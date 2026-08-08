@@ -20,7 +20,7 @@ The complete per-command handoff diagnostic model below is **target-state**. The
 
 Event-scope ingress decisions and handler-scoped execution outcomes are separate observability facts.
 
-- Event-scope ingress audit/logging records pre-resolution decisions for the incoming event, such as auth failure, reload backpressure, rollback pause, pin-state unavailability, or version unavailability. These records are keyed by the event-scope identity in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields` and must not invent a synthetic `scriptId`.
+- Event-scope ingress audit/logging records pre-resolution decisions for the incoming event, such as auth failure, reload backpressure, rollback pause, pin-state unavailability, signer-policy unavailability, or version unavailability. A rejected pre-handler ingress returns `admitted=false` with its event-scope `admissionOutcome` and `admissionReason`, records the same pair in `script_event_ingress_audit`, and increments the ingress dropped-trigger metric using the bounded reason. These records are keyed by the event-scope identity in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields` and must not invent a synthetic `scriptId` or create a handler-scoped `script_event_audit` row.
 - `script_event_audit` records handler-scoped, scheduler/timer-scoped, tenant-readiness `onLoad`, and dry-run/test executions after a concrete script or plugin handler identity exists.
 - per-command handoff history is a separate durable child surface keyed by the complete applicable command-handoff scope plus the target-state `(automationDispatchId, commandOrdinal)` pair; `outboxWorkItemId` is retained only as parent-work correlation so one handler audit row can still correlate to multiple emitted gameplay commands.
 - A successful event-scope ingress record means the event was accepted for handler resolution. It is not a summary of every handler outcome.
@@ -255,8 +255,8 @@ In particular:
 
 - Use `version_unavailable` (never `skipped_version_unavailable`).
 - Encode specific cause in `finalReason` (for example `onload_failed`, `plugin_version_failed`, `script_patch_missing`).
-- Use `pin_state_unavailable` when admission fails closed because bounded-staleness pin data cannot be refreshed.
-- Use `signer_policy_unavailable` when plugin admission fails closed because signer policy cannot be refreshed/verified from authoritative policy sources.
+- Use `pin_state_unavailable` when a resolved handler's admission fails closed because bounded-staleness pin data cannot be refreshed; pre-resolution failures use the event-scope mapping in the normative contract tables.
+- Use `signer_policy_unavailable` for a resolved handler's admission failure after binding resolution when signer policy cannot be refreshed/verified from authoritative policy sources; pre-handler signer-policy unavailability uses the event-scope mapping in the normative contract tables and is not a handler `finalOutcome`.
 - Use `script_disabled` for operator disable/drain admission skips (never `skipped_disabled`).
 - A rollback convergence timeout is an event-scope ingress decision, not a handler `finalOutcome`: return `admitted=false` with `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK` and `admissionReason=rollback_convergence_timeout`, and record the same pair in `script_event_ingress_audit`.
 - Output-budget failures may be represented by different `finalOutcome` values depending on the last attempted stage, but they must use one of the bounded canonical `finalReason` values above and must never be collapsed into an unstructured catch-all.
@@ -327,7 +327,8 @@ Label rules:
 
 Metric semantics:
 
-- `automation_script_triggers_total` counts all observed triggers (admitted and non-admitted), tagged with canonical final stage-aware outcomes.
+- `automation_script_triggers_total` counts all observed triggers (admitted and non-admitted). Its `outcome` uses handler `finalOutcome` after handler resolution and the event-scope admission outcome for pre-handler ingress; neither path fabricates the other field.
+- `automation_script_triggers_dropped_total` is the ingress metric for each rejected pre-handler event. Its bounded `reason` uses the event-scope `admissionReason`, including `reason="signer_policy_unavailable"` for signer-policy unavailability, and does not imply a handler audit row or handler `finalOutcome`.
 - `automation_rollback_drain_canceled_total` counts old-epoch executions intentionally fenced during rollback draining before live work could persist or hand off. It must be used for bounded rollback-drain visibility rather than a generic infrastructure failure counter.
   It is not the counter for ordinary operator-initiated cancel/purge actions on not-yet-running work items unless those items had already crossed into execution and were then fenced by rollback epoch advancement.
 

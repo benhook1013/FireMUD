@@ -95,6 +95,8 @@ Event-scope ingress identity before handler resolution:
 
 Event-scope ingress outcomes are recorded in an ingress audit/logging surface keyed by the event-scope identity above, not in handler-scoped `script_event_audit`. Once the event is accepted for handler resolution, each resolved handler produces its own full applicable Trigger Identity and `script_event_audit` row. Pre-resolution denials such as auth failure, stale pin state, reload backpressure, rollback pause, or version unavailability must not invent a synthetic `scriptId` or `bindingId`.
 
+Signer-policy unavailability before handler resolution is an event-scope denial: return `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_SIGNER_POLICY_UNAVAILABLE` with bounded `admissionReason=signer_policy_unavailable`, record the same pair in `script_event_ingress_audit`, and do not create a handler-scoped `finalOutcome` or `script_event_audit` row. If signer policy is evaluated after binding resolution for a concrete handler, the handler-scoped outcome remains `finalOutcome=signer_policy_unavailable` under Table 2.
+
 Notes:
 
 - If an implementation wants to treat some gameplay lifecycle events as “not tick-aligned”, it must define that exception explicitly in this table (not only in prose docs) and document why it is safe across scoped coordination resets. The default contract is that gameplay lifecycle triggers are fenced by `regionEpoch`.
@@ -169,7 +171,7 @@ Use a single canonical outcome taxonomy across docs, protos, metrics, and dashbo
 Taxonomy governance rule:
 
 - Keep `finalOutcome` intentionally small and stable; add a new canonical value only when operator behavior, routing, or alert semantics materially change. Use `finalReason` for finer-grained diagnosis.
-- Event-scope admission failures that occur before handler resolution are recorded in the ingress response and `script_event_ingress_audit`, not in this handler-scoped taxonomy. In particular, pre-resolution unavailable pin state uses `TRIGGER_ADMISSION_OUTCOME_PIN_STATE_UNAVAILABLE` / `pin_state_unavailable`, a requested-versus-observed pin mismatch uses `TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE` / `pin_state_mismatch_requested_vs_observed`, and an active rollback convergence timeout uses the existing `TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK` / `rollback_convergence_timeout` pair. After handler resolution, unavailable pin state is handler-scoped with `finalStage=ADMISSION` and `finalOutcome=pin_state_unavailable`.
+- Event-scope admission failures that occur before handler resolution are recorded in the ingress response and `script_event_ingress_audit`, not in this handler-scoped taxonomy. In particular, pre-resolution unavailable pin state uses `TRIGGER_ADMISSION_OUTCOME_PIN_STATE_UNAVAILABLE` / `pin_state_unavailable`, a requested-versus-observed pin mismatch uses `TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE` / `pin_state_mismatch_requested_vs_observed`, signer-policy unavailability uses `TRIGGER_ADMISSION_OUTCOME_SIGNER_POLICY_UNAVAILABLE` / `signer_policy_unavailable`, and an active rollback convergence timeout uses the existing `TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK` / `rollback_convergence_timeout` pair. After handler resolution, unavailable pin state and signer-policy unavailability remain handler-scoped with `finalStage=ADMISSION` and their corresponding `finalOutcome` values.
 
 | Canonical value | Stage | Notes |
 | --- | --- | --- |
@@ -255,9 +257,9 @@ General rules:
 
 | Metric family | Required labels | Forbidden labels | Notes |
 | --- | --- | --- | --- |
-| `automation_script_triggers_total` | `scope`, `script_category`, `eventType`, `outcome`, optional `plugin_family`, `plugin_version_family`, `priorityTag` | `scriptEventId` | Counts all observed triggers (admitted and non-admitted) with final stage-aware outcome; do not treat “DSL eval success” as success if handoff failed. |
+| `automation_script_triggers_total` | `scope`, `script_category`, `eventType`, `outcome`, optional `plugin_family`, `plugin_version_family`, `priorityTag` | `scriptEventId` | Counts all observed triggers (admitted and non-admitted). Handler-resolved triggers use `finalOutcome`; pre-handler ingress uses its event-scope admission outcome and must not fabricate a handler outcome. |
 | `automation_script_skips_total` | `scope`, `script_category`, `reason`, optional `plugin_family`, `priorityTag` | `scriptEventId` | “Skip” is pre-eval. |
-| `automation_script_triggers_dropped_total` | `scope`, `script_category`, `reason`, optional `plugin_family`, `priorityTag` | `scriptEventId` | “Dropped” indicates the trigger was not processed to tick acceptance. |
+| `automation_script_triggers_dropped_total` | `scope`, `script_category`, `reason`, optional `plugin_family`, `priorityTag` | `scriptEventId` | “Dropped” indicates the trigger was not processed to tick acceptance. This is the ingress metric for rejected pre-handler events; use bounded `admissionReason` values such as `signer_policy_unavailable`, without creating handler `finalOutcome` or `script_event_audit` rows. |
 | `script_quota_allowed_total` | `scope`, `script_category` | `scriptEventId` | Quota decisions are pre-eval. |
 | `script_quota_denied_total` | `scope`, `script_category`, `reason` | `scriptEventId` | N/A |
 | `automation_tick_events_enqueued_total` | `scope` | `scriptEventId` | Counts successful tick handoffs, not DSL evaluations. |

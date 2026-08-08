@@ -176,6 +176,27 @@ EXPORT_INITIATION_ACTION_FAMILY = "export_initiate"
 EXPORT_INITIATION_REQUIRED_LIVE_CHECKS = {
     EXPORT_INITIATION_ACTION_FAMILY: {"export_availability"},
 }
+ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES = {
+    (
+        "account-service",
+        "POST /accounts/{accountId}/exports",
+    ): EXPORT_INITIATION_ACTION_FAMILY,
+    (
+        "account-service",
+        "GET /accounts/{accountId}/exports/{exportId}",
+    ): "export_status",
+    (
+        "account-service",
+        "GET /accounts/{accountId}/exports/{exportId}/content",
+    ): "export_content",
+}
+ACCOUNT_EXPORT_BRANCH_CLASSIFICATIONS = {
+    "active": "account_scoped",
+    "security_locked": "security_lock_export_scoped",
+    "deactivated_pending_delete": "pending_deletion_scoped",
+}
+ACCOUNT_EXPORT_BRANCHES = set(ACCOUNT_EXPORT_BRANCH_CLASSIFICATIONS.items())
+ACTIVE_ACCOUNT_EXPORT_REQUIRED_LIVE_CHECKS = {"account_state_export_eligible"}
 SECURITY_LOCK_EXPORT_ACTION_FAMILIES = {
     "export_initiate",
     "export_status",
@@ -203,6 +224,7 @@ CAPACITY_DELTA_WIRE_CONTRACT = {
         },
         "present_zero": {
             "presence": "present",
+            "wire_value_type": "integer",
             "wire_value": 0,
         },
     },
@@ -1502,49 +1524,104 @@ def validate_export_initiation_routes(
     live_checks_cache: LiveChecksCache | None = None,
 ) -> None:
     matched_route = False
+    observed_branches: dict[tuple[str, str], set[tuple[str, str]]] = {
+        identity: set() for identity in ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES
+    }
     for route in routes:
-        if (
-            not isinstance(route, dict)
-            or route_set_key(route) != EXPORT_INITIATION_ROUTE_IDENTITY
-        ):
+        if not isinstance(route, dict):
             continue
-        matched_route = True
+        identity = route_set_key(route)
+        expected_action_family = ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES.get(identity)
+        if expected_action_family is None:
+            continue
+        if identity == EXPORT_INITIATION_ROUTE_IDENTITY:
+            matched_route = True
         action_family = route.get("action_family")
         label = route_label(route)
-        if action_family != EXPORT_INITIATION_ACTION_FAMILY:
+        if action_family != expected_action_family:
             append_unique_error(
                 errors,
-                f"{label} must declare action_family "
-                f"{EXPORT_INITIATION_ACTION_FAMILY}",
+                f"{label} must declare action_family {expected_action_family}",
             )
-        required_checks = EXPORT_INITIATION_REQUIRED_LIVE_CHECKS[
-            EXPORT_INITIATION_ACTION_FAMILY
-        ]
-        checks = route_live_checks(route, label, errors, live_checks_cache)
-        for required_check in sorted(required_checks - checks):
+        account_state = applicability_value(route, "account_state", label, errors)
+        expected_classification = ACCOUNT_EXPORT_BRANCH_CLASSIFICATIONS.get(
+            account_state
+        )
+        if expected_classification is None:
             append_unique_error(
                 errors,
-                f"{label} {EXPORT_INITIATION_ACTION_FAMILY} must require live check "
-                f"{required_check}",
+                f"{label} must declare one of the canonical account export states: "
+                f"{sorted(ACCOUNT_EXPORT_BRANCH_CLASSIFICATIONS)}",
             )
-        if applicability_value(route, "account_state", label, errors) == "active":
-            if route.get("subject_binding") != "caller_account_id":
+        elif route.get("classification") != expected_classification:
+            append_unique_error(
+                errors,
+                f"{label} account_state={account_state!r} must use classification "
+                f"{expected_classification}",
+            )
+        if isinstance(account_state, str) and isinstance(
+            route.get("classification"), str
+        ):
+            observed_branches[identity].add(
+                (account_state, route["classification"])
+            )
+        if (
+            identity == EXPORT_INITIATION_ROUTE_IDENTITY
+            and route.get("classification") == "account_scoped"
+        ):
+            validate_applicability(
+                route, label, {"account_state": "active"}, errors
+            )
+        checks = None
+        if (
+            identity == EXPORT_INITIATION_ROUTE_IDENTITY
+            or account_state == "active"
+        ):
+            checks = route_live_checks(route, label, errors, live_checks_cache)
+        if identity == EXPORT_INITIATION_ROUTE_IDENTITY:
+            required_checks = EXPORT_INITIATION_REQUIRED_LIVE_CHECKS[
+                expected_action_family
+            ]
+            for required_check in sorted(required_checks - (checks or set())):
                 append_unique_error(
                     errors,
-                    f"{label} active export initiation must bind to caller_account_id",
+                    f"{label} {expected_action_family} must require live check "
+                    f"{required_check}",
                 )
-            if route.get("platform_admin_override") != "forbidden":
+        if account_state == "active":
+            for required_check in sorted(
+                ACTIVE_ACCOUNT_EXPORT_REQUIRED_LIVE_CHECKS - (checks or set())
+            ):
                 append_unique_error(
                     errors,
-                    f"{label} active export initiation must declare "
-                    "platform_admin_override forbidden",
+                    f"{label} {expected_action_family} must require live check "
+                    f"{required_check}",
                 )
-            if "account_authorization_branches" in route:
-                append_unique_error(
-                    errors,
-                    f"{label} active export initiation must not declare "
-                    "account_authorization_branches",
-                )
+            if identity == EXPORT_INITIATION_ROUTE_IDENTITY:
+                if route.get("subject_binding") != "caller_account_id":
+                    append_unique_error(
+                        errors,
+                        f"{label} active export initiation must bind to caller_account_id",
+                    )
+                if route.get("platform_admin_override") != "forbidden":
+                    append_unique_error(
+                        errors,
+                        f"{label} active export initiation must declare "
+                        "platform_admin_override forbidden",
+                    )
+                if "account_authorization_branches" in route:
+                    append_unique_error(
+                        errors,
+                        f"{label} active export initiation must not declare "
+                        "account_authorization_branches",
+                    )
+    for identity in ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES:
+        if observed_branches[identity] != ACCOUNT_EXPORT_BRANCHES:
+            append_unique_error(
+                errors,
+                f"{identity[0]} {identity[1]} must declare exactly the mutually "
+                f"exclusive account export branches: {sorted(ACCOUNT_EXPORT_BRANCHES)}",
+            )
     if not matched_route:
         append_unique_error(
             errors,
@@ -1586,15 +1663,18 @@ def validate_capacity_admission_wire_contract(
         return
     label = f"{service} {route_name}"
     contract = route.get("capacity_delta_wire_contract")
+    present_zero_wire_type = None
     present_zero_wire_value = None
     if isinstance(contract, dict):
         golden_vectors = contract.get("golden_vectors")
         if isinstance(golden_vectors, dict):
             present_zero = golden_vectors.get("present_zero")
             if isinstance(present_zero, dict):
+                present_zero_wire_type = present_zero.get("wire_value_type")
                 present_zero_wire_value = present_zero.get("wire_value")
     if (
         contract != CAPACITY_DELTA_WIRE_CONTRACT
+        or present_zero_wire_type != "integer"
         or not isinstance(present_zero_wire_value, int)
         or isinstance(present_zero_wire_value, bool)
         or present_zero_wire_value != 0

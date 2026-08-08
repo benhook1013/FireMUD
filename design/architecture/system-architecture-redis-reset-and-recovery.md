@@ -20,6 +20,7 @@ Operator invocation boundary: every `coordination-maintenance recover`, `continu
 For a current Coordination Redis cold start, incomplete recovery, or reset incident:
 
 - Keep Gateway protected admission, gameplay mutation, command intake, and affected coordination writers fenced or stopped. An empty keyspace is not evidence that the scope is safe to resume.
+- Apply a scoped reset only when supported tooling for that exact scope exists and is proven; the target scope grammar below does not itself authorize an operational reset.
 - Use only the shipped `PauseTicksForScope` pause and `GetRuntimeOwnershipStatus` status surface for the supported `{tenantId, gameInstanceId}` boundary, plus read-only `coord_ops_ro` Redis inspection. Follow the current failover/AOF procedures and escalation path in the [Redis incident runbook](./system-architecture-redis-incident-runbook.md) and [Redis Operations](./system-architecture-redis-operations.md); do not invoke the target-state CLI or use raw coordination-prefix mutations.
 - If the durable recovery controller, Account projection repair/replacement, replay quarantine/fence, or immutable evidence path is unavailable, stale, or ambiguous, abort any destructive wipe, recovery continuation, `resume`, `release-lock`, or reopen attempt. Preserve the AOF and incident evidence, leave the fence in place, and escalate. There is no supported current full-wipe or unlock substitute.
 
@@ -191,6 +192,8 @@ Worked example (illustrative, non-normative, reset-local): cold start for `<tena
 
 - **Reset** (intentional operational action)
   - A deliberate, scoped choice to discard volatile coordination state (region/tenant/cluster) and resume from PostgreSQL state plus new activity.
+  - Target state only: apply a scoped reset through supported, implemented, and proven tooling for that exact scope and an explicit session policy.
+  - Until that tooling exists, current handling is the [Current Operator Fallback](#current-operator-fallback): preserve evidence, keep the affected scope fenced, and escalate.
   - Must follow the reset model and runbooks; ad‑hoc `redis-cli` edits are treated as “unknown resets” and require a follow‑up scoped reset.
 
 Design implications:

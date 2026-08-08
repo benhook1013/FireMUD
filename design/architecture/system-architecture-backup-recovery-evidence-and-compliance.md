@@ -163,7 +163,7 @@ Before opening production to player traffic for the first time, or reopening it 
 
 Traffic-open evidence has two distinct forms. The operation-bound pre-release evidence record identified by `evidenceRef` is immutable evidence for the exact recovery operation, scope, and event and is consumed by the controller's owner-defined continuation/release controls. The checked-in traffic-open record below is a separate immutable post-finalization projection. It is retained evidence, not the pre-release `evidenceRef` record and not an input to the release that produced it. The exact operation-bound `evidenceRef` consumed by the controller must be traceable from the finalized projection's `evidenceRefs[]`, together with any lineage required by the operation-bound record.
 
-At the owner's `ready_to_reopen` boundary, the operation-bound pre-release evidence record uses its own `schemaVersion=traffic-open-pre-release-evidence/v1` and binds the exact operation/event tuple that the exporter must preserve in the finalized projection: `eventType`, `deploymentEventId`, `preflightReportPath`, `actualRecoveryRecordRef`, and `playerFacingTargetBoundary`. It records `projectionSchemaVersion=traffic-open-record/v1` for that finalized projection, which uses `schemaVersion=traffic-open-record/v1`; the consumed operation-bound `evidenceRef` must appear in the finalized projection's `evidenceRefs[]`. The recovery owner defines the continuation call shape; the projection is written only after finalization and is not consumed as release authority.
+At the owner's `ready_to_reopen` boundary, the operation-bound pre-release evidence record uses its own `schemaVersion=traffic-open-pre-release-evidence/v1` and binds the exact operation/event tuple that the exporter must preserve in the finalized projection: `operationId`, `eventType`, `deploymentEventId`, `preflightReportPath`, `actualRecoveryRecordRef`, and `playerFacingTargetBoundary`. The finalized projection must exact-match `eventType`, `deploymentEventId`, `preflightReportPath`, and the remaining operation/event tuple. It records `projectionSchemaVersion=traffic-open-record/v1` for that finalized projection, which uses `schemaVersion=traffic-open-record/v1`; the consumed operation-bound `evidenceRef` must appear in the finalized projection's `evidenceRefs[]`. The recovery owner defines the continuation call shape; the projection is written only after finalization and is not consumed as release authority.
 
 This is target-state behavior. The current production preflight has no durable controller read and intentionally fails `PREFLIGHT-BACKUP-002` closed; no production traffic-open projection writer is implemented.
 
@@ -175,6 +175,7 @@ Required fields:
 
 - `schemaVersion` (`traffic-open-record/v1`)
 - `environment`
+- `operationId`
 - `eventType` (`first-live` or `reopen`)
 - `trafficOpenStatus` (`finalized` in the checked-in projection; pre-finalization controller state is not represented by this record)
 - `deploymentRef`
@@ -208,7 +209,7 @@ Validation rules:
 - an isolated production-equivalent drill may run in a production-equivalent boundary using current production database lineage and compatible recovery contracts/tooling; its evidence is bound only to that isolated boundary
 - the durable actual-recovery controller owns the pre-release and release lifecycle for first-live and reopen. Any preflight consumer must compare the immutable operation-bound evidence and event-matching controller lineage, and must not accept a transient traffic-open file as authority
 - `deploymentEventId` must equal the referenced preflight report so every retry, first-live attempt, or reopen has a unique immutable projection and cannot overwrite or reuse another event's evidence
-- the finalized projection must retain `schemaVersion=traffic-open-record/v1`, exact-match `eventType`, `deploymentEventId`, `preflightReportPath`, `actualRecoveryRecordRef`, and `playerFacingTargetBoundary` against the operation-bound evidence and finalized controller lineage, and include the exact operation-bound `evidenceRef` in `evidenceRefs[]`; where the operation-bound record requires lineage, that lineage must remain traceable there. A missing, mutable, or reissued projection is a later evidence-integrity failure, not a release input
+- the finalized projection must retain `schemaVersion=traffic-open-record/v1`, and its `operationId`, `eventType`, `deploymentEventId`, `preflightReportPath`, `actualRecoveryRecordRef`, and `playerFacingTargetBoundary` must exact-match the consumed operation-bound evidence and finalized controller lineage; it must include the exact operation-bound `evidenceRef` in `evidenceRefs[]`; where the operation-bound record requires lineage, that lineage must remain traceable there. A missing, mutable, or reissued projection is a later evidence-integrity failure, not a release input
 - the retained projection exported after release uses `trafficOpenStatus=finalized` and must dereference the same actual-recovery record in `finalized`; `trafficOpenedAt` is required only for this form
 - `restoreDrillLastSuccessAt` must be within 30 days
 - `backupCoverage` must be `environment-wide-postgresql`
@@ -243,7 +244,7 @@ An `incomplete` record is the canonical blocking representation while required r
 
 ## Hobby Traffic-Open Evidence
 
-The hobby operation-bound record uses the same `schemaVersion=traffic-open-pre-release-evidence/v1` and carries `projectionSchemaVersion=traffic-open-record/v1`; the consumed `evidenceRef` must appear in the finalized projection's `evidenceRefs[]`. After the durable controller finalizes a `hobby-self-hosted` first-live or reopen event, the exporter records the retained traffic-open projection at:
+The `hobby-self-hosted` operation-bound pre-release record reuses the complete production `traffic-open-pre-release-evidence/v1` schema defined above, including `operationId`, `eventType`, `deploymentEventId`, `preflightReportPath`, `actualRecoveryRecordRef`, and `playerFacingTargetBoundary`; it carries `projectionSchemaVersion=traffic-open-record/v1`, and the consumed `evidenceRef` must appear in the finalized projection's `evidenceRefs[]`. After the durable controller finalizes a `hobby-self-hosted` first-live or reopen event, the exporter records the retained traffic-open projection at:
 
 - `design/operations/deployments/hobby-self-hosted/traffic-open/<deployment-ref>/<deploymentEventId>.json`
 
@@ -251,6 +252,7 @@ Required fields:
 
 - `schemaVersion` (`traffic-open-record/v1`)
 - `environment`
+- `operationId`
 - `eventType` (`first-live` or `reopen`)
 - `trafficOpenStatus` (`finalized` in the checked-in projection; pre-finalization controller state is not represented by this record)
 - `deploymentRef`
@@ -271,7 +273,7 @@ Validation rules:
 - `baselineRecoveryRecordRef` must point to a finalized exported projection of an isolated drill proving the environment-wide `cold_start_restore` contract for the player-facing hobby boundary; first-live and reopen must additionally reference the durable actual-recovery controller for the live boundary
 - the actual-recovery controller lineage must use event-matching `trafficExposure` and name the exact `playerFacingTargetBoundary`; after the controller reaches its owner-defined finalized state, the exporter writes the checked-in projections
 - `deploymentEventId` must equal the referenced preflight report so evidence cannot be reused across retries or traffic-open events
-- the finalized projection must retain `schemaVersion=traffic-open-record/v1`, exact-match `eventType`, `deploymentEventId`, `preflightReportPath`, `actualRecoveryRecordRef`, and `playerFacingTargetBoundary` against the operation-bound evidence and finalized controller lineage, and include the exact operation-bound `evidenceRef` in `evidenceRefs[]`; where the operation-bound record requires lineage, that lineage must remain traceable there. A missing, mutable, or reissued projection is a later evidence-integrity failure, not a release input
+- the finalized projection must retain `schemaVersion=traffic-open-record/v1`, and its `operationId`, `eventType`, `deploymentEventId`, `preflightReportPath`, `actualRecoveryRecordRef`, and `playerFacingTargetBoundary` must exact-match the consumed operation-bound evidence and finalized controller lineage; it must include the exact operation-bound `evidenceRef` in `evidenceRefs[]`; where the operation-bound record requires lineage, that lineage must remain traceable there. A missing, mutable, or reissued projection is a later evidence-integrity failure, not a release input
 - `preflightReportPath` must show `PREFLIGHT-BACKUP-003=pass`
 - `PREFLIGHT-BACKUP-003` validates immutable pre-release evidence, compliance lineage, and the event-matching actual-recovery controller reference; it does not perform or authorize controller continuation or release. The preflight result must reject missing or stale compliance/controller evidence and any deployment, event, baseline-recovery, or actual-recovery lineage that does not match the current traffic-open event
 - the current event's checked-in traffic-open projection is not a preflight input because it is produced only after the controller records its finalized state

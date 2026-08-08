@@ -53,7 +53,7 @@ When this document and the DSL reference appear to overlap, use the DSL referenc
 
 ## Current Implementation Status
 
-This section records current implementation boundaries, not target-state authority. The normative contracts below and the linked owning documents remain canonical. Metric names, labels, audit fields, and handoff-observability behavior are owned by the [Scripting & Automation Observability Contract](./system-architecture-scripting-observability-contract.md).
+This section records current implementation boundaries, not target-state authority. The normative contracts below and the linked owning documents remain canonical. Telemetry fields, metric names, labels, and correlation guidance are owned by the [Scripting & Automation Observability Contract](./system-architecture-scripting-observability-contract.md); normative audit stage/outcome semantics and final lifecycle statuses remain owned by the normative audit and scripting lifecycle/rollout documents.
 
 The current runtime now includes a first durable work-item executor instead of stopping at ingress-only outbox materialization. Automation claims `PENDING_EVALUATION` rows, enforces per-script quota before execution, loads the persisted script definition, evaluates a current-boundary command-emission format, and hands emitted commands to Game Session through `EnqueueAutomationCommandIfAbsent`. The current implementation still uses one `script_work_items` row for both the pre-DSL trigger and later handoff processing; it does not yet implement the target separation between durable trigger state and evaluated command descriptors.
 
@@ -71,12 +71,12 @@ Current dedupe, rejection, and status diagnostics use the available `outboxWorkI
 
 The durable pre-DSL trigger state and the post-DSL evaluated command descriptor/outbox are separate durable roles:
 
-- The **pre-DSL trigger state** owns the complete applicable Trigger Identity, event payload, pinned script/configuration references, `read_snapshot_token`, admission epoch, evaluation lease, and fencing generation. It contains no evaluated gameplay command descriptors.
+- The **pre-DSL trigger state** owns the complete applicable Trigger Identity, event payload, pinned script/configuration references, `read_snapshot_token`, admission epoch, evaluation lease, fencing generation, and durable descriptor-commit marker/status. It contains no evaluated gameplay command descriptors.
 - The **evaluated command descriptor/outbox** is created only after DSL evaluation. It contains the immutable evaluated descriptor for each emitted command, including `automationDispatchId` and `commandOrdinal`, plus parent `outboxWorkItemId` correlation and the applicable trigger/configuration inputs needed for handoff and replay.
 
 Evaluation claims the pre-DSL trigger with a compare-and-set transition to `EVALUATING`, a bounded lease, and a monotonically increasing fencing generation. The worker may commit evaluated descriptors only while that lease and generation are current. The descriptor rows, their parent outbox record, the terminal evaluation outcome, and the audit update are persisted atomically with the terminal evaluation transition in one transaction. A retry after that terminal evaluation boundary loads the committed descriptors and replays handoff; it never re-enters the DSL.
 
-If the lease expires before the evaluated descriptor transaction commits, Automation's recovery owner must compare-and-set the stale `EVALUATING` state to a terminal audited `DEAD_LETTERED` outcome with `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and `finalReason=stale_execution_fenced`. Recovery must not re-enter the DSL. If the descriptor transaction committed, recovery follows the persisted descriptors and their outbox state instead; the committed descriptor set is the sole replay input.
+The descriptor commit must durably mark the pre-DSL trigger as committed in the same transaction as the descriptor rows and parent outbox record. If the evaluation lease expires, Automation's recovery owner must first read that durable descriptor-commit marker/status. A committed marker/status makes the persisted descriptor rows the sole replay input and recovery replays them without DSL re-entry. Only a stale `EVALUATING` state with no committed marker/status may be compare-and-set to a terminal audited `DEAD_LETTERED` outcome with `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and `finalReason=stale_execution_fenced`.
 
 ## Work Item Outbox Contract (Normative)
 
@@ -89,17 +89,17 @@ This section defines the minimum contract that makes "persist -> index -> drain 
 Each evaluated descriptor/outbox record must include:
 
 - Trigger Identity fields from `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields` (including `gameInstanceId` and, for gameplay/runtime triggers, `regionEpoch`).
-- `outboxWorkItemId` (stable unique identifier).
-- `automationDispatchId` and `commandOrdinal` for each evaluated command descriptor.
+- `outboxWorkItemId` (stable parent correlation identifier; not descriptor identity).
+- The unique `(automationDispatchId, commandOrdinal)` pair for each evaluated command descriptor.
 - `createdAt` and `updatedAt`.
-- `workItemStatus` (see below).
+- `workItemStatus` (per evaluated descriptor/command; see below, not a pre-DSL trigger or parent aggregate status).
 - The immutable evaluated command descriptor (one descriptor per emitted command, stored durably).
-- `commandCount` (for budgeting/inspection).
+- `commandCount` (the immutable total number of committed descriptors for the parent `outboxWorkItemId`, for budgeting/inspection; it is not per-descriptor progress).
 - `cancelReason` (nullable; required when canceled).
 
 `outboxWorkItemId` is the Automation-owned parent correlation identifier. At the current Game Session boundary, Automation produces `EnqueueAutomationCommandIfAbsentRequest.automationWorkItemId` with this same value, and Game Session consumes/reports it under the wire field name `automationWorkItemId`; these are boundary-specific names for one parent identifier, not separate work-item records. It is not the per-command discriminator and must not be used as command-level dedupe.
 
-Target-state per-command progress follows the [cross-service command boundary](./system-architecture-scripting-contracts.md#2-script-work-item-vs-tick-command-boundary): the `(automationDispatchId, commandOrdinal)` pair is the sole per-command discriminator and is linked to the parent `outboxWorkItemId`. Each emitted command has independent durable progress, so a retry resumes only unresolved commands and cannot drop an unattempted command or replay a command already accepted or terminally rejected. A queue pointer may be deduplicated by parent `outboxWorkItemId` for index hygiene, but that does not deduplicate commands. The current live handoff limitation above means this target behavior is not current end-to-end proof; multi-command work items remain rejected until the boundary is widened.
+Target-state per-command progress follows the [cross-service command boundary](./system-architecture-scripting-contracts.md#2-script-work-item-vs-tick-command-boundary): descriptor identity is the `(automationDispatchId, commandOrdinal)` pair and is linked to the parent `outboxWorkItemId`. Each emitted command has independent durable progress, so a retry resumes only unresolved commands and cannot drop an unattempted command or replay a command already accepted or terminally rejected. A queue pointer may be deduplicated by parent `outboxWorkItemId` for index hygiene, but that does not deduplicate commands. The current live handoff limitation above means this target behavior is not current end-to-end proof; multi-command work items remain rejected until the boundary is widened.
 
 When a work item is handed to Game Session, the local wire boundary is:
 
@@ -107,7 +107,7 @@ When a work item is handed to Game Session, the local wire boundary is:
 
 ### Minimum Status Model
 
-Statuses are a target-state contract; implementations may use different internal names as long as they are mapped 1:1:
+`PENDING` through `DEAD_LETTERED` are per evaluated descriptor/command statuses; pre-DSL trigger states and any parent-level aggregate are separate. Statuses are a target-state contract; implementations may use different internal names as long as they are mapped 1:1:
 
 - `PENDING` - persisted, eligible for indexing and draining.
 - `INDEXED` - a pointer/index has been published into `automation:queue:*` (best-effort; may be rederived).
@@ -128,7 +128,7 @@ The pointer/index format must be forward-compatible (versioned envelope) so it c
 ### Rebuild and Deduplication Rules
 
 - Rebuilding `automation:queue:*` from the outbox must be safe to run repeatedly and concurrently (idempotent projection).
-- Automation's queue-drain/rebuild path must dedupe repeated parent pointers by `outboxWorkItemId` (not by Redis list position) so queue resets and re-indexing do not multiply discovery. The durable executor and Game Session must dedupe each command by `(automationDispatchId, commandOrdinal)` so parent-pointer retries do not cause double-handoff.
+- Automation's queue-drain/rebuild path must dedupe repeated parent pointers by `outboxWorkItemId` (not by Redis list position) so queue resets and re-indexing do not multiply discovery. The durable executor and Game Session must dedupe each descriptor by `(automationDispatchId, commandOrdinal)` so parent-pointer retries do not cause double-handoff.
 - `CancelPendingWorkItemsForPatch` and `CancelPendingWorkItemsForPluginVersion` must be implemented as outbox state transitions (`workItemStatus=CANCELED`) so cancellation is durable even if Redis is reset. Cancellation must be reflected in `script_event_audit` stage-aware outcomes (for example `finalStage=ADMISSION` with a cancel outcome/reason for newly arriving triggers, and non-success outcomes for already persisted work that is canceled before handoff).
 
 ### Operational Constraints
@@ -142,12 +142,12 @@ The pointer/index format must be forward-compatible (versioned envelope) so it c
 
 ## Current State Mapping, Drain, and Rebuild Rules
 
-The current `script_work_items` statuses span two target layers. Tooling must not collapse them into one command-outbox state machine:
+The current `script_work_items` statuses span two target layers. `workItemStatus` on an evaluated descriptor is per descriptor/command; pre-DSL trigger status and any parent aggregate are separate scopes. Tooling must not collapse them into one command-outbox state machine:
 
 | Current or target status | Canonical target meaning | Drain and rebuild treatment |
 | --- | --- | --- |
 | `PENDING_EVALUATION` | Pre-DSL trigger state pending evaluation; it is not an evaluated command outbox row. | Count as pending pre-DSL work and make it eligible only for the fenced evaluator or explicit cancellation. Do not publish it as an evaluated command pointer. |
-| `EVALUATING` | Pre-DSL trigger state claimed under an evaluation lease and fencing generation. | Count as active. Do not requeue or re-enter the DSL from a pointer or timeout. An expired lease is handled only by the recovery-owner CAS to `DEAD_LETTERED` with audited `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and `finalReason=stale_execution_fenced`, unless the descriptor commit is already present. |
+| `EVALUATING` | Pre-DSL trigger state claimed under an evaluation lease and fencing generation. | Count as active. Do not requeue or re-enter the DSL from a pointer or timeout. Recovery first reads the durable descriptor-commit marker/status and replays committed descriptors without DSL re-entry; only an expired lease with no committed marker/status may use the recovery-owner CAS to `DEAD_LETTERED` with audited `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and `finalReason=stale_execution_fenced`. |
 | `PENDING` | Evaluated descriptor/outbox pending handoff. | Count as pending post-DSL work and publish or rebuild its derived pointer. |
 | `INDEXED` | Evaluated descriptor whose derived queue pointer has been published. | Count as pending post-DSL work; rebuilding is idempotent and may restore only the missing pointer. |
 | `HANDOFF_IN_FLIGHT` | Evaluated descriptor currently being handed to Game Session. | Count as active; retry the committed descriptor by `(automationDispatchId, commandOrdinal)`, never by re-entering the DSL. |
@@ -280,4 +280,4 @@ Failure handling:
 - If `onLoad` encounters `infrastructure_error`, the service must not re-enter the DSL for that readiness identity. Only an external infrastructure operation that is independently idempotent may be retried; if the required step cannot be retried safely, readiness fails rather than executing the DSL again.
 - A stale `ONLOAD_RUNNING` execution is fenced by its readiness publication/generation and compare-and-set transitioned by Automation's recovery owner to a terminal audited `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and `finalReason=stale_execution_fenced`. It blocks `READY`; the same readiness identity is never re-entered, and a new publication or readiness generation is required.
 
-All `onLoad` runs are recorded in `script_event_audit` with `eventType=onLoad` and the target `scriptPatchVersion`; stage/outcome fields follow the [normative audit table](./system-architecture-scripting-normative-contract-tables.md#table-2-script_event_audit-stages-and-outcomes). Patch-level readiness for `<tenantId, scriptPatchVersion>` is derived from the aggregate of all required per-script runs and becomes `READY` only after every required readiness execution succeeds and no fenced stale run remains unresolved. The final transition must be one atomic conditional durable update from `ONLOAD_RUNNING` to `READY`, fenced by the current readiness row still being `ONLOAD_RUNNING` and not `SUPERSEDED`; a concurrent supersession or stale-run terminalization must win and a partial or stale aggregate must not produce `READY`.
+All `onLoad` runs are recorded in `script_event_audit` with `eventType=onLoad` and the target `scriptPatchVersion`; stage/outcome fields follow the [normative audit table](./system-architecture-scripting-normative-contract-tables.md#table-2-script_event_audit-stages-and-outcomes). Patch-level readiness for `<tenantId, scriptPatchVersion>` is derived from the aggregate of all required per-script runs and becomes `READY` only after every required readiness execution succeeds and no fenced stale run remains unresolved. The final transition must be one atomic conditional durable update from `ONLOAD_RUNNING` to `READY` whose write predicate revalidates the complete required `onLoad` aggregate for the current readiness identity, the expected readiness generation, and the current publication/readiness row still being current, `ONLOAD_RUNNING`, and not `SUPERSEDED`; a concurrent supersession or stale-run terminalization must win and a partial or stale aggregate must not produce `READY`.

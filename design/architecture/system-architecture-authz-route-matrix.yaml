@@ -270,6 +270,7 @@ required_live_check_vocabulary:
   - account_generation
   - account_owned_wallet_customer_mapping
   - account_state_bootstrap_eligible
+  - account_state_export_eligible
   - account_state_login_eligible
   - account_authority_tuple
   - account_outbox_checkpoint
@@ -1647,7 +1648,7 @@ routes:
     subject_binding: caller_account_id
     platform_admin_override: forbidden
     required_fields: [request_id]
-    required_live_checks: [issuer_generation, account_generation, recent_account_authentication, export_availability]
+    required_live_checks: [account_state_export_eligible, issuer_generation, account_generation, recent_account_authentication, export_availability]
     action_family: export_initiate
     mutation_contract: create_or_idempotently_replay_bounded_full_subject_export
     idempotency_contract:
@@ -1753,7 +1754,7 @@ routes:
       comparison: exact
       mismatch: PERMISSION_DENIED
     action_family: export_status
-    required_live_checks: [issuer_generation, account_generation]
+    required_live_checks: [account_state_export_eligible, issuer_generation, account_generation]
     response_profile: asynchronous_versioned_cross_owner_export_manifest
     canonical_errors:
       any_of: [AUTH_UNAVAILABLE, PERMISSION_DENIED]
@@ -1840,7 +1841,7 @@ routes:
       mismatch: PERMISSION_DENIED
     action_family: export_content
     audit_contract: required_account_export_job_and_outcome
-    required_live_checks: [issuer_generation, account_generation, recent_account_authentication, export_availability]
+    required_live_checks: [account_state_export_eligible, issuer_generation, account_generation, recent_account_authentication, export_availability]
     response_profile: completed_export_artifact_only
     canonical_errors:
       any_of: [AUTH_UNAVAILABLE, PERMISSION_DENIED]
@@ -2210,6 +2211,7 @@ routes:
           wire_value: omitted
         present_zero:
           presence: present
+          wire_value_type: integer
           wire_value: 0
     attempt_fence_contract:
       initial_attempt: binds_fresh_attempt_id_current_rearm_fence_exact_payload_and_digest
