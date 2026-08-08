@@ -7,7 +7,7 @@ Unless explicitly described as current behavior, the sections below define the t
 - Java `CanonicalGatewayRoutesConfiguration` is the current route authority, with environment overrides; the target route catalog and deny-by-default exposure rules still require convergence proof.
 - The current edge implements bounded connect-token handshake classes and replay handling, but this does not prove the complete target replay durability, rotation, or reconnect contract.
 - **Current drift:** the protected admin `JwtAuthFilter` parses shared-HMAC JWTs through `JwtUtil`. This is current implementation behavior only, is not a player-facing asymmetric-validation capability, and must not be confused with the target receiving-service boundary.
-- **Target boundary:** Gateway may require and forward the declared `Authorization` header, but it does not parse or validate ordinary JWT contents; consuming services own asymmetric JWKS validation under [JWT and Token Contracts](../../system-architecture-jwt-and-token-contracts.md).
+- **Target boundary:** On protected admin routes, Gateway requires an `Authorization` header at ingress and forwards it without parsing or validating ordinary JWT contents; consuming services own asymmetric JWKS validation under [JWT and Token Contracts](../../system-architecture-jwt-and-token-contracts.md).
 - The current public `/api/session/**` inventory is limited to `GET /api/session/ping`; internal `/sessions*` mutations remain non-public.
 - The current route catalog blocks the documented internal subtrees, and `HeaderTrustFilter` owns trusted-header promotion; deployment-level drain, failover, and live readiness evidence remain separate proof obligations.
 
@@ -43,7 +43,7 @@ Unless explicitly described as current behavior, the sections below define the t
 ## Filter Chain and Admission Behavior
 
 - Authentication, rate limiting, and logging filters run before routing.
-- **Target contract:** `JwtAuthFilter` requires an `Authorization` header on protected admin routes and forwards the JWT unmodified. Spring Cloud Gateway does not parse or validate ordinary JWTs; validation occurs entirely in the consuming service. The current shared-HMAC parsing noted in Implementation Status is drift and does not change this target boundary.
+- **Target contract:** On protected admin routes, `JwtAuthFilter` requires an `Authorization` header at ingress and forwards it unmodified. Spring Cloud Gateway does not parse or validate ordinary JWTs; validation occurs entirely in the consuming service. The current shared-HMAC parsing noted in Implementation Status is drift and does not change this target boundary.
 - Rate-limiting behavior, including keying strategy and the division of responsibility with the TCP Proxy Service and Game Session Service, follows [Rate Limiting & Abuse Protection](../../system-architecture-gateway.md#rate-limiting--abuse-protection).
 - WebSocket upgrades are proxied using Spring Cloud Gateway’s built-in WebSocket support.
 - `RequestMetricsFilter` records HTTP request activity for observability, while the dev WebSocket echo handler records actual WebSocket connection counts separately.

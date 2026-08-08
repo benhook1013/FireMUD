@@ -166,6 +166,7 @@ Use a single canonical outcome taxonomy across docs, protos, metrics, and dashbo
 Taxonomy governance rule:
 
 - Keep `finalOutcome` intentionally small and stable; add a new canonical value only when operator behavior, routing, or alert semantics materially change. Use `finalReason` for finer-grained diagnosis.
+- Event-scope admission failures that occur before handler resolution are recorded in the ingress response and `script_event_ingress_audit`, not in this handler-scoped taxonomy. In particular, unavailable pin state uses `TRIGGER_ADMISSION_OUTCOME_PIN_STATE_UNAVAILABLE` / `pin_state_unavailable`, and a requested-versus-observed pin mismatch uses `TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE` / `pin_state_mismatch_requested_vs_observed`.
 
 | Canonical value | Stage | Notes |
 | --- | --- | --- |
@@ -177,7 +178,6 @@ Taxonomy governance rule:
 | `quota_denied` | `ADMISSION` | Script quota or concurrency/capacity denial before DSL evaluation. |
 | `tenant_budget_exceeded` | `ADMISSION` | Tenant budget exhausted. |
 | `version_unavailable` | `ADMISSION` | Unknown/failed/not-ready patch or plugin version. |
-| `pin_state_unavailable` | `ADMISSION` | Bounded-staleness pin cache could not be refreshed from an authoritative source; admission fails closed. |
 | `signer_policy_unavailable` | `ADMISSION` | Plugin admission fails closed because signer policy cannot be refreshed/verified from authoritative policy sources. |
 | `plugin_component_blocked` | `ADMISSION` | Plugin rejected by component policy. |
 | `plugin_disabled` | `ADMISSION` | Plugin disabled or draining state. |

@@ -216,8 +216,7 @@ raw_html_block_start = re.compile(
     re.IGNORECASE,
 )
 raw_html_special_start = re.compile(
-    r"^[ \t]{0,3}(?:(?P<processing><\?)|(?P<declaration><![A-Z])|(?P<cdata><!\[CDATA\[))",
-    re.IGNORECASE,
+    r"^[ \t]{0,3}(?:(?P<processing><\?)|(?P<declaration><![A-Za-z])|(?P<cdata><!\[CDATA\[))",
 )
 html_comment_boundary = "\x00"
 
@@ -482,6 +481,11 @@ cdata_adr_fixture_text = (
     "## Status\n\n"
     "Accepted\n"
 )
+lowercase_cdata_fixture_text = (
+    "<![cdata[\n"
+    "## Status\n"
+    "Superseded by ADR 0001\n"
+)
 comment_only_type6_html_fixture_text = (
     "# ADR 9986: Comment-Only Type-6 Raw HTML Fixture\n\n"
     "<div>\n"
@@ -530,6 +534,8 @@ if first_top_level_status_value(processing_instruction_adr_fixture_text) != "Acc
     raise SystemExit("processing-instruction block hid the following Accepted status")
 if first_top_level_status_value(cdata_adr_fixture_text) != "Accepted":
     raise SystemExit("CDATA block hid the following Accepted status")
+if first_top_level_status_value(lowercase_cdata_fixture_text) != "Superseded by ADR 0001":
+    raise SystemExit("lowercase CDATA was incorrectly treated as Type-5 raw HTML")
 if first_top_level_status_value(comment_only_type6_html_fixture_text) != "Accepted":
     raise SystemExit("comment-only Type-6 HTML line incorrectly terminated the block")
 for closing_tag in ("script", "style", "pre", "textarea"):
