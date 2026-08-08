@@ -1604,7 +1604,7 @@ routes:
     membership_authority_generation_applies: false
     pending_deletion_workflow_binding: required
     action_family: deletion_status
-    required_live_checks: [pending_deletion_state, pending_deletion_credential_registry]
+    required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, pending_deletion_action_family]
     response_profile: deletion_status_only
     canonical_errors:
       any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE]
@@ -1626,7 +1626,7 @@ routes:
     membership_authority_generation_applies: false
     pending_deletion_workflow_binding: required
     action_family: deletion_cancel
-    required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, cancellation_window]
+    required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, pending_deletion_action_family, cancellation_window]
     mutation_contract: cancel_deletion_revoke_pending_access_then_restore_normal_generation
     canonical_errors:
       any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE]
@@ -1932,7 +1932,7 @@ routes:
     membership_authority_generation_applies: false
     pending_deletion_workflow_binding: required
     action_family: billing_settlement
-    required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, settlement_scope]
+    required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, pending_deletion_action_family, settlement_scope]
     response_profile: necessary_billing_settlement_only
     canonical_errors:
       any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE]

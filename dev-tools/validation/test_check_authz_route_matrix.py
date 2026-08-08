@@ -2379,11 +2379,21 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors,
         )
 
-    def test_pending_deletion_export_routes_require_action_family_live_check(self):
+    def test_pending_deletion_routes_require_action_family_live_check(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-        for action_family in sorted(
-            self.validator.PENDING_DELETION_EXPORT_ACTION_FAMILIES
-        ):
+        pending_routes = [
+            route
+            for route in baseline["routes"]
+            if route.get("classification") == "pending_deletion_scoped"
+        ]
+        self.assertEqual(
+            self.validator.PENDING_DELETION_ACTION_FAMILIES,
+            {route["action_family"] for route in pending_routes},
+        )
+        self.assertEqual(6, len(pending_routes))
+
+        for baseline_route in pending_routes:
+            action_family = baseline_route["action_family"]
             with self.subTest(action_family=action_family):
                 route = next(
                     route
@@ -3311,7 +3321,8 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         pending_route = route_for(document, "account-service", "GET /accounts/{accountId}/deletion")
         self.assertEqual(
             set(pending_route["required_live_checks"]),
-            set(classifications["pending_deletion_scoped"]["required_authority"]),
+            set(classifications["pending_deletion_scoped"]["required_authority"])
+            | {"pending_deletion_action_family"},
         )
         errors = validate_document(self.validator, document)
         self.assertEqual([], errors)

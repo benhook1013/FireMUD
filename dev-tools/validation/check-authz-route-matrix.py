@@ -446,6 +446,14 @@ PENDING_DELETION_EXPORT_ACTION_FAMILIES = {
     "export_status",
     "export_content",
 }
+PENDING_DELETION_ACTION_FAMILIES = {
+    "deletion_status",
+    "deletion_cancel",
+    "export_initiate",
+    "export_status",
+    "export_content",
+    "billing_settlement",
+}
 ROUTES_WITH_EXPLICIT_TARGET_TENANT_AUTHORITY = {
     ("account-service", "IssueConnectToken"),
 }
@@ -1512,10 +1520,7 @@ def validate_pending_deletion_generation(
         errors.append(
             f"{label} is missing no-target authority checks: {sorted(missing)}"
         )
-    if (
-        route.get("action_family") in PENDING_DELETION_EXPORT_ACTION_FAMILIES
-        and "pending_deletion_action_family" not in (checks or set())
-    ):
+    if "pending_deletion_action_family" not in (checks or set()):
         append_unique_error(
             errors,
             f"{label} {route.get('action_family')} must require live check "
