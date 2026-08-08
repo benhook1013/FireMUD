@@ -1869,6 +1869,7 @@ routes:
       comparison: exact_completed_operation
       mismatch: PERMISSION_DENIED
     action_family: export_content
+    audit_contract: required_account_recovery_case_export_job_and_outcome
     required_live_checks: [security_lock_export_credential_registry, security_lock_recovery_state, security_lock_export_action_family, export_availability]
     credential_use: bounded_expiring_export_operation_access
     response_profile: completed_export_artifact_only
@@ -1899,6 +1900,7 @@ routes:
       comparison: exact_completed_operation
       mismatch: PERMISSION_DENIED
     action_family: export_content
+    audit_contract: required_account_deletion_workflow_export_job_and_outcome
     required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, export_availability]
     response_profile: completed_export_artifact_only
     canonical_errors:

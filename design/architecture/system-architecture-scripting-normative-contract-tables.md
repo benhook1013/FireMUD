@@ -26,9 +26,12 @@ When documents disagree, resolve conflicts in this order:
 
 ## Table 1: Trigger Identity (Required Fields)
 
-Trigger Identity is the composite idempotency identity for “evaluate handlers for this trigger at most once” and the natural primary key for handler-scoped `script_event_audit` records. `scriptEventId` is one required field, not a substitute for all other applicable identity fields.
+Trigger Identity is the composite idempotency identity for “evaluate this resolved handler for this trigger at most once” and the natural primary key for handler-scoped `script_event_audit` records. `scriptEventId` is one required field, not a substitute for all other applicable identity fields. Incoming requests use the separate event-scope identity defined below until handler resolution completes.
 
-All event-ingress RPCs into Automation & Scripting (for example `TriggerScriptEvent`) are idempotent with respect to Trigger Identity. Retries must reuse the same identity fields (including `scriptEventId`).
+Event-ingress RPCs into Automation & Scripting (for example `TriggerScriptEvent`) use two-stage deduplication:
+
+- Before handler resolution, incoming request dedupe uses the event-scope identity. `scriptId` and `bindingId` are unavailable at ingress and must not be invented or used as synthetic identity fields.
+- After binding resolution, each resolved handler dedupes independently by its full applicable Trigger Identity. Retries of that handler must reuse the same identity fields, including `scriptEventId`.
 
 Required identity fields for all triggers:
 
@@ -90,7 +93,7 @@ Event-scope ingress identity before handler resolution:
 | `scriptEventId` | Yes | Caller-supplied live ingress idempotency token, or service-generated dry-run/test token. |
 | `isDryRun` | Yes | Separates live and dry-run/test ingress namespaces. |
 
-Event-scope ingress outcomes are recorded in an ingress audit/logging surface keyed by the event-scope identity above, not in handler-scoped `script_event_audit` unless handler resolution has produced a concrete `scriptId` or plugin handler. Once the event is accepted for handler resolution, each resolved handler produces its own Trigger Identity and `script_event_audit` row. Pre-resolution denials such as auth failure, stale pin state, reload backpressure, rollback pause, or version unavailability must not invent a synthetic `scriptId`.
+Event-scope ingress outcomes are recorded in an ingress audit/logging surface keyed by the event-scope identity above, not in handler-scoped `script_event_audit`. Once the event is accepted for handler resolution, each resolved handler produces its own full applicable Trigger Identity and `script_event_audit` row. Pre-resolution denials such as auth failure, stale pin state, reload backpressure, rollback pause, or version unavailability must not invent a synthetic `scriptId` or `bindingId`.
 
 Notes:
 
@@ -166,7 +169,7 @@ Use a single canonical outcome taxonomy across docs, protos, metrics, and dashbo
 Taxonomy governance rule:
 
 - Keep `finalOutcome` intentionally small and stable; add a new canonical value only when operator behavior, routing, or alert semantics materially change. Use `finalReason` for finer-grained diagnosis.
-- Event-scope admission failures that occur before handler resolution are recorded in the ingress response and `script_event_ingress_audit`, not in this handler-scoped taxonomy. In particular, unavailable pin state uses `TRIGGER_ADMISSION_OUTCOME_PIN_STATE_UNAVAILABLE` / `pin_state_unavailable`, and a requested-versus-observed pin mismatch uses `TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE` / `pin_state_mismatch_requested_vs_observed`.
+- Event-scope admission failures that occur before handler resolution are recorded in the ingress response and `script_event_ingress_audit`, not in this handler-scoped taxonomy. In particular, unavailable pin state uses `TRIGGER_ADMISSION_OUTCOME_PIN_STATE_UNAVAILABLE` / `pin_state_unavailable`, a requested-versus-observed pin mismatch uses `TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE` / `pin_state_mismatch_requested_vs_observed`, and an active rollback convergence timeout uses the existing `TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK` / `rollback_convergence_timeout` pair.
 
 | Canonical value | Stage | Notes |
 | --- | --- | --- |
@@ -187,7 +190,6 @@ Taxonomy governance rule:
 | `canceled` | `ADMISSION`, `WORK_ITEM_PERSIST`, or `TICK_HANDOFF` | A scheduler candidate fenced before admission, or an already admitted execution intentionally fenced before producing live work or before handoff completed. Use bounded `finalReason` values such as `runtime_scope_changed`, `playable_state_scope_changed`, `rollback_epoch_advanced`, `superseded_by_newer_patch`, `operator_canceled`, or `operator_purged`. |
 | `infrastructure_error` | Any non-success stage | Transport/storage/runtime infrastructure failure. |
 | `disabled_due_to_errors` | `ADMISSION` | Script disabled by failure-rate policy. |
-| `rollback_convergence_timeout` | `ADMISSION` | Admission remains paused because rollback convergence timeout is active for scope. |
 
 Deprecated aliases:
 

@@ -175,6 +175,17 @@ EXPORT_INITIATION_ACTION_FAMILY = "export_initiate"
 EXPORT_INITIATION_REQUIRED_LIVE_CHECKS = {
     EXPORT_INITIATION_ACTION_FAMILY: {"export_availability"},
 }
+SECURITY_LOCK_EXPORT_ACTION_FAMILIES = {
+    "export_initiate",
+    "export_status",
+    "export_content",
+}
+SECURITY_LOCK_EXPORT_CONTENT_AUDIT_CONTRACT = (
+    "required_account_recovery_case_export_job_and_outcome"
+)
+PENDING_DELETION_EXPORT_CONTENT_AUDIT_CONTRACT = (
+    "required_account_deletion_workflow_export_job_and_outcome"
+)
 CAPACITY_ADMISSION_ROUTE = ("account-service", "CommitTenantCapacityAdmission")
 CAPACITY_DELTA_WIRE_CONTRACT = {
     "field": "capacityDelta",
@@ -1413,6 +1424,16 @@ def validate_pending_deletion_generation(
             f"{label} must not require tenant-generation checks for pending_deletion_scoped: "
             f"{sorted(forbidden_checks)}"
         )
+    if (
+        route.get("action_family") == "export_content"
+        and route.get("audit_contract")
+        != PENDING_DELETION_EXPORT_CONTENT_AUDIT_CONTRACT
+    ):
+        append_unique_error(
+            errors,
+            f"{label} export_content must declare audit_contract "
+            f"{PENDING_DELETION_EXPORT_CONTENT_AUDIT_CONTRACT}",
+        )
 
 
 def validate_security_lock_export_generation(
@@ -1459,6 +1480,16 @@ def validate_security_lock_export_generation(
             "security_lock_export_scoped: "
             f"{sorted(forbidden_checks)}"
         )
+    if (
+        route.get("action_family") == "export_content"
+        and route.get("audit_contract")
+        != SECURITY_LOCK_EXPORT_CONTENT_AUDIT_CONTRACT
+    ):
+        append_unique_error(
+            errors,
+            f"{label} export_content must declare audit_contract "
+            f"{SECURITY_LOCK_EXPORT_CONTENT_AUDIT_CONTRACT}",
+        )
 
 
 def validate_export_initiation_routes(
@@ -1466,12 +1497,14 @@ def validate_export_initiation_routes(
     errors: list[str],
     live_checks_cache: LiveChecksCache | None = None,
 ) -> None:
+    matched_route = False
     for route in routes:
         if (
             not isinstance(route, dict)
             or route_set_key(route) != EXPORT_INITIATION_ROUTE_IDENTITY
         ):
             continue
+        matched_route = True
         action_family = route.get("action_family")
         label = route_label(route)
         if action_family != EXPORT_INITIATION_ACTION_FAMILY:
@@ -1490,6 +1523,12 @@ def validate_export_initiation_routes(
                 f"{label} {EXPORT_INITIATION_ACTION_FAMILY} must require live check "
                 f"{required_check}",
             )
+    if not matched_route:
+        append_unique_error(
+            errors,
+            "matrix must contain normalized export-initiation route identity "
+            f"{EXPORT_INITIATION_ROUTE_IDENTITY[0]}/{EXPORT_INITIATION_ROUTE_IDENTITY[1]}",
+        )
 
 
 def validate_capacity_admission_wire_contract(
@@ -1524,7 +1563,20 @@ def validate_capacity_admission_wire_contract(
             errors,
             f"{label} required_fields must include capacity_delta",
         )
-    if route.get("capacity_delta_wire_contract") != CAPACITY_DELTA_WIRE_CONTRACT:
+    contract = route.get("capacity_delta_wire_contract")
+    present_zero_wire_value = None
+    if isinstance(contract, dict):
+        golden_vectors = contract.get("golden_vectors")
+        if isinstance(golden_vectors, dict):
+            present_zero = golden_vectors.get("present_zero")
+            if isinstance(present_zero, dict):
+                present_zero_wire_value = present_zero.get("wire_value")
+    if (
+        contract != CAPACITY_DELTA_WIRE_CONTRACT
+        or not isinstance(present_zero_wire_value, int)
+        or isinstance(present_zero_wire_value, bool)
+        or present_zero_wire_value != 0
+    ):
         append_unique_error(
             errors,
             f"{label} must declare explicit capacityDelta wire presence with "
@@ -2615,6 +2667,26 @@ def validate_generation_applicability(
         )
         validate_account_authorization_route(
             route, label, errors, checks, live_checks_cache
+        )
+    security_lock_action_families = [
+        route.get("action_family")
+        for route in routes
+        if isinstance(route, dict)
+        and route.get("classification") == "security_lock_export_scoped"
+    ]
+    if (
+        len(security_lock_action_families)
+        != len(SECURITY_LOCK_EXPORT_ACTION_FAMILIES)
+        or any(
+            not isinstance(action_family, str)
+            for action_family in security_lock_action_families
+        )
+        or set(security_lock_action_families) != SECURITY_LOCK_EXPORT_ACTION_FAMILIES
+    ):
+        append_unique_error(
+            errors,
+            "security_lock_export_scoped routes must declare exactly action_family "
+            f"set {sorted(SECURITY_LOCK_EXPORT_ACTION_FAMILIES)}",
         )
 
 

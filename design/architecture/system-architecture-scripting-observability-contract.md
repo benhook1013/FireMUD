@@ -258,7 +258,7 @@ In particular:
 - Use `pin_state_unavailable` when admission fails closed because bounded-staleness pin data cannot be refreshed.
 - Use `signer_policy_unavailable` when plugin admission fails closed because signer policy cannot be refreshed/verified from authoritative policy sources.
 - Use `script_disabled` for operator disable/drain admission skips (never `skipped_disabled`).
-- Use `rollback_convergence_timeout` when rollback pause remains active after convergence timeout terminal state.
+- A rollback convergence timeout is an event-scope ingress decision, not a handler `finalOutcome`: return `admitted=false` with `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK` and `admissionReason=rollback_convergence_timeout`, and record the same pair in `script_event_ingress_audit`.
 - Output-budget failures may be represented by different `finalOutcome` values depending on the last attempted stage, but they must use one of the bounded canonical `finalReason` values above and must never be collapsed into an unstructured catch-all.
 
 ### `policyViolations` Schema (Required When Present)

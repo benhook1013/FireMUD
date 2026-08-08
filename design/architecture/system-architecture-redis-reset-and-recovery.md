@@ -264,7 +264,7 @@ For the account-wide and issuer-wide child workflows above, the canonical child/
 
 ## Reset vs Accept Loss
 
-When coordination state appears incorrect or unhealthy, first-implementation operators choose between two supported strategies. Think of this as the **minimal decision tree** for a single‑admin operator:
+Once the bounded recovery controller and its coordination-maintenance CLI are implemented and proven, the target-state operator workflow presents two supported strategies. This is target-state-only guidance, not current operator behavior: the CLI is unavailable today. Current operators have only the fail-closed [Current Operator Fallback](#current-operator-fallback); an empty keyspace is never safe-resume evidence.
 
 1. **Can you safely accept the loss?**
    - Choose **Accept loss** when:
@@ -287,13 +287,13 @@ When coordination state appears incorrect or unhealthy, first-implementation ope
      - Region‑scoped reset after mis‑keyed `tick:*` data affecting many entities.
      - Tenant‑scoped reset after unrecoverable script bugs affecting multiple regions.
    - Rules:
-     - Performed through the versioned coordination maintenance CLI.
+     - In the target state, performed through the versioned coordination maintenance CLI after that tooling is implemented and proved.
      - Always accompanied by post‑reset health checks (ticks can be scheduled, sessions can be created/resumed, automation works).
      - Region‑ and tenant‑scoped resets should prefer **smaller scopes first**; cluster‑scoped reset is reserved for catastrophic or planned migration scenarios where finer scopes are ineffective.
 
 General in-place repair of coordination keys is intentionally **not** a first-implementation operator path. A future repair path may be added only by defining named maintenance CLI verbs with scope rules, fencing/quiescence requirements, audit output, and mandatory post-repair verification. Until that exists, any direct mutation of coordination prefixes is break-glass activity and must be followed by a scoped reset or documented cleanup flow that covers the mutated prefix before normal processing resumes.
 
-Design reviews should explicitly state which of these strategies is expected to be safe for each coordination structure.
+Target-state design reviews should explicitly state which of these strategies is expected to be safe for each coordination structure.
 
 ---
 

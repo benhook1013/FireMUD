@@ -385,7 +385,9 @@ At a high level:
 
 - **Infrastructure-level failures**
   - `finalOutcome=infrastructure_error` (with a `finalStage` that reflects where it failed) – transport or infrastructure problems (for example, Redis timeouts, gRPC `UNAVAILABLE`); counted separately from sandbox errors, may trigger retries at lower layers using idempotency keys, and contribute to infra-focused alerts.
-  - `finalStage=ADMISSION`, `finalOutcome=rollback_convergence_timeout` – rollback convergence timeout terminal state is active for scope and admission remains paused; increments `automation_rollback_convergence_timeout_total{scope, operation, reason}`.
+
+- **Event-scope ingress outcomes**
+  - While rollback convergence timeout terminal state is active, pre-handler ingress returns `admitted=false`, `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK`, and `admissionReason=rollback_convergence_timeout`; `script_event_ingress_audit` records the same pair and `automation_rollback_convergence_timeout_total{scope, operation, reason}` is incremented. This condition does not create a handler-scoped `finalOutcome`.
 
 The failure-rate circuit breaker primarily considers **sandbox_error** and other logical script failures when deciding to transition a script into `runtimeStatus=DISABLED_DUE_TO_ERRORS`. Quota denials and purely infrastructure-level errors do not, by themselves, trigger disables, although they should still be visible in metrics and dashboards.
 

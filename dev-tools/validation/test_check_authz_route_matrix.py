@@ -2470,6 +2470,104 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     )
                 )
 
+    def test_security_lock_export_action_families_are_exact(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        security_routes = [
+            route
+            for route in baseline["routes"]
+            if route.get("classification") == "security_lock_export_scoped"
+        ]
+        self.assertEqual(
+            self.validator.SECURITY_LOCK_EXPORT_ACTION_FAMILIES,
+            {route["action_family"] for route in security_routes},
+        )
+        self.assertEqual(
+            len(self.validator.SECURITY_LOCK_EXPORT_ACTION_FAMILIES),
+            len(security_routes),
+        )
+
+        for mutation_name, mutate in (
+            ("missing", lambda route: route.pop("action_family")),
+            (
+                "duplicate",
+                lambda route: route.__setitem__("action_family", "export_status"),
+            ),
+            (
+                "unexpected",
+                lambda route: route.__setitem__("action_family", "unexpected"),
+            ),
+        ):
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                mutated_route = next(
+                    route
+                    for route in document["routes"]
+                    if route.get("classification") == "security_lock_export_scoped"
+                    and route.get("action_family") == "export_content"
+                )
+                mutate(mutated_route)
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(
+                        "security_lock_export_scoped routes must declare exactly "
+                        "action_family set" in error
+                        for error in errors
+                    )
+                )
+
+    def test_recovery_export_content_audit_contracts_are_exact(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        expected_contracts = (
+            (
+                "security_lock_export_scoped",
+                "security_lock_export",
+                self.validator.SECURITY_LOCK_EXPORT_CONTENT_AUDIT_CONTRACT,
+            ),
+            (
+                "pending_deletion_scoped",
+                "pending_deletion_access",
+                self.validator.PENDING_DELETION_EXPORT_CONTENT_AUDIT_CONTRACT,
+            ),
+        )
+        for classification, auth_path, expected_contract in expected_contracts:
+            with self.subTest(classification=classification):
+                route = next(
+                    route
+                    for route in baseline["routes"]
+                    if route.get("classification") == classification
+                    and route.get("auth_path") == auth_path
+                    and route.get("action_family") == "export_content"
+                )
+                self.assertEqual(expected_contract, route["audit_contract"])
+
+                for mutation_name, mutate in (
+                    ("missing", lambda route: route.pop("audit_contract")),
+                    (
+                        "unexpected",
+                        lambda route: route.__setitem__(
+                            "audit_contract", "unexpected_audit_contract"
+                        ),
+                    ),
+                ):
+                    with self.subTest(mutation=mutation_name):
+                        document = copy.deepcopy(baseline)
+                        mutated_route = next(
+                            route
+                            for route in document["routes"]
+                            if route.get("classification") == classification
+                            and route.get("auth_path") == auth_path
+                            and route.get("action_family") == "export_content"
+                        )
+                        mutate(mutated_route)
+                        errors = validate_document(self.validator, document)
+                        self.assertTrue(
+                            any(
+                                f"export_content must declare audit_contract {expected_contract}"
+                                in error
+                                for error in errors
+                            )
+                        )
+
     def test_export_initiation_requires_availability_for_every_account_state(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         export_routes = self.validator.matching_routes(
@@ -2548,6 +2646,23 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                         )
                     )
 
+    def test_export_initiation_requires_normalized_identity(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        for route in document["routes"]:
+            if self.validator.route_set_key(route) == (
+                "account-service",
+                "POST /accounts/{accountId}/exports",
+            ):
+                route["service"] = "other-service"
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "matrix must contain normalized export-initiation route identity"
+                in error
+                for error in errors
+            )
+        )
+
     def test_capacity_admission_declares_distinct_absent_and_present_zero_vectors(
         self,
     ):
@@ -2575,6 +2690,18 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 "absent vector encoded as zero",
                 lambda contract: contract["golden_vectors"]["absent"].__setitem__(
                     "wire_value", 0
+                ),
+            ),
+            (
+                "present zero vector encoded as boolean",
+                lambda contract: contract["golden_vectors"]["present_zero"].__setitem__(
+                    "wire_value", False
+                ),
+            ),
+            (
+                "present zero vector encoded as non-integer",
+                lambda contract: contract["golden_vectors"]["present_zero"].__setitem__(
+                    "wire_value", 0.0
                 ),
             ),
         ):

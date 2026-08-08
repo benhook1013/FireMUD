@@ -67,6 +67,13 @@ Concrete example:
 
 Ordering is intentional: the admission barrier precedes repin and remains active through reconciliation, cancellation, purge, convergence, and drain; `ResumeTicks` runs while admission is still paused, and Automation returns to `NORMAL` only after `ResumeTicks` succeeds.
 
+## Two-Stage Event Deduplication
+
+Rollback and normal event ingress use two deduplication stages:
+
+- Before handler resolution, incoming request dedupe uses event-scope identity. `scriptId` and `bindingId` are unavailable at ingress and must not be invented.
+- After binding resolution, each resolved handler dedupes independently by the full applicable Trigger Identity and retains its own handler-scoped audit outcome.
+
 ## Command Identity and Live Handoff Boundary
 
 Rollback diagnosis uses the command-identity contract rather than treating a handler-level trigger identity as a command identity:
@@ -117,7 +124,7 @@ Convergence timeout semantics (required):
 - If timeout is reached before the [Pin Convergence Acknowledgment Predicate](#pin-convergence-acknowledgment-predicate) succeeds, or either owner returns a missing, stale, mismatched, or out-of-bound acknowledgment, the rollback enters terminal state `ROLLBACK_CONVERGENCE_TIMEOUT`.
 - In `ROLLBACK_CONVERGENCE_TIMEOUT`, Automation admission remains paused for scope safety and ticks remain paused until an operator explicitly issues resume or abort actions.
 - The system must emit terminal event `ScriptRollbackConvergenceTimedOut` and increment `automation_rollback_convergence_timeout_total{scope, operation, reason}`.
-- While timeout terminal state remains active, pre-resolution ingress admissions in scope must record an event-scope ingress audit outcome `rollback_convergence_timeout` with a bounded reason. If handler-scoped work is already resolved when the timeout state is observed, its `script_event_audit` row must use `finalStage=ADMISSION`, `finalOutcome=rollback_convergence_timeout`, and a bounded `finalReason`.
+- While timeout terminal state remains active, pre-handler ingress must return `admitted=false`, `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK` (the existing rollback backpressure response enum), and bounded `admissionReason=rollback_convergence_timeout`; `script_event_ingress_audit` must record the same event-scope admission outcome and reason. `scriptId` and `bindingId` are unavailable for this decision. No handler-scoped `script_event_audit` row may use `finalOutcome=rollback_convergence_timeout`; already-resolved handlers retain their applicable handler-scoped outcome.
 
 ## Pin-State Degraded Operations Policy (Required)
 

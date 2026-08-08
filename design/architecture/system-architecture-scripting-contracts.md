@@ -106,7 +106,7 @@ Plugins are executed by the same runtime engine as scripts and must not rely on 
 - The terminal condition must emit:
   - Control-plane event `ScriptRollbackConvergenceTimedOut` produced by Game Session as producer-of-record.
   - Metric `automation_rollback_convergence_timeout_total{scope, operation, reason}`.
-  - Audit-visible admission outcome `rollback_convergence_timeout` for affected scope while pause remains active.
+  - Event-scope ingress outcome `admitted=false`, `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK`, and `admissionReason=rollback_convergence_timeout` for the affected scope while pause remains active, recorded in `script_event_ingress_audit` without inventing a handler-scoped `finalOutcome`.
 - Rollback-safe pause scope is instance-level: control-plane pause, admission pause, convergence checks, and resume operations must all target the same `(tenantId, gameInstanceId)` scope. Region-only pause operations are operational tools and must not be used as the only barrier for rollback orchestration.
 
 ### 10) Instance Rollout Read Model Ownership

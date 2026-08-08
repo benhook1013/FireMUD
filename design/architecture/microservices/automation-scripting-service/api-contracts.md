@@ -57,7 +57,7 @@ Domain services such as Game Session and Game Logic deliver automation events th
 - `readSnapshotToken` when the canonical event-registry entry for that `eventType` requires an authoritative gameplay snapshot selector; it must be absent for events whose registry entry explicitly marks snapshot authority as `NONE`.
 - An envelope for the event payload, including any domain-specific fields.
 
-Event ingress uses the full applicable identity for deduplication and creates separate handler-scoped outcomes after binding resolution. The identity, ownership, and audit uniqueness rules are defined in the [normative scripting contracts](../../system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields) and [cross-service deduplication contract](../../system-architecture-scripting-contracts.md#4-scripteventid-identity-and-at-most-once-dedupe).
+Event ingress uses two-stage deduplication. Before handler resolution, incoming request dedupe uses event-scope identity; `scriptId` and `bindingId` are unavailable at ingress and must not be invented. After binding resolution, each resolved handler dedupes by the full applicable Trigger Identity and produces its own handler-scoped outcome. The identity, ownership, and audit uniqueness rules are defined in the [normative scripting contracts](../../system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields) and [cross-service deduplication contract](../../system-architecture-scripting-contracts.md#4-scripteventid-identity-and-at-most-once-dedupe).
 
 Admission must also enforce pin consistency for `<tenantId, gameInstanceId>`:
 
@@ -117,7 +117,16 @@ During operator rollback pause (`PAUSED_FOR_ROLLBACK`), ingress must return an e
 
 - `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK`
 - `admissionReason=rollback_pause`
-- event-scope identity fields from the request, without inventing a synthetic `scriptId`
+- event-scope identity fields from the request, without inventing synthetic `scriptId` or `bindingId` fields
+
+While terminal `ROLLBACK_CONVERGENCE_TIMEOUT` is active, pre-handler ingress remains rejected using the existing rollback backpressure response enum:
+
+- `TriggerScriptEventResponse.admitted=false`
+- `TriggerScriptEventResponse.admissionOutcome=TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK`
+- `TriggerScriptEventResponse.admissionReason=rollback_convergence_timeout`
+- `script_event_ingress_audit` records the same event-scope admission outcome and bounded `admissionReason=rollback_convergence_timeout`
+
+This is an event-scope decision. It must not create or relabel a handler-scoped `script_event_audit` row with `finalOutcome=rollback_convergence_timeout`.
 
 These ingress response fields are event-scope only. A successful ingress admission means the request was accepted for handler resolution; it does not mean every resolved script or plugin handler later succeeded. `resolvedHandlerCount` reports only how many enabled bindings matched the admitted event scope and were materialized into durable `script_work_items` for later evaluation. Per-handler outcomes remain authoritative in `script_event_audit`.
 
