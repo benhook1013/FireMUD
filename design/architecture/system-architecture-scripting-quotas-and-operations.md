@@ -120,7 +120,7 @@ Per-script scheduling knobs control how often scripts are allowed to run and how
 - **`concurrencyPolicy` and `maxConcurrent`** – govern what happens when new triggers arrive while runs are already in progress:
   - `concurrencyPolicy=queue_until_free` keeps a short queue of pending triggers up to configured limits and runs them once existing executions complete.
   - `concurrencyPolicy=drop_new` skips new triggers while the script is already running, favoring bounded concurrency over backlog growth.
-  - Queued triggers still count toward the script’s quota window; once quota limits are exceeded, additional triggers are dropped with `script_event_audit.finalStage=ADMISSION` and `finalOutcome=quota_denied` (or a more specific quota/concurrency outcome) and matching metrics.
+  - Queued triggers still count toward the script’s quota window; pre-resolution quota exhaustion rejects the trigger request with event-scope ingress audit and drop metrics. A handler-level quota denial uses `script_event_audit.finalStage=ADMISSION`, `finalOutcome=quota_denied`, and the handler outcome metric rather than the dropped-ingress metric.
 - **`priorityTag`** – assigns a priority tier (`high`, `normal`, `background`) that interacts with per-tenant budgets and cluster ceilings. When capacity is tight, the scheduler continues to admit `high`-priority work preferentially and defers or drops lower-priority triggers according to budget and quota rules.
 
 Timer and interval limits are evaluated against the canonical runtime scope tuple `<tenantId, gameInstanceId, regionId>`. A per-tenant or per-game-instance timer limit must not substitute for that tuple and accidentally couple unrelated instances or regions; any broader aggregate ceiling is an additional explicitly named safety limit. `playableStateScope` remains part of trigger identity and handler/work fencing, but it does not replace the scheduler's runtime scope tuple for these timer-capacity limits.
@@ -300,7 +300,7 @@ For scripting and automation, these metrics follow shared naming and labeling co
 
 - `automation_script_triggers_total{scope, script_category, plugin_family, plugin_version_family, eventType, outcome, priorityTag}` – counts all observed triggers (admitted and non-admitted), tagged with final stage-aware `outcome` (must match `script_event_audit.finalOutcome`).
 - `automation_script_skips_total{scope, script_category, plugin_family, reason, priorityTag}` – counts triggers that were intentionally skipped before sandbox execution (for example, `reason="reloading"`, `reason="disabled"`, `reason="priority_throttled"`).
-- `automation_script_triggers_dropped_total{scope, script_category, plugin_family, reason, priorityTag}` – counts triggers that could not be processed to tick acceptance (for example, `reason="quota"`, `reason="cluster_limit_reached"`, `reason="version_unavailable"`).
+- `automation_script_triggers_dropped_total{scope, script_category, plugin_family, reason, priorityTag}` – counts only trigger requests rejected before handler resolution; handler-level quota and budget outcomes use `automation_script_triggers_total` and `script_event_audit`.
 - `automation_script_work_item_outcomes_total{stage, outcome, dryRun, priorityTag, sourceService}` – counts terminal durable work-item execution outcomes using the same `finalStage` / `finalOutcome` vocabulary written to `script_event_audit`, so quota, output-budget, dry-run, source-specific, and handoff outcomes can be compared without parsing audit rows.
 - `script_quota_allowed_total{scope, script_category}` / `script_quota_denied_total{scope, script_category, reason}` – per-script quota decisions before sandbox work begins.
 - `automation_script_sandbox_failures_total{scope, script_category, plugin_family, reason}` – sandbox-level failures such as `reason="cpu_budget_exceeded"` or `reason="memory_budget_exceeded"`.
@@ -374,9 +374,12 @@ Implementations should align emitted metrics with those documents; the intent he
 
 At a high level:
 
-- **Pre-admission quota and budgeting outcomes**
-  - `finalStage=ADMISSION`, `finalOutcome=quota_denied` – trigger was rejected by `ScriptQuotaService` before sandbox execution; increments `script_quota_denied_total` and contributes to `automation_script_triggers_dropped_total{reason="quota"}` but does **not** increment sandbox failure metrics.
-  - `finalStage=ADMISSION`, `finalOutcome=tenant_budget_exceeded` (or other budget-related outcomes) – trigger was not admitted because per-tenant or cluster budgets were exhausted; contributes to `automation_script_skips_total` or `automation_script_triggers_dropped_total` with appropriate `reason` tags but does not run the sandbox.
+- **Handler-level quota and budgeting outcomes**
+  - `finalStage=ADMISSION`, `finalOutcome=quota_denied` – handler-level quota denial is recorded in `script_event_audit` and `automation_script_triggers_total{outcome="quota_denied"}`; it increments `script_quota_denied_total` but does **not** increment the pre-resolution dropped metric or sandbox failure metrics.
+  - `finalStage=ADMISSION`, `finalOutcome=tenant_budget_exceeded` (or other budget-related outcomes) – handler-level budget denial is recorded in `script_event_audit` and `automation_script_triggers_total{outcome="tenant_budget_exceeded"}`; it does **not** increment the pre-resolution dropped metric or run the sandbox.
+
+- **Pre-resolution ingress outcomes**
+  - `automation_script_triggers_dropped_total` is reserved for trigger requests rejected before handler resolution and their event-scope ingress audit records. Intentional pre-eval skips remain represented by `automation_script_skips_total`.
   - Signer-policy unavailability before handler resolution rejects the event without consuming handler quota or sandbox capacity and without producing a handler-scoped `finalOutcome` or `script_event_audit` row. A signer-policy outcome after binding resolution remains handler-scoped.
 
 - **Sandbox-level failures**

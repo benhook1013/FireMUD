@@ -2685,7 +2685,9 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     for route in self.validator.matching_routes(
                         baseline["routes"], "account-service", route_name
                     )
-                    if route.get("applicability", {}).get("account_state")
+                    if self.validator.applicability_value(
+                        route, "account_state", "test active export route", []
+                    )
                     == "active"
                 )
                 self.assertEqual(action_family, route["action_family"])
@@ -2703,7 +2705,9 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     for route in self.validator.matching_routes(
                         document["routes"], "account-service", route_name
                     )
-                    if route.get("applicability", {}).get("account_state")
+                    if self.validator.applicability_value(
+                        route, "account_state", "test active export route", []
+                    )
                     == "active"
                 )
                 mutated_route["required_live_checks"].remove(
@@ -2728,7 +2732,12 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     expected_branches,
                     {
                         (
-                            route["applicability"]["account_state"],
+                            self.validator.applicability_value(
+                                route,
+                                "account_state",
+                                "test export state branch",
+                                [],
+                            ),
                             route["classification"],
                         )
                         for route in routes
@@ -2743,7 +2752,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 "account-service",
                 "POST /accounts/{accountId}/exports",
             )
-            if route.get("applicability", {}).get("account_state") == "active"
+            if self.validator.applicability_value(
+                route, "account_state", "test active export initiation", []
+            )
+            == "active"
         )
         active["applicability"]["account_state"] = "security_locked"
         errors = validate_document(self.validator, document)
@@ -2762,10 +2774,18 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 "account-service",
                 "POST /accounts/{accountId}/exports",
             )
-            if route.get("applicability", {}).get("account_state") == "active"
+            if self.validator.applicability_value(
+                route, "account_state", "test active export initiation", []
+            )
+            == "active"
         )
         self.assertEqual("target_not_currently_routable", active["route_status"])
-        self.assertEqual("active", active["applicability"]["account_state"])
+        self.assertEqual(
+            "active",
+            self.validator.applicability_value(
+                active, "account_state", "test active export initiation", []
+            ),
+        )
         self.assertEqual("caller_account_id", active["subject_binding"])
         self.assertEqual("forbidden", active["platform_admin_override"])
         self.assertIn(
@@ -2842,7 +2862,9 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                         "account-service",
                         "POST /accounts/{accountId}/exports",
                     )
-                    if route.get("applicability", {}).get("account_state")
+                    if self.validator.applicability_value(
+                        route, "account_state", "test active export initiation", []
+                    )
                     == "active"
                 )
                 mutate(mutated_route)

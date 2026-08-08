@@ -835,14 +835,25 @@ def strip_hidden_markdown_content(text):
             continue
 
         physical_line_blank = not line.strip()
+        if in_raw_html_block:
+            _, in_raw_html_block, raw_html_block_kind = strip_raw_html_block(
+                line,
+                True,
+                raw_html_block_kind,
+                physical_line_blank,
+            )
+            continue
+        if not in_html_comment:
+            visible_line, in_raw_html_block, raw_html_block_kind = strip_raw_html_block(
+                line,
+                False,
+                None,
+                physical_line_blank,
+            )
+            if visible_line != line or in_raw_html_block:
+                continue
         line, in_html_comment = strip_html_comments(line, in_html_comment)
-        line, in_raw_html_block, raw_html_block_kind = strip_raw_html_block(
-            line,
-            in_raw_html_block,
-            raw_html_block_kind,
-            physical_line_blank,
-        )
-        if in_raw_html_block or not line:
+        if not line:
             continue
 
         visible_lines.append(line)
@@ -1015,6 +1026,24 @@ hidden_heading_section = extract_unique_markdown_section(
 )
 if "## Hidden comment heading" in hidden_heading_section or "after\n" not in hidden_heading_section:
     raise SystemExit("hidden heading fixture was not removed before section extraction")
+
+unclosed_comment_in_type6_section_fixture = (
+    "<div>\n"
+    "<!-- comment remains unclosed inside the raw block\n"
+    "## Hidden section inside raw HTML\n"
+    "hidden\n"
+    "\n"
+    "## Canonical Coordination Reset Sequence\n"
+    "visible after the raw block\n"
+    "## Following section\n"
+)
+unclosed_comment_in_type6_section = extract_unique_markdown_section(
+    unclosed_comment_in_type6_section_fixture,
+    "Canonical Coordination Reset Sequence",
+    "unclosed comment in Type-6 section fixture",
+)
+if unclosed_comment_in_type6_section != "visible after the raw block\n":
+    raise SystemExit("unclosed comment inside Type-6 HTML hid the following section")
 
 canonical_reset_text = extract_unique_markdown_section(
     operations_text,

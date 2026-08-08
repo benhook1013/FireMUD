@@ -599,8 +599,24 @@ Realm pointer schema and authority are canonical in [Multi-Tenancy](./system-arc
 - Stopping a realm without a replacement uses the owner-defined `CLOSED` state before the old instance drains; the owner-defined unavailable and realm-unavailable outcomes remain distinct.
 - **Target-only bounded source-drain behavior:** pointer state controls new or renewed gameplay bindings. Existing connected source sessions do not re-read it per action and remain on the source only before the persisted drain deadline; fresh `PLAY` and reconnect use the current target.
 - In the target-only drain contract, `firemud.game-session.cutover-drain.duration-ms` is an integer millisecond duration in the closed range `0..300000`, with a five-minute platform default and hard maximum. Tenant/game overrides may shorten it or set it to zero but cannot extend it. Negative, non-finite, fractional, or non-representable values fail closed before preparation or cutover commit. The cutover audit and prepared-upgrade execution record preserve the effective value, policy version, `sourceDrainId`, and `sourceDrainDeadlineAt` so retries and operators observe one deadline.
-- In that target contract, Game Session may complete a drain early after the source session index is empty. When the deadline is reached, it sends one bounded update notice, closes remaining source sockets, rejects further source commands through the instance lifecycle fence, marks the source `TERMINATING`, and retries the idempotent `InstanceTermination` workflow until the source is terminal.
+- In that target contract, Game Session may complete a drain early after the source session index is empty. Deadline enforcement follows the durable reconciliation contract below; in particular, command rejection is confirmed through the lifecycle fence before Game Session closes remaining source sockets.
 - **Local target consequence:** the source instance remains closed to new or reconnected bindings while existing sessions may continue only through `sourceDrainDeadlineAt`; after the deadline, terminal source cleanup follows the standard `InstanceTermination` workflow.
+
+#### Bounded Source-Drain Reconciliation
+
+Game Session owns the retryable reconciler and startup-recovery path for each durable source-drain item. A worker claims the item with a compare-and-set lease carrying a monotonically increasing `drainClaimFence`, bound to the exact `sourceDrainId` and source `gameInstanceId`. Only the current claim fence may persist effect state or completion. Lease expiry permits another worker to claim the item with a higher fence; a stale worker cannot commit after that handoff.
+
+Each external effect uses a durable replay identity derived from `{sourceDrainId, sourceGameInstanceId, effectType}`. The effect types are bounded notice delivery, lifecycle fencing and source-command rejection, socket closure, and `InstanceTermination`. Game Session persists each effect's pending, applied, and confirmed/read-back state. A crash after an external effect but before local acknowledgement therefore retries with the same identity and reconciles authoritative readback rather than emitting an untracked duplicate.
+
+At or after `sourceDrainDeadlineAt`, the current claimant performs the ordered sequence below:
+
+1. Claim or renew the fenced drain item.
+2. Deliver the bounded update notice when policy requires it, using the notice replay identity.
+3. Request World Management to acquire the source lifecycle fence, transition the source to `TERMINATING`, and confirm that further source commands are rejected.
+4. Close remaining source sockets only after that command-rejection confirmation.
+5. Reconcile the idempotent World Management `InstanceTermination` workflow until the standard [instance termination handoff](#instance-termination-handoff) confirms the source terminal.
+
+The drain item remains durable until every required effect is confirmed and the persisted source lifecycle is terminal. A committed pointer, drain record, effect request, or expired lease is not by itself evidence that the corresponding runtime effect occurred.
 
 ### Fork-Snapshot Boundary For Playtest Realms
 

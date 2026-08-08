@@ -15,7 +15,7 @@ Use the following patterns to answer common operational questions:
   - For handler-level `quota_denied`, use `automation_script_triggers_total{outcome="quota_denied"}`, `script_quota_denied_total`, and the handler-scoped audit row as separate diagnostics; do not treat it as a dropped pre-handler event.
 
 - **"Is a tenant being throttled by its own automation budget?"**
-  - Check `automation_script_skips_total{scope,reason="tenant_budget_exceeded"}` and audit rows with `finalStage=ADMISSION` and `finalOutcome=tenant_budget_exceeded`.
+  - Check pre-resolution throttling in `automation_script_skips_total{scope,reason="tenant_budget_exceeded"}`. For handler-level budget denials, use `automation_script_triggers_total{outcome="tenant_budget_exceeded"}` and the corresponding handler audit rows.
   - Use `automation_script_tenant_budget_allowed_total{scope, tier}` / `automation_script_tenant_budget_denied_total{scope, tier}` to see which priority tiers are consuming or exhausting bounded runtime budget. Use audit rows, Redis counters, and control-plane reads for tenant-specific drilldown instead of raw metric labels.
 
 - **"Are cluster-wide ceilings causing drops?"**
@@ -105,7 +105,8 @@ This section summarizes common failure and rollback scenarios and how operators 
     - Optionally disable the faulty script entirely (`runtimeStatus=DISABLED`) to stop further admission attempts while iterating.
 
 - **Stale `onLoad` execution**
-  - A stale `ONLOAD_RUNNING` readiness execution is terminalized by the Automation recovery owner as an audited `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and `finalReason=stale_execution_fenced` result and blocks `READY` for that publication/generation.
+  - **Target state only:** A stale `ONLOAD_RUNNING` readiness execution is terminalized by the Automation recovery owner as an audited `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and `finalReason=stale_execution_fenced` result and blocks `READY` for that publication/generation.
+  - **Current behavior:** Stale `ONLOAD_RUNNING` recovery is not implemented. Fail closed by retaining the unresolved work and any affected rollback admission/tick fences; do not infer a terminal audit record, reclaim, replay, or safe resumption from age alone.
   - Do not replay the same readiness identity. Publish a new patch or readiness generation after the stale execution is fenced and recorded.
 
 - **Plugin version failures or misbehavior**

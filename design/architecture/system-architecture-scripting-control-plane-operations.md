@@ -185,7 +185,8 @@ Outputs:
 Semantics:
 
 - Read-only.
-- Reports the latest pin observation used by tick command intake and execution-time version fences.
+- Reports the latest pin observation used by tick command intake and execution-time version fences through a direct authoritative read of the committed Game Session pin.
+- This is not a projection read; projection lag and stale-projection fields do not apply, and no projection fields are returned. For rollback/promotion convergence, the read is fresh only when it completes before the operation deadline, the observed patch and `lastObservedControlPlaneRequestId` match the expected patch and request, and `observedAt` is the timestamp from that committed pin.
 
 #### `GetSignerPolicyConvergence`
 
@@ -386,7 +387,7 @@ The canonical rollback ordering, durable state machine, convergence timeout, dra
 
 This document retains only the participating API consequences:
 
-- Automation & Scripting implements the admission barrier, durable schedule reconciliation, work-item cancellation, drain-status reads, pin-convergence projection, and auditable cleanup APIs described above.
+- Automation & Scripting implements the admission barrier, durable schedule reconciliation, work-item cancellation, drain-status reads, pin-convergence reads, and auditable cleanup APIs described above.
 - Game Session owns the durable rollback workflow and patch pin, and exposes tick pause/resume, queued-command purge, and convergence APIs. Logging & Admin may orchestrate those APIs but must not persist a competing workflow state machine.
 - The same `controlPlaneRequestId`, authenticated operator `actor`/`requestedBy`, and `reason` flow through every mutating step. System-owned reconciliation records use a separate `executedBy=system:automation` rather than replacing the operator identity.
 - Patch- and plugin-scoped cancel/purge calls omit `regionId` for an instance-wide repin so every affected region is covered. API retries remain idempotent under the owning request/response contracts.
