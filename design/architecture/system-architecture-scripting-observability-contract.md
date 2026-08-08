@@ -290,9 +290,9 @@ When `policyViolations` is present, `decision` values and final outcomes must al
 The normative metric-family catalog lives in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix`. This section describes observability behavior and grouping expectations for those families.
 
 - Trigger admission and drops
-  - `automation_script_triggers_total{scope, script_category, plugin_family, plugin_version_family, eventType, outcome, priorityTag}`
-  - `automation_script_skips_total{scope, script_category, plugin_family, reason, priorityTag}`
-  - `automation_script_triggers_dropped_total{scope, script_category, plugin_family, reason, priorityTag}`
+  - `automation_script_triggers_total{scope, script_category, eventType, outcome, priorityTag, optional plugin_family, optional plugin_version_family}`
+  - `automation_script_skips_total{scope, script_category, reason, priorityTag, optional plugin_family}`
+  - `automation_script_triggers_dropped_total{scope, script_category, reason, priorityTag, optional plugin_family}`
 - Quotas and budgets
   - `script_quota_allowed_total{scope, script_category}`
   - `script_quota_denied_total{scope, script_category, reason}`
@@ -325,6 +325,7 @@ Label rules:
 
 - `scriptEventId` is forbidden as a metric label.
 - Raw tenant, script, plugin, and runtime identifiers are not approved ordinary Prometheus labels here. Producers must emit bounded `scope`, category, family, or operation dimensions instead of raw IDs.
+- Before handler resolution, the pre-handler forms of the trigger, skip, and drop families use `script_category="UNRESOLVED"` and omit `plugin_family` and `plugin_version_family`. Resolved handler metrics use `SCRIPT` or `PLUGIN` and include bounded plugin classifications only when available. This follows the normative label matrix.
 
 Metric semantics:
 

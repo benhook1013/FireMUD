@@ -259,10 +259,11 @@ General rules:
 
 Bounded semantic labels use the existing scripting vocabulary:
 
-- `script_category` uses the existing handler types `SCRIPT` and `PLUGIN`.
+- Before handler resolution, pre-handler metric families use the single bounded value `script_category="UNRESOLVED"`; after resolution, handler-scoped metrics use the existing handler types `SCRIPT` and `PLUGIN`.
 - `priorityTag` uses `high`, `normal`, or `background`.
 - Event-scope `outcome`/`reason` values are bounded `admissionOutcome`/`admissionReason` codes; handler-scoped values are bounded `finalOutcome`/`finalReason` codes. An event-scope metric must not copy handler outcome or reason values.
 - `plugin_family` and `plugin_version_family` are optional registry-defined classifications, not raw plugin identifiers. Omit an optional plugin label when the event is not plugin-owned or the classification is unavailable at the event-scope boundary; do not invent `unknown` or `not_applicable` values for this contract.
+- Pre-handler metrics omit `plugin_family` and `plugin_version_family` because plugin identity is unavailable before handler resolution. Resolved plugin-handler metrics may include those bounded classifications when available.
 - `eventType`, `outcome`, and `scope` likewise use their owning registry, outcome taxonomy, and approved scope vocabularies. A producer must not emit an unbounded raw value.
 
 | Metric family | Required labels | Forbidden labels | Notes |

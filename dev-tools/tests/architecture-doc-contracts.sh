@@ -226,7 +226,7 @@ raw_html_type7_start = re.compile(
     re.IGNORECASE,
 )
 raw_html_special_start = re.compile(
-    r"^[ \t]{0,3}(?:(?P<processing><\?)|(?P<declaration><![A-Za-z])|(?P<cdata><!\[CDATA\[))",
+    r"^[ \t]{0,3}(?:(?P<processing><\?)|(?P<declaration><![A-Z])|(?P<cdata><!\[CDATA\[))",
 )
 html_comment_boundary = "\x00"
 atx_heading_with_content = re.compile(r"^[ \t]{0,3}#{1,6}[ \t]+\S")
@@ -549,6 +549,11 @@ lowercase_cdata_fixture_text = (
     "## Status\n"
     "Superseded by ADR 0001\n"
 )
+lowercase_declaration_fixture_text = (
+    "<!lowercase>\n"
+    "## Status\n"
+    "Superseded by ADR 0001\n"
+)
 comment_only_type6_html_fixture_text = (
     "# ADR 9986: Comment-Only Type-6 Raw HTML Fixture\n\n"
     "<div>\n"
@@ -629,6 +634,8 @@ if first_top_level_status_value(cdata_adr_fixture_text) != "Accepted":
     raise SystemExit("CDATA block hid the following Accepted status")
 if first_top_level_status_value(lowercase_cdata_fixture_text) != "Superseded by ADR 0001":
     raise SystemExit("lowercase CDATA was incorrectly treated as Type-5 raw HTML")
+if first_top_level_status_value(lowercase_declaration_fixture_text) != "Superseded by ADR 0001":
+    raise SystemExit("lowercase declaration was incorrectly treated as Type-4 raw HTML")
 if first_top_level_status_value(comment_only_type6_html_fixture_text) != "Accepted":
     raise SystemExit("comment-only Type-6 HTML line incorrectly terminated the block")
 if first_top_level_status_value(unclosed_comment_in_type6_html_fixture_text) != "Accepted":

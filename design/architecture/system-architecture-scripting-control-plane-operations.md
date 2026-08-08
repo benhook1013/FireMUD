@@ -140,6 +140,7 @@ Semantics:
 - Read-only.
 - Reports whether any pre-pause executions or already-persisted work remain in the rollback scope after the current `admissionEpoch` took effect.
 - Rollback orchestration uses this API together with cancel/purge hooks to decide when it is safe to resume normal admission. Drain is fail-closed: `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` are both required before normal admission or ticks resume; unresolved active or pending work keeps the workflow paused.
+- A drain response may authorize resume only when it is a fresh authoritative read taken after the final reconciliation, cancellation, and purge step, and its `admissionEpoch` matches the current rollback-scope epoch. A cached, stale, or earlier-epoch response is unsatisfied evidence.
 
 ### Rollback Convergence Readiness (Required)
 
@@ -319,7 +320,7 @@ Semantics:
 - Must enforce bounded batch size per request.
 - Must enforce replay eligibility against current control-plane state before creating the replay:
   - Work items with `scriptPatchVersion` that is not currently pinned for the scoped instance must be rejected from replay.
-  - Plugin work items whose `(pluginId, pluginVersionId)` do not match currently active plugin state for the scoped instance must be rejected from replay.
+  - Plugin work items whose immutable `(pluginId, pluginVersionId, bindingId)` tuple does not match the currently active binding for the same scoped `<tenantId, gameInstanceId, pluginId>` must be rejected from replay.
   - Ineligible rows must return deterministic bounded application errors (for example `REPLAY_VERSION_FENCE_MISMATCH`), remain `DEAD_LETTERED`, and produce no replay identity.
 
 Outputs:

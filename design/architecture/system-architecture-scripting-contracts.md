@@ -137,7 +137,7 @@ Plugins are executed by the same runtime engine as scripts and must not rely on 
 
 - `ReplayDeadLetteredWorkItems` must validate work-item versions against current control-plane state before transition from dead-letter to replayable:
   - `scriptPatchVersion` must match currently pinned patch for the scoped instance.
-  - Plugin work items must use the immutable `(pluginId, pluginVersionId)` stored on the dead-lettered work item and match that pair against the currently active plugin version for the scoped instance. The ingress audit may supplement diagnosis and provenance, but it is not the plugin-version eligibility fence.
+  - Plugin work items must use the immutable `(pluginId, pluginVersionId, bindingId)` tuple stored on the dead-lettered work item and match that tuple against the currently active binding for the same scoped `<tenantId, gameInstanceId, pluginId>`. The ingress audit may supplement diagnosis and provenance, but it is not the plugin/binding eligibility fence.
 - Ineligible work items must remain dead-lettered and return deterministic application-level mismatch errors; replay must not be best-effort for version-fenced mismatches.
 
 ### 13) Output Budget Safety
