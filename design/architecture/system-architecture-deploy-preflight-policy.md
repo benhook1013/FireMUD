@@ -26,7 +26,7 @@ For a brand-new player-facing environment (`hobby-self-hosted`, `staging`, or `p
 
 - registry pull credentials for workload image access,
 - PostgreSQL application credentials and admin rotation credentials when rotation Jobs are used,
-- the JWT custody/publication baseline for the selected mode: the target-only interim mounted fallback's fixed `jwt-signing-keys` Secret, Account-only private mount, and public `jwt-jwks` projection, or target non-exportable signer-health/no-private-mount evidence with the fixed Account-published public `jwt-jwks` resource,
+- the JWT custody/publication baseline, explicitly distinguished by mode: current legacy Secret-backed wiring (`jwt-signing-keys`/`jwt-jwks` Secret and path checks), which is non-authorizing wiring evidence only; target-only interim Account-mounted asymmetric fallback, with its fixed `jwt-signing-keys` Secret, Account-only private mount, and public `jwt-jwks` projection proof; or target non-exportable signer mode, with signer-health/no-private-mount evidence and the fixed Account-published public `jwt-jwks` resource,
 - cert-manager issuer or issuer reference for workload and bridge certificates,
 - backup/object-store credentials when the environment requires backups, including the binding identity that owns the bucket or object-store target,
 - asset-store and outbound-communications credentials when those integrations are enabled, including the binding identity that owns the asset bucket or object-store target,

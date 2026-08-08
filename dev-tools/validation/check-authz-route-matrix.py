@@ -212,6 +212,67 @@ PENDING_DELETION_EXPORT_CONTENT_AUDIT_CONTRACT = (
 ACTIVE_ACCOUNT_EXPORT_CONTENT_AUDIT_CONTRACT = (
     "required_account_export_job_and_outcome"
 )
+SECURITY_LOCK_EXPORT_CREDENTIAL_BINDING = {
+    "source": "security_lock_export_credential_registry",
+    "required": ["accountId", "recoveryCaseId"],
+    "comparison": "exact",
+    "mismatch": "AUTH_SESSION_REVOKED",
+}
+SECURITY_LOCK_EXPORT_OPERATION_BINDINGS = {
+    "export_initiate": {
+        "source": "security_lock_export_credential_and_export_registry",
+        "required": ["accountId", "recoveryCaseId", "exportId"],
+        "comparison": "create_and_attach_exact",
+        "mismatch": "PERMISSION_DENIED",
+    },
+    "export_status": {
+        "source": "security_lock_export_credential_and_export_registry",
+        "required": ["accountId", "recoveryCaseId", "exportId"],
+        "comparison": "exact",
+        "mismatch": "PERMISSION_DENIED",
+    },
+    "export_content": {
+        "source": "security_lock_export_credential_and_export_registry",
+        "required": ["accountId", "recoveryCaseId", "exportId"],
+        "comparison": "exact_completed_operation",
+        "mismatch": "PERMISSION_DENIED",
+    },
+}
+PENDING_DELETION_EXPORT_OPERATION_BINDINGS = {
+    "export_initiate": {
+        "source": "pending_deletion_credential_and_export_registry",
+        "required": [
+            "accountId",
+            "deletionWorkflowId",
+            "deletionWorkflowGeneration",
+            "exportId",
+        ],
+        "comparison": "create_and_attach_exact",
+        "mismatch": "PERMISSION_DENIED",
+    },
+    "export_status": {
+        "source": "pending_deletion_credential_and_export_registry",
+        "required": [
+            "accountId",
+            "deletionWorkflowId",
+            "deletionWorkflowGeneration",
+            "exportId",
+        ],
+        "comparison": "exact",
+        "mismatch": "PERMISSION_DENIED",
+    },
+    "export_content": {
+        "source": "pending_deletion_credential_and_export_registry",
+        "required": [
+            "accountId",
+            "deletionWorkflowId",
+            "deletionWorkflowGeneration",
+            "exportId",
+        ],
+        "comparison": "exact_completed_operation",
+        "mismatch": "PERMISSION_DENIED",
+    },
+}
 CAPACITY_ADMISSION_ROUTE = ("account-service", "CommitTenantCapacityAdmission")
 CAPACITY_DELTA_WIRE_CONTRACT = {
     "field": "capacityDelta",
@@ -1517,6 +1578,52 @@ def validate_security_lock_export_generation(
             f"{label} export_content must declare audit_contract "
             f"{SECURITY_LOCK_EXPORT_CONTENT_AUDIT_CONTRACT}",
         )
+
+
+def validate_declared_export_binding(
+    route: dict[str, Any],
+    label: str,
+    field: str,
+    expected: dict[str, Any],
+    errors: list[str],
+) -> None:
+    if route.get(field) != expected:
+        append_unique_error(
+            errors,
+            f"{label} {field} must declare exactly {expected}",
+        )
+
+
+def validate_export_bindings(routes: list[Any], errors: list[str]) -> None:
+    for route in routes:
+        if not isinstance(route, dict):
+            continue
+        classification = route.get("classification")
+        action_family = route.get("action_family")
+        label = route_label(route)
+        if classification == "security_lock_export_scoped":
+            operation_bindings = SECURITY_LOCK_EXPORT_OPERATION_BINDINGS
+            validate_declared_export_binding(
+                route,
+                label,
+                "credential_binding",
+                SECURITY_LOCK_EXPORT_CREDENTIAL_BINDING,
+                errors,
+            )
+        elif classification == "pending_deletion_scoped":
+            operation_bindings = PENDING_DELETION_EXPORT_OPERATION_BINDINGS
+        else:
+            continue
+
+        expected_operation_binding = operation_bindings.get(action_family)
+        if expected_operation_binding is not None:
+            validate_declared_export_binding(
+                route,
+                label,
+                "export_operation_binding",
+                expected_operation_binding,
+                errors,
+            )
 
 
 def validate_export_initiation_routes(
@@ -3951,6 +4058,7 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     )
     validate_generation_applicability(routes, errors, live_checks_cache)
     validate_export_initiation_routes(routes, errors, live_checks_cache)
+    validate_export_bindings(routes, errors)
     validate_profile_authority_routes(
         routes, errors, live_checks_cache, cardinality_errors
     )

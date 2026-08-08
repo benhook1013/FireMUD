@@ -13,9 +13,9 @@ Telnet and WebSocket clients share a minimal line-based command protocol that po
 The canonical player-facing paths are:
 
 - Telnet via TCP Proxy and Gateway
-- first-party web via `/ws/game/**` through Gateway
+- Gateway-routed first-party WebSocket route: `/ws/game/**`
 
-Direct generic WebSocket access to Game Session remains useful as an internal/test seam, but it is not a separate public authentication path. Public clients use Gateway `/ws/game/**`: `POST /auth/player-bootstrap` issues the tenant-free bootstrap credential, `/auth/bootstrap/*` performs authenticated discovery/actions, and `POST /auth/connect-token` sets the one-use token cookie. First-party browser, mobile-browser, and first-party native-mobile clients using a protected cookie jar use the `Firemud-Connect-Token` cookie, while only an explicitly classified target-only non-first-party/public non-browser route may use the dedicated handshake header. An unclassified generic WebSocket header is rejected. Real end-to-end client-path verification should prefer Gateway or TCP Proxy rather than relying only on direct Game Session WebSocket coverage.
+The direct Game Session WebSocket remains useful only as an internal/test seam, but it is not a separate public authentication path. The Gateway-routed first-party WebSocket route is `/ws/game/**`: `POST /auth/player-bootstrap` issues the tenant-free bootstrap credential, `/auth/bootstrap/*` performs authenticated discovery/actions, and `POST /auth/connect-token` sets the one-use token cookie. First-party browser, mobile-browser, and first-party native-mobile clients using a protected cookie jar use the `Firemud-Connect-Token` cookie, while only an explicitly classified target-only non-first-party/public non-browser route may use the dedicated handshake header. An unclassified generic WebSocket header is rejected. Real end-to-end client-path verification should prefer Gateway or TCP Proxy rather than relying only on direct Game Session WebSocket coverage.
 
 At the protocol level, commands are split into two groups:
 
@@ -44,7 +44,7 @@ For direct text/Telnet, `WORLDS` is the fresh public discovery step before `LOGI
 
 | Command | Purpose | Example |
 | ------- | ------- | ------- |
-| `LOGIN <email> [secret]` | With one argument, requests a verified-email login code without authenticating the session. With a password or active email code as the second argument, authenticates immediately. Public non-proxy `/ws/game/**` uses bare `LOGIN` after bootstrap/connect-token validation instead. | `LOGIN demo@example.com swordfish` |
+| `LOGIN <email> [secret]` | With one argument, requests a verified-email login code without authenticating the session. With a password or active email code as the second argument, authenticates immediately. The Gateway-routed first-party WebSocket route at `/ws/game/**` uses bare `LOGIN` after bootstrap/connect-token validation instead. | `LOGIN demo@example.com swordfish` |
 | `LOGON <email> [secret]` | Exact alias for `LOGIN`. | `LOGON demo@example.com swordfish` |
 | `LOGOUT` / `LOGOFF` / `QUIT` | Ends the current session and closes the transport. `LOGOFF` and `QUIT` are exact aliases for canonical `LOGOUT`. | `LOGOUT` |
 | `WORLDS` | Lists worlds visible to the caller. Before `LOGIN`, this is a public browse/discovery command intended to let players explore the platform before signing up or logging in. After `LOGIN`, it may also include caller-specific membership or entitlement context. | `WORLDS` |
@@ -81,7 +81,7 @@ Current `JOIN` availability and the membership-authority-generation gap are reco
 Telnet and WebSocket clients share the line-based syntax, but transport context determines which `LOGIN` form is valid:
 
 - For Telnet and other non-WebSocket text clients, fresh public `WORLDS` discovery precedes `LOGIN`; `LOGIN <email>` requests a verified-email code and `LOGIN <email> <secret>` performs an immediate password-or-code authentication attempt. Bare `LOGIN` does not start an interactive prompt.
-- For public non-proxy `/ws/game/**` sessions that already carry a validated Gateway connect context, bare `LOGIN` completes gameplay authentication from the pre-established bootstrap identity instead of prompting for credentials. First-party browser/mobile/server clients use the protected connect-token cookie; only explicitly classified non-first-party generic WebSocket clients use the dedicated connect-token handshake header. This bootstrap identity must not quietly reintroduce gameplay binding into `LOGIN`; `PLAY` remains the sole gameplay-admission and gameplay-scope binding step.
+- For sessions on the Gateway-routed first-party WebSocket route `/ws/game/**` that already carry a validated Gateway connect context, bare `LOGIN` completes gameplay authentication from the pre-established bootstrap identity instead of prompting for credentials. First-party browser/mobile/server clients use the protected connect-token cookie; only explicitly classified non-first-party generic WebSocket clients use the dedicated connect-token handshake header. This bootstrap identity must not quietly reintroduce gameplay binding into `LOGIN`; `PLAY` remains the sole gameplay-admission and gameplay-scope binding step.
 - The same `OK <COMMAND>` and `ERROR <CODE> <message>` response format applies to all transports so clients can react consistently.
 
 Multi-line prompt exchanges are planned but not implemented for Telnet and non-bootstrap clients. On those transports, bare `LOGIN` currently returns `ERROR PROMPT_LOGIN_UNSUPPORTED Prompt-based login is not implemented yet; send LOGIN <email> [secret].` First-party `/ws/game/**` sessions with a validated connect context are the exception: bare `LOGIN` consumes the bootstrap-backed context and must not ask the browser to resend credentials.

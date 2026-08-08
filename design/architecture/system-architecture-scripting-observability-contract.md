@@ -327,7 +327,7 @@ Label rules:
 
 Metric semantics:
 
-- `automation_script_triggers_total` counts all observed triggers (admitted and non-admitted). Its `outcome` uses handler `finalOutcome` after handler resolution and the event-scope admission outcome for pre-handler ingress; neither path fabricates the other field.
+- `automation_script_triggers_total` counts all observed triggers (admitted and non-admitted). Its `outcome` uses the event-scope admission outcome before handler resolution and the applicable handler `finalOutcome` after handler resolution. A pre-handler event has no handler-scoped `script_event_audit` row; an admitted event may produce multiple handler rows, so neither path fabricates the other field.
 - `automation_script_triggers_dropped_total` is the ingress metric for each rejected pre-handler event. Its bounded `reason` uses the event-scope `admissionReason`, including `reason="signer_policy_unavailable"` for signer-policy unavailability, and does not imply a handler audit row or handler `finalOutcome`.
 - `automation_rollback_drain_canceled_total` counts old-epoch executions intentionally fenced during rollback draining before live work could persist or hand off. It must be used for bounded rollback-drain visibility rather than a generic infrastructure failure counter.
   It is not the counter for ordinary operator-initiated cancel/purge actions on not-yet-running work items unless those items had already crossed into execution and were then fenced by rollback epoch advancement.

@@ -357,7 +357,7 @@ def first_top_level_status_value(text):
         if line.startswith((" ", "\t")):
             continue
         if line.strip():
-            return line.strip()
+            return line.replace(html_comment_boundary, "").strip()
     return None
 
 
@@ -615,6 +615,12 @@ inline_comment_status_heading_fixture_text = (
 )
 if first_top_level_status_value(inline_comment_status_heading_fixture_text) != "Accepted":
     raise SystemExit("inline HTML comment invalidated a valid status heading")
+comment_adjacent_status_value_fixture = (
+    "## Status <!-- inline comment -->\n"
+    "Accepted <!-- trailing comment -->\n"
+)
+if first_top_level_status_value(comment_adjacent_status_value_fixture) != "Accepted":
+    raise SystemExit("HTML comment boundary leaked into a returned status value")
 reject_obsolete_envelope_phrases(
     historical_adr_fixture,
     historical_adr_fixture_text,
@@ -904,7 +910,7 @@ def extract_unique_markdown_section(text, heading, source_label):
         raise SystemExit(
             f"{source_label}: expected exactly one {heading!r} section, found {len(sections)}"
         )
-    return sections[0]
+    return sections[0].replace(html_comment_boundary, "")
 
 
 def require_section_contains_text(text, heading, snippets, source_label):
@@ -1026,6 +1032,41 @@ hidden_heading_section = extract_unique_markdown_section(
 )
 if "## Hidden comment heading" in hidden_heading_section or "after\n" not in hidden_heading_section:
     raise SystemExit("hidden heading fixture was not removed before section extraction")
+
+ordinary_visible_content_fixture = (
+    "## Ordinary visible content fixture\n"
+    "ordinary visible text <!-- hidden comment --> trailing visible text\n"
+    "## Following section\n"
+)
+ordinary_visible_content = extract_unique_markdown_section(
+    ordinary_visible_content_fixture,
+    "Ordinary visible content fixture",
+    "ordinary visible content fixture",
+)
+if html_comment_boundary in ordinary_visible_content:
+    raise SystemExit("HTML comment boundary leaked into visible section content")
+if (
+    "ordinary visible text" not in ordinary_visible_content
+    or "trailing visible text" not in ordinary_visible_content
+):
+    raise SystemExit("ordinary visible text was lost around an HTML comment")
+
+synthetic_heading_section_fixture = (
+    "## Synthetic heading section fixture\n"
+    "before\n"
+    "<!-- hidden prefix -->## Hidden boundary\n"
+    "hidden content\n"
+    "## Following section\n"
+)
+synthetic_heading_section = extract_unique_markdown_section(
+    synthetic_heading_section_fixture,
+    "Synthetic heading section fixture",
+    "synthetic heading section fixture",
+)
+if synthetic_heading_section != "before\n## Hidden boundary\nhidden content\n":
+    raise SystemExit(
+        "synthetic heading detection did not preserve the HTML comment boundary"
+    )
 
 unclosed_comment_in_type6_section_fixture = (
     "<div>\n"

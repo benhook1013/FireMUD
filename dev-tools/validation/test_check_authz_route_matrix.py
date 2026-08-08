@@ -2514,32 +2514,123 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     errors,
                 )
 
-    def test_pending_deletion_export_initiation_creates_exact_operation_binding(self):
-        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-        initiation = next(
-            route
-            for route in self.validator.matching_routes(
-                document["routes"],
-                "account-service",
-                "POST /accounts/{accountId}/exports",
-            )
-            if route.get("classification") == "pending_deletion_scoped"
-        )
-        self.assertEqual(
-            {
-                "source": "pending_deletion_credential_and_export_registry",
-                "required": [
-                    "accountId",
-                    "deletionWorkflowId",
-                    "deletionWorkflowGeneration",
-                    "exportId",
+    def test_recovery_export_bindings_are_exact_by_class_and_action_family(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        expected_routes = {
+            (
+                "security_lock_export_scoped",
+                "export_initiate",
+            ): {
+                "credential_binding": self.validator.SECURITY_LOCK_EXPORT_CREDENTIAL_BINDING,
+                "export_operation_binding": self.validator.SECURITY_LOCK_EXPORT_OPERATION_BINDINGS[
+                    "export_initiate"
                 ],
-                "comparison": "create_and_attach_exact",
-                "mismatch": "PERMISSION_DENIED",
             },
-            initiation["export_operation_binding"],
-        )
-        self.assertIn("PERMISSION_DENIED", initiation["canonical_errors"]["any_of"])
+            (
+                "security_lock_export_scoped",
+                "export_status",
+            ): {
+                "credential_binding": self.validator.SECURITY_LOCK_EXPORT_CREDENTIAL_BINDING,
+                "export_operation_binding": self.validator.SECURITY_LOCK_EXPORT_OPERATION_BINDINGS[
+                    "export_status"
+                ],
+            },
+            (
+                "security_lock_export_scoped",
+                "export_content",
+            ): {
+                "credential_binding": self.validator.SECURITY_LOCK_EXPORT_CREDENTIAL_BINDING,
+                "export_operation_binding": self.validator.SECURITY_LOCK_EXPORT_OPERATION_BINDINGS[
+                    "export_content"
+                ],
+            },
+            (
+                "pending_deletion_scoped",
+                "export_initiate",
+            ): {
+                "export_operation_binding": self.validator.PENDING_DELETION_EXPORT_OPERATION_BINDINGS[
+                    "export_initiate"
+                ],
+            },
+            (
+                "pending_deletion_scoped",
+                "export_status",
+            ): {
+                "export_operation_binding": self.validator.PENDING_DELETION_EXPORT_OPERATION_BINDINGS[
+                    "export_status"
+                ],
+            },
+            (
+                "pending_deletion_scoped",
+                "export_content",
+            ): {
+                "export_operation_binding": self.validator.PENDING_DELETION_EXPORT_OPERATION_BINDINGS[
+                    "export_content"
+                ],
+            },
+        }
+
+        for (classification, action_family), expected_bindings in expected_routes.items():
+            with self.subTest(classification=classification, action_family=action_family):
+                route = next(
+                    route
+                    for route in baseline["routes"]
+                    if route.get("classification") == classification
+                    and route.get("action_family") == action_family
+                )
+                for field, expected in expected_bindings.items():
+                    self.assertEqual(expected, route[field])
+                self.assertIn(
+                    "PERMISSION_DENIED",
+                    route["canonical_errors"]["any_of"],
+                )
+                if classification == "security_lock_export_scoped":
+                    self.assertIn(
+                        "AUTH_SESSION_REVOKED",
+                        route["canonical_errors"]["any_of"],
+                    )
+
+        for (classification, action_family), expected_bindings in expected_routes.items():
+            for field, expected in expected_bindings.items():
+                for mutation_name, mutate in (
+                    ("missing", lambda binding: binding.pop("source")),
+                    (
+                        "altered",
+                        lambda binding: binding.__setitem__(
+                            "comparison", "unexpected_comparison"
+                        ),
+                    ),
+                    (
+                        "altered mismatch",
+                        lambda binding: binding.__setitem__(
+                            "mismatch", "unexpected_error"
+                        ),
+                    ),
+                    (
+                        "incomplete",
+                        lambda binding: binding["required"].pop(),
+                    ),
+                ):
+                    with self.subTest(
+                        classification=classification,
+                        action_family=action_family,
+                        field=field,
+                        mutation=mutation_name,
+                    ):
+                        document = copy.deepcopy(baseline)
+                        route = next(
+                            route
+                            for route in document["routes"]
+                            if route.get("classification") == classification
+                            and route.get("action_family") == action_family
+                        )
+                        mutate(route[field])
+                        errors = validate_document(self.validator, document)
+                        self.assertIn(
+                            f"{self.validator.route_label(route)} {field} "
+                            f"must declare exactly {expected}",
+                            errors,
+                        )
 
     def test_recovery_export_content_audit_contracts_are_exact(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))

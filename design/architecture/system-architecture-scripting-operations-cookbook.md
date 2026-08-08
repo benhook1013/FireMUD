@@ -11,7 +11,7 @@ This is a non-authoritative operator guide. Required rollout, rollback, converge
 Use the following patterns to answer common operational questions:
 
 - **"Which events are being rejected before handler resolution by quotas or queues?"**
-  - Look at `automation_script_triggers_dropped_total{reason="quota"}` for pre-handler quota/window rejections and `automation_script_triggers_dropped_total{reason="concurrency"}` / `automation_script_triggers_dropped_total{reason="concurrency_policy_drop_new"}` for pre-handler concurrency and queue-limit rejections.
+  - Look at `automation_script_triggers_dropped_total{reason="quota"}` for event-scope limiter rejections and `automation_script_triggers_dropped_total{reason="concurrency"}` / `automation_script_triggers_dropped_total{reason="concurrency_policy_drop_new"}` for pre-handler concurrency and queue-limit rejections. These are event-scope decisions, not per-script `ScriptQuotaService` charges.
   - For handler-level `quota_denied`, use `automation_script_triggers_total{outcome="quota_denied"}`, `script_quota_denied_total`, and the handler-scoped audit row as separate diagnostics; do not treat it as a dropped pre-handler event.
 
 - **"Is a tenant being throttled by its own automation budget?"**
@@ -26,7 +26,7 @@ Use the following patterns to answer common operational questions:
 
 - **"Are reloads or version issues causing skips?"**
   - Inspect `automation_script_triggers_total{outcome="skipped_reloading"}`, `automation_script_triggers_total{outcome="rollback_paused"}`, and `automation_script_triggers_dropped_total{reason="version_unavailable"}`. Use event-scope ingress audit records for pre-resolution denials and `script_event_audit.finalStage=ADMISSION` for handler-scoped denials; do not treat the dropped metric as a handler audit join.
-  - For stale control-plane pin visibility, inspect admissions with `finalOutcome=pin_state_unavailable` and corresponding drop metrics keyed by the bounded `finalReason`.
+  - For a pre-handler stale control-plane pin, inspect the ingress response and `script_event_ingress_audit` for `admitted=false`, `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_PIN_STATE_UNAVAILABLE`, and `admissionReason=pin_state_unavailable`. Do not look for `script_event_audit.finalOutcome` for this pre-handler case; a pin failure after handler resolution remains handler-scoped.
 
 ### Tuning Playbook: Misbehaving Scripts
 
@@ -58,7 +58,7 @@ Under light load:
 
 Under heavy load from Tenant A:
 
-1. **Per-script quota layer**: `npc-logger` may hit its per-script quota first. Pre-handler rejected events increase `automation_script_triggers_dropped_total{reason="quota"}` and the event-scope ingress audit; a handler-level denial instead uses `automation_script_triggers_total{outcome="quota_denied"}` and its handler-scoped audit row. `boss-ai` remains within its own per-script quota and continues to run when triggered.
+1. **Event-scope limiter and per-script quota layers**: An event-scope limiter may reject incoming events for `npc-logger` before handler resolution, increasing `automation_script_triggers_dropped_total{reason="quota"}` and the event-scope ingress audit without charging per-script quota. After resolution, `ScriptQuotaService` applies `npc-logger`'s per-script quota to each handler; a handler-level denial instead uses `automation_script_triggers_total{outcome="quota_denied"}` and its handler-scoped audit row. `boss-ai` remains within its own per-script quota and continues to run when triggered.
 2. **Per-tenant budget layer**: If Tenant A continues to generate background triggers, it may exhaust its tenant-level budget for the `background` tier. Once Tenant A’s background budget is exceeded, further background triggers for Tenant A (including `npc-logger`) are throttled or skipped and the corresponding `automation_script_skips_total{scope,reason="tenant_budget_exceeded"}` bucket increases. Tenant B’s budgets are independent; its `high`-priority `boss-ai` script is unaffected as long as Tenant B stays within its own budgets.
 3. **Cluster-level ceilings**: If total automation work across all tenants (including other games) approaches the cluster ceiling, the scheduler continues to admit `high`-priority scripts like `boss-ai` as long as possible and preferentially defers or rejects `background` work such as `npc-logger`; pre-handler rejections are reflected in `automation_script_triggers_dropped_total` with reasons like `cluster_limit_reached`.
 
@@ -121,7 +121,7 @@ This section summarizes common failure and rollback scenarios and how operators 
 
 - **Heavy timer drops or throttled `onInterval` handlers**
   - Symptoms:
-    - High counts for `automation_script_triggers_dropped_total{reason="tenant_budget_exceeded"}` or `reason="cluster_limit_reached"` for `eventType=onInterval` indicate pre-handler timer-event rejections.
+    - For `onInterval`, high counts for `automation_script_skips_total{scope,reason="tenant_budget_exceeded"}` indicate intentional pre-evaluation timer skips when tenant runtime budget is exhausted. Use `automation_script_triggers_dropped_total` only when the timer candidate is rejected under explicit pre-handler rejection semantics, such as `reason="cluster_limit_reached"`.
     - Handler-scoped `onInterval` denials are diagnosed separately through `automation_script_triggers_total` outcomes and `script_event_audit` entries with `finalStage=ADMISSION` and outcomes such as `quota_denied`, `tenant_budget_exceeded`, or `version_unavailable`.
   - Behavior:
     - Timer-based triggers are at-most-once per scheduled firing; dropped or skipped intervals are not replayed, although future firings may still occur.
