@@ -2,7 +2,7 @@
 
 This document defines the observability contract for scripting and automation: what is recorded in `script_event_audit`, what is returned by `ListScriptHandoffEvents`, what is emitted as metrics, and which identifiers may be used for correlation.
 
-Document conflict resolution order is defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md#document-precedence-normative`. This document is authoritative for observability details not fully enumerated in the normative tables.
+Document conflict resolution order is defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md#document-precedence-normative`. The normative tables own metric-family names, labels, and increment units; this document is authoritative for observability details not fully enumerated there.
 
 ## Live Versus Target-State Handoff Diagnostics
 
@@ -24,7 +24,7 @@ Event-scope ingress decisions and handler-scoped execution outcomes are separate
 - `script_event_audit` records handler-scoped, scheduler/timer-scoped, tenant-readiness `onLoad`, and dry-run/test executions after a concrete script or plugin handler identity exists.
 - per-command handoff history is a separate durable child surface keyed by the complete applicable command-handoff scope plus the target-state `(automationDispatchId, commandOrdinal)` pair; `outboxWorkItemId` is retained only as parent-work correlation so one handler audit row can still correlate to multiple emitted gameplay commands.
 - A successful event-scope ingress record means the event was accepted for handler resolution. It is not a summary of every handler outcome.
-- If ingress is accepted and resolves three handlers, tooling should expect one event-scope ingress record and up to three handler-scoped `script_event_audit` records, one per resolved Trigger Identity.
+- If ingress is accepted and resolves three handlers, tooling should expect one event-scope ingress record and up to three handler-scoped `script_event_audit` records, one per resolved Trigger Identity. The `automation_script_triggers_total` counter follows the normative metric matrix and does not add a separate admitted-event increment.
 - If one resolved handler emits three gameplay commands, tooling should expect one handler-scoped `script_event_audit` row plus three durable handoff-event rows under `ListScriptHandoffEvents`.
 
 ### Per-Command Handoff Records (Target-State)
@@ -313,6 +313,7 @@ The normative metric-family catalog lives in `design/architecture/system-archite
   - `automation_script_test_runs_total{scope, script_category, plugin_family, eventType, result}`
   - `automation_script_test_runtime_seconds{scope, script_category, plugin_family, eventType}`
   - `automation_script_test_sandbox_failures_total{scope, script_category, plugin_family, eventType, reason}`
+  - `automation_script_test_capacity_denied_total{scope}`
 - Plugin policy
   - `automation_plugin_policy_violations_total{scope, plugin_family, plugin_version_family, component_class, reason}`
 - Rollback convergence timeout
@@ -327,12 +328,12 @@ Label rules:
 
 Metric semantics:
 
-- `automation_script_triggers_total` counts all observed triggers (admitted and non-admitted). Its `outcome` uses the event-scope admission outcome before handler resolution and the applicable handler `finalOutcome` after handler resolution. A pre-handler event has no handler-scoped `script_event_audit` row; an admitted event may produce multiple handler rows, so neither path fabricates the other field.
+- `automation_script_triggers_total` follows the increment unit in [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix): increment once for each rejected pre-handler ingress event; after resolution, increment once per resolved handler with no additional admitted-event increment. An admitted event with zero handlers uses one event-scope `outcome="admitted_no_handlers"` increment. The event-scope outcome before resolution and handler `finalOutcome` after resolution remain distinct observability facts.
 - `automation_script_triggers_dropped_total` is the ingress metric for each rejected pre-handler event. Its bounded `reason` uses the event-scope `admissionReason`, including `reason="signer_policy_unavailable"` for signer-policy unavailability, and does not imply a handler audit row or handler `finalOutcome`.
 - `automation_rollback_drain_canceled_total` counts old-epoch executions intentionally fenced during rollback draining before live work could persist or hand off. It must be used for bounded rollback-drain visibility rather than a generic infrastructure failure counter.
   It is not the counter for ordinary operator-initiated cancel/purge actions on not-yet-running work items unless those items had already crossed into execution and were then fenced by rollback epoch advancement.
 
-Dry-run/test traffic must not increment live-traffic counters such as `automation_script_sandbox_failures_total` or `automation_script_errors_total`. Live dashboards and SLOs must remain interpretable without privileged tooling skewing error rates.
+Dry-run/test traffic must not increment live-traffic counters such as `automation_script_sandbox_failures_total`, `automation_script_errors_total`, or `script_quota_denied_total`. Handler-scoped `dry_run_capacity_exhausted` remains visible through `automation_script_test_capacity_denied_total{scope}`, `automation_script_triggers_total{outcome="quota_denied"}`, and its audit row. Live dashboards and SLOs must remain interpretable without privileged tooling skewing error rates.
 
 ## Required Links
 

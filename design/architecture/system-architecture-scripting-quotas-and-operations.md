@@ -10,6 +10,17 @@ Routing note:
 - Use `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` for DSL/lifecycle semantics.
 - Use `design/architecture/system-architecture-scripting-runtime-execution.md` for execution-state behavior.
 
+## Implementation Status
+
+Current Automation quota and budget behavior is consolidated here. The policy sections below define the target contract and do not repeat these implementation details.
+
+- **Live per-script quota:** Current ingress acquires `ScriptQuotaService` for `STANDARD_RUNTIME` resolved handlers before durable `script_work_items` materialization. A denial writes a handler-scoped audit row with `finalStage=ADMISSION`, `finalOutcome=quota_denied`, and `finalReason=script_quota_denied`; no outbox work item is created.
+- **Live tenant budget:** Current execution persists `priorityTag` and `quotaClass` on durable work items and applies `ScriptTenantBudgetService` to non-dry-run `STANDARD_RUNTIME` work before DSL evaluation. A denial terminally cancels the work item with `finalStage=ADMISSION`, `finalOutcome=tenant_budget_exceeded`, and `finalReason=tenant_budget_exceeded`.
+- **Dry-run/test limits:** Current ingress enforces per-minute tenant and principal dry-run ceilings before handler resolution, returning event-scope `TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED` with `admissionReason=dry_run_budget_exceeded` without creating handler work. Materialized dry-runs skip live per-script and tenant-budget acquisition, then reserve isolated tenant/cluster capacity through `ScriptDryRunCapacityService`. A capacity denial is handler-scoped with `finalStage=ADMISSION`, `finalOutcome=quota_denied`, and `finalReason=dry_run_capacity_exhausted`; it does not increment `script_quota_denied_total` and is visible through `automation_script_test_capacity_denied_total{scope}` and the trigger outcome/audit.
+- **Publish/readiness capacity:** Current execution reserves dedicated tenant and cluster readiness capacity for non-dry-run `PUBLISH_READINESS` work before DSL evaluation. Exhaustion cancels the work item with `finalStage=ADMISSION`, `finalOutcome=quota_denied`, and `finalReason=onload_budget_exceeded`; it is not charged to live per-script quota or tenant runtime budget.
+
+See the [normative metric matrix](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix) for metric units and labels. The [runtime execution](./system-architecture-scripting-runtime-execution.md) document owns execution-state behavior.
+
 Companion docs:
 
 - `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` – terminology, DSL semantics, event lifecycle, determinism.
@@ -18,6 +29,7 @@ Companion docs:
 
 ## Table of Contents
 
+- [Implementation Status](#implementation-status)
 - [Audience](#audience)
 - [Sandboxing & Security](#sandboxing--security)
 - [Fairness & Abuse Prevention](#fairness--abuse-prevention)
@@ -70,13 +82,13 @@ Dry-run and test execution paths exposed by the Automation & Scripting Service s
 - They execute handlers through the same engine with the same CPU/iteration and memory budgets.
 - They record `sandbox_error` and `infrastructure_error` outcomes in `script_event_audit` so failure modes are observable.
 - By default they do **not** consume per-script quotas or per-tenant budgets enforced by live runtime budget services; instead, they are restricted to privileged principals (for example, designers and operators) and should be further protected by separate rate limits or ACLs at the API gateway or Logging & Admin layer.
-- Current Automation execution honors that split by skipping live `ScriptQuotaService` and tenant-budget acquisition for dry-run `script_work_items`; dry-run capacity is controlled by the dedicated test/dry-run limiters rather than by consuming live gameplay automation quota.
   - Dry-run/test executions must not increment live-traffic error counters. Sandbox failures observed during tests are emitted via dry-run/test-only metric families (for example `automation_script_test_sandbox_failures_total`) so production SLO dashboards do not conflate privileged tooling with live automation reliability.
 - Dry-run/test traffic must not be allowed to consume the same last-resort execution capacity reserved for live automation:
   - Implementations should use separate executor pools or explicit worker reservations for `isDryRun=true`.
   - When the cluster is under pressure, live traffic must be admitted ahead of dry-run/test traffic even if dry-run quotas have not been exceeded.
   - Queue limits and concurrency ceilings for dry-run/test work must be enforced independently from live execution queues.
-  - Current Automation execution reserves both cluster-wide and tenant-local dry-run capacity through `ScriptDryRunCapacityService` after dry-run work has been materialized. Capacity-denied materialized dry-runs are terminally canceled with `script_event_audit.finalStage=ADMISSION`, `finalOutcome=quota_denied`, and `finalReason=dry_run_capacity_exhausted`.
+
+Current enforcement details are consolidated in [Implementation Status](#implementation-status).
 
 ---
 
@@ -138,7 +150,6 @@ Patch readiness initialization uses a separate admission class from ordinary liv
   - explicit timeout/CPU/memory ceilings, and
   - bounded infrastructure retry policy for transient failures.
 - Exhausting this dedicated initialization capacity must fail the patch deterministically with an explicit bounded reason (for example `onload_budget_exceeded`) rather than leaving readiness pending indefinitely or consuming arbitrary live runtime budget.
-- Current Automation execution now enforces the first bounded slice of that contract through dedicated tenant and cluster readiness-capacity reservations before live `PUBLISH_READINESS` work evaluates, canceling exhausted work with `finalStage=ADMISSION`, `finalOutcome=quota_denied`, and `finalReason=onload_budget_exceeded`.
 - Operators must be able to distinguish:
   - publish/readiness capacity exhaustion,
   - logical `onLoad` failures,
@@ -155,12 +166,10 @@ Quota and budget policy must be applied at fixed charge points so operators can 
   - Charged once per resolved handler-scoped Trigger Identity at handler admission time.
   - Handlers admitted into a bounded `queue_until_free` backlog consume quota immediately and are not re-charged when they later start.
   - Duplicate deliveries of the same handler-scoped Trigger Identity must not consume additional quota.
-  - Current Automation ingress enforces this by acquiring `ScriptQuotaService` before durable `script_work_items` are materialized when the event registry class is `STANDARD_RUNTIME`. Quota-denied handlers write handler audit rows with `finalStage=ADMISSION`, `finalOutcome=quota_denied`, and `finalReason=script_quota_denied`, but do not create outbox work items.
 - **Per-tenant tier budgets**
   - Charged when a handler-scoped run is reserved onto live sandbox execution capacity.
   - Event-scope ingress acceptance alone does not charge tenant runtime budget.
   - Mixed fan-out therefore consumes tenant runtime budget only for handlers that actually leave admission and reserve execution capacity.
-  - Current Automation execution persists both `priorityTag` and registry `quotaClass` onto durable work items, and enforces `ScriptTenantBudgetService` only for `STANDARD_RUNTIME` work before live durable work items evaluate script definitions. Budget-denied work items are terminally canceled with `script_event_audit.finalStage=ADMISSION`, `finalOutcome=tenant_budget_exceeded`, and `finalReason=tenant_budget_exceeded`.
 - **Cluster-wide execution ceilings**
   - Applied at the same execution-reservation point as tenant runtime budgets.
   - Admission rejections due purely to cluster exhaustion must remain `ADMISSION` outcomes and must not burn sandbox CPU/memory budget.
@@ -169,7 +178,6 @@ Quota and budget policy must be applied at fixed charge points so operators can 
   - These runs still consumed or reserved scarce runtime capacity and must remain visible as charged non-success outcomes.
 - **`onLoad`**
   - Uses its own publish-time capacity class and is excluded from the live per-script quota window and tenant runtime budget accounting above.
-  - Current Automation execution now reserves that class against dedicated readiness-capacity knobs instead of leaving it as an unbounded live-budget bypass.
 
 Concrete mixed fan-out accounting example:
 
@@ -223,7 +231,7 @@ Per-trigger output is also part of the quota model even when the run itself was 
 
 Every scheduler decision emits an audit record stored in a lightweight `script_event_audit` table in PostgreSQL. `scriptEventId` is one field within the full applicable Trigger Identity; it must never be treated as unique on its own because runtime scope, handler, event, patch, and other conditional identity fields can distinguish otherwise equal tokens. Retries, replays, and downstream side effects must be correlated using the complete identity (not as a metric label). The authoritative audit field and stage model is defined in `design/architecture/system-architecture-scripting-observability-contract.md`.
 
-Normative tables for Trigger Identity fields and metric label sets are centralized in `design/architecture/system-architecture-scripting-normative-contract-tables.md` so this document does not drift from other design docs.
+Normative tables for Trigger Identity fields, metric label sets, and metric increment units are centralized in `design/architecture/system-architecture-scripting-normative-contract-tables.md` so this document does not drift from other design docs.
 
 The canonical `script_event_audit` schema includes:
 
@@ -286,8 +294,9 @@ Metrics such as:
 
 are updated throughout the scripting pipeline so operators can monitor how often scripts fire, how many are skipped by policy, and how much automation work is being handed to the tick system. See `design/architecture/system-architecture-logging-monitoring.md` for broader metrics and alerting guidance. For dry-runs specifically:
 
-- `automation_script_test_runs_total{scope, script_category, plugin_family, eventType, result}` – counts non-committing test executions, tagged with a low-cardinality `result` dimension (for example, `result="success"`, `result="denied_quota"`, `result="error"`). This metric `result` is test-only aggregation shorthand; the corresponding audit outcome for a successful dry-run is `finalStage=DRY_RUN_RESULT`, `finalOutcome=dry_run_success`, not live `finalOutcome=success`.
+- `automation_script_test_runs_total{scope, script_category, plugin_family, eventType, result}` – counts non-committing test executions, tagged with a low-cardinality `result` dimension (for example, `result="success"`, `result="denied_quota"`, `result="denied_capacity"`, `result="error"`). This metric `result` is test-only aggregation shorthand; the corresponding audit outcome for a successful dry-run is `finalStage=DRY_RUN_RESULT`, `finalOutcome=dry_run_success`, not live `finalOutcome=success`.
 - `automation_script_test_runtime_seconds{scope, script_category, plugin_family, eventType}` – measures runtime for dry-run/test executions, separate from live traffic.
+- `automation_script_test_capacity_denied_total{scope}` – counts handler-scoped dry-run capacity denials using bounded `scope` values such as `tenant` or `cluster`; it is not a per-script quota metric.
 
 Additional queue-health metrics help detect automation backlogs that are not draining into ticks as expected:
 
@@ -298,11 +307,11 @@ A small, bounded Automation-owned inspector loop periodically samples a subset o
 
 For scripting and automation, these metrics follow shared naming and labeling conventions so dashboards and alerts remain consistent across services:
 
-- `automation_script_triggers_total{scope, script_category, plugin_family, plugin_version_family, eventType, outcome, priorityTag}` – counts all observed triggers (admitted and non-admitted). Before handler resolution, `outcome` is the event-scope admission outcome and the event has no handler-scoped `script_event_audit` row; after handler resolution, `outcome` is the applicable handler `finalOutcome`.
+- `automation_script_triggers_total{scope, script_category, plugin_family, plugin_version_family, eventType, outcome, priorityTag}` – follows the increment unit in [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix): use the event-scope outcome before handler resolution and the applicable handler `finalOutcome` after resolution, without adding a separate admitted-event increment when handlers resolve. An admitted event with zero handlers is counted once at event scope with `outcome="admitted_no_handlers"`.
 - `automation_script_skips_total{scope, script_category, plugin_family, reason, priorityTag}` – counts triggers that were intentionally skipped before sandbox execution (for example, `reason="reloading"`, `reason="disabled"`, `reason="priority_throttled"`).
 - `automation_script_triggers_dropped_total{scope, script_category, plugin_family, reason, priorityTag}` – counts only trigger requests rejected before handler resolution; handler-level quota and budget outcomes use `automation_script_triggers_total` and `script_event_audit`.
 - `automation_script_work_item_outcomes_total{stage, outcome, dryRun, priorityTag, sourceService}` – counts terminal durable work-item execution outcomes using the same `finalStage` / `finalOutcome` vocabulary written to `script_event_audit`, so quota, output-budget, dry-run, source-specific, and handoff outcomes can be compared without parsing audit rows.
-- `script_quota_allowed_total{scope, script_category}` / `script_quota_denied_total{scope, script_category, reason}` – per-script quota decisions before sandbox work begins.
+- `script_quota_allowed_total{scope, script_category}` / `script_quota_denied_total{scope, script_category, reason}` – per-script quota decisions before sandbox work begins; dry-run capacity denials are excluded.
 - `automation_script_sandbox_failures_total{scope, script_category, plugin_family, reason}` – sandbox-level failures such as `reason="cpu_budget_exceeded"` or `reason="memory_budget_exceeded"`.
 - `automation_script_errors_total{scope, script_category, plugin_family, reason}` – higher-level error classification, including downstream failures.
 - `automation_script_output_budget_exceeded_total{scope, script_category, plugin_family, reason}` – counts runs rejected because emitted work exceeded bounded output ceilings such as `command_count_exceeded` or `work_item_size_exceeded`.
@@ -360,8 +369,7 @@ Dry-run and test executions share the same sandbox engine and guards as live tra
   - Reject missing principal identity for endpoints configured with per-principal enforcement.
 - Dry-run activity is surfaced via dedicated metrics (for example, `automation_script_test_runs_total`, `automation_script_test_runtime_seconds`, `automation_script_test_sandbox_failures_total`) so operators can distinguish test traffic from live automation.
 - Logging & Admin and Game Design tools are responsible for exposing dry-run entry points only to privileged users and for applying complementary API gateway limits; test endpoints must not be wired into game traffic or public-facing flows.
-- When a dry-run request exceeds `SCRIPT_TEST_MAX_RUNS_PER_MINUTE`, Automation rejects it at event scope with `TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED` / `dry_run_budget_exceeded` before handler resolution. When a materialized dry-run exceeds `SCRIPT_TEST_MAX_CONCURRENCY` or `SCRIPT_TEST_MAX_CLUSTER_CONCURRENCY`, Automation cancels that handler-scoped work item before evaluation with `finalOutcome=quota_denied` and `finalReason=dry_run_capacity_exhausted` in `script_event_audit`. Both paths increment dry-run/test metrics so operators can see overuse of test facilities.
-- Current Automation ingress enforces the per-minute tenant and principal dry-run ceilings before handler resolution. Requests over those limits return event-scope admission outcome `TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED` with `admissionReason=dry_run_budget_exceeded` and do not create handler work.
+- When a dry-run request exceeds `SCRIPT_TEST_MAX_RUNS_PER_MINUTE`, Automation rejects it at event scope with `TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED` / `dry_run_budget_exceeded` before handler resolution. When a materialized dry-run exceeds `SCRIPT_TEST_MAX_CONCURRENCY` or `SCRIPT_TEST_MAX_CLUSTER_CONCURRENCY`, Automation cancels that handler-scoped work item before evaluation with `finalOutcome=quota_denied` and `finalReason=dry_run_capacity_exhausted` in `script_event_audit`, and emits `automation_script_test_capacity_denied_total{scope}`. The latter is not a per-script quota denial and must not increment `script_quota_denied_total`.
 
 ### Outcome-to-Metric Mapping
 
@@ -375,7 +383,8 @@ Implementations should align emitted metrics with those documents; the intent he
 At a high level:
 
 - **Handler-level quota and budgeting outcomes**
-  - `finalStage=ADMISSION`, `finalOutcome=quota_denied` – handler-level quota denial is recorded in `script_event_audit` and `automation_script_triggers_total{outcome="quota_denied"}`; it increments `script_quota_denied_total` but does **not** increment the pre-resolution dropped metric or sandbox failure metrics.
+  - `finalStage=ADMISSION`, `finalOutcome=quota_denied`, `finalReason=script_quota_denied` – per-script quota denial is recorded in `script_event_audit` and `automation_script_triggers_total{outcome="quota_denied"}`; it increments `script_quota_denied_total` but does **not** increment the pre-resolution dropped metric or sandbox failure metrics.
+  - `finalStage=ADMISSION`, `finalOutcome=quota_denied`, `finalReason=dry_run_capacity_exhausted` – handler-scoped dry-run capacity denial is recorded in `script_event_audit` and `automation_script_triggers_total{outcome="quota_denied"}`; it increments `automation_script_test_capacity_denied_total{scope}`, not `script_quota_denied_total`.
   - `finalStage=ADMISSION`, `finalOutcome=tenant_budget_exceeded` (or other budget-related outcomes) – handler-level budget denial is recorded in `script_event_audit` and `automation_script_triggers_total{outcome="tenant_budget_exceeded"}`; it does **not** increment the pre-resolution dropped metric or run the sandbox.
 
 - **Pre-resolution ingress outcomes**

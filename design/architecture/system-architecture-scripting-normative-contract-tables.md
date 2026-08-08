@@ -97,6 +97,8 @@ Event-scope ingress outcomes are recorded in an ingress audit/logging surface ke
 
 Signer-policy unavailability before handler resolution is an event-scope denial: return `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_SIGNER_POLICY_UNAVAILABLE` with bounded `admissionReason=signer_policy_unavailable`, record the same pair in `script_event_ingress_audit`, and do not create a handler-scoped `finalOutcome` or `script_event_audit` row. If signer policy is evaluated after binding resolution for a concrete handler, the handler-scoped outcome remains `finalOutcome=signer_policy_unavailable` under Table 2.
 
+Dry-run/test budget exhaustion before handler resolution is an event-scope denial: return `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED` with bounded `admissionReason=dry_run_budget_exceeded`, record the same pair in `script_event_ingress_audit`, and do not create a handler-scoped `finalOutcome` or `script_event_audit` row.
+
 Notes:
 
 - If an implementation wants to treat some gameplay lifecycle events as “not tick-aligned”, it must define that exception explicitly in this table (not only in prose docs) and document why it is safe across scoped coordination resets. The default contract is that gameplay lifecycle triggers are fenced by `regionEpoch`.
@@ -257,11 +259,11 @@ General rules:
 
 | Metric family | Required labels | Forbidden labels | Notes |
 | --- | --- | --- | --- |
-| `automation_script_triggers_total` | `scope`, `script_category`, `eventType`, `outcome`, optional `plugin_family`, `plugin_version_family`, `priorityTag` | `scriptEventId` | Counts all observed triggers (admitted and non-admitted). Before handler resolution, `outcome` is the event-scope admission outcome; after handler resolution, it is the applicable handler `finalOutcome`. It is not universally equal to `script_event_audit.finalOutcome`: a pre-handler event has no handler audit row, and one admitted event may produce multiple handler-scoped outcomes. |
+| `automation_script_triggers_total` | `scope`, `script_category`, `eventType`, `outcome`, optional `plugin_family`, `plugin_version_family`, `priorityTag` | `scriptEventId` | Increment exactly once for each rejected pre-handler ingress event using its event-scope admission outcome. After resolution, increment exactly once for each resolved handler using its applicable `finalOutcome`, with no additional admitted-event increment. If an admitted event resolves zero handlers, increment once at event scope with `outcome="admitted_no_handlers"`. |
 | `automation_script_skips_total` | `scope`, `script_category`, `reason`, optional `plugin_family`, `priorityTag` | `scriptEventId` | “Skip” is pre-eval. |
 | `automation_script_triggers_dropped_total` | `scope`, `script_category`, `reason`, optional `plugin_family`, `priorityTag` | `scriptEventId` | Counts only trigger requests rejected before handler resolution. It does not count handler-level outcomes such as `quota_denied` or post-handoff command drops. Use bounded event-scope `admissionReason` values such as `signer_policy_unavailable`; handler-level `quota_denied` belongs in the handler outcome path (`automation_script_triggers_total{outcome="quota_denied"}` and its handler audit row), without joining or double-counting it here. |
 | `script_quota_allowed_total` | `scope`, `script_category` | `scriptEventId` | Quota decisions are pre-eval. |
-| `script_quota_denied_total` | `scope`, `script_category`, `reason` | `scriptEventId` | N/A |
+| `script_quota_denied_total` | `scope`, `script_category`, `reason` | `scriptEventId` | Counts per-script quota decisions only; handler-scoped dry-run capacity denials do not increment this family. |
 | `automation_tick_events_enqueued_total` | `scope` | `scriptEventId` | Counts successful tick handoffs, not DSL evaluations. |
 | `automation_tick_version_fence_dropped_total` | `scope`, `script_category`, `reason` | `scriptEventId` | Counts commands dropped at execution-time due to script patch version fence mismatches. |
 | `automation_tick_plugin_version_fence_dropped_total` | `scope`, `plugin_family`, `plugin_version_family`, `reason` | `scriptEventId` | Counts commands dropped at execution-time due to plugin version fence mismatches. |
@@ -270,6 +272,7 @@ General rules:
 | `automation_script_test_runs_total` | `scope`, `script_category`, `eventType`, `result`, optional `plugin_family` | `scriptEventId` | Must be separate from live-traffic counters. |
 | `automation_script_test_runtime_seconds` | `scope`, `script_category`, `eventType`, optional `plugin_family` | `scriptEventId` | Dry-run/test runtime latency; must remain separate from live runtime histograms. |
 | `automation_script_test_sandbox_failures_total` | `scope`, `script_category`, `eventType`, `reason`, optional `plugin_family` | `scriptEventId` | Dry-run/test-only sandbox failures; must not increment live sandbox failure counters. |
+| `automation_script_test_capacity_denied_total` | `scope` | `scriptEventId` | Counts handler-scoped dry-run capacity denials. `scope` is bounded to `tenant` or `cluster`; this is not a per-script quota decision. |
 | `automation_script_timer_catchup_truncated_total` | `scope`, `script_category`, `eventType`, `reason` | `scriptEventId` | Counts catch-up firings that were intentionally truncated/dropped by resume-window limits. |
 | `automation_script_timer_runtime_fence_dropped_total` | `scope`, `script_category`, `eventType`, `reason` | `scriptEventId` | Counts due points intentionally dropped because runtime scope or epoch changed before the scheduler could admit them. |
 | `automation_rollback_convergence_timeout_total` | `scope`, `operation`, `reason` | `scriptEventId` | Incremented when rollback orchestration reaches timeout terminal state before convergence acknowledgment. |

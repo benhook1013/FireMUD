@@ -1017,7 +1017,8 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             )
             self.assertNotIn("self_only_roles", route)
             self.assertEqual(
-                "exact_caller_account_id_for_every_role", route["target_subject_binding"]
+                self.validator.PROFILE_TARGET_SUBJECT_BINDING,
+                route["target_subject_binding"],
             )
             self.assertEqual("forbidden", route["platform_admin_override"])
 
@@ -1033,7 +1034,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 lambda route: route.__setitem__(
                     "target_subject_binding", "explicit_target_account_id"
                 ),
-                "must declare target_subject_binding exact_caller_account_id_for_every_role",
+                (
+                    "must declare target_subject_binding "
+                    f"{self.validator.PROFILE_TARGET_SUBJECT_BINDING}"
+                ),
             ),
             (
                 "subject_binding",
@@ -2373,6 +2377,40 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors,
         )
 
+    def test_pending_deletion_export_routes_require_action_family_live_check(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        for action_family in sorted(
+            self.validator.PENDING_DELETION_EXPORT_ACTION_FAMILIES
+        ):
+            with self.subTest(action_family=action_family):
+                route = next(
+                    route
+                    for route in baseline["routes"]
+                    if route.get("classification") == "pending_deletion_scoped"
+                    and route.get("action_family") == action_family
+                )
+                self.assertIn(
+                    "pending_deletion_action_family",
+                    route["required_live_checks"],
+                )
+
+                document = copy.deepcopy(baseline)
+                mutated_route = next(
+                    route
+                    for route in document["routes"]
+                    if route.get("classification") == "pending_deletion_scoped"
+                    and route.get("action_family") == action_family
+                )
+                mutated_route["required_live_checks"].remove(
+                    "pending_deletion_action_family"
+                )
+                errors = validate_document(self.validator, document)
+                self.assertIn(
+                    f"{self.validator.route_label(mutated_route)} {action_family} "
+                    "must require live check pending_deletion_action_family",
+                    errors,
+                )
+
     def test_security_lock_export_contract_has_bounded_negative_proof(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         rule = document["classification_rules"]["security_lock_export_scoped"]
@@ -2511,6 +2549,38 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     "security_lock_export_scoped routes must declare exactly "
                     "action_family set ['export_content', 'export_initiate', "
                     "'export_status']",
+                    errors,
+                )
+
+    def test_security_lock_export_routes_require_action_family_live_check(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        security_routes = [
+            route
+            for route in baseline["routes"]
+            if route.get("classification") == "security_lock_export_scoped"
+        ]
+        for route in security_routes:
+            self.assertIn(
+                "security_lock_export_action_family", route["required_live_checks"]
+            )
+
+        for action_family in self.validator.SECURITY_LOCK_EXPORT_ACTION_FAMILIES:
+            with self.subTest(action_family=action_family):
+                document = copy.deepcopy(baseline)
+                mutated_route = next(
+                    route
+                    for route in document["routes"]
+                    if route.get("classification") == "security_lock_export_scoped"
+                    and route.get("action_family") == action_family
+                )
+                mutated_route["required_live_checks"].remove(
+                    "security_lock_export_action_family"
+                )
+                errors = validate_document(self.validator, document)
+                self.assertIn(
+                    f"{self.validator.route_label(mutated_route)} is missing "
+                    "no-target authority checks: "
+                    "['security_lock_export_action_family']",
                     errors,
                 )
 
@@ -2856,33 +2926,42 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors,
         )
 
-    def test_active_export_initiation_is_canonical_and_caller_only(self):
+    def test_active_account_export_routes_are_canonical_and_caller_only(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-        active = next(
-            route
-            for route in self.validator.matching_routes(
-                baseline["routes"],
-                "account-service",
-                "POST /accounts/{accountId}/exports",
-            )
-            if self.validator.applicability_value(
-                route, "account_state", "test active export initiation", []
-            )
-            == "active"
-        )
-        self.assertEqual("target_not_currently_routable", active["route_status"])
-        self.assertEqual(
-            "active",
-            self.validator.applicability_value(
-                active, "account_state", "test active export initiation", []
+        route_specs = (
+            ("POST /accounts/{accountId}/exports", "export_initiate"),
+            ("GET /accounts/{accountId}/exports/{exportId}", "export_status"),
+            (
+                "GET /accounts/{accountId}/exports/{exportId}/content",
+                "export_content",
             ),
         )
-        self.assertEqual("caller_account_id", active["subject_binding"])
-        self.assertEqual("forbidden", active["platform_admin_override"])
-        self.assertIn(
-            "account_state_export_eligible", active["required_live_checks"]
-        )
-        self.assertNotIn("account_authorization_branches", active)
+        for route_name, action_family in route_specs:
+            with self.subTest(route=route_name):
+                active = next(
+                    route
+                    for route in self.validator.matching_routes(
+                        baseline["routes"], "account-service", route_name
+                    )
+                    if self.validator.applicability_value(
+                        route, "account_state", "test active export route", []
+                    )
+                    == "active"
+                )
+                self.assertEqual("target_not_currently_routable", active["route_status"])
+                self.assertEqual(
+                    "active",
+                    self.validator.applicability_value(
+                        active, "account_state", "test active export route", []
+                    ),
+                )
+                self.assertEqual(action_family, active["action_family"])
+                self.assertEqual("caller_account_id", active["subject_binding"])
+                self.assertEqual("forbidden", active["platform_admin_override"])
+                self.assertNotIn("account_authorization_branches", active)
+                self.assertIn(
+                    "account_state_export_eligible", active["required_live_checks"]
+                )
 
         legacy = route_for(baseline, "account-service", "ExportAccount")
         self.assertEqual("current_openapi_operator_surface", legacy["route_status"])
@@ -2921,49 +3000,65 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 errors = validate_document(self.validator, document)
                 self.assertIn(expected_error, errors)
 
-        for mutation_name, mutate, expected_suffix in (
-            (
-                "platform admin override",
-                lambda route: route.__setitem__(
-                    "platform_admin_override", "platformAdmin_only"
+        for route_name, action_family in route_specs:
+            active_export_name = action_family.removeprefix("export_")
+            for mutation_name, mutate, expected_suffix in (
+                (
+                    "platform admin override",
+                    lambda route: route.__setitem__(
+                        "platform_admin_override", "platformAdmin_only"
+                    ),
+                    (
+                        f"active export {active_export_name} must declare "
+                        "platform_admin_override forbidden"
+                    ),
                 ),
-                "active export initiation must declare platform_admin_override forbidden",
-            ),
-            (
-                "non-caller subject binding",
-                lambda route: route.__setitem__(
-                    "subject_binding", "explicit_target_account_id"
+                (
+                    "non-caller subject binding",
+                    lambda route: route.__setitem__(
+                        "subject_binding", "explicit_target_account_id"
+                    ),
+                    (
+                        f"active export {active_export_name} must bind to "
+                        "caller_account_id"
+                    ),
                 ),
-                "active export initiation must bind to caller_account_id",
-            ),
-            (
-                "non-active applicability",
-                lambda route: route["applicability"].__setitem__(
-                    "account_state", "security_locked"
+                (
+                    "account authorization branches",
+                    lambda route: route.__setitem__(
+                        "account_authorization_branches", []
+                    ),
+                    (
+                        f"active export {active_export_name} must not declare "
+                        "account_authorization_branches"
+                    ),
                 ),
-                "must declare applicability account_state='active'",
-            ),
-        ):
-            with self.subTest(mutation=mutation_name):
-                document = copy.deepcopy(baseline)
-                mutated_route = next(
-                    route
-                    for route in self.validator.matching_routes(
-                        document["routes"],
-                        "account-service",
-                        "POST /accounts/{accountId}/exports",
+                (
+                    "non-active applicability",
+                    lambda route: route["applicability"].__setitem__(
+                        "account_state", "security_locked"
+                    ),
+                    "must declare applicability account_state='active'",
+                ),
+            ):
+                with self.subTest(route=route_name, mutation=mutation_name):
+                    document = copy.deepcopy(baseline)
+                    mutated_route = next(
+                        route
+                        for route in self.validator.matching_routes(
+                            document["routes"], "account-service", route_name
+                        )
+                        if self.validator.applicability_value(
+                            route, "account_state", "test active export route", []
+                        )
+                        == "active"
                     )
-                    if self.validator.applicability_value(
-                        route, "account_state", "test active export initiation", []
+                    mutate(mutated_route)
+                    errors = validate_document(self.validator, document)
+                    self.assertIn(
+                        f"{self.validator.route_label(mutated_route)} {expected_suffix}",
+                        errors,
                     )
-                    == "active"
-                )
-                mutate(mutated_route)
-                errors = validate_document(self.validator, document)
-                self.assertIn(
-                    f"{self.validator.route_label(mutated_route)} {expected_suffix}",
-                    errors,
-                )
 
     def test_export_initiation_identity_and_action_family_cannot_bypass_availability(
         self,
@@ -3054,7 +3149,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertEqual([], validate_document(self.validator, baseline))
 
         expected_error = (
-            "account-service CommitTenantCapacityAdmission must declare explicit "
+            f"{self.validator.route_label(route)} must declare explicit "
             "capacityDelta wire presence with distinct absent and present_zero "
             "golden vectors"
         )

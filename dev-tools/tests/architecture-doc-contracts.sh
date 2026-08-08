@@ -208,11 +208,18 @@ obsolete_envelope_phrases = ("Account-issued envelope", "Account-validated envel
 decision_history_dir = root / "design/architecture/decisions"
 
 historical_adr_record_name = re.compile(r"adr-\d{4}-.+\.md")
-status_heading = re.compile(r"^##[ \t]+Status[ \t]*$")
+status_heading = re.compile(r"^##[ \t]+Status(?:[ \t]+#+)?[ \t]*$")
 historical_status_value = re.compile(r"^(?:Superseded|Withdrawn)\b")
 raw_html_closing_tag_only = frozenset(("pre", "script", "style", "textarea"))
 raw_html_block_start = re.compile(
     r"^[ \t]{0,3}<(?P<closing>/)?(?P<tag>address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|pre|script|search|section|style|summary|table|tbody|td|textarea|tfoot|th|thead|title|tr|track|ul)(?:[ \t>]|/>|$)",
+    re.IGNORECASE,
+)
+raw_html_type7_start = re.compile(
+    r"^[ \t]{0,3}(?:"
+    r"</[A-Za-z][A-Za-z0-9-]*[ \t]*>"
+    r"|<[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[^<>]*)?[ \t]*/?>"
+    r")[ \t]*(?:\r?\n)?$",
     re.IGNORECASE,
 )
 raw_html_special_start = re.compile(
@@ -277,8 +284,10 @@ def strip_raw_html_block(
         return "", True, raw_html_block_kind
 
     match = raw_html_block_start.match(line)
+    # Type 1-6 blocks take precedence over the generic Type-7 tag form.
+    type7 = raw_html_type7_start.match(line) if match is None else None
     special = raw_html_special_start.match(line)
-    if match is None and special is None:
+    if match is None and type7 is None and special is None:
         return line, False, None
     tag = match.group("tag") if match is not None else None
     if special is not None:
@@ -287,6 +296,8 @@ def strip_raw_html_block(
         return "", terminator not in line[special.end() :], (
             kind if terminator not in line[special.end() :] else None
         )
+    if type7 is not None:
+        return "", True, None
     if (
         match.group("closing") is not None
         and tag is not None
@@ -437,6 +448,15 @@ raw_html_adr_fixture_text = (
     "Account-issued envelope\n"
     "</div>\n"
 )
+type7_raw_html_status_fixture_text = (
+    "# ADR 9982: Type-7 Raw HTML Status Fixture\n\n"
+    "<span class=\"history\">\n"
+    "## Status\n"
+    "Superseded by ADR 0001\n"
+    "</span>\n\n"
+    "## Status\n\n"
+    "Accepted\n"
+)
 ordinary_raw_html_closing_fixture_text = (
     "# ADR 9991: Ordinary Raw HTML Closing Fixture\n\n"
     "<div>\n"
@@ -562,6 +582,8 @@ if first_top_level_status_value(accepted_adr_fixture_text) != "Accepted":
     raise SystemExit("commented, fenced, or indented fake status bypassed the Accepted fixture")
 if first_top_level_status_value(raw_html_adr_fixture_text) is not None:
     raise SystemExit("raw HTML block status was incorrectly parsed")
+if first_top_level_status_value(type7_raw_html_status_fixture_text) != "Accepted":
+    raise SystemExit("type-7 raw HTML status was incorrectly parsed")
 if first_top_level_status_value(ordinary_raw_html_closing_fixture_text) != "Accepted":
     raise SystemExit("ordinary raw HTML block closed before a blank line")
 if first_top_level_status_value(same_line_raw_html_fixture_text) != "Accepted":
@@ -838,7 +860,7 @@ operations_text = (root / "design/architecture/system-architecture-redis-operati
 
 def extract_unique_markdown_section(text, heading, source_label):
     heading_pattern = re.compile(
-        rf"^[ ]{{0,3}}##[ \t]+{re.escape(heading)}[ \t]*(?:\r?\n)?$"
+        rf"^[ ]{{0,3}}##[ \t]+{re.escape(heading)}(?:[ \t]+#+)?[ \t]*(?:\r?\n)?$"
     )
     level_two_heading = re.compile(r"^[ ]{0,3}##(?=[ \t]|(?:\r?\n)?$)")
     sections = []
@@ -946,6 +968,20 @@ end_after_level_two_section = extract_unique_markdown_section(
 if end_after_level_two_section != "before\n":
     raise SystemExit("ATX heading ending immediately after ## was not recognized")
 
+closing_marker_heading_fixture = (
+    "## Canonical Coordination Reset Sequence ##\n"
+    "before\n"
+    "## Following section\n"
+    "after\n"
+)
+closing_marker_heading_section = extract_unique_markdown_section(
+    closing_marker_heading_fixture,
+    "Canonical Coordination Reset Sequence",
+    "closing marker heading fixture",
+)
+if closing_marker_heading_section != "before\n":
+    raise SystemExit("ATX closing heading markers were not recognized")
+
 inline_comment_section_heading_fixture = (
     "## Inline comment section fixture <!-- inline comment -->\n"
     "before\n"
@@ -996,6 +1032,27 @@ hidden_heading_section = extract_unique_markdown_section(
 )
 if "## Hidden comment heading" in hidden_heading_section or "after\n" not in hidden_heading_section:
     raise SystemExit("hidden heading fixture was not removed before section extraction")
+
+type7_raw_html_heading_fixture = (
+    "## Type-7 raw HTML section fixture\n"
+    "before\n"
+    "</span>\n"
+    "## Hidden section inside closing span\n"
+    "hidden\n"
+    "\n"
+    "after\n"
+    "## Following section\n"
+)
+type7_raw_html_heading_section = extract_unique_markdown_section(
+    type7_raw_html_heading_fixture,
+    "Type-7 raw HTML section fixture",
+    "type-7 raw HTML heading fixture",
+)
+if (
+    "## Hidden section inside closing span" in type7_raw_html_heading_section
+    or "after\n" not in type7_raw_html_heading_section
+):
+    raise SystemExit("type-7 raw HTML heading was not removed before section extraction")
 
 ordinary_visible_content_fixture = (
     "## Ordinary visible content fixture\n"

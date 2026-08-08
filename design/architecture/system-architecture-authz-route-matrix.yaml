@@ -216,7 +216,7 @@ tenant_generation_policy:
       account_authority_generation_applies: false
       tenant_billing_authority_generation_applies: false
       membership_authority_generation_applies: false
-      required_authority: [security_lock_export_credential_registry, security_lock_recovery_state]
+      required_authority: [security_lock_export_credential_registry, security_lock_recovery_state, security_lock_export_action_family]
       contract_justification: The Account-issued security-lock-export credential is bound to one recovered global account and export lifecycle; ordinary issuer, account, tenant, and membership generations are not authority inputs while the account remains security-locked.
       target_tenant_generation_advance_behavior: remains_bound_to_exact_recovery_export_lifecycle
       negative_proof:
@@ -1722,7 +1722,7 @@ routes:
     pending_deletion_workflow_binding: required
     action_family: export_initiate
     required_fields: [request_id]
-    required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, export_availability]
+    required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, pending_deletion_action_family, export_availability]
     export_operation_binding:
       source: pending_deletion_credential_and_export_registry
       required: [accountId, deletionWorkflowId, deletionWorkflowGeneration, exportId]
@@ -1750,6 +1750,7 @@ routes:
     token_issuer: firemud-account-service
     token_audience: control-ui
     subject_binding: caller_account_id
+    platform_admin_override: forbidden
     export_operation_binding:
       source: authenticated_account_and_export_registry
       required: [accountId, exportId]
@@ -1819,7 +1820,7 @@ routes:
       comparison: exact
       mismatch: PERMISSION_DENIED
     action_family: export_status
-    required_live_checks: [pending_deletion_state, pending_deletion_credential_registry]
+    required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, pending_deletion_action_family]
     response_profile: asynchronous_versioned_cross_owner_export_manifest
     canonical_errors:
       any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE, PERMISSION_DENIED]
@@ -1836,6 +1837,7 @@ routes:
     token_issuer: firemud-account-service
     token_audience: control-ui
     subject_binding: caller_account_id
+    platform_admin_override: forbidden
     export_operation_binding:
       source: authenticated_account_and_export_registry
       required: [accountId, exportId]
@@ -1908,7 +1910,7 @@ routes:
       mismatch: PERMISSION_DENIED
     action_family: export_content
     audit_contract: required_account_deletion_workflow_export_job_and_outcome
-    required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, export_availability]
+    required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, pending_deletion_action_family, export_availability]
     response_profile: completed_export_artifact_only
     canonical_errors:
       any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE, PERMISSION_DENIED]

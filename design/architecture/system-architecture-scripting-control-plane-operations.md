@@ -325,6 +325,13 @@ Semantics:
 Outputs:
 
 - `replayedCount` (best-effort count; may be approximate for large batches)
+- `results[]` (bounded to the selected input batch, with one result per selected item):
+  - `originalExecutionIdentity`
+  - `replayExecutionIdentity` when a replay identity was created or reused; identity semantics remain owned by [Operator Replay of DEAD_LETTERED Work](./system-architecture-scripting-runtime-execution.md#operator-replay-of-dead_lettered-work)
+  - `outcome` (`created`, `reused`, or `rejected`)
+  - `rejectionReason` when `outcome=rejected`, using a bounded application reason such as `REPLAY_VERSION_FENCE_MISMATCH`
+
+For a repeated `controlPlaneRequestId` and original execution identity, `results[]` returns the same replay identity with `outcome=reused`; rejected items remain without a replay identity. `replayedCount` and this stable-request idempotency behavior are retained.
 
 #### `PurgeOutboxWorkItems`
 

@@ -416,6 +416,7 @@ REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS = {
         "required_authority": {
             "security_lock_export_credential_registry",
             "security_lock_recovery_state",
+            "security_lock_export_action_family",
         },
         "target_tenant_generation_advance_behavior": (
             "remains_bound_to_exact_recovery_export_lifecycle"
@@ -439,6 +440,11 @@ SECURITY_LOCK_EXPORT_NEGATIVE_PROOF = {
     "security_lock_export_recovery_case_mismatch_denied",
     "security_lock_export_export_job_mismatch_denied",
     "security_lock_export_action_family_mismatch_denied",
+}
+PENDING_DELETION_EXPORT_ACTION_FAMILIES = {
+    "export_initiate",
+    "export_status",
+    "export_content",
 }
 ROUTES_WITH_EXPLICIT_TARGET_TENANT_AUTHORITY = {
     ("account-service", "IssueConnectToken"),
@@ -1506,6 +1512,15 @@ def validate_pending_deletion_generation(
         errors.append(
             f"{label} is missing no-target authority checks: {sorted(missing)}"
         )
+    if (
+        route.get("action_family") in PENDING_DELETION_EXPORT_ACTION_FAMILIES
+        and "pending_deletion_action_family" not in (checks or set())
+    ):
+        append_unique_error(
+            errors,
+            f"{label} {route.get('action_family')} must require live check "
+            "pending_deletion_action_family",
+        )
     forbidden_checks = checks & {"tenant_generation", "target_tenant_generation"}
     if forbidden_checks:
         errors.append(
@@ -1705,24 +1720,25 @@ def validate_export_initiation_routes(
                     f"{label} {expected_action_family} must require live check "
                     f"{required_check}",
                 )
-            if identity == EXPORT_INITIATION_ROUTE_IDENTITY:
-                if route.get("subject_binding") != "caller_account_id":
-                    append_unique_error(
-                        errors,
-                        f"{label} active export initiation must bind to caller_account_id",
-                    )
-                if route.get("platform_admin_override") != "forbidden":
-                    append_unique_error(
-                        errors,
-                        f"{label} active export initiation must declare "
-                        "platform_admin_override forbidden",
-                    )
-                if "account_authorization_branches" in route:
-                    append_unique_error(
-                        errors,
-                        f"{label} active export initiation must not declare "
-                        "account_authorization_branches",
-                    )
+            active_export_name = expected_action_family.removeprefix("export_")
+            if route.get("subject_binding") != "caller_account_id":
+                append_unique_error(
+                    errors,
+                    f"{label} active export {active_export_name} must bind to "
+                    "caller_account_id",
+                )
+            if route.get("platform_admin_override") != "forbidden":
+                append_unique_error(
+                    errors,
+                    f"{label} active export {active_export_name} must declare "
+                    "platform_admin_override forbidden",
+                )
+            if "account_authorization_branches" in route:
+                append_unique_error(
+                    errors,
+                    f"{label} active export {active_export_name} must not declare "
+                    "account_authorization_branches",
+                )
     for identity in ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES:
         if observed_branches[identity] != ACCOUNT_EXPORT_BRANCHES:
             append_unique_error(
@@ -1769,7 +1785,7 @@ def validate_capacity_admission_wire_contract(
     )
     if route is None:
         return
-    label = f"{service} {route_name}"
+    label = route_label(route)
     contract = route.get("capacity_delta_wire_contract")
     present_zero_wire_type = None
     present_zero_wire_value = None
@@ -1780,6 +1796,7 @@ def validate_capacity_admission_wire_contract(
             if isinstance(present_zero, dict):
                 present_zero_wire_type = present_zero.get("wire_value_type")
                 present_zero_wire_value = present_zero.get("wire_value")
+    # Check int and bool explicitly because Python treats False as equal to 0.
     if (
         contract != CAPACITY_DELTA_WIRE_CONTRACT
         or present_zero_wire_type != "integer"
