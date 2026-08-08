@@ -20,7 +20,7 @@ Operator invocation boundary: every `coordination-maintenance recover`, `continu
 For a current Coordination Redis cold start, incomplete recovery, or reset incident:
 
 - Keep Gateway protected admission, gameplay mutation, command intake, and affected coordination writers fenced or stopped. An empty keyspace is not evidence that the scope is safe to resume.
-- Apply a scoped reset only when supported tooling for that exact scope exists and is proven; the target scope grammar below does not itself authorize an operational reset.
+- No current scoped reset is supported: no distinct scoped-reset tool is documented or implemented. The target-state scope grammar and `coordination-maintenance` CLI are unavailable today, and raw coordination-prefix mutations are not a reset path.
 - Use only the shipped `PauseTicksForScope` pause and `GetRuntimeOwnershipStatus` status surface for the supported `{tenantId, gameInstanceId}` boundary, plus read-only `coord_ops_ro` Redis inspection. Follow the current failover/AOF procedures and escalation path in the [Redis incident runbook](./system-architecture-redis-incident-runbook.md) and [Redis Operations](./system-architecture-redis-operations.md); do not invoke the target-state CLI or use raw coordination-prefix mutations.
 - If the durable recovery controller, Account projection repair/replacement, replay quarantine/fence, or immutable evidence path is unavailable, stale, or ambiguous, abort any destructive wipe, recovery continuation, `resume`, `release-lock`, or reopen attempt. Preserve the AOF and incident evidence, leave the fence in place, and escalate. There is no supported current full-wipe or unlock substitute.
 

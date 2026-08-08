@@ -17,7 +17,7 @@ The following are canonical contracts across Telnet and WebSocket paths:
 
 ## Recommended Telnet Client Flows
 
-These flows describe how Telnet traffic is forwarded into the shared login/session pipeline. `LOGIN` / `LOGON` / `JOIN` / `PLAY` semantics are canonical in [Authentication](../../system-architecture-authentication.md#login-and-session-flow), while multi-client continuity is canonical in [Session Behavior](../../system-architecture-session-behavior.md#multi-client-behavior-and-session-takeover). Explicit `JOIN` remains unimplemented, and the missing connect-token membership-authority-generation reread is a separate gap.
+These flows describe how Telnet traffic is forwarded into the shared login/session pipeline. `LOGIN` / `LOGON` / `JOIN` / `PLAY` semantics are canonical in [Authentication](../../system-architecture-authentication.md#login-and-session-flow), while multi-client continuity is canonical in [Session Behavior](../../system-architecture-session-behavior.md#multi-client-behavior-and-session-takeover). Explicit `JOIN` is target-only: current Telnet clients cannot perform `JOIN` and fail closed with non-actionable `JOIN_REQUIRED` when membership is absent or inactive. The missing connect-token membership-authority-generation reread is a separate gap.
 
 - **Target canonical player flow**
   - Connect to the TCP Proxy Service.

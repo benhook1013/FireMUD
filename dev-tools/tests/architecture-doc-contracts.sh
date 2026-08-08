@@ -321,14 +321,25 @@ def first_top_level_status_value(text):
             continue
 
         physical_line_blank = not line.strip()
+        if in_raw_html_block:
+            _, in_raw_html_block, raw_html_block_kind = strip_raw_html_block(
+                line,
+                True,
+                raw_html_block_kind,
+                physical_line_blank,
+            )
+            continue
+        if not in_html_comment:
+            visible_line, in_raw_html_block, raw_html_block_kind = strip_raw_html_block(
+                line,
+                False,
+                None,
+                physical_line_blank,
+            )
+            if visible_line != line or in_raw_html_block:
+                continue
         line, in_html_comment = strip_html_comments(line, in_html_comment)
-        line, in_raw_html_block, raw_html_block_kind = strip_raw_html_block(
-            line,
-            in_raw_html_block,
-            raw_html_block_kind,
-            physical_line_blank,
-        )
-        if in_raw_html_block or not line:
+        if not line:
             continue
         in_fenced_block, fence_marker, opening_line_number = advance_fenced_block_state(
             line,
@@ -504,6 +515,16 @@ comment_only_type6_html_fixture_text = (
     "## Status\n\n"
     "Accepted\n"
 )
+unclosed_comment_in_type6_html_fixture_text = (
+    "# ADR 9984: Unclosed Comment In Type-6 Raw HTML Fixture\n\n"
+    "<div>\n"
+    "<!-- comment remains unclosed inside the raw block\n"
+    "## Hidden Status Inside Raw HTML\n"
+    "Superseded by ADR 0001\n"
+    "\n"
+    "## Status\n\n"
+    "Accepted\n"
+)
 indented_status_value_fixture = decision_history_dir / "adr-9996-indented-status-value-fixture.md"
 indented_status_value_fixture_text = (
     "# ADR 9996: Indented Status Value Fixture\n\n"
@@ -547,6 +568,8 @@ if first_top_level_status_value(lowercase_cdata_fixture_text) != "Superseded by 
     raise SystemExit("lowercase CDATA was incorrectly treated as Type-5 raw HTML")
 if first_top_level_status_value(comment_only_type6_html_fixture_text) != "Accepted":
     raise SystemExit("comment-only Type-6 HTML line incorrectly terminated the block")
+if first_top_level_status_value(unclosed_comment_in_type6_html_fixture_text) != "Accepted":
+    raise SystemExit("unclosed comment inside Type-6 HTML hid the following Accepted status")
 for closing_tag in ("script", "style", "pre", "textarea"):
     closing_special_tag_fixture_text = (
         f"# ADR 9985: Closing {closing_tag} Raw HTML Fixture\n\n"

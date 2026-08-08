@@ -177,10 +177,7 @@ EXPORT_INITIATION_REQUIRED_LIVE_CHECKS = {
     EXPORT_INITIATION_ACTION_FAMILY: {"export_availability"},
 }
 ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES = {
-    (
-        "account-service",
-        "POST /accounts/{accountId}/exports",
-    ): EXPORT_INITIATION_ACTION_FAMILY,
+    EXPORT_INITIATION_ROUTE_IDENTITY: EXPORT_INITIATION_ACTION_FAMILY,
     (
         "account-service",
         "GET /accounts/{accountId}/exports/{exportId}",
@@ -196,7 +193,11 @@ ACCOUNT_EXPORT_BRANCH_CLASSIFICATIONS = {
     "deactivated_pending_delete": "pending_deletion_scoped",
 }
 ACCOUNT_EXPORT_BRANCHES = set(ACCOUNT_EXPORT_BRANCH_CLASSIFICATIONS.items())
-ACTIVE_ACCOUNT_EXPORT_REQUIRED_LIVE_CHECKS = {"account_state_export_eligible"}
+ACTIVE_ACCOUNT_EXPORT_REQUIRED_LIVE_CHECKS = {
+    "account_state_export_eligible",
+    "current_account_generation",
+    "issuer_generation",
+}
 SECURITY_LOCK_EXPORT_ACTION_FAMILIES = {
     "export_initiate",
     "export_status",

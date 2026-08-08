@@ -2514,6 +2514,33 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     errors,
                 )
 
+    def test_pending_deletion_export_initiation_creates_exact_operation_binding(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        initiation = next(
+            route
+            for route in self.validator.matching_routes(
+                document["routes"],
+                "account-service",
+                "POST /accounts/{accountId}/exports",
+            )
+            if route.get("classification") == "pending_deletion_scoped"
+        )
+        self.assertEqual(
+            {
+                "source": "pending_deletion_credential_and_export_registry",
+                "required": [
+                    "accountId",
+                    "deletionWorkflowId",
+                    "deletionWorkflowGeneration",
+                    "exportId",
+                ],
+                "comparison": "create_and_attach_exact",
+                "mismatch": "PERMISSION_DENIED",
+            },
+            initiation["export_operation_binding"],
+        )
+        self.assertIn("PERMISSION_DENIED", initiation["canonical_errors"]["any_of"])
+
     def test_recovery_export_content_audit_contracts_are_exact(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         expected_contracts = (
@@ -2573,7 +2600,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             for route in baseline["routes"]
             if route.get("classification") == "account_scoped"
             and route.get("action_family") == "export_content"
-            and route.get("applicability", {}).get("account_state") == "active"
+            and self.validator.applicability_value(
+                route, "account_state", "test active export route", []
+            )
+            == "active"
         )
         expected_contract = self.validator.ACTIVE_ACCOUNT_EXPORT_CONTENT_AUDIT_CONTRACT
         self.assertEqual(expected_contract, route["audit_contract"])
@@ -2594,7 +2624,9 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     for route in document["routes"]
                     if route.get("classification") == "account_scoped"
                     and route.get("action_family") == "export_content"
-                    and route.get("applicability", {}).get("account_state")
+                    and self.validator.applicability_value(
+                        route, "account_state", "test active export route", []
+                    )
                     == "active"
                 )
                 mutate(mutated_route)
@@ -2660,6 +2692,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 self.assertIn(
                     "account_state_export_eligible", route["required_live_checks"]
                 )
+                self.assertIn(
+                    "current_account_generation", route["required_live_checks"]
+                )
+                self.assertNotIn("account_generation", route["required_live_checks"])
 
                 document = copy.deepcopy(baseline)
                 mutated_route = next(
@@ -2909,6 +2945,14 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             "capacityDelta wire presence with distinct absent and present_zero "
             "golden vectors"
         )
+        missing_contract = copy.deepcopy(baseline)
+        route_for(
+            missing_contract, "account-service", "CommitTenantCapacityAdmission"
+        ).pop("capacity_delta_wire_contract")
+        self.assertIn(
+            expected_error, validate_document(self.validator, missing_contract)
+        )
+
         for mutation_name, mutate in (
             (
                 "missing absent vector",

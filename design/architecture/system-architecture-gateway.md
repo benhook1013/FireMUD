@@ -78,7 +78,9 @@ For any connection that arrives from the public player/admin ingress, Spring Clo
 - `X-Client-IP`
 - `X-Game-Instance-Id`, `X-Tenant-Id`
 - `X-Proxy-Client-IP`, `X-Proxy-Connection-Id`, `X-Proxy-Game-Instance-Id`, `X-Proxy-Tenant-Id`
-- `X-Firemud-Connect-Context`, `X-Firemud-Connection-Mode`, and any other `X-Firemud-*` gameplay-admission headers
+- `X-Firemud-Connect-Context`, `X-Firemud-Connection-Mode`, and every other gateway-owned `X-Firemud-*` context/mode or gameplay-admission header; `X-Firemud-Connect-Token` is handled only by the carrier exception below
+
+The sole public-ingress carrier exception is `X-Firemud-Connect-Token`: Gateway preserves it only for the proven target-only `non_first_party_public` variant on canonical `/ws/game/**`. On first-party routes and on unsupported or unproven routes, Gateway rejects the carrier as `CONNECT_TOKEN_REJECTED` with reason `unsupported_carrier_or_route`, strips it, and does not fall back to a cookie carrier or infer a connection mode from its presence.
 
 ### TCP Proxy → Gateway Authentication
 

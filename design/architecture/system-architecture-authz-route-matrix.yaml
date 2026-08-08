@@ -376,16 +376,13 @@ classification_rules:
       tenant: false
       membership: false
     required_live_checks: [security_lock_export_credential_registry, security_lock_recovery_state, security_lock_export_action_family]
-    permitted_export_families: [full_subject_portable_data]
     allowed_route_actions: [export_initiate, export_status, export_content]
     forbidden_route_actions: [login, bootstrap, connect_token, tenant, purchase, gameplay, deletion_status, deletion_cancel, billing_settlement]
     invalid_or_revoked_outcome: AUTH_SESSION_REVOKED
     dependency_unavailable_outcome: AUTH_UNAVAILABLE
     failure_mapping:
-      invalid_expired_or_revoked_credential: AUTH_SESSION_REVOKED
       credential_account_or_recovery_binding_mismatch: AUTH_SESSION_REVOKED
       export_operation_or_job_binding_mismatch: PERMISSION_DENIED
-      unavailable_credential_recovery_or_export_authority: AUTH_UNAVAILABLE
       changed_request_or_export_scope: IDEMPOTENCY_CONFLICT
     fallback: forbidden
     issuance_constraint:
@@ -1648,7 +1645,7 @@ routes:
     subject_binding: caller_account_id
     platform_admin_override: forbidden
     required_fields: [request_id]
-    required_live_checks: [account_state_export_eligible, issuer_generation, account_generation, recent_account_authentication, export_availability]
+    required_live_checks: [account_state_export_eligible, issuer_generation, current_account_generation, recent_account_authentication, export_availability]
     action_family: export_initiate
     mutation_contract: create_or_idempotently_replay_bounded_full_subject_export
     idempotency_contract:
@@ -1726,6 +1723,11 @@ routes:
     action_family: export_initiate
     required_fields: [request_id]
     required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, export_availability]
+    export_operation_binding:
+      source: pending_deletion_credential_and_export_registry
+      required: [accountId, deletionWorkflowId, deletionWorkflowGeneration, exportId]
+      comparison: create_and_attach_exact
+      mismatch: PERMISSION_DENIED
     mutation_contract: create_or_idempotently_replay_bounded_full_subject_export
     idempotency_contract:
       key: request_id
@@ -1734,7 +1736,7 @@ routes:
       changed_digest: IDEMPOTENCY_CONFLICT
     response_profile: asynchronous_export_job_identity
     canonical_errors:
-      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE, IDEMPOTENCY_CONFLICT]
+      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE, PERMISSION_DENIED, IDEMPOTENCY_CONFLICT]
   - service: account-service
     route: GET /accounts/{accountId}/exports/{exportId}
     scope: account
@@ -1754,7 +1756,7 @@ routes:
       comparison: exact
       mismatch: PERMISSION_DENIED
     action_family: export_status
-    required_live_checks: [account_state_export_eligible, issuer_generation, account_generation]
+    required_live_checks: [account_state_export_eligible, issuer_generation, current_account_generation]
     response_profile: asynchronous_versioned_cross_owner_export_manifest
     canonical_errors:
       any_of: [AUTH_UNAVAILABLE, PERMISSION_DENIED]
@@ -1841,7 +1843,7 @@ routes:
       mismatch: PERMISSION_DENIED
     action_family: export_content
     audit_contract: required_account_export_job_and_outcome
-    required_live_checks: [account_state_export_eligible, issuer_generation, account_generation, recent_account_authentication, export_availability]
+    required_live_checks: [account_state_export_eligible, issuer_generation, current_account_generation, recent_account_authentication, export_availability]
     response_profile: completed_export_artifact_only
     canonical_errors:
       any_of: [AUTH_UNAVAILABLE, PERMISSION_DENIED]
