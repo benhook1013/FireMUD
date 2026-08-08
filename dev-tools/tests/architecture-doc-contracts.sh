@@ -212,13 +212,18 @@ status_heading = re.compile(r"^##[ \t]+Status[ \t]*$")
 historical_status_value = re.compile(r"^(?:Superseded|Withdrawn)\b")
 raw_html_closing_tag_only = frozenset(("pre", "script", "style", "textarea"))
 raw_html_block_start = re.compile(
-    r"^[ \t]{0,3}</?(?P<tag>address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|pre|script|search|section|style|summary|table|tbody|td|textarea|tfoot|th|thead|title|tr|track|ul)(?:[ \t/>]|$)",
+    r"^[ \t]{0,3}<(?P<closing>/)?(?P<tag>address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|pre|script|search|section|style|summary|table|tbody|td|textarea|tfoot|th|thead|title|tr|track|ul)(?:[ \t/>]|$)",
     re.IGNORECASE,
 )
 raw_html_special_start = re.compile(
     r"^[ \t]{0,3}(?:(?P<processing><\?)|(?P<declaration><![A-Z])|(?P<cdata><!\[CDATA\[))",
     re.IGNORECASE,
 )
+html_comment_boundary = "\x00"
+
+
+def has_non_whitespace(text):
+    return any(not character.isspace() for character in text)
 
 
 def strip_html_comments(line, in_html_comment):
@@ -231,21 +236,29 @@ def strip_html_comments(line, in_html_comment):
                 return "".join(visible), True
             in_html_comment = False
             cursor = closing + len("-->")
-            if cursor < len(line) and not line[cursor].isspace():
-                visible.append(" ")
+            remainder = line[cursor:]
+            if has_non_whitespace(remainder) and (
+                not visible or not visible[-1].endswith(html_comment_boundary)
+            ):
+                visible.append(html_comment_boundary)
             continue
 
         opening = line.find("<!--", cursor)
         if opening == -1:
             visible.append(line[cursor:])
             break
-        visible.append(line[cursor:opening])
+        prefix = line[cursor:opening]
+        visible.append(prefix)
+        if has_non_whitespace(prefix):
+            visible.append(html_comment_boundary)
         in_html_comment = True
         cursor = opening + len("<!--")
     return "".join(visible), in_html_comment
 
 
-def strip_raw_html_block(line, in_raw_html_block, raw_html_block_kind):
+def strip_raw_html_block(
+    line, in_raw_html_block, raw_html_block_kind, physical_line_blank
+):
     """Hide CommonMark raw HTML blocks from top-level Markdown status parsing."""
     if in_raw_html_block:
         if raw_html_block_kind == "processing":
@@ -255,7 +268,7 @@ def strip_raw_html_block(line, in_raw_html_block, raw_html_block_kind):
         if raw_html_block_kind == "cdata":
             return "", "]]>" not in line, None if "]]>" in line else raw_html_block_kind
         if raw_html_block_kind is None or raw_html_block_kind.lower() not in raw_html_closing_tag_only:
-            if not line.strip():
+            if physical_line_blank:
                 return "", False, None
         elif re.search(
             rf"</{re.escape(raw_html_block_kind)}[ \t]*>", line, re.IGNORECASE
@@ -274,6 +287,12 @@ def strip_raw_html_block(line, in_raw_html_block, raw_html_block_kind):
         return "", terminator not in line[special.end() :], (
             kind if terminator not in line[special.end() :] else None
         )
+    if (
+        match.group("closing") is not None
+        and tag is not None
+        and tag.lower() in raw_html_closing_tag_only
+    ):
+        return "", True, None
     if tag is not None and tag.lower() in raw_html_closing_tag_only:
         closing_tag = re.search(
             rf"</{re.escape(tag)}[ \t]*>", line, re.IGNORECASE
@@ -301,11 +320,13 @@ def first_top_level_status_value(text):
             )
             continue
 
+        physical_line_blank = not line.strip()
         line, in_html_comment = strip_html_comments(line, in_html_comment)
         line, in_raw_html_block, raw_html_block_kind = strip_raw_html_block(
             line,
             in_raw_html_block,
             raw_html_block_kind,
+            physical_line_blank,
         )
         if in_raw_html_block or not line:
             continue
@@ -461,6 +482,17 @@ cdata_adr_fixture_text = (
     "## Status\n\n"
     "Accepted\n"
 )
+comment_only_type6_html_fixture_text = (
+    "# ADR 9986: Comment-Only Type-6 Raw HTML Fixture\n\n"
+    "<div>\n"
+    "<!-- hidden comment -->\n"
+    "## Hidden Status After Comment-Only Line\n"
+    "Superseded by ADR 0001\n"
+    "</div>\n"
+    "\n"
+    "## Status\n\n"
+    "Accepted\n"
+)
 indented_status_value_fixture = decision_history_dir / "adr-9996-indented-status-value-fixture.md"
 indented_status_value_fixture_text = (
     "# ADR 9996: Indented Status Value Fixture\n\n"
@@ -498,6 +530,22 @@ if first_top_level_status_value(processing_instruction_adr_fixture_text) != "Acc
     raise SystemExit("processing-instruction block hid the following Accepted status")
 if first_top_level_status_value(cdata_adr_fixture_text) != "Accepted":
     raise SystemExit("CDATA block hid the following Accepted status")
+if first_top_level_status_value(comment_only_type6_html_fixture_text) != "Accepted":
+    raise SystemExit("comment-only Type-6 HTML line incorrectly terminated the block")
+for closing_tag in ("script", "style", "pre", "textarea"):
+    closing_special_tag_fixture_text = (
+        f"# ADR 9985: Closing {closing_tag} Raw HTML Fixture\n\n"
+        f"</{closing_tag}>\n"
+        "## Hidden Status After Closing Special Tag\n"
+        "Superseded by ADR 0001\n"
+        "\n"
+        "## Status\n\n"
+        "Accepted\n"
+    )
+    if first_top_level_status_value(closing_special_tag_fixture_text) != "Accepted":
+        raise SystemExit(
+            f"closing {closing_tag} tag did not start an ordinary Type-6 raw HTML block"
+        )
 if first_top_level_status_value("    ## Status\n    Superseded by ADR 0001\n") is not None:
     raise SystemExit("four-space indented code-block status was incorrectly parsed")
 if first_top_level_status_value(indented_status_value_fixture_text) != "Accepted":
@@ -511,6 +559,17 @@ same_line_comment_prefix_fixture_text = (
 )
 if first_top_level_status_value(same_line_comment_prefix_fixture_text) != "Accepted":
     raise SystemExit("same-line HTML comment prefix created a visible status heading")
+comment_adjacent_heading_fixture_text = (
+    "# ADR 9984: Comment-Adjacent Heading Fixture\n\n"
+    "##<!-- hidden --> Status\n"
+    "Superseded by ADR 0001\n"
+    "##<!-- hidden -->Status\n"
+    "Superseded by ADR 0001\n"
+    "## Status\n\n"
+    "Accepted\n"
+)
+if first_top_level_status_value(comment_adjacent_heading_fixture_text) != "Accepted":
+    raise SystemExit("HTML comment removal created a synthetic ATX status heading")
 reject_obsolete_envelope_phrases(
     historical_adr_fixture,
     historical_adr_fixture_text,
@@ -730,11 +789,13 @@ def strip_hidden_markdown_content(text):
             )
             continue
 
+        physical_line_blank = not line.strip()
         line, in_html_comment = strip_html_comments(line, in_html_comment)
         line, in_raw_html_block, raw_html_block_kind = strip_raw_html_block(
             line,
             in_raw_html_block,
             raw_html_block_kind,
+            physical_line_blank,
         )
         if in_raw_html_block or not line:
             continue
@@ -753,8 +814,10 @@ def strip_hidden_markdown_content(text):
 
 def extract_unique_markdown_section(text, heading, source_label):
     text = strip_hidden_markdown_content(text)
-    heading_pattern = re.compile(rf"^## {re.escape(heading)}[ \t]*(?:\r?\n)?$")
-    level_two_heading = re.compile(r"^## ")
+    heading_pattern = re.compile(
+        rf"^[ ]{{0,3}}##[ \t]+{re.escape(heading)}[ \t]*(?:\r?\n)?$"
+    )
+    level_two_heading = re.compile(r"^[ ]{0,3}##(?=[ \t]|(?:\r?\n)?$)")
     sections = []
     current_section = None
     in_fenced_block = False
@@ -819,6 +882,43 @@ fenced_heading_section = extract_unique_markdown_section(
 )
 if "## Not a real section heading" not in fenced_heading_section or "after\n" not in fenced_heading_section:
     raise SystemExit("fenced heading fixture was incorrectly treated as a section boundary")
+
+indented_heading_fixture = (
+    "  ## Indented heading fixture\n"
+    "before\n"
+    "   ## Indented boundary\n"
+    "after\n"
+)
+indented_heading_section = extract_unique_markdown_section(
+    indented_heading_fixture,
+    "Indented heading fixture",
+    "indented heading fixture",
+)
+if indented_heading_section != "before\n":
+    raise SystemExit("indented ATX heading boundary was not recognized")
+
+tab_separated_heading_fixture = (
+    "## Tab-separated heading fixture\n"
+    "before\n"
+    "##\tTab-separated boundary\n"
+    "after\n"
+)
+tab_separated_heading_section = extract_unique_markdown_section(
+    tab_separated_heading_fixture,
+    "Tab-separated heading fixture",
+    "tab-separated heading fixture",
+)
+if tab_separated_heading_section != "before\n":
+    raise SystemExit("tab-separated ATX heading boundary was not recognized")
+
+end_after_level_two_fixture = "## End-after-markers fixture\nbefore\n##\nafter\n"
+end_after_level_two_section = extract_unique_markdown_section(
+    end_after_level_two_fixture,
+    "End-after-markers fixture",
+    "end-after-level-two fixture",
+)
+if end_after_level_two_section != "before\n":
+    raise SystemExit("ATX heading ending immediately after ## was not recognized")
 
 hidden_required_snippet_fixture = (
     "## Hidden required snippet fixture\n"

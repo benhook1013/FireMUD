@@ -170,8 +170,27 @@ SECURITY_LOCK_EXPORT_GENERATION_FIELDS = (
     "membership_authority_generation_applies",
 )
 EXPORT_INITIATION_ROUTE = "POST /accounts/{accountId}/exports"
+EXPORT_INITIATION_ROUTE_IDENTITY = ("account-service", EXPORT_INITIATION_ROUTE)
+EXPORT_INITIATION_ACTION_FAMILY = "export_initiate"
 EXPORT_INITIATION_REQUIRED_LIVE_CHECKS = {
-    "export_initiate": {"export_availability"},
+    EXPORT_INITIATION_ACTION_FAMILY: {"export_availability"},
+}
+CAPACITY_ADMISSION_ROUTE = ("account-service", "CommitTenantCapacityAdmission")
+CAPACITY_DELTA_WIRE_CONTRACT = {
+    "field": "capacityDelta",
+    "presence": "explicit",
+    "absent_encoding": "omitted",
+    "present_zero_encoding": "explicit_zero",
+    "golden_vectors": {
+        "absent": {
+            "presence": "absent",
+            "wire_value": "omitted",
+        },
+        "present_zero": {
+            "presence": "present",
+            "wire_value": 0,
+        },
+    },
 }
 OPERATOR_AUTHORIZATION_BRANCHES = {
     "tenant_role": {
@@ -1448,19 +1467,69 @@ def validate_export_initiation_routes(
     live_checks_cache: LiveChecksCache | None = None,
 ) -> None:
     for route in routes:
-        if not isinstance(route, dict) or route.get("route") != EXPORT_INITIATION_ROUTE:
+        if (
+            not isinstance(route, dict)
+            or route_set_key(route) != EXPORT_INITIATION_ROUTE_IDENTITY
+        ):
             continue
         action_family = route.get("action_family")
-        required_checks = EXPORT_INITIATION_REQUIRED_LIVE_CHECKS.get(action_family)
-        if required_checks is None:
-            continue
         label = route_label(route)
+        if action_family != EXPORT_INITIATION_ACTION_FAMILY:
+            append_unique_error(
+                errors,
+                f"{label} must declare action_family "
+                f"{EXPORT_INITIATION_ACTION_FAMILY}",
+            )
+        required_checks = EXPORT_INITIATION_REQUIRED_LIVE_CHECKS[
+            EXPORT_INITIATION_ACTION_FAMILY
+        ]
         checks = route_live_checks(route, label, errors, live_checks_cache)
         for required_check in sorted(required_checks - checks):
             append_unique_error(
                 errors,
-                f"{label} {action_family} must require live check {required_check}",
+                f"{label} {EXPORT_INITIATION_ACTION_FAMILY} must require live check "
+                f"{required_check}",
             )
+
+
+def validate_capacity_admission_wire_contract(
+    routes: list[Any],
+    errors: list[str],
+    required_fields_cache: RequiredFieldsCache | None = None,
+    cardinality_errors: set[str] | None = None,
+) -> None:
+    service, route_name = CAPACITY_ADMISSION_ROUTE
+    route = resolve_unique_route(
+        routes,
+        service,
+        route_name,
+        errors,
+        cardinality_errors,
+    )
+    if route is None:
+        return
+    label = f"{service} {route_name}"
+    fields = set(
+        cached_required_fields(
+            route,
+            route.get("required_fields"),
+            f"{label} required_fields",
+            errors,
+            required_fields_cache,
+            "required_fields",
+        )
+    )
+    if "capacity_delta" not in fields:
+        append_unique_error(
+            errors,
+            f"{label} required_fields must include capacity_delta",
+        )
+    if route.get("capacity_delta_wire_contract") != CAPACITY_DELTA_WIRE_CONTRACT:
+        append_unique_error(
+            errors,
+            f"{label} must declare explicit capacityDelta wire presence with "
+            "distinct absent and present_zero golden vectors",
+        )
 
 
 def validate_membership_generation(
@@ -2578,6 +2647,11 @@ def validate_profile_authority_routes(
                     errors,
                     f"{label} must declare method_policy exact_declared_route",
                 )
+            if route.get("subject_binding") != "caller_account_id":
+                append_unique_error(
+                    errors,
+                    f"{label} must declare subject_binding caller_account_id",
+                )
             if "self_only_roles" in route:
                 append_unique_error(errors, f"{label} must not declare self_only_roles")
             if route.get("target_subject_binding") != PROFILE_TARGET_SUBJECT_BINDING:
@@ -3676,6 +3750,12 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     validate_route_statuses(routes, allowed_route_statuses, errors)
     validate_required_fields(routes, errors, required_fields_cache)
     cardinality_errors: set[str] = set()
+    validate_capacity_admission_wire_contract(
+        routes,
+        errors,
+        required_fields_cache,
+        cardinality_errors,
+    )
     validate_authority_unavailable_outcomes(routes, errors, cardinality_errors)
     validate_operator_reference_issuance(
         routes,

@@ -381,7 +381,9 @@ classification_rules:
     invalid_or_revoked_outcome: AUTH_SESSION_REVOKED
     dependency_unavailable_outcome: AUTH_UNAVAILABLE
     failure_mapping:
-      invalid_expired_revoked_or_binding_mismatch: AUTH_SESSION_REVOKED
+      invalid_expired_or_revoked_credential: AUTH_SESSION_REVOKED
+      credential_account_or_recovery_binding_mismatch: AUTH_SESSION_REVOKED
+      export_operation_or_job_binding_mismatch: PERMISSION_DENIED
       unavailable_credential_recovery_or_export_authority: AUTH_UNAVAILABLE
       changed_request_or_export_scope: IDEMPOTENCY_CONFLICT
     fallback: forbidden
@@ -1683,8 +1685,12 @@ routes:
       source: security_lock_export_credential_and_export_registry
       required: [accountId, recoveryCaseId, exportId]
       comparison: create_and_attach_exact
-      mismatch: AUTH_SESSION_REVOKED
-    credential_use: single_use_for_export_initiation
+      mismatch: PERMISSION_DENIED
+    credential_use: bounded_expiring_export_operation_access
+    credential_consumption:
+      initiation: only_when_accepting_new_request_id
+      exact_request_id_and_digest_retry: replay_stored_operation_without_reconsuming
+      status_and_content: same_bounded_expiring_credential_valid_until_expiry
     mutation_contract: create_or_idempotently_replay_bounded_full_subject_export
     idempotency_contract:
       key: request_id
@@ -1693,7 +1699,7 @@ routes:
       changed_digest: IDEMPOTENCY_CONFLICT
     response_profile: asynchronous_export_job_identity
     canonical_errors:
-      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE, IDEMPOTENCY_CONFLICT]
+      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE, PERMISSION_DENIED, IDEMPOTENCY_CONFLICT]
   - service: account-service
     route: POST /accounts/{accountId}/exports
     scope: account
@@ -1778,7 +1784,7 @@ routes:
       mismatch: PERMISSION_DENIED
     action_family: export_status
     required_live_checks: [security_lock_export_credential_registry, security_lock_recovery_state, security_lock_export_action_family]
-    credential_use: bounded_expiring_status_access
+    credential_use: bounded_expiring_export_operation_access
     response_profile: asynchronous_versioned_cross_owner_export_manifest
     canonical_errors:
       any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE, PERMISSION_DENIED]
@@ -1864,7 +1870,7 @@ routes:
       mismatch: PERMISSION_DENIED
     action_family: export_content
     required_live_checks: [security_lock_export_credential_registry, security_lock_recovery_state, security_lock_export_action_family, export_availability]
-    credential_use: bounded_expiring_content_access
+    credential_use: bounded_expiring_export_operation_access
     response_profile: completed_export_artifact_only
     canonical_errors:
       any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE, PERMISSION_DENIED]
@@ -2188,6 +2194,18 @@ routes:
         capacity_delta,
         mutation_digest,
       ]
+    capacity_delta_wire_contract:
+      field: capacityDelta
+      presence: explicit
+      absent_encoding: omitted
+      present_zero_encoding: explicit_zero
+      golden_vectors:
+        absent:
+          presence: absent
+          wire_value: omitted
+        present_zero:
+          presence: present
+          wire_value: 0
     attempt_fence_contract:
       initial_attempt: binds_fresh_attempt_id_current_rearm_fence_exact_payload_and_digest
       exact_retry: replays_stored_result

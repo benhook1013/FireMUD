@@ -1036,6 +1036,13 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 "must declare target_subject_binding exact_caller_account_id_for_every_role",
             ),
             (
+                "subject_binding",
+                lambda route: route.__setitem__(
+                    "subject_binding", "explicit_target_account_id"
+                ),
+                "must declare subject_binding caller_account_id",
+            ),
+            (
                 "platform_admin_override",
                 lambda route: route.__setitem__(
                     "platform_admin_override", "platformAdmin_only"
@@ -2269,14 +2276,14 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             for field in self.validator.SECURITY_LOCK_EXPORT_GENERATION_FIELDS:
                 self.assertFalse(route[field])
 
-        for route_index in range(len(security_routes)):
+        for security_route_position in range(len(security_routes)):
             for field in self.validator.SECURITY_LOCK_EXPORT_GENERATION_FIELDS:
                 for mutation_name, mutate in (
                     ("missing", lambda route, field=field: route.pop(field)),
                     ("true", lambda route, field=field: route.__setitem__(field, True)),
                 ):
                     with self.subTest(
-                        route_index=route_index,
+                        route_position=security_route_position,
                         field=field,
                         mutation=mutation_name,
                     ):
@@ -2287,7 +2294,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                             if route.get("classification")
                             == "security_lock_export_scoped"
                         ]
-                        mutate(mutated_routes[route_index])
+                        mutate(mutated_routes[security_route_position])
                         errors = validate_document(self.validator, document)
                         self.assertTrue(
                             any(
@@ -2312,8 +2319,17 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     ),
                     "security_lock_export_scoped routes must accept only security-lock-export",
                 ),
+                (
+                    "additional credential",
+                    lambda route: route["accepted_credentials"].append(
+                        "pending-deletion-access"
+                    ),
+                    "security_lock_export_scoped routes must accept only security-lock-export",
+                ),
             ):
-                with self.subTest(route_index=route_index, mutation=mutation_name):
+                with self.subTest(
+                    route_position=security_route_position, mutation=mutation_name
+                ):
                     document = copy.deepcopy(baseline)
                     mutated_routes = [
                         route
@@ -2321,7 +2337,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                         if route.get("classification")
                         == "security_lock_export_scoped"
                     ]
-                    mutate(mutated_routes[route_index])
+                    mutate(mutated_routes[security_route_position])
                     errors = validate_document(self.validator, document)
                     self.assertTrue(any(expected_error in error for error in errors))
 
@@ -2367,6 +2383,44 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             ["accountId", "recoveryCaseId", "exportId"],
             rule["export_operation_binding"]["required"],
         )
+        self.assertEqual(
+            "AUTH_SESSION_REVOKED",
+            rule["failure_mapping"][
+                "credential_account_or_recovery_binding_mismatch"
+            ],
+        )
+        self.assertEqual(
+            "PERMISSION_DENIED",
+            rule["failure_mapping"]["export_operation_or_job_binding_mismatch"],
+        )
+        export_routes = {
+            route["action_family"]: route
+            for route in document["routes"]
+            if route.get("classification") == "security_lock_export_scoped"
+        }
+        initiation = export_routes["export_initiate"]
+        self.assertEqual(
+            "bounded_expiring_export_operation_access",
+            initiation["credential_use"],
+        )
+        self.assertEqual(
+            {
+                "initiation": "only_when_accepting_new_request_id",
+                "exact_request_id_and_digest_retry": (
+                    "replay_stored_operation_without_reconsuming"
+                ),
+                "status_and_content": (
+                    "same_bounded_expiring_credential_valid_until_expiry"
+                ),
+            },
+            initiation["credential_consumption"],
+        )
+        for action_family in ("export_status", "export_content"):
+            with self.subTest(action_family=action_family):
+                self.assertEqual(
+                    "bounded_expiring_export_operation_access",
+                    export_routes[action_family]["credential_use"],
+                )
         self.assertEqual(
             {
                 "security_lock_export_recovery_case_mismatch_denied",
@@ -2418,26 +2472,25 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
 
     def test_export_initiation_requires_availability_for_every_account_state(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-        export_routes = [
-            route
-            for route in baseline["routes"]
-            if route.get("route") == "POST /accounts/{accountId}/exports"
-            and route.get("action_family") == "export_initiate"
-        ]
+        export_routes = self.validator.matching_routes(
+            baseline["routes"],
+            "account-service",
+            "POST /accounts/{accountId}/exports",
+        )
         self.assertEqual(3, len(export_routes))
         for route in export_routes:
+            self.assertEqual("export_initiate", route["action_family"])
             self.assertIn("export_availability", route["required_live_checks"])
 
-        for route_index in range(len(export_routes)):
-            with self.subTest(route_index=route_index):
+        for route_position in range(len(export_routes)):
+            with self.subTest(route_position=route_position):
                 document = copy.deepcopy(baseline)
-                mutated_routes = [
-                    route
-                    for route in document["routes"]
-                    if route.get("route") == "POST /accounts/{accountId}/exports"
-                    and route.get("action_family") == "export_initiate"
-                ]
-                mutated_route = mutated_routes[route_index]
+                mutated_routes = self.validator.matching_routes(
+                    document["routes"],
+                    "account-service",
+                    "POST /accounts/{accountId}/exports",
+                )
+                mutated_route = mutated_routes[route_position]
                 mutated_route["required_live_checks"].remove("export_availability")
                 errors = validate_document(self.validator, document)
                 label = self.validator.route_label(mutated_route)
@@ -2445,6 +2498,96 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     any(
                         f"{label} export_initiate must require live check "
                         "export_availability" in error
+                        for error in errors
+                    )
+                )
+
+    def test_export_initiation_identity_and_action_family_cannot_bypass_availability(
+        self,
+    ):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        mutations = (
+            (
+                "padded service",
+                lambda route: route.__setitem__("service", " account-service "),
+            ),
+            (
+                "padded route",
+                lambda route: route.__setitem__(
+                    "route", " POST /accounts/{accountId}/exports "
+                ),
+            ),
+            (
+                "missing action family",
+                lambda route: route.pop("action_family"),
+            ),
+            (
+                "alternate action family",
+                lambda route: route.__setitem__("action_family", "export_status"),
+            ),
+        )
+        for mutation_name, mutate in mutations:
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                route = self.validator.matching_routes(
+                    document["routes"],
+                    "account-service",
+                    "POST /accounts/{accountId}/exports",
+                )[0]
+                mutate(route)
+                route["required_live_checks"].remove("export_availability")
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any("export_availability" in error for error in errors)
+                )
+                if mutation_name in {"missing action family", "alternate action family"}:
+                    self.assertTrue(
+                        any(
+                            "must declare action_family export_initiate" in error
+                            for error in errors
+                        )
+                    )
+
+    def test_capacity_admission_declares_distinct_absent_and_present_zero_vectors(
+        self,
+    ):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(
+            baseline, "account-service", "CommitTenantCapacityAdmission"
+        )
+        self.assertEqual(
+            self.validator.CAPACITY_DELTA_WIRE_CONTRACT,
+            route["capacity_delta_wire_contract"],
+        )
+
+        for mutation_name, mutate in (
+            (
+                "missing absent vector",
+                lambda contract: contract["golden_vectors"].pop("absent"),
+            ),
+            (
+                "present zero vector encoded as absent",
+                lambda contract: contract["golden_vectors"]["present_zero"].__setitem__(
+                    "presence", "absent"
+                ),
+            ),
+            (
+                "absent vector encoded as zero",
+                lambda contract: contract["golden_vectors"]["absent"].__setitem__(
+                    "wire_value", 0
+                ),
+            ),
+        ):
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                mutated_route = route_for(
+                    document, "account-service", "CommitTenantCapacityAdmission"
+                )
+                mutate(mutated_route["capacity_delta_wire_contract"])
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(
+                        "explicit capacityDelta wire presence" in error
                         for error in errors
                     )
                 )

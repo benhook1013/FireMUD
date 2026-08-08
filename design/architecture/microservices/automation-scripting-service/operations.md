@@ -8,6 +8,10 @@ This document collects the service readiness model, quota and fairness behavior,
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 - Operators and SREs should pair this document with [Scripting Quotas and Operations](../../system-architecture-scripting-quotas-and-operations.md), [Scripting Operations Cookbook](../../system-architecture-scripting-operations-cookbook.md), [Scripting Observability Contract](../../system-architecture-scripting-observability-contract.md), and [Redis Architecture](../../system-architecture-redis.md).
 
+## Implementation Status
+
+The current service implementation still combines pre-DSL trigger state and later handoff processing in its work-item row, lacks evaluation lease/fencing-generation recovery, and does not carry stable per-command identity and dedupe through the live producer/consumer boundary. Multi-command work items are therefore not a conformant admitted capability until that boundary is widened. The target durable boundary, state mapping, and recovery behavior are owned by [Scripting Runtime Execution](../../system-architecture-scripting-runtime-execution.md#pre-dsl-trigger-and-evaluated-descriptor-boundary).
+
 ## Readiness and Liveness
 
 - `liveness` is local-only and indicates that the process is alive and the scheduler/runtime loops are not wedged.
@@ -30,10 +34,10 @@ Game Session and Logging & Admin use the script patch visibility APIs and events
 Rollback orchestration rules:
 
 - Pinning must satisfy base-version cohesion (`patch.baseVersionId == runtimeVersionId` for the instance).
-- Rollback convergence waiting is bounded. If `GetAutomationPinConvergence` plus Game Session convergence checks do not match the expected `controlPlaneRequestId` before the configured timeout, rollback enters terminal timeout state (`ROLLBACK_CONVERGENCE_TIMEOUT`) and admission and ticks remain paused until explicit operator action.
+- Rollback convergence waiting is bounded and delegates to the [Pin Convergence Acknowledgment Predicate](../../system-architecture-scripting-rollout-and-rollback.md#pin-convergence-acknowledgment-predicate). This service must not declare convergence from its own acknowledgment; it consumes the owner workflow outcome and keeps admission and ticks paused when the canonical predicate has not succeeded.
 - Timeout transition must emit `ScriptRollbackConvergenceTimedOut` and increment `automation_rollback_convergence_timeout_total{scope, operation, reason}`.
 - Rollback orchestration follows the durable state machine in [Scripting Rollout and Rollback](../../system-architecture-scripting-rollout-and-rollback.md#rollback-orchestration-state-machine-required). This service must resume its idempotent participation from the last durable owner state rather than restarting or accidentally unpausing.
-- `DRAINING` remains active until `GetAutomationDrainStatus` confirms that the current rollback-scope `admissionEpoch` has no active pre-pause executions and no remaining cancelable outbox work.
+- `DRAINING` remains active until `GetAutomationDrainStatus` confirms the canonical two-layer state mapping has no active pre-DSL evaluation or descriptor handoff and no pending trigger or evaluated descriptor that can refill the current rollback-scope `admissionEpoch`; see [Scripting Runtime Execution](../../system-architecture-scripting-runtime-execution.md#current-state-mapping-drain-and-rebuild-rules).
 
 ## Metrics and Audit Guidance
 
@@ -52,7 +56,7 @@ Queue and quota behavior must be observable either through the canonical `cache.
 
 When diagnosing sandbox-related or automation-runtime issues in production, operators should:
 
-- Check `script_event_audit` records for `finalStage`, `finalOutcome`, `finalReason`, and associated scope fields such as `tenantId`, `scriptId`, `gameInstanceId`, `regionId`, `regionEpoch`, `tickId`, resolved `playableStateScope` (`shared` or `isolated`), and `sourceService` when present. For emitted commands, inspect the supplementary command-handoff records for `automationDispatchId`, Game Session command id, and handoff outcome/reason; inspect rendered command text/shape only when required by the canonical command-handoff schema, so shared-state and isolated-state work can be distinguished without treating one handler audit row as one command.
+- Check `script_event_audit` records for `finalStage`, `finalOutcome`, `finalReason`, and associated scope fields such as `tenantId`, `scriptId`, `gameInstanceId`, `regionId`, `regionEpoch`, `tickId`, resolved `playableStateScope` (`shared` or `isolated`), and `sourceService` when present. For emitted commands, inspect the supplementary command-handoff records using the canonical `(automationDispatchId, commandOrdinal)` identity; `outboxWorkItemId` is parent correlation only. Inspect rendered command text/shape only when required by the canonical command-handoff schema, so shared-state and isolated-state work can be distinguished without treating one handler audit row as one command.
 - Inspect sandbox and runtime metrics such as `automation_script_sandbox_failures_total`, `automation_script_runtime_seconds`, and queue delay metrics.
-- Verify patch and pin convergence using `GetScriptPatchStatus`, `GetScriptPatchInstanceRolloutStatus`, and `GetAutomationPinConvergence`.
+- Verify patch and pin convergence using `GetScriptPatchStatus`, `GetScriptPatchInstanceRolloutStatus`, and the [Pin Convergence Acknowledgment Predicate](../../system-architecture-scripting-rollout-and-rollback.md#pin-convergence-acknowledgment-predicate) when a promotion or rollback is active.
 - Verify plugin policy/runtime convergence using `GetPluginStatus`, `ListPluginRuntimeEvents`, and `GetPluginPolicyConvergence` together with the design-time publication reads from Game Design.
