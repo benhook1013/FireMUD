@@ -74,7 +74,7 @@ The single `Admin / Operator Tools -> Gateway` line in the ASCII diagram visuall
 
 Plane definitions:
 
-- `infrastructure management plane`: Internal automation and operator clients use Gateway's gRPC surface for route configuration and health checks; it is separate from the `player traffic plane` and uses the separate Gateway-management authentication contract.
+- `infrastructure management plane`: Internal automation and operator clients use Gateway's gRPC surface for approved development/test-only route configuration and health checks; it is separate from the `player traffic plane` and uses the separate Gateway-management authentication contract. Infrastructure-management route overrides must not mutate production player-facing routes.
 - `external admin/creator API plane`: Operator and creator UIs use HTTP(S) through Gateway for route-matrix entries explicitly marked edge-routable; it is separate from the `infrastructure management plane`.
 - `player traffic plane`: Player-facing HTTP, WebSocket, and Telnet traffic used for gameplay admission and live play; it is separate from the infrastructure-management gRPC surface.
 

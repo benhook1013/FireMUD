@@ -93,7 +93,7 @@ Event-scope ingress identity before handler resolution:
 | `scriptEventId` | Yes | Caller-supplied live ingress idempotency token, or service-generated dry-run/test token. |
 | `isDryRun` | Yes | Separates live and dry-run/test ingress namespaces. |
 
-Event-scope ingress outcomes are recorded in an ingress audit/logging surface keyed by the event-scope identity above, not in handler-scoped `script_event_audit`. Once the event is accepted for handler resolution, each resolved handler produces its own full applicable Trigger Identity and `script_event_audit` row. Pre-resolution denials such as auth failure, stale pin state, reload backpressure, rollback pause, or version unavailability must not invent a synthetic `scriptId` or `bindingId`.
+Event-scope ingress outcomes are recorded in the existing `script_event_ingress_audit` surface using its event-scope identity, `scriptEventId` correlation, `createdAt` retention anchor, and `admissionOutcome`/`admissionReason` fields, not in handler-scoped `script_event_audit`. Once the event is accepted for handler resolution, each resolved handler produces its own full applicable Trigger Identity and `script_event_audit` row. Pre-resolution denials such as auth failure, stale pin state, reload backpressure, rollback pause, or version unavailability must not invent a synthetic `scriptId` or `bindingId`.
 
 Signer-policy unavailability before handler resolution is an event-scope denial: return `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_SIGNER_POLICY_UNAVAILABLE` with bounded `admissionReason=signer_policy_unavailable`, record the same pair in `script_event_ingress_audit`, and do not create a handler-scoped `finalOutcome` or `script_event_audit` row. If signer policy is evaluated after binding resolution for a concrete handler, the handler-scoped outcome remains `finalOutcome=signer_policy_unavailable` under Table 2.
 
@@ -118,7 +118,7 @@ The ingress endpoint determines who owns `scriptEventId` generation and retry be
 
 ## Table 2: `script_event_audit` Stages and Outcomes
 
-`script_event_audit` must be stage-aware so operators can distinguish “rejected before evaluation” from “evaluated but not handed off” and from “accepted into tick queues”.
+`script_event_audit` must be stage-aware so operators can distinguish handler-scoped “rejected before evaluation” from “evaluated but not handed off” and from “accepted into tick queues”. Pre-handler event-scope rejections are represented by `script_event_ingress_audit` and its `admissionOutcome`/`admissionReason` fields instead.
 
 ### Required Stage Set
 
@@ -257,6 +257,14 @@ General rules:
 - `scriptEventId` is forbidden as a metric label.
 - Raw `tenantId`, `scriptId`, `pluginId`, `pluginVersionId`, and `bindingId` are not approved ordinary Prometheus labels in the canonical repo-wide metrics policy. When this table names those logical dimensions, producers must map them to bounded operator-facing scope/category labels unless a later design update records an explicit exception.
 
+Bounded semantic labels use the existing scripting vocabulary:
+
+- `script_category` uses the existing handler types `SCRIPT` and `PLUGIN`.
+- `priorityTag` uses `high`, `normal`, or `background`.
+- Event-scope `outcome`/`reason` values are bounded `admissionOutcome`/`admissionReason` codes; handler-scoped values are bounded `finalOutcome`/`finalReason` codes. An event-scope metric must not copy handler outcome or reason values.
+- `plugin_family` and `plugin_version_family` are optional registry-defined classifications, not raw plugin identifiers. Omit an optional plugin label when the event is not plugin-owned or the classification is unavailable at the event-scope boundary; do not invent `unknown` or `not_applicable` values for this contract.
+- `eventType`, `outcome`, and `scope` likewise use their owning registry, outcome taxonomy, and approved scope vocabularies. A producer must not emit an unbounded raw value.
+
 | Metric family | Required labels | Forbidden labels | Notes |
 | --- | --- | --- | --- |
 | `automation_script_triggers_total` | `scope`, `script_category`, `eventType`, `outcome`, optional `plugin_family`, `plugin_version_family`, `priorityTag` | `scriptEventId` | Increment exactly once for each rejected pre-handler ingress event using its event-scope admission outcome. After resolution, increment exactly once for each resolved handler using its applicable `finalOutcome`, with no additional admitted-event increment. If an admitted event resolves zero handlers, increment once at event scope with `outcome="admitted_no_handlers"`. |
@@ -269,7 +277,7 @@ General rules:
 | `automation_tick_plugin_version_fence_dropped_total` | `scope`, `plugin_family`, `plugin_version_family`, `reason` | `scriptEventId` | Counts commands dropped at execution-time due to plugin version fence mismatches. |
 | `automation_script_runtime_seconds` | `scope`, `script_category`, `eventType`, optional `plugin_family` | `scriptEventId` | Runtime is sandbox eval time (not tick execution time). |
 | `automation_script_sandbox_failures_total` | `scope`, `script_category`, `reason`, optional `plugin_family` | `scriptEventId` | N/A |
-| `automation_script_test_runs_total` | `scope`, `script_category`, `eventType`, `result`, optional `plugin_family` | `scriptEventId` | Must be separate from live-traffic counters. |
+| `automation_script_test_runs_total` | `scope`, `script_category`, `eventType`, `result`, optional `plugin_family` | `scriptEventId` | Increment exactly once per materialized handler-scoped dry-run/test execution attempt, including a post-materialization capacity denial or execution failure. Pre-resolution denials use the ingress/drop metrics and do not increment this family; completion must not increment it again. Keep it separate from live-traffic counters. |
 | `automation_script_test_runtime_seconds` | `scope`, `script_category`, `eventType`, optional `plugin_family` | `scriptEventId` | Dry-run/test runtime latency; must remain separate from live runtime histograms. |
 | `automation_script_test_sandbox_failures_total` | `scope`, `script_category`, `eventType`, `reason`, optional `plugin_family` | `scriptEventId` | Dry-run/test-only sandbox failures; must not increment live sandbox failure counters. |
 | `automation_script_test_capacity_denied_total` | `scope` | `scriptEventId` | Counts handler-scoped dry-run capacity denials. `scope` is bounded to `tenant` or `cluster`; this is not a per-script quota decision. |

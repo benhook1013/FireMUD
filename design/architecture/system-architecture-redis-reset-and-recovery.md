@@ -294,7 +294,7 @@ Once the bounded recovery controller and its coordination-maintenance CLI are im
      - Always accompanied by post‑reset health checks (ticks can be scheduled, sessions can be created/resumed, automation works).
      - Region‑ and tenant‑scoped resets should prefer **smaller scopes first**; cluster‑scoped reset is reserved for catastrophic or planned migration scenarios where finer scopes are ineffective.
 
-General in-place repair of coordination keys is intentionally **not** a first-implementation operator path. A future repair path may be added only by defining named maintenance CLI verbs with scope rules, fencing/quiescence requirements, audit output, and mandatory post-repair verification. Until that exists, any direct mutation of coordination prefixes is break-glass activity and must be followed by a scoped reset or documented cleanup flow that covers the mutated prefix before normal processing resumes.
+General in-place repair of coordination keys is intentionally **not** a first-implementation operator path. A future repair path may be added only by defining named maintenance CLI verbs with scope rules, fencing/quiescence requirements, audit output, and mandatory post-repair verification. In the current fallback, any direct coordination-prefix mutation is break-glass activity: preserve the mutation evidence, keep the affected scope fenced, and escalate when no supported scoped reset or cleanup path exists. In the target state, a direct mutation must be followed by the owner-defined scoped reset or documented cleanup flow that covers the mutated prefix before normal processing resumes.
 
 Target-state design reviews should explicitly state which of these strategies is expected to be safe for each coordination structure.
 

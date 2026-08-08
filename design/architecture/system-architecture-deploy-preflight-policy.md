@@ -26,7 +26,11 @@ For a brand-new player-facing environment (`hobby-self-hosted`, `staging`, or `p
 
 - registry pull credentials for workload image access,
 - PostgreSQL application credentials and admin rotation credentials when rotation Jobs are used,
-- the JWT custody/publication baseline, explicitly distinguished by mode: current legacy Secret-backed wiring (`jwt-signing-keys`/`jwt-jwks` Secret and path checks), which is non-authorizing wiring evidence only; target-only interim Account-mounted asymmetric fallback, with its fixed `jwt-signing-keys` Secret, Account-only private mount, and public `jwt-jwks` projection proof; or target non-exportable signer mode, with signer-health/no-private-mount evidence and the fixed Account-published public `jwt-jwks` resource,
+- the public `jwt-jwks` resource and public-JWKS evidence required by every player-facing custody mode, plus exactly one conditional custody proof:
+  - legacy Secret/path mode selects `PREFLIGHT-JWT-001` and `PREFLIGHT-JWKS-001`; these are non-authorizing wiring checks only,
+  - interim Account-only mounted-fallback mode selects `PREFLIGHT-JWT-INTERIM-001`; only this mode requires the fixed `jwt-signing-keys` Secret and Account private mount,
+  - target non-exportable-signer mode selects `PREFLIGHT-JWT-002`; it requires Account-authenticated signer health, challenge-signature correspondence, and no private-material mount/distribution,
+  - a missing, unknown, or not-yet-implemented selected mode fails closed rather than falling back to another mode,
 - cert-manager issuer or issuer reference for workload and bridge certificates,
 - backup/object-store credentials when the environment requires backups, including the binding identity that owns the bucket or object-store target,
 - asset-store and outbound-communications credentials when those integrations are enabled, including the binding identity that owns the asset bucket or object-store target,
@@ -93,8 +97,8 @@ Policy applicability:
 - `PREFLIGHT-DIGEST-001` is required for any flow using Kustomize overlays (`staging`, `production`) and `not_applicable` for `hobby-self-hosted`.
 - `PREFLIGHT-DIGEST-002` is recommended/advisory for `hobby-self-hosted` and `not_applicable` for `staging`/`production`.
 - `PREFLIGHT-SECRETS-002`, `PREFLIGHT-BOOTSTRAP-001`, `PREFLIGHT-EXTERNAL-001`, and `PREFLIGHT-SERVICES-001` are required for all player-facing environments.
-- `PREFLIGHT-JWT-001` is required for the current legacy Secret/path mode; `PREFLIGHT-JWKS-001` is required only for the current legacy Secret-backed JWKS mode. Target-only `PREFLIGHT-JWT-INTERIM-001` is required when the interim mounted fallback is selected once implemented; because it is not currently emitted, that mode remains fail-closed.
-- Target-state `PREFLIGHT-JWT-002` is required for all player-facing environments using non-exportable signer custody once implemented; `PREFLIGHT-JWT-ROTATION-001` is event-scoped to first-live, reopen, and production promotion evidence for the selected custody backend.
+- `PREFLIGHT-JWT-001` and `PREFLIGHT-JWKS-001` are required only for the current legacy Secret/path mode. Target-only `PREFLIGHT-JWT-INTERIM-001` is required only when the interim mounted fallback is selected; because it is not currently emitted, that mode remains fail-closed.
+- Target-state `PREFLIGHT-JWT-002` is required only when non-exportable signer custody is selected; because it is not currently emitted, that mode remains fail-closed. `PREFLIGHT-JWT-ROTATION-001` is event-scoped to first-live, reopen, and production promotion evidence for the selected custody backend.
 - Target-state `PREFLIGHT-TELNET-001` is required for player-facing environments that expose a public Telnet endpoint and is `not_applicable` only when the deployment inputs explicitly declare that no public Telnet endpoint exists.
 
 ## Canonical Expected-Binding Inputs

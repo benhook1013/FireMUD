@@ -1231,6 +1231,11 @@ for path in [
     require_contains(path, [canonical_public_resume_signature])
 
 require_section_contains(
+    "design/architecture/system-architecture-backup-recovery.md",
+    "Recovery Controller Continuation",
+    [],
+)
+require_section_contains(
     "design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md",
     "Canonical Recovery Record",
     [

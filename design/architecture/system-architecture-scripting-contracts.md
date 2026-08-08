@@ -4,6 +4,10 @@ This document defines the **non-negotiable contracts** that make the scripting D
 
 Document conflict resolution order is defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md#document-precedence-normative`. This document defines the cross-service invariants layer in that precedence model.
 
+## Implementation Status
+
+The current evaluator accepts exactly one emitted command per work item. A result with more than one command is rejected before persistence or handoff with `finalStage=DSL_EVAL`, `finalOutcome=sandbox_error`, and bounded `finalReason=command_count_exceeded`. Multi-command identity using `(automationDispatchId, commandOrdinal)` remains target-only. The contracts below remain the normative target boundary; this status does not narrow that target.
+
 ## Contracts
 
 ### 1) Tick Queue Ownership (`tick:*`)
@@ -16,11 +20,9 @@ Document conflict resolution order is defined in `design/architecture/system-arc
 - A **script work item** is the post-DSL output staged by Automation & Scripting (domain commands + metadata such as `scriptId`, `scriptPatchVersion`, and `scriptEventId`). It preserves the immutable source Trigger Identity, including the source `regionId` and `regionEpoch` when applicable; any enqueue or current-routing identity is carried separately and must not overwrite the source trigger fields.
 - A **tick command** is a unit of work that has been accepted into an entity’s tick queue by Game Session and will be executed under tick locks and replay semantics.
 - **Target-state command handoff:** Every script work item that emits gameplay commands receives one stable `automationDispatchId`, and each emitted command carries a deterministic `commandOrdinal` under that dispatch. The pair is distinct from Trigger Identity and `scriptEventId`: one handler may fan out into multiple commands, and each command is identified by `(automationDispatchId, commandOrdinal)`.
-- **Target-state command handoff:** `automationDispatchId` is the single scripting command discriminator used for handoff deduplication, execution-fence reporting, and effect identity. `scriptEventId` alone must never identify a fan-out command.
+- **Target-state command handoff:** `automationDispatchId` is the single scripting command discriminator used for handoff deduplication, execution-fence reporting, and effect identity. `scriptEventId` alone must never identify a fan-out command. See [Implementation Status](#implementation-status) for the current evaluator boundary.
 
 The current implementation is narrower than this target. Automation persists `automationDispatchId` and command ordinals in its durable handoff records, but the live Game Session enqueue/fence contract does not yet carry the full Trigger Identity or `commandOrdinal` end to end. Until `AS-1.5` and its Game Session handoff dependency are complete in the [automation and scheduler runtime tracker](../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status), current live diagnostics and retries use the available `outboxWorkItemId`, `gameSessionCommandId`, and any persisted `automationDispatchId`, together with `script_event_audit`; this fallback does not establish target command-level deduplication or complete fence proof.
-
-The current evaluator accepts exactly one emitted command per work item. A result with more than one command is rejected before persistence or handoff with `finalStage=DSL_EVAL`, `finalOutcome=sandbox_error`, and bounded `finalReason=command_count_exceeded`; multi-command identity using `(automationDispatchId, commandOrdinal)` remains target-only.
 
 Audit and outcomes must distinguish between:
 
@@ -105,7 +107,7 @@ Plugins are executed by the same runtime engine as scripts and must not rely on 
 
 - Rollback orchestration must enforce bounded convergence waiting across Automation and Game Session pin-convergence APIs.
 - If convergence is not observed before timeout, rollback enters terminal state `ROLLBACK_CONVERGENCE_TIMEOUT`.
-- In that state, admission and ticks remain paused until an explicit operator action resumes or aborts rollback.
+- In that state, admission and ticks remain paused until an explicit operator action resumes the rollback workflow.
 - When rollback enters the terminal state, emit once:
   - Control-plane event `ScriptRollbackConvergenceTimedOut` produced by Game Session as producer-of-record.
   - Metric `automation_rollback_convergence_timeout_total{scope, operation, reason}`.

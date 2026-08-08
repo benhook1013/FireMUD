@@ -306,9 +306,11 @@ Before the first deployment into `hobby-self-hosted`, `staging`, or `production`
 
 - `postgres-credentials`
 - `postgres-admin-credentials` when rotation Jobs are used
-- `jwt-jwks`
-- `jwt-signing-keys` and `internalBindings.jwt.signingKeysRef` only when the interim mounted fallback is selected
-- target non-exportable signer health evidence and proof that no private signing material is mounted or distributed to application workloads outside the approved signer boundary
+- `jwt-jwks` and the public-JWKS consumption evidence required by the selected player-facing custody mode
+- exactly one selected JWT custody mode: the current legacy Secret/path checks, the interim Account-only mounted fallback, or target non-exportable signer custody
+- for the interim mounted fallback only, `jwt-signing-keys` and `internalBindings.jwt.signingKeysRef`, with the private mount limited to Account Service
+- for target non-exportable signer custody only, signer-health evidence and proof that no private signing material is mounted or distributed to application workloads outside the approved signer boundary
+- a missing, unknown, or unimplemented selected custody mode fails closed; public JWKS readiness does not imply that private signing material is required
 - cert-manager issuer or issuer reference used by workload and bridge certificates
 - concrete certificate bindings for workload gRPC mTLS, the Gateway internal mTLS WebSocket listener where used, the TCP Proxy bridge client identity where used, and a maintenance control-plane client identity when an exceptional backup-related maintenance workflow invokes `PauseTicks` / `ResumeTicks`; routine online backup does not require that pause identity
 - registry pull credential secret

@@ -2,6 +2,10 @@
 
 This document defines the JWT profiles, claim requirements, issued-token registry, Account authority generations, and token-validation behavior used by FireMUD services. It complements [Authentication & Authorization](./system-architecture-authentication.md), which defines how these token contracts are applied to route classification, gameplay admission, and tenant authorization.
 
+## Implementation Status
+
+This document defines target-state token and revocation behavior. Current implementation remains drifted: the runtime has no complete issued-token registry or Account-owned authority-generation issuance, advancement, propagation, and validation path; current JWT/JWKS delivery is Secret-backed; validators still use shared-HMAC verification rather than Account JWKS; and the runtime still permits the documented classpath JWKS fallback when the configured file is absent. The first implemented authority-generation path must prove that issuance and refresh cannot cross a concurrent generation advance and that every affected route rejects stale generations; no such runtime proof is currently claimed.
+
 Each registry-backed revocable `control-ui`, `player-bootstrap`, or receiver-specific private player-delegation JWT has exactly one Account-owned Coordination Redis record: `session:auth:token:<tokenHash>`. The separate `gameplay-connect` profile is not registry-backed and uses its dedicated single-use replay contract.
 
 ## Canonical Authority Tuple
@@ -102,10 +106,6 @@ An entry is exact and operation-scoped by `{rotationOperationId, validatorId, to
 The registry lifecycle is `PLANNED -> ISSUED -> VERIFIED -> RETIRED -> CLEANED` on promotion, and `PLANNED|ISSUED|VERIFIED -> EXPIRED|ABORTED -> CLEANED` for expiry, failed promotion, or cancellation. Every transition compares the same operation, target/active signer fences, and entry version; a stale or cross-operation transition is rejected.
 
 This predicate is harness-only and non-authorizing. A request that fails any predicate, including an ordinary caller presenting a probe-shaped token or a harness request with a missing, extra, mismatched, expired, terminal, or cross-operation entry, is denied before normal authentication context is created, authorization is evaluated, or application side effects occur. A matching probe may proceed only through the production signature, claim, audience, algorithm, key-use, and JWKS validation code and is then unconditionally denied before authorization and side effects. A readiness entry never satisfies `session:auth:token:<tokenHash>`, grants authentication context, or permits a normal registry-backed request to bypass its required record. This readiness-only exception does not apply to gameplay-connect, routine gameplay, bootstrap, control-plane, or any other application route; those paths retain their declared authentication contracts.
-
-## Implementation Status
-
-This document defines target-state token and revocation behavior. Current implementation remains drifted: the runtime has no complete issued-token registry or Account-owned authority-generation issuance, advancement, propagation, and validation path; current JWT/JWKS delivery is Secret-backed; validators still use shared-HMAC verification rather than Account JWKS; and the runtime still permits the documented classpath JWKS fallback when the configured file is absent. The first implemented authority-generation path must prove that issuance and refresh cannot cross a concurrent generation advance and that every affected route rejects stale generations; no such runtime proof is currently claimed.
 
 ## Token Validity and Revocation
 
