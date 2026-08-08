@@ -165,6 +165,8 @@ Traffic-open evidence has two distinct forms. The operation-bound pre-release ev
 
 At the owner's `ready_to_reopen` boundary, the operation-bound pre-release evidence record uses its own `schemaVersion=traffic-open-pre-release-evidence/v1` and binds the exact operation/event tuple that the exporter must preserve in the finalized projection: `operationId`, `eventType`, `deploymentEventId`, `preflightReportPath`, `actualRecoveryRecordRef`, and `playerFacingTargetBoundary`. The finalized projection must exact-match `eventType`, `deploymentEventId`, `preflightReportPath`, and the remaining operation/event tuple. It records `projectionSchemaVersion=traffic-open-record/v1` for that finalized projection, which uses `schemaVersion=traffic-open-record/v1`; the consumed operation-bound `evidenceRef` must appear in the finalized projection's `evidenceRefs[]`. The recovery owner defines the continuation call shape; the projection is written only after finalization and is not consumed as release authority.
 
+Both production and `hobby-self-hosted` `traffic-open-record/v1` projections use one canonical `contentDigest` for export identity. It is the SHA-256 digest of the UTF-8 bytes of the complete canonical JSON projection payload with only `contentDigest` omitted, serialized with RFC 8785 JSON Canonicalization Scheme; it is encoded as `sha256:` followed by 64 lowercase hexadecimal characters. The field set, canonicalization, encoding, and comparison are identical for production and hobby projections and for `first-live` and `reopen`; an exporter recomputes the digest for a retry and may reuse an existing event path only when the exact finalized event tuple and `contentDigest` match.
+
 This is target-state behavior. The current production preflight has no durable controller read and intentionally fails `PREFLIGHT-BACKUP-002` closed; no production traffic-open projection writer is implemented.
 
 Canonical evidence path:
@@ -201,6 +203,7 @@ Required fields:
 - `trafficExposure` (`player-facing-first-live` or `player-facing-reopen`, matching `eventType`; any referenced baseline drill retains `isolated-drill` in its own recovery record)
 - `backupConfidentialityEvidence`
 - `trafficOpenedAt` when `trafficOpenStatus=finalized`
+- `contentDigest`
 - `evidenceRefs[]`
 
 Validation rules:
@@ -217,7 +220,7 @@ Validation rules:
 - `backupConfidentialityEvidence` must prove the backup confidentiality invariant and, whenever production-origin data is exercised outside production, quarantine, sanitization, validation, and deletion evidence
 - `PREFLIGHT-BACKUP-002` validates the backup/recovery lineage and event identity against immutable controller-owned evidence; the durable recovery controller remains the sole continuation and release authority described in [Backup & Disaster Recovery](./system-architecture-backup-recovery.md). Checked-in projections are retained evidence and never replace live controller authority.
 - the exporter writes the checked-in traffic-open projection, including `trafficOpenedAt`, only after the controller reaches `finalized`; the projection is not a prerequisite for that same release, and a runtime authorization or partially written file is not proof that the transition completed
-- the exporter must create one new immutable traffic-open projection per `deploymentEventId` after the controller finalizes every first-live or reopen event; an export retry may reuse the event path only when the existing payload exactly matches the finalized event tuple and content digest. It must not mutate or refresh an existing projection, and any mismatch or attempt to reuse a projection for another event is an evidence-integrity failure; a finalized projection cannot be reused for a later event
+- the exporter must create one new immutable traffic-open projection per `deploymentEventId` after the controller finalizes every first-live or reopen event; an export retry may reuse the event path only when the existing payload exactly matches the finalized event tuple and canonical `contentDigest`. It must not mutate or refresh an existing projection, and any mismatch or attempt to reuse a projection for another event is an evidence-integrity failure; a finalized projection cannot be reused for a later event
 - the canonical gate for this artifact is the deployment preflight contract in `system-architecture-deploy-preflight-policy.md` (`PREFLIGHT-BACKUP-002`), and the deployment sequencing that consumes it is defined in `system-architecture-deployment-runbook.md`
 
 ## Hobby Backup Compliance Evidence
@@ -265,6 +268,7 @@ Required fields:
 - `playerFacingTargetBoundary`
 - `preflightReportPath`
 - `trafficOpenedAt` when `trafficOpenStatus=finalized`
+- `contentDigest`
 - `evidenceRefs[]`
 
 Validation rules:
@@ -278,7 +282,7 @@ Validation rules:
 - `PREFLIGHT-BACKUP-003` validates immutable pre-release evidence, compliance lineage, and the event-matching actual-recovery controller reference; it does not perform or authorize controller continuation or release. The preflight result must reject missing or stale compliance/controller evidence and any deployment, event, baseline-recovery, or actual-recovery lineage that does not match the current traffic-open event
 - the current event's checked-in traffic-open projection is not a preflight input because it is produced only after the controller records its finalized state
 - hobby player traffic must not open when this evidence is missing, stale, mismatched, or bound to a failed preflight run
-- the exporter must create one new immutable traffic-open projection per `deploymentEventId` after the controller finalizes every first-live or reopen event, even when the referenced compliance record did not change; an export retry may reuse the event path only when the existing payload exactly matches the finalized event tuple and content digest. It must not mutate or refresh an existing projection, and any mismatch or attempt to reuse a projection for another event is an evidence-integrity failure; a finalized projection cannot be reused for a later event
+- the exporter must create one new immutable traffic-open projection per `deploymentEventId` after the controller finalizes every first-live or reopen event, even when the referenced compliance record did not change; an export retry may reuse the event path only when the existing payload exactly matches the finalized event tuple and canonical `contentDigest`. It must not mutate or refresh an existing projection, and any mismatch or attempt to reuse a projection for another event is an evidence-integrity failure; a finalized projection cannot be reused for a later event
 
 ## Canonical Recovery Record
 

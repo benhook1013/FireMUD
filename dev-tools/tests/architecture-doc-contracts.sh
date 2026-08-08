@@ -301,22 +301,26 @@ def strip_raw_html_block(
     return "", True, tag
 
 
-def first_top_level_status_value(text):
+def iter_visible_markdown_lines(text, include_fenced_content):
     in_fenced_block = False
     fence_marker = None
     opening_line_number = None
     in_html_comment = False
     in_raw_html_block = False
     raw_html_block_kind = None
-    status_heading_found = False
+
     for line_number, line in enumerate(text.splitlines(keepends=True), start=1):
         if in_fenced_block:
-            in_fenced_block, fence_marker, opening_line_number = advance_fenced_block_state(
-                line,
-                in_fenced_block,
-                fence_marker,
-                opening_line_number,
-                line_number,
+            if include_fenced_content:
+                yield line_number, line
+            in_fenced_block, fence_marker, opening_line_number = (
+                advance_fenced_block_state(
+                    line,
+                    in_fenced_block,
+                    fence_marker,
+                    opening_line_number,
+                    line_number,
+                )
             )
             continue
 
@@ -341,15 +345,27 @@ def first_top_level_status_value(text):
         line, in_html_comment = strip_html_comments(line, in_html_comment)
         if not line:
             continue
-        in_fenced_block, fence_marker, opening_line_number = advance_fenced_block_state(
-            line,
-            in_fenced_block,
-            fence_marker,
-            opening_line_number,
-            line_number,
+
+        if include_fenced_content:
+            yield line_number, line
+        in_fenced_block, fence_marker, opening_line_number = (
+            advance_fenced_block_state(
+                line,
+                in_fenced_block,
+                fence_marker,
+                opening_line_number,
+                line_number,
+            )
         )
         if in_fenced_block:
             continue
+        if not include_fenced_content:
+            yield line_number, line
+
+
+def first_top_level_status_value(text):
+    status_heading_found = False
+    for _, line in iter_visible_markdown_lines(text, include_fenced_content=False):
         if not status_heading_found:
             if status_heading.match(line.rstrip("\r\n")):
                 status_heading_found = True
@@ -820,62 +836,7 @@ require_contains(
 operations_text = (root / "design/architecture/system-architecture-redis-operations.md").read_text(encoding="utf-8")
 
 
-def strip_hidden_markdown_content(text):
-    visible_lines = []
-    in_fenced_block = False
-    fence_marker = None
-    in_html_comment = False
-    in_raw_html_block = False
-    raw_html_block_kind = None
-
-    for line_number, line in enumerate(text.splitlines(keepends=True), start=1):
-        if in_fenced_block:
-            visible_lines.append(line)
-            in_fenced_block, fence_marker, _ = advance_fenced_block_state(
-                line,
-                in_fenced_block,
-                fence_marker,
-                None,
-                line_number,
-            )
-            continue
-
-        physical_line_blank = not line.strip()
-        if in_raw_html_block:
-            _, in_raw_html_block, raw_html_block_kind = strip_raw_html_block(
-                line,
-                True,
-                raw_html_block_kind,
-                physical_line_blank,
-            )
-            continue
-        if not in_html_comment:
-            visible_line, in_raw_html_block, raw_html_block_kind = strip_raw_html_block(
-                line,
-                False,
-                None,
-                physical_line_blank,
-            )
-            if visible_line != line or in_raw_html_block:
-                continue
-        line, in_html_comment = strip_html_comments(line, in_html_comment)
-        if not line:
-            continue
-
-        visible_lines.append(line)
-        in_fenced_block, fence_marker, _ = advance_fenced_block_state(
-            line,
-            in_fenced_block,
-            fence_marker,
-            None,
-            line_number,
-        )
-
-    return "".join(visible_lines)
-
-
 def extract_unique_markdown_section(text, heading, source_label):
-    text = strip_hidden_markdown_content(text)
     heading_pattern = re.compile(
         rf"^[ ]{{0,3}}##[ \t]+{re.escape(heading)}[ \t]*(?:\r?\n)?$"
     )
@@ -885,7 +846,10 @@ def extract_unique_markdown_section(text, heading, source_label):
     in_fenced_block = False
     fence_marker = None
 
-    for line_number, line in enumerate(text.splitlines(keepends=True), start=1):
+    for line_number, line in iter_visible_markdown_lines(
+        text,
+        include_fenced_content=True,
+    ):
         is_heading = not in_fenced_block and level_two_heading.match(line)
         if is_heading:
             if current_section is not None:

@@ -306,8 +306,9 @@ Before the first deployment into `hobby-self-hosted`, `staging`, or `production`
 
 - `postgres-credentials`
 - `postgres-admin-credentials` when rotation Jobs are used
-- `jwt-signing-keys`
 - `jwt-jwks`
+- `jwt-signing-keys` and `internalBindings.jwt.signingKeysRef` only when the interim mounted fallback is selected
+- target non-exportable signer health evidence and proof that no private signing material is mounted or distributed to application workloads outside the approved signer boundary
 - cert-manager issuer or issuer reference used by workload and bridge certificates
 - concrete certificate bindings for workload gRPC mTLS, the Gateway internal mTLS WebSocket listener where used, the TCP Proxy bridge client identity where used, and a maintenance control-plane client identity when an exceptional backup-related maintenance workflow invokes `PauseTicks` / `ResumeTicks`; routine online backup does not require that pause identity
 - registry pull credential secret

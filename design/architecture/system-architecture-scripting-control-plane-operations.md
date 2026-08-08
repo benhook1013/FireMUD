@@ -314,12 +314,13 @@ Inputs:
 Semantics:
 
 - Idempotent.
-- Transitions selected `DEAD_LETTERED` work items back to replayable state (`PENDING` or equivalent) without re-running DSL evaluation for original triggers.
+- Creates one durable replay record with a new execution identity for each eligible selected `DEAD_LETTERED` item. The original identity remains terminal and becomes causation evidence for the new replay; its audit row is never reopened or appended with replay execution history. The canonical identity and idempotency rules are defined in [Operator Replay of DEAD_LETTERED Work](./system-architecture-scripting-runtime-execution.md#operator-replay-of-dead_lettered-work).
+- Repeating the same `controlPlaneRequestId` for the same original execution identity returns the previously created replay record/result rather than creating another replay identity.
 - Must enforce bounded batch size per request.
-- Must enforce replay eligibility against current control-plane state before transition:
+- Must enforce replay eligibility against current control-plane state before creating the replay:
   - Work items with `scriptPatchVersion` that is not currently pinned for the scoped instance must be rejected from replay.
   - Plugin work items whose `(pluginId, pluginVersionId)` do not match currently active plugin state for the scoped instance must be rejected from replay.
-  - Ineligible rows must return deterministic bounded application errors (for example `REPLAY_VERSION_FENCE_MISMATCH`) and must remain `DEAD_LETTERED`.
+  - Ineligible rows must return deterministic bounded application errors (for example `REPLAY_VERSION_FENCE_MISMATCH`), remain `DEAD_LETTERED`, and produce no replay identity.
 
 Outputs:
 

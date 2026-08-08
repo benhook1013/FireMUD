@@ -27,6 +27,7 @@ It is a companion to:
 - [Pre-DSL Trigger and Evaluated Descriptor Boundary](#pre-dsl-trigger-and-evaluated-descriptor-boundary)
 - [Work Item Outbox Contract](#work-item-outbox-contract-normative)
 - [Current State Mapping, Drain, and Rebuild Rules](#current-state-mapping-drain-and-rebuild-rules)
+- [Operator Replay of DEAD_LETTERED Work](#operator-replay-of-dead_lettered-work)
 - [`scriptEventId` Lifecycle and Deduplication](#scripteventid-lifecycle-and-deduplication)
 - [Runtime Deployment & Versioning](#runtime-deployment--versioning)
 - [Script Patch Lifecycle](#script-patch-lifecycle)
@@ -153,10 +154,16 @@ The current `script_work_items` statuses span two target layers. `workItemStatus
 | `HANDOFF_IN_FLIGHT` | Evaluated descriptor currently being handed to Game Session. | Count as active; retry the committed descriptor by `(automationDispatchId, commandOrdinal)`, never by re-entering the DSL. |
 | `HANDED_OFF` | Evaluated command accepted by Game Session. | Terminal for drain and rebuild; retain only for the defined retention horizon. |
 | `CANCELED` | Explicitly canceled trigger or evaluated descriptor. | Terminal for drain and rebuild; retain audit and cancellation reason. |
-| `DEAD_LETTERED` | Terminal non-progressing trigger/descriptor. | Terminal for drain and rebuild; no automatic DSL replay. Any operator replay is a separate, explicitly admitted operation with a new execution identity. |
+| `DEAD_LETTERED` | Terminal non-progressing trigger/descriptor. | Terminal for drain and rebuild; no automatic DSL replay. Any operator replay follows the [operator replay contract](#operator-replay-of-dead_lettered-work) and uses a new execution identity. |
 | `FAILED` | Not a canonical script work-item state; patch readiness `FAILED` is a separate lifecycle state. | Do not use as an alias for `DEAD_LETTERED`, and do not include it in command-outbox drain or rebuild selection. |
 
 `PENDING` and `INDEXED` are target descriptor states; the current implementation does not persist them as separate statuses. Until it converges, drain and rebuild projections must report the implementation gap rather than presenting `PENDING_EVALUATION` or `EVALUATING` as evaluated command work. Drain completion is true only when both the pre-DSL trigger states and the evaluated descriptor states satisfy the applicable terminal or empty conditions for the rollback/promotion scope.
+
+### Operator Replay of DEAD_LETTERED Work
+
+An operator replay must never move a `DEAD_LETTERED` row back to `PENDING_EVALUATION`, re-evaluate the original execution identity, or append new history to the original audit row. The service must create a durable replay record with a new execution identity, retain the original execution identity as the replay's causation identity, and associate all replay audit history with the new identity. The replay enters the normal admission and evaluation flow under that new identity while the original remains terminal and queryable.
+
+Replay creation is idempotent by stable `controlPlaneRequestId` for each original execution identity. Retrying the same operator replay request returns the existing replay record/result and creates no second replay identity or audit history; a distinct request is a distinct controlled replay subject to the normal admission and runtime checks.
 
 ## `scriptEventId` Lifecycle and Deduplication
 
