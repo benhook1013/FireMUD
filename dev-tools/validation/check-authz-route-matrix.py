@@ -2927,6 +2927,28 @@ def validate_generation_applicability(
             "security_lock_export_scoped routes must declare exactly action_family "
             f"set {sorted(SECURITY_LOCK_EXPORT_ACTION_FAMILIES)}",
         )
+    pending_deletion_action_families = [
+        route.get("action_family")
+        for route in routes
+        if isinstance(route, dict)
+        and route.get("classification") == "pending_deletion_scoped"
+        and route_set_key(route) in ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES
+    ]
+    if (
+        len(pending_deletion_action_families)
+        != len(PENDING_DELETION_EXPORT_ACTION_FAMILIES)
+        or any(
+            not isinstance(action_family, str)
+            for action_family in pending_deletion_action_families
+        )
+        or set(pending_deletion_action_families)
+        != PENDING_DELETION_EXPORT_ACTION_FAMILIES
+    ):
+        append_unique_error(
+            errors,
+            "pending_deletion_scoped routes must declare exactly action_family "
+            f"set {sorted(PENDING_DELETION_EXPORT_ACTION_FAMILIES)}",
+        )
 
 
 def validate_profile_authority_routes(

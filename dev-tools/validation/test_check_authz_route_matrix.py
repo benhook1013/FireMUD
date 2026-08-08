@@ -2237,6 +2237,8 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             route
             for route in baseline["routes"]
             if route.get("classification") == "pending_deletion_scoped"
+            and self.validator.route_set_key(route)
+            in self.validator.ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES
         ]
         self.assertTrue(pending_routes)
         self.assertTrue(
@@ -2406,8 +2408,55 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 )
                 errors = validate_document(self.validator, document)
                 self.assertIn(
+                    f"routes[{route_index(document, mutated_route)}] "
                     f"{self.validator.route_label(mutated_route)} {action_family} "
                     "must require live check pending_deletion_action_family",
+                    errors,
+                )
+
+    def test_pending_deletion_export_action_families_are_exact(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        pending_routes = [
+            route
+            for route in baseline["routes"]
+            if route.get("classification") == "pending_deletion_scoped"
+            and self.validator.route_set_key(route)
+            in self.validator.ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES
+        ]
+        self.assertEqual(
+            self.validator.PENDING_DELETION_EXPORT_ACTION_FAMILIES,
+            {route["action_family"] for route in pending_routes},
+        )
+        self.assertEqual(
+            len(self.validator.PENDING_DELETION_EXPORT_ACTION_FAMILIES),
+            len(pending_routes),
+        )
+
+        for mutation_name, mutate in (
+            ("missing", lambda route: route.pop("action_family")),
+            (
+                "duplicate",
+                lambda route: route.__setitem__("action_family", "export_status"),
+            ),
+            (
+                "unexpected",
+                lambda route: route.__setitem__("action_family", "unexpected"),
+            ),
+        ):
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                mutated_route = next(
+                    route
+                    for route in document["routes"]
+                    if route.get("classification") == "pending_deletion_scoped"
+                    and route.get("action_family") == "export_content"
+                )
+                mutate(mutated_route)
+                errors = validate_document(self.validator, document)
+                self.assertIn(
+                    "pending_deletion_scoped routes must declare exactly "
+                    "action_family set ['export_content', 'export_initiate', "
+                    "'export_status']",
                     errors,
                 )
 
@@ -2578,6 +2627,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 )
                 errors = validate_document(self.validator, document)
                 self.assertIn(
+                    f"routes[{route_index(document, mutated_route)}] "
                     f"{self.validator.route_label(mutated_route)} is missing "
                     "no-target authority checks: "
                     "['security_lock_export_action_family']",
@@ -3038,7 +3088,12 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     lambda route: route["applicability"].__setitem__(
                         "account_state", "security_locked"
                     ),
-                    "must declare applicability account_state='active'",
+                    (
+                        "must declare applicability account_state='active'"
+                        if route_name == "POST /accounts/{accountId}/exports"
+                        else "account_state='security_locked' must use classification "
+                        "security_lock_export_scoped"
+                    ),
                 ),
             ):
                 with self.subTest(route=route_name, mutation=mutation_name):
@@ -3055,8 +3110,9 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     )
                     mutate(mutated_route)
                     errors = validate_document(self.validator, document)
+                    expected_label = self.validator.route_label(mutated_route)
                     self.assertIn(
-                        f"{self.validator.route_label(mutated_route)} {expected_suffix}",
+                        f"{expected_label} {expected_suffix}",
                         errors,
                     )
 

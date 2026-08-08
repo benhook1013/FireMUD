@@ -218,7 +218,10 @@ raw_html_block_start = re.compile(
 raw_html_type7_start = re.compile(
     r"^[ \t]{0,3}(?:"
     r"</[A-Za-z][A-Za-z0-9-]*[ \t]*>"
-    r"|<[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[^<>]*)?[ \t]*/?>"
+    r"|<[A-Za-z][A-Za-z0-9-]*"
+    r"(?:[ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t]*=[ \t]*"
+    r"(?:[^ \t\r\n\"'=<>\x60]+|'[^'\r\n]*'|\"[^\"\r\n]*\"))?)*"
+    r"[ \t]*/?>"
     r")[ \t]*(?:\r?\n)?$",
     re.IGNORECASE,
 )
@@ -372,6 +375,12 @@ def iter_visible_markdown_lines(text, include_fenced_content):
             continue
         if not include_fenced_content:
             yield line_number, line
+
+
+    if in_fenced_block:
+        raise SystemExit(
+            f"unterminated fenced example opened at line {opening_line_number}"
+        )
 
 
 def first_top_level_status_value(text):
@@ -584,6 +593,22 @@ if first_top_level_status_value(raw_html_adr_fixture_text) is not None:
     raise SystemExit("raw HTML block status was incorrectly parsed")
 if first_top_level_status_value(type7_raw_html_status_fixture_text) != "Accepted":
     raise SystemExit("type-7 raw HTML status was incorrectly parsed")
+for raw_html_tag in (
+    '<span data="<nested > angle brackets">\n',
+    "<span data='quoted > angle brackets'>\n",
+):
+    if raw_html_type7_start.match(raw_html_tag) is None:
+        raise SystemExit(
+            "quoted angle brackets in a type-7 raw HTML tag were not accepted"
+        )
+for malformed_raw_html_tag in (
+    "<span data=unquoted<value>\n",
+    '<span data=">"> trailing text\n',
+):
+    if raw_html_type7_start.match(malformed_raw_html_tag) is not None:
+        raise SystemExit(
+            "malformed type-7 raw HTML attribute or trailing text was accepted"
+        )
 if first_top_level_status_value(ordinary_raw_html_closing_fixture_text) != "Accepted":
     raise SystemExit("ordinary raw HTML block closed before a blank line")
 if first_top_level_status_value(same_line_raw_html_fixture_text) != "Accepted":
@@ -1053,6 +1078,27 @@ if (
     or "after\n" not in type7_raw_html_heading_section
 ):
     raise SystemExit("type-7 raw HTML heading was not removed before section extraction")
+
+unterminated_fenced_section_fixture = (
+    "## Unterminated fenced section fixture\n"
+    "before\n"
+    "\x60\x60\x60text\n"
+    "## Clause inside the unterminated fence\n"
+    "must not be accepted as section content\n"
+)
+try:
+    extract_unique_markdown_section(
+        unterminated_fenced_section_fixture,
+        "Unterminated fenced section fixture",
+        "unterminated fenced section fixture",
+    )
+except SystemExit as error:
+    if str(error) != "unterminated fenced example opened at line 3":
+        raise SystemExit(f"unexpected unterminated section diagnostic: {error}")
+else:
+    raise SystemExit(
+        "section extraction accepted a clause inside an unterminated fenced block"
+    )
 
 ordinary_visible_content_fixture = (
     "## Ordinary visible content fixture\n"

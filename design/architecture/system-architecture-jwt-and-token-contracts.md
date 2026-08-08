@@ -105,7 +105,7 @@ This predicate is harness-only and non-authorizing. A request that fails any pre
 
 ## Implementation Status
 
-This document defines target-state token and revocation behavior. The current runtime has no complete issued-token registry or Account-owned authority-generation issuance, advancement, propagation, and validation path, and validators still use shared-HMAC verification rather than Account JWKS. The first implemented authority-generation path must prove that issuance and refresh cannot cross a concurrent generation advance and that every affected route rejects stale generations; no such runtime proof is currently claimed.
+This document defines target-state token and revocation behavior. Current implementation remains drifted: the runtime has no complete issued-token registry or Account-owned authority-generation issuance, advancement, propagation, and validation path; current JWT/JWKS delivery is Secret-backed; validators still use shared-HMAC verification rather than Account JWKS; and the runtime still permits the documented classpath JWKS fallback when the configured file is absent. The first implemented authority-generation path must prove that issuance and refresh cannot cross a concurrent generation advance and that every affected route rejects stale generations; no such runtime proof is currently claimed.
 
 ## Token Validity and Revocation
 

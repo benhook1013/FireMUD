@@ -105,9 +105,9 @@ This section summarizes common failure and rollback scenarios and how operators 
     - Optionally disable the faulty script entirely (`runtimeStatus=DISABLED`) to stop further admission attempts while iterating.
 
 - **Stale `onLoad` execution**
-  - **Target state only:** A stale `ONLOAD_RUNNING` readiness execution is terminalized by the Automation recovery owner as an audited `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and `finalReason=stale_execution_fenced` result and blocks `READY` for that publication/generation.
+  - **Target state only:** A stale `ONLOAD_RUNNING` readiness execution is terminalized by the Automation recovery owner as an audited `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and `finalReason=stale_execution_fenced` result and blocks `READY` for that publication/generation. The affected unresolved work and any rollback admission/tick fences remain in force until that fencing and audit result are durable.
   - **Current behavior:** Stale `ONLOAD_RUNNING` recovery is not implemented. Fail closed by retaining the unresolved work and any affected rollback admission/tick fences; do not infer a terminal audit record, reclaim, replay, or safe resumption from age alone.
-  - Do not replay the same readiness identity. Publish a new patch or readiness generation after the stale execution is fenced and recorded.
+  - Do not replay the same canonical readiness identity or permit a replacement readiness identity before the stale execution is fenced and its terminal audit is recorded. A later accepted publication supplies a distinct identity; it is not an implicit retry of the stale execution.
 
 - **Plugin version failures or misbehavior**
   - Symptoms:
@@ -176,7 +176,7 @@ Concrete rollback sequence example:
 Operationally, use control-plane APIs rather than direct data-store edits for pending and dead-lettered work:
 
 - `ListOutboxWorkItems(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, scriptPatchVersion=P22, pluginVersionId=plugin-v22, workItemStatus=PENDING)` for instance-wide scoped inspection; omit `pluginVersionId` only when the operation is not plugin-owned.
-- `ReplayDeadLetteredWorkItems(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, scriptPatchVersion=P21, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` for bounded replay of recoverable target-version items. Plugin-backed candidates still pass the operation's active-plugin-version fence.
+- `ReplayDeadLetteredWorkItems(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, scriptPatchVersion=P21, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` for bounded replay of recoverable target-version items. Plugin-backed candidates must pass the active-plugin-version fence using the immutable plugin identity stored on each dead-lettered work item; ingress audit is supplemental provenance, not the eligibility source.
 - `PurgeOutboxWorkItems(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, scriptPatchVersion=P22, pluginVersionId=plugin-v22, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` for auditable cleanup of terminally invalid or stale old-version items.
 
 For the canonical rollback and version-fence requirements, follow [Scripting & Automation: Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md#patch-rollback-operator-driven-required) and [Scripting & Automation: Cross-Service Contracts](./system-architecture-scripting-contracts.md#3-version-fencing-rollback-safety).

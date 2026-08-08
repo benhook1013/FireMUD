@@ -22,7 +22,7 @@ This section summarizes the **most important environment variables and delivery/
 
 ### Implementation Notes
 
-This document describes the canonical environment and secret target state. The first implementation pass now covers the highest-risk deployment-critical pieces:
+This document describes the canonical environment and secret target state. The first implementation pass now documents or partially implements the highest-risk deployment-critical pieces:
 
 - JWT signing material can come from `FIREMUD_AUTH_JWT_SECRET_PATH` without requiring inline `firemud.auth.jwt-secret`, but the current path still supplies a shared HMAC secret rather than the required Account-only asymmetric signing bundle.
 - Target mode uses non-exportable signer custody: applications do not mount or receive private signing keys. The interim target requirement is that Account and every JWT validator consume the public `jwt-jwks` resource through their read-only `FIREMUD_AUTH_JWKS_PATH`; current runtime and preflight do not prove validator consumption. Until that target is available, the interim fallback mounts an environment-unique `jwt-signing-keys` Secret read-only only into Account Service and supplies the public projection as an environment consequence. The canonical signer-custody contract is [JWT and Token Contracts](../system-architecture-jwt-and-token-contracts.md#signing-key-rotation-contract-normative); this overview records only the environment-specific resource and mount consequences.
