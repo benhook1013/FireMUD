@@ -1519,6 +1519,7 @@ routes:
     http_route: GET /accounts/{accountId}/export
     scope: account
     classification: account_scoped
+    route_status: current_openapi_operator_surface
     subject_binding: caller_account_id
     platform_admin_override: platformAdmin_only
     accepted_token_profiles: [control-ui]
@@ -1536,10 +1537,11 @@ routes:
         required_live_checks: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
     response_profile: asynchronous_versioned_cross_owner_export_manifest
     response_contract: reports_owner_completion_retries_omissions_and_policy_retention
+    canonical_target: POST /accounts/{accountId}/exports
     implementation_status:
       known_drift:
         - Current implementation returns synchronous Account/profile-local data rather than the versioned cross-owner manifest.
-        - Current helper permits a broad global privileged role; the target cross-account override is platformAdmin-only.
+        - The legacy platformAdmin override is current-only drift and is excluded from the canonical POST target.
   - service: account-service
     route: DeleteAccount
     http_route: DELETE /accounts/{accountId}
@@ -1643,6 +1645,7 @@ routes:
     token_issuer: firemud-account-service
     token_audience: control-ui
     subject_binding: caller_account_id
+    platform_admin_override: forbidden
     required_fields: [request_id]
     required_live_checks: [issuer_generation, account_generation, recent_account_authentication, export_availability]
     action_family: export_initiate
@@ -1836,6 +1839,7 @@ routes:
       comparison: exact_completed_operation
       mismatch: PERMISSION_DENIED
     action_family: export_content
+    audit_contract: required_account_export_job_and_outcome
     required_live_checks: [issuer_generation, account_generation, recent_account_authentication, export_availability]
     response_profile: completed_export_artifact_only
     canonical_errors:

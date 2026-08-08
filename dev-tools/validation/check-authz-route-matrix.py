@@ -171,6 +171,7 @@ SECURITY_LOCK_EXPORT_GENERATION_FIELDS = (
 )
 EXPORT_INITIATION_ROUTE = "POST /accounts/{accountId}/exports"
 EXPORT_INITIATION_ROUTE_IDENTITY = ("account-service", EXPORT_INITIATION_ROUTE)
+LEGACY_EXPORT_ROUTE_IDENTITY = ("account-service", "ExportAccount")
 EXPORT_INITIATION_ACTION_FAMILY = "export_initiate"
 EXPORT_INITIATION_REQUIRED_LIVE_CHECKS = {
     EXPORT_INITIATION_ACTION_FAMILY: {"export_availability"},
@@ -185,6 +186,9 @@ SECURITY_LOCK_EXPORT_CONTENT_AUDIT_CONTRACT = (
 )
 PENDING_DELETION_EXPORT_CONTENT_AUDIT_CONTRACT = (
     "required_account_deletion_workflow_export_job_and_outcome"
+)
+ACTIVE_ACCOUNT_EXPORT_CONTENT_AUDIT_CONTRACT = (
+    "required_account_export_job_and_outcome"
 )
 CAPACITY_ADMISSION_ROUTE = ("account-service", "CommitTenantCapacityAdmission")
 CAPACITY_DELTA_WIRE_CONTRACT = {
@@ -1523,18 +1527,51 @@ def validate_export_initiation_routes(
                 f"{label} {EXPORT_INITIATION_ACTION_FAMILY} must require live check "
                 f"{required_check}",
             )
+        if applicability_value(route, "account_state", label, errors) == "active":
+            if route.get("subject_binding") != "caller_account_id":
+                append_unique_error(
+                    errors,
+                    f"{label} active export initiation must bind to caller_account_id",
+                )
+            if route.get("platform_admin_override") != "forbidden":
+                append_unique_error(
+                    errors,
+                    f"{label} active export initiation must declare "
+                    "platform_admin_override forbidden",
+                )
+            if "account_authorization_branches" in route:
+                append_unique_error(
+                    errors,
+                    f"{label} active export initiation must not declare "
+                    "account_authorization_branches",
+                )
     if not matched_route:
         append_unique_error(
             errors,
             "matrix must contain normalized export-initiation route identity "
             f"{EXPORT_INITIATION_ROUTE_IDENTITY[0]}/{EXPORT_INITIATION_ROUTE_IDENTITY[1]}",
         )
+    for route in matching_routes(
+        routes, LEGACY_EXPORT_ROUTE_IDENTITY[0], LEGACY_EXPORT_ROUTE_IDENTITY[1]
+    ):
+        label = route_label(route)
+        if route.get("route_status") != "current_openapi_operator_surface":
+            append_unique_error(
+                errors,
+                f"{label} legacy export route must declare route_status "
+                "current_openapi_operator_surface",
+            )
+        if route.get("canonical_target") != EXPORT_INITIATION_ROUTE:
+            append_unique_error(
+                errors,
+                f"{label} legacy export route must point to canonical target "
+                f"{EXPORT_INITIATION_ROUTE}",
+            )
 
 
 def validate_capacity_admission_wire_contract(
     routes: list[Any],
     errors: list[str],
-    required_fields_cache: RequiredFieldsCache | None = None,
     cardinality_errors: set[str] | None = None,
 ) -> None:
     service, route_name = CAPACITY_ADMISSION_ROUTE
@@ -2633,6 +2670,18 @@ def validate_generation_applicability(
         validate_security_lock_export_generation(
             route, label, errors, checks, live_checks_cache
         )
+        if (
+            route.get("classification") == "account_scoped"
+            and route.get("action_family") == "export_content"
+            and applicability_value(route, "account_state", label, errors) == "active"
+            and route.get("audit_contract")
+            != ACTIVE_ACCOUNT_EXPORT_CONTENT_AUDIT_CONTRACT
+        ):
+            append_unique_error(
+                errors,
+                f"{label} active account export_content must declare audit_contract "
+                f"{ACTIVE_ACCOUNT_EXPORT_CONTENT_AUDIT_CONTRACT}",
+            )
         value = validate_membership_generation(route, label, errors)
         if value is True:
             if checks is None:
@@ -3810,7 +3859,6 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     validate_capacity_admission_wire_contract(
         routes,
         errors,
-        required_fields_cache,
         cardinality_errors,
     )
     validate_authority_unavailable_outcomes(routes, errors, cardinality_errors)

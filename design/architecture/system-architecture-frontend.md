@@ -120,7 +120,7 @@ For gameplay WebSocket handshake failures on `/ws/game/**`, first-party clients 
 - `CONNECT_TOKEN_REPLAYED`: request a fresh connect token and retry with bounded backoff; repeated replay failures should surface a session-recovery action instead of fast-looping.
 - `CONNECT_SCOPE_MISMATCH`: discard the entire failed discovery snapshot bundle and all connect-token metadata derived from it, including `catalogRevision`, rerun bootstrap discovery, request a fresh connect token from the newly returned scope, and retry on a new socket. Do not reuse any failed bundle field or infer a target from cached tenant/realm fields.
 - `CONNECT_REPLAY_PROTECTION_UNAVAILABLE`: keep the current auth state, show a temporary edge-auth-unavailable message, and retry with slower bounded backoff.
-- `CONNECT_TOKEN_REJECTED`: request a fresh connect token and retry with bounded backoff; if repeated after refresh, restart the first-party bootstrap flow.
+- `CONNECT_TOKEN_REJECTED`: when the carrier or route is unsupported, use the supported carrier/route without refreshing the token; when a supported carrier contains invalid token content, request a fresh token and retry with bounded backoff, restarting the first-party bootstrap flow if rejection repeats.
 - `POLICY_DENY`: treat as non-retriable until configuration is corrected and surface an actionable error.
 
 These handshake classes are edge-handshake outcomes, not gameplay text-protocol `ERROR <CODE>` frames. Clients only start handling protocol-level `ERROR <CODE>` responses after the WebSocket has been established and `LOGIN`/`PLAY` exchange begins.

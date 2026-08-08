@@ -212,13 +212,14 @@ status_heading = re.compile(r"^##[ \t]+Status[ \t]*$")
 historical_status_value = re.compile(r"^(?:Superseded|Withdrawn)\b")
 raw_html_closing_tag_only = frozenset(("pre", "script", "style", "textarea"))
 raw_html_block_start = re.compile(
-    r"^[ \t]{0,3}<(?P<closing>/)?(?P<tag>address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|pre|script|search|section|style|summary|table|tbody|td|textarea|tfoot|th|thead|title|tr|track|ul)(?:[ \t/>]|$)",
+    r"^[ \t]{0,3}<(?P<closing>/)?(?P<tag>address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|pre|script|search|section|style|summary|table|tbody|td|textarea|tfoot|th|thead|title|tr|track|ul)(?:[ \t>]|/>|$)",
     re.IGNORECASE,
 )
 raw_html_special_start = re.compile(
     r"^[ \t]{0,3}(?:(?P<processing><\?)|(?P<declaration><![A-Za-z])|(?P<cdata><!\[CDATA\[))",
 )
 html_comment_boundary = "\x00"
+atx_heading_with_content = re.compile(r"^[ \t]{0,3}#{1,6}[ \t]+\S")
 
 
 def has_non_whitespace(text):
@@ -248,7 +249,7 @@ def strip_html_comments(line, in_html_comment):
             break
         prefix = line[cursor:opening]
         visible.append(prefix)
-        if has_non_whitespace(prefix):
+        if has_non_whitespace(prefix) and atx_heading_with_content.match(prefix) is None:
             visible.append(html_comment_boundary)
         in_html_comment = True
         cursor = opening + len("<!--")
@@ -439,6 +440,12 @@ self_closing_raw_html_fixture_text = (
     "## Status\n\n"
     "Accepted\n"
 )
+standalone_slash_raw_html_fixture_text = (
+    "# ADR 9980: Standalone Slash Raw HTML Fixture\n\n"
+    "<div/not-a-tag>\n"
+    "## Status\n"
+    "Superseded by ADR 0001\n"
+)
 extended_type6_raw_html_fixture_text = (
     "# ADR 9987: Extended Type-6 Raw HTML Fixture\n\n"
     "<option>\n"
@@ -524,6 +531,8 @@ if first_top_level_status_value(same_line_raw_html_fixture_text) != "Accepted":
     raise SystemExit("same-line Type-6 raw HTML block closed before a blank line")
 if first_top_level_status_value(self_closing_raw_html_fixture_text) != "Accepted":
     raise SystemExit("self-closing Type-6 raw HTML block closed before a blank line")
+if first_top_level_status_value(standalone_slash_raw_html_fixture_text) != "Superseded by ADR 0001":
+    raise SystemExit("standalone slash after a Type-6 tag name was incorrectly accepted")
 if first_top_level_status_value(extended_type6_raw_html_fixture_text) != "Accepted":
     raise SystemExit("extended Type-6 raw HTML tag was not hidden before a blank line")
 if first_top_level_status_value(style_html_adr_fixture_text) is not None:
@@ -576,6 +585,13 @@ comment_adjacent_heading_fixture_text = (
 )
 if first_top_level_status_value(comment_adjacent_heading_fixture_text) != "Accepted":
     raise SystemExit("HTML comment removal created a synthetic ATX status heading")
+inline_comment_status_heading_fixture_text = (
+    "# ADR 9983: Inline Comment Status Heading Fixture\n\n"
+    "## Status <!-- inline comment -->\n"
+    "Accepted\n"
+)
+if first_top_level_status_value(inline_comment_status_heading_fixture_text) != "Accepted":
+    raise SystemExit("inline HTML comment invalidated a valid status heading")
 reject_obsolete_envelope_phrases(
     historical_adr_fixture,
     historical_adr_fixture_text,
@@ -925,6 +941,20 @@ end_after_level_two_section = extract_unique_markdown_section(
 )
 if end_after_level_two_section != "before\n":
     raise SystemExit("ATX heading ending immediately after ## was not recognized")
+
+inline_comment_section_heading_fixture = (
+    "## Inline comment section fixture <!-- inline comment -->\n"
+    "before\n"
+    "## Following section\n"
+    "after\n"
+)
+inline_comment_section = extract_unique_markdown_section(
+    inline_comment_section_heading_fixture,
+    "Inline comment section fixture",
+    "inline comment section heading fixture",
+)
+if inline_comment_section != "before\n":
+    raise SystemExit("inline HTML comment invalidated a valid section heading")
 
 hidden_required_snippet_fixture = (
     "## Hidden required snippet fixture\n"

@@ -7,12 +7,13 @@ This document defines the Automation & Scripting Service REST and gRPC surfaces,
 This section records the current implementation boundary only. The API sections below remain normative target contracts; a current implementation note does not relax those contracts, and a target-only surface must not be inferred as shipped.
 
 - `UpdateScript` is limited to bootstrap/dev tooling and is not the production runtime publish path; production rollout uses `PublishScriptPatchVersion` and `NotifyScriptVersionUpdate`.
-- `GetScriptStatus` is backed by durable queued and active script work-item state: runtime workers claim `PENDING_EVALUATION` rows by transitioning them to `EVALUATING` before DSL execution or later handoff work.
+- `GetScriptStatus` is backed by durable pre-DSL evaluator state: runtime workers claim `PENDING_EVALUATION` rows by transitioning them to `EVALUATING` before DSL execution. These pre-DSL statuses are not evaluated-command queue entries; evaluated-command rebuild and handoff select only `PENDING` or `INDEXED` descriptors, while a separate pre-DSL projection may route evaluator work.
 - `NotifyScriptVersionUpdate` currently validates and stages patches through `PENDING_VALIDATION -> ONLOAD_RUNNING -> READY/FAILED/SUPERSEDED`; running instances reload only after a later pin change to that tenant-`READY` patch.
 - The current `ListScriptHandoffEvents` proto/client exposes no `bindingId` request filter. The target response metadata remains target-state follow-through rather than a claimed live field.
 - `GetAutomationPinConvergence` is currently served from a durable Automation-owned `script_patch_pin_projections` view keyed by `(tenantId, gameInstanceId)` and returns freshness flags (`projectionAsOfMs`, `projectionLagMs`, `isProjectionStale`) so temporary Game Session read failures do not collapse operator visibility into raw pass-through coupling.
 - Signer/component-policy enforcement is live on the Automation runtime side. The current control-plane surface exposes `GetPluginStatus`, `ListPluginRuntimeEvents`, and `GetPluginPolicyConvergence`, and scheduled reconciliation disables enabled plugins when current publication metadata becomes fail-closed. The separate propagation-event families `SignerPolicyVersionObserved` and `SignerRevocationApplied` remain target-state follow-through rather than a shipped API family.
 - Script-patch digesting already attests the patch-scoped script graph for `scriptPatchVersion`. The current full-version digest attests the tenant's draft script graph using the existing schema and returns synthetic `appliedCommitId = "version:<versionId>"` until script definitions are modeled as fully version-scoped draft data.
+- The current evaluator accepts exactly one emitted command per work item. A result with more than one command is rejected before persistence or handoff with `finalStage=DSL_EVAL`, `finalOutcome=sandbox_error`, and bounded `finalReason=command_count_exceeded`; multi-command identity using `(automationDispatchId, commandOrdinal)` remains target-only.
 
 ## REST
 
@@ -100,7 +101,7 @@ The shared dry-run safety, namespace, authorization, budget, and capacity rules 
 
 - Test runs use the production sandbox and loop-safety/resource limits, but return would-be commands to the caller instead of persisting/indexing work or handing off to tick queues.
 - Test executions are recorded in `script_event_audit` with `isDryRun=true`; the normative audit table defines the `DRY_RUN_RESULT` success outcome and prohibits live handoff success.
-- Authorization and budget failures are returned as deterministic application-level outcomes such as `DRY_RUN_UNAUTHORIZED` or `DRY_RUN_RATE_LIMITED`, not transport errors.
+- Pre-resolution dry-run budget denial is returned as the event-scope outcome `TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED` with `admissionReason=dry_run_budget_exceeded`, not as a transport error. After handler work is materialized, capacity denial is recorded with handler-scoped `finalOutcome=quota_denied` and a bounded reason. Authorization failures remain deterministic application-level errors such as `DRY_RUN_UNAUTHORIZED`.
 
 ## Reload Backpressure Contract
 
@@ -125,6 +126,7 @@ While terminal `ROLLBACK_CONVERGENCE_TIMEOUT` is active, pre-handler ingress rem
 - `TriggerScriptEventResponse.admissionOutcome=TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK`
 - `TriggerScriptEventResponse.admissionReason=rollback_convergence_timeout`
 - `script_event_ingress_audit` records the same event-scope admission outcome and bounded `admissionReason=rollback_convergence_timeout`
+- Each rejected ingress increments the existing `automation_script_triggers_dropped_total{scope, script_category, reason="rollback_convergence_timeout"}` family. `automation_rollback_convergence_timeout_total{scope, operation, reason}` increments only when rollback enters the terminal state, not for each rejected ingress.
 
 This is an event-scope decision. It must not create or relabel a handler-scoped `script_event_audit` row with `finalOutcome=rollback_convergence_timeout`.
 

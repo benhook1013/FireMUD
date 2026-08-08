@@ -20,6 +20,8 @@ Document conflict resolution order is defined in `design/architecture/system-arc
 
 The current implementation is narrower than this target. Automation persists `automationDispatchId` and command ordinals in its durable handoff records, but the live Game Session enqueue/fence contract does not yet carry the full Trigger Identity or `commandOrdinal` end to end. Until `AS-1.5` and its Game Session handoff dependency are complete in the [automation and scheduler runtime tracker](../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status), current live diagnostics and retries use the available `outboxWorkItemId`, `gameSessionCommandId`, and any persisted `automationDispatchId`, together with `script_event_audit`; this fallback does not establish target command-level deduplication or complete fence proof.
 
+The current evaluator accepts exactly one emitted command per work item. A result with more than one command is rejected before persistence or handoff with `finalStage=DSL_EVAL`, `finalOutcome=sandbox_error`, and bounded `finalReason=command_count_exceeded`; multi-command identity using `(automationDispatchId, commandOrdinal)` remains target-only.
+
 Audit and outcomes must distinguish between:
 
 - “DSL evaluated successfully” vs
@@ -47,6 +49,7 @@ To make script patch rollback meaningful:
 - Scheduler identities and durable timer state must also include `gameInstanceId` and `playableStateScope` for gameplay/runtime schedules. For plugin timers, `pluginId`, `pluginVersionId`, and the binding-scoped `bindingId` are additionally required so multiple bindings, instances, and plugin-version rollbacks cannot alias timer state.
 - After event fan-out, each resolved handler is a separate dedupe and audit unit. A plugin handler is uniquely identified by the full applicable Trigger Identity plus `(pluginId, pluginVersionId, bindingId)`; `pluginId` or `pluginVersionId` alone is never sufficient when one plugin version contributes multiple bindings. The same handler-scoped identity governs `script_event_audit`, quota attribution, timer ownership, and binding-scoped cleanup.
 - **Tenant-readiness `onLoad` events** intentionally omit `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, and `entityId` because they run before any instance pins the patch. Automation & Scripting generates `scriptEventId` deterministically from the preimage `<tenantId, scriptId, eventSchemaVersion, scriptPatchVersion, eventType=onLoad, isDryRun=false>`. The persisted dedupe/audit Trigger Identity is then `<tenantId, scriptId, eventSchemaVersion, scriptPatchVersion, eventType=onLoad, scriptEventId, isDryRun=false>`.
+- `onLoad` handler code may not create durable or semi-durable shared effects, including gameplay/tick commands or handler-owned records in shared stores. Platform-owned execution and readiness state, including required `script_event_audit` metadata, is permitted and required to claim, fence, record, and complete readiness; it is not a handler-created shared effect.
 
 Callers must reuse the same full applicable Trigger Identity on retries for live ingress, including the same `scriptEventId`. For downstream command-handoff retries, reuse of the complete command identity including `automationDispatchId` and `commandOrdinal` is target-state; the current live fallback reuses the available work-item/command identity and does not claim complete fan-out deduplication. For dry-run/test ingress, server-generated IDs are preferred by default; if caller-supplied IDs are accepted, they must be collision-validated in the dry-run namespace.
 
@@ -67,7 +70,7 @@ Dry-run executions are privileged and must not destabilize production:
 - Dry-runs must use an idempotency/audit namespace that is distinct from live traffic (for example, include `isDryRun=true` in Trigger Identity) so test calls cannot dedupe, suppress, or overwrite live trigger records.
 - Dry-run/test APIs should default to server-generated `scriptEventId` values to avoid cross-client collision and namespace drift. If a caller-supplied `scriptEventId` is accepted, the service must validate namespace rules and reject collisions with a deterministic application error.
 - Dry-run/test ingress must enforce explicit authorization scopes/roles (for example `automation.dryrun.execute`) and must record principal identity in audit fields for privileged use.
-- Dry-run/test ingress must apply deterministic principal and tenant rate-limit outcomes (for example `DRY_RUN_RATE_LIMITED`) as application-level errors rather than transport failures.
+- Dry-run/test budget ceilings must apply deterministic event-scope admission outcomes: before handler resolution, return `TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED` with `admissionReason=dry_run_budget_exceeded`. After handler work is materialized, capacity denial uses handler-scoped `finalOutcome=quota_denied` with a bounded reason; no separate `DRY_RUN_*` outcome is introduced.
 - If dry-run authorization context is missing or invalid, the call must fail with deterministic application error (for example `DRY_RUN_UNAUTHORIZED`) and must not execute DSL evaluation.
 - Dry-run/test execution capacity must be isolated from live traffic with separate worker pools, reserved worker shares, or equivalent scheduling partitions so privileged tooling cannot consume the last available live automation capacity.
 
@@ -103,10 +106,10 @@ Plugins are executed by the same runtime engine as scripts and must not rely on 
 - Rollback orchestration must enforce bounded convergence waiting across Automation and Game Session pin-convergence APIs.
 - If convergence is not observed before timeout, rollback enters terminal state `ROLLBACK_CONVERGENCE_TIMEOUT`.
 - In that state, admission and ticks remain paused until an explicit operator action resumes or aborts rollback.
-- The terminal condition must emit:
+- When rollback enters the terminal state, emit once:
   - Control-plane event `ScriptRollbackConvergenceTimedOut` produced by Game Session as producer-of-record.
   - Metric `automation_rollback_convergence_timeout_total{scope, operation, reason}`.
-  - Event-scope ingress outcome `admitted=false`, `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK`, and `admissionReason=rollback_convergence_timeout` for the affected scope while pause remains active, recorded in `script_event_ingress_audit` without inventing a handler-scoped `finalOutcome`.
+- While that terminal state remains active, each rejected ingress must record event-scope outcome `admitted=false`, `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK`, and `admissionReason=rollback_convergence_timeout` in `script_event_ingress_audit` and increment the existing `automation_script_triggers_dropped_total{scope, script_category, reason="rollback_convergence_timeout"}` family. These rejected ingresses must not increment `automation_rollback_convergence_timeout_total` and must not create a handler-scoped `finalOutcome`.
 - Rollback-safe pause scope is instance-level: control-plane pause, admission pause, convergence checks, and resume operations must all target the same `(tenantId, gameInstanceId)` scope. Region-only pause operations are operational tools and must not be used as the only barrier for rollback orchestration.
 
 ### 10) Instance Rollout Read Model Ownership

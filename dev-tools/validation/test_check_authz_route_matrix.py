@@ -2568,6 +2568,47 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                             )
                         )
 
+    def test_active_account_export_content_audit_contract_is_exact(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(
+            route
+            for route in baseline["routes"]
+            if route.get("classification") == "account_scoped"
+            and route.get("action_family") == "export_content"
+            and route.get("applicability", {}).get("account_state") == "active"
+        )
+        expected_contract = self.validator.ACTIVE_ACCOUNT_EXPORT_CONTENT_AUDIT_CONTRACT
+        self.assertEqual(expected_contract, route["audit_contract"])
+
+        for mutation_name, mutate in (
+            ("missing", lambda route: route.pop("audit_contract")),
+            (
+                "unexpected",
+                lambda route: route.__setitem__(
+                    "audit_contract", "unexpected_audit_contract"
+                ),
+            ),
+        ):
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                mutated_route = next(
+                    route
+                    for route in document["routes"]
+                    if route.get("classification") == "account_scoped"
+                    and route.get("action_family") == "export_content"
+                    and route.get("applicability", {}).get("account_state")
+                    == "active"
+                )
+                mutate(mutated_route)
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(
+                        f"active account export_content must declare audit_contract {expected_contract}"
+                        in error
+                        for error in errors
+                    )
+                )
+
     def test_export_initiation_requires_availability_for_every_account_state(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         export_routes = self.validator.matching_routes(
@@ -2598,6 +2639,79 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                         "export_availability" in error
                         for error in errors
                     )
+                )
+
+    def test_active_export_initiation_is_canonical_and_caller_only(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        active = next(
+            route
+            for route in self.validator.matching_routes(
+                baseline["routes"],
+                "account-service",
+                "POST /accounts/{accountId}/exports",
+            )
+            if route.get("applicability", {}).get("account_state") == "active"
+        )
+        self.assertEqual("target_not_currently_routable", active["route_status"])
+        self.assertEqual("caller_account_id", active["subject_binding"])
+        self.assertEqual("forbidden", active["platform_admin_override"])
+        self.assertNotIn("account_authorization_branches", active)
+
+        legacy = route_for(baseline, "account-service", "ExportAccount")
+        self.assertEqual("current_openapi_operator_surface", legacy["route_status"])
+        self.assertEqual(
+            "POST /accounts/{accountId}/exports", legacy["canonical_target"]
+        )
+        self.assertTrue(
+            any(
+                "legacy platformAdmin override" in drift
+                for drift in legacy["implementation_status"]["known_drift"]
+            )
+        )
+        self.assertEqual([], validate_document(self.validator, baseline))
+
+        for field, value in (
+            ("route_status", "target_not_currently_routable"),
+            ("canonical_target", "ExportAccount"),
+        ):
+            with self.subTest(legacy_field=field):
+                document = copy.deepcopy(baseline)
+                route_for(document, "account-service", "ExportAccount")[field] = value
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any("legacy export route" in error for error in errors)
+                )
+
+        for mutation_name, mutate in (
+            (
+                "platform admin override",
+                lambda route: route.__setitem__(
+                    "platform_admin_override", "platformAdmin_only"
+                ),
+            ),
+            (
+                "non-caller subject binding",
+                lambda route: route.__setitem__(
+                    "subject_binding", "explicit_target_account_id"
+                ),
+            ),
+        ):
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                mutated_route = next(
+                    route
+                    for route in self.validator.matching_routes(
+                        document["routes"],
+                        "account-service",
+                        "POST /accounts/{accountId}/exports",
+                    )
+                    if route.get("applicability", {}).get("account_state")
+                    == "active"
+                )
+                mutate(mutated_route)
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any("active export initiation" in error for error in errors)
                 )
 
     def test_export_initiation_identity_and_action_family_cannot_bypass_availability(
