@@ -4,6 +4,8 @@ Append-only notes for recurring friction, surprising behavior, environment issue
 
 Only keep entries whose lesson still matters after the immediate task is done. Do not use this file as a bug log for ordinary fixes that were completed in the same piece of work. Prefer logging reusable observations that suggest a better repo rule, CI guard, design refinement, or shared implementation pattern.
 
+During ordinary autonomous work, this file is append-only: add dated reusable observations, and do not silently rewrite or delete prior entries. A human-requested [repository health check](../developer-workflows/repository-health-check.md) authorizes the worker to remove an entry only after evidence shows that it is addressed, obsolete, or disproved. Retain an entry only when a genuine blocker or deliberate postponement remains, recording the reason and reconsideration trigger. A health-check pass should reduce this inbox toward zero.
+
 Entry format:
 
 - `YYYY-MM-DD`: short title

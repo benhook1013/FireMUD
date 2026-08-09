@@ -244,7 +244,7 @@ The following is the target deterministic replay contract for the `(versionId, s
 
 FireMUD uses a **shared short synchronous saga orchestration library**, not a separate microservice.
 
-### Characteristics:
+### Characteristics
 
 - **Orchestration**:
   - Centralized in the **common-saga** library located under
@@ -276,7 +276,7 @@ This library is intentionally not FireMUD's durable workflow engine. World lifec
   - Compensation logic is registered via hooks
   - Retried automatically or flagged for manual review
 
-### Fluent API Example:
+### Fluent API Example
 
 ```java
 sagaBuilder("accountCreation")

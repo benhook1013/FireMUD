@@ -1,8 +1,17 @@
 {
   "config": {
     "default": true,
+    "MD003": { "style": "atx" },
+    "MD004": { "style": "dash" },
     "MD013": false,
-    "MD026": false
+    "MD026": true,
+    "MD035": { "style": "---" },
+    "MD046": { "style": "fenced" },
+    "MD048": { "style": "backtick" },
+    "MD049": { "style": "asterisk" },
+    "MD050": { "style": "asterisk" },
+    "MD055": { "style": "leading_and_trailing" },
+    "MD060": { "style": "compact" }
   },
   "ignores": [
     "**/node_modules/**",

@@ -2,6 +2,14 @@
 
 This section records implementation status, design/code reconciliation, reusable review material, and project history. It does not own product requirements or technical target-state contracts: use [product documentation](../product/README.md) and [architecture](../architecture/README.md) for those authorities.
 
+## Document Roles And Routing
+
+- Implementation trackers record current capability implementation and proof status; they do not define product or technical behavior.
+- Design-alignment files record allocation, inventory, review, and application status; they are non-normative coordination artifacts.
+- The AI task prompt library, review checklists, and recurring sweeps provide reusable review material and procedures; they do not create a second backlog or authority surface.
+- AI observations are a short-lived inbox for reusable process, tooling, environment, and design lessons. Testing focus areas record recurring risk families and canonical proof surfaces, not individual bugs or current jobs.
+- Use [developer workflows](../developer-workflows/README.md) for repeatable contributor procedures. Product, architecture, operations, and user-guide documents remain in their respective owning directories.
+
 ## Current Implementation Status
 
 Domain-centric [implementation tracking](./implementation-tracking/README.md) is the canonical active status surface. The `slice-support/` directory remains a partial supplemental collection of capability-specific proof and playtest material; its legacy path name is retained pending a separate rename-only cleanup.

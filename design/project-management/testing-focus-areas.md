@@ -5,7 +5,8 @@ This document is the short catalog of the testing areas that most often deserve 
 ## How to Use This Document
 
 - Treat each numbered section as a living list of recurring regression risks.
-- When fixing a bug, add a short note under the relevant section with links to the tests or smoke proof that now cover it.
+- Update this document only when a bug reveals a durable recurring risk or a better shared proof surface.
+- Keep individual bugs, current jobs, and one-off follow-ups with their active pull request or the owning domain implementation tracker when they change a capability gap.
 - Prefer linking to the canonical suite, harness, or proof doc rather than copying command transcripts or Gradle invocations into this file.
 - For current capability priorities and implementation status, use `design/project-management/implementation-tracking/README.md` and the relevant domain tracker rather than this file.
 

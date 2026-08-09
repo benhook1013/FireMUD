@@ -24,4 +24,4 @@ repos:
         name: ShellCheck
         entry: shellcheck
         language: system
-        files: ^(dev-tools/.*\.sh|scripts/.*\.sh|config/git-hooks/.*|codex-.*\.sh)$
+        files: ^(dev-tools/.*\.sh|scripts/.*\.sh|config/git-hooks/.*)$

@@ -10,7 +10,6 @@ The tree and summary below follow a Windows Explorer style sort: directories app
 ```text
 root
 ├── .github/
-├── .vscode/
 ├── buildSrc/
 ├── charts/
 ├── config/
@@ -50,8 +49,6 @@ root
 ├── AGENTS.md
 ├── build.gradle.kts
 ├── CODE_OF_CONDUCT.md
-├── codex-maintenance.sh
-├── codex-setup.sh
 ├── CONTRIBUTING.md
 ├── DEVELOPER_SETUP.md
 ├── FAQ.md
@@ -68,7 +65,6 @@ root
 ## Directory summary
 
 - `.github/` – GitHub Actions workflows and issue templates.
-- `.vscode/` – Recommended workspace settings for VS Code.
 - `buildSrc/` – Shared Gradle convention plugins and build logic applied across modules.
 - `charts/` – Umbrella Helm chart for deploying all services together.
 - `config/` – Checkstyle, ESLint, git hooks, Hadolint, lychee link checker, Markdownlint, OpenAPI generator, protobuf (Buf), Redis, release automation, security scans, SpotBugs, and TypeScript configs.
@@ -89,7 +85,6 @@ root
 - `AGENTS.md` – Always-on AI contributor safety and authority guidance, with links to conditional developer workflows.
 - `build.gradle.kts` – Root Gradle build file that aggregates all modules.
 - `CODE_OF_CONDUCT.md` – Community conduct expectations.
-- `codex-maintenance.sh` and `codex-setup.sh` – Setup and maintenance helpers for Codex CLI workflows and AI tooling.
 - `CONTRIBUTING.md` – Developer onboarding and contribution workflow.
 - `DEVELOPER_SETUP.md` – Step-by-step project setup instructions.
 - `FAQ.md` – Frequently asked questions for contributors.

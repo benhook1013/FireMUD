@@ -31,13 +31,14 @@ This file is the always-on project, authority, and safety kernel for AI work. Re
 
 - Use Gradle task paths without a `services:` prefix, for example `./gradlew :tcp-proxy-service:test`. Run heavier Gradle work from WSL in this repository and use the default daemon unless debugging it. Prefer native Linux Docker against `unix:///var/run/docker.sock` over Windows wrappers.
 - Prefer standard CLI tools for routine inspection. `gh` and `python3` are available and may be used when requested.
-- Record reusable process, tooling, environment, or design lessons in [AI observations](design/project-management/ai-observations.md). Append dated entries; do not log one-off fixes or rewrite prior observations without a requested cleanup.
+- Record reusable process, tooling, environment, or design lessons in [AI observations](design/project-management/ai-observations.md). During ordinary autonomous work, append dated entries; do not silently rewrite or delete prior observations. A human-requested [repository health check](design/developer-workflows/repository-health-check.md) authorizes evidence-based removal of entries shown to be addressed, obsolete, or disproved; retain only genuine blockers or deliberate postponements with their reason and reconsideration trigger.
 
 ## Conditional Workflows
 
 - PR status, CodeRabbit, CI, Renovate, merge authorization, branch topology, and post-merge cleanup use [PR lifecycle](design/developer-workflows/pr-lifecycle.md).
 - Every code or documentation change uses [validation and runtime proof](design/developer-workflows/validation-and-runtime-proof.md) to select and report the required formatting and checks; use its runtime sections when the change affects runtime or smoke behavior.
 - Subagent selection, delegation boundaries, and independent review use [AI delegation and review](design/developer-workflows/ai-delegation-and-review.md). That linked workflow is authoritative for complete delegation boundaries; keep this root file lean rather than duplicating its full list.
+- Human-requested repository maintenance checks use the [repository health check](design/developer-workflows/repository-health-check.md); it routes detailed PR, hosted-environment, validation, and Renovate mechanics to their existing owners.
 - PR or review status handling starts with unresolved non-outdated review threads and the latest completed review summary, reports outdated unresolved threads separately, and checks CI and mergeability second. Summary-only duplicate and outside-diff findings still require verification. Before calling a review complete or merge-ready, use `python3 dev-tools/validation/check-coderabbit-review.py --repo <owner/repo> --pr <number>`; request a full CodeRabbit review at meaningful checkpoints only after current findings are resolved and no review is active or rate limited.
 
 ## Orchestration
@@ -48,5 +49,6 @@ The main `gpt-5.6-sol` thread owns planning, human design discussion, task decom
 - An explicit pause or stop overrides autonomous continuation. Finish only the stated in-progress boundary, publish any promised safe checkpoint, report the state, and do not begin substitute work.
 - Use process proportional to the risk and size of the change. Do not create ledgers, audit suites, repeated review machinery, or speculative governance infrastructure for small edits unless a concrete correctness risk requires it.
 - Delegate bounded bulk reading, mechanical work, or focused investigation only with a disjoint scope and explicit success conditions.
+- Main orchestrators may create or improve small repo-owned tools when repeated manual work or a durable invariant justifies them. Subagents should report tooling opportunities and must not introduce new general-purpose or canonical tools unless explicitly delegated that tool; prefer extending existing tooling, follow [dev-tools placement guidance](dev-tools/README.md#placement-guidance), and add proportionate documentation and focused proof.
 - Every delegation prompt repeats the authoritative workflow's full prohibition text; omitting it grants no permission.
 - Preserve one authority direction: architecture defines target behavior; implementation tracking records status; workflow guidance selects process; the orchestrator evaluates evidence and makes the final decision.
