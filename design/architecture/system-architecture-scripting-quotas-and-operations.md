@@ -294,22 +294,10 @@ Concrete rollback-visibility example:
 Retention and sizing are governed by environment variables described below and in the Automation & Scripting Service README; in particular, `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` and `SCRIPT_EVENT_AUDIT_MAX_ROWS` control how long audit rows are retained and how large the table is allowed to grow (current defaults are 30 days and 1,000,000 rows, but the README remains the authoritative source).
 Dead-letter stores used for rejected queue entries or non-progressing outbox work must also define explicit `maxAge`, `maxRows`, cleanup cadence, and alert thresholds; unbounded dead-letter growth is not an acceptable operational mode. These controls should be exposed as operator knobs (for example, `SCRIPT_DEAD_LETTER_MAX_ROWS`, `SCRIPT_DEAD_LETTER_MAX_AGE_SECONDS`, `SCRIPT_DEAD_LETTER_CLEANUP_INTERVAL_SECONDS`, `SCRIPT_DEAD_LETTER_ALERT_THRESHOLD_ROWS`) rather than implicit defaults.
 
-Metric-family names, labels, and increment units are owned by [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix). Local examples include:
+Metric-family names, labels, and increment units are owned exclusively by [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix); this document does not repeat those schemas. See `design/architecture/system-architecture-logging-monitoring.md` for broader metrics and alerting guidance. Locally, operators use the canonical families to monitor admission, policy skips, quota/budget decisions, and tick handoff. An admitted event that resolves zero handlers has only the Table 4 metric consequence `outcome="admitted_no_handlers"`; it is not an ingress-response or audit-field outcome. For dry-runs specifically:
 
-- `automation_script_triggers_total`
-- `automation_script_skips_total`
-- `automation_script_triggers_dropped_total`
-- `script_quota_allowed_total`
-- `script_quota_denied_total`
-- `automation_tick_events_enqueued_total`
-- `automation_script_test_runs_total`
-- `automation_script_test_runtime_seconds`
-
-are updated throughout the scripting pipeline so operators can monitor how often scripts fire, how many are skipped by policy, and how much automation work is being handed to the tick system. See `design/architecture/system-architecture-logging-monitoring.md` for broader metrics and alerting guidance. For dry-runs specifically:
-
-- `automation_script_test_runs_total` – increments exactly once per materialized handler-scoped dry-run/test execution attempt, including a post-materialization capacity denial or execution failure. Pre-resolution denials use the ingress/drop metrics and do not increment this family; completion does not increment it again. The corresponding audit outcome for a successful dry-run is `finalStage=DRY_RUN_RESULT`, `finalOutcome=dry_run_success`, not live `finalOutcome=success`.
-- `automation_script_test_runtime_seconds` – measures runtime for dry-run/test executions, separate from live traffic.
-- `automation_script_test_capacity_denied_total` – counts handler-scoped dry-run capacity denials; it is not a per-script quota metric.
+- Materialized dry-run/test attempts, their runtime, and isolated capacity denials use the dedicated test-only families defined in Table 4. Pre-resolution denials remain event-scope ingress/drop outcomes, while the corresponding audit outcome for a successful dry-run is `finalStage=DRY_RUN_RESULT`, `finalOutcome=dry_run_success`, not live `finalOutcome=success`.
+- Dry-run capacity denials remain isolated from per-script live quota decisions and do not increment `script_quota_denied_total`.
 
 Additional queue-health metrics help detect automation backlogs that are not draining into ticks as expected:
 
@@ -318,13 +306,7 @@ Additional queue-health metrics help detect automation backlogs that are not dra
 
 A small, bounded Automation-owned inspector loop periodically samples a subset of queues to update these metrics; it does not attempt to repair or delete items itself, but surfaces misalignment between queue projection, durable executor progress, and tick processing for investigation.
 
-For scripting and automation, these metric names and labels follow [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix) so dashboards and alerts remain consistent across services:
-
-Before handler resolution, the pre-handler forms of the trigger, skip, and drop families use the single bounded `script_category="UNRESOLVED"` value and omit `plugin_family` and `plugin_version_family`. Resolved handler metrics use `SCRIPT` or `PLUGIN` and include bounded plugin classifications only when available, as defined by the normative label matrix.
-
-- `automation_script_triggers_total` follows the Table 4 increment unit: use the event-scope outcome before handler resolution and the applicable handler `finalOutcome` after resolution, without adding a separate admitted-event increment when handlers resolve. An admitted event with zero handlers is counted once at event scope with `outcome="admitted_no_handlers"`.
-- `automation_script_skips_total` counts triggers intentionally skipped before sandbox execution; `automation_script_triggers_dropped_total` counts only requests rejected before handler resolution. Handler-level quota and budget outcomes use `automation_script_triggers_total` and `script_event_audit`.
-- `automation_script_work_item_outcomes_total`, `script_quota_allowed_total`, `script_quota_denied_total`, `automation_script_sandbox_failures_total`, `automation_script_errors_total`, `automation_script_output_budget_exceeded_total`, `automation_script_tenant_budget_allowed_total`, `automation_script_tenant_budget_denied_total`, `automation_script_runtime_seconds`, `automation_plugin_policy_violations_total`, and `automation_script_timer_catchup_truncated_total` follow the Table 4 labels and increments. Their local consequences remain visible in audit rows and bounded control-plane/queue diagnostics.
+The live families `automation_script_work_item_outcomes_total`, `automation_script_sandbox_failures_total`, `automation_script_errors_total`, and `automation_script_runtime_seconds` require `isDryRun=false`. Dry-run/test observations use `automation_script_test_runs_total`, `automation_script_test_sandbox_failures_total`, and `automation_script_test_runtime_seconds` as applicable, with isolated capacity denials in `automation_script_test_capacity_denied_total`. This keeps quota, audit, queue, and dashboard consequences attributable to live automation or privileged test traffic without duplicating the metric schema here.
 
 Plugin executions use the same metrics but distinguish plugin behavior through bounded `plugin_family` and `plugin_version_family` labels rather than raw ids. Policy-specific behavior is surfaced via `automation_plugin_policy_violations_total` so operators can separate policy enforcement from quota or sandbox failures.
 
@@ -398,7 +380,7 @@ At a high level:
   - Signer-policy unavailability before handler resolution rejects the event without consuming handler quota or sandbox capacity and without producing a handler-scoped `finalOutcome` or `script_event_audit` row. A signer-policy outcome after binding resolution remains handler-scoped.
 
 - **Sandbox-level failures**
-  - `finalStage=DSL_EVAL`, `finalOutcome=sandbox_error` – the DSL runtime rejected the run or hit a guard (for example, `finalReason=cpu_budget_exceeded`, `finalReason=memory_budget_exceeded`, `finalReason=iteration_budget_exceeded`); increments `automation_script_sandbox_failures_total{reason=...}` and `automation_script_errors_total{reason=...}` and feeds into failure-rate circuit breakers for live traffic (`isDryRun=false`).
+  - `finalStage=DSL_EVAL`, `finalOutcome=sandbox_error` – the DSL runtime rejected the run or hit a guard (for example, `finalReason=cpu_budget_exceeded`, `finalReason=memory_budget_exceeded`, `finalReason=iteration_budget_exceeded`); for live traffic (`isDryRun=false`), this contributes to the live sandbox/error consequences defined by [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix) and feeds failure-rate circuit breakers. Dry-run/test failures use the corresponding test-only families instead.
   - Output-budget failures (for example `finalReason=command_count_exceeded`, `finalReason=per_entity_command_limit_exceeded`, `finalReason=work_item_size_exceeded`) must increment `automation_script_output_budget_exceeded_total{reason=...}` and remain non-success stage-aware outcomes; they must not be counted as successful handoff.
 
 - **Infrastructure-level failures**

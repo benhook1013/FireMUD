@@ -4,6 +4,12 @@ The architecture section describes FireMUD's technical contracts, runtime bounda
 
 Unless a document explicitly says otherwise, docs in `design/architecture/` describe canonical target-state technical contracts and are normative for implementation. Product requirements and observable product behavior are defined in `design/product`; read architecture overview tables, responsibility matrices, glossary terms, and explicitly labeled canonical sections as technical contracts rather than as informal background.
 
+## Implementation Status
+
+Current Gateway/player readiness is partial rather than production-complete. The [platform operations and delivery tracker](../project-management/implementation-tracking/platform-operations-and-delivery.md), [player access and session tracker](../project-management/implementation-tracking/player-access-and-session.md), and [realm-routing tracker](../project-management/implementation-tracking/realm-routing-and-playable-state.md) record the current bounded seams and remaining route-catalog, public-Telnet, admission, and live-environment proof gaps; these statuses do not promote current paths to target readiness.
+
+The target traffic-plane shape remains three distinct planes: internal infrastructure management, external admin/creator APIs through Gateway, and player HTTP/WebSocket/Telnet traffic. Gateway is the target ingress and routing boundary, but this shape is not evidence that current player-facing readiness or production traffic exposure is complete. Detailed contracts remain in the linked architecture documents and the [system context diagram](./system-context-diagram.md).
+
 ## High-Level Diagrams
 
 - [**system-architecture-overview.md**](./system-architecture-overview.md) – High-level diagrams and interactions.

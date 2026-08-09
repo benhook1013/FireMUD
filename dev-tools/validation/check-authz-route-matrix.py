@@ -207,16 +207,32 @@ ACCOUNT_EXPORT_APPLICABILITY_RULES = [
     }
     for identity, action_family in ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES.items()
 ]
+ACTIVE_ACCOUNT_EXPORT_OPERATION_BINDINGS = {
+    "export_initiate": {
+        "source": "authenticated_account_and_export_registry",
+        "required": ["accountId", "exportId"],
+        "comparison": "create_and_attach_exact",
+        "mismatch": "PERMISSION_DENIED",
+    },
+    "export_status": {
+        "source": "authenticated_account_and_export_registry",
+        "required": ["accountId", "exportId"],
+        "comparison": "exact",
+        "mismatch": "PERMISSION_DENIED",
+    },
+    "export_content": {
+        "source": "authenticated_account_and_export_registry",
+        "required": ["accountId", "exportId"],
+        "comparison": "exact_completed_operation",
+        "mismatch": "PERMISSION_DENIED",
+    },
+}
 ACTIVE_ACCOUNT_EXPORT_REQUIRED_LIVE_CHECKS = {
     "account_state_export_eligible",
     "current_account_generation",
     "issuer_generation",
 }
-SECURITY_LOCK_EXPORT_ACTION_FAMILIES = {
-    "export_initiate",
-    "export_status",
-    "export_content",
-}
+SECURITY_LOCK_EXPORT_ACTION_FAMILIES = set(ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES.values())
 SECURITY_LOCK_EXPORT_CONTENT_AUDIT_CONTRACT = (
     "required_account_recovery_case_export_job_and_outcome"
 )
@@ -236,7 +252,7 @@ CHARACTER_ROUTE_CONTRACTS = {
         "GET /auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters",
     ): {
         "character_operation": "existing_character_discovery",
-        "selected_character_requirement": "not_applicable",
+        "selected_character_requirement": "none",
         "gameplay_binding": "not_performed",
         "final_play_binding_cas": "not_performed",
     },
@@ -250,6 +266,7 @@ CHARACTER_ROUTE_CONTRACTS = {
         "final_play_binding_cas": "not_performed",
     },
 }
+SELECTED_CHARACTER_REQUIREMENT_VOCABULARY = ["none"]
 SECURITY_LOCK_EXPORT_CREDENTIAL_BINDING = {
     "source": "security_lock_export_credential_registry",
     "required": ["accountId", "recoveryCaseId"],
@@ -275,6 +292,13 @@ SECURITY_LOCK_EXPORT_OPERATION_BINDINGS = {
         "comparison": "exact_completed_operation",
         "mismatch": "PERMISSION_DENIED",
     },
+}
+SECURITY_LOCK_EXPORT_CLASSIFICATION_OPERATION_BINDINGS = {
+    action_family: {
+        "required": binding["required"],
+        "comparison": binding["comparison"],
+    }
+    for action_family, binding in SECURITY_LOCK_EXPORT_OPERATION_BINDINGS.items()
 }
 PENDING_DELETION_EXPORT_OPERATION_BINDINGS = {
     "export_initiate": {
@@ -317,6 +341,7 @@ CAPACITY_DELTA_WIRE_CONTRACT = {
     "presence": "explicit",
     "absent_encoding": "omitted",
     "present_zero_encoding": "explicit_zero",
+    "boolean_zero_encoding": "rejected",
     "golden_vectors": {
         "absent": {
             "presence": "absent",
@@ -474,24 +499,32 @@ NO_TARGET_TENANT_CLASSES_WITHOUT_ROUTE_SPECIFIC_TARGET_AUTHORITY = {
     "public_production_onboarding",
     "security_lock_export_scoped",
 }
+RECOVERY_EXPORT_GENERATION_CONTRACTS = {
+    "pending_deletion_scoped": {
+        "credential": "pending-deletion-access",
+        "action_family_check": "pending_deletion_action_family",
+        "audit_contract": PENDING_DELETION_EXPORT_CONTENT_AUDIT_CONTRACT,
+    },
+    "security_lock_export_scoped": {
+        "credential": "security-lock-export",
+        "action_family_check": "security_lock_export_action_family",
+        "audit_contract": SECURITY_LOCK_EXPORT_CONTENT_AUDIT_CONTRACT,
+    },
+}
 SECURITY_LOCK_EXPORT_NEGATIVE_PROOF = {
     "security_lock_export_recovery_case_mismatch_denied",
     "security_lock_export_export_job_mismatch_denied",
     "security_lock_export_action_family_mismatch_denied",
+    "security_lock_export_remains_bound_after_target_tenant_generation_advance",
 }
-PENDING_DELETION_EXPORT_ACTION_FAMILIES = {
-    "export_initiate",
-    "export_status",
-    "export_content",
-}
+PENDING_DELETION_EXPORT_ACTION_FAMILIES = set(
+    ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES.values()
+)
 PENDING_DELETION_ACTION_FAMILIES = {
     "deletion_status",
     "deletion_cancel",
-    "export_initiate",
-    "export_status",
-    "export_content",
     "billing_settlement",
-}
+} | PENDING_DELETION_EXPORT_ACTION_FAMILIES
 ROUTES_WITH_EXPLICIT_TARGET_TENANT_AUTHORITY = {
     ("account-service", "IssueConnectToken"),
 }
@@ -1506,137 +1539,75 @@ def validate_multi_profile_predicates(
         )
 
 
-def validate_pending_deletion_generation(
-    route: dict[str, Any],
-    label: str,
-    account_generation: Any,
-    errors: list[str],
-    checks: set[str] | None = None,
-    live_checks_cache: LiveChecksCache | None = None,
-) -> None:
-    if route.get("classification") != "pending_deletion_scoped":
-        return
-    if route.get("accepted_token_profiles") != []:
-        errors.append(
-            f"{label} pending_deletion_scoped routes must set "
-            "accepted_token_profiles=[]"
-        )
-    if route.get("accepted_credentials") != ["pending-deletion-access"]:
-        errors.append(
-            f"{label} pending_deletion_scoped routes must accept only "
-            "pending-deletion-access"
-        )
-    if account_generation is not False:
-        errors.append(
-            f"{label} pending_deletion_scoped routes must set "
-            "account_authority_generation_applies=false"
-        )
-    if route.get("issuer_authority_generation_applies") is not False:
-        errors.append(
-            f"{label} pending_deletion_scoped routes must set "
-            "issuer_authority_generation_applies=false"
-        )
-    if route.get("tenant_billing_authority_generation_applies") is not False:
-        errors.append(
-            f"{label} pending_deletion_scoped routes must set "
-            "tenant_billing_authority_generation_applies=false"
-        )
-    if route.get("membership_authority_generation_applies") is not False:
-        errors.append(
-            f"{label} pending_deletion_scoped routes must set "
-            "membership_authority_generation_applies=false"
-        )
-    if checks is None:
-        checks = route_live_checks(route, label, errors, live_checks_cache)
-    missing = (
-        REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS["pending_deletion_scoped"][
-            "required_authority"
-        ]
-        - checks
-    )
-    if missing:
-        errors.append(
-            f"{label} is missing no-target authority checks: {sorted(missing)}"
-        )
-    if "pending_deletion_action_family" not in (checks or set()):
-        append_unique_error(
-            errors,
-            f"{label} {route.get('action_family')} must require live check "
-            "pending_deletion_action_family",
-        )
-    forbidden_checks = checks & {"tenant_generation", "target_tenant_generation"}
-    if forbidden_checks:
-        errors.append(
-            f"{label} must not require tenant-generation checks for pending_deletion_scoped: "
-            f"{sorted(forbidden_checks)}"
-        )
-    if (
-        route.get("action_family") in RECOVERY_EXPORT_AUDITED_ACTION_FAMILIES
-        and route.get("audit_contract")
-        != PENDING_DELETION_EXPORT_CONTENT_AUDIT_CONTRACT
-    ):
-        action_family = route.get("action_family")
-        append_unique_error(
-            errors,
-            f"{label} {action_family} must declare audit_contract "
-            f"{PENDING_DELETION_EXPORT_CONTENT_AUDIT_CONTRACT}",
-        )
-
-
-def validate_security_lock_export_generation(
+def validate_recovery_export_generation(
     route: dict[str, Any],
     label: str,
     errors: list[str],
     checks: set[str] | None = None,
     live_checks_cache: LiveChecksCache | None = None,
 ) -> None:
-    if route.get("classification") != "security_lock_export_scoped":
+    classification = route.get("classification")
+    if not isinstance(classification, str):
+        return
+    contract = RECOVERY_EXPORT_GENERATION_CONTRACTS.get(classification)
+    if contract is None:
         return
     if route.get("accepted_token_profiles") != []:
         errors.append(
-            f"{label} security_lock_export_scoped routes must set "
+            f"{label} {classification} routes must set "
             "accepted_token_profiles=[]"
         )
-    if route.get("accepted_credentials") != ["security-lock-export"]:
+    credential = contract["credential"]
+    if route.get("accepted_credentials") != [credential]:
         errors.append(
-            f"{label} security_lock_export_scoped routes must accept only "
-            "security-lock-export"
+            f"{label} {classification} routes must accept only {credential}"
         )
     for field in SECURITY_LOCK_EXPORT_GENERATION_FIELDS:
         if route.get(field) is not False:
             errors.append(
-                f"{label} security_lock_export_scoped routes must set "
+                f"{label} {classification} routes must set "
                 f"{field}=false"
             )
     if checks is None:
         checks = route_live_checks(route, label, errors, live_checks_cache)
     missing = (
-        REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS["security_lock_export_scoped"][
-            "required_authority"
-        ]
+        REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS[classification]["required_authority"]
         - checks
     )
     if missing:
         errors.append(
             f"{label} is missing no-target authority checks: {sorted(missing)}"
         )
+    action_family_check = contract["action_family_check"]
+    required_authority = REQUIRED_NO_TARGET_TENANT_CLASSIFICATIONS[classification][
+        "required_authority"
+    ]
+    if (
+        action_family_check not in required_authority
+        and action_family_check not in (checks or set())
+    ):
+        append_unique_error(
+            errors,
+            f"{label} {route.get('action_family')} must require live check "
+            f"{action_family_check}",
+        )
     forbidden_checks = checks & {"tenant_generation", "target_tenant_generation"}
     if forbidden_checks:
         errors.append(
             f"{label} must not require tenant-generation checks for "
-            "security_lock_export_scoped: "
+            f"{classification}: "
             f"{sorted(forbidden_checks)}"
         )
     if (
         route.get("action_family") in RECOVERY_EXPORT_AUDITED_ACTION_FAMILIES
         and route.get("audit_contract")
-        != SECURITY_LOCK_EXPORT_CONTENT_AUDIT_CONTRACT
+        != contract["audit_contract"]
     ):
         action_family = route.get("action_family")
         append_unique_error(
             errors,
             f"{label} {action_family} must declare audit_contract "
-            f"{SECURITY_LOCK_EXPORT_CONTENT_AUDIT_CONTRACT}",
+            f"{contract['audit_contract']}",
         )
 
 
@@ -1672,6 +1643,12 @@ def validate_export_bindings(routes: list[Any], errors: list[str]) -> None:
             )
         elif classification == "pending_deletion_scoped":
             operation_bindings = PENDING_DELETION_EXPORT_OPERATION_BINDINGS
+        elif (
+            classification == "account_scoped"
+            and route_set_key(route) in ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES
+            and applicability_value(route, "account_state", label, errors) == "active"
+        ):
+            operation_bindings = ACTIVE_ACCOUNT_EXPORT_OPERATION_BINDINGS
         else:
             continue
 
@@ -1684,6 +1661,25 @@ def validate_export_bindings(routes: list[Any], errors: list[str]) -> None:
                 expected_operation_binding,
                 errors,
             )
+
+
+def validate_security_lock_export_classification_rule(
+    document: dict[str, Any], errors: list[str]
+) -> None:
+    classification_rules = document.get("classification_rules")
+    rule = (
+        classification_rules.get("security_lock_export_scoped")
+        if isinstance(classification_rules, dict)
+        else None
+    )
+    binding = rule.get("export_operation_binding") if isinstance(rule, dict) else None
+    if binding != SECURITY_LOCK_EXPORT_CLASSIFICATION_OPERATION_BINDINGS:
+        append_unique_error(
+            errors,
+            "classification_rules.security_lock_export_scoped."
+            "export_operation_binding must declare action-family-specific "
+            f"bindings {SECURITY_LOCK_EXPORT_CLASSIFICATION_OPERATION_BINDINGS}",
+        )
 
 
 def validate_account_export_applicability(
@@ -1713,7 +1709,20 @@ def validate_account_export_applicability(
             "account_export_applicability must declare coverage=exhaustive, "
             "overlap=forbidden, and unmatched=deny",
         )
-    if applicability.get("rules") != ACCOUNT_EXPORT_APPLICABILITY_RULES:
+    actual_rules = applicability.get("rules")
+    try:
+        actual_rule_keys = sorted(
+            json.dumps(rule, sort_keys=True, separators=(",", ":"))
+            for rule in actual_rules
+        )
+        expected_rule_keys = sorted(
+            json.dumps(rule, sort_keys=True, separators=(",", ":"))
+            for rule in ACCOUNT_EXPORT_APPLICABILITY_RULES
+        )
+    except (TypeError, ValueError):
+        actual_rule_keys = None
+        expected_rule_keys = None
+    if actual_rule_keys != expected_rule_keys:
         append_unique_error(
             errors,
             "account_export_applicability.rules must declare exactly the canonical "
@@ -1721,7 +1730,7 @@ def validate_account_export_applicability(
         )
 
 
-def validate_export_initiation_routes(
+def validate_account_export_routes(
     routes: list[Any],
     errors: list[str],
     live_checks_cache: LiveChecksCache | None = None,
@@ -1857,6 +1866,7 @@ def validate_export_initiation_routes(
         for route in routes
         if isinstance(route, dict)
         and route.get("classification") == "security_lock_export_scoped"
+        and route_set_key(route) in ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES
     ]
     if (
         len(security_lock_action_families)
@@ -1931,6 +1941,19 @@ def validate_character_routes(
                     errors,
                     f"{label} must declare {field}={expected_value}",
                 )
+
+
+def validate_selected_character_requirement_vocabulary(
+    document: dict[str, Any], errors: list[str]
+) -> None:
+    if document.get("selected_character_requirement_vocabulary") != (
+        SELECTED_CHARACTER_REQUIREMENT_VOCABULARY
+    ):
+        append_unique_error(
+            errors,
+            "selected_character_requirement_vocabulary must declare exactly "
+            f"{SELECTED_CHARACTER_REQUIREMENT_VOCABULARY}",
+        )
 
 
 def validate_capacity_admission_wire_contract(
@@ -3032,10 +3055,7 @@ def validate_generation_applicability(
             branch_checks = operator_authorization_branch_checks(
                 route, label, errors, live_checks_cache
             )
-        validate_pending_deletion_generation(
-            route, label, account_generation, errors, checks, live_checks_cache
-        )
-        validate_security_lock_export_generation(
+        validate_recovery_export_generation(
             route, label, errors, checks, live_checks_cache
         )
         if (
@@ -4225,9 +4245,11 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     )
     validate_generation_applicability(routes, errors, live_checks_cache)
     validate_account_export_applicability(document, errors)
-    validate_export_initiation_routes(routes, errors, live_checks_cache)
+    validate_account_export_routes(routes, errors, live_checks_cache)
     validate_export_bindings(routes, errors)
+    validate_security_lock_export_classification_rule(document, errors)
     validate_character_routes(routes, errors, cardinality_errors)
+    validate_selected_character_requirement_vocabulary(document, errors)
     validate_profile_authority_routes(
         routes, errors, live_checks_cache, cardinality_errors
     )

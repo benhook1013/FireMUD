@@ -2392,27 +2392,17 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
         self.assertEqual(6, len(pending_routes))
 
-        for baseline_route in pending_routes:
-            action_family = baseline_route["action_family"]
+        for route in pending_routes:
+            action_family = route["action_family"]
+            route_position = route_index(baseline, route)
             with self.subTest(action_family=action_family):
-                route = next(
-                    route
-                    for route in baseline["routes"]
-                    if route.get("classification") == "pending_deletion_scoped"
-                    and route.get("action_family") == action_family
-                )
                 self.assertIn(
                     "pending_deletion_action_family",
                     route["required_live_checks"],
                 )
 
                 document = copy.deepcopy(baseline)
-                mutated_route = next(
-                    route
-                    for route in document["routes"]
-                    if route.get("classification") == "pending_deletion_scoped"
-                    and route.get("action_family") == action_family
-                )
+                mutated_route = document["routes"][route_position]
                 mutated_route["required_live_checks"].remove(
                     "pending_deletion_action_family"
                 )
@@ -2436,6 +2426,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertEqual(
             self.validator.PENDING_DELETION_EXPORT_ACTION_FAMILIES,
             {route["action_family"] for route in pending_routes},
+        )
+        self.assertEqual(
+            set(self.validator.ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES.values()),
+            self.validator.PENDING_DELETION_EXPORT_ACTION_FAMILIES,
         )
         self.assertEqual(
             len(self.validator.PENDING_DELETION_EXPORT_ACTION_FAMILIES),
@@ -2467,7 +2461,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 )
                 mutate(mutated_route)
                 errors = []
-                self.validator.validate_export_initiation_routes(
+                self.validator.validate_account_export_routes(
                     document["routes"], errors
                 )
                 self.assertIn(
@@ -2485,6 +2479,21 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
 
     def test_character_routes_are_distinct_pre_play_operations(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        self.assertEqual(
+            ["none"],
+            baseline["selected_character_requirement_vocabulary"],
+        )
+        malformed_vocabulary = copy.deepcopy(baseline)
+        malformed_vocabulary["selected_character_requirement_vocabulary"] = [
+            "not_applicable"
+        ]
+        self.assertTrue(
+            any(
+                "selected_character_requirement_vocabulary must declare exactly"
+                in error
+                for error in validate_document(self.validator, malformed_vocabulary)
+            )
+        )
         for identity, expected_contract in self.validator.CHARACTER_ROUTE_CONTRACTS.items():
             with self.subTest(route=identity[1]):
                 route = route_for(baseline, *identity)
@@ -2531,10 +2540,6 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             ["accountId", "recoveryCaseId"], rule["subject_binding"]
         )
         self.assertEqual(
-            ["accountId", "recoveryCaseId", "exportId"],
-            rule["export_operation_binding"]["required"],
-        )
-        self.assertEqual(
             "AUTH_SESSION_REVOKED",
             rule["failure_mapping"][
                 "credential_account_or_recovery_binding_mismatch"
@@ -2543,6 +2548,34 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertEqual(
             "PERMISSION_DENIED",
             rule["failure_mapping"]["export_operation_or_job_binding_mismatch"],
+        )
+        self.assertEqual(
+            {
+                "export_initiate": {
+                    "required": ["accountId", "recoveryCaseId", "exportId"],
+                    "comparison": "create_and_attach_exact",
+                },
+                "export_status": {
+                    "required": ["accountId", "recoveryCaseId", "exportId"],
+                    "comparison": "exact",
+                },
+                "export_content": {
+                    "required": ["accountId", "recoveryCaseId", "exportId"],
+                    "comparison": "exact_completed_operation",
+                },
+            },
+            rule["export_operation_binding"],
+        )
+        mutated = copy.deepcopy(document)
+        mutated["classification_rules"]["security_lock_export_scoped"][
+            "export_operation_binding"
+        ]["export_status"]["comparison"] = "exact_completed_operation"
+        self.assertTrue(
+            any(
+                "export_operation_binding must declare action-family-specific bindings"
+                in error
+                for error in validate_document(self.validator, mutated)
+            )
         )
         export_routes = {
             route["action_family"]: route
@@ -2572,17 +2605,20 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     "bounded_expiring_export_operation_access",
                     export_routes[action_family]["credential_use"],
                 )
+        security_lock_exception = document["tenant_generation_policy"][
+            "no_target_tenant_classifications"
+        ]["security_lock_export_scoped"]
         self.assertEqual(
-            {
-                "security_lock_export_recovery_case_mismatch_denied",
-                "security_lock_export_export_job_mismatch_denied",
-                "security_lock_export_action_family_mismatch_denied",
-            },
-            set(
-                document["tenant_generation_policy"]["no_target_tenant_classifications"][
-                    "security_lock_export_scoped"
-                ]["negative_proof"]["required"]
-            ),
+            "remains_bound_to_exact_recovery_export_lifecycle",
+            security_lock_exception["target_tenant_generation_advance_behavior"],
+        )
+        self.assertEqual(
+            self.validator.SECURITY_LOCK_EXPORT_NEGATIVE_PROOF,
+            set(security_lock_exception["negative_proof"]["required"]),
+        )
+        self.assertIn(
+            "security_lock_export_remains_bound_after_target_tenant_generation_advance",
+            security_lock_exception["negative_proof"]["required"],
         )
         self.assertEqual([], validate_document(self.validator, document))
 
@@ -2633,6 +2669,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             {route["action_family"] for route in security_routes},
         )
         self.assertEqual(
+            set(self.validator.ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES.values()),
+            self.validator.SECURITY_LOCK_EXPORT_ACTION_FAMILIES,
+        )
+        self.assertEqual(
             len(self.validator.SECURITY_LOCK_EXPORT_ACTION_FAMILIES),
             len(security_routes),
         )
@@ -2658,7 +2698,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 )
                 mutate(mutated_route)
                 errors = []
-                self.validator.validate_export_initiation_routes(
+                self.validator.validate_account_export_routes(
                     document["routes"], errors
                 )
                 self.assertIn(
@@ -2667,6 +2707,28 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     "'export_status']",
                     errors,
                 )
+
+    def test_security_lock_action_family_cardinality_is_scoped_to_account_exports(
+        self,
+    ):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        unrelated = copy.deepcopy(
+            next(
+                route
+                for route in baseline["routes"]
+                if route.get("classification") == "security_lock_export_scoped"
+            )
+        )
+        unrelated["route"] = "SecurityLockRecoveryAudit"
+        unrelated["action_family"] = "recovery_audit"
+        baseline["routes"].append(unrelated)
+        errors = []
+        self.validator.validate_account_export_routes(baseline["routes"], errors)
+        self.assertNotIn(
+            "security_lock_export_scoped routes must declare exactly action_family "
+            "set ['export_content', 'export_initiate', 'export_status']",
+            errors,
+        )
 
     def test_security_lock_export_routes_require_action_family_live_check(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -3063,6 +3125,12 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             applicability["rules"],
         )
 
+        reordered = copy.deepcopy(baseline)
+        reordered["account_export_applicability"]["rules"] = list(
+            reversed(reordered["account_export_applicability"]["rules"])
+        )
+        self.assertEqual([], validate_document(self.validator, reordered))
+
         for mutation_name, mutate, expected_error in (
             (
                 "vocabulary",
@@ -3205,10 +3273,38 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 self.assertEqual(action_family, active["action_family"])
                 self.assertEqual("caller_account_id", active["subject_binding"])
                 self.assertEqual("forbidden", active["platform_admin_override"])
+                self.assertEqual(
+                    self.validator.ACTIVE_ACCOUNT_EXPORT_OPERATION_BINDINGS[
+                        action_family
+                    ],
+                    active["export_operation_binding"],
+                )
                 self.assertNotIn("account_authorization_branches", active)
                 self.assertIn(
                     "account_state_export_eligible", active["required_live_checks"]
                 )
+
+        document = copy.deepcopy(baseline)
+        active_initiation = next(
+            route
+            for route in self.validator.matching_routes(
+                document["routes"],
+                "account-service",
+                "POST /accounts/{accountId}/exports",
+            )
+            if self.validator.applicability_value(
+                route, "account_state", "test active export route", []
+            )
+            == "active"
+        )
+        active_initiation.pop("export_operation_binding")
+        errors = validate_document(self.validator, document)
+        self.assertIn(
+            f"{self.validator.route_label(active_initiation)} "
+            "export_operation_binding must declare exactly "
+            f"{self.validator.ACTIVE_ACCOUNT_EXPORT_OPERATION_BINDINGS['export_initiate']}",
+            errors,
+        )
 
         legacy = route_for(baseline, "account-service", "ExportAccount")
         self.assertEqual("current_openapi_operator_surface", legacy["route_status"])
@@ -3404,6 +3500,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             route["capacity_delta_wire_contract"],
         )
         self.assertEqual(
+            "rejected",
+            route["capacity_delta_wire_contract"]["boolean_zero_encoding"],
+        )
+        self.assertEqual(
             "integer",
             route["capacity_delta_wire_contract"]["golden_vectors"]["present_zero"][
                 "wire_value_type"
@@ -3446,6 +3546,12 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 "present zero vector encoded as boolean",
                 lambda contract: contract["golden_vectors"]["present_zero"].__setitem__(
                     "wire_value", False
+                ),
+            ),
+            (
+                "boolean zero accepted by contract",
+                lambda contract: contract.__setitem__(
+                    "boolean_zero_encoding", "explicit_zero"
                 ),
             ),
             (

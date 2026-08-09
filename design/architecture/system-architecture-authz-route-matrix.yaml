@@ -101,6 +101,8 @@ account_state_vocabulary:
   - active
   - security_locked
   - deactivated_pending_delete
+selected_character_requirement_vocabulary:
+  - none
 account_export_applicability:
   coverage: exhaustive
   overlap: forbidden
@@ -254,6 +256,7 @@ tenant_generation_policy:
           - security_lock_export_recovery_case_mismatch_denied
           - security_lock_export_export_job_mismatch_denied
           - security_lock_export_action_family_mismatch_denied
+          - security_lock_export_remains_bound_after_target_tenant_generation_advance
   negative_proof:
     tenant_authority_classifications: [tenant_regular, cross_tenant_data_bearing]
     required:
@@ -397,8 +400,15 @@ classification_rules:
       state: ACTIVE
     subject_binding: [accountId, recoveryCaseId]
     export_operation_binding:
-      required: [accountId, recoveryCaseId, exportId]
-      comparison: exact
+      export_initiate:
+        required: [accountId, recoveryCaseId, exportId]
+        comparison: create_and_attach_exact
+      export_status:
+        required: [accountId, recoveryCaseId, exportId]
+        comparison: exact
+      export_content:
+        required: [accountId, recoveryCaseId, exportId]
+        comparison: exact_completed_operation
     action_family_binding: exact_route_action_family
     authority_generations:
       issuer: false
@@ -1017,7 +1027,7 @@ routes:
     realm_grant_authority: account_owned_when_non_public
     realm_grant_version: required_when_grant_gated
     character_operation: existing_character_discovery
-    selected_character_requirement: not_applicable
+    selected_character_requirement: none
     gameplay_binding: not_performed
     final_play_binding_cas: not_performed
     required_live_checks: [membership, membership_generation, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match]
@@ -1682,6 +1692,11 @@ routes:
     token_audience: control-ui
     subject_binding: caller_account_id
     platform_admin_override: forbidden
+    export_operation_binding:
+      source: authenticated_account_and_export_registry
+      required: [accountId, exportId]
+      comparison: create_and_attach_exact
+      mismatch: PERMISSION_DENIED
     required_fields: [request_id]
     required_live_checks: [account_state_export_eligible, issuer_generation, current_account_generation, recent_account_authentication, export_availability]
     action_family: export_initiate
@@ -2249,6 +2264,7 @@ routes:
       presence: explicit
       absent_encoding: omitted
       present_zero_encoding: explicit_zero
+      boolean_zero_encoding: rejected
       golden_vectors:
         absent:
           presence: absent

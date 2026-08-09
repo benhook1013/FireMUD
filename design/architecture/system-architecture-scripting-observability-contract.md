@@ -287,29 +287,17 @@ When `policyViolations` is present, `decision` values and final outcomes must al
 
 ## Metrics (Authoritative Names and Label Rules)
 
-The normative metric-family catalog, labels, and increment units live in [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix). This section describes observability behavior and grouping expectations for those families without redefining their schemas.
+The normative metric-family catalog, labels, and increment units live exclusively in [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix). This section records observability consequences and must not copy metric schemas.
 
-- Trigger admission and drops: `automation_script_triggers_total`, `automation_script_skips_total`, and `automation_script_triggers_dropped_total`.
-- Quotas and budgets: `script_quota_allowed_total`, `script_quota_denied_total`, `automation_script_tenant_budget_allowed_total`, and `automation_script_tenant_budget_denied_total`.
-- Tick integration and queueing: `automation_tick_events_enqueued_total`, `automation_tick_version_fence_dropped_total`, `automation_tick_plugin_version_fence_dropped_total`, `automation_script_queue_delay_seconds`, `automation_queue_orphaned_entries_total`, `automation_queue_oldest_entry_age_seconds`, `automation_script_leadership_changes_total`, and `automation_script_timer_catchup_truncated_total`.
-- Work-item, sandbox, and runtime health: `automation_script_work_item_outcomes_total`, `automation_script_sandbox_failures_total`, `automation_script_errors_total`, `automation_script_output_budget_exceeded_total`, and `automation_script_runtime_seconds`.
-- Dry-run/test traffic: `automation_script_test_runs_total`, `automation_script_test_runtime_seconds`, `automation_script_test_sandbox_failures_total`, and `automation_script_test_capacity_denied_total`.
-- Plugin policy and rollback: `automation_plugin_policy_violations_total`, `automation_rollback_convergence_timeout_total`, and `automation_rollback_drain_canceled_total`.
-
-Label rules:
-
-- `scriptEventId` is forbidden as a metric label.
-- Raw tenant, script, plugin, and runtime identifiers are not approved ordinary Prometheus labels here. Producers must emit bounded `scope`, category, family, or operation dimensions instead of raw IDs.
-- Before handler resolution, the pre-handler forms of the trigger, skip, and drop families use `script_category="UNRESOLVED"` and omit `plugin_family` and `plugin_version_family`. Resolved handler metrics use `SCRIPT` or `PLUGIN` and include bounded plugin classifications only when available. This follows the normative label matrix.
+- The live families `automation_script_work_item_outcomes_total`, `automation_script_sandbox_failures_total`, `automation_script_errors_total`, and `automation_script_runtime_seconds` are emitted only for `isDryRun=false`. Dry-run/test observations use `automation_script_test_runs_total`, `automation_script_test_sandbox_failures_total`, and `automation_script_test_runtime_seconds` as applicable; isolated capacity denials use `automation_script_test_capacity_denied_total`.
+- Dry-run/test traffic must not increment live-traffic counters such as `automation_script_sandbox_failures_total`, `automation_script_errors_total`, or `script_quota_denied_total`. Handler-scoped `dry_run_capacity_exhausted` remains visible through `automation_script_test_capacity_denied_total{scope}`, `automation_script_triggers_total{outcome="quota_denied"}`, and its audit row. Live dashboards and SLOs must remain interpretable without privileged tooling skewing error rates.
 
 Metric semantics:
 
-- `automation_script_triggers_total` follows the increment unit in [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix): increment once for each rejected pre-handler ingress event; after resolution, increment once per resolved handler with no additional admitted-event increment. An admitted event with zero handlers uses one event-scope `outcome="admitted_no_handlers"` increment. The event-scope outcome before resolution and handler `finalOutcome` after resolution remain distinct observability facts.
-- `automation_script_triggers_dropped_total` is the ingress metric for each rejected pre-handler event. Its bounded `reason` uses the event-scope `admissionReason`, including `reason="signer_policy_unavailable"` for signer-policy unavailability, and does not imply a handler audit row or handler `finalOutcome`.
+- Event-scope admission, skip, and drop outcomes remain distinct from resolved handler outcomes. An admitted event that resolves zero handlers is visible only through the bounded metric-only `outcome="admitted_no_handlers"` value in `automation_script_triggers_total`; it is not returned in an ingress response or written to any audit field. The exact definition is owned by [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix).
+- `automation_script_triggers_dropped_total` remains the ingress metric for each rejected pre-handler event. Its bounded `reason` uses the event-scope `admissionReason`, including `reason="signer_policy_unavailable"` for signer-policy unavailability, and does not imply a handler audit row or handler `finalOutcome`.
 - `automation_rollback_drain_canceled_total` counts old-epoch executions intentionally fenced during rollback draining before live work could persist or hand off. It must be used for bounded rollback-drain visibility rather than a generic infrastructure failure counter.
   It is not the counter for ordinary operator-initiated cancel/purge actions on not-yet-running work items unless those items had already crossed into execution and were then fenced by rollback epoch advancement.
-
-Dry-run/test traffic must not increment live-traffic counters such as `automation_script_sandbox_failures_total`, `automation_script_errors_total`, or `script_quota_denied_total`. Handler-scoped `dry_run_capacity_exhausted` remains visible through `automation_script_test_capacity_denied_total{scope}`, `automation_script_triggers_total{outcome="quota_denied"}`, and its audit row. Live dashboards and SLOs must remain interpretable without privileged tooling skewing error rates.
 
 ## Required Links
 

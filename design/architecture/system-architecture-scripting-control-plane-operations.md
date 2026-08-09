@@ -82,6 +82,9 @@ Inputs:
 Semantics:
 
 - Idempotent.
+- Reusing a `controlPlaneRequestId` with a different canonical request fingerprint returns an idempotency conflict and cannot alter an existing claim; a distinct request or selector reuses the existing per-original result.
+- Resolves and normalizes the selected canonical `outboxWorkItemId` values, then validates and claims each original execution identity atomically. A durable unique replay claim keyed by the original identity, independent of `controlPlaneRequestId` and selector form, prevents two requests or overlapping selectors from creating two replay identities.
+- A successful claim durably stores the original execution identity, new `replayExecutionIdentity`, outcome/result, winning `controlPlaneRequestId`, and canonical request fingerprint. An exact retry reuses that stored result; a request using an already claimed original identity through another selector also reuses the existing result and cannot replace its fingerprint or create another replay identity. Reuse does not reopen the original audit row.
 - Prevents new tick scheduling and new command intake for the scope.
 
 #### `ResumeTicks`
@@ -283,6 +286,8 @@ Outputs:
 
 These APIs provide deterministic operator hooks for stuck/canceled work so control-plane rollback and recovery do not depend on ad-hoc database access.
 
+Public work-item identifier naming is canonical across these operations: `workItemId` and `workItemIds[]` are public API aliases for the persisted `outboxWorkItemId` values. They do not create another work-item identity. `automationWorkItemId` remains the current Game Session wire name for that same parent identifier and is not a public API alias or a per-command identity.
+
 #### `ListOutboxWorkItems`
 
 Inputs:
@@ -298,7 +303,7 @@ Semantics:
 
 Outputs:
 
-- `items[]` (including `outboxWorkItemId`, Trigger Identity, `workItemStatus`, `createdAt`, `updatedAt`, `cancelReason`)
+- `items[]` (including `workItemId`, the public alias for canonical `outboxWorkItemId`, Trigger Identity, `workItemStatus`, `createdAt`, `updatedAt`, `cancelReason`)
 - `nextPageToken`
 
 #### `ReplayDeadLetteredWorkItems`
@@ -307,7 +312,7 @@ Inputs:
 
 - `tenantId`
 - Optional scope: `gameInstanceId`, `regionId`
-- Selector: explicit `outboxWorkItemIds[]` or bounded filter (`scriptPatchVersion`, `pluginVersionId`, `createdAfter`, `createdBefore`)
+- Selector: explicit `workItemIds[]` (public aliases for canonical `outboxWorkItemId` values) or bounded filter (`scriptPatchVersion`, `pluginVersionId`, `createdAfter`, `createdBefore`)
 - `controlPlaneRequestId`
 - `actor`
 - `reason`
@@ -318,6 +323,8 @@ Semantics:
 - Creates one durable replay record with a new execution identity for each eligible selected `DEAD_LETTERED` item. The original identity remains terminal and becomes causation evidence for the new replay; its audit row is never reopened or appended with replay execution history. The canonical identity and idempotency rules are defined in [Operator Replay of DEAD_LETTERED Work](./system-architecture-scripting-runtime-execution.md#operator-replay-of-dead_lettered-work).
 - Repeating the same `controlPlaneRequestId` for the same original execution identity returns the previously created replay record/result rather than creating another replay identity.
 - Must enforce bounded batch size per request.
+- Every selected row must match the request `tenantId` and any explicit `gameInstanceId` or `regionId` scope using the row's own stored `tenantId`, `gameInstanceId`, and optional `regionId`. A tenant-wide selector must evaluate each instance independently and must not borrow another instance's current pin or binding.
+- Resolve the current patch pin from each row's own tenant and instance. For plugin-backed work, resolve the current binding for that same tenant, instance, and plugin, then compare the row's immutable `(pluginId, pluginVersionId, bindingId)` tuple to that binding.
 - Must enforce replay eligibility against current control-plane state before creating the replay:
   - Work items with `scriptPatchVersion` that is not currently pinned for the scoped instance must be rejected from replay.
   - Plugin work items whose immutable `(pluginId, pluginVersionId, bindingId)` tuple does not match the currently active binding for the same scoped `<tenantId, gameInstanceId, pluginId>` must be rejected from replay.
@@ -334,13 +341,15 @@ Outputs:
 
 For a repeated `controlPlaneRequestId` and original execution identity, `results[]` returns the same replay identity with `outcome=reused`; rejected items remain without a replay identity. `replayedCount` and this stable-request idempotency behavior are retained.
 
+Ineligible rows remain `DEAD_LETTERED` and produce no replay identity. Their rejected result is not a unique replay claim, so a later request may retry after the row's current patch or plugin binding becomes eligible.
+
 #### `PurgeOutboxWorkItems`
 
 Inputs:
 
 - `tenantId`
 - Optional scope: `gameInstanceId`, `regionId`
-- Selector: explicit `outboxWorkItemIds[]` or bounded filter (`workItemStatus`, `scriptPatchVersion`, `pluginVersionId`, `createdBefore`)
+- Selector: explicit `workItemIds[]` (public aliases for canonical `outboxWorkItemId` values) or bounded filter (`workItemStatus`, `scriptPatchVersion`, `pluginVersionId`, `createdBefore`)
 - `controlPlaneRequestId`
 - `actor`
 - `reason`

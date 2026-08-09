@@ -2,6 +2,12 @@
 
 This document gives a high-level view of how FireMUD's clients, gateways, internal services, and infrastructure fit together. Use it as an orientation map before diving into the more detailed architecture and microservice design documents.
 
+## Implementation Status
+
+Current Gateway/player readiness is partial: checked-in Gateway route/header-trust and WebSocket/Telnet bridge seams are bounded implementation, while route-catalog convergence, the public Telnet TLS boundary, and complete player-facing deployment proof remain gaps. See the [platform operations and delivery tracker](../project-management/implementation-tracking/platform-operations-and-delivery.md), [player access and session tracker](../project-management/implementation-tracking/player-access-and-session.md), and [realm-routing tracker](../project-management/implementation-tracking/realm-routing-and-playable-state.md) for current status.
+
+This diagram shows the target traffic-plane shape, not proof of deployment readiness: internal infrastructure management, external admin/creator APIs through Gateway, and player HTTP/WebSocket/Telnet traffic remain separate planes. Detailed ownership and readiness rules stay in [Gateway Architecture](./system-architecture-gateway.md), [Authentication & Authorization](./system-architecture-authentication.md), and the linked trackers.
+
 ```plaintext
                 +----------------------+                  +-------------------+
                 |      Web Client      |                  |   Telnet Client   |
