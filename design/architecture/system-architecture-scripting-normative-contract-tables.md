@@ -92,6 +92,20 @@ Event-scope ingress identity before handler resolution:
 | `scriptPatchVersion` | Yes | Patch version supplied by the producer for pin/version checks. |
 | `scriptEventId` | Yes | Caller-supplied live ingress idempotency token, or service-generated dry-run/test token. |
 | `isDryRun` | Yes | Separates live and dry-run/test ingress namespaces. |
+| `sourceService` | Yes for custom/service-specific events | Producing service identity. Include it in the event-scope key when the event registry marks it applicable; omit it for built-in events that originate entirely within Automation & Scripting. |
+
+### Event-Scope Claim and Retry Semantics (Normative)
+
+The event-scope uniqueness key is the ordered composite of every applicable field in the event-scope identity table:
+`<tenantId, gameInstanceId?, playableStateScope?, regionId?, regionEpoch?, entityId?, eventType, eventSchemaVersion, scriptPatchVersion, scriptEventId, isDryRun, sourceService?>`.
+An optional field is included exactly when its ingress scope requires it; absent optional fields remain absent and must not be replaced with sentinel values. `scriptId`, `pluginId`, `pluginVersionId`, and `bindingId` are not part of this key because they are unavailable before handler resolution.
+
+The first ingress claimant must atomically insert-or-claim this key and persist the event-scope admission result in the same operation as the single `script_event_ingress_audit` row. The stored result includes the response fields `admitted`, `admissionOutcome`, `admissionReason`, and `retryAfterMs` when present. Only the first claimant may perform admission side effects or begin handler fan-out.
+
+- A retry or duplicate delivery with the same complete event-scope key returns the exact stored admission result, without re-evaluating admission, creating another ingress-audit row, or materializing duplicate handler work.
+- An admitted claim may materialize each resolved handler only once, under the claim's idempotency boundary and the handler's full applicable Trigger Identity. A retry returns the original result (including any exposed `resolvedHandlerCount`) and reuses the existing handler materialization and audit rows.
+- A request that reuses `scriptEventId` but changes any other applicable key field is an identity conflict, not a retry. Reject it deterministically, preserve the original claim and outcome, and do not materialize handlers.
+- A rejected claim has no handler materialization and remains represented only by its one event-scope ingress-audit row; `admitted_no_handlers` is not used for this path.
 
 Event-scope ingress outcomes are recorded in the existing `script_event_ingress_audit` surface using its event-scope identity, `scriptEventId` correlation, `createdAt` retention anchor, and `admissionOutcome`/`admissionReason` fields, not in handler-scoped `script_event_audit`. Once the event is accepted for handler resolution, each resolved handler produces its own full applicable Trigger Identity and `script_event_audit` row. Pre-resolution denials such as auth failure, stale pin state, reload backpressure, rollback pause, or version unavailability must not invent a synthetic `scriptId` or `bindingId`.
 
@@ -207,9 +221,7 @@ If Game Session rejects a queued command because its embedded `scriptPatchVersio
 
 - Record the drop on the affected command-handoff record with identifiers sufficient for diagnosis (including `automationDispatchId`, `outboxWorkItemId`, `scriptEventId`, `scriptId`, `scriptPatchVersion`, `tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, and `entityId`, plus `pluginId`, `pluginVersionId`, and `bindingId` for a plugin handler).
 - Remove the rejected queue entry (or move it to a bounded dead-letter store) so mismatched entries cannot accumulate unboundedly after a rollback.
-- Emit an operator-visible metric for version-fence drops:
-  - `automation_tick_version_fence_dropped_total{scope, script_category, reason}` for script patch mismatches (for example `reason="script_patch_mismatch"`).
-  - `automation_tick_plugin_version_fence_dropped_total{scope, plugin_family, plugin_version_family, reason}` for plugin version mismatches (for example `reason="plugin_version_mismatch"`).
+- Apply the corresponding Table 4 version-fence metric consequence for script-patch or plugin-version mismatches; Table 4 owns the exact family, labels, and increment unit.
 - Dead-letter retention for rejected queue entries must be bounded and explicit:
   - `maxAge` and `maxRows` must be documented per environment.
   - Cleanup cadence must be documented and alert-backed.
@@ -261,7 +273,7 @@ General rules:
 Bounded semantic labels use the existing scripting vocabulary:
 
 - Before handler resolution, pre-handler metric families use the single bounded value `script_category="UNRESOLVED"`; after resolution, handler-scoped metrics use the existing handler types `SCRIPT` and `PLUGIN`.
-- `priorityTag` uses `high`, `normal`, or `background`.
+- `priorityTag` uses `high`, `normal`, or `background` after handler resolution. For a rejected pre-handler increment, it must come from a bounded request/event-scope value; when that value is absent, invalid, or not trusted, use the bounded `UNRESOLVED` value rather than inferring priority from a handler that was never materialized.
 - Event-scope `outcome`/`reason` values are bounded `admissionOutcome`/`admissionReason` codes; handler-scoped values are bounded `finalOutcome`/`finalReason` codes. An event-scope metric must not copy handler outcome or reason values.
 - `plugin_family` and `plugin_version_family` are optional registry-defined classifications, not raw plugin identifiers. Omit an optional plugin label when the event is not plugin-owned or the classification is unavailable at the event-scope boundary; do not invent `unknown` or `not_applicable` values for this contract.
 - Pre-handler metrics omit `plugin_family` and `plugin_version_family` because plugin identity is unavailable before handler resolution. Resolved plugin-handler metrics may include those bounded classifications when available.

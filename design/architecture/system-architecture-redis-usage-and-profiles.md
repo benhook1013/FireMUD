@@ -2,11 +2,18 @@
 
 This document describes **how** FireMUD uses Redis in different roles and environments. It complements the conceptual hub (`system-architecture-redis.md`) by defining concrete usage patterns, profiles, and configuration wiring.
 
+## Implementation Status
+
+The live automation handoff still carries optional `dueTickId` for scheduler/timer work and omits a due point for immediate event-driven handoffs. The target tagged, mutually exclusive `duePoint` contract is not yet the live wire boundary; callers must not represent a wall-clock due point as a tick value.
+
+The target automation handoff also requires the complete Trigger Identity plus `automationDispatchId` and `commandOrdinal`. The current Game Session request does not yet carry that complete contract, so the target fields and uniqueness rules below are not implementation proof.
+
 ---
 
 ## Table of Contents
 
 - [Redis Roles and Usage Patterns](#redis-roles-and-usage-patterns)
+- [Implementation Status](#implementation-status)
 - [Environment Profiles and Mappings](#environment-profiles-and-mappings)
 - [Maxmemory, Eviction, and Sizing](#maxmemory-eviction-and-sizing)
 - [Configuration Wiring and Misconfiguration Guards](#configuration-wiring-and-misconfiguration-guards)
@@ -20,8 +27,6 @@ FireMUD runs two logical Redis roles in all non‑trivial environments:
 
 Scope-key convention: `{tenantRegionTag}` is the canonical opaque tag for the complete `<tenantId, gameInstanceId, regionId>` scope, while `{tenantInstanceTag}` is the canonical opaque tag for `<tenantId, gameInstanceId>`. Region-scoped coordination metadata keys therefore carry `gameInstanceId` through `{tenantRegionTag}`; callers must not substitute a tenant-only or region-only tag.
 
-Current live boundary: `EnqueueAutomationCommandIfAbsent` currently carries optional `dueTickId` for scheduler/timer handoffs and omits a due point for immediate event-driven handoffs. The tagged, mutually exclusive `duePoint` contract below is target-state and must be introduced before wall-clock `dueAt` handoffs are admitted; until then, live callers must not represent a wall-clock due point as a tick value.
-
 - **Coordination Redis**
   - Responsibilities:
     - Tick queues, locks, timers, and executor leases.
@@ -30,7 +35,7 @@ Current live boundary: `EnqueueAutomationCommandIfAbsent` currently carries opti
     - Automation coordination structures that participate in tick timelines.
   - Characteristics:
     - Treated as a long-running **coordination buffer with bounded tail-loss** in persistent environments; durable history for tick effects and gameplay outcomes lives in PostgreSQL tick effect ledgers and domain stores.
-    - Owned by the **Game Session Service** for gameplay coordination and gameplay session prefixes such as `tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`, and `session:game:*`; Account Service owns `session:auth:*`; Automation & Scripting Service owns automation-specific coordination prefixes as documented below.
+    - Owned by the **Game Session Service** for gameplay coordination and gameplay session prefixes such as `tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`, the canonical `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` records, and their derived `session:game:index:*` projections; Account Service owns `session:auth:*`; Automation & Scripting Service owns automation-specific coordination prefixes as documented below.
     - AOF enabled in `dev_local`, `hobby_self_hosted`, and `production_clustered`–like profiles.
     - Subject to tail‑loss SLOs and replay guarantees described in the Redis hub doc.
   - Example prefixes:
@@ -39,6 +44,7 @@ Current live boundary: `EnqueueAutomationCommandIfAbsent` currently carries opti
     - `retry:{tenantRegionTag}`
     - `tick-executor-lease:{tenantRegionTag}`
     - `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`
+    - `session:game:index:*` derived gameplay lookup projections
     - `sessionctx:*` bootstrap/session-context keys used by the current Game Session implementation.
     - Automation coordination prefixes that follow shard‑local rules.
 
@@ -72,7 +78,7 @@ Keep the cheat sheet and the owning service Redis sections aligned with the cano
 
 - `tick:{tenantRegionTag}:session-binding:<entityId>`
 - `binding_generation`
-- The target full automation Trigger Identity and per-command `automationDispatchId` plus `commandOrdinal` child identity. The current Automation handoff record exposes `commandOrdinal`, but the live Game Session `EnqueueAutomationCommandIfAbsentRequest` does not yet carry it or the full Trigger Identity; the target API must add those fields rather than inventing a `commandKind` discriminator or claiming the current wire shape is complete.
+- The target full automation Trigger Identity and per-command `automationDispatchId` plus `commandOrdinal` child identity.
 
 ### Automation & Scheduler Coordination Prefixes
 

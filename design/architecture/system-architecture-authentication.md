@@ -218,7 +218,7 @@ The sequence above is the target flow. Current-versus-target deviations are reco
 
 `<world>` is either an index from the caller's exact `WORLDS` browse snapshot or the stable `tenantSlug/worldSlug` selector carried by that response. A bare `tenantSlug` is accepted only when the tenant exposes exactly one visible authored world; a bare tenant-scoped `worldSlug` is never resolved globally. `[realm]` is a `realmSlug` under the resolved world or an index from the corresponding `REALMS` snapshot. Menu indices are response-local conveniences and are never stored or forwarded as durable identity. `REALMS` is authenticated discovery after `LOGIN`; `JOIN` is conditional on the selected public-production membership state; `CHARS` or allowed character creation follows only after membership is `ACTIVE`.
 
-Before login, only the `WORLDS` wire command is available, internally classified as `WORLDS_PUBLIC`, and it exposes bounded public-production catalog/availability metadata. `REALMS` and `CHARS` are authenticated post-login discovery commands; they must not be exposed as anonymous pre-login discovery surfaces. After login, authenticated `WORLDS`, `REALMS`, and `CHARS` may provide caller-bound membership/grant-aware discovery.
+Before login, `HELP` is available only as non-discovery help, while `WORLDS` is the sole anonymous discovery wire command, internally classified as `WORLDS_PUBLIC`, and exposes bounded public-production catalog/availability metadata. `REALMS` and `CHARS` are authenticated post-login discovery commands; they must not be exposed as anonymous pre-login discovery surfaces. After login, authenticated `WORLDS`, `REALMS`, and `CHARS` may provide caller-bound membership/grant-aware discovery.
 
 `WORLDS` deliberately has two internal route classifications rather than one replacing the other:
 
@@ -235,9 +235,9 @@ These modes are complementary: public browse remains available before authentica
 
 ### Direct-text REALMS-to-JOIN scope (normative)
 
-- During authenticated `REALMS` resolution, Account Service issues an opaque, short-lived `connectScopeId` for the selected realm. It is bound to the authenticated caller and the exact server-resolved `{tenantId, worldSlug, realmSlug, gameInstanceId, catalogRevision, pointerVersion}` snapshot, including its expiry; it is not a client-selected target or a durable realm handle.
+- During authenticated `REALMS` resolution, Account Service issues an opaque, short-lived `connectScopeId` for the selected realm. It is bound to the authenticated caller and the exact server-resolved `{tenantId, worldSlug, realmSlug, gameInstanceId, catalogRevision, pointerVersion}` snapshot, including its expiry; it is not a client-selected target or a durable realm handle. The same snapshot is the only source from which Game Session derives `playableStateScope` for `CHARS`; that policy projection is never supplied as join input.
 - Game Session obtains that scope and retains it as transport-local session state alongside the response-local `REALMS` selector or index. The text client receives ordinary selectors and display data only; it never receives or supplies authority IDs, a scope, a tenant, a runtime target, a catalog revision, or a pointer version.
-- When the client selects `JOIN`, Game Session calls Account's `JoinPublicProductionMembership` with only trusted caller context, the retained `connectScopeId`, and a server-generated high-entropy `requestId`. Game Session does not accept a client-supplied request ID or pass selector/target fields as authority. The `requestId` identifies the logical join attempt and is reused only for its retries; a changed attempt uses a new value.
+- When the client selects `JOIN`, Game Session calls Account's `JoinPublicProductionMembership` with only trusted caller context, the retained `connectScopeId`, and a server-generated high-entropy `requestId`. Game Session does not accept a client-supplied request ID, `playableStateScope`, storage key, or pass selector/target fields as authority. The `requestId` identifies the logical join attempt and is reused only for its retries; a changed attempt uses a new value.
 - Account validates the caller binding, scope validity, expiry, and exact bound routing snapshot before applying the join operation. A missing, expired, or mismatched retained scope fails closed and requires fresh authenticated `REALMS` discovery. An unavailable authority dependency returns `AUTH_UNAVAILABLE` and does not permit selector fallback; reachable invalid or contradictory scope evidence returns the applicable scope failure. The server must not re-resolve a stale selector or accept client-supplied target fields as fallback.
 
 Normative semantic split:
@@ -544,12 +544,13 @@ After public `WORLDS` discovery and successful `LOGIN`, the Game Session Service
 
 - `WORLDS` – list worlds the authenticated account can enter (a numbered menu plus stable
   `tenantSlug` and `worldSlug` values for each entry).
+- `HELP` – return static command/help content only. It is non-discovery and does not expose worlds, realms, characters, membership, or admission state; `WORLDS` remains the sole anonymous discovery command.
 - `REALMS <world>` – list the visible realms for the selected world (`<world>` is a response-local
   world index or the stable tenant-qualified selector returned by `WORLDS`). Responses include the
   default production realm plus any explicitly authorized additional realms such as playtest
   forks.
 - **Target `JOIN <world>`** – `<world>` remains an adapter-local selector. The Account-owned `JoinPublicProductionMembership` lifecycle, idempotency, caller binding, and `connectScopeId`/`requestId` contract are defined in [Account Runtime and Data](./microservices/account-service/runtime-and-data.md#membership-and-entitlement-authority); first-party clients expose the equivalent `Join & Play` action through Account bootstrap.
-- `CHARS <world> [realm]` – list characters for the selected world and optional realm.
+- `CHARS <world> [realm]` – list characters for the selected world and optional realm. Game Session resolves `playableStateScope` from the exact server-side realm snapshot before the character query; callers cannot provide that scope, a storage key, or a join-derived substitute.
 - `PLAY <world> [realm] [character]` – enter gameplay by selecting a world, an optional realm, and an optional character.
 
 `public_production_onboarding` is the target lobby route class for discovery and first-join work in the default public production realm. In target behavior, an authenticated caller may see that realm before membership exists for the selected tenant, but must explicitly use `Join & Play` or `JOIN <world>` before character creation or connect-token issuance. The resulting membership is the intended durable account-to-game relationship used by later discovery and return flows. `PLAY` and the gameplay transport are classified as `gameplay_admission`; current implementation drift is recorded in [Implementation Status](#implementation-status) rather than treated as completion.

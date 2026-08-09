@@ -2201,35 +2201,47 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors,
         )
 
-    def test_pending_deletion_uses_canonical_account_generation_field(self):
-        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-        pending_routes = [
-            route
-            for route in document["routes"]
-            if route.get("classification") == "pending_deletion_scoped"
-        ]
-        self.assertTrue(pending_routes, "matrix must define pending-deletion routes")
-        for route in pending_routes:
-            self.assertEqual([], route["accepted_token_profiles"])
-            self.assertEqual(["pending-deletion-access"], route["accepted_credentials"])
-            self.assertEqual("none", route["token_type"])
-            self.assertEqual("none", route["token_issuer"])
-            self.assertEqual("none", route["token_audience"])
-            self.assertFalse(route["account_authority_generation_applies"])
-            self.assertFalse(route["tenant_billing_authority_generation_applies"])
-            self.assertFalse(route["membership_authority_generation_applies"])
+    def test_recovery_routes_use_canonical_account_generation_field(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        for classification, expected_credential in (
+            ("pending_deletion_scoped", "pending-deletion-access"),
+            ("security_lock_export_scoped", "security-lock-export"),
+        ):
+            with self.subTest(classification=classification):
+                document = copy.deepcopy(baseline)
+                recovery_routes = [
+                    route
+                    for route in document["routes"]
+                    if route.get("classification") == classification
+                ]
+                self.assertTrue(recovery_routes)
+                for route in recovery_routes:
+                    self.assertEqual([], route["accepted_token_profiles"])
+                    self.assertEqual(
+                        [expected_credential], route["accepted_credentials"]
+                    )
+                    self.assertEqual("none", route["token_type"])
+                    self.assertEqual("none", route["token_issuer"])
+                    self.assertEqual("none", route["token_audience"])
+                    self.assertFalse(route["account_authority_generation_applies"])
+                    self.assertFalse(
+                        route["tenant_billing_authority_generation_applies"]
+                    )
+                    self.assertFalse(
+                        route["membership_authority_generation_applies"]
+                    )
 
-        route = pending_routes[0]
-        route["account_generation_applies"] = route.pop(
-            "account_authority_generation_applies"
-        )
-        errors = validate_document(self.validator, document)
-        self.assertTrue(
-            any(
-                "must use account_authority_generation_applies" in error
-                for error in errors
-            )
-        )
+                route = recovery_routes[0]
+                route["account_generation_applies"] = route.pop(
+                    "account_authority_generation_applies"
+                )
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(
+                        "must use account_authority_generation_applies" in error
+                        for error in errors
+                    )
+                )
 
     def test_pending_deletion_routes_disable_issuer_authority_generation(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -2390,7 +2402,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             self.validator.PENDING_DELETION_ACTION_FAMILIES,
             {route["action_family"] for route in pending_routes},
         )
-        self.assertEqual(6, len(pending_routes))
+        self.assertEqual(
+            len(self.validator.PENDING_DELETION_ACTION_FAMILIES),
+            len(pending_routes),
+        )
 
         for route in pending_routes:
             action_family = route["action_family"]
@@ -2505,20 +2520,20 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     },
                 )
 
-        creation_identity = (
-            "account-service",
-            "POST /auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters",
-        )
-        document = copy.deepcopy(baseline)
-        creation = route_for(document, *creation_identity)
-        creation["selected_character_requirement"] = "required"
-        errors = []
-        self.validator.validate_character_routes(document["routes"], errors)
-        self.assertIn(
-            f"{self.validator.route_label(creation)} must declare "
-            "selected_character_requirement=none",
-            errors,
-        )
+        for identity in self.validator.CHARACTER_ROUTE_CONTRACTS:
+            with self.subTest(
+                route=identity[1], field="selected_character_requirement"
+            ):
+                document = copy.deepcopy(baseline)
+                route = route_for(document, *identity)
+                route["selected_character_requirement"] = "required"
+                errors = []
+                self.validator.validate_character_routes(document["routes"], errors)
+                self.assertIn(
+                    f"{self.validator.route_label(route)} must declare "
+                    "selected_character_requirement=none",
+                    errors,
+                )
 
         for identity in self.validator.CHARACTER_ROUTE_CONTRACTS:
             with self.subTest(route=identity[1], field="gameplay_binding"):
@@ -2841,25 +2856,30 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
 
         for (classification, action_family), expected_bindings in expected_routes.items():
             for field, expected in expected_bindings.items():
-                for mutation_name, mutate in (
-                    ("missing", lambda binding: binding.pop("source")),
+                for mutation_name, mutation_key, mutate in (
+                    ("missing", "source", lambda binding: binding.pop("source")),
                     (
                         "altered",
+                        "comparison",
                         lambda binding: binding.__setitem__(
                             "comparison", "unexpected_comparison"
                         ),
                     ),
                     (
                         "altered mismatch",
+                        "mismatch",
                         lambda binding: binding.__setitem__(
                             "mismatch", "unexpected_error"
                         ),
                     ),
                     (
                         "incomplete",
+                        "required",
                         lambda binding: binding["required"].pop(),
                     ),
                 ):
+                    if mutation_key not in expected:
+                        continue
                     with self.subTest(
                         classification=classification,
                         action_family=action_family,
@@ -3144,21 +3164,21 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 lambda document: document["account_export_applicability"].__setitem__(
                     "coverage", "partial"
                 ),
-                "account_export_applicability must declare coverage=exhaustive",
+                "account_export_applicability.coverage must be 'exhaustive'",
             ),
             (
                 "overlap",
                 lambda document: document["account_export_applicability"].__setitem__(
                     "overlap", "allowed"
                 ),
-                "account_export_applicability must declare coverage=exhaustive",
+                "account_export_applicability.overlap must be 'forbidden'",
             ),
             (
                 "unmatched",
                 lambda document: document["account_export_applicability"].__setitem__(
                     "unmatched", "allow"
                 ),
-                "account_export_applicability must declare coverage=exhaustive",
+                "account_export_applicability.unmatched must be 'deny'",
             ),
             (
                 "rules",
@@ -3174,6 +3194,25 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 errors = validate_document(self.validator, document)
                 self.assertTrue(
                     any(expected_error in error for error in errors),
+                    errors,
+                )
+
+        for mutation_name, mutate in (
+            ("missing", lambda applicability: applicability.pop("rules")),
+            ("non-list", lambda applicability: applicability.__setitem__("rules", {})),
+            (
+                "non-serializable",
+                lambda applicability: applicability.__setitem__("rules", [object()]),
+            ),
+        ):
+            with self.subTest(rules=mutation_name):
+                document = copy.deepcopy(baseline)
+                mutate(document["account_export_applicability"])
+                errors = []
+                self.validator.validate_account_export_applicability(document, errors)
+                self.assertIn(
+                    "account_export_applicability.rules must declare exactly the "
+                    "canonical export initiation, status, and content account-state rules",
                     errors,
                 )
 
@@ -3279,6 +3318,11 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     ],
                     active["export_operation_binding"],
                 )
+                if action_family == "export_initiate":
+                    self.assertTrue(
+                        self.validator.EXPORT_INITIATION_REQUIRED_CANONICAL_ERRORS
+                        .issubset(set(active["canonical_errors"]["any_of"]))
+                    )
                 self.assertNotIn("account_authorization_branches", active)
                 self.assertIn(
                     "account_state_export_eligible", active["required_live_checks"]
@@ -3303,6 +3347,27 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             f"{self.validator.route_label(active_initiation)} "
             "export_operation_binding must declare exactly "
             f"{self.validator.ACTIVE_ACCOUNT_EXPORT_OPERATION_BINDINGS['export_initiate']}",
+            errors,
+        )
+
+        document = copy.deepcopy(baseline)
+        active_initiation = next(
+            route
+            for route in self.validator.matching_routes(
+                document["routes"],
+                "account-service",
+                "POST /accounts/{accountId}/exports",
+            )
+            if self.validator.applicability_value(
+                route, "account_state", "test active export route", []
+            )
+            == "active"
+        )
+        active_initiation["canonical_errors"]["any_of"].remove("PERMISSION_DENIED")
+        errors = validate_document(self.validator, document)
+        self.assertIn(
+            f"{self.validator.route_label(active_initiation)} export_initiate must "
+            "declare PERMISSION_DENIED",
             errors,
         )
 
@@ -3873,8 +3938,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         routes = [
             route
             for route in document["routes"]
-            if (route.get("service"), route.get("route"))
-            not in self.validator.PROFILE_ROUTES
+            if self.validator.route_set_key(route) not in self.validator.PROFILE_ROUTES
         ]
         errors = []
         cardinality_errors = set()

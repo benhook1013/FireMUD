@@ -16,6 +16,15 @@ The frontend is a consumer of the canonical [realm catalog and admission-pointer
 
 Reachable missing, malformed, ambiguous, stale, or otherwise invalid pointer evidence keeps auth state but disables gameplay entry and maps to `ADMISSION_POINTER_UNAVAILABLE`; an unreachable or timed-out pointer authority maps to `AUTH_UNAVAILABLE`; in the target state, a complete `CLOSED` pointer maps to `REALM_UNAVAILABLE`. The frontend reruns canonical discovery before retrying and never substitutes a cached target or infers one from display metadata. Pointer and continuation authorization remain defined by [Authentication](./system-architecture-authentication.md#login-and-session-flow) and [Gateway architecture](./system-architecture-gateway.md#tenant-aware-edge-connect-token-gameplay-handshake), not by frontend state.
 
+### Target-only Gameplay Gates
+
+The frontend keeps the target `PLAY` gate separate from the target `Join & Play` gate:
+
+- **`PLAY` gate:** enable only after fresh selected-target routing/pointer evidence, entitlement, caller-bound `membershipLifecycleState=ACTIVE`, any required realm grant, and a valid current character all pass. `PLAY` never creates or restores membership.
+- **`Join & Play` gate:** enable only for the selected public-production realm when the fresh public-joining policy is `allowPublicJoin=true` and caller-bound membership is missing or `INACTIVE`; it invokes the explicit Account join route and waits for the post-join snapshot before character discovery, creation, connect-token issuance, or `PLAY`.
+
+These are target-only gates. The current frontend must keep missing or non-admitting membership unavailable and must not expose an actionable Join route while the explicit join endpoint and required issuance reread remain unimplemented. A private/playtest target never uses the public `Join & Play` gate; it requires existing `ACTIVE` membership plus the current realm grant.
+
 ## Implementation Notes
 
 - The current `web-client` baseline now uses `TanStack Query` plus local feature state rather than Redux starter scaffolding.
@@ -123,7 +132,7 @@ For gameplay WebSocket handshake failures on `/ws/game/**`, first-party clients 
 - `CONNECT_TOKEN_REJECTED` with `reason=unsupported_carrier_or_route`: only a first-party client that accidentally used the `non_first_party_public` header carrier may switch to the supported cookie path and retry without refreshing the token. Any other client or unsupported route/carrier must stop with a non-retriable unsupported-route/carrier error. With `reason=invalid_token_content`, request a fresh token and retry with bounded backoff, restarting the first-party bootstrap flow if rejection repeats. Do not infer the reason from HTTP status alone.
 - `POLICY_DENY`: treat as non-retriable until configuration is corrected and surface an actionable error.
 
-These handshake classes are edge-handshake outcomes, not gameplay text-protocol `ERROR <CODE>` frames. Clients only start handling protocol-level `ERROR <CODE>` responses after the WebSocket has been established and `LOGIN`/`PLAY` exchange begins.
+These handshake classes are edge-handshake outcomes, not gameplay text-protocol `ERROR <CODE>` frames. Clients only start handling protocol-level `ERROR <CODE>` responses after the WebSocket has been established and `LOGIN`/`PLAY` exchange begins. If Game Session rejects the signed context after the socket opens, the browser observes the existing `ERROR CONNECT_CONTEXT_INVALID reason=<bounded-reason>` protocol frame and the socket close; the bounded reasons are `missing_field`, `wrong_field_type`, `altered_claim`, `unbound_claim`, `invalid_signature`, `unknown_kid`, `expired`, `audience_mismatch`, and `recipient_mismatch`. Before HTTP 101, the browser uses the existing Gateway `X-Firemud-Handshake-Error-Class` and, for `CONNECT_TOKEN_REJECTED`, `X-Firemud-Handshake-Error-Reason` surfaces or the existing HTTP error response from `POST /auth/connect-token`. No browser-specific handshake class or reason taxonomy is introduced.
 
 Canonical first-party browser reconnect sequence:
 
@@ -154,7 +163,7 @@ Authorization: Bearer <bootstrapToken>
 
 GET /auth/bootstrap/worlds/demo/realms/production/characters?connectScopeId=cs_demo_production_v17
 Authorization: Bearer <bootstrapToken>
--> [{ characterName: "Mara", playableStateScope: "PLAYABLE_STATE_SCOPE_SHARED" }]  # abbreviated character list; scope is resolved from the exact realm snapshot, not a storage key
+-> [{ characterName: "Mara", playableStateScope: "PLAYABLE_STATE_SCOPE_SHARED" }]  # server-derived response projection from the exact realm snapshot; never a caller-selected query or join field
 
 POST /auth/connect-token
 Authorization: Bearer <bootstrapToken>

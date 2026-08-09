@@ -176,6 +176,11 @@ EXPORT_INITIATION_ACTION_FAMILY = "export_initiate"
 EXPORT_INITIATION_REQUIRED_LIVE_CHECKS = {
     EXPORT_INITIATION_ACTION_FAMILY: {"export_availability"},
 }
+EXPORT_INITIATION_REQUIRED_CANONICAL_ERRORS = {
+    "AUTH_UNAVAILABLE",
+    "PERMISSION_DENIED",
+    "IDEMPOTENCY_CONFLICT",
+}
 ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES = {
     EXPORT_INITIATION_ROUTE_IDENTITY: EXPORT_INITIATION_ACTION_FAMILY,
     (
@@ -1699,29 +1704,31 @@ def validate_account_export_applicability(
             "account_export_applicability must be a mapping",
         )
         return
-    if (
-        applicability.get("coverage") != "exhaustive"
-        or applicability.get("overlap") != "forbidden"
-        or applicability.get("unmatched") != "deny"
-    ):
-        append_unique_error(
-            errors,
-            "account_export_applicability must declare coverage=exhaustive, "
-            "overlap=forbidden, and unmatched=deny",
-        )
+    expected_metadata = {
+        "coverage": "exhaustive",
+        "overlap": "forbidden",
+        "unmatched": "deny",
+    }
+    for field, expected in expected_metadata.items():
+        if applicability.get(field) != expected:
+            append_unique_error(
+                errors,
+                f"account_export_applicability.{field} must be {expected!r}",
+            )
     actual_rules = applicability.get("rules")
+    expected_rule_keys = sorted(
+        json.dumps(rule, sort_keys=True, separators=(",", ":"))
+        for rule in ACCOUNT_EXPORT_APPLICABILITY_RULES
+    )
+    actual_rule_keys = None
     try:
-        actual_rule_keys = sorted(
-            json.dumps(rule, sort_keys=True, separators=(",", ":"))
-            for rule in actual_rules
-        )
-        expected_rule_keys = sorted(
-            json.dumps(rule, sort_keys=True, separators=(",", ":"))
-            for rule in ACCOUNT_EXPORT_APPLICABILITY_RULES
-        )
+        if isinstance(actual_rules, list):
+            actual_rule_keys = sorted(
+                json.dumps(rule, sort_keys=True, separators=(",", ":"))
+                for rule in actual_rules
+            )
     except (TypeError, ValueError):
         actual_rule_keys = None
-        expected_rule_keys = None
     if actual_rule_keys != expected_rule_keys:
         append_unique_error(
             errors,
@@ -1800,6 +1807,25 @@ def validate_account_export_routes(
                     f"{label} {expected_action_family} must require live check "
                     f"{required_check}",
                 )
+            canonical_errors = route.get("canonical_errors")
+            outcomes = (
+                canonical_errors.get("any_of")
+                if isinstance(canonical_errors, dict)
+                else None
+            )
+            if not isinstance(outcomes, list) or any(
+                not isinstance(outcome, str) for outcome in outcomes
+            ):
+                outcomes = []
+            for required_error in sorted(
+                EXPORT_INITIATION_REQUIRED_CANONICAL_ERRORS
+            ):
+                if required_error not in outcomes:
+                    append_unique_error(
+                        errors,
+                        f"{label} {expected_action_family} must declare "
+                        f"{required_error}",
+                    )
         if account_state == "active":
             for required_check in sorted(
                 ACTIVE_ACCOUNT_EXPORT_REQUIRED_LIVE_CHECKS - (checks or set())

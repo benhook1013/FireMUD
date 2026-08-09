@@ -12,7 +12,7 @@ FireMUD's target state treats versioned publishing, release attestation, runtime
 
 ## Implementation Status
 
-The versioned publish and replacement-cutover substrate is partially implemented, including durable cutover preparation and execution records. The current admission-pointer writer performs a read-then-write version check and persists pointer, audit, and prepared-upgrade execution changes through separate repository calls; it does not yet prove the target single-transaction compare-and-set boundary described below. Current cutover implementation drift is also explicit: it clears active bindings rather than preserving them through the target bounded source-drain sequence of a persisted deadline, command fence/rejection, one bounded notice attempt after that fence, unconditional socket closure, and terminal `InstanceTermination` workflow. Notice failure never keeps source sockets open or delays termination. The target sections that follow are normative design, not proof that the current runtime already satisfies those effects.
+The versioned publish and replacement-cutover substrate is partially implemented, including durable cutover preparation and execution records. The current admission-pointer writer performs a read-then-write version check and persists pointer, audit, and prepared-upgrade execution changes through separate repository calls; it does not yet prove the target single-transaction compare-and-set boundary described below. Current cutover implementation drift is also explicit: it clears active bindings rather than preserving them through the target bounded source-drain sequence of a persisted deadline, World Management lifecycle fence with confirmed command rejection, one bounded notice attempt after that fence, unconditional socket closure, and terminal `InstanceTermination` workflow. Notice failure never keeps source sockets open or delays termination. The target sections that follow are normative design, not proof that the current runtime already satisfies those effects.
 
 Capacity admission is also target-state only. Account's `CommitTenantCapacityAdmission` RPC and the Game Session callers/integration are unimplemented, as are the durable Account authority/usage ledger, the exact `capacityDelta` wire contract, the capacity-admission action-family schema and cross-language `mutationDigest/v1` golden vectors, and the reservation create/finalize/release/reconciliation lifecycle. The capacity-admission sections below are normative contracts and must not be read as evidence that these RPC, caller, ledger, schema/vector, or reservation components exist.
 
@@ -530,10 +530,10 @@ Activation workflows must also respect per-instance lifecycle fencing in World M
 Termination requires ordered handoff across runtime and domain owners:
 
 1. Game Session marks the instance non-admissible/draining and blocks new admissions.
-2. At the persisted source-drain deadline, Game Session fences the source and rejects new commands or other source work.
-3. After that fence/rejection, Game Session makes one bounded notice attempt to affected source clients.
-4. Game Session closes the affected source sockets regardless of the notice outcome; notice failure never keeps sockets open or extends the deadline.
-5. World Management acquires the lifecycle fence, transitions to `TERMINATING`, and runs `InstanceTermination` with Entity Management cleanup.
+2. At the persisted source-drain deadline, Game Session requests that World Management acquire the source lifecycle fence, transition the source to `TERMINATING`, and confirm that new commands or other source work are rejected.
+3. After World Management confirms that fence/rejection, Game Session makes one bounded notice attempt to affected source clients.
+4. Game Session unconditionally closes the affected source sockets after that bounded notice attempt; notice failure or unavailability never keeps sockets open or extends the deadline.
+5. World Management runs `InstanceTermination` with Entity Management cleanup.
 6. World Management commits `TERMINATED` only after Entity Management confirms cleanup.
 7. Game Session marks the `game_instances` runtime record terminated/stopped only after step 6.
 
@@ -594,7 +594,7 @@ Version cutover contract for a player-addressable realm:
 3. Persist a durable `PrepareVersionUpgrade` artifact for that cutover attempt and use it as the proof input to the realm-route swap.
 4. Re-run the final activation gate above immediately before changing admission state.
 5. Perform one atomic `OPEN(source)` -> `OPEN(target)` realm-route swap so the selected realm has exactly one target for new or renewed bindings at any instant.
-6. **Target-only bounded source drain:** in the same cutover commit, persist the source instance, a unique `sourceDrainId`, and absolute `sourceDrainDeadlineAt` resolved from `firemud.game-session.cutover-drain.duration-ms`. Keep the old instance closed to new/reconnected bindings while already connected source sessions finish before that deadline, then terminate it through the standard `InstanceTermination` workflow.
+6. **Target-only bounded source drain:** in the same cutover commit, persist the source instance, a unique `sourceDrainId`, and absolute `sourceDrainDeadlineAt` resolved from `firemud.game-session.cutover-drain.duration-ms`. Keep the old instance closed to new/reconnected bindings while already connected source sessions finish before that deadline; at the deadline, World Management acquires the lifecycle fence and confirms command rejection, then Game Session makes one bounded notice attempt and unconditionally closes the remaining source sockets before the standard `InstanceTermination` workflow.
 7. If swap fails, keep the previously routed instance as the sole admissible target for that realm and retry; do not open dual admission for the same realm.
 
 Realm pointer schema and authority are canonical in [Multi-Tenancy](./system-architecture-multi-tenancy.md#realm-catalog-and-admission-pointer-contract). Versioning and runtime retains only the cutover lifecycle and its local consequences below. Game Session remains the sole routing owner; versioning workflows consume its API rather than direct table writes.
@@ -604,7 +604,7 @@ Realm pointer schema and authority are canonical in [Multi-Tenancy](./system-arc
 - Stopping a realm without a replacement uses the owner-defined `CLOSED` state before the old instance drains; the owner-defined unavailable and realm-unavailable outcomes remain distinct.
 - **Target-only bounded source-drain behavior:** pointer state controls new or renewed gameplay bindings. Existing connected source sessions do not re-read it per action and remain on the source only before the persisted drain deadline; fresh `PLAY` and reconnect use the current target.
 - In the target-only drain contract, `firemud.game-session.cutover-drain.duration-ms` is an integer millisecond duration in the closed range `0..300000`, with a five-minute platform default and hard maximum. Tenant/game overrides may shorten it or set it to zero but cannot extend it. Negative, non-finite, fractional, or non-representable values fail closed before preparation or cutover commit. The cutover audit and prepared-upgrade execution record preserve the effective value, policy version, `sourceDrainId`, and `sourceDrainDeadlineAt` so retries and operators observe one deadline.
-- In that target contract, Game Session may complete a drain early after the source session index is empty. Deadline enforcement follows the durable reconciliation contract below; in particular, command rejection is confirmed through the lifecycle fence before Game Session closes remaining source sockets.
+- In that target contract, Game Session may complete a drain early after the source session index is empty. Deadline enforcement follows the durable reconciliation contract below; in particular, World Management's lifecycle fence and command-rejection confirmation precede the bounded notice and unconditional source-socket close.
 - **Local target consequence:** the source instance remains closed to new or reconnected bindings while existing sessions may continue only through `sourceDrainDeadlineAt`; after the deadline, terminal source cleanup follows the standard `InstanceTermination` workflow.
 
 #### Bounded Source-Drain Reconciliation
@@ -616,9 +616,9 @@ Each external effect uses a durable replay identity derived from `{sourceDrainId
 At or after `sourceDrainDeadlineAt`, the current claimant performs the ordered sequence below:
 
 1. Claim or renew the fenced drain item.
-2. Request World Management to acquire the source lifecycle fence, transition the source to `TERMINATING`, and confirm that further source commands are rejected.
+2. Request World Management to acquire the source lifecycle fence, transition the source to `TERMINATING`, and confirm that further source commands are rejected before any notice is attempted.
 3. Attempt the bounded update notice when policy requires it, using the notice replay identity and its own bounded timeout/reconciliation path.
-4. Close remaining source sockets after that bounded attempt completes, regardless of whether notice delivery succeeded; notice failure or unavailability cannot hold source sockets open indefinitely.
+4. Unconditionally close remaining source sockets after that bounded attempt completes, regardless of whether notice delivery succeeded, failed, or was unavailable; notice failure or unavailability cannot hold source sockets open indefinitely.
 5. Reconcile the idempotent World Management `InstanceTermination` workflow until the standard [instance termination handoff](#instance-termination-handoff) confirms the source terminal.
 
 The drain item remains durable until every required effect is confirmed and the persisted source lifecycle is terminal. A committed pointer, drain record, effect request, or expired lease is not by itself evidence that the corresponding runtime effect occurred.

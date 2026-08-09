@@ -4,13 +4,20 @@ This document defines the service participation and API-usage layer for scriptin
 
 The direct API surface and request/response contracts for pinning, plugin activation, plugin drain, patch visibility, and admission outcomes live in [Scripting & Automation: Control Plane API](./system-architecture-scripting-control-plane-api.md).
 
+## Normative Target Contract
+
+The workflow APIs below are target-state contracts. Automation's durable work model has two layers: pre-DSL trigger state and evaluated descriptor/outbox evidence. A target evaluation atomically commits all emitted descriptors, parent outbox evidence, and the terminal evaluation outcome by transitioning the trigger to `EVALUATED_COMMITTED`; recovery replays those descriptors without DSL re-entry. `EVALUATED_COMMITTED` is not an active evaluation and is excluded from `activeExecutionCount`; unresolved descriptor children remain represented by their `PENDING`/`INDEXED` or `HANDOFF_IN_FLIGHT` descriptor states. `PENDING_EVALUATION` and `EVALUATING` remain pre-DSL states, while the existing evaluated-descriptor statuses retain their meanings.
+
+Purge is evidence cleanup, not trigger recovery. It rejects selected active or pre-DSL work, including `PENDING_EVALUATION`, `EVALUATING`, `EVALUATED_COMMITTED`, and active descriptor rows, and can remove only terminal descriptor/outbox evidence after the configured retention horizon. It never cancels, reclaims, dead-letters, or deletes active trigger state.
+
 ## Implementation Status
 
-The workflow APIs below are target-state contracts. In the target state, Automation & Scripting is the recovery owner for stale evaluation claims: it reads the durable descriptor-commit marker/status, replays committed descriptor rows without DSL re-entry, and dead-letters only stale claims with no committed marker/status under the runtime and normative lifecycle contracts. The current Automation claim boundary is `PENDING_EVALUATION` -> `EVALUATING`; it has no recovery owner, evaluation lease expiry/fencing generation, or descriptor-commit marker/status, and its recovery behavior is unimplemented and unverified. `GetAutomationDrainStatus` currently counts `EVALUATING` and `HANDOFF_IN_FLIGHT` rows in `activeExecutionCount`, including unresolved stale `EVALUATING` rows, and counts every handoff-capable `PENDING_EVALUATION` row in `pendingCancelableWorkItemCount`. These implementation facts do not change the fail-closed zero-count rule in the normative API below.
+This section records current behavior only. The current Automation claim boundary is `PENDING_EVALUATION` -> `EVALUATING`; it has no recovery owner, evaluation lease expiry/fencing generation, or descriptor-commit marker/status, and its recovery behavior is unimplemented and unverified. `GetAutomationDrainStatus` currently counts `EVALUATING` and `HANDOFF_IN_FLIGHT` rows in `activeExecutionCount`, including unresolved stale `EVALUATING` rows, and counts every handoff-capable `PENDING_EVALUATION` row in `pendingCancelableWorkItemCount`. Current terminal-row cleanup is retention-based; target purge selection must not be read as current trigger-state recovery. These implementation facts do not change the fail-closed zero-count rule in the normative API below.
 
 ## Table of Contents
 
 - [Scope](#scope)
+- [Normative Target Contract](#normative-target-contract)
 - [Implementation Status](#implementation-status)
 - [Principles](#principles)
 - [Actors and Responsibilities](#actors-and-responsibilities)
@@ -82,9 +89,6 @@ Inputs:
 Semantics:
 
 - Idempotent.
-- Reusing a `controlPlaneRequestId` with a different canonical request fingerprint returns an idempotency conflict and cannot alter an existing claim; a distinct request or selector reuses the existing per-original result.
-- Resolves and normalizes the selected canonical `outboxWorkItemId` values, then validates and claims each original execution identity atomically. A durable unique replay claim keyed by the original identity, independent of `controlPlaneRequestId` and selector form, prevents two requests or overlapping selectors from creating two replay identities.
-- A successful claim durably stores the original execution identity, new `replayExecutionIdentity`, outcome/result, winning `controlPlaneRequestId`, and canonical request fingerprint. An exact retry reuses that stored result; a request using an already claimed original identity through another selector also reuses the existing result and cannot replace its fingerprint or create another replay identity. Reuse does not reopen the original audit row.
 - Prevents new tick scheduling and new command intake for the scope.
 
 #### `ResumeTicks`
@@ -323,6 +327,9 @@ Semantics:
 - Creates one durable replay record with a new execution identity for each eligible selected `DEAD_LETTERED` item. The original identity remains terminal and becomes causation evidence for the new replay; its audit row is never reopened or appended with replay execution history. The canonical identity and idempotency rules are defined in [Operator Replay of DEAD_LETTERED Work](./system-architecture-scripting-runtime-execution.md#operator-replay-of-dead_lettered-work).
 - Repeating the same `controlPlaneRequestId` for the same original execution identity returns the previously created replay record/result rather than creating another replay identity.
 - Must enforce bounded batch size per request.
+- Reusing a `controlPlaneRequestId` with a different canonical request fingerprint returns an idempotency conflict and cannot alter an existing claim; a distinct request or selector reuses the existing per-original result.
+- Resolves and normalizes the selected canonical `outboxWorkItemId` values, then validates and claims each original execution identity atomically. A durable unique replay claim keyed by the original identity, independent of `controlPlaneRequestId` and selector form, prevents two requests or overlapping selectors from creating two replay identities.
+- A successful claim durably stores the original execution identity, new `replayExecutionIdentity`, outcome/result, winning `controlPlaneRequestId`, and canonical request fingerprint. An exact retry reuses that stored result; a request using an already claimed original identity through another selector also reuses the existing result and cannot replace its fingerprint or create another replay identity. Reuse does not reopen the original audit row.
 - Every selected row must match the request `tenantId` and any explicit `gameInstanceId` or `regionId` scope using the row's own stored `tenantId`, `gameInstanceId`, and optional `regionId`. A tenant-wide selector must evaluate each instance independently and must not borrow another instance's current pin or binding.
 - Resolve the current patch pin from each row's own tenant and instance. For plugin-backed work, resolve the current binding for that same tenant, instance, and plugin, then compare the row's immutable `(pluginId, pluginVersionId, bindingId)` tuple to that binding.
 - Must enforce replay eligibility against current control-plane state before creating the replay:
@@ -357,7 +364,8 @@ Inputs:
 Semantics:
 
 - Idempotent.
-- Permanently removes selected outbox rows or marks them purged in bounded batches.
+- Resolves each selected identifier against durable trigger and descriptor/outbox state before mutating anything. A selection that resolves to `PENDING_EVALUATION`, `EVALUATING`, or `EVALUATED_COMMITTED`, or to an evaluated descriptor in `PENDING`, `INDEXED`, or `HANDOFF_IN_FLIGHT`, is rejected with a bounded application reason; purge does not cancel, reclaim, dead-letter, or otherwise mutate that active/pre-DSL work.
+- May purge only evaluated descriptor/outbox evidence in terminal `HANDED_OFF`, `CANCELED`, or `DEAD_LETTERED` status after that status's configured retention horizon has elapsed. Terminal evidence still inside its retention window is rejected with a bounded retention reason. The operation preserves active trigger state, `script_event_audit`, replay causation claims, and any other evidence still inside its required retention window.
 - Must emit operator-auditable records for every purge request.
 
 Outputs:

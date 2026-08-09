@@ -1708,7 +1708,7 @@ routes:
       changed_digest: IDEMPOTENCY_CONFLICT
     response_profile: asynchronous_export_job_identity
     canonical_errors:
-      any_of: [AUTH_UNAVAILABLE, IDEMPOTENCY_CONFLICT]
+      any_of: [AUTH_UNAVAILABLE, PERMISSION_DENIED, IDEMPOTENCY_CONFLICT]
   - service: account-service
     route: POST /accounts/{accountId}/exports
     scope: account
