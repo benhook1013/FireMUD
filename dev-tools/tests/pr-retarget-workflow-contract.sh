@@ -266,6 +266,7 @@ require_contains "$ci_path" 'PR Metadata Edit (Validation Summary)'
 require_contains "$smoke_path" 'PR Metadata Edit (Smoke Summary)'
 require_contains "$smoke_path" 'name: Smoke Summary (Pending)'
 require_contains "$smoke_path" 'needs: [changes, smoke-gate, smoke-summary-pending]'
+# shellcheck disable=SC2016 # This assertion intentionally matches a literal GitHub expression.
 require_contains "$smoke_path" 'SMOKE_GATE_RESULT: ${{ needs.smoke-gate.result }}'
 require_contains "$smoke_path" 'tracked-by-smoke-gate'
 if grep -Eq '^  smoke-lite:' "$smoke_path"; then
