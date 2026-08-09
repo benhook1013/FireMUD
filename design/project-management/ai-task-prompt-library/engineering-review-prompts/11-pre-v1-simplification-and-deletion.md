@@ -4,6 +4,8 @@ Use this prompt for an occasional review of obsolete paths, compatibility baggag
 
 Apply the [shared review contract](../system-review-prompts/00-shared-review-contract.md).
 
+Use `AGENTS.md` only as repository-wide AI authority, safety, and workflow-routing guidance. Architecture documents own the technical target state and service boundaries.
+
 ## Starting Sources
 
 - `AGENTS.md`

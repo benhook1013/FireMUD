@@ -30,11 +30,12 @@ Without a defined environment, event, evidence source, and human decision owner,
 
 ## Gate
 
-For the declared environment and event, check:
+For the declared environment and event, check only controls and evidence applicable to that event:
 
 - immutable artifact and configuration lineage;
 - expected bindings, isolation, secrets, certificates, keys, routes, migrations, and readiness;
-- backup freshness and scope, restore completion, quarantine, post-restore hardening, credential rebinding, and a new backup baseline where applicable;
+- backup freshness and scope where applicable;
+- for restore events only, restore completion, quarantine, post-restore hardening, credential rebinding, and a new backup baseline where applicable;
 - alerts, dashboards, logs, traces, external monitoring, and operator access;
 - canonical player-path and control-plane probes;
 - rollback or re-quarantine ability;

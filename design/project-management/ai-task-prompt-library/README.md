@@ -23,7 +23,8 @@ Review working notes and coverage tables are ephemeral unless the human explicit
 - technical contracts go to `design/architecture/`;
 - implementation and proof status go to the owning implementation tracker;
 - consequential decisions use the established decision workflow; and
-- release or operational evidence goes to the existing operations evidence surface.
+- release or operational evidence goes to the existing operations evidence surface; and
+- reusable process, tooling, environment, or design lessons go to dated appended entries in the [AI observations](../ai-observations.md).
 
 Do not create a permanent second backlog, finding database, invariant registry, or per-service status collection for this library.
 

@@ -20,7 +20,7 @@ Apply the [shared review contract](./00-shared-review-contract.md).
 
 ## Scope Boundary
 
-The repository currently identifies the whole-platform threat model as deferred. State that limitation prominently. Review accepted security requirements and concrete trust boundaries, but do not claim exhaustive threat-model coverage or invent accepted risks.
+The canonical [FireMUD threat-model architecture](../../../architecture/system-architecture-threat-model.md) marks the whole-platform threat model as deferred and not yet considered or accepted. State that limitation prominently. Review accepted security requirements and concrete trust boundaries, but do not claim exhaustive threat-model coverage or invent accepted risks. The canonical source requires a future threat-model pass to reconcile the current contracts; when that source is updated, update this scope boundary and the resulting review accordingly.
 
 ## Review
 

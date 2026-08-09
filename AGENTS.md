@@ -14,7 +14,7 @@ This file is the always-on project, authority, and safety kernel for AI work. Re
 - Expect concurrent and dirty worktrees. Preserve unrelated edits and work in scope; do not stop merely because unrelated files changed.
 - Do not run `git restore`, `git checkout`, `git reset`, `git clean`, or `git stash` unless a human explicitly requests that action. Delete an untracked file only when it is unquestionably disposable and in scope; temporary-looking names or lint failures are not sufficient.
 - Edit a modified target in place. If overlapping changes make intent unclear or risky, ask the human. Never revert or clean up unrelated work; changes produced by the repository's canonical automatic formatters are allowed, but preserve unrelated semantic edits.
-- Open and update coherent pull requests autonomously for active implementation work so CI and review can run; use clearly based stacked PRs when that keeps work moving without mixing unrelated changes. Merge or close pull requests only with explicit human authorization.
+- Open and update coherent pull requests autonomously for active implementation work so CI and review can run, subject to active review-safety. While a hosted review is active, prepare review fixes locally and do not publish review-invalidating commits until the hosted review completes; publish them only after it finishes. Use clearly based stacked PRs when that keeps work moving without mixing unrelated changes. Merge or close pull requests only with explicit human authorization.
 
 ## Development And Documentation
 
@@ -44,7 +44,7 @@ This file is the always-on project, authority, and safety kernel for AI work. Re
 
 The main `gpt-5.6-sol` thread owns planning, human design discussion, task decomposition, integration, validation, and final repository decisions. It does not delegate product or architecture design decisions. Subagent approval is model-specific: `gpt-5.6-sol` may run at medium autonomously, but using it at high requires explicit human approval. Luna reasoning levels are not approval-gated.
 
-- Once the human selects an active workstream, continue through its next unambiguous tracked steps, including implementation, validation, PR publication, and review fixes, without seeking confirmation at every boundary. A progress update is not a stopping point.
+- Once the human selects an active workstream, continue through its next unambiguous tracked steps, including implementation, validation, PR publication, and review fixes, without seeking confirmation at every boundary, subject to active review-safety. During an active hosted review, prepare review fixes locally and do not publish review-invalidating commits until the hosted review completes. A progress update is not a stopping point.
 - An explicit pause or stop overrides autonomous continuation. Finish only the stated in-progress boundary, publish any promised safe checkpoint, report the state, and do not begin substitute work.
 - Use process proportional to the risk and size of the change. Do not create ledgers, audit suites, repeated review machinery, or speculative governance infrastructure for small edits unless a concrete correctness risk requires it.
 - Delegate bounded bulk reading, mechanical work, or focused investigation only with a disjoint scope and explicit success conditions.

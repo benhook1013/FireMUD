@@ -29,7 +29,7 @@ The invocation records:
 - capability and journey sets from the current product indexes;
 - expected review prompts;
 - explicit exclusions; and
-- any permissions beyond the shared read-only default.
+- any permissions beyond the shared read-only default, including the exact write scope, command allowlist, execution environment, and required validation.
 
 Keep the coverage table and working findings in the review response or another explicitly authorized ephemeral surface. Do not create a permanent review database.
 
@@ -54,7 +54,7 @@ The final synthesis contains:
 5. excluded or unavailable evidence; and
 6. the aggregate state: `complete`, `incomplete`, or `blocked`.
 
-The aggregate cannot be `complete` when a required prompt is incomplete or blocked, a declared service or capability is missing from coverage, a target-only behavior is presented as shipped, or an unresolved finding lacks an owner or requested human decision.
+The aggregate must cover every declared capability, journey, service, invariant, workflow, route, persistence boundary, environment, and evidence item, or explicitly exclude it with an acceptable rationale. It cannot be `complete` when a required prompt is incomplete or blocked, a declared item is missing from coverage, a target-only behavior is presented as shipped, or an unresolved finding lacks an owner or requested human decision.
 
 ## After The Review
 
