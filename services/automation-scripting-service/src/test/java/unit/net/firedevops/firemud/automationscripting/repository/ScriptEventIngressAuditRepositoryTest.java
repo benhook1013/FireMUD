@@ -1,5 +1,6 @@
 package net.firedevops.firemud.automationscripting.repository;
 
+import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventIngressAudit.SCRIPT_EVENT_INGRESS_AUDIT;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.Locale;
@@ -16,10 +17,13 @@ class ScriptEventIngressAuditRepositoryTest {
   @Test
   void lookupUsesCanonicalEventScopeFieldsAndSourceService() {
     AtomicReference<String> sqlRef = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     MockDataProvider provider =
         context -> {
           sqlRef.set(context.sql());
-          return new MockResult[0];
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(SCRIPT_EVENT_INGRESS_AUDIT))
+          };
         };
     DSLContext dsl = DSL.using(new MockConnection(provider), SQLDialect.POSTGRES);
     ScriptEventIngressAuditRepository repository = new ScriptEventIngressAuditRepository(dsl);
