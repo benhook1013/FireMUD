@@ -299,7 +299,7 @@ The metric-family catalog, labels, and increment units live exclusively in [Tabl
 
 Metric semantics:
 
-- Event-scope admission, skip, and drop outcomes remain distinct from resolved handler outcomes. An admitted event that resolves zero handlers has only the bounded, metric-only `outcome="admitted_no_handlers"` consequence defined by Table 4; it is not returned in an ingress response or written to any audit field.
+- Event-scope admission, skip, and drop outcomes remain distinct from resolved handler outcomes. An admitted event that resolves zero handlers has only the bounded, metric-only `outcome="admitted_no_handlers"` consequence defined by Table 4, with `script_category="UNRESOLVED"` and no `plugin_family` or `plugin_version_family`; it is not returned in an ingress response or written to any `script_event_ingress_audit` or `script_event_audit` field.
 - Each rejected pre-handler event has the Table 4 ingress-drop consequence with its bounded event-scope `admissionReason`, including `signer_policy_unavailable` when applicable. It does not imply a handler audit row or handler `finalOutcome`.
 - The Table 4 rollback-drain metric consequence counts old-epoch executions intentionally fenced during rollback draining before live work could persist or hand off. Use it for bounded rollback-drain visibility rather than a generic infrastructure failure counter.
   It is not the counter for ordinary operator-initiated cancel/purge actions on not-yet-running work items unless those items had already crossed into execution and were then fenced by rollback epoch advancement.

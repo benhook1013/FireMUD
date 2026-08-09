@@ -237,6 +237,10 @@ ACTIVE_ACCOUNT_EXPORT_REQUIRED_LIVE_CHECKS = {
     "current_account_generation",
     "issuer_generation",
 }
+EXPORT_CONTENT_REQUIRED_LIVE_CHECKS = {
+    "recent_account_authentication",
+    "export_availability",
+}
 SECURITY_LOCK_EXPORT_ACTION_FAMILIES = set(ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES.values())
 SECURITY_LOCK_EXPORT_CONTENT_AUDIT_CONTRACT = (
     "required_account_recovery_case_export_job_and_outcome"
@@ -1600,6 +1604,15 @@ def validate_recovery_export_generation(
             f"{label} {route.get('action_family')} must require live check "
             f"{action_family_check}",
         )
+    if route.get("action_family") == "export_content":
+        for required_check in sorted(
+            EXPORT_CONTENT_REQUIRED_LIVE_CHECKS - (checks or set())
+        ):
+            append_unique_error(
+                errors,
+                f"{label} export_content must require live check "
+                f"{required_check}",
+            )
     forbidden_checks = checks & {"tenant_generation", "target_tenant_generation"}
     if forbidden_checks:
         errors.append(
@@ -1799,6 +1812,7 @@ def validate_account_export_routes(
         if (
             identity == EXPORT_INITIATION_ROUTE_IDENTITY
             or account_state == "active"
+            or expected_action_family == "export_content"
         ):
             checks = route_live_checks(route, label, errors, live_checks_cache)
         if identity == EXPORT_INITIATION_ROUTE_IDENTITY:
@@ -1830,6 +1844,15 @@ def validate_account_export_routes(
                         f"{label} {expected_action_family} must declare "
                         f"{required_error}",
                     )
+        if expected_action_family == "export_content":
+            for required_check in sorted(
+                EXPORT_CONTENT_REQUIRED_LIVE_CHECKS - (checks or set())
+            ):
+                append_unique_error(
+                    errors,
+                    f"{label} export_content must require live check "
+                    f"{required_check}",
+                )
         if account_state == "active":
             for required_check in sorted(
                 ACTIVE_ACCOUNT_EXPORT_REQUIRED_LIVE_CHECKS - (checks or set())

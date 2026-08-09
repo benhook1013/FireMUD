@@ -212,11 +212,11 @@ status_heading = re.compile(r"^[ ]{0,3}##[ \t]+Status(?:[ \t]+#+)?[ \t]*$")
 historical_status_value = re.compile(r"^(?:Superseded|Withdrawn)\b")
 raw_html_closing_tag_only = frozenset(("pre", "script", "style", "textarea"))
 raw_html_block_start = re.compile(
-    r"^[ \t]{0,3}<(?P<closing>/)?(?P<tag>address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|pre|script|search|section|style|summary|table|tbody|td|textarea|tfoot|th|thead|title|tr|track|ul)(?:[ \t>]|/>|$)",
+    r"^[ ]{0,3}<(?P<closing>/)?(?P<tag>address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|pre|script|search|section|style|summary|table|tbody|td|textarea|tfoot|th|thead|title|tr|track|ul)(?:[ \t>]|/>|$)",
     re.IGNORECASE,
 )
 raw_html_type7_start = re.compile(
-    r"^[ \t]{0,3}(?:"
+    r"^[ ]{0,3}(?:"
     r"</[A-Za-z][A-Za-z0-9-]*[ \t]*>"
     r"|<[A-Za-z][A-Za-z0-9-]*"
     r"(?:[ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t]*=[ \t]*"
@@ -226,7 +226,7 @@ raw_html_type7_start = re.compile(
     re.IGNORECASE,
 )
 raw_html_special_start = re.compile(
-    r"^[ \t]{0,3}(?:(?P<processing><\?)|(?P<declaration><![A-Z])|(?P<cdata><!\[CDATA\[))",
+    r"^[ ]{0,3}(?:(?P<processing><\?)|(?P<declaration><![A-Z])|(?P<cdata><!\[CDATA\[))",
 )
 # The NUL sentinel assumes scanned Markdown contains no literal NUL.
 html_comment_boundary = "\x00"
@@ -382,9 +382,13 @@ def iter_visible_markdown_lines(text, include_fenced_content, source_label=None)
         )
 
 
-def first_top_level_status_value(text):
+def first_top_level_status_value(text, source_label=None):
     status_heading_found = False
-    for _, line in iter_visible_markdown_lines(text, include_fenced_content=False):
+    for _, line in iter_visible_markdown_lines(
+        text,
+        include_fenced_content=False,
+        source_label=source_label,
+    ):
         if not status_heading_found:
             if status_heading.match(line.rstrip("\r\n")):
                 status_heading_found = True
@@ -397,7 +401,7 @@ def first_top_level_status_value(text):
 
 
 def is_historical_adr_record(path, text):
-    status_value = first_top_level_status_value(text)
+    status_value = first_top_level_status_value(text, source_label=path)
     return (
         path.parent == decision_history_dir
         and historical_adr_record_name.fullmatch(path.name) is not None
@@ -481,6 +485,12 @@ raw_html_adr_fixture_text = (
     "Superseded by ADR 0001\n"
     "Account-issued envelope\n"
     "</div>\n"
+)
+tab_indented_raw_html_fixture_text = (
+    "# ADR 9979: Tab-Indented Raw HTML Fixture\n\n"
+    "\t<div>\n"
+    "## Status\n"
+    "Superseded by ADR 0001\n"
 )
 type7_raw_html_status_fixture_text = (
     "# ADR 9982: Type-7 Raw HTML Status Fixture\n\n"
@@ -608,6 +618,12 @@ indented_status_value_fixture_text = (
     "Accepted\n\n"
     "Account-issued envelope\n"
 )
+unterminated_fence_adr_fixture = decision_history_dir / "adr-9978-unterminated-fence-fixture.md"
+unterminated_fence_adr_fixture_text = (
+    "```markdown\n"
+    "## Status\n"
+    "Superseded by ADR 0001\n"
+)
 registry_index_fixture = decision_history_dir / "README.md"
 if not is_historical_adr_record(historical_adr_fixture, historical_adr_fixture_text):
     raise SystemExit("historical ADR fixture was not recognized as an exempt record")
@@ -624,10 +640,33 @@ for fixture_path, fixture_text in indented_status_heading_fixture_cases:
     reject_obsolete_envelope_phrases(fixture_path, fixture_text)
 if is_historical_adr_record(registry_index_fixture, obsolete_envelope_phrases[0]):
     raise SystemExit("decision registry/index fixture was incorrectly exempted")
+try:
+    is_historical_adr_record(
+        unterminated_fence_adr_fixture,
+        unterminated_fence_adr_fixture_text,
+    )
+except SystemExit as error:
+    expected_diagnostic = (
+        f"{unterminated_fence_adr_fixture}: "
+        "unterminated fenced example opened at line 1"
+    )
+    if str(error) != expected_diagnostic:
+        raise SystemExit(f"unexpected historical ADR fence diagnostic: {error}")
+else:
+    raise SystemExit("unterminated historical ADR fence was not rejected")
 if first_top_level_status_value(accepted_adr_fixture_text) != "Accepted":
     raise SystemExit("commented, fenced, or indented fake status bypassed the Accepted fixture")
 if first_top_level_status_value(raw_html_adr_fixture_text) is not None:
     raise SystemExit("raw HTML block status was incorrectly parsed")
+if first_top_level_status_value(tab_indented_raw_html_fixture_text) != "Superseded by ADR 0001":
+    raise SystemExit("tab-indented raw HTML block was incorrectly hidden")
+for raw_html_pattern, raw_html_line in (
+    (raw_html_block_start, "\t<div>\n"),
+    (raw_html_type7_start, "\t<span>\n"),
+    (raw_html_special_start, "\t<?firemud\n"),
+):
+    if raw_html_pattern.match(raw_html_line) is not None:
+        raise SystemExit("tab-indented raw HTML start was incorrectly accepted")
 if first_top_level_status_value(type7_raw_html_status_fixture_text) != "Accepted":
     raise SystemExit("type-7 raw HTML status was incorrectly parsed")
 for raw_html_tag in (

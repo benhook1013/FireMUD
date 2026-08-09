@@ -290,7 +290,7 @@ Outputs:
 
 These APIs provide deterministic operator hooks for stuck/canceled work so control-plane rollback and recovery do not depend on ad-hoc database access.
 
-Public work-item identifier naming is canonical across these operations: `workItemId` and `workItemIds[]` are public API aliases for the persisted `outboxWorkItemId` values. They do not create another work-item identity. `automationWorkItemId` remains the current Game Session wire name for that same parent identifier and is not a public API alias or a per-command identity.
+The persisted `outboxWorkItemId` and its public/current wire aliases (`workItemId` and `automationWorkItemId`) are parent correlation only, not command identity. The existing outbox and dead-letter operations target evaluated commands through explicit `references[]`; each reference is the complete [Command-Handoff Identity](./system-architecture-scripting-normative-contract-tables.md#command-handoff-identity-target-state), including `commandOrdinal`, with `outboxWorkItemId` retained only for correlation. Operators may copy a reference from a returned `items[]` row into a mutation request; a parent work-item identifier alone is insufficient.
 
 #### `ListOutboxWorkItems`
 
@@ -307,7 +307,7 @@ Semantics:
 
 Outputs:
 
-- `items[]` (including `workItemId`, the public alias for canonical `outboxWorkItemId`, Trigger Identity, `workItemStatus`, `createdAt`, `updatedAt`, `cancelReason`)
+- `items[]` (including `workItemId`, the public alias for canonical `outboxWorkItemId`, `reference` containing the complete Command-Handoff Identity, Trigger Identity, `workItemStatus`, `createdAt`, `updatedAt`, `cancelReason`)
 - `nextPageToken`
 
 #### `ReplayDeadLetteredWorkItems`
@@ -316,7 +316,7 @@ Inputs:
 
 - `tenantId`
 - Optional scope: `gameInstanceId`, `regionId`
-- Selector: explicit `workItemIds[]` (public aliases for canonical `outboxWorkItemId` values) or bounded filter (`scriptPatchVersion`, `pluginVersionId`, `createdAfter`, `createdBefore`)
+- Selector: explicit `references[]` (one complete Command-Handoff Identity per selected command) or bounded filter (`scriptPatchVersion`, `pluginVersionId`, `createdAfter`, `createdBefore`)
 - `controlPlaneRequestId`
 - `actor`
 - `reason`
@@ -324,13 +324,13 @@ Inputs:
 Semantics:
 
 - Idempotent.
-- Creates one durable replay record with a new execution identity for each eligible selected `DEAD_LETTERED` item. The original identity remains terminal and becomes causation evidence for the new replay; its audit row is never reopened or appended with replay execution history. The canonical identity and idempotency rules are defined in [Operator Replay of DEAD_LETTERED Work](./system-architecture-scripting-runtime-execution.md#operator-replay-of-dead_lettered-work).
+- Creates one durable replay record with a new execution identity for each eligible selected `DEAD_LETTERED` command descriptor. The original identity remains terminal and becomes causation evidence for the new replay; its audit row is never reopened or appended with replay execution history. The canonical identity and idempotency rules are defined in [Operator Replay of DEAD_LETTERED Work](./system-architecture-scripting-runtime-execution.md#operator-replay-of-dead_lettered-work).
 - Repeating the same `controlPlaneRequestId` for the same original execution identity returns the previously created replay record/result rather than creating another replay identity.
 - Must enforce bounded batch size per request.
 - Reusing a `controlPlaneRequestId` with a different canonical request fingerprint returns an idempotency conflict and cannot alter an existing claim; a distinct request or selector reuses the existing per-original result.
-- Resolves and normalizes the selected canonical `outboxWorkItemId` values, then validates and claims each original execution identity atomically. A durable unique replay claim keyed by the original identity, independent of `controlPlaneRequestId` and selector form, prevents two requests or overlapping selectors from creating two replay identities.
+- Resolves and normalizes each selected command reference, then validates and claims its original execution identity atomically. A durable unique replay claim keyed by the complete Command-Handoff Identity, independent of `controlPlaneRequestId` and selector form, prevents two requests or overlapping selectors from creating two replay identities for one command. Filter matches are expanded to individual command references; a parent with multiple descriptors is not implicitly replayed as one atomic unit.
 - A successful claim durably stores the original execution identity, new `replayExecutionIdentity`, outcome/result, winning `controlPlaneRequestId`, and canonical request fingerprint. An exact retry reuses that stored result; a request using an already claimed original identity through another selector also reuses the existing result and cannot replace its fingerprint or create another replay identity. Reuse does not reopen the original audit row.
-- Every selected row must match the request `tenantId` and any explicit `gameInstanceId` or `regionId` scope using the row's own stored `tenantId`, `gameInstanceId`, and optional `regionId`. A tenant-wide selector must evaluate each instance independently and must not borrow another instance's current pin or binding.
+- Every selected command descriptor must match the request `tenantId` and any explicit `gameInstanceId` or `regionId` scope using its own stored identity. A tenant-wide selector must evaluate each instance independently and must not borrow another instance's current pin or binding.
 - Resolve the current patch pin from each row's own tenant and instance. For plugin-backed work, resolve the current binding for that same tenant, instance, and plugin, then compare the row's immutable `(pluginId, pluginVersionId, bindingId)` tuple to that binding.
 - Must enforce replay eligibility against current control-plane state before creating the replay:
   - Work items with `scriptPatchVersion` that is not currently pinned for the scoped instance must be rejected from replay.
@@ -339,14 +339,15 @@ Semantics:
 
 Outputs:
 
-- `replayedCount` (best-effort count; may be approximate for large batches)
-- `results[]` (bounded to the selected input batch, with one result per selected item):
+- `replayedCount` (best-effort count of selected commands; may be approximate for large batches)
+- `results[]` (bounded to the selected input batch, with one result per selected reference):
+  - `reference` (the complete Command-Handoff Identity)
   - `originalExecutionIdentity`
   - `replayExecutionIdentity` when a replay identity was created or reused; identity semantics remain owned by [Operator Replay of DEAD_LETTERED Work](./system-architecture-scripting-runtime-execution.md#operator-replay-of-dead_lettered-work)
   - `outcome` (`created`, `reused`, or `rejected`)
   - `rejectionReason` when `outcome=rejected`, using a bounded application reason such as `REPLAY_VERSION_FENCE_MISMATCH`
 
-For a repeated `controlPlaneRequestId` and original execution identity, `results[]` returns the same replay identity with `outcome=reused`; rejected items remain without a replay identity. `replayedCount` and this stable-request idempotency behavior are retained.
+For a repeated `controlPlaneRequestId` and command reference, `results[]` returns the same replay identity with `outcome=reused`; rejected references remain without a replay identity. `replayedCount` and this stable-request idempotency behavior are retained.
 
 Ineligible rows remain `DEAD_LETTERED` and produce no replay identity. Their rejected result is not a unique replay claim, so a later request may retry after the row's current patch or plugin binding becomes eligible.
 
@@ -356,7 +357,7 @@ Inputs:
 
 - `tenantId`
 - Optional scope: `gameInstanceId`, `regionId`
-- Selector: explicit `workItemIds[]` (public aliases for canonical `outboxWorkItemId` values) or bounded filter (`workItemStatus`, `scriptPatchVersion`, `pluginVersionId`, `createdBefore`)
+- Selector: explicit `references[]` (one complete Command-Handoff Identity per selected command) or bounded filter (`workItemStatus`, `scriptPatchVersion`, `pluginVersionId`, `createdBefore`)
 - `controlPlaneRequestId`
 - `actor`
 - `reason`
@@ -364,7 +365,7 @@ Inputs:
 Semantics:
 
 - Idempotent.
-- Resolves each selected identifier against durable trigger and descriptor/outbox state before mutating anything. A selection that resolves to `PENDING_EVALUATION` or `EVALUATING`, or to an evaluated descriptor in `PENDING`, `INDEXED`, or `HANDOFF_IN_FLIGHT`, is rejected with a bounded application reason; an `EVALUATED_COMMITTED` parent is resolved as retained trigger evidence rather than rejected wholesale. Purge does not cancel, reclaim, dead-letter, replay, or otherwise mutate active/nonterminal work.
+- Resolves each selected command reference against durable trigger and descriptor/outbox state before mutating anything. A reference that resolves to `PENDING_EVALUATION` or `EVALUATING`, or to an evaluated descriptor in `PENDING`, `INDEXED`, or `HANDOFF_IN_FLIGHT`, is rejected with a bounded application reason; an `EVALUATED_COMMITTED` parent is resolved as retained trigger evidence rather than rejected wholesale. Purge does not cancel, reclaim, dead-letter, replay, or otherwise mutate active/nonterminal work.
 - May purge only evaluated descriptor/outbox evidence in terminal `HANDED_OFF`, `CANCELED`, or `DEAD_LETTERED` status after that status's configured retention horizon has elapsed, including terminal children under an `EVALUATED_COMMITTED` parent. Terminal evidence still inside its retention window is rejected with a bounded retention reason. The operation preserves the `EVALUATED_COMMITTED` marker, corresponding `script_event_audit`, replay causation claims or records, and any other evidence still inside its required retention window.
 - Must emit operator-auditable records for every purge request.
 
@@ -387,7 +388,7 @@ Inputs:
 Semantics:
 
 - Idempotent.
-- Marks pending outbox work items produced by the specified plugin version as canceled so they are never handed off again.
+- **Target-state semantics:** cancellation is fencing-aware across both durable layers. `PENDING_EVALUATION` transitions by compare-and-set to `CANCELED` without entering the DSL. `EVALUATING` is fenced and its descriptor-commit marker is inspected first; a committed descriptor is resumed from durable descriptors without DSL re-entry, while an explicit cancellation with no committed descriptor transitions the trigger to `CANCELED` and stale recovery uses the canonical `DEAD_LETTERED` mapping. Evaluated descriptors in eligible `PENDING` or `INDEXED` status transition to `workItemStatus=CANCELED` with durable `cancelReason`. Each transition records the corresponding stage-aware `script_event_audit` cancellation outcome. The current implementation lacks the descriptor layer and recovery owner, so these are target-state semantics rather than current live proof.
 - Required for plugin disable/rollback/revocation workflows to avoid repeated execution-time plugin version fence drops and queue growth.
 
 Outputs:

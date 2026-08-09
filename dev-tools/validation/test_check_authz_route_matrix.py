@@ -2443,6 +2443,41 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     errors,
                 )
 
+    def test_recovery_export_generation_reuses_export_content_live_checks(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        recovery_routes = [
+            route
+            for route in baseline["routes"]
+            if route.get("classification")
+            in self.validator.RECOVERY_EXPORT_GENERATION_CONTRACTS
+            and route.get("action_family") == "export_content"
+        ]
+        self.assertEqual(
+            {"security_lock_export_scoped", "pending_deletion_scoped"},
+            {route["classification"] for route in recovery_routes},
+        )
+        required_checks = self.validator.EXPORT_CONTENT_REQUIRED_LIVE_CHECKS
+        for route in recovery_routes:
+            for required_check in sorted(required_checks):
+                with self.subTest(
+                    classification=route["classification"],
+                    required_check=required_check,
+                ):
+                    mutated_route = copy.deepcopy(route)
+                    mutated_route["required_live_checks"].remove(required_check)
+                    errors = []
+                    label = self.validator.route_label(mutated_route)
+                    self.validator.validate_recovery_export_generation(
+                        mutated_route,
+                        label,
+                        errors,
+                    )
+                    self.assertIn(
+                        f"{label} export_content must require live check "
+                        f"{required_check}",
+                        errors,
+                    )
+
     def test_pending_deletion_export_action_families_are_exact(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         pending_routes = [
@@ -3104,6 +3139,59 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     "must require live check account_state_export_eligible",
                     errors,
                 )
+
+    def test_export_content_requires_recent_authentication_and_availability_for_every_account_state(
+        self,
+    ):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        export_routes = self.validator.matching_routes(
+            baseline["routes"],
+            "account-service",
+            "GET /accounts/{accountId}/exports/{exportId}/content",
+        )
+        required_checks = self.validator.EXPORT_CONTENT_REQUIRED_LIVE_CHECKS
+        self.assertEqual(
+            {"recent_account_authentication", "export_availability"},
+            required_checks,
+        )
+        self.assertEqual(
+            {
+                "active",
+                "security_locked",
+                "deactivated_pending_delete",
+            },
+            {
+                self.validator.applicability_value(
+                    route, "account_state", "test export content state", []
+                )
+                for route in export_routes
+            },
+        )
+        for route_position, route in enumerate(export_routes):
+            with self.subTest(
+                account_state=self.validator.applicability_value(
+                    route, "account_state", "test export content state", []
+                )
+            ):
+                self.assertEqual("export_content", route["action_family"])
+                self.assertTrue(
+                    required_checks.issubset(set(route["required_live_checks"]))
+                )
+                for required_check in sorted(required_checks):
+                    document = copy.deepcopy(baseline)
+                    mutated_route = self.validator.matching_routes(
+                        document["routes"],
+                        "account-service",
+                        "GET /accounts/{accountId}/exports/{exportId}/content",
+                    )[route_position]
+                    mutated_route["required_live_checks"].remove(required_check)
+                    errors = validate_document(self.validator, document)
+                    label = self.validator.route_label(mutated_route)
+                    self.assertIn(
+                        f"{label} export_content must require live check "
+                        f"{required_check}",
+                        errors,
+                    )
 
     def test_export_state_branches_are_exact_and_mutually_exclusive(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))

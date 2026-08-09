@@ -375,6 +375,7 @@ required_live_check_vocabulary:
 implementation_status:
   known_drift:
     - explicit_public_production_JOIN_is_not_implemented; current_PLAY_returns_JOIN_REQUIRED_for_missing_public_production_membership_and_WORLD_ACCESS_DENIED_for_missing_non_public_membership; connect_token_issuance_requires_existing_membership_and_never_creates_it; connect_token_membership_authority_generation_reread_remains_unimplemented
+    - protected_cookie_ws_game_and_bootstrap_bare_LOGIN_are_implemented_but_non_promotable_until_Gateway_carrier_requirements_replay_marker_durability_replay_quarantine_continuity_and_Account_planned_rotation_compromise_cutover_evidence_are_complete
     - privileged_control_is_target_only_and_unavailable_in_current_runtime; platformAdmin_and_cross_tenant_billingAdmin_branches_requiring_it_fail_closed_while_the_support_branch_does_not_require_it
     - operator_mutation_rows_are_normative_target_contracts_not_current_availability; action_schema_mutationDigest_v1_vectors_and_account_issued_authorization_reference_flow_are_required_before_external_support
     - game_session_sessions_routes_are_current_owner_local_hooks; target_external_lifecycle_ingress_is_logging_admin_forwarding_and_no_complete_external_family_exists
@@ -878,6 +879,7 @@ routes:
         # confirms public visibility and an allowed public-production join.
         public_production: JOIN_REQUIRED
         non_public: NON_PUBLIC_ENROLLMENT_REQUIRED
+      # Applies only when the selected target is confirmed public production and its joining policy denies entry.
       policy_denial: PUBLIC_PRODUCTION_ADMISSION_DENIED
       unavailable_or_invalid_authority: applicable_unavailable_or_invalid_authority_outcome
   - service: spring-cloud-gateway
@@ -1033,6 +1035,7 @@ routes:
     selected_character_requirement: none
     gameplay_binding: not_performed
     final_play_binding_cas: not_performed
+    # playableStateScope is the server-derived projection of the canonical realm snapshot; callers cannot provide it.
     required_live_checks: [membership, membership_generation, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match]
     canonical_errors:
       any_of: [JOIN_REQUIRED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE, CONNECT_SCOPE_MISMATCH]
@@ -1055,6 +1058,7 @@ routes:
     selected_character_requirement: none
     gameplay_binding: not_performed
     final_play_binding_cas: not_performed
+    # The direct-text producer applies the same canonical stateScope mapping as this REST producer.
     required_live_checks: [membership, membership_generation, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match]
     canonical_errors:
       any_of: [JOIN_REQUIRED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE, CONNECT_SCOPE_MISMATCH]
@@ -1937,7 +1941,7 @@ routes:
       mismatch: PERMISSION_DENIED
     action_family: export_content
     audit_contract: required_account_recovery_case_export_job_and_outcome
-    required_live_checks: [security_lock_export_credential_registry, security_lock_recovery_state, security_lock_export_action_family, export_availability]
+    required_live_checks: [security_lock_export_credential_registry, security_lock_recovery_state, security_lock_export_action_family, recent_account_authentication, export_availability]
     credential_use: bounded_expiring_export_operation_access
     response_profile: completed_export_artifact_only
     canonical_errors:
@@ -1968,7 +1972,7 @@ routes:
       mismatch: PERMISSION_DENIED
     action_family: export_content
     audit_contract: required_account_deletion_workflow_export_job_and_outcome
-    required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, pending_deletion_action_family, export_availability]
+    required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, pending_deletion_action_family, recent_account_authentication, export_availability]
     response_profile: completed_export_artifact_only
     canonical_errors:
       any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE, PERMISSION_DENIED]

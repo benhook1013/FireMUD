@@ -176,7 +176,7 @@ Additional non-committing terminal outcome rules:
 
 The command collection uses one complete command-handoff identity everywhere:
 `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, targetGameInstanceId?, targetRegionId?, targetRegionEpoch?, automationDispatchId, commandOrdinal>`.
-The source scope fields are required for gameplay/runtime commands; the target scope fields are included exactly when the emitted command is routed to a distinct target runtime scope. Absent optional fields remain absent. `automationDispatchId` is a dispatch-group identifier and is not assumed to be globally unique. `outboxWorkItemId` is parent correlation only. The parent Trigger Identity, including `scriptEventId`, is retained on each child for correlation and is not part of the command-child uniqueness key; `script_event_audit` remains a separate one-row-per-handler surface.
+The source scope fields are required for gameplay/runtime commands; the target scope fields are included exactly when the emitted command is routed to a distinct target runtime scope. Absent optional fields remain absent. `commandOrdinal` is zero-based: the first emitted command under a dispatch is `0`, followed by `1`, and so on. `automationDispatchId` is a dispatch-group identifier and is not assumed to be globally unique. `outboxWorkItemId` is parent correlation only. The parent Trigger Identity, including `scriptEventId`, is retained on each child for correlation and is not part of the command-child uniqueness key; `script_event_audit` remains a separate one-row-per-handler surface.
 
 Supplementary post-handoff correlation rule:
 
