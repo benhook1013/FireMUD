@@ -1517,6 +1517,7 @@ routes:
     route: JoinPublicProductionMembership
     scope: tenant
     classification: internal_workload
+    route_status: target_not_currently_routable
     auth_path: exact_mtls_workload
     issued_token_state: none
     accepted_token_profiles: []

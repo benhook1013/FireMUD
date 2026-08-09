@@ -817,21 +817,19 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     if (pluginId.isBlank()) {
       Optional<ScriptEventIngressAudit> audit =
           ingressAuditRepository
-              .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+              .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRunAndSourceService(
                   item.getTenantId(),
                   item.getGameInstanceId(),
                   item.getRegionId(),
                   item.getRegionEpoch(),
                   item.getEntityId(),
                   blankToEmpty(item.getPlayableStateScope()),
-                  blankToEmpty(item.getWorldSlug()),
-                  blankToEmpty(item.getRealmSlug()),
-                  blankToEmpty(item.getPointerVersion()),
                   item.getEventType(),
                   item.getEventSchemaVersion(),
                   item.getScriptPatchVersion(),
                   item.getScriptEventId(),
-                  item.isDryRun());
+                  item.isDryRun(),
+                  blankToEmpty(item.getSourceService()));
       if (audit.isEmpty()
           || audit.get().getPluginId() == null
           || audit.get().getPluginId().isBlank()) {

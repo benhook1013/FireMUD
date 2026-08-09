@@ -7,8 +7,8 @@ It is intended as the main reference for operators, SREs, and platform engineers
 Routing note:
 
 - Use this document for quota policy, enforcement, and runtime/operator controls.
-- Use `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` for DSL/lifecycle semantics.
-- Use `design/architecture/system-architecture-scripting-runtime-execution.md` for execution-state behavior.
+- Use the [DSL and lifecycle reference](./system-architecture-scripting-dsl-reference-and-lifecycle.md) for DSL/lifecycle semantics.
+- Use [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md) for execution-state behavior.
 
 ## Target-State Quota and Budget Contract
 
@@ -35,9 +35,9 @@ See the [normative metric matrix](./system-architecture-scripting-normative-cont
 
 Companion docs:
 
-- `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` – terminology, DSL semantics, event lifecycle, determinism.
-- `design/architecture/system-architecture-scripting-examples-and-patterns.md` – worked examples (for example, `onEnterRegion`, periodic patrol).
-- `design/architecture/system-architecture-scripting.md` – high-level hub and TL;DR flow.
+- [DSL and lifecycle reference](./system-architecture-scripting-dsl-reference-and-lifecycle.md) – terminology, DSL semantics, event lifecycle, determinism.
+- [Scripting examples and patterns](./system-architecture-scripting-examples-and-patterns.md) – worked examples (for example, `onEnterRegion`, periodic patrol).
+- [Scripting and Automation hub](./system-architecture-scripting.md) – high-level hub and TL;DR flow.
 
 ## Table of Contents
 
@@ -61,9 +61,9 @@ Companion docs:
 - **Operators, SREs, and platform engineers**
   - Use this document as the primary reference for runtime knobs, quotas, and operational workflows around scripting.
   - Pair with:
-    - `design/architecture/system-architecture-logging-monitoring.md`
-    - `design/architecture/system-architecture-redis.md`
-    - Automation & Scripting Service README: `design/architecture/microservices/automation-scripting-service/README.md`
+    - [Logging & Monitoring](./system-architecture-logging-monitoring.md)
+    - [Redis Architecture](./system-architecture-redis.md)
+    - [Automation & Scripting Service README](./microservices/automation-scripting-service/README.md#document-map)
 
 - **Backend developers and maintainers**
   - Use this document when implementing new quota types, metrics, or operational flows.
@@ -88,7 +88,7 @@ For **core scripts**, `UNSAFE` is a publish/readiness classification, not a live
 - Already-`READY` or already-pinned patches do not become implicitly disabled just because a component was reclassified later.
 - Immediate containment of a live script that uses a newly `UNSAFE` component is an operator action through the existing disable/rollback controls, not a separate implicit admission policy.
 
-For lower-level sandbox and runtime internals, see `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md`.
+For lower-level sandbox and runtime internals, see the [sandbox runtime design](./microservices/automation-scripting-service/sandbox-runtime-design.md).
 
 Dry-run and test execution paths exposed by the Automation & Scripting Service share the same sandbox and guardrails as live traffic:
 
@@ -157,7 +157,7 @@ Patch readiness initialization uses a separate admission class from ordinary liv
 - `onLoad` is part of the publish/readiness lifecycle for `<tenantId, scriptPatchVersion>`, not part of steady-state gameplay traffic.
 - `onLoad` must **not** consume ordinary live-trigger quota windows or compete indefinitely in the same admission queues as `onEnterRegion`, `onInterval`, or other runtime events.
 - The canonical registry classification for that split is `quotaClass=PUBLISH_READINESS`, and Automation must carry that class onto durable work items so later execution-time budget decisions do not fall back to event-name inference.
-- In the first implementation slice, `onLoad` capacity exists only for **ephemeral readiness work**. Durable or semi-durable artifact creation is not part of the `onLoad` contract and must be rejected at design/runtime review until a dedicated cleanup lifecycle exists.
+- In the first implementation slice, `onLoad` capacity exists only for **ephemeral readiness work**. `onLoad` handlers may not create durable or semi-durable artifacts in databases, Redis, object storage, or other shared stores. Platform-owned execution, readiness, fencing/recovery, and `script_event_audit` metadata remain allowed and are not handler-created artifacts.
 - Implementations must reserve bounded publish-time capacity for `onLoad`, including:
   - explicit concurrency ceilings,
   - explicit timeout/CPU/memory ceilings, and
@@ -218,7 +218,7 @@ Budgets operate at three main levels:
   - Global ceilings on automation work (for example, CPU/time budgets and `AUTOMATION_TICK_MAX_EVENTS`) protect the cluster.
   - When limits are reached, the scheduler favors `high`-priority, latency-sensitive scripts and defers or drops `background` work.
 
-All script-side keys remain scoped by `tenantId`, and scheduler ownership must remain explicit enough that each tenant’s automation workload can be reasoned about and tuned independently while still sharing the same infrastructure. Operator-facing metrics, however, must use the bounded `scope`, category, family, or tier labels defined in the canonical observability contract rather than raw tenant/runtime identifiers. Do not infer a separate canonical `script-leader:*` prefix unless the Redis coordination docs explicitly add one.
+All script-side keys remain scoped by `tenantId`, and scheduler ownership must remain explicit enough that each tenant’s automation workload can be reasoned about and tuned independently while still sharing the same infrastructure. Operator-facing metrics, however, must use the bounded `scope`, category, family, or tier labels defined in canonical Table 4 rather than raw tenant/runtime identifiers. Do not infer a separate canonical `script-leader:*` prefix unless the Redis coordination docs explicitly add one.
 
 ### Quota & Budget Summary
 
@@ -236,15 +236,17 @@ Per-trigger output is also part of the quota model even when the run itself was 
 
 - Each admitted script/plugin run must be constrained by explicit output ceilings such as `maxCommandsPerRun`, `maxCommandsPerEntityPerTrigger`, and `maxSerializedWorkItemBytes`.
 - Output-budget failures must be surfaced as stage-aware non-success outcomes and must not be treated as successful handoff merely because the DSL graph began evaluating.
-- Game Design validation must reject graphs whose conservatively bounded worst-case fan-out cannot fit within those runtime ceilings, using the static output cost contract in `design/architecture/system-architecture-scripting-runtime-execution.md#static-output-cost-contract`.
+- Game Design validation must reject graphs whose conservatively bounded worst-case fan-out cannot fit within those runtime ceilings, using the [static output cost contract](./system-architecture-scripting-runtime-execution.md#static-output-cost-contract).
 
 ---
 
 ## Auditability & Metrics
 
-Every resolved-handler or materialized-work lifecycle decision emits an audit record stored in a lightweight `script_event_audit` table in PostgreSQL. Pre-handler dry-run rejection, signer-policy unavailability, and rollback backpressure are recorded in the event-scope ingress audit instead; an admitted event with zero handlers is metric-only. `scriptEventId` is one field within the full applicable Trigger Identity; it must never be treated as unique on its own because runtime scope, handler, event, patch, and other conditional identity fields can distinguish otherwise equal tokens. Retries, replays, and downstream side effects must be correlated using the complete identity (not as a metric label). The authoritative audit field and stage model is defined in `design/architecture/system-architecture-scripting-observability-contract.md`.
+Every resolved-handler or materialized-work lifecycle decision emits an audit record stored in a lightweight `script_event_audit` table in PostgreSQL. Pre-handler dry-run rejection, signer-policy unavailability, and rollback backpressure are recorded in the event-scope ingress audit instead; an admitted event with zero handlers is metric-only. `scriptEventId` is one field within the full applicable Trigger Identity; it must never be treated as unique on its own because runtime scope, handler, event, patch, and other conditional identity fields can distinguish otherwise equal tokens. Retries, replays, and downstream side effects must be correlated using the complete identity (not as a metric label). The authoritative audit field and stage model is defined in the [Scripting & Automation Observability Contract](./system-architecture-scripting-observability-contract.md).
 
-Normative tables for Trigger Identity fields, metric label sets, and metric increment units are centralized in `design/architecture/system-architecture-scripting-normative-contract-tables.md` so this document does not drift from other design docs.
+Normative tables for Trigger Identity fields, metric label sets, and metric increment units are centralized in the [scripting normative contract tables](./system-architecture-scripting-normative-contract-tables.md) so this document does not drift from other design docs.
+
+Metric troubleshooting must use only the bounded labels defined by Table 4. Never put raw `tenantId`, `gameInstanceId`, or `regionId` on a metric; retain those identifiers in `script_event_audit`, audit records, logs, traces, Redis inspection, or control-plane queries for drilldown.
 
 The canonical `script_event_audit` schema includes:
 
@@ -279,7 +281,7 @@ At the metric layer, these rows should contribute to the bounded rollback/drain 
 `script_event_audit` remains the authoritative record for Automation-owned stages through `TICK_HANDOFF`, but it is not the sole post-handoff surface. The complete per-command handoff diagnostics below are **target-state**: the live Game Session proto carries `automationDispatchId`, command id/text, and selected provenance fields, but not `commandOrdinal` or the full Trigger Identity. Current live status/readback therefore remains narrower. In the target state, per-command handoff and execution-time version-fence results are queried through `ListScriptHandoffEvents` and composed as `commandHandoffDispositions[]`, with one child keyed by the complete Command-Handoff Identity defined in the [normative contract tables](./system-architecture-scripting-normative-contract-tables.md#command-handoff-identity-target-state) and correlated to the complete parent Trigger Identity. `automationDispatchId` is a dispatch-group identifier, not a globally unique child key:
 
 - If Game Session later drops a handed-off command because its embedded `scriptPatchVersion` or plugin version no longer matches the instance's active pin, operator tooling must be able to locate that drop directly from the originating Trigger Identity.
-- The target-state mechanism is the per-command handoff contract in `design/architecture/system-architecture-scripting-observability-contract.md`: Game Session reports a bounded child handoff result through `ListScriptHandoffEvents`, retaining the parent Trigger Identity and `outboxWorkItemId` while keying the command record by the complete Command-Handoff Identity.
+- The target-state mechanism is the per-command handoff contract in the [Scripting & Automation Observability Contract](./system-architecture-scripting-observability-contract.md): Game Session reports a bounded child handoff result through `ListScriptHandoffEvents`, retaining the parent Trigger Identity and `outboxWorkItemId` while keying the command record by the complete Command-Handoff Identity. `outboxWorkItemId` is parent correlation only and is excluded from command identity, uniqueness, and deduplication keys.
 - Dashboards and incident tooling should therefore show both:
   - Automation pipeline completion (`finalStage`, `finalOutcome`) and
   - the later per-command handoff result in `commandHandoffDispositions[]` (for example `outcome=version_fence_dropped`, with a bounded reason).
@@ -288,7 +290,7 @@ Concrete rollback-visibility example:
 
 - Trigger Identity `T123` reaches `finalStage=TICK_HANDOFF`, `finalOutcome=success` after Automation & Scripting hands off its commands to Game Session.
 - Before the queued command executes, operators roll the instance back to an older `scriptPatchVersion`.
-- Game Session rejects only the command-handoff child ending in `(automationDispatchId=work-9, commandOrdinal=1)` on its execution-time version fence; `ListScriptHandoffEvents` returns that target-state child with `outcome=version_fence_dropped`, `reason=script_patch_mismatch`, and `sourceService=game-session`, while the sibling child ending in `(automationDispatchId=work-9, commandOrdinal=0)` remains a separate result under the same complete scope.
+- Game Session rejects only the command-handoff child for the complete `T123` Trigger Identity plus `(automationDispatchId=work-9, commandOrdinal=1)` on its execution-time version fence; `outboxWorkItemId=work-9` remains parent correlation only. `ListScriptHandoffEvents` returns that target-state child with `outcome=version_fence_dropped`, `reason=script_patch_mismatch`, and `sourceService=game-session`, while the sibling child for the same complete Trigger Identity plus `(automationDispatchId=work-9, commandOrdinal=0)` remains a separate result. The parent/scope identity is required; each pair is only a display suffix.
 - Operator tooling for `T123` must therefore show `finalStage=TICK_HANDOFF`/`finalOutcome=success` together with the complete `commandHandoffDispositions[]` collection, rather than overwriting the handler result or collapsing the commands into one disposition.
 
 Retention and sizing are governed by the environment catalog in [Automation & Scripting Service Configuration](./microservices/automation-scripting-service/configuration.md#service-specific-variables); in particular, `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` and `SCRIPT_EVENT_AUDIT_MAX_ROWS` control how long audit rows are retained and how large the table is allowed to grow. This document retains the local control consequences; the catalog owns defaults and exact variable semantics.
@@ -302,7 +304,7 @@ Metric-family names, labels, and increment units are owned exclusively by [Table
 The following are local interpretations of the Table 4 queue-health metric families and help detect automation backlogs that are not draining into ticks as expected:
 
 - `automation_queue_orphaned_entries_total` – counts work items that have remained in `automation:queue:{tenantInstanceTag}:<entityId>` beyond a bounded age window (for example, N ticks or seconds) without corresponding durable-executor progress or entries in the tick effect ledger.
-- `automation_queue_oldest_entry_age_seconds` – records the age of the oldest sampled queue item per tenant/script so operators can see when automation queues are falling behind.
+- `automation_queue_oldest_entry_age_seconds` – records the age of the oldest sampled queue item per bounded scope so operators can see when automation queues are falling behind; tenant, instance, region, and script drilldown remains in audit/log/trace records.
 
 A small, bounded Automation-owned inspector loop periodically samples a subset of queues to update these metrics; it does not attempt to repair or delete items itself, but surfaces misalignment between queue projection, durable executor progress, and tick processing for investigation.
 
@@ -342,7 +344,7 @@ By consistently tagging metrics and audits with these identifiers, operators can
 Dry-run and test executions share the same sandbox engine and guards as live traffic but are subject to their own **budgets and rate limits** so they cannot bypass safety mechanisms:
 
 - Dry-runs do **not** consume ScriptQuotaService windows or per-tenant automation budgets that gate live triggers, but they:
-  - Execute through the same sandbox, CPU, and memory budgets described in `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md`.
+  - Execute through the same sandbox, CPU, and memory budgets described in the [sandbox runtime design](./microservices/automation-scripting-service/sandbox-runtime-design.md).
   - Contribute to dry-run/test-only metrics (for example, `automation_script_test_runs_total`, `automation_script_test_runtime_seconds`, `automation_script_test_sandbox_failures_total`) so behavior is observable without affecting live-traffic dashboards and SLOs.
 - Dry-run/test triggers must use a separate idempotency namespace from live traffic (for example include `isDryRun=true` in Trigger Identity) so test executions cannot dedupe, suppress, or overwrite live trigger handling/audit rows.
 - By default, dry-run/test executions must not contribute to failure-rate circuit breakers that can disable live scripts (`runtimeStatus=DISABLED_DUE_TO_ERRORS`); if dry-run failures are used for gating, they must be isolated (separate breaker or explicit opt-in).
@@ -363,9 +365,9 @@ Dry-run and test executions share the same sandbox engine and guards as live tra
 
 This section is **illustrative**, not normative. The **authoritative metric definitions** for family names, labels, and increment units live in Table 4. Local audit/diagnostic behavior and broader alerting guidance live in:
 
-- `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix`
-- `design/architecture/system-architecture-scripting-observability-contract.md`
-- `design/architecture/system-architecture-logging-monitoring.md`
+- [Scripting normative contract tables](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix)
+- [Scripting & Automation Observability Contract](./system-architecture-scripting-observability-contract.md)
+- [Logging & Monitoring](./system-architecture-logging-monitoring.md)
 
 Implementations should align emitted metrics with Table 4; the intent here is only to show illustrative local consequences for common outcomes so readers understand the observability story. These examples do not define additional labels, units, or metric families.
 
@@ -373,7 +375,7 @@ At a high level:
 
 - **Handler-level quota and budgeting outcomes**
   - `finalStage=ADMISSION`, `finalOutcome=quota_denied`, `finalReason=script_quota_denied` – per-script quota denial is recorded in `script_event_audit` and `automation_script_triggers_total{outcome="quota_denied"}`; it increments `script_quota_denied_total` but does **not** increment the pre-resolution dropped metric or sandbox failure metrics.
-  - `finalStage=ADMISSION`, `finalOutcome=quota_denied`, `finalReason=dry_run_capacity_exhausted` – handler-scoped dry-run capacity denial is recorded in `script_event_audit` and `automation_script_triggers_total{outcome="quota_denied"}`; it increments `automation_script_test_capacity_denied_total{scope}`, not `script_quota_denied_total`.
+  - `finalStage=ADMISSION`, `finalOutcome=quota_denied`, `finalReason=dry_run_capacity_exhausted` – handler-scoped dry-run capacity denial is recorded in `script_event_audit` and uses the Table 4 test-only consequences `automation_script_test_runs_total` and `automation_script_test_capacity_denied_total{scope}`; it must not increment live `automation_script_triggers_total`, `script_quota_denied_total`, or other live families.
   - `finalStage=ADMISSION`, `finalOutcome=tenant_budget_exceeded` (or other budget-related outcomes) – handler-level budget denial is recorded in `script_event_audit` and `automation_script_triggers_total{outcome="tenant_budget_exceeded"}`; it does **not** increment the pre-resolution dropped metric or run the sandbox.
 
 - **Pre-resolution ingress outcomes**
@@ -404,14 +406,14 @@ The steady-state quota, budget, and observability contracts stay in this parent 
 
 ## Environment Variables
 
-The **authoritative, up-to-date list of environment variables and defaults** lives in [Automation & Scripting Service Configuration](./microservices/automation-scripting-service/configuration.md#service-specific-variables), linked from the [Automation & Scripting Service README](./microservices/automation-scripting-service/README.md#document-map). This section only calls out conceptual categories so it remains stable as new settings are added:
+The **authoritative, up-to-date list of environment variables and defaults** lives in [Automation & Scripting Service Configuration](./microservices/automation-scripting-service/configuration.md#service-specific-variables). The [Automation & Scripting Service README](./microservices/automation-scripting-service/README.md#document-map) only maps related service documents. This section only calls out conceptual categories so it remains stable as new settings are added:
 
 - **Quota knobs** – control per-script and per-tenant quota windows and budgets used by `ScriptQuotaService` and the multi-level budgeting model (for example, limits on how many triggers a script or tenant may execute per window).
 - **Execution batch knobs** – bound how much automation work the durable executor performs per scheduling window, including batch sizes, per-window budgets, and cluster-wide ceilings on automation events.
 - **Timer and scheduling knobs** – influence `onInterval` / `onTimerExpire` behavior, including cadence and maximum timers evaluated per canonical runtime scope tuple `<tenantId, gameInstanceId, regionId>`, plus any backoff or delay settings applied when regions are degraded.
 - **Audit and retention knobs** – govern how long `script_event_audit` and related records remain available for troubleshooting, and how large those tables are allowed to grow before automated cleanup; retention is typically controlled via `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` and `SCRIPT_EVENT_AUDIT_MAX_ROWS`, with exact defaults and semantics documented in [Automation & Scripting Service Configuration](./microservices/automation-scripting-service/configuration.md#service-specific-variables).
 
-For the exact variable names, defaults, and any future additions, always refer to the Automation & Scripting Service README rather than this document.
+For the exact variable names, defaults, and any future additions, always refer to [Automation & Scripting Service Configuration](./microservices/automation-scripting-service/configuration.md#service-specific-variables) rather than the README or this document.
 
 ---
 

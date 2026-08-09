@@ -12,8 +12,8 @@ The target automation handoff also requires the complete Trigger Identity plus `
 
 ## Table of Contents
 
-- [Redis Roles and Usage Patterns](#redis-roles-and-usage-patterns)
 - [Implementation Status](#implementation-status)
+- [Redis Roles and Usage Patterns](#redis-roles-and-usage-patterns)
 - [Environment Profiles and Mappings](#environment-profiles-and-mappings)
 - [Maxmemory, Eviction, and Sizing](#maxmemory-eviction-and-sizing)
 - [Configuration Wiring and Misconfiguration Guards](#configuration-wiring-and-misconfiguration-guards)

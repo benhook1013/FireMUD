@@ -110,14 +110,12 @@ CREATE TABLE script_event_ingress_audit (
         region_epoch,
         entity_id,
         playable_state_scope,
-        world_slug,
-        realm_slug,
-        pointer_version,
         event_type,
         event_schema_version,
         script_patch_version,
         script_event_id,
-        dry_run
+        dry_run,
+        source_service
     )
 );
 

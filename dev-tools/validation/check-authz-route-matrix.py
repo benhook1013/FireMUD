@@ -1785,7 +1785,7 @@ def validate_account_export_routes(
     observed_branches: dict[tuple[str, str], list[tuple[str, str]]] = {
         identity: [] for identity in ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES
     }
-    for route in routes:
+    for index, route in enumerate(routes):
         if not isinstance(route, dict):
             continue
         identity = route_set_key(route)
@@ -1837,6 +1837,24 @@ def validate_account_export_routes(
             or expected_action_family == "export_content"
         ):
             checks = route_live_checks(route, label, errors, live_checks_cache)
+        if (
+            account_state == "active"
+            and expected_action_family in RECOVERY_EXPORT_AUDITED_ACTION_FAMILIES
+            and route.get("audit_contract")
+            != ACTIVE_ACCOUNT_EXPORT_CONTENT_AUDIT_CONTRACT
+        ):
+            audit_label = f"routes[{index}] {label}"
+            if expected_action_family == "export_content":
+                audit_error = (
+                    f"{audit_label} active account export_content must declare audit_contract "
+                    f"{ACTIVE_ACCOUNT_EXPORT_CONTENT_AUDIT_CONTRACT}"
+                )
+            else:
+                audit_error = (
+                    f"{audit_label} active account {expected_action_family} must declare "
+                    f"audit_contract {ACTIVE_ACCOUNT_EXPORT_CONTENT_AUDIT_CONTRACT}"
+                )
+            append_unique_error(errors, audit_error)
         if identity == EXPORT_INITIATION_ROUTE_IDENTITY:
             required_checks = EXPORT_INITIATION_REQUIRED_LIVE_CHECKS[
                 expected_action_family
@@ -3128,21 +3146,6 @@ def validate_generation_applicability(
         validate_recovery_export_generation(
             route, label, errors, checks, live_checks_cache
         )
-        if (
-            route.get("classification") == "account_scoped"
-            and route.get("action_family") == "export_content"
-            and applicability_value(
-                route, "account_state", route_label(route), errors
-            )
-            == "active"
-            and route.get("audit_contract")
-            != ACTIVE_ACCOUNT_EXPORT_CONTENT_AUDIT_CONTRACT
-        ):
-            append_unique_error(
-                errors,
-                f"{label} active account export_content must declare audit_contract "
-                f"{ACTIVE_ACCOUNT_EXPORT_CONTENT_AUDIT_CONTRACT}",
-            )
         value = validate_membership_generation(route, label, errors)
         if value is True:
             if checks is None:

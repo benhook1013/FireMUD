@@ -1,5 +1,13 @@
 # World Management Service API Contracts
 
+## Implementation Status
+
+This API contract is target-state canonical; implementation coverage is partial and must not be inferred from target examples alone.
+
+- The current World Management gameplay bridge serializes runtime room ids as `R-<roomInstanceRowId>` and rejects scoped decimal `roomInstanceId` values such as `1021`. That storage-derived encoding is not the canonical target identity defined by the [Identifier Glossary](../../system-architecture-identifier-glossary.md).
+- The bridge, cross-service callers, examples, and focused proof have not migrated together to the scoped decimal `roomInstanceId` contract. The checked-in proof still exercises the legacy encoding.
+- Required executable migration/proof gate: `./gradlew :world-management-service:test :game-logic-service:test :game-session-service:test :tcp-proxy-service:crossServiceTest`. This gate must update the bridge, callers, examples, and checked-in proof together and pass before the target examples below may be treated as current. This document does not claim that the gate exists or passes.
+
 ## gRPC APIs
 
 - `GetRoom` – retrieves room data including exits and environmental effects through `RoomInstanceRef`.
@@ -153,12 +161,11 @@ Once that target protocol is designed and implemented, cross-service LOOK read c
 
 ## Room Identity Migration
 
+### Target behavior
+
 The target runtime identity at this boundary is `RoomInstanceRef = {tenantId, gameInstanceId, roomInstanceId}`. `roomInstanceId` is a service-owned runtime identity, not a database row id. When a string is required at a transport boundary, it uses canonical decimal text such as `1021`; the value remains opaque outside the full `RoomInstanceRef` scope.
 
-Current implementation drift:
-
-- The current World Management gameplay bridge serializes runtime room ids as `R-<roomInstanceRowId>` and rejects decimal `1021` input. That storage-derived encoding is not the canonical target identity defined by the [Identifier Glossary](../../system-architecture-identifier-glossary.md).
-- The bridge, cross-service callers, examples, and focused proof must migrate together to the scoped `roomInstanceId` contract. The checked-in proof still exercises the legacy encoding.
+These examples remain target-only until the required executable migration/proof gate in [Implementation Status](#implementation-status) has updated the bridge, callers, examples, and checked-in proof and has passed.
 
 Illustrative target-state `GetRoomSnapshot` fragments:
 

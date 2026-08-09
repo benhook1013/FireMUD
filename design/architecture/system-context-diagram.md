@@ -2,10 +2,6 @@
 
 This document gives a high-level view of how FireMUD's clients, gateways, internal services, and infrastructure fit together. Use it as an orientation map before diving into the more detailed architecture and microservice design documents.
 
-## Implementation Status
-
-Current Gateway/player readiness is partial: checked-in Gateway route/header-trust and WebSocket/Telnet bridge seams are bounded implementation, while route-catalog convergence, the public Telnet TLS boundary, and complete player-facing deployment proof remain gaps. See the [platform operations and delivery tracker](../project-management/implementation-tracking/platform-operations-and-delivery.md), [player access and session tracker](../project-management/implementation-tracking/player-access-and-session.md), and [realm-routing tracker](../project-management/implementation-tracking/realm-routing-and-playable-state.md) for current status.
-
 This diagram shows the target traffic-plane shape, not proof of deployment readiness: internal infrastructure management, external admin/creator APIs through Gateway, and player HTTP/WebSocket/Telnet traffic remain separate planes. Detailed ownership and readiness rules stay in [Gateway Architecture](./system-architecture-gateway.md), [Authentication & Authorization](./system-architecture-authentication.md), and the linked trackers.
 
 ```plaintext
@@ -84,6 +80,10 @@ Plane definitions:
 - `external admin/creator API plane`: Operator and creator UIs use HTTP(S) through Gateway for route-matrix entries explicitly marked edge-routable; it is separate from the `infrastructure management plane`.
 - `player traffic plane`: Player-facing HTTP, WebSocket, and Telnet traffic used for gameplay admission and live play; it is separate from the infrastructure-management gRPC surface.
 
+## Implementation Status
+
+Current Gateway/player readiness is partial: checked-in Gateway route/header-trust and WebSocket/Telnet bridge seams are bounded implementation, while route-catalog convergence, the public Telnet TLS boundary, and complete player-facing deployment proof remain gaps. See the [platform operations and delivery tracker](../project-management/implementation-tracking/platform-operations-and-delivery.md), [player access and session tracker](../project-management/implementation-tracking/player-access-and-session.md), and [realm-routing tracker](../project-management/implementation-tracking/realm-routing-and-playable-state.md) for current status.
+
 Context callouts:
 
 - External operator writes do not bypass Logging & Admin even when the owning domain service is edge-routable for reads or other explicitly documented bypass-safe workflows.
@@ -93,7 +93,7 @@ Context callouts:
 - External domain gRPC is not part of the edge contract unless a dedicated design update adds it. Internal service-to-service calls, including gRPC, do not traverse Gateway.
 - External mutating operator workflows such as moderation actions, quota overrides, runtime feature-flag overrides, and tick remediation must enter through Logging & Admin. Direct domain-admin routes are limited to route-matrix-allowlisted reads and explicitly documented bypass-safe workflows.
 - Canonical room-state reads: World Management emits the read fence used to align room occupancy with Entity Management containment/presentation. Game Logic owns same-fence composition and must reject mixed or missing fences instead of allowing best-effort room assembly; Game Session initiates the read and renders/caches the resulting transcript.
-- For production-like control-plane constraints, including dynamic route override dev/test scope, see the canonical [Gateway Management Plane Capability Matrix](./system-architecture-overview.md#gateway-management-plane-capability-matrix-canonical).
+- For production-like control-plane constraints, including dynamic route override dev/test scope, see the canonical [Infrastructure Management Plane Capability Matrix](./system-architecture-overview.md#infrastructure-management-plane-capability-matrix-canonical).
 
 Among application microservices, only the Account Service and Logging & Admin Service send email directly to the SMTP provider; other internal services surface email-worthy events through these owners rather than talking to SMTP themselves. Alertmanager, as part of the observability stack, may also send alerts via SMTP for infrastructure notifications. This matches the responsibilities defined in the Service Responsibility Matrix: Account Service owns account-centric and security-related emails (for example, verification, password reset, subscription and billing notifications), while Logging & Admin Service owns operational and moderation notifications (for example, alerts, escalations, moderation decisions, and admin digests).
 

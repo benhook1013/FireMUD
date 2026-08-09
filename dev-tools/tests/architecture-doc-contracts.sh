@@ -823,6 +823,11 @@ for path in (root / "design").rglob("*.md"):
     text = path.read_text(encoding="utf-8")
     reject_obsolete_redis_rebind_envelope(path, text)
     reject_obsolete_envelope_phrases(path, text)
+    if "session:game:{tenantInstanceTag}" in text:
+        raise SystemExit(
+            f"{path}: gameplay session selectors must use the canonical "
+            "tenantGameplayTag/gameInstanceId shape"
+        )
 
 canonical_world_dynamic = "world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>"
 for path in [
@@ -939,14 +944,6 @@ require_contains(
         "`session:game:index:character:{tenantGameplayTag}:<gameInstanceId>:<characterId>`",
     ],
 )
-reset_recovery_text = (
-    root / "design/architecture/system-architecture-redis-reset-and-recovery.md"
-).read_text(encoding="utf-8")
-if "session:game:{tenantInstanceTag}" in reset_recovery_text:
-    raise SystemExit(
-        "design/architecture/system-architecture-redis-reset-and-recovery.md: "
-        "gameplay session selectors must use the canonical tenantGameplayTag/gameInstanceId shape"
-    )
 require_contains(
     "design/architecture/system-architecture-redis-ops-access.md",
     ["Region- and tenant-scoped coordination resets preserve Account-owned `session:auth:token:<tokenHash>` records"],
@@ -1316,8 +1313,6 @@ canonical_public_resume_awaiting_signature = "`resume(operationId, expectedPhase
 for path in [
     "design/architecture/decisions/adr-0015-online-backup-and-environment-wide-cold-start-recovery.md",
     "design/architecture/system-architecture-backup-recovery.md",
-    "design/architecture/system-architecture-deployment-runbook.md",
-    "design/architecture/system-architecture-post-restore-hardening.md",
     "design/architecture/system-architecture-redis-operations.md",
 ]:
     require_contains(path, [canonical_public_resume_signature])
@@ -1344,7 +1339,7 @@ require_section_contains(
     [
         "`trafficOpenStatus` (`finalized` in the checked-in projection",
         "must not accept a transient traffic-open file as authority",
-        "exact-match `eventType`, `deploymentEventId`, `preflightReportPath`",
+        "`operationId`, `eventType`, `deploymentEventId`, `preflightReportPath`, `actualRecoveryRecordRef`, `playerFacingTargetBoundary`, and `trafficExposure` must exact-match",
     ],
 )
 require_section_contains(

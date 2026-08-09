@@ -2,11 +2,11 @@
 
 This document defines the observability contract for scripting and automation: what is recorded in `script_event_audit`, what is returned by `ListScriptHandoffEvents`, what is emitted as metrics, and which identifiers may be used for correlation.
 
-Document conflict resolution order is defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md#document-precedence-normative`. The normative tables own metric-family names, labels, and increment units; this document is authoritative for observability details not fully enumerated there.
+Document conflict resolution order is defined in the [normative document precedence](./system-architecture-scripting-normative-contract-tables.md#document-precedence-normative). The normative tables own metric-family names, labels, and increment units; this document is authoritative for observability details not fully enumerated there.
 
 ## Target-State Command Identity and Handoff Contract
 
-The target per-command handoff contract records one child disposition for each emitted command. Each child is keyed by the complete [Command-Handoff Identity](./system-architecture-scripting-normative-contract-tables.md#command-handoff-identity-target-state), with `(automationDispatchId, commandOrdinal)` only the final dispatch-group/ordinal fields within that scope, and retains the parent Trigger Identity, `outboxWorkItemId`, handoff result, and any later execution-time fence result. `automationDispatchId` is not assumed globally unique. `script_event_audit` remains one handler row per Trigger Identity and is never a substitute for the command collection.
+The target per-command handoff contract records one child disposition for each emitted command. Each child carries the complete applicable Trigger Identity plus the `(automationDispatchId, commandOrdinal)` command discriminator described by the [Command-Handoff Identity](./system-architecture-scripting-normative-contract-tables.md#command-handoff-identity-target-state). `outboxWorkItemId` is retained solely as parent correlation and is excluded from command identity, uniqueness, and deduplication keys. `automationDispatchId` is not assumed globally unique, and a pair shown without its parent/scope context is only a display suffix. `script_event_audit` remains one handler row per Trigger Identity and is never a substitute for the command collection.
 
 ## Implementation Status
 
@@ -42,7 +42,7 @@ A resolved handler may emit zero, one, or many gameplay commands. `script_event_
 
 ## `script_event_audit` (Required Fields)
 
-Each observed resolved-handler/materialized-work trigger, scheduler/timer trigger, tenant-readiness `onLoad` trigger, or materialized dry-run/test execution must write (or update) a single audit record keyed by the trigger identity described in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields`. Pre-handler dry-run rejection, signer-policy unavailability, and rollback backpressure remain ingress-audit outcomes, and an admitted event with zero handlers remains metric-only.
+Each observed resolved-handler/materialized-work trigger, scheduler/timer trigger, tenant-readiness `onLoad` trigger, or materialized dry-run/test execution must write (or update) a single audit record keyed by the trigger identity described in [Table 1](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields). Pre-handler dry-run rejection, signer-policy unavailability, and rollback backpressure remain ingress-audit outcomes, and an admitted event with zero handlers remains metric-only.
 
 Write behavior requirements:
 
@@ -142,7 +142,7 @@ When a downstream service reports a later handoff or execution result, the targe
 - `recordedAt` – timestamp.
 - `sourceService` – producer of the disposition (for example `game-session`).
 
-Each returned child retains the parent `outboxWorkItemId` only for correlation and retains the applicable Trigger Identity fields needed for diagnosis, including plugin `bindingId` when applicable; the target-state `(automationDispatchId, commandOrdinal)` fields are part of the complete command-level key and must not be treated as globally unique or replaced with the parent `scriptEventId`.
+Each returned child retains the parent `outboxWorkItemId` only for correlation and retains the complete applicable Trigger Identity needed for diagnosis, including plugin `bindingId` when applicable; the target-state `(automationDispatchId, commandOrdinal)` fields complete that child identity and must not be treated as globally unique or replaced with the parent `scriptEventId`. A pair shown without the Trigger Identity and scope is only a display suffix, never an identity, uniqueness, or deduplication key.
 
 Rules:
 
@@ -152,7 +152,7 @@ Rules:
 
 During rollback, operator views must show the handler's `finalStage`/`finalOutcome` beside the `commandHandoffDispositions[]` returned from `ListScriptHandoffEvents`. A successful `TICK_HANDOFF` therefore remains visible even when one or more individual commands later receive `version_fence_dropped`; a child result must never overwrite the handler result or collapse sibling command records.
 
-Concrete example:
+Concrete example. Both child records below use the complete `T123` Trigger Identity (`tenantId=11111111-1111-4111-8111-111111111111`, `gameInstanceId=44444444-4444-4444-8444-444444444444`, `playableStateScope=isolated`, `regionId=R2`, `regionEpoch=14`, `entityId=npc-guard-9`, `scriptId=guard-on-enter`, `eventType=onEnterRegion`, `eventSchemaVersion=1`, `scriptPatchVersion=P22`, `scriptEventId=evt-7f4c`, `isDryRun=false`) plus the command discriminator. `outboxWorkItemId=work-9` is parent correlation only. The `(automationDispatchId, commandOrdinal)` notation in the bullets is a display suffix, not a standalone key.
 
 - `script_event_audit` row for Trigger Identity `T123` ends with `finalStage=TICK_HANDOFF`, `finalOutcome=success`.
 - The handler emitted two commands. Later, Game Session rejects only the child ending in `(automationDispatchId=work-9, commandOrdinal=1)` under the same complete command-handoff scope during rollback convergence and appends a child disposition with `outcome=version_fence_dropped`, `reason=script_patch_mismatch`, `sourceService=game-session`, and `recordedAt=...`; the child ending in `(automationDispatchId=work-9, commandOrdinal=0)` remains a separate sibling record.
@@ -295,7 +295,7 @@ When `policyViolations` is present, `decision` values and final outcomes must al
 The metric-family catalog, labels, and increment units live exclusively in [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix). This section records illustrative observability consequences and local diagnostic guidance; it does not define or extend metric schemas.
 
 - The live families `automation_script_work_item_outcomes_total`, `automation_script_sandbox_failures_total`, `automation_script_errors_total`, and `automation_script_runtime_seconds` are emitted only for `isDryRun=false`. Dry-run/test observations use `automation_script_test_runs_total`, `automation_script_test_sandbox_failures_total`, and `automation_script_test_runtime_seconds` as applicable; isolated capacity denials use `automation_script_test_capacity_denied_total`.
-- Dry-run/test traffic must not increment live-traffic counters such as `automation_script_sandbox_failures_total`, `automation_script_errors_total`, or `script_quota_denied_total`. Handler-scoped `dry_run_capacity_exhausted` remains visible through `automation_script_test_capacity_denied_total{scope}`, `automation_script_triggers_total{outcome="quota_denied"}`, and its audit row. Live dashboards and SLOs must remain interpretable without privileged tooling skewing error rates.
+- Dry-run/test traffic must not increment live-traffic counters such as `automation_script_sandbox_failures_total`, `automation_script_errors_total`, `automation_script_triggers_total`, or `script_quota_denied_total`. Handler-scoped `dry_run_capacity_exhausted` remains visible through the Table 4 test-only consequences `automation_script_test_runs_total` and `automation_script_test_capacity_denied_total{scope}`, plus its audit row. Live dashboards and SLOs must remain interpretable without privileged tooling skewing error rates.
 
 Metric semantics:
 
@@ -308,6 +308,6 @@ Metric semantics:
 
 This contract is referenced by:
 
-- `design/architecture/system-architecture-scripting-quotas-and-operations.md`
-- `design/architecture/microservices/automation-scripting-service/README.md`
-- `design/architecture/system-architecture-logging-monitoring.md`
+- [Scripting Quotas & Operations](./system-architecture-scripting-quotas-and-operations.md)
+- [Automation & Scripting Service README](./microservices/automation-scripting-service/README.md#document-map)
+- [Logging & Monitoring](./system-architecture-logging-monitoring.md)

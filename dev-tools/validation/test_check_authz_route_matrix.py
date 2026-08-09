@@ -54,6 +54,21 @@ def route_for(document, service, route_name):
     return matches[0]
 
 
+def export_route_for(document, action_family, account_state="active"):
+    matches = [
+        route
+        for route in document["routes"]
+        if route.get("classification") == "account_scoped"
+        and route.get("action_family") == action_family
+        and route.get("applicability", {}).get("account_state") == account_state
+    ]
+    if len(matches) != 1:
+        raise RouteCardinalityError(
+            "account-service", f"{account_state} {action_family} export", len(matches)
+        )
+    return matches[0]
+
+
 def route_index(document, route):
     for index, candidate in enumerate(document["routes"]):
         if candidate is route:
@@ -2978,50 +2993,39 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                                 errors,
                             )
 
-    def test_active_account_export_content_audit_contract_is_exact(self):
+    def test_active_account_export_audit_contracts_are_exact(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-        route = next(
-            route
-            for route in baseline["routes"]
-            if route.get("classification") == "account_scoped"
-            and route.get("action_family") == "export_content"
-            and self.validator.applicability_value(
-                route, "account_state", "test active export route", []
-            )
-            == "active"
-        )
         expected_contract = self.validator.ACTIVE_ACCOUNT_EXPORT_CONTENT_AUDIT_CONTRACT
-        self.assertEqual(expected_contract, route["audit_contract"])
+        for action_family in self.validator.RECOVERY_EXPORT_AUDITED_ACTION_FAMILIES:
+            with self.subTest(action_family=action_family):
+                route = export_route_for(baseline, action_family)
+                self.assertEqual(expected_contract, route["audit_contract"])
 
-        for mutation_name, mutate in (
-            ("missing", lambda route: route.pop("audit_contract")),
-            (
-                "unexpected",
-                lambda route: route.__setitem__(
-                    "audit_contract", "unexpected_audit_contract"
-                ),
-            ),
-        ):
-            with self.subTest(mutation=mutation_name):
-                document = copy.deepcopy(baseline)
-                mutated_route = next(
-                    route
-                    for route in document["routes"]
-                    if route.get("classification") == "account_scoped"
-                    and route.get("action_family") == "export_content"
-                    and self.validator.applicability_value(
-                        route, "account_state", "test active export route", []
-                    )
-                    == "active"
-                )
-                mutate(mutated_route)
-                errors = validate_document(self.validator, document)
-                self.assertIn(
-                    f"routes[{route_index(document, mutated_route)}] "
-                    f"{self.validator.route_label(mutated_route)} "
-                    f"active account export_content must declare audit_contract {expected_contract}",
-                    errors,
-                )
+                for mutation_name, mutate in (
+                    ("missing", lambda route: route.pop("audit_contract")),
+                    (
+                        "unexpected",
+                        lambda route: route.__setitem__(
+                            "audit_contract", "unexpected_audit_contract"
+                        ),
+                    ),
+                ):
+                    with self.subTest(mutation=mutation_name):
+                        document = copy.deepcopy(baseline)
+                        mutated_route = export_route_for(document, action_family)
+                        mutate(mutated_route)
+                        errors = validate_document(self.validator, document)
+                        expected_error = (
+                            "active account export_content"
+                            if action_family == "export_content"
+                            else f"active account {action_family}"
+                        )
+                        self.assertIn(
+                            f"routes[{route_index(document, mutated_route)}] "
+                            f"{self.validator.route_label(mutated_route)} "
+                            f"{expected_error} must declare audit_contract {expected_contract}",
+                            errors,
+                        )
 
     def test_export_initiation_requires_availability_for_every_account_state(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -3065,16 +3069,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
         for route_name, action_family in route_specs:
             with self.subTest(route=route_name):
-                route = next(
-                    route
-                    for route in self.validator.matching_routes(
-                        baseline["routes"], "account-service", route_name
-                    )
-                    if self.validator.applicability_value(
-                        route, "account_state", "test active export route", []
-                    )
-                    == "active"
-                )
+                route = export_route_for(baseline, action_family)
                 self.assertEqual(action_family, route["action_family"])
                 self.assertIn(
                     "account_state_export_eligible", route["required_live_checks"]
@@ -3085,16 +3080,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 self.assertNotIn("account_generation", route["required_live_checks"])
 
                 document = copy.deepcopy(baseline)
-                mutated_route = next(
-                    route
-                    for route in self.validator.matching_routes(
-                        document["routes"], "account-service", route_name
-                    )
-                    if self.validator.applicability_value(
-                        route, "account_state", "test active export route", []
-                    )
-                    == "active"
-                )
+                mutated_route = export_route_for(document, action_family)
                 mutated_route["required_live_checks"].remove(
                     "account_state_export_eligible"
                 )
@@ -3374,16 +3360,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
         for route_name, action_family in route_specs:
             with self.subTest(route=route_name):
-                active = next(
-                    route
-                    for route in self.validator.matching_routes(
-                        baseline["routes"], "account-service", route_name
-                    )
-                    if self.validator.applicability_value(
-                        route, "account_state", "test active export route", []
-                    )
-                    == "active"
-                )
+                active = export_route_for(baseline, action_family)
                 self.assertEqual("target_not_currently_routable", active["route_status"])
                 self.assertEqual(
                     "active",
@@ -3411,18 +3388,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 )
 
         document = copy.deepcopy(baseline)
-        active_initiation = next(
-            route
-            for route in self.validator.matching_routes(
-                document["routes"],
-                "account-service",
-                "POST /accounts/{accountId}/exports",
-            )
-            if self.validator.applicability_value(
-                route, "account_state", "test active export route", []
-            )
-            == "active"
-        )
+        active_initiation = export_route_for(document, "export_initiate")
         active_initiation.pop("export_operation_binding")
         errors = validate_document(self.validator, document)
         self.assertIn(
@@ -3433,18 +3399,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
 
         document = copy.deepcopy(baseline)
-        active_initiation = next(
-            route
-            for route in self.validator.matching_routes(
-                document["routes"],
-                "account-service",
-                "POST /accounts/{accountId}/exports",
-            )
-            if self.validator.applicability_value(
-                route, "account_state", "test active export route", []
-            )
-            == "active"
-        )
+        active_initiation = export_route_for(document, "export_initiate")
         active_initiation["canonical_errors"]["any_of"].remove("PERMISSION_DENIED")
         errors = validate_document(self.validator, document)
         self.assertIn(
@@ -3501,16 +3456,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             ):
                 with self.subTest(route=route_name, mutation=mutation_name):
                     document = copy.deepcopy(baseline)
-                    mutated_route = next(
-                        route
-                        for route in self.validator.matching_routes(
-                            document["routes"], "account-service", route_name
-                        )
-                        if self.validator.applicability_value(
-                            route, "account_state", "test active export route", []
-                        )
-                        == "active"
-                    )
+                    mutated_route = export_route_for(document, action_family)
                     mutate(mutated_route)
                     errors = validate_document(self.validator, document)
                     expected_label = self.validator.route_label(mutated_route)
@@ -3734,12 +3680,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
 
         route["mutation_contract"] = "unexpected_mutation_contract"
         errors = validate_document(self.validator, document)
-        self.assertTrue(
-            any(
-                self.validator.route_label(route) in error
-                and "mutation_contract" in error
-                for error in errors
-            )
+        self.assertIn(
+            f"{self.validator.route_label(route)} billing_reporting route must not "
+            "declare mutation_contract",
+            errors,
         )
 
     def test_no_target_tenant_classifications_are_closed_and_explicit(self):

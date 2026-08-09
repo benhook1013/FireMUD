@@ -1263,21 +1263,19 @@ class ScriptWorkItemServiceImplTest {
     when(workItemRepository.save(item)).thenReturn(item);
     when(auditRepository.findByWorkItemId(77L)).thenReturn(Optional.of(audit));
     when(ingressAuditRepository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRunAndSourceService(
                 "1",
                 "game-1",
                 "region-1",
                 3L,
                 "entity-1",
                 "",
-                "",
-                "",
-                "",
                 "onCommand",
                 "v1",
                 "patch-1",
                 "event-1",
-                false))
+                false,
+                ""))
         .thenReturn(Optional.of(ingressAudit));
     when(pinProjectionService.getPinConvergence("1", "game-1"))
         .thenReturn(
@@ -1354,21 +1352,19 @@ class ScriptWorkItemServiceImplTest {
     when(workItemRepository.save(item)).thenReturn(item);
     when(auditRepository.findByWorkItemId(78L)).thenReturn(Optional.of(audit));
     when(ingressAuditRepository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRunAndSourceService(
                 "1",
                 "game-1",
                 "region-1",
                 3L,
                 "entity-1",
                 "",
-                "",
-                "",
-                "",
                 "onCommand",
                 "v1",
                 "patch-1",
                 "event-2",
-                false))
+                false,
+                ""))
         .thenReturn(Optional.of(ingressAudit));
     when(pinProjectionService.getPinConvergence("1", "game-1"))
         .thenReturn(
@@ -1448,21 +1444,19 @@ class ScriptWorkItemServiceImplTest {
     when(workItemRepository.findById(77L)).thenReturn(Optional.of(item));
     when(auditRepository.findByWorkItemId(77L)).thenReturn(Optional.empty());
     when(ingressAuditRepository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRunAndSourceService(
                 "1",
                 "game-1",
                 "region-1",
                 3L,
                 "entity-1",
                 "",
-                "",
-                "",
-                "",
                 "onCommand",
                 "v1",
                 "patch-1",
                 "event-1",
-                false))
+                false,
+                ""))
         .thenReturn(Optional.empty());
     when(pinProjectionService.getPinConvergence("1", "game-1"))
         .thenReturn(
