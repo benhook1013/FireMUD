@@ -100,12 +100,14 @@ The event-scope uniqueness key is the ordered composite of every applicable fiel
 `<tenantId, gameInstanceId?, playableStateScope?, regionId?, regionEpoch?, entityId?, eventType, eventSchemaVersion, scriptPatchVersion, scriptEventId, isDryRun, sourceService?>`.
 An optional field is included exactly when its ingress scope requires it; absent optional fields remain absent and must not be replaced with sentinel values. `scriptId`, `pluginId`, `pluginVersionId`, and `bindingId` are not part of this key because they are unavailable before handler resolution.
 
-The first ingress claimant must atomically insert-or-claim this key and persist the event-scope admission result in the same operation as the single `script_event_ingress_audit` row. The stored result includes the response fields `admitted`, `admissionOutcome`, `admissionReason`, and `retryAfterMs` when present. Only the first claimant may perform admission side effects or begin handler fan-out.
+The durable event-scope claim has an `IN_PROGRESS` phase and a finalized phase. The first claimant must atomically insert-or-claim this key and its single `script_event_ingress_audit` record before performing admission side effects. Only that claimant, or a fenced recovery owner for the same claim, may run handler resolution and fan-out. A claim that passes pre-handler admission remains `IN_PROGRESS` until resolution has completed and every matched handler's idempotent materialization attempt has completed; only then are the final response fields (`admitted`, `admissionOutcome`, `admissionReason`, `retryAfterMs` when present, and `resolvedHandlerCount`) atomically finalized on the claim and audit record.
 
-- A retry or duplicate delivery with the same complete event-scope key returns the exact stored admission result, without re-evaluating admission, creating another ingress-audit row, or materializing duplicate handler work.
-- An admitted claim may materialize each resolved handler only once, under the claim's idempotency boundary and the handler's full applicable Trigger Identity. A retry returns the original result (including any exposed `resolvedHandlerCount`) and reuses the existing handler materialization and audit rows.
+- A concurrent retry or duplicate delivery that finds `IN_PROGRESS` waits for the same claim to finalize, or returns a retryable transport/application signal without an admission result; it must not start resolution, return a partial handler count, or create another ingress-audit row. Recovery resumes the same claim under fencing rather than creating a competing outcome.
+- A retry or duplicate delivery with the same finalized event-scope key returns the exact stored admission result, without re-evaluating admission or materializing duplicate handler work.
+- `resolvedHandlerCount` is the count of enabled bindings that matched and were resolved for the admitted event scope, including dry-run/test claims. It is not a count of persisted work items, emitted commands, successful handlers, or handler audit rows, and it is immutable in the finalized claim result. A resolved handler may have no work item when its handler-scoped admission decision denies it.
+- An admitted claim with zero resolved handlers returns the normal admitted result with `resolvedHandlerCount=0`; `admitted_no_handlers` is emitted only as the Table 4 metric-only outcome and is not stored in the ingress response or either Automation audit surface.
 - A request that reuses `scriptEventId` but changes any other applicable key field is an identity conflict, not a retry. Reject it deterministically, preserve the original claim and outcome, and do not materialize handlers.
-- A rejected claim has no handler materialization and remains represented only by its one event-scope ingress-audit row; `admitted_no_handlers` is not used for this path.
+- A rejected claim has no handler materialization and remains represented only by its one event-scope ingress-audit row.
 
 Event-scope ingress outcomes are recorded in the existing `script_event_ingress_audit` surface using its event-scope identity, `scriptEventId` correlation, `createdAt` retention anchor, and `admissionOutcome`/`admissionReason` fields, not in handler-scoped `script_event_audit`. Once the event is accepted for handler resolution, each resolved handler produces its own full applicable Trigger Identity and `script_event_audit` row. Pre-resolution denials such as auth failure, stale pin state, reload backpressure, rollback pause, or version unavailability must not invent a synthetic `scriptId` or `bindingId`.
 
@@ -132,7 +134,7 @@ The ingress endpoint determines who owns `scriptEventId` generation and retry be
 
 ## Table 2: `script_event_audit` Stages and Outcomes
 
-`script_event_audit` must be stage-aware so operators can distinguish handler-scoped “rejected before evaluation” from “evaluated but not handed off” and from “accepted into tick queues”. Pre-handler event-scope rejections are represented by `script_event_ingress_audit` and its `admissionOutcome`/`admissionReason` fields instead.
+`script_event_audit` is limited to a concrete resolved-handler lifecycle: handler-scoped admission and materialized-work decisions, DSL evaluation, persistence, handoff, and dry-run/test results. It must be stage-aware so operators can distinguish handler-scoped “rejected before evaluation” from “evaluated but not handed off” and from “accepted into tick queues”. Pre-handler event-scope decisions, including dry-run rejection, signer-policy unavailability, and rollback backpressure, are represented by `script_event_ingress_audit` and its `admissionOutcome`/`admissionReason` fields instead. An admitted event that resolves zero handlers is metric-only and is not an ingress- or handler-audit outcome.
 
 ### Required Stage Set
 
@@ -170,15 +172,21 @@ Additional non-committing terminal outcome rules:
 - Control-plane or rollback fencing that intentionally prevents an already admitted execution from persisting or handing off must use `finalOutcome=canceled` with a bounded `finalReason` such as `rollback_epoch_advanced`, `superseded_by_newer_patch`, `operator_canceled`, or `operator_purged`.
 - **Target-state pre-DSL cancellation mapping:** a cancelable `PENDING_EVALUATION` trigger transitions durably to terminal `CANCELED` without entering the DSL and records `finalStage=ADMISSION`, `finalOutcome=canceled`, and the applicable bounded cancellation reason. An `EVALUATING` trigger must be fenced and its descriptor-commit marker inspected before transition: a committed descriptor resumes from durable descriptors without DSL re-entry; an explicit cancellation with no committed descriptor transitions to terminal `CANCELED` with `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and the applicable bounded cancellation reason. An expired stale lease with no committed descriptor instead transitions to terminal `DEAD_LETTERED` with `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and `finalReason=stale_execution_fenced`.
 
+### Command-Handoff Identity (Target-State)
+
+The command collection uses one complete command-handoff identity everywhere:
+`<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, targetGameInstanceId?, targetRegionId?, targetRegionEpoch?, automationDispatchId, commandOrdinal>`.
+The source scope fields are required for gameplay/runtime commands; the target scope fields are included exactly when the emitted command is routed to a distinct target runtime scope. Absent optional fields remain absent. `automationDispatchId` is a dispatch-group identifier and is not assumed to be globally unique. `outboxWorkItemId` is parent correlation only. The parent Trigger Identity, including `scriptEventId`, is retained on each child for correlation and is not part of the command-child uniqueness key; `script_event_audit` remains a separate one-row-per-handler surface.
+
 Supplementary post-handoff correlation rule:
 
-- **Target-state command-ordinal contract:** execution-time version/plugin fence drops that happen after tick handoff must not be left as metrics-only signals. They must be exposed on the affected per-command handoff disposition keyed by `(automationDispatchId, commandOrdinal)`, with the parent Trigger Identity retained for correlation, using bounded reasons such as `script_patch_mismatch` or `plugin_version_mismatch`.
+- **Target-state command-ordinal contract:** execution-time version/plugin fence drops that happen after tick handoff must not be left as metrics-only signals. They must be exposed on the affected per-command handoff disposition keyed by the complete Command-Handoff Identity, with the parent Trigger Identity retained for correlation, using bounded reasons such as `script_patch_mismatch` or `plugin_version_mismatch`.
 - **Current live fallback:** the Game Session handoff currently carries `automationDispatchId`, command id/text, selected provenance fields, and parent work-item correlation, but not `commandOrdinal` or the complete Trigger Identity. Current diagnostics use those fields and must be labeled as the narrower fallback rather than as proof of the target-state contract.
 
 Per-command handoff correlation rule:
 
 - `script_event_audit` remains one handler record per Trigger Identity, even when that handler emits multiple gameplay commands. It must not contain a single command dispatch field or a single post-handoff outcome for the whole Trigger Identity.
-- **Target-state:** handoff and later execution dispositions are represented as a child/collection surface with one record per emitted command. One stable `automationDispatchId` identifies the persisted handoff/work item, and `commandOrdinal` distinguishes each emitted command under that dispatch. Each record is keyed by `(automationDispatchId, commandOrdinal)` and retains the parent `outboxWorkItemId` and complete Trigger Identity for correlation. `ListScriptHandoffEvents` is the canonical query surface for these records.
+- **Target-state:** handoff and later execution dispositions are represented as a child/collection surface with one record per emitted command. One stable `automationDispatchId` identifies the persisted dispatch group, and `commandOrdinal` distinguishes each emitted command under that dispatch within the complete Command-Handoff Identity. Each record retains the parent `outboxWorkItemId` and complete Trigger Identity for correlation. `ListScriptHandoffEvents` is the canonical query surface for these records.
 - A handler may therefore have zero, one, or many command-handoff records; a later version-fence drop on one command must not overwrite or summarize the handler audit row or the dispositions of sibling commands.
 
 ### Canonical `finalOutcome` Values (Normative)
@@ -227,6 +235,12 @@ If Game Session rejects a queued command because its embedded `scriptPatchVersio
   - Cleanup cadence must be documented and alert-backed.
   - Breaching thresholds must emit operator-visible alerts.
 
+### Terminal Descriptor Evidence Purge (Target-State)
+
+Purge may delete only retention-eligible evaluated descriptor/outbox evidence whose parent trigger is `EVALUATED_COMMITTED` and whose selected descriptor status is terminal `HANDED_OFF`, `CANCELED`, or `DEAD_LETTERED`. It must preserve the `EVALUATED_COMMITTED` trigger marker, the corresponding `script_event_audit` record, and replay-causation claims or records; deleting terminal child evidence must never delete or reset the marker as a side effect.
+
+Purge rejects `PENDING_EVALUATION` and `EVALUATING` triggers, any nonterminal trigger, and descriptor statuses `PENDING`, `INDEXED`, or `HANDOFF_IN_FLIGHT`, including when those rows are associated with an `EVALUATED_COMMITTED` parent. Purge is evidence cleanup only: it must not cancel, reclaim, dead-letter, replay, or re-enter the DSL.
+
 ## Table 3: Timer Semantics Matrix
 
 Timer-driven handlers (`onInterval`, `onTimerExpire`) are best-effort, at-most-once per Trigger Identity.
@@ -270,15 +284,19 @@ General rules:
 - `scriptEventId` is forbidden as a metric label.
 - Raw `tenantId`, `scriptId`, `pluginId`, `pluginVersionId`, and `bindingId` are not approved ordinary Prometheus labels in the canonical repo-wide metrics policy. When this table names those logical dimensions, producers must map them to bounded operator-facing scope/category labels unless a later design update records an explicit exception.
 
-Bounded semantic labels use the existing scripting vocabulary:
+Bounded semantic labels use the existing scripting vocabulary and are validated before a sample is emitted:
 
+- `scope` is the controlled enum `region`, `game_instance`, `tenant`, or `cluster`; a metric family may restrict which of these values it accepts. Capacity metrics use only their documented subset, such as `tenant` or `cluster`.
 - Before handler resolution, pre-handler metric families use the single bounded value `script_category="UNRESOLVED"`; after resolution, handler-scoped metrics use the existing handler types `SCRIPT` and `PLUGIN`.
-- `priorityTag` uses `high`, `normal`, or `background` after handler resolution. For a rejected pre-handler increment, it must come from a bounded request/event-scope value; when that value is absent, invalid, or not trusted, use the bounded `UNRESOLVED` value rather than inferring priority from a handler that was never materialized.
-- Event-scope `outcome`/`reason` values are bounded `admissionOutcome`/`admissionReason` codes; handler-scoped values are bounded `finalOutcome`/`finalReason` codes. An event-scope metric must not copy handler outcome or reason values.
-- `plugin_family` and `plugin_version_family` are optional registry-defined classifications, not raw plugin identifiers. Omit an optional plugin label when the event is not plugin-owned or the classification is unavailable at the event-scope boundary; do not invent `unknown` or `not_applicable` values for this contract.
+- `priorityTag`/`tier` use the bounded runtime priority vocabulary `high`, `normal`, or `background`. For a rejected pre-handler increment, `priorityTag` must come from a bounded request/event-scope value; when absent, invalid, or untrusted, use `UNRESOLVED` rather than infer priority from a handler that was never materialized.
+- `eventType` is valid only when `(eventType, eventSchemaVersion)` is present in the canonical event registry. Event-scope `outcome`/`reason` values use bounded `admissionOutcome`/`admissionReason` codes; handler-scoped values use bounded `finalOutcome`/`finalReason` codes; `stage`/`finalStage` use the Table 2 stage set. An event-scope metric must not copy handler outcome or reason values.
+- `result` uses the bounded dry-run/test result taxonomy derived from Table 2 outcomes, including `dry_run_success` and the applicable classified non-success outcomes; it is never a free-form test result or raw exception.
+- `reason` is the bounded admission, final-outcome, or command-handoff reason taxonomy owned by the relevant contract. `operation` uses the bounded operation vocabulary of its owning control-plane workflow. `component_class` uses the finite component-policy registry. None of these labels may carry a free-form request reason or raw identifier.
+- `sourceService` uses the finite producer/owner service vocabulary registered for the event. The full canonical producer identity, including a custom-event source service, is preserved separately in event-scope and handler audit records; it is not widened into an unbounded metric label.
+- `plugin_family` and `plugin_version_family` are registry-defined classifications, not raw plugin identifiers. Omit an optional plugin label when the event is not plugin-owned or the classification is unavailable at the event-scope boundary; do not invent `unknown` or `not_applicable` values. For `automation_tick_plugin_version_fence_dropped_total`, both plugin labels are required: validate them before emission and emit no sample when either is absent or invalid, while retaining the raw plugin identity in the command disposition, audit, or log record.
 - Pre-handler metrics omit `plugin_family` and `plugin_version_family` because plugin identity is unavailable before handler resolution. Resolved plugin-handler metrics may include those bounded classifications when available.
-- `eventType`, `outcome`, and `scope` likewise use their owning registry, outcome taxonomy, and approved scope vocabularies. A producer must not emit an unbounded raw value.
 - `admitted_no_handlers` is a bounded metric-only outcome owned by `automation_script_triggers_total`. It is emitted only when an admitted event resolves zero handlers; it is excluded from ingress responses and all Automation audit fields, including `script_event_ingress_audit` and `script_event_audit` admission and final outcome/reason fields.
+- Every required label must be present and belong to its closed vocabulary. If an invalid or missing value is required for business-event admission, reject the event under the owning admission contract; otherwise suppress the metric sample and retain the full source value in audit/log/operational records. Do not emit an unbounded value or an unapproved sentinel, and do not create a new admission outcome or validator family for metric hygiene.
 - `isDryRun` is an execution-mode predicate, not a metric label. The live families `automation_script_work_item_outcomes_total`, `automation_script_sandbox_failures_total`, `automation_script_errors_total`, and `automation_script_runtime_seconds` require `isDryRun=false`. Dry-run/test observations use `automation_script_test_runs_total`, `automation_script_test_sandbox_failures_total`, and `automation_script_test_runtime_seconds` as applicable; `automation_script_test_capacity_denied_total` records isolated dry-run capacity denials.
 
 | Metric family | Required labels | Forbidden labels | Notes |
@@ -293,7 +311,7 @@ Bounded semantic labels use the existing scripting vocabulary:
 | `automation_script_tenant_budget_denied_total` | `scope`, `tier` | `scriptEventId` | Counts denied live execution budget reservation decisions by bounded runtime budget tier. |
 | `automation_tick_events_enqueued_total` | `scope` | `scriptEventId` | Counts successful tick handoffs, not DSL evaluations. |
 | `automation_tick_version_fence_dropped_total` | `scope`, `script_category`, `reason` | `scriptEventId` | Counts commands dropped at execution-time due to script patch version fence mismatches. |
-| `automation_tick_plugin_version_fence_dropped_total` | `scope`, `plugin_family`, `plugin_version_family`, `reason` | `scriptEventId` | Counts commands dropped at execution-time due to plugin version fence mismatches. |
+| `automation_tick_plugin_version_fence_dropped_total` | `scope`, `plugin_family`, `plugin_version_family`, `reason` | `scriptEventId` | Counts commands dropped at execution-time due to plugin version fence mismatches. All required labels must pass the registry/taxonomy validation above; if either plugin classification is unavailable or invalid, emit no sample and retain the raw plugin identity in the command disposition/audit/log record. |
 | `automation_script_queue_delay_seconds` | `scope`, `script_category` | `scriptEventId` | Observes queue delay for sampled or processed automation work; raw queue, tenant, and script identifiers are not labels. |
 | `automation_queue_orphaned_entries_total` | `scope` | `scriptEventId` | Counts queue entries detected beyond the bounded age window without corresponding durable-executor progress or tick-effect-ledger entries. |
 | `automation_queue_oldest_entry_age_seconds` | `scope` | `scriptEventId` | Records the age of the oldest sampled queue entry per bounded scope; tenant/script diagnosis remains in operational records. |

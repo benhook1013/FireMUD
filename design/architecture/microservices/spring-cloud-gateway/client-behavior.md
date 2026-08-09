@@ -36,7 +36,7 @@ Unless explicitly described as current behavior, the sections below define the t
   - `CONNECT_SCOPE_MISMATCH`
   - `CONNECT_REPLAY_PROTECTION_UNAVAILABLE`
   - `CONNECT_TOKEN_REJECTED` for malformed or otherwise rejected tokens outside the narrower classes above
-- A concrete wire-level example remains the `X-Firemud-Handshake-Error-Class` response header paired with matching structured-log fields; downstream clients and operator tooling may rely on that bounded header/value surface rather than parsing free-form text.
+- A concrete wire-level example remains the `X-Firemud-Handshake-Error-Class` response header paired with matching structured-log fields. Capable non-browser callers and operator tooling may rely on that bounded surface rather than parsing free-form text; browser WebSocket APIs cannot read failed-upgrade headers and use the conservative recovery rule in Gateway architecture instead.
 - The gateway observability contract requires `gateway.websocket.closes{reason,subreason}`, `gateway.websocket.handshake.rejected`, and `gateway.websocket.slow_client_closes`.
 - Close and handshake classifications must remain bounded and stable so reconnect logic, dashboards, and alerting do not depend on free-form strings.
 

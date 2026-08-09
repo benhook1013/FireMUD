@@ -272,6 +272,10 @@ CHARACTER_ROUTE_CONTRACTS = {
     },
 }
 SELECTED_CHARACTER_REQUIREMENT_VOCABULARY = ["none"]
+CHARACTER_OPERATION_VOCABULARY = [
+    "existing_character_discovery",
+    "character_creation",
+]
 SECURITY_LOCK_EXPORT_CREDENTIAL_BINDING = {
     "source": "security_lock_export_credential_registry",
     "required": ["accountId", "recoveryCaseId"],
@@ -1980,6 +1984,34 @@ def validate_selected_character_requirement_vocabulary(
             "selected_character_requirement_vocabulary must declare exactly "
             f"{SELECTED_CHARACTER_REQUIREMENT_VOCABULARY}",
         )
+
+
+def validate_character_operation_vocabulary(
+    document: dict[str, Any], errors: list[str]
+) -> None:
+    if document.get("character_operation_vocabulary") != (
+        CHARACTER_OPERATION_VOCABULARY
+    ):
+        append_unique_error(
+            errors,
+            "character_operation_vocabulary must declare exactly "
+            f"{CHARACTER_OPERATION_VOCABULARY}",
+        )
+
+
+def validate_read_only_reporting_routes(
+    routes: list[Any], errors: list[str]
+) -> None:
+    for route in routes:
+        if not isinstance(route, dict) or route.get("response_profile") != "billing_reporting":
+            continue
+        label = route_label(route)
+        for field in ("mutation_contract", "provider_instrument_contract"):
+            if field in route:
+                append_unique_error(
+                    errors,
+                    f"{label} billing_reporting route must not declare {field}",
+                )
 
 
 def validate_capacity_admission_wire_contract(
@@ -4275,7 +4307,9 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     validate_export_bindings(routes, errors)
     validate_security_lock_export_classification_rule(document, errors)
     validate_character_routes(routes, errors, cardinality_errors)
+    validate_character_operation_vocabulary(document, errors)
     validate_selected_character_requirement_vocabulary(document, errors)
+    validate_read_only_reporting_routes(routes, errors)
     validate_profile_authority_routes(
         routes, errors, live_checks_cache, cardinality_errors
     )

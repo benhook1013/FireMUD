@@ -103,6 +103,9 @@ account_state_vocabulary:
   - deactivated_pending_delete
 selected_character_requirement_vocabulary:
   - none
+character_operation_vocabulary:
+  - existing_character_discovery
+  - character_creation
 account_export_applicability:
   coverage: exhaustive
   overlap: forbidden
@@ -2274,6 +2277,8 @@ routes:
           wire_value_type: integer
           wire_value: 0
     attempt_fence_contract:
+      capacity_rearm_fence: caller_supplied_attempt_bound_fence
+      capacity_admission_fence: account_live_check_compared_at_commit
       initial_attempt: binds_fresh_attempt_id_current_rearm_fence_exact_payload_and_digest
       exact_retry: replays_stored_result
       changed_attempt: requires_committed_account_owned_rearm_cas

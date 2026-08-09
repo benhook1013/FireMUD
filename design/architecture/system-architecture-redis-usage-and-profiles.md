@@ -35,7 +35,7 @@ Scope-key convention: `{tenantRegionTag}` is the canonical opaque tag for the co
     - Automation coordination structures that participate in tick timelines.
   - Characteristics:
     - Treated as a long-running **coordination buffer with bounded tail-loss** in persistent environments; durable history for tick effects and gameplay outcomes lives in PostgreSQL tick effect ledgers and domain stores.
-    - Owned by the **Game Session Service** for gameplay coordination and gameplay session prefixes such as `tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`, the canonical `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` records, and their derived `session:game:index:*` projections; Account Service owns `session:auth:*`; Automation & Scripting Service owns automation-specific coordination prefixes as documented below.
+    - Owned by the **Game Session Service** for gameplay coordination and gameplay session prefixes such as `tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`, the canonical `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` records, and their derived `session:game:index:*` projections, including the separately approved `session:game:auth:issuer-generation:v1:*` consumer projection; Account Service owns the explicit `session:auth:token:*` and `session:auth:generation:*` prefixes; Automation & Scripting Service owns automation-specific coordination prefixes as documented below.
     - AOF enabled in `dev_local`, `hobby_self_hosted`, and `production_clustered`–like profiles.
     - Subject to tail‑loss SLOs and replay guarantees described in the Redis hub doc.
   - Example prefixes:
@@ -249,7 +249,7 @@ Coordination and Cache/Rate‑Limit Redis are sized and configured differently.
 
 - **Goal:** predictable restart behavior and bounded memory usage for coordination keys.
 - **Recommendations:**
-  - Keep peak memory for coordination prefixes (`tick:*`, `timer:*`, `retry:*`, `session:game:*`, `session:auth:*`, `tick-executor-lease:*`, etc.) within the canonical Coordination Redis budget from `system-architecture-redis-operations.md` (normally **≤ 30–40% of `maxmemory`**).
+  - Keep peak memory for coordination prefixes (`tick:*`, `timer:*`, `retry:*`, `session:game:*`, `session:auth:token:*`, `session:auth:generation:*`, `tick-executor-lease:*`, etc.) within the canonical Coordination Redis budget from `system-architecture-redis-operations.md` (normally **≤ 30–40% of `maxmemory`**).
   - Use AOF preamble and rewrite settings that keep AOF size within the budgets described in **Redis Operations & Migrations**.
   - Avoid eviction for coordination keys whenever possible; if `maxmemory` is configured with eviction, treat eviction events as incidents rather than normal operation.
 

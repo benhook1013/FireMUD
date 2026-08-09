@@ -266,7 +266,7 @@ The canonical `/ws/game/**` route, carrier, trust marker, and connect-token vali
 When Web clients attempt to establish or re-establish WebSocket connections and receive HTTP errors instead of a successful upgrade, they must interpret those signals consistently with the close-code taxonomy:
 
 This table is the canonical client-policy matrix for gameplay-route handshake failures; gateway and client documentation must reference this mapping rather than redefining retry semantics independently.
-Client behavior must key on handshake error class first, then HTTP status as a secondary signal.
+Clients that can observe the failed HTTP upgrade must key on handshake error class first, then HTTP status as a secondary signal. Browser WebSocket APIs cannot observe that response reliably; before the socket opens, first-party browsers use the conservative Gateway-owned fallback of discarding the failed discovery/connect-token bundle, obtaining fresh discovery and a fresh token, and retrying with bounded backoff rather than guessing a row from this table.
 
 | HTTP status | Handshake error class | Meaning on gameplay routes | Client policy |
 | --- | --- | --- | --- |

@@ -2313,7 +2313,14 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                             == "security_lock_export_scoped"
                         ]
                         mutate(mutated_routes[security_route_position])
-                        errors = validate_document(self.validator, document)
+                        errors = []
+                        self.validator.validate_recovery_export_generation(
+                            mutated_routes[security_route_position],
+                            self.validator.route_label(
+                                mutated_routes[security_route_position]
+                            ),
+                            errors,
+                        )
                         self.assertTrue(
                             any(
                                 f"security_lock_export_scoped routes must set {field}=false"
@@ -2356,7 +2363,14 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                         == "security_lock_export_scoped"
                     ]
                     mutate(mutated_routes[security_route_position])
-                    errors = validate_document(self.validator, document)
+                    errors = []
+                    self.validator.validate_recovery_export_generation(
+                        mutated_routes[security_route_position],
+                        self.validator.route_label(
+                            mutated_routes[security_route_position]
+                        ),
+                        errors,
+                    )
                     self.assertTrue(any(expected_error in error for error in errors))
 
     def test_pending_deletion_generation_exception_has_bounded_negative_proof(self):
@@ -2548,7 +2562,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     errors,
                 )
 
-    def test_security_lock_export_contract_has_bounded_negative_proof(self):
+    def test_security_lock_export_classification_and_binding_contract_is_exact(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         rule = document["classification_rules"]["security_lock_export_scoped"]
         self.assertEqual(
@@ -2592,6 +2606,9 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 for error in validate_document(self.validator, mutated)
             )
         )
+
+    def test_security_lock_export_initiation_credential_consumption_is_bounded(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         export_routes = {
             route["action_family"]: route
             for route in document["routes"]
@@ -2620,6 +2637,9 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     "bounded_expiring_export_operation_access",
                     export_routes[action_family]["credential_use"],
                 )
+
+    def test_security_lock_export_negative_proof_mutations_are_rejected(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         security_lock_exception = document["tenant_generation_policy"][
             "no_target_tenant_classifications"
         ]["security_lock_export_scoped"]
@@ -3371,54 +3391,6 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors,
         )
 
-        legacy = route_for(baseline, "account-service", "ExportAccount")
-        self.assertEqual("current_openapi_operator_surface", legacy["route_status"])
-        self.assertEqual(
-            "POST /accounts/{accountId}/exports", legacy["canonical_target_route"]
-        )
-        self.assertNotIn("canonical_target", legacy)
-        self.assertIsInstance(
-            route_for(baseline, "game-session-service", "PLAY")["canonical_target"],
-            dict,
-        )
-        self.assertIsInstance(
-            route_for(baseline, "account-service", "IssueConnectToken")[
-                "canonical_target"
-            ],
-            dict,
-        )
-        self.assertTrue(
-            any(
-                "legacy platformAdmin override" in drift
-                for drift in legacy["implementation_status"]["known_drift"]
-            )
-        )
-        self.assertEqual([], validate_document(self.validator, baseline))
-
-        for field, value, expected_error in (
-            (
-                "route_status",
-                "target_not_currently_routable",
-                (
-                    "account-service ExportAccount legacy export route must declare "
-                    "route_status current_openapi_operator_surface"
-                ),
-            ),
-            (
-                "canonical_target_route",
-                "ExportAccount",
-                (
-                    "account-service ExportAccount legacy export route must point to "
-                    "canonical target POST /accounts/{accountId}/exports"
-                ),
-            ),
-        ):
-            with self.subTest(legacy_field=field):
-                document = copy.deepcopy(baseline)
-                route_for(document, "account-service", "ExportAccount")[field] = value
-                errors = validate_document(self.validator, document)
-                self.assertIn(expected_error, errors)
-
         for route_name, action_family in route_specs:
             active_export_name = action_family.removeprefix("export_")
             for mutation_name, mutate, expected_suffix in (
@@ -3484,6 +3456,56 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                         f"{expected_label} {expected_suffix}",
                         errors,
                     )
+
+    def test_legacy_export_account_route_points_to_canonical_target(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        legacy = route_for(baseline, "account-service", "ExportAccount")
+        self.assertEqual("current_openapi_operator_surface", legacy["route_status"])
+        self.assertEqual(
+            "POST /accounts/{accountId}/exports", legacy["canonical_target_route"]
+        )
+        self.assertNotIn("canonical_target", legacy)
+        self.assertIsInstance(
+            route_for(baseline, "game-session-service", "PLAY")["canonical_target"],
+            dict,
+        )
+        self.assertIsInstance(
+            route_for(baseline, "account-service", "IssueConnectToken")[
+                "canonical_target"
+            ],
+            dict,
+        )
+        self.assertTrue(
+            any(
+                "legacy platformAdmin override" in drift
+                for drift in legacy["implementation_status"]["known_drift"]
+            )
+        )
+        self.assertEqual([], validate_document(self.validator, baseline))
+
+        for field, value, expected_error in (
+            (
+                "route_status",
+                "target_not_currently_routable",
+                (
+                    "account-service ExportAccount legacy export route must declare "
+                    "route_status current_openapi_operator_surface"
+                ),
+            ),
+            (
+                "canonical_target_route",
+                "ExportAccount",
+                (
+                    "account-service ExportAccount legacy export route must point to "
+                    "canonical target POST /accounts/{accountId}/exports"
+                ),
+            ),
+        ):
+            with self.subTest(legacy_field=field):
+                document = copy.deepcopy(baseline)
+                route_for(document, "account-service", "ExportAccount")[field] = value
+                errors = validate_document(self.validator, document)
+                self.assertIn(expected_error, errors)
 
     def test_export_initiation_identity_and_action_family_cannot_bypass_availability(
         self,
@@ -3648,6 +3670,16 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertNotIn("mutation_contract", route)
         self.assertNotIn("provider_instrument_contract", route)
 
+        route["mutation_contract"] = "unexpected_mutation_contract"
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                self.validator.route_label(route) in error
+                and "mutation_contract" in error
+                for error in errors
+            )
+        )
+
     def test_no_target_tenant_classifications_are_closed_and_explicit(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         policy = document["tenant_generation_policy"]
@@ -3781,11 +3813,11 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
 
     def test_selected_tenant_generation_exception_matches_route_classification(self):
-        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-        route = route_for(baseline, "account-service", "IssueConnectToken")
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "account-service", "IssueConnectToken")
 
         route["classification"] = "gameplay_admission"
-        errors = validate_document(self.validator, baseline)
+        errors = validate_document(self.validator, document)
         self.assertTrue(
             any(
                 "explicit target-tenant authority must use classification "

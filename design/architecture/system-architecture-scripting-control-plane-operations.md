@@ -8,11 +8,11 @@ The direct API surface and request/response contracts for pinning, plugin activa
 
 The workflow APIs below are target-state contracts. Automation's durable work model has two layers: pre-DSL trigger state and evaluated descriptor/outbox evidence. A target evaluation atomically commits all emitted descriptors, parent outbox evidence, and the terminal evaluation outcome by transitioning the trigger to `EVALUATED_COMMITTED`; recovery replays those descriptors without DSL re-entry. `EVALUATED_COMMITTED` is not an active evaluation and is excluded from `activeExecutionCount`; unresolved descriptor children remain represented by their `PENDING`/`INDEXED` or `HANDOFF_IN_FLIGHT` descriptor states. `PENDING_EVALUATION` and `EVALUATING` remain pre-DSL states, while the existing evaluated-descriptor statuses retain their meanings.
 
-Purge is evidence cleanup, not trigger recovery. It rejects selected active or pre-DSL work, including `PENDING_EVALUATION`, `EVALUATING`, `EVALUATED_COMMITTED`, and active descriptor rows, and can remove only terminal descriptor/outbox evidence after the configured retention horizon. It never cancels, reclaims, dead-letters, or deletes active trigger state.
+Purge is evidence cleanup, not trigger recovery. It rejects `PENDING_EVALUATION` and `EVALUATING` triggers and all active/nonterminal descriptor rows. An `EVALUATED_COMMITTED` parent marker is not deleted; purge may remove only its retention-eligible terminal `HANDED_OFF`, `CANCELED`, or `DEAD_LETTERED` descriptor/outbox evidence. It preserves the trigger marker, corresponding `script_event_audit`, and replay-causation claims or records, and never cancels, reclaims, dead-letters, or replays work.
 
 ## Implementation Status
 
-This section records current behavior only. The current Automation claim boundary is `PENDING_EVALUATION` -> `EVALUATING`; it has no recovery owner, evaluation lease expiry/fencing generation, or descriptor-commit marker/status, and its recovery behavior is unimplemented and unverified. `GetAutomationDrainStatus` currently counts `EVALUATING` and `HANDOFF_IN_FLIGHT` rows in `activeExecutionCount`, including unresolved stale `EVALUATING` rows, and counts every handoff-capable `PENDING_EVALUATION` row in `pendingCancelableWorkItemCount`. Current terminal-row cleanup is retention-based; target purge selection must not be read as current trigger-state recovery. These implementation facts do not change the fail-closed zero-count rule in the normative API below.
+This section records current behavior only. The current Automation claim boundary is `PENDING_EVALUATION` -> `EVALUATING`; it has no recovery owner, evaluation lease expiry/fencing generation, or descriptor-commit marker/status, and its recovery behavior is unimplemented and unverified. `GetAutomationDrainStatus` currently counts `EVALUATING` and `HANDOFF_IN_FLIGHT` rows in `activeExecutionCount`, including unresolved stale `EVALUATING` rows, and counts every handoff-capable `PENDING_EVALUATION` row in `pendingCancelableWorkItemCount`. Current terminal-row cleanup is retention-based; the target terminal-evidence purge rule is not current trigger-state recovery and does not establish that the current cleanup preserves an `EVALUATED_COMMITTED` marker, audit, or replay causation. These implementation facts do not change the fail-closed zero-count rule in the normative API below.
 
 ## Table of Contents
 
@@ -120,7 +120,7 @@ Semantics:
 
 - Idempotent.
 - `PAUSED_FOR_ROLLBACK` prevents admission of new external, scheduler, and timer triggers for the scope while allowing already-admitted work to be drained or canceled.
-- During pause, ingress calls return explicit rollback backpressure outcomes and remain audit-visible.
+- During pause, ingress calls return explicit rollback backpressure outcomes and remain visible in the event-scope ingress audit; they do not create handler-scoped `script_event_audit` rows before handler resolution.
 - Entering `PAUSED_FOR_ROLLBACK` must also advance a scope-local **admission epoch**. Every already-admitted execution carries the epoch under which it was accepted, and any later outbox-persist or tick-handoff attempt must re-check that epoch before committing side effects.
 - If an execution admitted under an earlier epoch reaches persist or handoff after the scope has advanced to a newer rollback epoch, it must not create new live work. The execution transitions to `finalOutcome=canceled` with a bounded `finalReason` such as `rollback_epoch_advanced` and remains visible in `script_event_audit`.
 
@@ -364,8 +364,8 @@ Inputs:
 Semantics:
 
 - Idempotent.
-- Resolves each selected identifier against durable trigger and descriptor/outbox state before mutating anything. A selection that resolves to `PENDING_EVALUATION`, `EVALUATING`, or `EVALUATED_COMMITTED`, or to an evaluated descriptor in `PENDING`, `INDEXED`, or `HANDOFF_IN_FLIGHT`, is rejected with a bounded application reason; purge does not cancel, reclaim, dead-letter, or otherwise mutate that active/pre-DSL work.
-- May purge only evaluated descriptor/outbox evidence in terminal `HANDED_OFF`, `CANCELED`, or `DEAD_LETTERED` status after that status's configured retention horizon has elapsed. Terminal evidence still inside its retention window is rejected with a bounded retention reason. The operation preserves active trigger state, `script_event_audit`, replay causation claims, and any other evidence still inside its required retention window.
+- Resolves each selected identifier against durable trigger and descriptor/outbox state before mutating anything. A selection that resolves to `PENDING_EVALUATION` or `EVALUATING`, or to an evaluated descriptor in `PENDING`, `INDEXED`, or `HANDOFF_IN_FLIGHT`, is rejected with a bounded application reason; an `EVALUATED_COMMITTED` parent is resolved as retained trigger evidence rather than rejected wholesale. Purge does not cancel, reclaim, dead-letter, replay, or otherwise mutate active/nonterminal work.
+- May purge only evaluated descriptor/outbox evidence in terminal `HANDED_OFF`, `CANCELED`, or `DEAD_LETTERED` status after that status's configured retention horizon has elapsed, including terminal children under an `EVALUATED_COMMITTED` parent. Terminal evidence still inside its retention window is rejected with a bounded retention reason. The operation preserves the `EVALUATED_COMMITTED` marker, corresponding `script_event_audit`, replay causation claims or records, and any other evidence still inside its required retention window.
 - Must emit operator-auditable records for every purge request.
 
 Outputs:

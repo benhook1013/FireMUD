@@ -208,7 +208,7 @@ obsolete_envelope_phrases = ("Account-issued envelope", "Account-validated envel
 decision_history_dir = root / "design/architecture/decisions"
 
 historical_adr_record_name = re.compile(r"adr-\d{4}-.+\.md")
-status_heading = re.compile(r"^##[ \t]+Status(?:[ \t]+#+)?[ \t]*$")
+status_heading = re.compile(r"^[ ]{0,3}##[ \t]+Status(?:[ \t]+#+)?[ \t]*$")
 historical_status_value = re.compile(r"^(?:Superseded|Withdrawn)\b")
 raw_html_closing_tag_only = frozenset(("pre", "script", "style", "textarea"))
 raw_html_block_start = re.compile(
@@ -429,6 +429,32 @@ def reject_obsolete_envelope_phrases(path, text):
 
 historical_adr_fixture = decision_history_dir / "adr-9999-history-fixture.md"
 historical_adr_fixture_text = "# ADR 9999: Historical Fixture\n\n## Status\n\nSuperseded by ADR 0001\n\nAccount-issued envelope\nrebind-envelope\n"
+indented_status_heading_fixture_cases = (
+    (
+        decision_history_dir / "adr-9990-one-space-status-heading-fixture.md",
+        "# ADR 9990: One-Space Status Heading Fixture\n\n"
+        " ## Status\n\n"
+        "Superseded by ADR 0001\n\n"
+        "Account-issued envelope\n"
+        "rebind-envelope\n",
+    ),
+    (
+        decision_history_dir / "adr-9989-two-space-status-heading-fixture.md",
+        "# ADR 9989: Two-Space Status Heading Fixture\n\n"
+        "  ## Status\n\n"
+        "Superseded by ADR 0001\n\n"
+        "Account-issued envelope\n"
+        "rebind-envelope\n",
+    ),
+    (
+        decision_history_dir / "adr-9988-three-space-status-heading-fixture.md",
+        "# ADR 9988: Three-Space Status Heading Fixture\n\n"
+        "   ## Status\n\n"
+        "Superseded by ADR 0001\n\n"
+        "Account-issued envelope\n"
+        "rebind-envelope\n",
+    ),
+)
 accepted_adr_fixture = decision_history_dir / "adr-9998-accepted-fixture.md"
 accepted_adr_fixture_text = (
     "# ADR 9998: Accepted Fixture\n\n"
@@ -589,6 +615,13 @@ reject_obsolete_redis_rebind_envelope(
     historical_adr_fixture,
     historical_adr_fixture_text,
 )
+for fixture_path, fixture_text in indented_status_heading_fixture_cases:
+    if not is_historical_adr_record(fixture_path, fixture_text):
+        raise SystemExit(
+            f"indented historical ADR fixture was not recognized: {fixture_path.name}"
+        )
+    reject_obsolete_redis_rebind_envelope(fixture_path, fixture_text)
+    reject_obsolete_envelope_phrases(fixture_path, fixture_text)
 if is_historical_adr_record(registry_index_fixture, obsolete_envelope_phrases[0]):
     raise SystemExit("decision registry/index fixture was incorrectly exempted")
 if first_top_level_status_value(accepted_adr_fixture_text) != "Accepted":
@@ -858,7 +891,10 @@ for path in [
 
 require_contains(
     "design/architecture/system-architecture-redis-reset-and-recovery.md",
-    ["Region and tenant resets preserve Account-owned `session:auth:token:<tokenHash>` records"],
+    [
+        "`session:auth:token:*` and `session:auth:generation:*`",
+        "Region and tenant resets preserve those Account-owned records",
+    ],
 )
 require_contains(
     "design/architecture/system-architecture-redis-ops-access.md",

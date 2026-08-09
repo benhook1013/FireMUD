@@ -6,7 +6,7 @@ Document conflict resolution order is defined in `design/architecture/system-arc
 
 ## Target-State Command Identity and Handoff Contract
 
-The target per-command handoff contract records one child disposition for each emitted command. Each child is keyed by the complete applicable command-handoff scope plus `(automationDispatchId, commandOrdinal)`, and retains the parent Trigger Identity, `outboxWorkItemId`, handoff result, and any later execution-time fence result. `script_event_audit` remains one handler row per Trigger Identity and is never a substitute for the command collection.
+The target per-command handoff contract records one child disposition for each emitted command. Each child is keyed by the complete [Command-Handoff Identity](./system-architecture-scripting-normative-contract-tables.md#command-handoff-identity-target-state), with `(automationDispatchId, commandOrdinal)` only the final dispatch-group/ordinal fields within that scope, and retains the parent Trigger Identity, `outboxWorkItemId`, handoff result, and any later execution-time fence result. `automationDispatchId` is not assumed globally unique. `script_event_audit` remains one handler row per Trigger Identity and is never a substitute for the command collection.
 
 ## Implementation Status
 
@@ -25,8 +25,8 @@ The complete per-command handoff diagnostic model is **target-state**. The live 
 Event-scope ingress decisions and handler-scoped execution outcomes are separate observability facts.
 
 - Event-scope ingress audit/logging records pre-resolution decisions for the incoming event, such as auth failure, reload backpressure, rollback pause, pin-state unavailability, signer-policy unavailability, or version unavailability. A rejected pre-handler ingress returns `admitted=false` with its event-scope `admissionOutcome` and `admissionReason`, records the same pair in `script_event_ingress_audit`, and has the corresponding Table 4 ingress-drop consequence using the bounded reason. These records use the uniqueness key and atomic first-claim/retry rules in [Table 1](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields), must not invent a synthetic `scriptId`, and must not create a handler-scoped `script_event_audit` row.
-- `script_event_audit` records handler-scoped, scheduler/timer-scoped, tenant-readiness `onLoad`, and dry-run/test executions after a concrete script or plugin handler identity exists.
-- per-command handoff history is a separate durable child surface keyed by the complete applicable command-handoff scope plus the target-state `(automationDispatchId, commandOrdinal)` pair; `outboxWorkItemId` is retained only as parent-work correlation so one handler audit row can still correlate to multiple emitted gameplay commands.
+- `script_event_audit` records resolved-handler/materialized-work lifecycles, including scheduler/timer-scoped, tenant-readiness `onLoad`, and dry-run/test executions after a concrete script or plugin handler identity exists. Pre-handler dry-run rejection, signer-policy unavailability, and rollback backpressure remain ingress-audit outcomes; an admitted event with zero handlers is metric-only.
+- per-command handoff history is a separate durable child surface keyed by the complete Command-Handoff Identity; `outboxWorkItemId` is retained only as parent-work correlation so one handler audit row can still correlate to multiple emitted gameplay commands.
 - A successful event-scope ingress record means the event was accepted for handler resolution. It is not a summary of every handler outcome.
 - If ingress is accepted and resolves three handlers, tooling should expect one event-scope ingress record and three handler-scoped `script_event_audit` records, one per resolved Trigger Identity. The Table 4 metric consequence does not add a separate admitted-event increment.
 - If one resolved handler emits three gameplay commands, tooling should expect one handler-scoped `script_event_audit` row plus three durable handoff-event rows under `ListScriptHandoffEvents`.
@@ -36,18 +36,18 @@ Event-scope ingress decisions and handler-scoped execution outcomes are separate
 A resolved handler may emit zero, one, or many gameplay commands. `script_event_audit` remains one handler-scoped row per Trigger Identity and must not contain a single command dispatch field or a single post-handoff outcome for the whole Trigger Identity.
 
 - Persist or return one command-handoff record for each attempted emitted command.
-- Each gameplay command record is keyed by the target-state scope-complete command-level handoff identity `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, automationDispatchId, commandOrdinal>` plus any other applicable target identity dimensions. It includes the parent `outboxWorkItemId` only as correlation, the complete parent Trigger Identity (including `scriptEventId` and plugin `bindingId` when applicable), handoff outcome/reason, and any later gameplay execution outcome/reason. A child record must retain these fields rather than relying on an implicit join to the handler row for scope identity.
+- Each gameplay command record is keyed by the target-state complete Command-Handoff Identity defined in the [normative contract tables](./system-architecture-scripting-normative-contract-tables.md#command-handoff-identity-target-state). It includes the parent `outboxWorkItemId` only as correlation, the complete parent Trigger Identity (including `scriptEventId` and plugin `bindingId` when applicable), handoff outcome/reason, and any later gameplay execution outcome/reason. A child record must retain these fields rather than relying on an implicit join to the handler row for scope identity.
 - `ListScriptHandoffEvents` is the canonical query surface for these records. A query that combines handler and command data must expose a collection such as `commandHandoffDispositions[]`; it must not collapse sibling commands into one dispatch ID or one disposition on the handler audit row.
 - A version-fence drop on one command updates only that command-handoff record. It must not overwrite the handler audit row or the dispositions of sibling commands.
 
 ## `script_event_audit` (Required Fields)
 
-Each observed handler-scoped trigger, scheduler/timer trigger, tenant-readiness `onLoad` trigger, or dry-run/test execution must write (or update) a single audit record keyed by the trigger identity described in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields`.
+Each observed resolved-handler/materialized-work trigger, scheduler/timer trigger, tenant-readiness `onLoad` trigger, or materialized dry-run/test execution must write (or update) a single audit record keyed by the trigger identity described in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields`. Pre-handler dry-run rejection, signer-policy unavailability, and rollback backpressure remain ingress-audit outcomes, and an admitted event with zero handlers remains metric-only.
 
 Write behavior requirements:
 
 - Storage must enforce uniqueness for the event-scope key before handler resolution and for full Trigger Identity after resolution, so retries and duplicate deliveries update one logical record at each scope.
-- The event-scope first claim and its admission outcome must be written atomically with the one `script_event_ingress_audit` row. A retry with the same complete key returns the exact stored admission response and must not re-evaluate admission, write another ingress row, or materialize duplicate handlers. A changed applicable identity field is an identity conflict, not a retry.
+- The event-scope first claim and its admission outcome must be written atomically with the one `script_event_ingress_audit` row. The durable claim remains `IN_PROGRESS` until handler resolution and all matched-handler materialization attempts complete. A concurrent retry that finds `IN_PROGRESS` waits for the same fenced claim or receives a retryable signal without an admission result; it must not resolve/fan out again, return a partial count, or write another ingress row. A retry with the same finalized key returns the exact stored admission response, and a changed applicable identity field is an identity conflict, not a retry.
 - Audit writers must be idempotent and stage-monotonic; `finalStage` must never move backwards.
 - Conflicting concurrent writes for the same Trigger Identity must converge on a single row with deterministic precedence (higher stage wins).
 - Handler-scoped admission rejections and backpressure outcomes (for example `quota_denied`, `script_disabled`, or timer-scope `skipped_reloading`) must still produce the row for that Trigger Identity with `finalStage=ADMISSION`. Pre-resolution event-scope denials belong in the ingress audit/logging surface described above.
@@ -78,7 +78,7 @@ Audit records must include at least:
     - DSL evaluation outcome
     - Work-item persistence outcome (if using a durable outbox)
     - Handoff/enqueue outcome into the tick system
-  - A query-composed `commandHandoffDispositions[]` collection whenever emitted command child records exist, including initial handoff-only records before a later execution-time result is known. These target-state child records are not part of the Automation-owned `finalStage` progression and are keyed by the complete applicable command-handoff scope plus `(automationDispatchId, commandOrdinal)`, with the parent Trigger Identity retained for correlation. `outboxWorkItemId` is correlation metadata, not a substitute for the child key.
+  - A query-composed `commandHandoffDispositions[]` collection whenever emitted command child records exist, including initial handoff-only records before a later execution-time result is known. These target-state child records are not part of the Automation-owned `finalStage` progression and are keyed by the complete Command-Handoff Identity, with the parent Trigger Identity retained for correlation. `outboxWorkItemId` is correlation metadata, not a substitute for the child key.
   - `policyViolations` (optional array, plugin policy rollouts only; see schema below)
 
 Outcome fields must be sufficient to distinguish “DSL evaluated successfully” from “commands were accepted into the tick system”. Do not collapse these into a single `success` signal.
@@ -131,18 +131,18 @@ Stage semantics:
 
 ### Per-Command Handoff and Post-Handoff Outcomes (Required When Present)
 
-`script_event_audit` is the canonical Automation-owned lifecycle record through `TICK_HANDOFF`, but it is not the sole post-handoff surface and it must not contain a single disposition for a fan-out trigger. In the target state, `ListScriptHandoffEvents` is the canonical durable query for per-command records: an initial handoff-only child is recorded for every attempted emitted command, and later Game Session acceptance, rejection, or execution-time version-fence results update or extend that command's disposition. A combined trigger read must expose those records as `commandHandoffDispositions[]`, with one element per emitted command keyed by its complete applicable command-handoff scope plus `(automationDispatchId, commandOrdinal)`. Each child retains the parent Trigger Identity, including plugin `bindingId` when applicable; tooling must not rely on metrics alone to correlate the records back to the original trigger.
+`script_event_audit` is the canonical Automation-owned lifecycle record through `TICK_HANDOFF`, but it is not the sole post-handoff surface and it must not contain a single disposition for a fan-out trigger. In the target state, `ListScriptHandoffEvents` is the canonical durable query for per-command records: an initial handoff-only child is recorded for every attempted emitted command, and later Game Session acceptance, rejection, or execution-time version-fence results update or extend that command's disposition. A combined trigger read must expose those records as `commandHandoffDispositions[]`, with one element per emitted command keyed by the complete Command-Handoff Identity. Each child retains the parent Trigger Identity, including plugin `bindingId` when applicable; tooling must not rely on metrics alone to correlate the records back to the original trigger.
 
-When a downstream service reports a later handoff or execution result, the target-state command-handoff surface must expose or update a child disposition keyed to the affected `(automationDispatchId, commandOrdinal)` pair with:
+When a downstream service reports a later handoff or execution result, the target-state command-handoff surface must expose or update a child disposition keyed to the affected complete Command-Handoff Identity, including its `(automationDispatchId, commandOrdinal)` dispatch-group fields, with:
 
-- `automationDispatchId` – the stable handoff/work-item identity shared by the emitted gameplay commands; `commandOrdinal` distinguishes each command under it.
+- `automationDispatchId` – the stable dispatch-group identifier shared by the emitted gameplay commands; `commandOrdinal` distinguishes each command under it within the complete command-handoff scope.
 - `commandOrdinal` – the deterministic ordinal of that emitted command within the handler handoff.
 - `outcome` – bounded enum. Minimum required value: `version_fence_dropped`.
 - `reason` – bounded reason such as `script_patch_mismatch` or `plugin_version_mismatch`.
 - `recordedAt` – timestamp.
 - `sourceService` – producer of the disposition (for example `game-session`).
 
-Each returned child retains the parent `outboxWorkItemId` only for correlation and retains the applicable Trigger Identity fields needed for diagnosis, including plugin `bindingId` when applicable; the target-state `(automationDispatchId, commandOrdinal)` pair is part of the scope-complete command-level key and must not be replaced with the parent `scriptEventId`.
+Each returned child retains the parent `outboxWorkItemId` only for correlation and retains the applicable Trigger Identity fields needed for diagnosis, including plugin `bindingId` when applicable; the target-state `(automationDispatchId, commandOrdinal)` fields are part of the complete command-level key and must not be treated as globally unique or replaced with the parent `scriptEventId`.
 
 Rules:
 
@@ -155,7 +155,7 @@ During rollback, operator views must show the handler's `finalStage`/`finalOutco
 Concrete example:
 
 - `script_event_audit` row for Trigger Identity `T123` ends with `finalStage=TICK_HANDOFF`, `finalOutcome=success`.
-- The handler emitted two commands. Later, Game Session rejects only `(automationDispatchId=work-9, commandOrdinal=1)` during rollback convergence and appends a child disposition with `outcome=version_fence_dropped`, `reason=script_patch_mismatch`, `sourceService=game-session`, and `recordedAt=...`; `(automationDispatchId=work-9, commandOrdinal=0)` remains a separate sibling record.
+- The handler emitted two commands. Later, Game Session rejects only the child ending in `(automationDispatchId=work-9, commandOrdinal=1)` under the same complete command-handoff scope during rollback convergence and appends a child disposition with `outcome=version_fence_dropped`, `reason=script_patch_mismatch`, `sourceService=game-session`, and `recordedAt=...`; the child ending in `(automationDispatchId=work-9, commandOrdinal=0)` remains a separate sibling record.
 - Queries for `T123` must surface the handler row plus both command-handoff records so operators can tell that Automation succeeded and which gameplay command was later fenced.
 
 Illustrative record shape:
@@ -250,7 +250,7 @@ Illustrative record shape:
 }
 ```
 
-This target-state example is illustrative rather than prescriptive about JSON column layout, but any API or query surface must preserve the same information model: one Trigger Identity, one Automation-owned handler final stage/outcome, and zero or more later per-command handoff dispositions keyed by `(automationDispatchId, commandOrdinal)`.
+This target-state example is illustrative rather than prescriptive about JSON column layout, but any API or query surface must preserve the same information model: one Trigger Identity, one Automation-owned handler final stage/outcome, and zero or more later per-command handoff dispositions keyed by the complete Command-Handoff Identity.
 
 ### Canonical Outcome Taxonomy (Required)
 
