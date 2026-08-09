@@ -711,9 +711,11 @@ if first_top_level_status_value(comment_only_type6_html_fixture_text) != "Accept
     raise SystemExit("comment-only Type-6 HTML line incorrectly terminated the block")
 if first_top_level_status_value(unclosed_comment_in_type6_html_fixture_text) != "Accepted":
     raise SystemExit("unclosed comment inside Type-6 HTML hid the following Accepted status")
-for closing_tag in ("script", "style", "pre", "textarea"):
+for fixture_id, closing_tag in enumerate(
+    ("script", "style", "pre", "textarea"), start=9900
+):
     closing_special_tag_fixture_text = (
-        f"# ADR 9985: Closing {closing_tag} Raw HTML Fixture\n\n"
+        f"# ADR {fixture_id}: Closing {closing_tag} Raw HTML Fixture\n\n"
         f"</{closing_tag}>\n"
         "## Hidden Status After Closing Special Tag\n"
         "Superseded by ADR 0001\n"
@@ -933,8 +935,18 @@ require_contains(
     [
         "`session:auth:token:*` and `session:auth:generation:*`",
         "Region and tenant resets preserve those Account-owned records",
+        "`session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`",
+        "`session:game:index:character:{tenantGameplayTag}:<gameInstanceId>:<characterId>`",
     ],
 )
+reset_recovery_text = (
+    root / "design/architecture/system-architecture-redis-reset-and-recovery.md"
+).read_text(encoding="utf-8")
+if "session:game:{tenantInstanceTag}" in reset_recovery_text:
+    raise SystemExit(
+        "design/architecture/system-architecture-redis-reset-and-recovery.md: "
+        "gameplay session selectors must use the canonical tenantGameplayTag/gameInstanceId shape"
+    )
 require_contains(
     "design/architecture/system-architecture-redis-ops-access.md",
     ["Region- and tenant-scoped coordination resets preserve Account-owned `session:auth:token:<tokenHash>` records"],

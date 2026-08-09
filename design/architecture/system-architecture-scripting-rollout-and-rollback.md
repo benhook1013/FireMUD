@@ -71,8 +71,9 @@ Ordering is intentional: the admission barrier precedes repin and remains active
 
 Rollback and normal event ingress use two deduplication stages:
 
-- Before handler resolution, incoming request dedupe uses event-scope identity. `scriptId` and `bindingId` are unavailable at ingress and must not be invented.
+- Before handler resolution, incoming request dedupe uses the event-scope identity from [Table 1](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields), including `isDryRun`. `scriptId` and `bindingId` are unavailable at ingress and must not be invented. A live claim (`isDryRun=false`) and a dry-run/test claim (`isDryRun=true`) are distinct even when every other applicable field matches; they must not share an event-scope claim, ingress audit result, or materialized handler work. Retries must preserve the original mode, and changing it is an identity conflict.
 - After binding resolution, each resolved handler dedupes independently by the full applicable Trigger Identity and retains its own handler-scoped audit outcome.
+- The local mode consequence is directional: `isDryRun=false` may continue through live persistence and handoff, while `isDryRun=true` remains on the non-committing test branch and must not use live execution metric consequences; the exact metric families and units remain owned by Table 4.
 
 ## Command Identity and Live Handoff Boundary
 
@@ -89,7 +90,7 @@ Rollback orchestration must expose and persist a state machine so partial failur
 
 Ownership and source-of-truth requirements:
 
-- Game Session is the producer-of-record for rollback orchestration state keyed by `controlPlaneRequestId`.
+- Game Session is the producer-of-record for rollback orchestration state keyed by `controlPlaneRequestId` and is the sole producer of the convergence-timeout signal.
 - Logging & Admin may expose convenience orchestration APIs, but these must call the Game Session workflow APIs and read back the same canonical workflow state; they must not persist a competing rollback-state machine.
 - Automation & Scripting participates via idempotent step APIs (`SetAutomationAdmissionMode`, cancel/purge hooks, convergence reads) and must not infer orchestration completion from local state alone.
 
@@ -107,6 +108,7 @@ State rules:
 - Operator retries must continue from the last durable state.
 - `CONVERGING` transitions to `DRAINING` only after the Pin Convergence Acknowledgment Predicate succeeds. If the configured deadline is reached while that predicate remains unsatisfied, `CONVERGING` transitions directly and durably to terminal `ROLLBACK_CONVERGENCE_TIMEOUT`; it must not advance to `DRAINING`, `RESUMING`, or `COMPLETED`.
 - `ROLLBACK_CONVERGENCE_TIMEOUT` keeps admission and ticks paused until explicit operator action.
+- Operator recovery of `ROLLBACK_CONVERGENCE_TIMEOUT` uses the same Game Session-owned workflow record and `controlPlaneRequestId`; it is not a second state machine or a new recovery subsystem. An idempotent retry resumes only unfinished existing `CONVERGING`/`DRAINING` work from its durable state, and may move the same record back through the existing `CONVERGING` state. If fresh convergence proof is still unavailable, the record remains in `ROLLBACK_CONVERGENCE_TIMEOUT` and both fences remain set.
 - `DRAINING` is required. Rollback must not resume admission or ticks until a fresh authoritative `GetAutomationDrainStatus` response, taken after final reconciliation, cancellation, and purge, reports both counts zero for the current rollback-scope `admissionEpoch`. **Target-state mapping:** `activeExecutionCount` is exactly `EVALUATING` pre-DSL triggers plus `HANDOFF_IN_FLIGHT` evaluated descriptors; `pendingCancelableWorkItemCount` is exactly `PENDING_EVALUATION` pre-DSL triggers plus `PENDING`/`INDEXED` evaluated descriptors. A cached, stale, or earlier-epoch response is unsatisfied evidence.
 - **Current fail-closed mapping:** the live projection counts `EVALUATING`, including unresolved stale rows, and `HANDOFF_IN_FLIGHT` as active, while every handoff-capable `PENDING_EVALUATION` is pending because the separate `PENDING`/`INDEXED` descriptor layer is not yet persisted. Any nonzero count keeps `DRAINING` active.
 - During target-state cancellation and `DRAINING`, `PENDING_EVALUATION` transitions durably to terminal `CANCELED` with `finalStage=ADMISSION`, `finalOutcome=canceled`, and the bounded rollback/operator reason without entering the DSL. An `EVALUATING` trigger is fenced and its descriptor-commit marker is read first: committed descriptors resume without DSL re-entry; an explicitly canceled uncommitted trigger transitions to terminal `CANCELED` with `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and the bounded cancellation reason; an expired stale uncommitted trigger transitions to terminal `DEAD_LETTERED` with `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and `finalReason=stale_execution_fenced`. Drain remains closed until each such trigger is terminal or its committed descriptors reach terminal descriptor states, without re-entering the DSL.
@@ -122,11 +124,11 @@ An acknowledgment is fresh only when it reflects this promotion/rollback operati
 
 Convergence timeout semantics (required):
 
-- Rollback orchestration must apply a bounded convergence timeout (for example `ROLLBACK_CONVERGENCE_TIMEOUT_MS`) to the convergence wait.
+- Game Session must apply a bounded convergence timeout (for example `ROLLBACK_CONVERGENCE_TIMEOUT_MS`) to the convergence wait.
 - Before the deadline, missing, stale, mismatched, or out-of-bound acknowledgments leave convergence unsatisfied and the workflow continues authoritative reads; they do not by themselves enter a terminal state.
 - If the deadline is reached before the [Pin Convergence Acknowledgment Predicate](#pin-convergence-acknowledgment-predicate) succeeds, including because either owner's acknowledgment remains missing, stale, mismatched, or out-of-bound at the deadline, the rollback enters terminal state `ROLLBACK_CONVERGENCE_TIMEOUT`.
-- In `ROLLBACK_CONVERGENCE_TIMEOUT`, Automation admission remains paused for scope safety and ticks remain paused until an operator explicitly issues the supported idempotent `ResumeTicks` action after the durable rollback state is safe to resume.
-- The system must emit terminal event `ScriptRollbackConvergenceTimedOut` and apply the Table 4 terminal-timeout metric consequence exactly once when the terminal state is entered.
+- In `ROLLBACK_CONVERGENCE_TIMEOUT`, Automation admission remains paused for scope safety and ticks remain paused. Game Session alone persists the terminal state and emits `ScriptRollbackConvergenceTimedOut` exactly once; Automation consumes that state/signal and does not produce a competing timeout signal or metric. Any metric consequence follows [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix).
+- An operator may retry the same durable workflow idempotently. Before `ResumeTicks`, the retry must obtain fresh matching Game Session and Automation acknowledgments for the [Pin Convergence Acknowledgment Predicate](#pin-convergence-acknowledgment-predicate) and a fresh post-cleanup `GetAutomationDrainStatus` response with the current `admissionEpoch` and both counts zero. Only that fresh proof permits the existing `ResumeTicks` step, followed by the existing `NORMAL` admission transition.
 - While timeout terminal state remains active, pre-handler ingress must return `admitted=false`, `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK` (the existing rollback backpressure response enum), and bounded `admissionReason=rollback_convergence_timeout`; `script_event_ingress_audit` must record the same event-scope admission outcome and reason. `scriptId` and `bindingId` are unavailable for this decision. No handler-scoped `script_event_audit` row may use `finalOutcome=rollback_convergence_timeout`; already-resolved handlers retain their applicable handler-scoped outcome.
 
 ## Pin-State Degraded Operations Policy (Required)

@@ -1604,15 +1604,6 @@ def validate_recovery_export_generation(
             f"{label} {route.get('action_family')} must require live check "
             f"{action_family_check}",
         )
-    if route.get("action_family") == "export_content":
-        for required_check in sorted(
-            EXPORT_CONTENT_REQUIRED_LIVE_CHECKS - (checks or set())
-        ):
-            append_unique_error(
-                errors,
-                f"{label} export_content must require live check "
-                f"{required_check}",
-            )
     forbidden_checks = checks & {"tenant_generation", "target_tenant_generation"}
     if forbidden_checks:
         errors.append(
@@ -1754,6 +1745,37 @@ def validate_account_export_applicability(
         )
 
 
+def validate_recovery_export_action_families(
+    routes: list[Any],
+    classification: str,
+    expected_action_families: set[str],
+    errors: list[str],
+) -> list[Any]:
+    action_families = [
+        route.get("action_family")
+        for route in routes
+        if isinstance(route, dict)
+        and route.get("classification") == classification
+        and route_set_key(route) in ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES
+    ]
+    declared_action_families = {
+        action_family
+        for action_family in action_families
+        if isinstance(action_family, str)
+    }
+    if (
+        len(action_families) != len(expected_action_families)
+        or len(declared_action_families) != len(action_families)
+        or declared_action_families != expected_action_families
+    ):
+        append_unique_error(
+            errors,
+            f"{classification} routes must declare exactly action_family "
+            f"set {sorted(expected_action_families)}",
+        )
+    return action_families
+
+
 def validate_account_export_routes(
     routes: list[Any],
     errors: list[str],
@@ -1845,9 +1867,10 @@ def validate_account_export_routes(
                         f"{required_error}",
                     )
         if expected_action_family == "export_content":
-            for required_check in sorted(
-                EXPORT_CONTENT_REQUIRED_LIVE_CHECKS - (checks or set())
-            ):
+            required_content_checks = {"export_availability"}
+            if account_state == "active":
+                required_content_checks.add("recent_account_authentication")
+            for required_check in sorted(required_content_checks - (checks or set())):
                 append_unique_error(
                     errors,
                     f"{label} export_content must require live check "
@@ -1914,34 +1937,15 @@ def validate_account_export_routes(
                 f"{EXPORT_INITIATION_ROUTE}",
             )
 
-    security_lock_action_families = [
-        route.get("action_family")
-        for route in routes
-        if isinstance(route, dict)
-        and route.get("classification") == "security_lock_export_scoped"
-        and route_set_key(route) in ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES
-    ]
-    if (
-        len(security_lock_action_families)
-        != len(SECURITY_LOCK_EXPORT_ACTION_FAMILIES)
-        or any(
-            not isinstance(action_family, str)
-            for action_family in security_lock_action_families
-        )
-        or set(security_lock_action_families) != SECURITY_LOCK_EXPORT_ACTION_FAMILIES
-    ):
-        append_unique_error(
-            errors,
-            "security_lock_export_scoped routes must declare exactly action_family "
-            f"set {sorted(SECURITY_LOCK_EXPORT_ACTION_FAMILIES)}",
-        )
-    pending_deletion_action_families = [
-        route.get("action_family")
-        for route in routes
-        if isinstance(route, dict)
-        and route.get("classification") == "pending_deletion_scoped"
-        and route_set_key(route) in ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES
-    ]
+    validate_recovery_export_action_families(
+        routes, "security_lock_export_scoped", SECURITY_LOCK_EXPORT_ACTION_FAMILIES, errors
+    )
+    pending_deletion_action_families = validate_recovery_export_action_families(
+        routes,
+        "pending_deletion_scoped",
+        PENDING_DELETION_EXPORT_ACTION_FAMILIES,
+        errors,
+    )
     declared_pending_action_families = [
         action_family
         for action_family in pending_deletion_action_families
@@ -1954,21 +1958,6 @@ def validate_account_export_routes(
             errors,
             "pending_deletion_scoped account export routes must declare unique "
             "action_family values",
-        )
-    if (
-        len(pending_deletion_action_families)
-        != len(PENDING_DELETION_EXPORT_ACTION_FAMILIES)
-        or any(
-            not isinstance(action_family, str)
-            for action_family in pending_deletion_action_families
-        )
-        or set(pending_deletion_action_families)
-        != PENDING_DELETION_EXPORT_ACTION_FAMILIES
-    ):
-        append_unique_error(
-            errors,
-            "pending_deletion_scoped routes must declare exactly action_family "
-            f"set {sorted(PENDING_DELETION_EXPORT_ACTION_FAMILIES)}",
         )
 
 

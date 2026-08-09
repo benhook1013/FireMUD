@@ -301,6 +301,10 @@ entitlement_contract:
   response_authority: tenant_bound_entitlement_version
   cross_tenant_inheritance: forbidden
   account_wide_fallback: forbidden
+  reads_assess_eligibility_only: true
+  capacity_commitment_route: CommitTenantCapacityAdmission
+  capacity_commitment_required_when_implemented: true
+  capacity_mutation_without_commit: fail_closed
 required_live_check_vocabulary:
   # Captured in a private delegation and compared by the receiving owner.
   - account_generation
@@ -777,10 +781,12 @@ routes:
     conditional_branches:
       public_production:
         selector: realm_mode=public_production
+        classification: public_production_onboarding
         membership: pre_membership_discovery_allowed
         required_live_checks: [realm_visibility, runtime_entitlements]
       private_or_playtest:
         selector: realm_mode=private_or_playtest
+        classification: caller_membership_scoped
         membership: active_caller_bound_membership_required
         membership_authority_generation_applies: true
         membership_version_applies: true
@@ -803,7 +809,25 @@ routes:
     membership_authority_generation_applies: true
     realm_grant_authority: account_owned_when_non_public
     realm_grant_version: required_when_grant_gated
-    required_live_checks: [membership, membership_generation, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
+    required_live_checks: [membership_generation, realm_visibility, runtime_entitlements, admission_pointer]
+    branch_selector: exactly_one_realm_mode
+    conditional_branch_precedence:
+      branch_fields_override_top_level: true
+    conditional_branches:
+      public_production:
+        selector: realm_mode=public_production
+        classification: public_production_onboarding
+        membership: active_caller_bound_membership_required
+        required_live_checks: [membership, membership_generation, realm_visibility, runtime_entitlements, admission_pointer]
+      private_or_playtest:
+        selector: realm_mode=private_or_playtest
+        classification: caller_membership_scoped
+        membership: active_caller_bound_membership_required
+        membership_authority_generation_applies: true
+        membership_version_applies: true
+        realm_grant_authority: account_owned
+        realm_grant_version: required
+        required_live_checks: [membership, membership_generation, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer]
     canonical_errors:
       # JOIN_REQUIRED is only a next-step response after fresh authority
       # confirms public visibility and an allowed public-production join.
@@ -850,12 +874,15 @@ routes:
       required_live_checks_composition: common_plus_selected_branch
       branches:
         public_production_onboarding:
+          classification: public_production_onboarding
           required_live_checks: [membership, public_production_admission, realm_visibility]
           membership_creation: explicit_join_only
         returning_membership:
+          classification: gameplay_admission
           required_live_checks: [membership, realm_visibility]
           membership_creation: forbidden
         grant_backed_private_or_playtest:
+          classification: gameplay_admission
           required_live_checks: [membership, conditional_realm_access_grant]
           membership_creation: forbidden
     # Membership existence and conditional realm-grant checks belong to the
@@ -1016,6 +1043,24 @@ routes:
     realm_grant_authority: account_owned_when_non_public
     realm_grant_version: required_when_grant_gated
     required_live_checks: [realm_visibility, runtime_entitlements]
+    branch_selector: exactly_one_realm_mode
+    conditional_branch_precedence:
+      branch_fields_override_top_level: true
+    conditional_branches:
+      public_production:
+        selector: realm_mode=public_production
+        classification: public_production_onboarding
+        membership: pre_membership_discovery_allowed
+        required_live_checks: [realm_visibility, runtime_entitlements]
+      private_or_playtest:
+        selector: realm_mode=private_or_playtest
+        classification: player_bootstrap_tenant
+        membership: active_caller_bound_membership_required
+        membership_authority_generation_applies: true
+        membership_version_applies: true
+        realm_grant_authority: account_owned
+        realm_grant_version: required
+        required_live_checks: [realm_visibility, membership, membership_generation, membership_version, conditional_realm_access_grant, grant_version, runtime_entitlements]
   - service: account-service
     route: GET /auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters
     scope: tenant
@@ -1036,7 +1081,25 @@ routes:
     gameplay_binding: not_performed
     final_play_binding_cas: not_performed
     # playableStateScope is the server-derived projection of the canonical realm snapshot; callers cannot provide it.
-    required_live_checks: [membership, membership_generation, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match]
+    required_live_checks: [membership_generation, realm_visibility, runtime_entitlements, admission_pointer, connect_scope_match]
+    branch_selector: exactly_one_realm_mode
+    conditional_branch_precedence:
+      branch_fields_override_top_level: true
+    conditional_branches:
+      public_production:
+        selector: realm_mode=public_production
+        classification: public_production_onboarding
+        membership: active_caller_bound_membership_required
+        required_live_checks: [membership, membership_generation, public_production_visibility, public_production_admission, runtime_entitlements, admission_pointer, connect_scope_match]
+      private_or_playtest:
+        selector: realm_mode=private_or_playtest
+        classification: player_bootstrap_tenant
+        membership: active_caller_bound_membership_required
+        membership_authority_generation_applies: true
+        membership_version_applies: true
+        realm_grant_authority: account_owned
+        realm_grant_version: required
+        required_live_checks: [membership, membership_generation, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match]
     canonical_errors:
       any_of: [JOIN_REQUIRED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE, CONNECT_SCOPE_MISMATCH]
   - service: account-service
@@ -1059,7 +1122,25 @@ routes:
     gameplay_binding: not_performed
     final_play_binding_cas: not_performed
     # The direct-text producer applies the same canonical stateScope mapping as this REST producer.
-    required_live_checks: [membership, membership_generation, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match]
+    required_live_checks: [membership_generation, realm_visibility, runtime_entitlements, admission_pointer, connect_scope_match]
+    branch_selector: exactly_one_realm_mode
+    conditional_branch_precedence:
+      branch_fields_override_top_level: true
+    conditional_branches:
+      public_production:
+        selector: realm_mode=public_production
+        classification: public_production_onboarding
+        membership: active_caller_bound_membership_required
+        required_live_checks: [membership, membership_generation, public_production_visibility, public_production_admission, runtime_entitlements, admission_pointer, connect_scope_match]
+      private_or_playtest:
+        selector: realm_mode=private_or_playtest
+        classification: player_bootstrap_tenant
+        membership: active_caller_bound_membership_required
+        membership_authority_generation_applies: true
+        membership_version_applies: true
+        realm_grant_authority: account_owned
+        realm_grant_version: required
+        required_live_checks: [membership, membership_generation, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match]
     canonical_errors:
       any_of: [JOIN_REQUIRED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE, CONNECT_SCOPE_MISMATCH]
     delegates_to: entity-management-service/CreateCharacter
@@ -1683,8 +1764,14 @@ routes:
     action_family: deletion_cancel
     required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, pending_deletion_action_family, cancellation_window]
     mutation_contract: cancel_deletion_revoke_pending_access_then_restore_normal_generation
+    required_fields: [request_id]
+    idempotency_contract:
+      key: request_id
+      digest: account_computed_versioned_request_digest
+      exact_retry: returns_existing_deletion_cancellation_outcome
+      changed_digest: IDEMPOTENCY_CONFLICT
     canonical_errors:
-      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE]
+      any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE, IDEMPOTENCY_CONFLICT]
   - service: account-service
     route: POST /accounts/{accountId}/exports
     scope: account
@@ -1707,6 +1794,7 @@ routes:
     required_fields: [request_id]
     required_live_checks: [account_state_export_eligible, issuer_generation, current_account_generation, recent_account_authentication, export_availability]
     action_family: export_initiate
+    audit_contract: required_account_export_job_and_outcome
     mutation_contract: create_or_idempotently_replay_bounded_full_subject_export
     idempotency_contract:
       key: request_id
@@ -1941,7 +2029,7 @@ routes:
       mismatch: PERMISSION_DENIED
     action_family: export_content
     audit_contract: required_account_recovery_case_export_job_and_outcome
-    required_live_checks: [security_lock_export_credential_registry, security_lock_recovery_state, security_lock_export_action_family, recent_account_authentication, export_availability]
+    required_live_checks: [security_lock_export_credential_registry, security_lock_recovery_state, security_lock_export_action_family, export_availability]
     credential_use: bounded_expiring_export_operation_access
     response_profile: completed_export_artifact_only
     canonical_errors:
@@ -1972,7 +2060,7 @@ routes:
       mismatch: PERMISSION_DENIED
     action_family: export_content
     audit_contract: required_account_deletion_workflow_export_job_and_outcome
-    required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, pending_deletion_action_family, recent_account_authentication, export_availability]
+    required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, pending_deletion_action_family, export_availability]
     response_profile: completed_export_artifact_only
     canonical_errors:
       any_of: [AUTH_SESSION_REVOKED, AUTH_UNAVAILABLE, PERMISSION_DENIED]
@@ -2091,6 +2179,8 @@ routes:
         - issue_connect_token_uses_legacy_account_session_key_shape
         - issue_connect_token_target_registry_and_evidence_proof_is_incomplete
         - issue_connect_token_does_not_reread_membership_authority_generation
+        - issue_connect_token_private_playtest_grant_enforcement_is_missing
+        - issue_connect_token_private_playtest_entitlement_enforcement_is_missing
   - service: account-service
     route: Authenticate
     scope: account

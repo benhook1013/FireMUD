@@ -21,7 +21,7 @@ The current service implementation still combines pre-DSL trigger state and late
 
 ## Fairness Quotas and Budgets
 
-`ScriptQuotaService` limits how many times a script may execute within a configurable window. Counters are stored in Redis using keys of the form `automation:quota:<tenantId>:<scriptId>`. When a quota is exceeded the event is ignored and `script_quota_denied_total{scope, script_category, reason}` is incremented. Saga orchestration emits separate Saga-specific metrics and must not be conflated with quota enforcement.
+`ScriptQuotaService` limits how many times a script may execute within a configurable window. Counters are stored in Redis using keys of the form `automation:quota:<tenantId>:<scriptId>`. When a quota is exceeded the event is denied under the owning admission and audit semantics. The metric family, labels, and increment unit for that decision are defined only by [Table 4](../../system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix). Saga orchestration emits separate Saga-specific metrics and must not be conflated with quota enforcement.
 
 Dry-run and test executions use separate budgets and isolated capacity so privileged tooling cannot starve live automation.
 
@@ -35,7 +35,7 @@ Rollback orchestration rules:
 
 - Pinning must satisfy base-version cohesion (`patch.baseVersionId == runtimeVersionId` for the instance).
 - Rollback convergence waiting is bounded and delegates to the [Pin Convergence Acknowledgment Predicate](../../system-architecture-scripting-rollout-and-rollback.md#pin-convergence-acknowledgment-predicate). This service must not declare convergence from its own acknowledgment; it consumes the owner workflow outcome and keeps admission and ticks paused when the canonical predicate has not succeeded.
-- Timeout transition must emit `ScriptRollbackConvergenceTimedOut` and increment `automation_rollback_convergence_timeout_total` according to [Table 4](../../system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix).
+- Game Session alone owns the convergence deadline, `ROLLBACK_CONVERGENCE_TIMEOUT` transition, and terminal timeout signal. Automation consumes that durable workflow state or signal; it must not run a competing timeout, emit the timeout signal, or define a local timeout metric. Any metric consequence follows [Table 4](../../system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix).
 - Rollback orchestration follows the durable state machine in [Scripting Rollout and Rollback](../../system-architecture-scripting-rollout-and-rollback.md#rollback-orchestration-state-machine-required). This service must resume its idempotent participation from the last durable owner state rather than restarting or accidentally unpausing.
 - **Target-state drain mapping:** `DRAINING` remains active until a fresh `GetAutomationDrainStatus` response for the current `{tenantId, gameInstanceId, regionId?}` scope and `admissionEpoch` reports `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0`. `activeExecutionCount` is exactly current-epoch `EVALUATING` pre-DSL triggers plus `HANDOFF_IN_FLIGHT` evaluated descriptors; `pendingCancelableWorkItemCount` is exactly current-epoch `PENDING_EVALUATION` pre-DSL triggers plus `PENDING`/`INDEXED` evaluated descriptors. Terminal states, rows from another scope or epoch, and derived queue pointers are excluded.
 - **Current fail-closed counts:** the live projection counts `EVALUATING`, including unresolved stale rows, and `HANDOFF_IN_FLIGHT` as active; it counts every current handoff-capable `PENDING_EVALUATION` row as pending because the separate `PENDING`/`INDEXED` descriptor layer is not yet persisted. Any unresolved count, stale response, or earlier-epoch response keeps `DRAINING` active.
@@ -43,7 +43,7 @@ Rollback orchestration rules:
 
 ## Metrics and Audit Guidance
 
-The authoritative metric-family names, labels, and increment units live in [Table 4](../../system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix). Service-level metric examples include:
+The authoritative metric-family names, labels, and increment units live only in [Table 4](../../system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix). The examples below are pointers to those definitions, not service-local metric schemas:
 
 - `automation_script_triggers_total`, `automation_script_skips_total`, and `automation_script_triggers_dropped_total` for scheduler activity and drops.
 - `automation_script_queue_delay_seconds` and `automation_script_leadership_changes_total` for queue latency and leader stability.

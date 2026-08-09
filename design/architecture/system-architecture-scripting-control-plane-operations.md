@@ -52,7 +52,7 @@ This document does not redefine the direct API request/response contracts or can
 - **Game Session Service**
   - Owns tick-scheduling pause/resume.
   - Owns the canonical rollback workflow state keyed by `controlPlaneRequestId`.
-  - Produces the pin-change and rollback-timeout events used for operator visibility.
+  - Is the sole producer of the pin-change and rollback-timeout events used for operator visibility.
 
 - **Automation & Scripting Service**
   - Owns admission pause/resume.
@@ -238,7 +238,7 @@ Semantics:
 - Idempotent.
 - Under the shared queue mutation/tick lease, terminal-marks matching durable Game Session command rows before post-commit Redis queue/pending cleanup. Pre-batch commands use `executionOutcome = LOST_BEFORE_STAGING`; an explicitly retryable command with a durable prior tick-effect binding uses `executionOutcome = ABANDONED`. Both use `gameplayResult = NOT_APPLIED`, `failureCode = ROLLBACK_PURGED`, and the validated nonblank ingress `reason` as `failureMessage`.
 - Batch-bound work that is not in the explicit retry queue is not purged through this hook; it requires effect-ledger remediation or rollback recovery because it has crossed the tick-batch boundary.
-- Emits an operator-visible metric for purge activity and for version-fence drops (exact metric names and label sets follow the observability contract, including separate script and plugin version-fence metric families).
+- Emits an operator-visible metric for purge activity and for version-fence drops; exact metric names, labels, and increment units follow [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix), while audit and handoff diagnostics follow the observability contract.
 
 Outputs:
 
@@ -280,7 +280,7 @@ Semantics:
 
 - Idempotent.
 - Marks all pending outbox work items for the specified patch/scope as canceled so they are never handed off again.
-- Emits an operator audit entry and increments a rollback-specific metric (exact metric names are defined by the observability contract).
+- Emits an operator audit entry and applies the rollback-specific metric consequence defined by [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix).
 
 Outputs:
 
@@ -324,9 +324,11 @@ Inputs:
 Semantics:
 
 - Idempotent.
-- Creates one durable replay record with a new execution identity for each eligible selected `DEAD_LETTERED` command descriptor. The original identity remains terminal and becomes causation evidence for the new replay; its audit row is never reopened or appended with replay execution history. The canonical identity and idempotency rules are defined in [Operator Replay of DEAD_LETTERED Work](./system-architecture-scripting-runtime-execution.md#operator-replay-of-dead_lettered-work).
+- Creates one durable replay record with a new `replayExecutionIdentity` and a new `automationDispatchId` for each eligible selected `DEAD_LETTERED` command descriptor. The selected original complete Command-Handoff Identity, including its original `automationDispatchId` and `commandOrdinal`, is immutable causation evidence; the original identity remains terminal and its audit row is never reopened or appended with replay execution history. Control Plane Operations owns the canonical replay identity and idempotency rules.
 - Repeating the same `controlPlaneRequestId` for the same original execution identity returns the previously created replay record/result rather than creating another replay identity.
 - Must enforce bounded batch size per request.
+- Each selected command is replayed under the existing single-command replay contract: the new replay command uses its new `automationDispatchId` with `commandOrdinal=0`; the original command ordinal remains only in the immutable causation identity. The durable claim stores the replay identity, replay dispatch, outcome/result, winning `controlPlaneRequestId`, and canonical request fingerprint.
+- An exact retry with the same `controlPlaneRequestId` and original command reference returns that stored replay identity/result; selector-form retries of an already claimed original identity reuse the same result and cannot create a second replay identity.
 - Reusing a `controlPlaneRequestId` with a different canonical request fingerprint returns an idempotency conflict and cannot alter an existing claim; a distinct request or selector reuses the existing per-original result.
 - Resolves and normalizes each selected command reference, then validates and claims its original execution identity atomically. A durable unique replay claim keyed by the complete Command-Handoff Identity, independent of `controlPlaneRequestId` and selector form, prevents two requests or overlapping selectors from creating two replay identities for one command. Filter matches are expanded to individual command references; a parent with multiple descriptors is not implicitly replayed as one atomic unit.
 - A successful claim durably stores the original execution identity, new `replayExecutionIdentity`, outcome/result, winning `controlPlaneRequestId`, and canonical request fingerprint. An exact retry reuses that stored result; a request using an already claimed original identity through another selector also reuses the existing result and cannot replace its fingerprint or create another replay identity. Reuse does not reopen the original audit row.
@@ -342,8 +344,8 @@ Outputs:
 - `replayedCount` (best-effort count of selected commands; may be approximate for large batches)
 - `results[]` (bounded to the selected input batch, with one result per selected reference):
   - `reference` (the complete Command-Handoff Identity)
-  - `originalExecutionIdentity`
-  - `replayExecutionIdentity` when a replay identity was created or reused; identity semantics remain owned by [Operator Replay of DEAD_LETTERED Work](./system-architecture-scripting-runtime-execution.md#operator-replay-of-dead_lettered-work)
+  - `originalExecutionIdentity` (the immutable complete Command-Handoff Identity retained as causation evidence)
+  - `replayExecutionIdentity` when a replay identity was created or reused; replay identity semantics are owned by this control-plane operation, while the runtime document records local execution consequences
   - `outcome` (`created`, `reused`, or `rejected`)
   - `rejectionReason` when `outcome=rejected`, using a bounded application reason such as `REPLAY_VERSION_FENCE_MISMATCH`
 
@@ -415,7 +417,7 @@ The canonical rollback ordering, durable state machine, convergence timeout, dra
 This document retains only the participating API consequences:
 
 - Automation & Scripting implements the admission barrier, durable schedule reconciliation, work-item cancellation, drain-status reads, pin-convergence reads, and auditable cleanup APIs described above.
-- Game Session owns the durable rollback workflow and patch pin, and exposes tick pause/resume, queued-command purge, and convergence APIs. Logging & Admin may orchestrate those APIs but must not persist a competing workflow state machine.
+- Game Session owns the durable rollback workflow and patch pin, exposes tick pause/resume, queued-command purge, and convergence APIs, and is the sole producer of the rollback-timeout signal. Automation consumes the durable timeout state/signal and must not create a competing timeout or recovery state machine. Logging & Admin may orchestrate those APIs but must not persist a competing workflow state machine.
 - The same `controlPlaneRequestId`, authenticated operator `actor`/`requestedBy`, and `reason` flow through every mutating step. System-owned reconciliation records use a separate `executedBy=system:automation` rather than replacing the operator identity.
 - Patch- and plugin-scoped cancel/purge calls omit `regionId` for an instance-wide repin so every affected region is covered. API retries remain idempotent under the owning request/response contracts.
 
@@ -430,4 +432,4 @@ Operationally, use control-plane APIs rather than direct data-store edits for pe
 - [Scripting & Automation: Control Plane API](./system-architecture-scripting-control-plane-api.md) defines the direct request/response contracts, canonical errors, and admission rules.
 - [Scripting & Automation: Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md) defines promotion and rollback ordering, orchestration state, convergence, and degraded-operation policy.
 - [Scripting & Automation: Control Plane Events](./system-architecture-scripting-control-plane-events.md) defines the durable event families emitted by the workflow APIs in this document.
-- [Scripting Observability Contract](./system-architecture-scripting-observability-contract.md) defines telemetry fields, metric names, labels, and correlation guidance referenced by the workflow steps in this document; the normative audit tables and scripting lifecycle/rollout documents own audit stage/outcome semantics and final status transitions.
+- [Scripting Observability Contract](./system-architecture-scripting-observability-contract.md) defines audit and handoff diagnostics referenced by the workflow steps in this document; [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix) owns metric names, labels, and increment units, while the normative audit tables and scripting lifecycle/rollout documents own audit stage/outcome semantics and final status transitions.

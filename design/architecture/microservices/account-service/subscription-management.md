@@ -157,7 +157,7 @@ These behaviors tie directly into the revocation rules in [Session Behavior](../
 The canonical per-tenant membership, entitlement response, freshness, and billing-sequence contract is [Account Runtime and Data](./runtime-and-data.md#membership-and-entitlement-authority). This document retains the subscription-local consequences:
 
 - Account exposes separate runtime, tenant-admin, and support-safe entitlement surfaces; subscription status and plan metadata are projected into the canonical runtime response rather than maintained by consumers.
-- Game Session and World Management use `GetTenantEntitlementsForRuntime(tenantId, requestId)` before instance start, new bindings, scaling, or other capacity-affecting lifecycle work. `grace` may preserve already-authorized gameplay while blocking new commitments.
+- Game Session and World Management use `GetTenantEntitlementsForRuntime(tenantId, requestId)` before instance start, new bindings, scaling, or other capacity-affecting lifecycle work. This read assesses eligibility only and never commits capacity. Capacity-changing work must use `CommitTenantCapacityAdmission` when implemented and fail closed until that Account-owned commitment route exists. `grace` may preserve already-authorized gameplay while blocking new commitments.
 - Runtime consumers invalidate or refresh cached entitlement state when Account emits `SubscriptionStatusChanged` or `TenantBillingStateChanged`; Account remains the sole producer of those events.
 - Strict capacity admission remains an Account-owned target-only commitment and is described by the [capacity-attempt proof obligations](../../system-architecture-versioning-runtime.md#focused-capacity-attempt-proof-obligations).
 
