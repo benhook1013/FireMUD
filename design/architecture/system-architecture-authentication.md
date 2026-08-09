@@ -27,7 +27,7 @@ Authentication applies the canonical `authorityTuple` unchanged to admission and
 - First-party browser and mobile-browser gameplay use the short-lived `player-bootstrap` JWT for HTTPS bootstrap calls and carry the resulting gameplay-connect token only in the `Firemud-Connect-Token` HttpOnly cookie. First-party native-mobile and other first-party non-browser clients using a cookie jar remain cookie-only. Telnet and other non-WebSocket text transports use credential-bearing `LOGIN` and do not carry public JWTs or connect tokens.
 - `/sessions/{sessionId}/refresh-roles` exists as an operational hook, but current role-refresh token regeneration and periodic active-session `game-session-account-delegation` rotation remain implementation gaps; the placeholder response is not proof of refresh.
 - The current Account `Authenticate` proto path still lacks the target `requestId`/immutable-digest replay envelope and orphan-token retirement contract described below; those fields and recovery semantics remain implementation/proof gaps rather than implied current behavior.
-- **Current reauthentication boundary:** After a gameplay binding is terminated by an authority cutoff or the bounded cleanup path, current restoration requires fresh `LOGIN` plus `PLAY` and current authoritative checks. Target disconnect, expiry, revocation, refresh, and resume sequencing is owned by [Session Behavior](./system-architecture-session-behavior.md); fresh `LOGIN` then `PLAY` remains the client-visible reauthentication path when required.
+- **Current reauthentication boundary:** After a gameplay binding is terminated by an authority cutoff or the bounded cleanup path, current restoration requires fresh `LOGIN` plus `PLAY` and current authoritative checks. Token refresh, replacement, revocation, fencing, and logout are owned by [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md); gameplay binding continuity, reconnect, and resume orchestration remain in [Session Behavior](./system-architecture-session-behavior.md). Fresh `LOGIN` then `PLAY` remains the client-visible reauthentication path when required.
 - Account's JWKS endpoint and conditional secret watcher are implemented, but asymmetric-profile validation, non-exportable signer delegation for asymmetric signing, rotation/convergence, issued-token registry issuance/storage/consumer enforcement, and Account-owned authority generations remain target-state and unimplemented. No authority-generation issuance, advancement, propagation, or validation proof is currently claimed.
 
 ## Contract Decisions (Normative)
@@ -200,7 +200,7 @@ All route classifications represented in a validated source inventory must also 
 
 ## Login and Session Flow
 
-The target direct-text player-facing flow is intentionally simple. Public discovery precedes credential entry; authenticated discovery then supplies the target used by the conditional membership and character gates:
+The target direct-text player-facing flow is intentionally simple. Optional non-discovery `HELP` may precede the mandatory public discovery; it never replaces `WORLDS`. Authenticated discovery then supplies the target used by the conditional membership and character gates:
 
 ```text
    WORLDS
@@ -217,7 +217,7 @@ The sequence above is the target flow. Current-versus-target deviations are reco
 
 `<world>` is either an index from the caller's exact `WORLDS` browse snapshot or the stable `tenantSlug/worldSlug` selector carried by that response. A bare `tenantSlug` is accepted only when the tenant exposes exactly one visible authored world; a bare tenant-scoped `worldSlug` is never resolved globally. `[realm]` is a `realmSlug` under the resolved world or an index from the corresponding `REALMS` snapshot. Menu indices are response-local conveniences and are never stored or forwarded as durable identity. `REALMS` is authenticated discovery after `LOGIN`; `JOIN` is conditional on the selected public-production membership state; `CHARS` or allowed character creation follows only after membership is `ACTIVE`.
 
-Before login, `HELP` is available only as non-discovery help, while `WORLDS` is the sole anonymous discovery wire command, internally classified as `WORLDS_PUBLIC`, and exposes bounded public-production catalog/availability metadata. `REALMS` and `CHARS` are authenticated post-login discovery commands; they must not be exposed as anonymous pre-login discovery surfaces. After login, authenticated `WORLDS`, `REALMS`, and `CHARS` may provide caller-bound membership/grant-aware discovery.
+Before login, optional `HELP` is available only as non-discovery help; the mandatory `WORLDS` command is the sole anonymous discovery wire command, internally classified as `WORLDS_PUBLIC`, and exposes bounded public-production catalog/availability metadata. `WORLDS` must complete before `LOGIN`. `REALMS` and `CHARS` are authenticated post-login discovery commands; they must not be exposed as anonymous pre-login discovery surfaces. After login, authenticated `WORLDS`, `REALMS`, and `CHARS` may provide caller-bound membership/grant-aware discovery.
 
 `WORLDS` deliberately has two internal route classifications rather than one replacing the other:
 
@@ -237,6 +237,20 @@ These modes are complementary: public browse remains available before authentica
 - During authenticated `REALMS` resolution, Account Service issues an opaque, short-lived `connectScopeId` for the selected realm. It is bound to the authenticated caller and the exact server-resolved `{tenantId, worldSlug, realmSlug, gameInstanceId, catalogRevision, pointerVersion}` snapshot, including its expiry; it is not a client-selected target or a durable realm handle. The same snapshot is the only source from which Game Session derives `playableStateScope` for `CHARS`; that policy projection is never supplied as join input.
 - Game Session obtains that scope and retains it as transport-local session state alongside the response-local `REALMS` selector or index. The text client receives ordinary selectors and display data only; it never receives or supplies authority IDs, a scope, a tenant, a runtime target, a catalog revision, or a pointer version.
 - When the client selects `JOIN`, Game Session calls Account's `JoinPublicProductionMembership` with only trusted caller context, the retained `connectScopeId`, and a server-generated high-entropy `requestId`. Game Session does not accept a client-supplied request ID, `playableStateScope`, storage key, or pass selector/target fields as authority. The `requestId` identifies the logical join attempt and is reused only for its retries; a changed attempt uses a new value.
+- The canonical `JOIN` idempotency digest is `SHA-256` over the UTF-8 bytes of this exact newline-delimited preimage, including the final newline and preserving this field order:
+
+  ```text
+  operationKind=JOIN
+  accountId=<authenticated accountId>
+  callerBinding=<validated caller binding>
+  worldSlug=<resolved worldSlug>
+  realmSlug=<resolved realmSlug>
+  connectScopeId=<verified connectScopeId>
+  catalogRevision=<bound catalogRevision>
+  pointerVersion=<bound pointerVersion>
+  ```
+
+  Field names, separators, and the final newline are literal ASCII bytes; values are the exact canonical UTF-8 wire strings from the authenticated caller binding and verified scope and may not contain `=` or a newline. No trimming, case folding, Unicode normalization, alternate serialization, or client-supplied replacement is permitted. Account stores the resulting `requestDigest` with the `requestId`; an exact retry replays the stored outcome and a different digest returns `IDEMPOTENCY_CONFLICT`.
 - Account validates the caller binding, scope validity, expiry, and exact bound routing snapshot before applying the join operation. A missing, expired, or mismatched retained scope fails closed and requires fresh authenticated `REALMS` discovery. An unavailable authority dependency returns `AUTH_UNAVAILABLE` and does not permit selector fallback; reachable invalid or contradictory scope evidence returns the applicable scope failure. The server must not re-resolve a stale selector or accept client-supplied target fields as fallback.
 
 Normative semantic split:
@@ -522,9 +536,11 @@ OK PLAY Entered Demo World / Playtest Fork as Mara
 
 Gameplay commands such as `LOOK` and `SAY` are gated by both the authentication handshake (`LOGIN`) and the lobby selection step (`PLAY`). Any text command received before login should be rejected with stage-aware guidance such as `ERROR LOGIN_REQUIRED ...`, and any gameplay command received before `PLAY` should be rejected with stage-aware guidance such as `ERROR PLAY_REQUIRED ...`. Except in explicitly documented development/test bypass modes that grant temporary access, these commands are not processed for anonymous or unscoped sessions, keeping the gameplay queue free of unauthenticated traffic.
 
-Routing errors on the authenticated text-protocol path preserve the Account classification through Game Session rather than being collapsed into a generic login result. Reachable missing, malformed, ambiguous, stale, or otherwise contract-invalid pointer evidence is passed through as `ERROR ADMISSION_POINTER_UNAVAILABLE <bounded message>`; Game Session keeps `LOGIN` state, creates no gameplay binding, and requires fresh `REALMS`/routing reconciliation before retry. An unreachable or timed-out pointer authority is passed through as `ERROR UNAVAILABLE <bounded message>` for retryable `AUTH_UNAVAILABLE`, not as pointer-invalid evidence and not as permission to use a cached selector or target. A representative interaction is:
+Routing errors on the authenticated text-protocol path preserve the Account classification through Game Session rather than being collapsed into a generic login result. Reachable missing, malformed, ambiguous, stale, or otherwise contract-invalid pointer evidence is passed through as `ERROR ADMISSION_POINTER_UNAVAILABLE <bounded message>`; Game Session keeps `LOGIN` state, creates no gameplay binding, and requires fresh `REALMS`/routing reconciliation before retry. An unreachable or timed-out pointer authority is passed through as `ERROR AUTH_UNAVAILABLE <bounded message>`, not as pointer-invalid evidence and not as permission to use a cached selector or target. A representative interaction is:
 
 ```text
+REALMS docks
+ERROR AUTH_UNAVAILABLE Realm routing authority is unavailable; retry REALMS.
 REALMS docks
 ERROR ADMISSION_POINTER_UNAVAILABLE Realm routing evidence is invalid; retry REALMS.
 REALMS docks
@@ -548,7 +564,7 @@ After public `WORLDS` discovery and successful `LOGIN`, the Game Session Service
   world index or the stable tenant-qualified selector returned by `WORLDS`). Responses include the
   default production realm plus any explicitly authorized additional realms such as playtest
   forks.
-- **Target `JOIN <world>`** – `<world>` remains an adapter-local selector. The Account-owned `JoinPublicProductionMembership` lifecycle, idempotency, caller binding, and `connectScopeId`/`requestId` contract are defined in [Account Runtime and Data](./microservices/account-service/runtime-and-data.md#membership-and-entitlement-authority); first-party clients expose the equivalent `Join & Play` action through Account bootstrap.
+- **Target `JOIN <world>`** – `<world>` remains an adapter-local selector. The Account-owned `JoinPublicProductionMembership` operation consumes the canonical lifecycle, caller-binding, digest, and `connectScopeId`/`requestId` contract defined in [Authentication](#direct-text-realms-to-join-scope-normative); Account Runtime and Data records the local persistence and transaction consequences. First-party clients expose the equivalent `Join & Play` action through Account bootstrap.
 - `CHARS <world> [realm]` – list characters for the selected world and optional realm; it does not require a selected character. Game Session resolves `playableStateScope` from the exact server-side realm snapshot before the character query; callers cannot provide that scope, a storage key, or a join-derived substitute.
 - `PLAY <world> [realm] [character]` – enter gameplay by selecting a world, an optional realm, and an optional character.
 
@@ -658,7 +674,7 @@ Gameplay identity is single-mode and canonical: uniqueness key `{tenantId, gameI
 
 ## Logout Ordering
 
-The canonical per-token and logout-all ordering, token fencing, Gateway deny-marker, and reconciliation contract is defined once in [Session Behavior](./system-architecture-session-behavior.md#control-plane-logout). Authentication surfaces follow that contract; logout is not inferred from registry presence or absence.
+The canonical token refresh, replacement, generation, revocation, fencing, and logout contract is defined once in [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md). Authentication surfaces follow that contract; gameplay binding cleanup and reconnect orchestration remain in [Session Behavior](./system-architecture-session-behavior.md). Logout is not inferred from registry presence or absence.
 
 ---
 
@@ -667,7 +683,7 @@ The canonical per-token and logout-all ordering, token fencing, Gateway deny-mar
 The detailed token and lifecycle contracts now live in focused sibling docs:
 
 - [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md) defines JWT claim requirements, token profiles, issued-token registry records, authority generations, and Redis-outage behavior for token validation.
-- [Session Behavior](./system-architecture-session-behavior.md) defines gameplay takeover, session rebinding, mid-session role refresh, membership-version handling, and control-plane logout behavior.
+- [Session Behavior](./system-architecture-session-behavior.md) defines gameplay takeover, session rebinding, binding-refresh orchestration, and membership-version handling; token refresh, revocation, fencing, and logout are owned by [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md).
 
 ---
 
@@ -729,7 +745,7 @@ When adding a new public HTTP/gRPC route:
 
 ## Session Lifecycle and Rebinding
 
-Gameplay takeover, reconnect, token refresh, membership-version handling, and control-plane logout behavior are defined in [Session Behavior](./system-architecture-session-behavior.md). This parent doc keeps the admission and authorization model while the sibling doc carries the long-form lifecycle rules.
+Gameplay takeover, reconnect, binding-refresh orchestration, and membership-version handling are defined in [Session Behavior](./system-architecture-session-behavior.md). Token refresh, replacement, generation, revocation, fencing, and logout are defined in [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md). This parent doc keeps the admission and authorization model.
 
 ---
 
@@ -743,7 +759,7 @@ Gameplay takeover, reconnect, token refresh, membership-version handling, and co
 | Session State | Stored in Redis; bound to socket by Game Session Service |
 | Gameplay Continuity TTL | Separate `session_expiration_ms` policy with an independent effective maximum of five minutes; the configurable JWT cleanup margin applies only to issued-token registry retention |
 | Issued-Token Registry TTL | Defined by [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md); the local margin is `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` and activity does not extend it |
-| Gameplay Reauthentication | Current and target reauthentication are recorded in [Implementation Status](#implementation-status); [Session Behavior](./system-architecture-session-behavior.md) owns disconnect, expiry, revocation, refresh, and resume, with fresh `LOGIN` then `PLAY` when required |
+| Gameplay Reauthentication | Current and target reauthentication are recorded in [Implementation Status](#implementation-status); [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md) owns token refresh, revocation, and fencing, while [Session Behavior](./system-architecture-session-behavior.md) owns binding disconnect, reconnect, and resume, with fresh `LOGIN` then `PLAY` when required |
 | Role Enforcement | Meta/control services validate declared JWT profiles; gameplay services use Security-owned mTLS caller trust plus the validated `PlayerExecutionContext` contract |
 | Role Updates | Target: Account-owned role/token refresh is intended to be invisible in-session; current refresh gaps are recorded in [Implementation Status](#implementation-status) |
 | Multi-Client Behavior | One gameplay session per `{tenantId, gameInstanceId, characterId}`; takeover and rebinding are defined in [Session Behavior](./system-architecture-session-behavior.md#multi-client-behavior-and-session-takeover) |

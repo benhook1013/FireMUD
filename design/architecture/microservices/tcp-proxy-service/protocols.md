@@ -2,7 +2,7 @@
 
 ## Normative Target Contract
 
-The target Telnet flow is non-discovery `HELP` or the sole anonymous discovery command `WORLDS` -> credential-bearing `LOGIN` -> authenticated `REALMS` -> conditional `JOIN` -> conditional `CHARS`/character creation -> `PLAY`. `REALMS` and `CHARS` are never anonymous discovery. The proxy forwards player-facing selectors only; Game Session resolves the target and derives `playableStateScope` server-side from the exact realm catalog/pointer snapshot. No Telnet command or join request carries `playableStateScope`, storage keys, `tenantId`, `gameInstanceId`, or `PlayerExecutionContext` as caller authority.
+The target Telnet flow is optional non-discovery `HELP`, then mandatory anonymous `WORLDS` discovery -> credential-bearing `LOGIN` -> authenticated `REALMS` -> conditional `JOIN` -> conditional `CHARS`/character creation -> `PLAY`. `HELP` never replaces `WORLDS`; `REALMS` and `CHARS` are never anonymous discovery. The proxy forwards player-facing selectors only; Game Session resolves the target and derives `playableStateScope` server-side from the exact realm catalog/pointer snapshot. No Telnet command or join request carries `playableStateScope`, storage keys, `tenantId`, `gameInstanceId`, or `PlayerExecutionContext` as caller authority.
 
 ## Implementation Status
 
@@ -15,13 +15,13 @@ The discovery-snapshot shortcut is restricted to the first-party token-backed We
 
 The following are canonical contracts across Telnet and WebSocket paths:
 
-- Target Telnet discovery-first without typed attach hints follows non-discovery `HELP` as needed, fresh `WORLDS` discovery -> credential-bearing `LOGIN` -> authenticated `REALMS` -> the Authentication-owned conditional `JOIN` when required -> conditional `CHARS`/character creation when no valid selected character exists -> `PLAY`. In the current runtime, explicit `JOIN` is unavailable, hidden default routing is bootstrapped, and missing public-production membership does not create membership. Direct text does not use a first-party WebSocket discovery snapshot.
+- Target Telnet discovery-first without typed attach hints follows optional non-discovery `HELP`, mandatory fresh `WORLDS` discovery -> credential-bearing `LOGIN` -> authenticated `REALMS` -> the Authentication-owned conditional `JOIN` when required -> conditional `CHARS`/character creation when no valid selected character exists -> `PLAY`. In the current runtime, explicit `JOIN` is unavailable, hidden default routing is bootstrapped, and missing public-production membership does not create membership. Direct text does not use a first-party WebSocket discovery snapshot.
 - Proxy -> Gateway WebSocket hop is mTLS-authenticated in player-facing environments under [Security](../../system-architecture-security.md#tls-termination--internal-encryption).
 - Proxy bridge-availability circuit breaker uses deterministic open/half-open/closed admission behavior during sustained upstream unreachability.
 
 ## Recommended Telnet Client Flows
 
-These flows describe how Telnet traffic is forwarded into the shared login/session pipeline. `LOGIN` / `LOGON` / `JOIN` / `PLAY` semantics are canonical in [Authentication](../../system-architecture-authentication.md#login-and-session-flow), while multi-client continuity is canonical in [Session Behavior](../../system-architecture-session-behavior.md#multi-client-behavior-and-session-takeover). The target flow includes explicit `JOIN`; current Telnet clients cannot perform `JOIN` and fail closed with non-actionable `JOIN_REQUIRED` only when an otherwise eligible public-production response reports `membershipExists=false`. An existing response with `gameplayAdmissionAllowed=false` retains its established denial. The missing connect-token membership-authority-generation reread is a separate gap.
+These flows describe how Telnet traffic is forwarded into the shared login/session pipeline. `LOGIN` / `LOGON` / `JOIN` / `PLAY` semantics are canonical in [Authentication](../../system-architecture-authentication.md#login-and-session-flow), while multi-client continuity is canonical in [Session Behavior](../../system-architecture-session-behavior.md#multi-client-behavior-and-session-takeover). The target flow requires `WORLDS` before `LOGIN`; optional `HELP` is non-discovery and does not replace it. The target flow includes explicit `JOIN`; current Telnet clients cannot perform `JOIN` and fail closed with non-actionable `JOIN_REQUIRED` only when an otherwise eligible public-production response reports `membershipExists=false`. An existing response with `gameplayAdmissionAllowed=false` retains its established denial. The missing connect-token membership-authority-generation reread is a separate gap.
 
 - **Target canonical player flow**
   - Connect to the TCP Proxy Service.

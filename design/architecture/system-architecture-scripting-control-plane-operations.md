@@ -279,7 +279,7 @@ Inputs:
 Semantics:
 
 - Idempotent.
-- Marks all pending outbox work items for the specified patch/scope as canceled so they are never handed off again.
+- Applies the canonical two-layer cancellation mapping: `PENDING_EVALUATION` transitions to terminal `CANCELED` without DSL evaluation with `finalStage=ADMISSION`, `finalOutcome=canceled`; `EVALUATING` is fenced and its descriptor-commit marker is inspected, with committed descriptors continuing through descriptor cancellation, explicit no-descriptor cancellation using `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and stale recovery using terminal `DEAD_LETTERED` with `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and `finalReason=stale_execution_fenced`; evaluated descriptors in `PENDING` or `INDEXED` transition to `CANCELED` with durable `cancelReason`, `finalStage=WORK_ITEM_PERSIST`, and `finalOutcome=canceled`. No path re-enters the DSL.
 - Emits an operator audit entry and applies the rollback-specific metric consequence defined by [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix).
 
 Outputs:
@@ -307,7 +307,7 @@ Semantics:
 
 Outputs:
 
-- `items[]` (including `workItemId`, the public alias for canonical `outboxWorkItemId`, `reference` containing the complete Command-Handoff Identity, Trigger Identity, `workItemStatus`, `createdAt`, `updatedAt`, `cancelReason`)
+- `items[]` (including `workItemId`, the public alias for canonical `outboxWorkItemId`, `reference` containing the complete Command-Handoff Identity and Trigger Identity when the row is an evaluated descriptor, `workItemStatus`, `createdAt`, `updatedAt`, `cancelReason`). For pre-DSL `PENDING_EVALUATION` or `EVALUATING` rows, the target descriptor `reference` is omitted/null because no command identity exists.
 - `nextPageToken`
 
 #### `ReplayDeadLetteredWorkItems`
@@ -392,7 +392,7 @@ Inputs:
 Semantics:
 
 - Idempotent.
-- **Target-state semantics:** cancellation is fencing-aware across both durable layers. `PENDING_EVALUATION` transitions by compare-and-set to `CANCELED` without entering the DSL. `EVALUATING` is fenced and its descriptor-commit marker is inspected first; a committed descriptor is resumed from durable descriptors without DSL re-entry, while an explicit cancellation with no committed descriptor transitions the trigger to `CANCELED` and stale recovery uses the canonical `DEAD_LETTERED` mapping. Evaluated descriptors in eligible `PENDING` or `INDEXED` status transition to `workItemStatus=CANCELED` with durable `cancelReason`. Each transition records the corresponding stage-aware `script_event_audit` cancellation outcome. The current implementation lacks the descriptor layer and recovery owner, so these are target-state semantics rather than current live proof.
+- **Target-state semantics:** cancellation is fencing-aware across both durable layers. `PENDING_EVALUATION` transitions by compare-and-set to `CANCELED` without entering the DSL. `EVALUATING` is fenced and its descriptor-commit marker is inspected first; a committed descriptor is resumed from durable descriptors without DSL re-entry, while an explicit cancellation with no committed descriptor transitions the trigger to `CANCELED` with `finalStage=DSL_EVAL` and stale recovery uses the canonical `DEAD_LETTERED` mapping. Evaluated descriptors in eligible `PENDING` or `INDEXED` status transition to `workItemStatus=CANCELED` with durable `cancelReason`, `finalStage=WORK_ITEM_PERSIST`, and `finalOutcome=canceled`. Each transition records the corresponding stage-aware `script_event_audit` cancellation outcome. The current implementation lacks the descriptor layer and recovery owner, so these are target-state semantics rather than current live proof.
 - Required for plugin disable/rollback/revocation workflows to avoid repeated execution-time plugin version fence drops and queue growth.
 
 Outputs:
