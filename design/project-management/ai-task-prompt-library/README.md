@@ -42,7 +42,9 @@ These prompts form the deliberate post-design review suite.
 - [Capability, journey, status, and evidence census](./system-review-prompts/11-capability-journey-status-and-evidence-census.md) – Checks every product capability and persona journey against design, implementation tracking, and proof status.
 - [Cross-service invariant and workflow closure](./system-review-prompts/12-cross-service-invariant-and-workflow-closure.md) – Follows important workflows and failure rules across service boundaries.
 
-### Focused System Reviews
+## Commissioned System Reviews
+
+These prompts may run independently for a commissioned selection, but that result is not complete whole-system coverage; the whole-system orchestration also invokes them in its declared order.
 
 - [Service boundary review](./system-review-prompts/20-service-boundary-review.md) – Reusable review for one selected deployed service.
 - [Identity, tenancy, account lifecycle, and data rights](./system-review-prompts/21-identity-tenancy-account-lifecycle-and-data-rights.md) – Accounts, admission, sessions, entitlements, commerce, and account data.
@@ -53,7 +55,7 @@ These prompts form the deliberate post-design review suite.
 - [Operations, delivery, recovery, and observability](./system-review-prompts/26-operations-delivery-recovery-and-observability.md) – Deployment, environments, monitoring, runbooks, backups, and restore design.
 - [Persona journeys, UX, and accessibility](./system-review-prompts/27-persona-journeys-ux-and-accessibility.md) – Player, creator, and operator experience across implemented and target surfaces.
 
-### Release And Environment Gates
+## Release And Environment Gates
 
 - [Release readiness gate](./system-review-prompts/30-release-readiness-gate.md) – Assesses a declared release scope without claiming live-environment proof.
 - [Traffic-open and restore gate](./system-review-prompts/31-traffic-open-and-restore-gate.md) – Assesses event-bound deployment, traffic-opening, and restore evidence.

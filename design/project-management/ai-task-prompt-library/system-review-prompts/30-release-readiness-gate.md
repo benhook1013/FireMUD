@@ -39,7 +39,7 @@ Check that:
 - unresolved design, security, privacy, data-rights, corruption, or user-blocking findings have an accepted human disposition;
 - rollback and recovery expectations are defined for the release type;
 - repository validation evidence is current for the release revision; and
-- missing live-environment or provider evidence remains explicitly outside this static gate.
+- the status of live-environment or provider evidence is explicit: unavailable evidence required for the release claim makes the recommendation `incomplete`, while evidence that is not required leaves the result `static-only` and not a release-readiness claim.
 
 ## Output
 
@@ -48,7 +48,7 @@ Provide:
 1. the assessed release scope;
 2. a gate table for claimed capabilities, journeys, public contracts, proof, security prerequisites, artifacts, rollback, and known gaps;
 3. release blockers and evidence limitations;
-4. a recommendation: `ready`, `not-ready`, or `incomplete`; and
+4. a recommendation: `ready`, `not-ready`, `incomplete`, or `static-only`; and
 5. the review state required by the shared contract.
 
-`ready` is a recommendation to the human release owner, not authorization to publish, deploy, merge, or open traffic.
+`ready` is a recommendation to the human release owner, not authorization to publish, deploy, merge, or open traffic. A `static-only` result is not a release-readiness claim.
