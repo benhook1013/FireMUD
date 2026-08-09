@@ -264,11 +264,11 @@ done
 
 require_contains "$ci_path" 'PR Metadata Edit (Validation Summary)'
 require_contains "$smoke_path" 'PR Metadata Edit (Smoke Summary)'
-require_contains "$smoke_path" 'name: Smoke Summary (Pending)'
-require_contains "$smoke_path" 'needs: [changes, smoke-gate, smoke-summary-pending]'
+assert_job_contains smoke.yml smoke-summary-pending 'name: Smoke Summary (Pending)'
+assert_job_contains smoke.yml smoke-summary-pending 'tracked-by-smoke-gate'
+assert_job_contains smoke.yml smoke-summary 'needs: [changes, smoke-gate, smoke-summary-pending]'
 # shellcheck disable=SC2016 # This assertion intentionally matches a literal GitHub expression.
-require_contains "$smoke_path" 'SMOKE_GATE_RESULT: ${{ needs.smoke-gate.result }}'
-require_contains "$smoke_path" 'tracked-by-smoke-gate'
+assert_job_contains smoke.yml smoke-summary 'SMOKE_GATE_RESULT: ${{ needs.smoke-gate.result }}'
 if grep -Eq '^  smoke-lite:' "$smoke_path"; then
   echo "smoke.yml must not restore the redundant smoke-lite job" >&2
   exit 1
@@ -300,7 +300,11 @@ for job in changes smoke-summary-pending smoke-summary; do
 done
 assert_job_contains smoke.yml smoke-summary-pending 'const smokeGateStatus = fullEnabled ? "pending" : "not-required";'
 assert_job_contains smoke.yml smoke-summary-pending 'Full-stack smoke runs in Build Runtime Images and is tracked by Smoke Gate'
+assert_job_contains smoke.yml smoke-summary-pending 'firemud-smoke-summary'
+assert_job_contains smoke.yml smoke-summary-pending 'comment.user?.login === "github-actions[bot]"'
 assert_job_contains smoke.yml smoke-summary 'const smokeGateStatus ='
+assert_job_contains smoke.yml smoke-summary 'firemud-smoke-summary'
+assert_job_contains smoke.yml smoke-summary 'comment.user?.login === "github-actions[bot]"'
 assert_job_contains smoke.yml smoke-gate 'pull-requests: read'
 assert_job_contains smoke.yml smoke-gate 'github.rest.pulls.get'
 assert_job_contains smoke.yml smoke-gate 'pullRequest.state !== "open"'
@@ -329,12 +333,19 @@ require_contains "$image_wait_path" 'if ! workflow_payload="$('
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
 require_contains "$image_wait_path" 'if ! publisher_payload="$('
 require_contains "$preview_path" "cancel-in-progress: \${{ github.event_name == 'pull_request' || inputs.action == 'destroy' }}"
-require_contains "$preview_path" 'Publish preview lifecycle state'
-require_contains "$preview_path" 'const isStaleTarget ='
-require_contains "$preview_path" 'pullRequest.head?.sha !== headSha'
-require_contains "$preview_path" 'github.paginate('
-require_contains "$preview_path" 'updated_at || comment.created_at'
-require_contains "$preview_path" 'always() && !cancelled()'
+assert_job_contains preview.yml preview-plan 'Publish preview lifecycle state'
+for job in preview-plan preview-deploy preview-destroy; do
+  assert_job_contains preview.yml "$job" 'const isStaleTarget ='
+  assert_job_contains preview.yml "$job" 'pullRequest.head?.sha !== headSha'
+  assert_job_contains preview.yml "$job" 'github.paginate('
+  assert_job_contains preview.yml "$job" 'updated_at || comment.created_at'
+  assert_job_contains preview.yml "$job" 'comment.user?.login === "github-actions[bot]"'
+  assert_job_contains preview.yml "$job" 'firemud-preview-summary'
+  assert_job_contains preview.yml "$job" 'isLegacyWorkflowComment'
+done
+for job in preview-deploy preview-destroy; do
+  assert_job_contains preview.yml "$job" 'always() && !cancelled()'
+done
 if grep -Fq 'Clear previous preview summary comments' "$preview_path"; then
   echo "Preview workflow must update the canonical summary instead of clearing it" >&2
   exit 1
@@ -346,6 +357,8 @@ for mode in deploying target unavailable success cleanup removed failure; do
   require_contains "$ROOT_DIR/dev-tools/hosted/preview/write-preview-summary.sh" "  $mode)"
 done
 require_contains "$ROOT_DIR/dev-tools/hosted/preview/write-preview-summary.sh" '## ✅ Preview Removed'
+require_contains "$ROOT_DIR/dev-tools/hosted/preview/write-preview-summary.sh" '- Web: pending'
+require_contains "$ROOT_DIR/dev-tools/hosted/preview/write-preview-summary.sh" '- TCP: pending'
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
 require_contains "$preview_reconciler_path" '--workflow "${preview_workflow_name}"'
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell source.

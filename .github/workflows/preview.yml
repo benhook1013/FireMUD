@@ -268,7 +268,7 @@ jobs:
               "unavailable",
             ];
             const summaryText = execFileSync("bash", args, { encoding: "utf8" });
-            const body = `### Preview Summary\n\n${summaryText.trimEnd()}\n`;
+            const body = `<!-- firemud-preview-summary -->\n### Preview Summary\n\n${summaryText.trimEnd()}\n`;
 
             const comments = await github.paginate(
               github.rest.issues.listComments,
@@ -279,9 +279,14 @@ jobs:
               }
             );
 
-            const previewComments = comments.filter((comment) =>
-              comment.body.startsWith("### Preview Summary")
-            );
+            const isBotAuthored = (comment) => comment.user?.login === "github-actions[bot]";
+            const isWorkflowComment = (comment) =>
+              isBotAuthored(comment) && comment.body.includes("<!-- firemud-preview-summary -->");
+            const isLegacyWorkflowComment = (comment) =>
+              isBotAuthored(comment) && comment.body.startsWith("### Preview Summary");
+            const generatedComments = comments.filter(isWorkflowComment);
+            const legacyComments = comments.filter(isLegacyWorkflowComment);
+            const previewComments = [...generatedComments, ...legacyComments];
 
             const commentTimestamp = (comment) => {
               const parsed = Date.parse(comment.updated_at || comment.created_at || "");
@@ -306,12 +311,20 @@ jobs:
               return;
             }
 
+            const deleteCommentIfPresent = async (comment) => {
+              try {
+                await github.rest.issues.deleteComment({
+                  ...context.repo,
+                  comment_id: comment.id,
+                });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            };
+
             for (const comment of previewComments) {
               if (comment.id === existing?.id) continue;
-              await github.rest.issues.deleteComment({
-                ...context.repo,
-                comment_id: comment.id,
-              });
+              await deleteCommentIfPresent(comment);
             }
 
             if (existing) {
@@ -742,7 +755,7 @@ jobs:
             }
 
             const summaryText = execFileSync("bash", args, { encoding: "utf8" });
-            const bodyLines = ["### Preview Summary", "", summaryText.trimEnd()];
+            const bodyLines = ["<!-- firemud-preview-summary -->", "### Preview Summary", "", summaryText.trimEnd()];
             if (mode === "success") {
               bodyLines.push(`- Demo login username: ${process.env.DEMO_SMOKE_USERNAME}`);
               bodyLines.push(`- Demo login email: ${process.env.DEMO_SMOKE_EMAIL}`);
@@ -759,9 +772,14 @@ jobs:
               }
             );
 
-            const previewComments = comments.filter((comment) =>
-              comment.body.startsWith("### Preview Summary")
-            );
+            const isBotAuthored = (comment) => comment.user?.login === "github-actions[bot]";
+            const isWorkflowComment = (comment) =>
+              isBotAuthored(comment) && comment.body.includes("<!-- firemud-preview-summary -->");
+            const isLegacyWorkflowComment = (comment) =>
+              isBotAuthored(comment) && comment.body.startsWith("### Preview Summary");
+            const generatedComments = comments.filter(isWorkflowComment);
+            const legacyComments = comments.filter(isLegacyWorkflowComment);
+            const previewComments = [...generatedComments, ...legacyComments];
             const commentTimestamp = (comment) => {
               const parsed = Date.parse(comment.updated_at || comment.created_at || "");
               return Number.isNaN(parsed) ? 0 : parsed;
@@ -785,12 +803,20 @@ jobs:
               return;
             }
 
+            const deleteCommentIfPresent = async (comment) => {
+              try {
+                await github.rest.issues.deleteComment({
+                  ...context.repo,
+                  comment_id: comment.id,
+                });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            };
+
             for (const comment of previewComments) {
               if (comment.id === existing?.id) continue;
-              await github.rest.issues.deleteComment({
-                ...context.repo,
-                comment_id: comment.id,
-              });
+              await deleteCommentIfPresent(comment);
             }
 
             if (existing) {
@@ -923,7 +949,7 @@ jobs:
             ];
             if (mode === "failure") args.push("cleanup");
             const summaryText = execFileSync("bash", args, { encoding: "utf8" });
-            const body = `### Preview Summary\n\n${summaryText.trimEnd()}\n`;
+            const body = `<!-- firemud-preview-summary -->\n### Preview Summary\n\n${summaryText.trimEnd()}\n`;
 
             const comments = await github.paginate(
               github.rest.issues.listComments,
@@ -934,9 +960,14 @@ jobs:
               }
             );
 
-            const previewComments = comments.filter((comment) =>
-              comment.body.startsWith("### Preview Summary")
-            );
+            const isBotAuthored = (comment) => comment.user?.login === "github-actions[bot]";
+            const isWorkflowComment = (comment) =>
+              isBotAuthored(comment) && comment.body.includes("<!-- firemud-preview-summary -->");
+            const isLegacyWorkflowComment = (comment) =>
+              isBotAuthored(comment) && comment.body.startsWith("### Preview Summary");
+            const generatedComments = comments.filter(isWorkflowComment);
+            const legacyComments = comments.filter(isLegacyWorkflowComment);
+            const previewComments = [...generatedComments, ...legacyComments];
             const commentTimestamp = (comment) => {
               const parsed = Date.parse(comment.updated_at || comment.created_at || "");
               return Number.isNaN(parsed) ? 0 : parsed;
@@ -960,12 +991,20 @@ jobs:
               return;
             }
 
+            const deleteCommentIfPresent = async (comment) => {
+              try {
+                await github.rest.issues.deleteComment({
+                  ...context.repo,
+                  comment_id: comment.id,
+                });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            };
+
             for (const comment of previewComments) {
               if (comment.id === existing?.id) continue;
-              await github.rest.issues.deleteComment({
-                ...context.repo,
-                comment_id: comment.id,
-              });
+              await deleteCommentIfPresent(comment);
             }
 
             if (existing) {

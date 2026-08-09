@@ -22,8 +22,8 @@ case "$mode" in
 - PR: #${pr_number}
 - Head SHA: \`${head_sha}\`
 - Image tag: \`${image_tag}\`
-- Web: https://${hostname}
-- TCP: \`${hostname} ${telnet_port}\`
+- Web: pending
+- TCP: pending
 EOF
     ;;
   target)

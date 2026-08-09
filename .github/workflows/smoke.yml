@@ -160,6 +160,7 @@ jobs:
             }
 
             const body = [
+              "<!-- firemud-smoke-summary -->",
               "### Smoke Summary",
               headline,
               "",
@@ -168,23 +169,51 @@ jobs:
               `- ${statusIcon(fullResult)} PR Full-Stack Smoke: \`${fullResult}\``,
             ].join("\n");
 
-            const { data: comments } = await github.rest.issues.listComments({
-              ...context.repo,
-              issue_number: context.issue.number
-            });
-
-            const summaryComments = comments.filter(comment =>
-              comment.body.startsWith("### Smoke Summary")
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              {
+                ...context.repo,
+                issue_number: context.issue.number,
+                per_page: 100,
+              }
             );
-            const existing = summaryComments[0];
 
-            if (summaryComments.length > 1) {
-              for (const comment of summaryComments.slice(1)) {
+            const isBotAuthored = (comment) => comment.user?.login === "github-actions[bot]";
+            const isWorkflowComment = (comment) =>
+              isBotAuthored(comment) && comment.body.includes("<!-- firemud-smoke-summary -->");
+            const isLegacyWorkflowComment = (comment) =>
+              isBotAuthored(comment) && comment.body.startsWith("### Smoke Summary");
+            const generatedComments = comments.filter(isWorkflowComment);
+            const legacyComments = comments.filter(isLegacyWorkflowComment);
+            const summaryComments = [...generatedComments, ...legacyComments];
+            const commentTimestamp = (comment) => {
+              const parsed = Date.parse(comment.updated_at || comment.created_at || "");
+              return Number.isNaN(parsed) ? 0 : parsed;
+            };
+            const existing = summaryComments.reduce((latest, comment) => {
+              if (!latest) return comment;
+              const latestTimestamp = commentTimestamp(latest);
+              const candidateTimestamp = commentTimestamp(comment);
+              if (candidateTimestamp !== latestTimestamp) {
+                return candidateTimestamp > latestTimestamp ? comment : latest;
+              }
+              return Number(comment.id) > Number(latest.id) ? comment : latest;
+            }, null);
+
+            const deleteCommentIfPresent = async (comment) => {
+              try {
                 await github.rest.issues.deleteComment({
                   ...context.repo,
                   comment_id: comment.id,
                 });
+              } catch (error) {
+                if (error.status !== 404) throw error;
               }
+            };
+
+            for (const comment of summaryComments) {
+              if (comment.id === existing?.id) continue;
+              await deleteCommentIfPresent(comment);
             }
 
             if (existing) {
@@ -257,6 +286,7 @@ jobs:
             }
 
             const body = [
+              "<!-- firemud-smoke-summary -->",
               "### Smoke Summary",
               headline,
               "",
@@ -265,23 +295,51 @@ jobs:
               `- ${statusIcon(fullResult)} PR Full-Stack Smoke: \`${fullResult}\``,
             ].join("\n");
 
-            const { data: comments } = await github.rest.issues.listComments({
-              ...context.repo,
-              issue_number: context.issue.number
-            });
-
-            const summaryComments = comments.filter(comment =>
-              comment.body.startsWith("### Smoke Summary")
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              {
+                ...context.repo,
+                issue_number: context.issue.number,
+                per_page: 100,
+              }
             );
-            const existing = summaryComments[0];
 
-            if (summaryComments.length > 1) {
-              for (const comment of summaryComments.slice(1)) {
+            const isBotAuthored = (comment) => comment.user?.login === "github-actions[bot]";
+            const isWorkflowComment = (comment) =>
+              isBotAuthored(comment) && comment.body.includes("<!-- firemud-smoke-summary -->");
+            const isLegacyWorkflowComment = (comment) =>
+              isBotAuthored(comment) && comment.body.startsWith("### Smoke Summary");
+            const generatedComments = comments.filter(isWorkflowComment);
+            const legacyComments = comments.filter(isLegacyWorkflowComment);
+            const summaryComments = [...generatedComments, ...legacyComments];
+            const commentTimestamp = (comment) => {
+              const parsed = Date.parse(comment.updated_at || comment.created_at || "");
+              return Number.isNaN(parsed) ? 0 : parsed;
+            };
+            const existing = summaryComments.reduce((latest, comment) => {
+              if (!latest) return comment;
+              const latestTimestamp = commentTimestamp(latest);
+              const candidateTimestamp = commentTimestamp(comment);
+              if (candidateTimestamp !== latestTimestamp) {
+                return candidateTimestamp > latestTimestamp ? comment : latest;
+              }
+              return Number(comment.id) > Number(latest.id) ? comment : latest;
+            }, null);
+
+            const deleteCommentIfPresent = async (comment) => {
+              try {
                 await github.rest.issues.deleteComment({
                   ...context.repo,
                   comment_id: comment.id,
                 });
+              } catch (error) {
+                if (error.status !== 404) throw error;
               }
+            };
+
+            for (const comment of summaryComments) {
+              if (comment.id === existing?.id) continue;
+              await deleteCommentIfPresent(comment);
             }
 
             if (existing) {
