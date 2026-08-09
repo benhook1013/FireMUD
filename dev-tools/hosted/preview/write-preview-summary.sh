@@ -15,6 +15,17 @@ telnet_port="$6"
 failure_stage="${7:-}"
 
 case "$mode" in
+  deploying)
+    cat <<EOF
+## ⏳ Preview Deploying
+
+- PR: #${pr_number}
+- Head SHA: \`${head_sha}\`
+- Image tag: \`${image_tag}\`
+- Web: https://${hostname}
+- TCP: \`${hostname} ${telnet_port}\`
+EOF
+    ;;
   target)
     cat <<EOF
 ## ⏳ Preview Target
@@ -47,6 +58,26 @@ EOF
 - Image tag: \`${image_tag}\`
 - Web: https://${hostname}
 - TCP: \`telnet ${hostname} ${telnet_port}\`
+EOF
+    ;;
+  cleanup)
+    cat <<EOF
+## ⏳ Preview Cleanup In Progress
+
+- PR: #${pr_number}
+- Head SHA: \`${head_sha}\`
+- Previous host: https://${hostname}
+- TCP: unavailable
+EOF
+    ;;
+  removed)
+    cat <<EOF
+## ✅ Preview Removed
+
+- PR: #${pr_number}
+- Head SHA: \`${head_sha}\`
+- Previous host: https://${hostname}
+- TCP: unavailable
 EOF
     ;;
   failure)

@@ -108,11 +108,11 @@ jobs:
             );
             core.setOutput("run_smoke_full", runSmokeFull ? "true" : "false");
 
-  smoke-summary:
-    name: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Summary)' || 'Smoke Summary' }}
+  smoke-summary-pending:
+    name: Smoke Summary (Pending)
     runs-on: ubuntu-latest
     permissions:
-      # Only this job publishes or updates the pull request smoke summary comment.
+      # This job publishes the initial pending state; Smoke Summary publishes the terminal state.
       contents: read
       pull-requests: write
     needs: [changes]
@@ -123,7 +123,7 @@ jobs:
         with:
           egress-policy: audit
 
-      - name: 💬 Publish Smoke Summary Comment
+      - name: 💬 Publish Pending Smoke Summary Comment
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
@@ -136,6 +136,7 @@ jobs:
               : "unavailable";
             const changesHealthy = changesStatus === "success";
             const fullEnabled = process.env.RUN_SMOKE_FULL === "true";
+            const smokeGateStatus = fullEnabled ? "pending" : "not-required";
             const fullResult = !changesHealthy
               ? `not-evaluated (${changesStatus} changes detection)`
               : fullEnabled
@@ -145,7 +146,7 @@ jobs:
               if (value === "success") return "✅";
               if (value === "failure") return "❌";
               if (value === "cancelled") return "⚪";
-              if (value === "tracked-by-smoke-gate") return "⏳";
+              if (value === "pending") return "⏳";
               if (value === "unavailable") return "⚠️";
               if (value.startsWith("not-evaluated")) return "⚠️";
               return "⏭️";
@@ -153,7 +154,7 @@ jobs:
 
             let headline = "⏭️ Runtime smoke is not required";
             if (!changesHealthy) {
-              headline = `⚠️ Smoke scope detection ${changesStatus}; Smoke Gate remains authoritative`;
+              headline = `⚠️ Smoke scope detection ${changesStatus}; Smoke Gate is still authoritative`;
             } else if (fullEnabled) {
               headline = "⏳ Full-stack smoke runs in Build Runtime Images and is tracked by Smoke Gate";
             }
@@ -163,6 +164,104 @@ jobs:
               headline,
               "",
               `- ${statusIcon(changesStatus)} Changes detection: \`${changesStatus}\``,
+              `- ${statusIcon(smokeGateStatus)} Smoke Gate: \`${smokeGateStatus}\``,
+              `- ${statusIcon(fullResult)} PR Full-Stack Smoke: \`${fullResult}\``,
+            ].join("\n");
+
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo,
+              issue_number: context.issue.number
+            });
+
+            const summaryComments = comments.filter(comment =>
+              comment.body.startsWith("### Smoke Summary")
+            );
+            const existing = summaryComments[0];
+
+            if (summaryComments.length > 1) {
+              for (const comment of summaryComments.slice(1)) {
+                await github.rest.issues.deleteComment({
+                  ...context.repo,
+                  comment_id: comment.id,
+                });
+              }
+            }
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                ...context.repo,
+                comment_id: existing.id,
+                body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: context.issue.number,
+                body
+              });
+            }
+
+  smoke-summary:
+    name: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Summary)' || 'Smoke Summary' }}
+    runs-on: ubuntu-latest
+    permissions:
+      # This job updates the canonical comment to the terminal Smoke Gate result.
+      contents: read
+      pull-requests: write
+    needs: [changes, smoke-gate, smoke-summary-pending]
+    if: ${{ always() && github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
+      - name: 💬 Publish Smoke Summary Comment
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          RUN_SMOKE_FULL: ${{ needs.changes.outputs.run_smoke_full }}
+          SMOKE_GATE_RESULT: ${{ needs.smoke-gate.result }}
+        with:
+          script: |
+            const rawChangesResult = process.env.CHANGES_RESULT || "";
+            const changesStatus = ["success", "failure", "cancelled"].includes(rawChangesResult)
+              ? rawChangesResult
+              : "unavailable";
+            const changesHealthy = changesStatus === "success";
+            const fullEnabled = process.env.RUN_SMOKE_FULL === "true";
+            const rawSmokeGateResult = process.env.SMOKE_GATE_RESULT || "";
+            const smokeGateStatus = ["success", "failure", "cancelled", "skipped"].includes(rawSmokeGateResult)
+              ? rawSmokeGateResult
+              : "unavailable";
+            const fullResult = !changesHealthy
+              ? `not-evaluated (${changesStatus} changes detection)`
+              : fullEnabled
+                ? smokeGateStatus
+                : "skipped (run_smoke_full=false)";
+            const statusIcon = (value) => {
+              if (value === "success") return "✅";
+              if (value === "failure") return "❌";
+              if (value === "cancelled") return "⚪";
+              if (value === "skipped") return "⏭️";
+              if (value === "unavailable") return "⚠️";
+              if (value.startsWith("not-evaluated")) return "⚠️";
+              return "⏭️";
+            };
+
+            let headline = "⏭️ Runtime smoke is not required";
+            if (!changesHealthy) {
+              headline = `${statusIcon(smokeGateStatus)} Smoke Gate completed with ${smokeGateStatus}; scope detection was ${changesStatus}`;
+            } else if (fullEnabled) {
+              headline = `${statusIcon(smokeGateStatus)} Full-stack smoke completed with Smoke Gate: ${smokeGateStatus}`;
+            }
+
+            const body = [
+              "### Smoke Summary",
+              headline,
+              "",
+              `- ${statusIcon(changesStatus)} Changes detection: \`${changesStatus}\``,
+              `- ${statusIcon(smokeGateStatus)} Smoke Gate: \`${smokeGateStatus}\``,
               `- ${statusIcon(fullResult)} PR Full-Stack Smoke: \`${fullResult}\``,
             ].join("\n");
 

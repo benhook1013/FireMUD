@@ -264,6 +264,10 @@ done
 
 require_contains "$ci_path" 'PR Metadata Edit (Validation Summary)'
 require_contains "$smoke_path" 'PR Metadata Edit (Smoke Summary)'
+require_contains "$smoke_path" 'name: Smoke Summary (Pending)'
+require_contains "$smoke_path" 'needs: [changes, smoke-gate, smoke-summary-pending]'
+require_contains "$smoke_path" 'SMOKE_GATE_RESULT: ${{ needs.smoke-gate.result }}'
+require_contains "$smoke_path" 'tracked-by-smoke-gate'
 if grep -Eq '^  smoke-lite:' "$smoke_path"; then
   echo "smoke.yml must not restore the redundant smoke-lite job" >&2
   exit 1
@@ -290,9 +294,12 @@ for job in \
   assert_job_condition ci.yml "$job" "$required_condition"
 done
 
-for job in changes smoke-summary; do
+for job in changes smoke-summary-pending smoke-summary; do
   assert_job_condition smoke.yml "$job" "$required_condition"
 done
+assert_job_contains smoke.yml smoke-summary-pending 'const smokeGateStatus = fullEnabled ? "pending" : "not-required";'
+assert_job_contains smoke.yml smoke-summary-pending 'Full-stack smoke runs in Build Runtime Images and is tracked by Smoke Gate'
+assert_job_contains smoke.yml smoke-summary 'const smokeGateStatus ='
 assert_job_contains smoke.yml smoke-gate 'pull-requests: read'
 assert_job_contains smoke.yml smoke-gate 'github.rest.pulls.get'
 assert_job_contains smoke.yml smoke-gate 'pullRequest.state !== "open"'
@@ -321,6 +328,23 @@ require_contains "$image_wait_path" 'if ! workflow_payload="$('
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
 require_contains "$image_wait_path" 'if ! publisher_payload="$('
 require_contains "$preview_path" "cancel-in-progress: \${{ github.event_name == 'pull_request' || inputs.action == 'destroy' }}"
+require_contains "$preview_path" 'Publish preview lifecycle state'
+require_contains "$preview_path" 'const isStaleTarget ='
+require_contains "$preview_path" 'pullRequest.head?.sha !== headSha'
+require_contains "$preview_path" 'github.paginate('
+require_contains "$preview_path" 'updated_at || comment.created_at'
+require_contains "$preview_path" 'always() && !cancelled()'
+if grep -Fq 'Clear previous preview summary comments' "$preview_path"; then
+  echo "Preview workflow must update the canonical summary instead of clearing it" >&2
+  exit 1
+fi
+require_contains "$preview_path" 'PREVIEW_CLEANUP_OUTCOME'
+require_contains "$preview_path" '? "removed"'
+require_contains "$preview_path" 'mode = isCleanup ? "cleanup" : "deploying"'
+for mode in deploying target unavailable success cleanup removed failure; do
+  require_contains "$ROOT_DIR/dev-tools/hosted/preview/write-preview-summary.sh" "  $mode)"
+done
+require_contains "$ROOT_DIR/dev-tools/hosted/preview/write-preview-summary.sh" '## ✅ Preview Removed'
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
 require_contains "$preview_reconciler_path" '--workflow "${preview_workflow_name}"'
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
