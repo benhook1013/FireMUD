@@ -40,7 +40,6 @@ public final class GameplayWebSocketDriver implements AutoCloseable {
         return text;
       }
     }
-
   }
 
   private final Duration waitTimeout;
