@@ -2,9 +2,11 @@
 
 ## Implementation Status
 
-The target contract requires explicit `TCP_PROXY_TELNET_MODE` selection and startup rejection of incompatible listener and TLS settings in shared and player-facing environments. `EDGE_PROXY` additionally requires an authenticated, cryptographically protected edge-to-PROXY-listener channel and retained deployment evidence for the exact edge and listener identities. Current code still exposes independent port and `TCP_PROXY_TLS_ENABLED` settings without that cross-setting validator or protected-edge-channel readiness proof, so operators can currently construct an invalid or unauthenticated mixed mode. Those gaps are not supported target configurations and require implementation and focused startup proof before player-facing readiness.
+The target contract requires explicit `TCP_PROXY_TELNET_MODE` selection and startup rejection of incompatible listener and TLS settings in shared and player-facing environments. `EDGE_PROXY` additionally requires an authenticated, cryptographically protected edge-to-PROXY-listener channel and retained deployment evidence for the exact edge and listener identities. Runtime configuration does not contain the deployment topology needed to determine whether both public ingress modes are externally exposed; public-listener exposure exclusivity is therefore a deployment-preflight responsibility under [PREFLIGHT-TELNET-001](../../system-architecture-deploy-preflight-policy.md#preflight-telnet-001). Current code still exposes independent port and `TCP_PROXY_TLS_ENABLED` settings without that cross-setting validator or protected-edge-channel readiness proof, so operators can currently construct an invalid or unauthenticated mixed mode. Those gaps are not supported target configurations and require implementation and focused startup proof before player-facing readiness.
 
 ## Minimal Production Configuration Checklist
+
+The security policy for these settings is owned by [Security](../../system-architecture-security.md#telnet-command-handling-and-controls); this section retains the TCP Proxy startup and listener consequences.
 
 For any shared or player-facing environment, operators should ensure at least:
 
@@ -13,12 +15,14 @@ For any shared or player-facing environment, operators should ensure at least:
 - `TCP_PROXY_MAX_CONNECTIONS` and `TCP_PROXY_MAX_CONNECTIONS_PER_IP` are set to non-zero values sized for expected load and NAT patterns; the `0` defaults are reserved for local/dev and CI.
 - Public player-facing Telnet must select exactly one TLS mode per endpoint: edge termination with internal PROXY forwarding, or direct TLS termination at TCP Proxy. These modes must not be combined.
 - Shared and player-facing deployments set `TCP_PROXY_TELNET_MODE` explicitly to `EDGE_PROXY` or `DIRECT_TLS`; an unset mode is allowed only for local development and automated tests.
-- In `EDGE_PROXY` mode, the edge forwards Telnet with PROXY protocol into `TCP_PROXY_PROXY_PROTOCOL_PORT` only through an authenticated, cryptographically protected channel such as mTLS. The deployment must provide the listener identity, trust roots, and exact permitted edge identity through the terminating listener or an attested service-mesh/sidecar boundary; source allowlists and `NetworkPolicy` are defense in depth, not sender authentication. Startup/readiness must reject player-facing `EDGE_PROXY` when that binding and its evidence are absent. The listener remains internal-only, `TCP_PROXY_TLS_ENABLED` must be `false`, and the raw `TCP_PROXY_PORT` listener is unbound or explicitly private and unreachable by players. Recovered PROXY client addresses become trusted only after channel identity validation succeeds.
+- In `EDGE_PROXY` mode, the edge forwards Telnet with PROXY protocol into `TCP_PROXY_PROXY_PROTOCOL_PORT` only through the authenticated, cryptographically protected channel required by [Security](../../system-architecture-security.md#telnet-command-handling-and-controls). The listener remains internal-only, `TCP_PROXY_TLS_ENABLED` must be `false`, and recovered client addresses become trusted only after channel identity validation succeeds.
 - In `DIRECT_TLS` mode, the public listener uses `TCP_PROXY_TLS_ENABLED=true` and does not accept a PROXY header; raw and PROXY-protocol listeners remain local, test-only, or explicitly private.
-- Startup rejects an unknown mode, missing required listener or certificate settings, `EDGE_PROXY` with TCP Proxy TLS enabled, `DIRECT_TLS` without TCP Proxy TLS enabled, or a configuration that exposes both public modes.
+- Startup rejects an unknown mode, missing required listener or certificate settings, `EDGE_PROXY` with TCP Proxy TLS enabled, or `DIRECT_TLS` without TCP Proxy TLS enabled. It cannot determine simultaneous public exposure from runtime configuration; deployment preflight must prove that only the selected public mode is externally exposed. The canonical preflight evidence entrypoint is [`dev-tools/deploy/preflight.py`](../../../../dev-tools/deploy/preflight.py), which does not yet emit this target-state-only result.
 - Genuinely client-facing plaintext Telnet connections should trigger the canonical landing-menu warning recommending Telnet-over-TLS or the web client instead. The trusted internal plaintext hop after edge TLS termination is not itself a plaintext client connection and does not trigger that warning.
 
 ## TLS and Trust Surfaces
+
+[Security](../../system-architecture-security.md#tls-termination--internal-encryption) owns the cross-service trust policy. The table below records the TCP Proxy-local listener identities and delivery variables.
 
 The TCP Proxy Service participates in three distinct TLS and trust boundaries:
 
@@ -29,7 +33,7 @@ The TCP Proxy Service participates in three distinct TLS and trust boundaries:
 | WebSocket mTLS bridge | TCP Proxy Service -> Spring Cloud Gateway | **Gateway WebSocket client mTLS identity:** TCP Proxy presents its dedicated client certificate to Gateway and validates Gateway with the configured CA. This is not the identity used by TCP Proxy's gRPC server. | `GATEWAY_WS_URL`, `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH`, `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH`, `FIREMUD_GATEWAY_WS_CA_CERT_PATH` |
 | Internal gRPC mTLS | Internal clients -> TCP Proxy Service | **Internal gRPC server mTLS identity:** TCP Proxy presents its gRPC server certificate to internal callers and validates their client identity. This is not the Gateway WebSocket client identity or the Telnet server-TLS identity. | `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH` |
 
-Plaintext local and throwaway test profiles may omit these identities. Local/dev and throwaway test profiles may also reuse the generated `certs/client.*` material used by the current Compose/test setup. Those repeated certificate defaults are local/dev-only convenience values, not identity defaults for shared or player-facing environments. In shared and player-facing environments, Telnet server TLS, Proxy-to-Gateway WebSocket mTLS, and internal gRPC mTLS use separate private identities appropriate to their distinct trust surfaces; reusing certificate files is not promotion evidence.
+Plaintext local and throwaway test profiles may omit these identities and may reuse generated `certs/client.*` material. Those defaults are local/dev-only convenience values; shared and player-facing deployments use separate private identities, and reused certificate files are not promotion evidence.
 
 ## Redis Role Guidance
 
@@ -84,6 +88,8 @@ When any `TCP_PROXY_DEFAULT_*` bootstrap routing variables are used together, th
 
 ## WebSocket mTLS to Spring Cloud Gateway
 
+The trust and identity requirements are defined by [Security](../../system-architecture-security.md#tls-termination--internal-encryption); the TCP Proxy-local wiring is:
+
 In production, the TCP Proxy Service connects to Spring Cloud Gateway over `wss://` using mutual TLS by dialing a dedicated internal-only Gateway WebSocket mTLS listener.
 
 - Client certificate and key are loaded from `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH` and `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH`.
@@ -98,13 +104,15 @@ Shared and player-facing startup must validate every effective private key for a
 
 When overriding `GATEWAY_WS_URL` in a `wss://` configuration, the host portion of the URL is used for both SNI and hostname verification. If you point `GATEWAY_WS_URL` at an IP address or a hostname that is not present in the Gateway certificate SANs, the TLS handshake fails with `reason="cert_validation"` and no insecure fallback occurs. In cluster-internal deployments, prefer the Kubernetes DNS name for the Gateway service.
 
-Environment policy is normative:
+The local environment consequence is:
 
 - Proxy -> Gateway gameplay traffic uses mTLS in all shared and player-facing environments.
 - Shared and player-facing environments must use `wss://` to the internal-only Gateway mTLS listener; they must not serve player-facing traffic over `ws://`.
 - Player-facing environments must fail startup or admission if Proxy -> Gateway mTLS identity verification is unavailable.
 
 ## Connection Limits and Abuse Protection
+
+The cross-service abuse ownership split is defined in [Security](../../system-architecture-security.md#brute-force-defense-and-abuse-handling); these are the TCP Proxy-local hard ceilings.
 
 Because the TCP Proxy Service sits in the network DMZ, it enforces hard resource ceilings even though richer abuse policies live in Spring Cloud Gateway and Game Session.
 
@@ -114,7 +122,7 @@ Because the TCP Proxy Service sits in the network DMZ, it enforces hard resource
 - Read idle timeouts and maximum connection lifetimes close connections that send no data or linger indefinitely.
 - Maximum line-length constraints reject oversized lines without forwarding partial input.
 
-The proxy’s connection caps, idle timeouts, and buffer depth limits are hard ceilings at the network edge. Gateway rate limiting and Game Session quotas remain higher-layer policy controls.
+The proxy’s connection caps, idle timeouts, and buffer depth limits are hard ceilings at the network edge. Gateway rate limiting and Game Session quotas remain higher-layer controls.
 
 ## Tuning TCP Proxy for Different Environments
 

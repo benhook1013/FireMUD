@@ -1,28 +1,34 @@
 # FireMUD System Architecture: Scripting Runtime Execution
 
-This document is the canonical reference for scripting runtime execution flow, event/outbox behavior, Redis/runtime integration, execution-state ownership, version fencing, and the other operational behaviors that sit behind the DSL reference. Use it together with the DSL reference, the Automation & Scripting Service README, the sandbox runtime design, and the tick architecture.
+This document is the canonical reference for scripting runtime execution flow, event/outbox behavior, Redis/runtime integration, execution-state ownership, version fencing, and the other operational behaviors that sit behind the DSL reference. Use it together with the [DSL reference](./system-architecture-scripting-dsl-reference-and-lifecycle.md), the [Automation & Scripting Service README](./microservices/automation-scripting-service/README.md#document-map), the [sandbox runtime design](./microservices/automation-scripting-service/sandbox-runtime-design.md), and the [tick architecture](./system-architecture-ticks.md).
 
 Routing note:
 
 - Use this document for runtime execution semantics, instance-aware admission, and execution-state behavior after a script patch or plugin version is already eligible to run.
-- Use `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` for the DSL and authoring/publish lifecycle.
+- Use the [DSL and lifecycle reference](./system-architecture-scripting-dsl-reference-and-lifecycle.md) for the DSL and authoring/publish lifecycle.
 
 It is a companion to:
 
-- `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` - DSL model, lifecycle states, determinism rules, and author-facing semantics.
-- `design/architecture/system-architecture-scripting.md` - high-level scripting hub and audience routing.
-- `design/architecture/system-architecture-scripting-quotas-and-operations.md` - quotas, circuit breakers, and operator workflows.
-- `design/architecture/system-architecture-scripting-scheduler-and-timers.md` - timer leadership, scheduling, and reload coordination.
-- `design/architecture/system-architecture-ticks.md` - tick model, idempotency rules, and replay semantics.
-- `design/architecture/system-architecture-transactions.md` - transaction patterns and idempotent downstream operations.
-- `design/architecture/system-architecture-versioning-runtime.md` - script-only patch versions and runtime configuration.
-- `design/architecture/microservices/automation-scripting-service/runtime-and-data.md` - service-level runtime state, Redis roles, and persistence.
-- `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md` - sandbox engine semantics and resource limits.
+- [DSL and lifecycle reference](./system-architecture-scripting-dsl-reference-and-lifecycle.md) - DSL model, lifecycle states, determinism rules, and author-facing semantics.
+- [Scripting and Automation hub](./system-architecture-scripting.md) - high-level scripting hub and audience routing.
+- [Scripting Quotas & Operations](./system-architecture-scripting-quotas-and-operations.md) - quotas, circuit breakers, and operator workflows.
+- [Scripting Scheduler and Timers](./system-architecture-scripting-scheduler-and-timers.md) - timer leadership, scheduling, and reload coordination.
+- [Scripting & Automation Observability Contract](./system-architecture-scripting-observability-contract.md) - canonical scripting audit and handoff-observability details; metric schemas remain owned by normative Table 4.
+- [Tick architecture](./system-architecture-ticks.md) - tick model, idempotency rules, and replay semantics.
+- [Transactions](./system-architecture-transactions.md) - transaction patterns and idempotent downstream operations.
+- [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md) - script-only patch versions and runtime configuration.
+- [Automation & Scripting runtime and data](./microservices/automation-scripting-service/runtime-and-data.md) - service-level runtime state, Redis roles, and persistence.
+- [Sandbox runtime design](./microservices/automation-scripting-service/sandbox-runtime-design.md) - sandbox engine semantics and resource limits.
 
 ## Table of Contents
 
 - [Scope and Ownership](#scope-and-ownership)
+- [Normative Target Contract](#normative-target-contract)
+- [Current Implementation Status](#current-implementation-status)
+- [Pre-DSL Trigger and Evaluated Descriptor Boundary](#pre-dsl-trigger-and-evaluated-descriptor-boundary)
 - [Work Item Outbox Contract](#work-item-outbox-contract-normative)
+- [Current State Mapping, Drain, and Rebuild Rules](#current-state-mapping-drain-and-rebuild-rules)
+- [Operator Replay of DEAD_LETTERED Work](#operator-replay-of-dead_lettered-work)
 - [`scriptEventId` Lifecycle and Deduplication](#scripteventid-lifecycle-and-deduplication)
 - [Runtime Deployment & Versioning](#runtime-deployment--versioning)
 - [Script Patch Lifecycle](#script-patch-lifecycle)
@@ -47,53 +53,95 @@ It is a companion to:
 
 When this document and the DSL reference appear to overlap, use the DSL reference for graph/model/determinism semantics and this document for runtime ownership, outbox, queue projection, and rollback behavior.
 
-## Implementation Notes
+## Normative Target Contract
 
-The current runtime now includes a first durable work-item executor instead of stopping at ingress-only outbox materialization. Automation claims `PENDING_EVALUATION` rows, enforces per-script quota before execution, loads the persisted script definition, evaluates a current-boundary command-emission format, and hands emitted commands to Game Session through `EnqueueAutomationCommandIfAbsent`.
+The target runtime uses one canonical two-layer lifecycle, not parallel state machines. The trigger lifecycle has pre-DSL states `PENDING_EVALUATION` and `EVALUATING`, followed by the committed post-evaluation state `EVALUATED_COMMITTED`; evaluated command descriptors use the existing `PENDING`, `INDEXED`, `HANDOFF_IN_FLIGHT`, `HANDED_OFF`, `CANCELED`, and `DEAD_LETTERED` statuses. The trigger and descriptor layers have separate roles and must not be collapsed into one command-outbox status.
 
-That current-boundary execution format is intentionally narrow but no longer raw-text-only: script definitions may expose `emitCommands` at the top level or under `eventHandlers.<eventType>.emitCommands`, and each emitted command may currently carry either direct `commandText` or a structured `commandAlias` plus templated `arguments`, along with optional `targetEntityId` or first multi-target `targetEntityIds[]`, optional explicit target runtime scope (`targetGameInstanceId`, `targetRegionId`, `targetRegionEpoch`), `requiresSoloTick`, and optional `dueTickId`. If neither target field is present, the command targets the triggering work item's entity; if explicit target runtime scope is absent, the command defaults to the triggering work item's owned gameplay scope. `targetEntityIds[]` expands one emitted command node into multiple gameplay handoffs that share the same rendered command text and deterministic output order under the same work item. The current evaluator can preserve that order locally, but end-to-end `commandOrdinal` propagation is target-state until the Game Session handoff is widened. Command nodes may also carry bounded `when` / `unless` predicate maps over durable work-item metadata and flat primitive payload fields; skipped nodes do not consume command ordinals. Template substitution is still limited to durable work-item metadata and flat primitive payload fields such as `{{payload.commandName}}`. Richer graph execution and broader DSL semantics remain target-state work above this first production evaluator path.
+`EVALUATED_COMMITTED` is the canonical target trigger state reached by the atomic descriptor commit. One transaction persists the immutable evaluated descriptor rows, parent outbox evidence, terminal evaluation outcome, and audit update, and compare-and-set transitions the pre-DSL trigger from `EVALUATING` to `EVALUATED_COMMITTED`. Recovery uses the committed descriptors and retained outcome as its only replay input and never re-enters the DSL. The trigger state itself contributes zero to `activeExecutionCount`; any unresolved child descriptors contribute through their descriptor status.
+
+The current implementation does not persist `EVALUATED_COMMITTED` or the separate descriptor layer. Its live claim and handoff boundaries remain the current behaviors documented below.
+
+## Current Implementation Status
+
+This section records current implementation boundaries, not target-state authority. The normative contracts below and the linked owning documents remain canonical. Metric names, labels, and increment units are owned by [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix); audit fields and handoff diagnostics are owned by the [Scripting & Automation Observability Contract](./system-architecture-scripting-observability-contract.md). Normative audit stage/outcome semantics and final lifecycle statuses remain owned by the normative audit and scripting lifecycle/rollout documents.
+
+The current runtime now includes a first durable work-item executor instead of stopping at ingress-only outbox materialization. Automation claims `PENDING_EVALUATION` rows, enforces per-script quota before execution, loads the persisted script definition, evaluates a current-boundary command-emission format, and hands emitted commands to Game Session through `EnqueueAutomationCommandIfAbsent`. The replay and evaluated-descriptor layers described by the target lifecycle are target-only. The current implementation still uses one `script_work_items` row spanning the pre-DSL trigger and later handoff processing; it does not yet implement the target separation between durable trigger state and evaluated command descriptors or descriptor-only replay.
+
+### Current evaluator boundary
+
+The current evaluator accepts exactly one emitted command per work item. A result with more than one command is rejected before persistence or handoff with `finalStage=DSL_EVAL`, `finalOutcome=sandbox_error`, and bounded `finalReason=command_count_exceeded`. This is a current implementation limitation only; the target multi-command handoff contract remains canonical in [Scripting & Automation: Cross-Service Contracts](./system-architecture-scripting-contracts.md#2-script-work-item-vs-tick-command-boundary), including deterministic identity under the complete [Command-Handoff Identity](./system-architecture-scripting-normative-contract-tables.md#command-handoff-identity-target-state).
+
+That current-boundary execution format is intentionally narrow but no longer raw-text-only: script definitions may expose `emitCommands` at the top level or under `eventHandlers.<eventType>.emitCommands`, and each emitted command may currently carry either direct `commandText` or a structured `commandAlias` plus templated `arguments`, along with an optional singular `targetEntityId`, optional explicit target runtime scope (`targetGameInstanceId`, `targetRegionId`, `targetRegionEpoch`), `requiresSoloTick`, and optional `dueTickId`. A distinct target `playableStateScope` is target-only until the handoff and descriptor contracts carry the complete target runtime tuple. If no target is present, the command targets the triggering work item's entity; if explicit target runtime scope is absent, the command defaults to the triggering work item's owned gameplay scope. Multi-target `targetEntityIds[]` fan-out and multi-command identity remain target-only: the existing owner contracts do not define the persisted deterministic per-target identity, scope validation, and complete Command-Handoff Identity deduplication needed to make them a current end-to-end handoff. The current implementation therefore supports one target entity per handoff and has no current multi-target fan-out proof. Command nodes may also carry bounded `when` / `unless` predicate maps over durable work-item metadata and flat primitive payload fields; target-state command ordinals and optional `targetPlayableStateScope` distinguish emitted commands after handoff identity is widened. Template substitution is still limited to durable work-item metadata and flat primitive payload fields such as `{{payload.commandName}}`. Richer graph execution and broader DSL semantics remain target-state work above this first production evaluator path.
+
+The current claim boundary is the atomic PostgreSQL transition from `PENDING_EVALUATION` to `EVALUATING`; the existing Game Session lease rules govern region-owned tick execution, not Automation work-item claims. The current implementation has no evaluation lease expiry, fencing generation, descriptor-commit marker, or recovery owner. Its `GetAutomationDrainStatus` implementation counts both `EVALUATING` and `HANDOFF_IN_FLIGHT` rows in `activeExecutionCount`, including unresolved stale `EVALUATING` rows, while `pendingCancelableWorkItemCount` covers every current handoff-capable `PENDING_EVALUATION` row because that is the current cancelable set. These are current implementation gaps: the current runtime retains unresolved work and any affected rollback admission/tick fences; it cannot safely resume or promise terminal audit from lease age alone. The target mapping and recovery behavior are defined below, and current tooling must not infer reclaim, terminalization, or re-entry to the DSL.
+
+The current `onLoad` implementation slice is tenant-readiness work limited to configuration/runtime metadata validation and warming recomputable in-process caches. It does not perform per-entity setup or create handler-owned durable shared state. Platform-owned execution, readiness, and `script_event_audit` metadata remains required bookkeeping and is not a handler-created effect. The current implementation also lacks stale-`ONLOAD_RUNNING` generation recovery; that gap must not be handled by re-entering the same DSL execution.
+
+At the live Game Session handoff boundary, the current `EnqueueAutomationCommandIfAbsentRequest` wire fields are exactly `tenant_id`, `game_instance_id`, `region_id`, `region_epoch`, `due_tick_id` (logically optional for immediate event-driven work), `automation_dispatch_id`, `automation_work_item_id`, `script_id`, `script_patch_version`, `target_entity_id`, `command`, `requires_solo_tick`, `plugin_id`, `plugin_version_id`, `playable_state_scope`, `world_slug`, `realm_slug`, `pointer_version`, `origin_source_kind`, `origin_source_state`, `origin_source_ordinal`, `origin_source_due_tick_id`, and `origin_source_due_at_ms`. Its response fields are exactly `accepted`, `admission_outcome`, `command_id`, and `error`. The current `playable_state_scope` is the source/current admitted routing scope, not a distinct target scope; `automation_work_item_id` is the wire alias for parent `outboxWorkItemId`. The request does not carry `command_ordinal`, `script_event_id`, `event_type`, `event_schema_version`, `is_dry_run`, `binding_id`, `target_game_instance_id`, `target_playable_state_scope`, `target_region_id`, or `target_region_epoch`; those fields, the complete Trigger Identity, and the complete Command-Handoff Identity are target-only. Until the producer and consumer carry stable per-command identity and dedupe, multi-command work items are not an admitted capability and must be rejected with a bounded non-success outcome rather than exposed to ambiguous retries.
+
+Current dedupe, rejection, and status diagnostics use the available `outboxWorkItemId`/parent work-item correlation, persisted `automationDispatchId`, Game Session `commandId`/persisted `gameSessionCommandId`, command text, selected provenance, and `script_event_audit`. `outboxWorkItemId` is not a per-command discriminator. This is a live diagnostic and retry fallback only; it does not claim end-to-end complete Trigger Identity, `commandOrdinal`, independent per-command progress, or target command-level deduplication/fence proof.
+
+## Pre-DSL Trigger and Evaluated Descriptor Boundary
+
+The durable pre-DSL trigger state and the post-DSL evaluated command descriptor/outbox are separate durable roles:
+
+- The target lifecycle for the **pre-DSL trigger record** is `PENDING_EVALUATION` -> `EVALUATING` -> `EVALUATED_COMMITTED`, with explicit terminal cancellation/dead-letter transitions only where the cancellation and stale-recovery rules below permit them. The record owns the complete applicable Trigger Identity, event payload, pinned script/configuration references, `read_snapshot_token`, admission epoch, evaluation lease, fencing generation, and durable descriptor-commit marker/status. It contains no evaluated gameplay command descriptors.
+- The **evaluated command descriptor/outbox** is created only after DSL evaluation. It contains the immutable evaluated descriptor for each emitted command, including `automationDispatchId` and `commandOrdinal`, plus parent `outboxWorkItemId` correlation, the applicable trigger/configuration inputs, and optional `targetGameInstanceId`, `targetPlayableStateScope`, `targetRegionId`, and `targetRegionEpoch` when the command has a distinct target runtime scope needed for handoff and replay.
+
+Evaluation claims the pre-DSL trigger with a compare-and-set transition to `EVALUATING`, a bounded lease, and a monotonically increasing fencing generation. The worker may commit evaluated descriptors only while that lease and generation are current. The descriptor rows, their parent outbox record, the terminal evaluation outcome, and the audit update are persisted atomically with a compare-and-set transition from `EVALUATING` to `EVALUATED_COMMITTED` in one transaction. A retry after that commit boundary loads the committed descriptors and replays handoff; it never re-enters the DSL.
+
+The `EVALUATED_COMMITTED` state is the durable descriptor-commit marker/status. If the evaluation lease expires, Automation's recovery owner must first read that state. `EVALUATED_COMMITTED` makes the persisted descriptor rows and retained evaluation outcome the sole replay input, and recovery replays them without DSL re-entry. Only a stale `EVALUATING` state with no committed marker/status may be compare-and-set to a terminal audited `DEAD_LETTERED` outcome with `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and `finalReason=stale_execution_fenced`.
+
+Target-state cancellation of pre-DSL trigger states is durable and fencing-aware:
+
+- `PENDING_EVALUATION` transitions by compare-and-set to terminal `CANCELED` without entering the DSL. The same durable transition records `cancelReason` and updates `script_event_audit` to `finalStage=ADMISSION`, `finalOutcome=canceled`, and the applicable bounded reason, such as `operator_canceled` or `rollback_epoch_advanced`.
+- `EVALUATING` cancellation first fences the claimed attempt and reads the descriptor-commit marker/status. If the state is or becomes `EVALUATED_COMMITTED`, the pre-DSL trigger is not re-evaluated or discarded as uncommitted work; recovery resumes only those durable descriptors, which then follow descriptor cancellation and version-fence rules. If no descriptor was committed, an explicit cancellation compare-and-sets the trigger to terminal `CANCELED` and records `cancelReason`, `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and the applicable bounded cancellation reason. If the lease is instead expired and stale, the recovery-owner transition is terminal `DEAD_LETTERED` with `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and `finalReason=stale_execution_fenced`.
+
+None of these cancellation or recovery paths invokes or re-enters the DSL. They operate only on durable trigger state, descriptor-commit evidence, and already committed descriptors.
 
 ## Work Item Outbox Contract (Normative)
 
-The Automation & Scripting Service must treat Redis automation queues (`automation:queue:*`) as derived indexes/pointers only. The authoritative record of admitted post-DSL work is the durable work item outbox.
+The Automation & Scripting Service must treat Redis automation queues (`automation:queue:*`) as derived indexes/pointers only. The authoritative record of admitted post-DSL work is the durable work item outbox. Queue ownership, command handoff, and cross-service retry invariants are defined in the [scripting cross-service contracts](./system-architecture-scripting-contracts.md); this section retains the local outbox schema and projection behavior.
 
 This section defines the minimum contract that makes "persist -> index -> drain -> handoff" interoperable and rollback-safe across services and operational tooling.
 
 ### Minimum Outbox Record Fields
 
-Each persisted script work item must include:
+Each evaluated descriptor/outbox record must include:
 
-- Trigger Identity fields from `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields` (including `gameInstanceId` and, for gameplay/runtime triggers, `regionEpoch`).
-- `outboxWorkItemId` (stable unique identifier).
+- Trigger Identity fields from [Table 1](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields) (including `gameInstanceId` and, for gameplay/runtime triggers, `regionEpoch`).
+- `outboxWorkItemId` (stable parent correlation identifier; not descriptor identity).
+- The unique child identity for each evaluated command descriptor: the complete Command-Handoff Identity, including optional `targetPlayableStateScope` and the other target runtime fields when a distinct target scope applies. `outboxWorkItemId` is parent correlation only and is excluded from command identity, uniqueness, and deduplication keys.
 - `createdAt` and `updatedAt`.
-- `workItemStatus` (see below).
-- `commands` (the domain commands payload, stored durably).
-- `commandCount` (for budgeting/inspection).
+- `workItemStatus` (per evaluated descriptor/command; see below, not a pre-DSL trigger or parent aggregate status).
+- The immutable evaluated command descriptor (one descriptor per emitted command, stored durably).
+- `commandCount` (the immutable total number of committed descriptors for the parent `outboxWorkItemId`, for budgeting/inspection; it is not per-descriptor progress).
 - `cancelReason` (nullable; required when canceled).
 
-When a work item is handed to Game Session, the handoff identity has a current live boundary and a target-state contract:
+`outboxWorkItemId` is the Automation-owned parent correlation identifier. At the current Game Session boundary, Automation produces `EnqueueAutomationCommandIfAbsentRequest.automationWorkItemId` with this same value, and Game Session consumes/reports it under the wire field name `automationWorkItemId`; these are boundary-specific names for one parent identifier, not separate work-item records. It is not the per-command discriminator and must not be used as command-level dedupe.
 
-- **Current live boundary/fallback:** `EnqueueAutomationCommandIfAbsent` carries `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, optional `dueTickId`, `automationDispatchId`, `automationWorkItemId`, `scriptId`, `scriptPatchVersion`, target entity, rendered command text, `requiresSoloTick`, `pluginId`, `pluginVersionId`, `playableStateScope`, routing fields, and origin-source fields; its response returns the live Game Session `commandId`/admission outcome. It does not yet carry `commandOrdinal`, `bindingId`, `eventType`, `eventSchemaVersion`, `scriptEventId`, `isDryRun`, `scheduleDefinitionId`, `triggerMode`, or the complete applicable Trigger Identity, so current dedupe, rejection, and status diagnostics use this narrower fallback and must not claim full-identity ordinal semantics.
-- **Target-state handoff identity:** every outbox work item that emits gameplay commands creates one stable `automationDispatchId` and persists it before the first handoff attempt. Retries reuse that value rather than minting another dispatch identity. Each emitted gameplay command receives a deterministic `commandOrdinal` under that shared dispatch, including the single-command case.
-- **Target-state downstream behavior:** Game Session dedupe, stale-timeline rejection, replay/no-op outcomes, and later execution-fence reporting key each command by the applicable scope plus `(automationDispatchId, commandOrdinal)`, while operator tooling retains the parent `outboxWorkItemId` and complete Trigger Identity for correlation.
-- Before target-state handoff is reported as accepted, Game Session must atomically validate the applicable runtime scope and epoch/fence (`regionEpoch`, the current `executorFence`, and any active rollback `admissionEpoch`) together with per-command deduplication and tick-queue admission. If those operations cannot share one storage transaction, the downstream enqueue or execution fence must provide equivalent validation and reject stale commands. Automation must not record successful `TICK_HANDOFF` until that fenced downstream acceptance is confirmed.
+Target-state per-command progress follows the [cross-service command boundary](./system-architecture-scripting-contracts.md#2-script-work-item-vs-tick-command-boundary): descriptor identity is the complete Command-Handoff Identity and is linked to the parent `outboxWorkItemId`. Each emitted command has independent durable progress, so a retry resumes only unresolved commands and cannot drop an unattempted command or replay a command already accepted or terminally rejected. A queue pointer may be deduplicated by parent `outboxWorkItemId` for index hygiene, but that does not deduplicate commands. The current live handoff limitation above means this target behavior is not current end-to-end proof; multi-command work items remain rejected until the boundary is widened.
+
+When a work item is handed to Game Session, the local wire boundary is:
+
+- `EnqueueAutomationCommandIfAbsent` carries the local handoff fields described in [Current Implementation Status](#current-implementation-status), and its response returns the live Game Session `commandId`/admission outcome. The target handoff identity and fenced acceptance rule are owned by the [cross-service scripting contracts](./system-architecture-scripting-contracts.md#2-script-work-item-vs-tick-command-boundary).
 
 ### Minimum Status Model
 
-Statuses are a target-state contract; implementations may use different internal names as long as they are mapped 1:1:
+`PENDING` through `DEAD_LETTERED` are per evaluated descriptor/command statuses; pre-DSL trigger states and any parent-level aggregate are separate. Statuses are a target-state contract; implementations may use different internal names as long as they are mapped 1:1:
 
 - `PENDING` - persisted, eligible for indexing and draining.
 - `INDEXED` - a pointer/index has been published into `automation:queue:*` (best-effort; may be rederived).
 - `HANDOFF_IN_FLIGHT` - being handed off to Game Session (idempotent retries allowed).
 - `HANDED_OFF` - Game Session has accepted the corresponding tick commands into tick queues (`script_event_audit.finalStage=TICK_HANDOFF` is now eligible for `finalOutcome=success`).
 - `CANCELED` - permanently canceled by control plane (for example rollback, disable, or operator purge).
-- `DEAD_LETTERED` - permanently non-progressing due to repeated infrastructure failures; bounded retention and operator visibility are required.
+- `DEAD_LETTERED` - permanently non-progressing after a fenced terminal decision; bounded retention and operator visibility are required.
 
 ### Pointer Payload Contract for `automation:queue:*`
 
 Entries in `automation:queue:{tenantInstanceTag}:<entityId>` must contain enough information to locate and safely process the durable outbox record:
 
-- `outboxWorkItemId`
+- `outboxWorkItemId` - the stable parent pointer used to locate the evaluated descriptor set; it must not be replaced by Redis list position. It is not command-level dedupe, which uses the complete Command-Handoff Identity.
 - A minimal identity checksum (for example `gameInstanceId`, `scriptPatchVersion`, optional `pluginVersionId`) so rebuild/drain logic can detect version-fence mismatches early without reading full payloads.
 
 The pointer/index format must be forward-compatible (versioned envelope) so it can evolve without requiring out-of-band Redis migrations.
@@ -101,39 +149,53 @@ The pointer/index format must be forward-compatible (versioned envelope) so it c
 ### Rebuild and Deduplication Rules
 
 - Rebuilding `automation:queue:*` from the outbox must be safe to run repeatedly and concurrently (idempotent projection).
-- Automation's queue-drain/rebuild path and durable executor must dedupe by `outboxWorkItemId` (not by Redis list position) so queue resets, re-indexing, and retries do not cause double-handoff.
-- `CancelPendingWorkItemsForPatch` and `CancelPendingWorkItemsForPluginVersion` must be implemented as outbox state transitions (`workItemStatus=CANCELED`) so cancellation is durable even if Redis is reset. Cancellation must be reflected in `script_event_audit` stage-aware outcomes (for example `finalStage=ADMISSION` with a cancel outcome/reason for newly arriving triggers, and non-success outcomes for already persisted work that is canceled before handoff).
+- Automation's queue-drain/rebuild path must dedupe repeated parent pointers by `outboxWorkItemId` (not by Redis list position) so queue resets and re-indexing do not multiply discovery. The durable executor and Game Session must dedupe each descriptor by the complete Command-Handoff Identity so parent-pointer retries do not cause double-handoff.
+- `HANDOFF_IN_FLIGHT` rows are active evaluated descriptors during queue rebuild and recovery. Recovery must load the committed descriptor and retry or confirm handoff by the complete Command-Handoff Identity without re-entering the DSL; if the durable handoff-lease evidence is insufficient, retain the row active/unresolved rather than rebuilding it as fresh DSL work.
+- `CancelPendingWorkItemsForPatch` and `CancelPendingWorkItemsForPluginVersion` must make durable transitions in both layers: `PENDING_EVALUATION` transitions to `CANCELED` at `ADMISSION`; `EVALUATING` follows the fencing and descriptor-commit rules above; evaluated descriptors in `PENDING` or `INDEXED` transition to `workItemStatus=CANCELED` with durable `cancelReason`, `finalStage=WORK_ITEM_PERSIST`, and `finalOutcome=canceled`. Cancellation remains authoritative if Redis is reset and is reflected in the corresponding stage-aware `script_event_audit` outcome.
 
 ### Operational Constraints
 
 - Outbox scanning for rebuild and cancellation must be bounded and backpressured (pagination, time windows, per-tenant limits) so it cannot become an unbounded full-table scan on large tenants.
 - Outbox retention must be explicitly defined for `HANDED_OFF`, `CANCELED`, and `DEAD_LETTERED` records, and must preserve enough history for rollback diagnosis and audit queries.
 - The canonical defaults are owned by [Automation & Scripting Service Configuration](./microservices/automation-scripting-service/configuration.md): `SCRIPT_OUTBOX_HANDED_OFF_RETENTION_DAYS`, `SCRIPT_OUTBOX_CANCELED_RETENTION_DAYS`, `SCRIPT_DEAD_LETTER_MAX_AGE_SECONDS`, `SCRIPT_OUTBOX_TERMINAL_CLEANUP_INTERVAL_SECONDS`, `SCRIPT_OUTBOX_QUEUE_REBUILD_INTERVAL_SECONDS`, `SCRIPT_OUTBOX_QUEUE_REBUILD_BATCH_SIZE`, `SCRIPT_OUTBOX_EXECUTION_INTERVAL_SECONDS`, and `SCRIPT_OUTBOX_EXECUTION_BATCH_SIZE`.
-- The current Automation & Scripting implementation wires those retention knobs into a scheduled cleanup job for terminal `script_work_items`: `HANDED_OFF` and `CANCELED` rows expire by status-specific retention days, and `DEAD_LETTERED` rows expire by max age plus a row-count cap that removes the oldest excess rows first.
-- The current implementation also wires the derived queue contract into runtime behavior instead of leaving it as prose only: queue drains dedupe repeated pointer envelopes by `outboxWorkItemId`, a bounded scheduled rebuild republishes missing queue pointers from durable `PENDING_EVALUATION` / `EVALUATING` work items, and the scheduled executor now uses queue pointers as its first work-discovery path before claiming durable outbox rows. Redis never becomes authoritative: execution only proceeds after a PostgreSQL row is successfully transitioned from `PENDING_EVALUATION` to `EVALUATING`, stale/orphaned pointers are ignored by that durable claim, and queue discovery failures fall back to the bounded durable scan.
+- The current Automation & Scripting implementation wires those retention knobs into a scheduled cleanup job for terminal `script_work_items`: `HANDED_OFF` and `CANCELED` rows expire by status-specific retention days, and `DEAD_LETTERED` rows expire by max age plus a row-count cap that removes the oldest excess rows first. The target retention policy also covers terminal dead-lettered records.
+- **Target-state only:** The derived queue contract is a projection only: queue drains dedupe repeated parent pointer envelopes by `outboxWorkItemId`, and a bounded rebuild republishes missing queue pointers only from evaluated descriptors in `PENDING` or `INDEXED` status. Rebuild and handoff must apply an explicit status gate before treating a row as evaluated command work. Pre-DSL `PENDING_EVALUATION` and `EVALUATING` rows are never published to or consumed from the evaluated-command queue; a separate pre-DSL projection may route evaluator work. Redis never becomes authoritative, and reindexing `EVALUATING` rows must not reclaim or replay them. The target descriptor rebuild and lease/fencing recovery contract above remain current implementation gaps.
+- Current rebuild behavior is narrower and must not be described as the target descriptor rebuild: `rebuildPendingWorkItemIndex` selects current `script_work_items` rows in `PENDING_EVALUATION` or `EVALUATING` and republishes pre-DSL discovery pointers. The current persisted model has no separate evaluated descriptor status layer, so target `PENDING`/`INDEXED` descriptor rebuild is unavailable. These current pointers are not evaluated-command queue entries and are not evidence of descriptor replay.
+- Target purge follows the [normative terminal descriptor evidence rule](./system-architecture-scripting-normative-contract-tables.md#terminal-descriptor-evidence-purge-target-state): under an `EVALUATED_COMMITTED` parent it may remove only retention-eligible terminal `HANDED_OFF`, `CANCELED`, or `DEAD_LETTERED` descriptor/outbox evidence. It preserves the trigger marker, corresponding `script_event_audit`, and replay-causation evidence, and rejects active/nonterminal trigger or descriptor work.
 - Operator-facing replay, purge, and convergence tooling must treat those retention windows as the supported diagnosis horizon rather than inventing ad hoc cleanup timing.
+
+## Current State Mapping, Drain, and Rebuild Rules
+
+The current `script_work_items` statuses span two target layers. `workItemStatus` on an evaluated descriptor is per descriptor/command; pre-DSL trigger status and any parent aggregate are separate scopes. Tooling must not collapse them into one command-outbox state machine:
+
+| Current or target status | Canonical target meaning | Drain and rebuild treatment |
+| --- | --- | --- |
+| `PENDING_EVALUATION` | Pre-DSL trigger state pending evaluation; it is not an evaluated command outbox row. | Count as pending pre-DSL work. During cancellation or `DRAINING`, compare-and-set it to terminal `CANCELED`, persist `cancelReason`, and record `finalStage=ADMISSION` / `finalOutcome=canceled` with the bounded cancellation reason, without entering the DSL. Do not publish it as an evaluated command pointer. |
+| `EVALUATING` | Pre-DSL trigger state claimed under an evaluation lease and fencing generation. | Count as active. Cancellation/recovery first fences the attempt and reads the durable descriptor-commit marker/status. Resume committed descriptors without DSL re-entry. With no committed descriptor, explicit cancellation transitions to terminal `CANCELED` with `finalStage=DSL_EVAL` / `finalOutcome=canceled` and the bounded cancellation reason; expired stale recovery transitions to terminal `DEAD_LETTERED` with `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and `finalReason=stale_execution_fenced`. |
+| `EVALUATED_COMMITTED` | Trigger record whose evaluated descriptors, parent outbox evidence, terminal evaluation outcome, and audit update were committed atomically. It is not an evaluated descriptor status. | Do not count the trigger in `activeExecutionCount` and never re-enter the DSL. Replay its descriptor children without DSL re-entry; any `PENDING`/`INDEXED` children remain pending and any `HANDOFF_IN_FLIGHT` children remain active. Retain the committed outcome with the trigger/audit evidence. |
+| `PENDING` | Evaluated descriptor/outbox pending handoff. | Count as pending post-DSL work and publish or rebuild its derived pointer. |
+| `INDEXED` | Evaluated descriptor whose derived queue pointer has been published. | Count as pending post-DSL work; rebuilding is idempotent and may restore only the missing pointer. |
+| `HANDOFF_IN_FLIGHT` | Evaluated descriptor currently being handed to Game Session. | Count as active; rebuild/recovery retries or confirms the committed descriptor by the complete Command-Handoff Identity, never by re-entering the DSL. If handoff-lease evidence is insufficient, keep it active/unresolved until a durable recovery decision exists. |
+| `HANDED_OFF` | Evaluated command accepted by Game Session. | Terminal for drain and rebuild; retain only for the defined retention horizon. |
+| `CANCELED` | Explicitly canceled trigger or evaluated descriptor. | Terminal for drain and rebuild; retain audit and cancellation reason. |
+| `DEAD_LETTERED` | Terminal non-progressing trigger/descriptor. | Terminal for drain and rebuild; no automatic DSL replay. Any operator replay follows the [operator replay contract](#operator-replay-of-dead_lettered-work) and uses a new execution identity. |
+| `FAILED` | Not a canonical script work-item state; patch readiness `FAILED` is a separate lifecycle state. | Do not use as an alias for `DEAD_LETTERED`, and do not include it in command-outbox drain or rebuild selection. |
+
+**Target-state `GetAutomationDrainStatus` mapping:** for the current scope and `admissionEpoch`, `activeExecutionCount` is exactly the sum of `EVALUATING` pre-DSL triggers and `HANDOFF_IN_FLIGHT` evaluated descriptors; an `EVALUATED_COMMITTED` trigger itself contributes zero. `pendingCancelableWorkItemCount` is exactly the sum of `PENDING_EVALUATION` pre-DSL triggers and `PENDING`/`INDEXED` evaluated descriptors, including descriptors committed by an `EVALUATED_COMMITTED` trigger. Terminal states, another scope or epoch, and derived queue pointers do not contribute. `DRAINING` resolves only when both counts are zero after `PENDING_EVALUATION` cancellation and every `EVALUATING` trigger has either reached the durable cancellation/dead-letter terminal mapping or resumed its committed descriptors to terminal descriptor states; no drain path enters or re-enters the DSL.
+
+`PENDING` and `INDEXED` are target descriptor states; the current implementation does not persist them as separate statuses or persist `EVALUATED_COMMITTED`. **Current fail-closed mapping:** the live projection counts `EVALUATING`, including unresolved stale rows, and `HANDOFF_IN_FLIGHT` as active, and counts every handoff-capable `PENDING_EVALUATION` as pending. Until the implementation converges, drain and rebuild projections must report that gap rather than presenting `PENDING_EVALUATION` or `EVALUATING` as evaluated command work; any unresolved count keeps `DRAINING` active.
+
+### Operator Replay of DEAD_LETTERED Work
+
+Replay selection, eligibility, durable claims, retry mapping, and replay identity semantics are owned by [Control Plane Operations](./system-architecture-scripting-control-plane-operations.md#replaydeadletteredworkitems). This runtime section records only local consequences: the original complete Command-Handoff Identity, including any distinct target runtime scope and `targetPlayableStateScope`, remains immutable causation evidence, replay uses a new durable `replayExecutionIdentity` and new `automationDispatchId`, and the target-state single-command replay contract uses `commandOrdinal=0` for the replay command. The original descriptor remains terminal and its audit row is not reopened.
+
+**Target-state only:** The control-plane replay operation targets one terminal evaluated command descriptor at a time through the complete Command-Handoff Identity, including `targetPlayableStateScope` whenever the command has a distinct target runtime scope; a `DEAD_LETTERED` pre-DSL trigger with no committed descriptor is not command-replayable. The current replay selects parent `workItemIds` and requeues eligible `script_work_items` rows, so it does not select independent command descriptors. An operator replay must never move a `DEAD_LETTERED` descriptor back to `PENDING_EVALUATION`, re-evaluate the original execution identity, or append new history to the original audit row. Before creating a target-state replay, the service must revalidate the current patch pin and, for plugin work, the immutable `(pluginId, pluginVersionId, bindingId)` tuple against the currently active binding for the same scoped `<tenantId, gameInstanceId, pluginId>`. A mismatch or unavailable active binding leaves the original descriptor `DEAD_LETTERED` and produces no replay identity. The service creates a durable replay record with a new execution identity, retains the original execution identity as the replay's causation identity, and associates all replay audit history with the new identity. The replay enters the normal admission and evaluation flow under that new identity while the original descriptor remains terminal and queryable.
+
+Target-state replay creation is idempotent by stable `controlPlaneRequestId` for each original execution identity. Retrying the same operator replay request returns the existing replay record/result and creates no second replay identity or audit history; a distinct request is a distinct controlled replay subject to the normal admission and runtime checks.
 
 ## `scriptEventId` Lifecycle and Deduplication
 
-`scriptEventId` is the caller- or scheduler-generated idempotency token within a complete script Trigger Identity; it appears on automation queue entries, tick commands, and `script_event_audit` rows so behavior can be correlated end to end. It is not a standalone identifier or idempotency key: deduplication and retry decisions use every applicable field in the full Trigger Identity from the normative contract tables, while emitted-command handoff uses `(automationDispatchId, commandOrdinal)`.
-
-- **Generation rules**
-  - For external events, the event source that owns the trigger creates a `scriptEventId` when the event is first emitted and includes it in the `TriggerScriptEvent` payload. If the caller retries the gRPC call due to infrastructure errors, it must reuse the same full applicable Trigger Identity, including the same `scriptEventId`; changing any identity field is not a retry of the original trigger.
-  - For scheduler-originated events such as `onInterval` and `onTimerExpire`, the Automation & Scripting scheduler creates the `scriptEventId` deterministically from the due point and all applicable Trigger Identity fields when the timer or interval becomes due.
-  - For dry-run/test invocations, the Automation & Scripting Service generates `scriptEventId` by default so test tooling does not create cross-client collisions.
-
-- **Uniqueness scope**
-  - Uniqueness is enforced over the full applicable Trigger Identity field set, including `gameInstanceId`, `playableStateScope` and, for gameplay/tick-aligned triggers, `regionEpoch`; `scriptEventId` alone must never define the idempotency scope.
-  - There is no requirement for global uniqueness across all tenants; downstream idempotency keys are derived from the full applicable Trigger Identity, plus tick context and command identity when applicable, rather than from `scriptEventId` alone.
-
-- **Deterministic scheduler IDs**
-  - Scheduler-originated `scriptEventId` values must be deterministic so leader failover and bounded catch-up do not double-fire.
-  - The specific encoding is an implementation detail, but it must be derived from stable inputs, not from process-local randomness.
-
-- **Handling retries and duplicates**
-  - The Automation & Scripting Service treats script execution as at-most-once per the full applicable Trigger Identity, never per `scriptEventId` alone.
-  - Duplicate delivery handling must preserve a single `script_event_audit` row per Trigger Identity with monotonic stage progression.
-  - Downstream services and replay tools rely on stable idempotency tokens derived from Trigger Identity plus tick context when applicable.
+Trigger Identity, endpoint-specific `scriptEventId` ownership, audit uniqueness, and command-level retry identity are defined in the [normative contract tables](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields) and [cross-service scripting contracts](./system-architecture-scripting-contracts.md#4-scripteventid-identity-and-at-most-once-dedupe). Runtime persistence carries the applicable identity on the durable work item and preserves it across queue projection, claims, and handoff attempts.
 
 ## Runtime Deployment & Versioning
 
@@ -141,7 +203,7 @@ Deployment semantics, publish-time ownership, and the canonical versioning model
 
 ## Script Patch Lifecycle
 
-The canonical patch lifecycle and readiness states remain owned by [Scripting DSL Reference & Event Lifecycle](./system-architecture-scripting-dsl-reference-and-lifecycle.md#script-patch-lifecycle). Runtime execution consumes that lifecycle by enforcing pin visibility and admission checks:
+The canonical patch lifecycle and readiness states remain owned by [Scripting DSL Reference & Event Lifecycle](./system-architecture-scripting-dsl-reference-and-lifecycle.md#script-patch-lifecycle). Runtime execution consumes that lifecycle by enforcing the [canonical version-fence contract](./system-architecture-scripting-contracts.md#3-version-fencing-rollback-safety) at its local admission boundary:
 
 - If the supplied `scriptPatchVersion` is `READY` for the tenant, runtime must additionally compare it to a fresh-enough observed pin for `<tenantId, gameInstanceId>`.
 - If pin visibility is stale beyond its configured max age and fresh control-plane state cannot be obtained, admission fails closed.
@@ -196,10 +258,7 @@ Quota and budget accounting must be deterministic so operators can reason about 
 
 ## Ordering Between Player and Script Commands
 
-- Each entity has a single authoritative command queue in Redis that contains both player-originated commands and script-generated commands.
-- Commands are appended to this queue in the order they are accepted by the Game Session Service.
-- During tick processing, the Game Session Service reads at most one command per entity per tick from this combined queue.
-- Script-generated commands carry `scriptEventId`, `scriptId`, and when applicable upstream ordering tokens such as `tickId`.
+Game Session owns the combined per-entity tick queue and its enqueue/order invariants as defined in the [cross-service scripting contracts](./system-architecture-scripting-contracts.md#1-tick-queue-ownership-tick). At this runtime boundary, the current handoff preserves `scriptId` and optional `dueTickId` when present. `commandOrdinal`, `triggerMode`, `scheduleDefinitionId`, and scheduler/ordinal propagation are target-only and are not current ordering guarantees. `scriptEventId` remains on the Automation-owned durable work item and `script_event_audit`; it is omitted from the current Game Session handoff. Target command identity and complete Trigger Identity propagation remain subject to the widened handoff contract.
 
 ## Redis Key Summary for Scripting
 
@@ -215,68 +274,45 @@ The main Redis keys used by the Automation & Scripting Service are:
 
 ## Failure Modes and Error Handling
 
-Script executions are treated as at-most-once per full applicable Trigger Identity. Common outcome classes include:
-
-- `success`
-- `quota_denied`
-- `sandbox_error`
-- `validation_error`
-- `disabled_due_to_errors`
-- `version_unavailable`
-- `signer_policy_unavailable`
-- `infrastructure_error`
-- `validation_error` with `finalReason=unsafe_component`
+The canonical stage and outcome taxonomy is defined in the [normative audit table](./system-architecture-scripting-normative-contract-tables.md#table-2-script_event_audit-stages-and-outcomes). Runtime-specific failure behavior includes quota, sandbox, validation, version, signer-policy, and infrastructure failures; the executor does not re-enter the DSL for a persisted trigger when retrying an idempotent downstream operation.
 
 Component safety classification for core scripts is fixed at validation and readiness time, not reevaluated as a live runtime policy on already-READY patches.
 
-`success` is valid only after tick-handoff acceptance, not merely after DSL evaluation. Audit records therefore stay stage-aware through `finalStage`, `finalOutcome`, and `finalReason` rather than collapsing runtime behavior into a single undifferentiated status.
+Live `success` is valid only after tick-handoff acceptance, not merely after DSL evaluation; the owner table defines the stage-aware audit fields and allowed outcomes.
 
 Retry behavior:
 
 - Logical failures are treated as final for a trigger.
-- Backpressure outcomes such as `skipped_reloading` and `rollback_paused` are not treated as final for low-rate external events.
+- For event ingress, pre-handler rollback pause is an ingress-audit backpressure outcome only. Timer candidates use the Table 3 candidate-audit rule instead. Post-resolution handler backpressure such as `skipped_reloading` and `rollback_paused` is not treated as final for low-rate external events.
 - Infrastructure errors may be retried by lower layers following platform-wide retry policies and idempotency contracts.
 
-When script components call other services over gRPC, they must pass a stable idempotency key derived from Trigger Identity plus tick context when applicable so downstream operations can retry without duplicating effects.
+When script components call other services over gRPC, target-state handoff effects must pass an idempotency key derived from the complete Command-Handoff Identity plus the target aggregate type and ID and tick context when applicable, so downstream operations can retry without duplicating effects. The `(automationDispatchId, commandOrdinal)` pair alone is insufficient; current live calls remain subject to the narrower fallback described above.
 
 ## Version Fencing and Rollback Safety
 
-Rollback of a script patch must not allow previously queued work from the rolled-back patch to continue affecting gameplay.
-
-- Script work items and tick commands carry the effective `scriptPatchVersion` used to produce them.
-- Game Session revalidates the admitted runtime scope and current pinned script patch immediately before durable effect execution. Plugin-backed commands also re-read the authoritative Automation & Scripting plugin status and require the same enabled version and runtime scope.
-- **Target-state full-identity diagnostics:** any handoff or execution-time version-fence rejection must retain every applicable Trigger Identity field and command identity for diagnosis, including `tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, `entityId`, `scriptId`, `eventType`, `eventSchemaVersion`, `scriptEventId`, `isDryRun`, and `scriptPatchVersion`; plugin handlers must also retain `pluginId`, `pluginVersionId`, and `bindingId`, while scheduler/timer handlers must retain `scheduleDefinitionId`, `triggerMode`, and the applicable due point. The command identity `(automationDispatchId, commandOrdinal)` and its parent `outboxWorkItemId` must remain available for correlation.
-- **Current live fallback:** until the Game Session proto carries that complete identity and `commandOrdinal`, rejection/status diagnostics use the live `automationDispatchId`, command id/text, selected provenance, and parent work-item correlation. This narrower fallback is not a substitute for the target-state full-identity record.
-- A version or runtime-scope mismatch terminalizes the command as not applied. Temporary inability to read the plugin authority leaves the durable effect retryable rather than executing without a fence.
-- Operational rollback flows include a drain/purge step for queued automation work items and staging entries that cannot satisfy the version fence.
+Rollback of a script patch must not allow previously queued work from the rolled-back patch to continue affecting gameplay. The version-fence fields, rejection disposition, and diagnostic identity are owned by the [cross-service scripting contracts](./system-architecture-scripting-contracts.md#3-version-fencing-rollback-safety). Locally, script work items retain the effective `scriptPatchVersion`; current live handoff limitations and rejection/status diagnostic fallback are recorded in [Current Implementation Status](#current-implementation-status). A version or runtime-scope mismatch is not applied, temporary plugin-authority unavailability leaves the durable effect retryable, and rollback flows drain or purge queued work that cannot satisfy the fence.
 
 ## Timer Failure Semantics
 
-Timer-based triggers such as `onInterval` and `onTimerExpire` are subject to the same at-most-once per trigger semantics as other events:
-
-- When a timer becomes due, the scheduler attempts to admit the corresponding trigger subject to quotas and budgets.
-- If a timer trigger is skipped because of quotas, budgets, or an unavailable patch, the scheduler records the skip in `script_event_audit` with a canonical outcome and reason.
-- If a timer trigger fails with `infrastructure_error` after admission, the DSL body is not re-executed for the same full applicable Trigger Identity; `scriptEventId` alone does not authorize re-execution or deduplication.
-- The scheduler’s responsibility is to attempt to fire timers that fit within configured budgets and capacity; there is no guarantee of eventual execution for every individual interval or timer firing.
+Timer admission, due-point identity, catch-up, reload, and failure outcomes follow the [normative timer semantics](./system-architecture-scripting-normative-contract-tables.md#table-3-timer-semantics-matrix). Runtime-specific behavior is at-most-once DSL evaluation for an admitted timer identity: an infrastructure failure may retry independently idempotent downstream operations, but must not re-enter the DSL for the same trigger. The scheduler makes a best-effort attempt within configured capacity; individual firings are not guaranteed.
 
 ## `onLoad` Semantics and Failure Handling
 
-The `onLoad` lifecycle event is a tenant-readiness check for scripts in a given `<tenantId, scriptPatchVersion>` before that patch becomes active:
+The `onLoad` lifecycle event is a tenant-readiness check for scripts in a given `<tenantId, scriptPatchVersion>` before that patch becomes active. Its lifecycle and identity are defined by the [DSL lifecycle](./system-architecture-scripting-dsl-reference-and-lifecycle.md#onload-semantics) and [normative readiness contract](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields):
 
 - `onLoad` handlers run after static validation and compilation succeed, but before the patch is marked `READY` for a tenant.
-- Each `onLoad` execution is keyed by the canonical readiness Trigger Identity `<tenantId, scriptId, eventSchemaVersion, scriptPatchVersion, eventType=onLoad, scriptEventId, isDryRun=false>` and is treated as at-most-once.
-- Allowed uses are limited to ephemeral or trivially recomputable runtime initialization.
-- `onLoad` must not create durable or semi-durable artifacts in databases, Redis, object storage, or other shared stores.
+- Allowed uses are limited to configuration/runtime metadata validation and ephemeral or trivially recomputable in-process initialization.
+- `onLoad` handlers may not emit gameplay commands, tick commands, or durable shared effects, and may not create durable or semi-durable artifacts in databases, Redis, object storage, or other shared stores. Platform-owned execution, readiness, fencing/recovery, and `script_event_audit` metadata remain allowed and are not handler-created artifacts.
 - There is no compensating `onUnload` / `onDeactivate` lifecycle in the current architecture.
 - If future requirements demand durable patch-managed shared state, the platform must add a symmetric deactivation/cleanup lifecycle first.
 
 Failure handling:
 
 - `onLoad` admission uses a dedicated publish-time initialization budget, not the normal live-trigger quota windows enforced by `ScriptQuotaService`.
-- If `onLoad` completes successfully for a tenant, the Automation & Scripting Service may mark the patch as `READY` for that tenant.
+- If every required per-script `onLoad` execution completes successfully for a tenant, the Automation & Scripting Service may attempt the readiness transition for that tenant.
 - If `onLoad` fails with a logical or sandbox-level error, the patch is marked `FAILED` for that tenant and events that reference the failed patch are rejected at admission with `version_unavailable` or a more specific bounded variant such as `onload_failed`.
 - If the dedicated `onLoad` initialization budget is exhausted before completion, the patch must fail deterministically with an explicit bounded reason.
-- If `onLoad` encounters `infrastructure_error`, the service must not re-enter the DSL for that Trigger Identity. Only an external infrastructure operation that is independently idempotent may be retried, using the same operation idempotency key and the same persisted onLoad identity; the DSL evaluation and its `onLoad` audit lifecycle remain at-most-once. If the required infrastructure step cannot be retried safely, readiness fails rather than executing the DSL again.
+- If `onLoad` encounters `infrastructure_error`, the service must not re-enter the DSL for that readiness identity. Only an external infrastructure operation that is independently idempotent may be retried; if the required step cannot be retried safely, readiness fails rather than executing the DSL again.
+- **Target state only:** A stale `ONLOAD_RUNNING` execution is fenced by its readiness publication/generation and compare-and-set transitioned by Automation's recovery owner to a terminal audited `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and `finalReason=stale_execution_fenced`. It blocks `READY`; the same canonical readiness identity is never re-entered. Readiness/publication generations are fences, not execution identity. After the stale fencing and terminal audit are durable, retry requires republishing as a new immutable `scriptPatchVersion`; a new execution identity must not be minted for the stale patch.
 
-All `onLoad` runs are recorded in `script_event_audit` with `eventType=onLoad`, the target `scriptPatchVersion`, and their final stage-aware outcome. A successful `onLoad` contributes to patch readiness aggregation and must use `finalStage=DSL_EVAL`, `finalOutcome=readiness_success`; it does not use live `finalOutcome=success`, which remains reserved for tick handoff.
-Patch-level readiness for `<tenantId, scriptPatchVersion>` is derived from the aggregate of all required per-script `onLoad` runs, where each required run is counted by its full readiness Trigger Identity, including `eventSchemaVersion`; the patch becomes `READY` only after every required identity succeeds.
+All `onLoad` runs are recorded in `script_event_audit` with `eventType=onLoad` and the target `scriptPatchVersion`; stage/outcome fields follow the [normative audit table](./system-architecture-scripting-normative-contract-tables.md#table-2-script_event_audit-stages-and-outcomes). **Target state only:** Patch-level readiness for `<tenantId, scriptPatchVersion>` is derived from the aggregate of all required per-script runs and becomes `READY` only after every required readiness execution succeeds and no fenced stale run remains unresolved. The recovery transition from `ONLOAD_RUNNING` to `READY` must be one atomic conditional durable update whose write predicate revalidates the complete required `onLoad` aggregate for the current readiness identity, the expected readiness generation, and the current publication/readiness row still being current, `ONLOAD_RUNNING`, and not `SUPERSEDED`; a concurrent supersession or stale-run terminalization must win and a partial or stale aggregate must not produce `READY`.

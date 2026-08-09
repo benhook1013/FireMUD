@@ -66,7 +66,7 @@ These are the primary canonical references for gateway behaviour:
 
 - [client-behavior.md#gameplay-route-behavior](./client-behavior.md#gameplay-route-behavior)
 - [client-behavior.md#websocket-close-and-handshake-classification](./client-behavior.md#websocket-close-and-handshake-classification)
-- [api-contracts.md#dynamic-route-management](./api-contracts.md#dynamic-route-management)
+- [api-contracts.md#dynamic-route-management-target-state](./api-contracts.md#dynamic-route-management-target-state)
 - [configuration.md#configuration-sources](./configuration.md#configuration-sources)
 - [operations.md#metrics-and-observability-contract](./operations.md#metrics-and-observability-contract)
 

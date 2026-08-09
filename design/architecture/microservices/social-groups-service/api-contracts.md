@@ -53,7 +53,7 @@ curl -X POST http://localhost:8080/voice/token \
 - `SendMessage` – publishes a chat message to an in-game channel or player
 - `CreateGuild` – establishes a new guild with an owner account
 - `AddFriend` – adds a friend relationship at the game or account level
-- `ListFriendPresence` – returns bounded account-scoped friend presence, including canonical world/realm labels and conservative last-seen facts only when policy allows them. Player-facing responses never include disconnect reason or disposition. The target-state projection reads raw current/recent presence facts from Game Session and current profile visibility through bounded, chunked bulk reads, with each Account or Game Session chunk limited to 100 account IDs and each page limited to 100 subjects; missing, malformed, unknown, or legacy Account policy is evaluated as internal `PRIVATE` before any field projection, and that policy value is never serialized. The current implementation remains non-pageable as described above.
+- `ListFriendPresence` – returns the bounded account-scoped projection defined by the [Friend Presence Privacy Contract](#friend-presence-privacy-contract). Social & Groups retains the local transport consequence: raw presence is obtained from Game Session and profile policy through bounded internal bulk reads; the current endpoint remains non-pageable as noted in implementation status.
 - `SendMail` – stores asynchronous player mail for later retrieval
 
 ### Friend Presence Privacy Contract

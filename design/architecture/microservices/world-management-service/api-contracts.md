@@ -1,5 +1,13 @@
 # World Management Service API Contracts
 
+## Implementation Status
+
+This API contract is target-state canonical; implementation coverage is partial and must not be inferred from target examples alone.
+
+- The current World Management gameplay bridge serializes runtime room ids as `R-<roomInstanceRowId>` and rejects scoped decimal `roomInstanceId` values such as `1021`. That storage-derived encoding is not the canonical target identity defined by the [Identifier Glossary](../../system-architecture-identifier-glossary.md).
+- The bridge, cross-service callers, examples, and focused proof have not migrated together to the scoped decimal `roomInstanceId` contract. The checked-in proof still exercises the legacy encoding.
+- Required executable migration/proof gate: `./gradlew :world-management-service:test :game-logic-service:test :game-session-service:test :tcp-proxy-service:crossServiceTest`. This gate must update the bridge, callers, examples, and checked-in proof together and pass before the target examples below may be treated as current. This document does not claim that the gate exists or passes.
+
 ## gRPC APIs
 
 - `GetRoom` – retrieves room data including exits and environmental effects through `RoomInstanceRef`.
@@ -151,10 +159,13 @@ Once that target protocol is designed and implemented, cross-service LOOK read c
 - Entity Management must either answer with that exact committed same-scope fence token after satisfying it, or return target-state `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE`; it must not mint a competing entity-local fence.
 - If a participant cannot satisfy the requested fence or the returned participant fence differs, Game Logic treats that as a caller-side retry condition, obtains a fresh World Management snapshot, and retries the same-scope composition. It must not return mixed-state output or require a separate mismatch service error.
 
-Current World Management runtime room identity notes:
+## Room Identity Migration
 
-- World Management emits canonical runtime room ids as opaque text in the form `R-<roomInstanceRowId>`.
-- World Management gameplay bridge readers fail closed on legacy `room-1021` or `1021` request forms; callers must send the canonical opaque runtime room id and must not infer row-id semantics from its shape.
+### Target behavior
+
+The target runtime identity at this boundary is `RoomInstanceRef = {tenantId, gameInstanceId, roomInstanceId}`. `roomInstanceId` is a service-owned runtime identity, not a database row id. When a string is required at a transport boundary, it uses canonical decimal text such as `1021`; the value remains opaque outside the full `RoomInstanceRef` scope.
+
+These examples remain target-only until the required executable migration/proof gate in [Implementation Status](#implementation-status) has updated the bridge, callers, examples, and checked-in proof and has passed.
 
 Illustrative target-state `GetRoomSnapshot` fragments:
 
@@ -162,7 +173,7 @@ Illustrative target-state `GetRoomSnapshot` fragments:
 {
   "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
   "gameInstanceId": "9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78",
-  "roomInstanceId": "R-1021",
+  "roomInstanceId": "1021",
   "worldSnapshotId": "room-snapshot-epoch-17",
   "roomName": "Candle-lit Antechamber"
 }

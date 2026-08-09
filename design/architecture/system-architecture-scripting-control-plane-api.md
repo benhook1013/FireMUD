@@ -474,7 +474,7 @@ Inputs:
 
 - `tenantId`
 - Optional filters: `gameInstanceId`, `regionId`, `scriptPatchVersion`, `createdAfterMs`, `createdBeforeMs`
-- Optional explicit `workItemIds` (numeric durable work-item identifiers; when present, replay selection is limited to these rows)
+- Optional explicit `workItemIds` (current numeric durable parent-work-item identifiers; when present, replay selection is limited to these rows). Target state replaces this explicit selector with `references[]`, one complete Command-Handoff Identity per command descriptor, as defined by [Scripting Control-Plane Operations](./system-architecture-scripting-control-plane-operations.md#replaydeadletteredworkitems).
 - `limit` (bounded by the service)
 - `controlPlaneRequestId`
 - `actor`
@@ -491,6 +491,7 @@ Contract rules:
 - When the original ingress audit identifies a plugin-backed handler, replay is additionally allowed only if the currently active plugin version for `(tenantId, gameInstanceId, pluginId)` still matches the ingress-audited `pluginVersionId`.
 - Rows that fail these checks remain `DEAD_LETTERED` and count toward `rejectedCount`; the operation does not partially mutate them into an intermediate state.
 - Replay does not bypass later admission or runtime checks. Requeued rows re-enter the normal evaluation pipeline and may dead-letter again if the underlying failure condition still exists.
+- The current parent-row mutation does not establish the target per-command replay contract. Target replay claims and results are keyed by complete command references so one command may be selected without implicitly replaying its siblings.
 
 #### `GetScriptPatchInstanceRolloutStatus`
 

@@ -1,18 +1,28 @@
 # FireMUD Scripting & Automation: Control Plane Operations
 
-This document defines the workflow layer for scripting and automation control-plane changes. It covers rollback, pause/resume, drain/purge, dead-letter recovery, convergence checks, and operator audit flows.
+This document defines the service participation and API-usage layer for scripting and automation control-plane changes. It covers pause/resume, drain/purge, dead-letter recovery, convergence reads, and operator audit flows. The canonical promotion and rollback sequence, state machine, timeouts, and degraded-operation policy live in [Scripting & Automation: Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md).
 
 The direct API surface and request/response contracts for pinning, plugin activation, plugin drain, patch visibility, and admission outcomes live in [Scripting & Automation: Control Plane API](./system-architecture-scripting-control-plane-api.md).
+
+## Normative Target Contract
+
+The workflow APIs below are target-state contracts. Automation's durable work model has two layers: pre-DSL trigger state and evaluated descriptor/outbox evidence. A target evaluation atomically commits all emitted descriptors, parent outbox evidence, and the terminal evaluation outcome by transitioning the trigger to `EVALUATED_COMMITTED`; recovery replays those descriptors without DSL re-entry. `EVALUATED_COMMITTED` is not an active evaluation and is excluded from `activeExecutionCount`; unresolved descriptor children remain represented by their `PENDING`/`INDEXED` or `HANDOFF_IN_FLIGHT` descriptor states. `PENDING_EVALUATION` and `EVALUATING` remain pre-DSL states, while the existing evaluated-descriptor statuses retain their meanings.
+
+Purge is evidence cleanup, not trigger recovery. It rejects `PENDING_EVALUATION` and `EVALUATING` triggers and all active/nonterminal descriptor rows. An `EVALUATED_COMMITTED` parent marker is not deleted; purge may remove only its retention-eligible terminal `HANDED_OFF`, `CANCELED`, or `DEAD_LETTERED` descriptor/outbox evidence. It preserves the trigger marker, corresponding `script_event_audit`, and replay-causation claims or records, and never cancels, reclaims, dead-letters, or replays work.
+
+## Implementation Status
+
+This section records current behavior only. The current Automation claim boundary is `PENDING_EVALUATION` -> `EVALUATING`; it has no recovery owner, evaluation lease expiry/fencing generation, or descriptor-commit marker/status, and its recovery behavior is unimplemented and unverified. `GetAutomationDrainStatus` currently counts `EVALUATING` and `HANDOFF_IN_FLIGHT` rows in `activeExecutionCount`, including unresolved stale `EVALUATING` rows, and counts every handoff-capable `PENDING_EVALUATION` row in `pendingCancelableWorkItemCount`. Current terminal-row cleanup is retention-based; the target terminal-evidence purge rule is not current trigger-state recovery and does not establish that the current cleanup preserves an `EVALUATED_COMMITTED` marker, audit, or replay causation. These implementation facts do not change the fail-closed zero-count rule in the normative API below.
 
 ## Table of Contents
 
 - [Scope](#scope)
+- [Normative Target Contract](#normative-target-contract)
+- [Implementation Status](#implementation-status)
 - [Principles](#principles)
 - [Actors and Responsibilities](#actors-and-responsibilities)
 - [Control Plane Workflow APIs (Normative)](#control-plane-workflow-apis-normative)
 - [Rollback and Recovery Workflow](#rollback-and-recovery-workflow)
-- [Rollback Orchestration State Machine (Required)](#rollback-orchestration-state-machine-required)
-- [Pin-State Degraded Operations Policy (Required)](#pin-state-degraded-operations-policy-required)
 - [Related Control Plane Contracts](#related-control-plane-contracts)
 
 ---
@@ -42,7 +52,7 @@ This document does not redefine the direct API request/response contracts or can
 - **Game Session Service**
   - Owns tick-scheduling pause/resume.
   - Owns the canonical rollback workflow state keyed by `controlPlaneRequestId`.
-  - Produces the pin-change and rollback-timeout events used for operator visibility.
+  - Is the sole producer of the pin-change and rollback-timeout events used for operator visibility.
 
 - **Automation & Scripting Service**
   - Owns admission pause/resume.
@@ -110,7 +120,7 @@ Semantics:
 
 - Idempotent.
 - `PAUSED_FOR_ROLLBACK` prevents admission of new external, scheduler, and timer triggers for the scope while allowing already-admitted work to be drained or canceled.
-- During pause, ingress calls return explicit rollback backpressure outcomes and remain audit-visible.
+- During pause, ingress calls return explicit rollback backpressure outcomes and remain visible in the event-scope ingress audit; they do not create handler-scoped `script_event_audit` rows before handler resolution.
 - Entering `PAUSED_FOR_ROLLBACK` must also advance a scope-local **admission epoch**. Every already-admitted execution carries the epoch under which it was accepted, and any later outbox-persist or tick-handoff attempt must re-check that epoch before committing side effects.
 - If an execution admitted under an earlier epoch reaches persist or handoff after the scope has advanced to a newer rollback epoch, it must not create new live work. The execution transitions to `finalOutcome=canceled` with a bounded `finalReason` such as `rollback_epoch_advanced` and remains visible in `script_event_audit`.
 
@@ -136,7 +146,8 @@ Semantics:
 
 - Read-only.
 - Reports whether any pre-pause executions or already-persisted work remain in the rollback scope after the current `admissionEpoch` took effect.
-- Rollback orchestration uses this API together with cancel/purge hooks to decide when it is safe to resume normal admission.
+- Rollback orchestration uses this API together with cancel/purge hooks to decide when it is safe to resume normal admission. Drain is fail-closed: `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` are both required before normal admission or ticks resume; unresolved active or pending work keeps the workflow paused.
+- A drain response may authorize resume only when it is a fresh authoritative read taken after the final reconciliation, cancellation, and purge step, and its `admissionEpoch` matches the current rollback-scope epoch. A cached, stale, or earlier-epoch response is unsatisfied evidence.
 
 ### Rollback Convergence Readiness (Required)
 
@@ -155,11 +166,15 @@ Outputs:
 - `observedPinnedScriptPatchVersion`
 - `lastObservedControlPlaneRequestId`
 - `observedAt`
+- `projectionAsOfMs`
+- `projectionLagMs`
+- `isProjectionStale`
 
 Semantics:
 
 - Read-only.
-- Reports the latest pin observation used by admission and scheduler logic.
+- Reports the latest pin observation used by admission and scheduler logic. For rollback convergence, the observation is an acknowledgment only when the expected patch and `controlPlaneRequestId` are present, `isProjectionStale=false`, and `projectionLagMs` is inside the configured freshness bound; a stale stored observation remains diagnostic data, not convergence proof. The freshness bound is the configured `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS` value from [Automation & Scripting Service Configuration](./microservices/automation-scripting-service/configuration.md).
+- Reports only pin observation and projection freshness; it does not return an admission decision, `finalStage`, `finalOutcome`, `finalReason`, or a handler outcome.
 
 #### `GetGameSessionPinConvergence`
 
@@ -178,7 +193,8 @@ Outputs:
 Semantics:
 
 - Read-only.
-- Reports the latest pin observation used by tick command intake and execution-time version fences.
+- Reports the latest pin observation used by tick command intake and execution-time version fences through a direct authoritative read of the committed Game Session pin.
+- This is not a projection read; projection lag and stale-projection fields do not apply, and no projection fields are returned. For rollback/promotion convergence, the read is fresh only when it completes before the operation deadline, the observed patch and `lastObservedControlPlaneRequestId` match the expected patch and request, and `observedAt` is the timestamp from that committed pin.
 
 #### `GetSignerPolicyConvergence`
 
@@ -222,7 +238,7 @@ Semantics:
 - Idempotent.
 - Under the shared queue mutation/tick lease, terminal-marks matching durable Game Session command rows before post-commit Redis queue/pending cleanup. Pre-batch commands use `executionOutcome = LOST_BEFORE_STAGING`; an explicitly retryable command with a durable prior tick-effect binding uses `executionOutcome = ABANDONED`. Both use `gameplayResult = NOT_APPLIED`, `failureCode = ROLLBACK_PURGED`, and the validated nonblank ingress `reason` as `failureMessage`.
 - Batch-bound work that is not in the explicit retry queue is not purged through this hook; it requires effect-ledger remediation or rollback recovery because it has crossed the tick-batch boundary.
-- Emits an operator-visible metric for purge activity and for version-fence drops (exact metric names and label sets follow the observability contract, including separate script and plugin version-fence metric families).
+- Emits an operator-visible metric for purge activity and for version-fence drops; exact metric names, labels, and increment units follow [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix), while audit and handoff diagnostics follow the observability contract.
 
 Outputs:
 
@@ -263,8 +279,8 @@ Inputs:
 Semantics:
 
 - Idempotent.
-- Marks all pending outbox work items for the specified patch/scope as canceled so they are never handed off again.
-- Emits an operator audit entry and increments a rollback-specific metric (exact metric names are defined by the observability contract).
+- Applies the canonical two-layer cancellation mapping: `PENDING_EVALUATION` transitions to terminal `CANCELED` without DSL evaluation with `finalStage=ADMISSION`, `finalOutcome=canceled`; `EVALUATING` is fenced and its descriptor-commit marker is inspected, with committed descriptors continuing through descriptor cancellation, explicit no-descriptor cancellation using `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and stale recovery using terminal `DEAD_LETTERED` with `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and `finalReason=stale_execution_fenced`; evaluated descriptors in `PENDING` or `INDEXED` transition to `CANCELED` with durable `cancelReason`, `finalStage=WORK_ITEM_PERSIST`, and `finalOutcome=canceled`. No path re-enters the DSL.
+- Emits an operator audit entry and applies the rollback-specific metric consequence defined by [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix).
 
 Outputs:
 
@@ -273,6 +289,8 @@ Outputs:
 ### Automation & Scripting: Outbox and Dead-Letter Operations (Required)
 
 These APIs provide deterministic operator hooks for stuck/canceled work so control-plane rollback and recovery do not depend on ad-hoc database access.
+
+The persisted `outboxWorkItemId` and its public/current wire aliases (`workItemId` and `automationWorkItemId`) are parent correlation only, not command identity. The current replay mutation selects parent `workItemIds` and requeues eligible `script_work_items` rows; it does not select independent command descriptors. **Target-state only:** descriptor-level outbox and dead-letter operations use explicit `references[]`; each reference is the complete [Command-Handoff Identity](./system-architecture-scripting-normative-contract-tables.md#command-handoff-identity-target-state), including `commandOrdinal`, with `outboxWorkItemId` retained only for correlation. Operators may copy a reference from a returned `items[]` row into a target-state mutation request; a parent work-item identifier alone is insufficient, and pre-DSL rows must be rejected rather than assigned a synthetic command identity.
 
 #### `ListOutboxWorkItems`
 
@@ -289,16 +307,18 @@ Semantics:
 
 Outputs:
 
-- `items[]` (including `outboxWorkItemId`, Trigger Identity, `workItemStatus`, `createdAt`, `updatedAt`, `cancelReason`)
+- `items[]` (including `workItemId`, the public alias for canonical `outboxWorkItemId`, `reference` containing the complete Command-Handoff Identity and Trigger Identity when the row is an evaluated descriptor, `workItemStatus`, `createdAt`, `updatedAt`, `cancelReason`). For pre-DSL `PENDING_EVALUATION` or `EVALUATING` rows, the target descriptor `reference` is omitted/null because no command identity exists.
 - `nextPageToken`
 
 #### `ReplayDeadLetteredWorkItems`
+
+The `references[]` selector and per-descriptor replay claims below are target-state only. Current replay selects parent `workItemIds` as documented by the live API contract and requeues the selected parent rows; it does not select or independently replay emitted command descriptors.
 
 Inputs:
 
 - `tenantId`
 - Optional scope: `gameInstanceId`, `regionId`
-- Selector: explicit `outboxWorkItemIds[]` or bounded filter (`scriptPatchVersion`, `pluginVersionId`, `createdAfter`, `createdBefore`)
+- Selector: explicit `references[]` (one complete Command-Handoff Identity per selected command) or bounded filter (`scriptPatchVersion`, `pluginVersionId`, `createdAfter`, `createdBefore`)
 - `controlPlaneRequestId`
 - `actor`
 - `reason`
@@ -306,16 +326,34 @@ Inputs:
 Semantics:
 
 - Idempotent.
-- Transitions selected `DEAD_LETTERED` work items back to replayable state (`PENDING` or equivalent) without re-running DSL evaluation for original triggers.
+- Creates one durable replay record with a new `replayExecutionIdentity` and a new `automationDispatchId` for each eligible selected `DEAD_LETTERED` command descriptor. The selected original complete Command-Handoff Identity, including its original `automationDispatchId` and `commandOrdinal`, is immutable causation evidence; the original identity remains terminal and its audit row is never reopened or appended with replay execution history. Control Plane Operations owns the canonical replay identity and idempotency rules.
+- Repeating the same `controlPlaneRequestId` for the same original execution identity returns the previously created replay record/result rather than creating another replay identity.
 - Must enforce bounded batch size per request.
-- Must enforce replay eligibility against current control-plane state before transition:
+- Each selected command is replayed under the existing single-command replay contract: the new replay command uses its new `automationDispatchId` with `commandOrdinal=0`; the original command ordinal remains only in the immutable causation identity. The durable claim stores the replay identity, replay dispatch, outcome/result, winning `controlPlaneRequestId`, and canonical request fingerprint.
+- An exact retry with the same `controlPlaneRequestId` and original command reference returns that stored replay identity/result; selector-form retries of an already claimed original identity reuse the same result and cannot create a second replay identity.
+- Reusing a `controlPlaneRequestId` with a different canonical request fingerprint returns an idempotency conflict and cannot alter an existing claim; a distinct request or selector reuses the existing per-original result.
+- Resolves and normalizes each selected command reference, then validates and claims its original execution identity atomically. A durable unique replay claim keyed by the complete Command-Handoff Identity, independent of `controlPlaneRequestId` and selector form, prevents two requests or overlapping selectors from creating two replay identities for one command. Filter matches are expanded to individual command references; a parent with multiple descriptors is not implicitly replayed as one atomic unit.
+- A successful claim durably stores the original execution identity, new `replayExecutionIdentity`, outcome/result, winning `controlPlaneRequestId`, and canonical request fingerprint. An exact retry reuses that stored result; a request using an already claimed original identity through another selector also reuses the existing result and cannot replace its fingerprint or create another replay identity. Reuse does not reopen the original audit row.
+- Every selected command descriptor must match the request `tenantId` and any explicit `gameInstanceId` or `regionId` scope using its own stored identity. A tenant-wide selector must evaluate each instance independently and must not borrow another instance's current pin or binding.
+- Resolve the current patch pin from each row's own tenant and instance. For plugin-backed work, resolve the current binding for that same tenant, instance, and plugin, then compare the row's immutable `(pluginId, pluginVersionId, bindingId)` tuple to that binding.
+- Must enforce replay eligibility against current control-plane state before creating the replay:
   - Work items with `scriptPatchVersion` that is not currently pinned for the scoped instance must be rejected from replay.
-  - Plugin work items whose `(pluginId, pluginVersionId)` do not match currently active plugin state for the scoped instance must be rejected from replay.
-  - Ineligible rows must return deterministic bounded application errors (for example `REPLAY_VERSION_FENCE_MISMATCH`) and must remain `DEAD_LETTERED`.
+  - Plugin work items whose immutable `(pluginId, pluginVersionId, bindingId)` tuple does not match the currently active binding for the same scoped `<tenantId, gameInstanceId, pluginId>` must be rejected from replay.
+  - Ineligible rows must return deterministic bounded application errors (for example `REPLAY_VERSION_FENCE_MISMATCH`), remain `DEAD_LETTERED`, and produce no replay identity.
 
 Outputs:
 
-- `replayedCount` (best-effort count; may be approximate for large batches)
+- `replayedCount` (best-effort count of selected commands; may be approximate for large batches)
+- `results[]` (bounded to the selected input batch, with one result per selected reference):
+  - `reference` (the complete Command-Handoff Identity)
+  - `originalExecutionIdentity` (the immutable complete Command-Handoff Identity retained as causation evidence)
+  - `replayExecutionIdentity` when a replay identity was created or reused; replay identity semantics are owned by this control-plane operation, while the runtime document records local execution consequences
+  - `outcome` (`created`, `reused`, or `rejected`)
+  - `rejectionReason` when `outcome=rejected`, using a bounded application reason such as `REPLAY_VERSION_FENCE_MISMATCH`
+
+For a repeated `controlPlaneRequestId` and command reference, `results[]` returns the same replay identity with `outcome=reused`; rejected references remain without a replay identity. `replayedCount` and this stable-request idempotency behavior are retained.
+
+Ineligible rows remain `DEAD_LETTERED` and produce no replay identity. Their rejected result is not a unique replay claim, so a later request may retry after the row's current patch or plugin binding becomes eligible.
 
 #### `PurgeOutboxWorkItems`
 
@@ -323,7 +361,7 @@ Inputs:
 
 - `tenantId`
 - Optional scope: `gameInstanceId`, `regionId`
-- Selector: explicit `outboxWorkItemIds[]` or bounded filter (`workItemStatus`, `scriptPatchVersion`, `pluginVersionId`, `createdBefore`)
+- Selector: explicit `references[]` (one complete Command-Handoff Identity per selected command) or bounded filter (`workItemStatus`, `scriptPatchVersion`, `pluginVersionId`, `createdBefore`)
 - `controlPlaneRequestId`
 - `actor`
 - `reason`
@@ -331,7 +369,8 @@ Inputs:
 Semantics:
 
 - Idempotent.
-- Permanently removes selected outbox rows or marks them purged in bounded batches.
+- Resolves each selected command reference against durable trigger and descriptor/outbox state before mutating anything. A reference that resolves to `PENDING_EVALUATION` or `EVALUATING`, or to an evaluated descriptor in `PENDING`, `INDEXED`, or `HANDOFF_IN_FLIGHT`, is rejected with a bounded application reason; an `EVALUATED_COMMITTED` parent is resolved as retained trigger evidence rather than rejected wholesale. Purge does not cancel, reclaim, dead-letter, replay, or otherwise mutate active/nonterminal work.
+- May purge only evaluated descriptor/outbox evidence in terminal `HANDED_OFF`, `CANCELED`, or `DEAD_LETTERED` status after that status's configured retention horizon has elapsed, including terminal children under an `EVALUATED_COMMITTED` parent. Terminal evidence still inside its retention window is rejected with a bounded retention reason. The operation preserves the `EVALUATED_COMMITTED` marker, corresponding `script_event_audit`, replay causation claims or records, and any other evidence still inside its required retention window.
 - Must emit operator-auditable records for every purge request.
 
 Outputs:
@@ -353,7 +392,7 @@ Inputs:
 Semantics:
 
 - Idempotent.
-- Marks pending outbox work items produced by the specified plugin version as canceled so they are never handed off again.
+- **Target-state semantics:** cancellation is fencing-aware across both durable layers. `PENDING_EVALUATION` transitions by compare-and-set to `CANCELED` without entering the DSL. `EVALUATING` is fenced and its descriptor-commit marker is inspected first; a committed descriptor is resumed from durable descriptors without DSL re-entry, while an explicit cancellation with no committed descriptor transitions the trigger to `CANCELED` with `finalStage=DSL_EVAL` and stale recovery uses the canonical `DEAD_LETTERED` mapping. Evaluated descriptors in eligible `PENDING` or `INDEXED` status transition to `workItemStatus=CANCELED` with durable `cancelReason`, `finalStage=WORK_ITEM_PERSIST`, and `finalOutcome=canceled`. Each transition records the corresponding stage-aware `script_event_audit` cancellation outcome. The current implementation lacks the descriptor layer and recovery owner, so these are target-state semantics rather than current live proof.
 - Required for plugin disable/rollback/revocation workflows to avoid repeated execution-time plugin version fence drops and queue growth.
 
 Outputs:
@@ -375,30 +414,14 @@ If implemented, these APIs must remain thin orchestration and must not become an
 
 ## Rollback and Recovery Workflow
 
-Rollback orchestration must prevent previously queued work from a rolled-back `scriptPatchVersion` from continuing to affect gameplay.
+The canonical rollback ordering, durable state machine, convergence timeout, drain gate, schedule reconciliation, and degraded-operation policy remain owned by [Scripting & Automation: Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md#patch-rollback-operator-driven-required). Use that owner document for command ordering and state transitions. The [operations cookbook](./system-architecture-scripting-operations-cookbook.md#rollback-protocol-example-non-authoritative) is only a non-authoritative worked example and must not be treated as a source of command ordering.
 
-At a minimum, rollback consists of:
+This document retains only the participating API consequences:
 
-1. Fence new evaluation by setting Automation admission to rollback-pause mode, waiting for that barrier to be acknowledged, and then calling `PauseTicks`; a future operation may acquire both fences atomically, but it must not pause ticks first while Automation admission remains open. Keep the admission barrier active through repin, schedule reconciliation, cancellation, purge, convergence, and drain.
-2. Repin the affected game instance(s) to the target `scriptPatchVersion` using the Game Session control-plane API.
-3. Reconcile durable schedule entries before timer admission resumes: create or confirm every target-version entry, then retire displaced version-owned entries as one atomic durable result or a resumable idempotent operation. This is a required mutating rollback phase and records the same `controlPlaneRequestId`, `requestedBy`, and `reason` as the surrounding operator workflow, with `executedBy=system:automation` for the worker. Never record `actor=system:automation` or replace the operator's `requestedBy` value. Each schedule child is keyed by its full owner identity plus `scheduleDefinitionId`; the parent `controlPlaneRequestId` coordinates the operation but does not replace per-schedule identity. Preserve `scheduleDefinitionId` only as the stable logical schedule identity; do not rewrite old entries or reuse their trigger claims or `scriptEventId` values.
-4. Drain or purge queued script work items and staging entries that carry the rolled-back patch.
-5. If plugin versions are also being rolled back, disabled, or revoked, cancel pending work for those `pluginVersionId` values before queue purge.
-6. Verify pin convergence and drain completion before resuming normal admission.
-7. Invoke `ResumeTicks` as the `RESUMING` action while Automation admission remains paused. A failed resume leaves ticks paused and the workflow retryable rather than falsely marking rollback complete.
-8. After `ResumeTicks` succeeds, set Automation admission to `NORMAL`. Persist `COMPLETED` only after both actions succeed.
-
-Concrete rollback sequence example:
-
-1. Call `SetAutomationAdmissionMode(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, mode=PAUSED_FOR_ROLLBACK, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` so new external, scheduler, and timer triggers are rejected before any tick barrier is acquired.
-2. After the Automation admission barrier is acknowledged, call `PauseTicks(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` so Game Session stops new tick scheduling and command intake for that instance.
-3. Call `RollbackScriptPatchVersion(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, targetScriptPatchVersion=P21, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` to repin the instance to the known-good patch.
-4. Run the system-owned durable schedule/timer reconciliation for `tenantId=11111111-1111-4111-8111-111111111111`, `gameInstanceId=44444444-4444-4444-8444-444444444444`, and target `P21` across every region of that instance while the admission barrier remains active. The audit record carries `controlPlaneRequestId=RB-42`, `requestedBy=operator:alice`, `executedBy=system:automation`, and `reason="rollback RB-42"`; it does not overload `actor` with the executing principal. Each schedule child is keyed by its applicable `scheduleDefinitionId` and full owner identity. It creates or confirms only target-version rows before retiring displaced `P22` rows as one atomic durable result or a resumable idempotent operation, and creates no firing claim or `scriptEventId` before timer admission resumes.
-5. Call `CancelPendingWorkItemsForPatch(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, scriptPatchVersion=P22, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` and `PurgeQueuedTickCommandsForScriptPatch(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, scriptPatchVersion=P22, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")`. The optional `regionId` is deliberately omitted so this instance-wide repin cleans every affected region. When plugin versions are displaced, invoke the separate plugin-version cancel and queued-command purge operations with their `pluginId` and `pluginVersionId`.
-6. Poll `GetAutomationPinConvergence(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444)` and `GetGameSessionPinConvergence(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444)` until both report `observedPinnedScriptPatchVersion=P21` and `lastObservedControlPlaneRequestId=RB-42`.
-7. Poll `GetAutomationDrainStatus(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444)` until `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` for the current rollback-scope `admissionEpoch`.
-8. Call `ResumeTicks(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` while Automation admission remains paused.
-9. After `ResumeTicks` succeeds, call `SetAutomationAdmissionMode(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, mode=NORMAL, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")`.
+- Automation & Scripting implements the admission barrier, durable schedule reconciliation, work-item cancellation, drain-status reads, pin-convergence reads, and auditable cleanup APIs described above.
+- Game Session owns the durable rollback workflow and patch pin, exposes tick pause/resume, queued-command purge, and convergence APIs, and is the sole producer of the rollback-timeout signal. Automation consumes the durable timeout state/signal and must not create a competing timeout or recovery state machine. Logging & Admin may orchestrate those APIs but must not persist a competing workflow state machine.
+- The same `controlPlaneRequestId`, authenticated operator `actor`/`requestedBy`, and `reason` flow through every mutating step. System-owned reconciliation records use a separate `executedBy=system:automation` rather than replacing the operator identity.
+- Patch- and plugin-scoped cancel/purge calls omit `regionId` for an instance-wide repin so every affected region is covered. API retries remain idempotent under the owning request/response contracts.
 
 Operationally, use control-plane APIs rather than direct data-store edits for pending and dead-lettered work:
 
@@ -406,56 +429,9 @@ Operationally, use control-plane APIs rather than direct data-store edits for pe
 - `ReplayDeadLetteredWorkItems` for bounded replay of recoverable items.
 - `PurgeOutboxWorkItems` for auditable cleanup of terminally invalid or stale items.
 
-## Rollback Orchestration State Machine (Required)
-
-Rollback orchestration must expose and persist a state machine so partial failures are recoverable and retries are deterministic.
-
-Ownership and source-of-truth requirements:
-
-- Game Session is the producer-of-record for rollback orchestration state keyed by `controlPlaneRequestId`.
-- Logging & Admin may expose convenience orchestration APIs, but these must call the Game Session workflow APIs and read back the same canonical workflow state; they must not persist a competing rollback-state machine.
-- Automation & Scripting participates via idempotent step APIs (`SetAutomationAdmissionMode`, cancel/purge hooks, convergence reads) and must not infer orchestration completion from local state alone.
-
-Required states:
-
-- `PAUSING` -> `REPINNING` -> `RECONCILING_SCHEDULES` -> `CANCELING` -> `PURGING` -> `CONVERGING` -> `DRAINING` -> `RESUMING` (invoke `ResumeTicks`, then set admission `NORMAL`) -> `COMPLETED`
-- Terminal failure state: `ROLLBACK_CONVERGENCE_TIMEOUT`
-
-State rules:
-
-- Each transition must be idempotent and keyed by `controlPlaneRequestId`.
-- Re-running a request in the same state must return current state, not restart from scratch.
-- `RECONCILING_SCHEDULES` must complete before timer admission, normal admission, or tick resumption can proceed. Replacement creation and displaced-row retirement must be one atomic durable result or a resumable idempotent operation keyed by `controlPlaneRequestId`; retries may carry due state only when the requested displaced-to-replacement mapping matches the complete immutable schedule-owner identity: `<tenantId, gameInstanceId, playableStateScope, targetScopeType, targetScopeId, scriptId, eventType, eventSchemaVersion, isDryRun, scheduleDefinitionId, scheduleSemanticsHash, pluginId?, displacedScriptPatchVersion, replacementScriptPatchVersion?, displacedPluginVersionId?, replacementPluginVersionId?, bindingId?>`. The mapping must retain both the displaced and replacement owner identities, including their patch/plugin versions and binding, rather than comparing only a logical schedule ID. If any tenant, instance, target scope, applicable owner, displaced/replacement owner, schedule-definition, or semantics component differs, create the replacement with fresh due state; retire the displaced row only after the full mapping matches. Reconciliation creates no firing claim or `scriptEventId`.
-- Failures in `CANCELING`, `PURGING`, or `RESUMING` must not auto-resume admission or ticks; admission remains paused until `ResumeTicks` succeeds and the `NORMAL` transition succeeds.
-- `RESUMING` represents the in-flight `ResumeTicks` action followed by the admission transition to `NORMAL`. Only a successful `ResumeTicks` result and successful `NORMAL` transition may transition the workflow to `COMPLETED`; failures leave the relevant barrier paused and `RESUMING` retryable.
-- Operator retries must continue from the last durable state.
-- `ROLLBACK_CONVERGENCE_TIMEOUT` keeps admission and ticks paused until explicit operator action.
-- `DRAINING` is required. Rollback must not resume admission or ticks until the current rollback-scope `admissionEpoch` has no active pre-pause executions and no remaining cancelable outbox work according to `GetAutomationDrainStatus`.
-
-Convergence timeout semantics (required):
-
-- Rollback orchestration must apply a bounded convergence timeout for the convergence step.
-- If timeout is reached before both convergence APIs report the expected `controlPlaneRequestId`, the rollback enters terminal state `ROLLBACK_CONVERGENCE_TIMEOUT`.
-- In `ROLLBACK_CONVERGENCE_TIMEOUT`, Automation admission remains paused for scope safety and ticks remain paused until an operator explicitly issues resume or abort actions.
-- The system must emit terminal event `ScriptRollbackConvergenceTimedOut` and increment the corresponding rollback timeout metric.
-- While timeout terminal state remains active, ingress admissions in scope must record a rollback timeout admission outcome and a bounded final reason.
-
-## Pin-State Degraded Operations Policy (Required)
-
-`pin_state_unavailable` is fail-closed by default. Any override mode must be explicit and tightly constrained:
-
-- Override must be activated by an authenticated operator action with `controlPlaneRequestId`, `actor`, `reason`, and a bounded TTL.
-- Override scope must be explicit (`tenantId` + `gameInstanceId` minimum).
-- Override must emit control-plane audit and event records so post-incident reconciliation can prove exactly when fail-closed behavior was bypassed.
-- On TTL expiry, fail-closed behavior (`pin_state_unavailable`) must resume automatically.
-
-Notes:
-
-- Even without an explicit purge, Game Session’s version fence prevents execution of commands produced under the rolled-back patch, but rollback must still drain and purge automation staging to avoid unbounded queue growth and operator confusion.
-- Rollback does not attempt compensating actions for already-executed tick effects. Operators rely on normal incident response patterns for remediation such as restore, rollback data, or targeted admin operations.
-
 ## Related Control Plane Contracts
 
 - [Scripting & Automation: Control Plane API](./system-architecture-scripting-control-plane-api.md) defines the direct request/response contracts, canonical errors, and admission rules.
+- [Scripting & Automation: Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md) defines promotion and rollback ordering, orchestration state, convergence, and degraded-operation policy.
 - [Scripting & Automation: Control Plane Events](./system-architecture-scripting-control-plane-events.md) defines the durable event families emitted by the workflow APIs in this document.
-- [Scripting Observability Contract](./system-architecture-scripting-observability-contract.md) defines the metric names, labels, and audit surfaces referenced by the workflow steps in this document.
+- [Scripting Observability Contract](./system-architecture-scripting-observability-contract.md) defines audit and handoff diagnostics referenced by the workflow steps in this document; [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix) owns metric names, labels, and increment units, while the normative audit tables and scripting lifecycle/rollout documents own audit stage/outcome semantics and final status transitions.

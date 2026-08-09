@@ -8,6 +8,7 @@ This document is the **hub/entry point** for environment variables and secrets i
 ## Table of Contents
 
 - [Overview](#overview)
+- [Implementation Status](#implementation-status)
 - [Operator & Architecture Overview](#operator--architecture-overview)
 - [Environment Variable Catalog](#environment-variable-catalog)
 
@@ -21,6 +22,16 @@ FireMUD relies on environment variables and Kubernetes Secrets to configure serv
 - Use the **catalog** document when you need exact variable names, defaults, and rotation behavior.
 
 Existing links to sections like “gRPC TLS Certificates” and “Authentication” still resolve here, but the detailed tables now live in the catalog. Each section below includes a short summary and links to the appropriate document.
+
+---
+
+## Implementation Status
+
+The current checked-in runtime and executable preflight remain in the legacy Secret-backed JWKS mode. `jwt-jwks` is a Kubernetes `Secret`, the runtime still permits shared-HMAC and classpath-fallback drift, and `PREFLIGHT-JWKS-001` rejects a `ConfigMap` named `jwt-jwks`. These checks are current wiring evidence only; they do not establish player-facing JWT readiness.
+
+The target-only `INTERIM_ACCOUNT_ONLY_MOUNTED_FALLBACK` is not currently proved. Its interim environment consequence is an environment-unique `jwt-signing-keys` Secret mounted only into Account through `FIREMUD_AUTH_JWT_SECRET_PATH`, with validators consuming only the public `jwt-jwks` projection through `FIREMUD_AUTH_JWKS_PATH`. The packaged classpath JWKS fallback is permitted only in local/test environments.
+
+Current hosted `pr-preview` manifests use preview-unique, pre-created signing-key and `jwt-jwks` Secrets; current preflight rejects a `ConfigMap`. Target hosted previews use preview-unique, Account-published `jwt-jwks` ConfigMap data delivered through `FIREMUD_AUTH_JWKS_PATH` to Account and every validator. Shared preview trust material across namespaces is not allowed. The custody and publication contract is canonical in [JWT and Token Contracts](../system-architecture-jwt-and-token-contracts.md#signing-key-rotation-contract-normative).
 
 ---
 
@@ -66,7 +77,7 @@ Redis coordination and cache/rate‑limit variables, along with the precedence a
 
 Environment variables that configure gRPC TLS certificate paths and the TCP Proxy → Gateway WebSocket mTLS hop are documented in the [TLS and certificates catalog](./environment-and-secrets-catalog.md#tls--certificates). Conceptual TLS and rotation behavior is covered in:
 
-- [Certificate management and watchers](environment-and-secrets-overview.md#certificate-management--watchers)
+- [Certificate management and watchers](environment-and-secrets-overview.md#certificate-management-and-watchers)
 - [TLS termination for Gateway](../system-architecture-security.md#tls-termination-for-gateway)
 - [Key and certificate rotation](../system-architecture-security.md#key-and-certificate-rotation)
 
@@ -78,9 +89,7 @@ JWT and session-related environment variables, including `FIREMUD_AUTH_JWT_SECRE
 - [Security architecture](../system-architecture-security.md)
 
 The catalog’s Authentication section documents the separate gameplay continuity-retention formula. Issued-token registry records instead use each token's actual `exp` plus the cleanup margin, as described in [JWT and Token Contracts](../system-architecture-jwt-and-token-contracts.md).
-The current checked-in runtime and executable preflight still use the legacy Secret-backed JWKS mode: `jwt-jwks` is a Kubernetes `Secret`, the current runtime still permits shared-HMAC and classpath-fallback drift, and `PREFLIGHT-JWKS-001` rejects a `ConfigMap` named `jwt-jwks`. That current mode is not player-facing readiness. The target mode is a fixed, pre-created `jwt-signing-keys` private Secret read and written through the Kubernetes API only by the materialization controller after an authenticated Account request and a fixed, pre-created public `jwt-jwks` ConfigMap whose initial and subsequent contents are published only by Account through name-scoped `resourceVersion` CAS. Account has no signing-Secret API authority, consumes its private bundle through a read-only projected mount, and consumes the public projection; validators consume the public JWKS and never receive private material. Target-mode preflight remains fail-closed until those checks are implemented. The packaged classpath JWKS fallback is permitted only in local/test environments. Hosted `pr-preview` environments require preview-unique, pre-created JWT signing-key and JWKS resources in each preview namespace; shared preview trust material is not allowed. Account startup must fail when the configured target-mode path or file is missing or unreadable, the JWKS is malformed, or its public JWK does not match the Account signing key and `kid`.
-
-For initial publication, Account remains unready while it authenticates the private-material operation, waits for the projected bundle, derives or receives the operation-bound public JWK, and CAS-populates the pre-created ConfigMap through the Account service account. Account validates the mounted private/public correspondence before becoming ready. There is no separate bootstrap writer or one-time publication-authority exception.
+The target mode uses non-exportable signer custody: Account owns signing authority and lifecycle; the approved signer performs private-key operations; application workloads receive only the Account-published public JWKS, and no application workload receives or mounts private signing material. The signer-custody, publication, rotation, and convergence rules are canonical in [JWT and Token Contracts](../system-architecture-jwt-and-token-contracts.md#signing-key-rotation-contract-normative). This hub records only environment and resource consequences; see [Implementation Status](#implementation-status) for current legacy, interim, and hosted-preview state.
 
 ### Service Discovery
 

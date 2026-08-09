@@ -4,6 +4,12 @@ The architecture section describes FireMUD's technical contracts, runtime bounda
 
 Unless a document explicitly says otherwise, docs in `design/architecture/` describe canonical target-state technical contracts and are normative for implementation. Product requirements and observable product behavior are defined in `design/product`; read architecture overview tables, responsibility matrices, glossary terms, and explicitly labeled canonical sections as technical contracts rather than as informal background.
 
+## Implementation Status
+
+Current Gateway/player readiness is partial rather than production-complete. The [platform operations and delivery tracker](../project-management/implementation-tracking/platform-operations-and-delivery.md), [player access and session tracker](../project-management/implementation-tracking/player-access-and-session.md), and [realm-routing tracker](../project-management/implementation-tracking/realm-routing-and-playable-state.md) record the current bounded seams and remaining route-catalog, public-Telnet, admission, and live-environment proof gaps; these statuses do not promote current paths to target readiness.
+
+The target traffic-plane shape remains three distinct planes: internal infrastructure management, external admin/creator APIs through Gateway, and player HTTP/WebSocket/Telnet traffic. Gateway is the target ingress and routing boundary, but this shape is not evidence that current player-facing readiness or production traffic exposure is complete. Detailed contracts remain in the linked architecture documents and the [system context diagram](./system-context-diagram.md).
+
 ## High-Level Diagrams
 
 - [**system-architecture-overview.md**](./system-architecture-overview.md) – High-level diagrams and interactions.
@@ -24,31 +30,40 @@ Unless a document explicitly says otherwise, docs in `design/architecture/` desc
 
 ## Contract Authority Map
 
-This table names the canonical owner for cross-cutting contract families represented by merged ADRs. Secondary documents link to the owner and state only their local API, persistence, transport, or operational consequence. ADRs explain why a consequential choice was made; they do not replace the current contract in the owning architecture document.
+This table names the canonical owner for cross-cutting contract families represented by merged ADRs or repeated across several architecture documents. Secondary documents link to the owner and state only their local API, persistence, transport, or operational consequence. ADRs explain why a consequential choice was made; they do not replace the current contract in the owning architecture document. A dash in the ADR column means the ownership boundary consolidates existing design without introducing a consequential decision record.
 
 | Contract family | Canonical owner | Secondary documents retain | Merged ADRs |
 | --- | --- | --- | --- |
-| Script event identity, handoff, and reload admission | [Scripting normative contracts](./system-architecture-scripting-contracts.md) | Service-local handler and persistence consequences | 0001-0003 |
+| Script trigger identity, ingress ownership, audit outcomes, and timer semantics | [Scripting normative contract tables](./system-architecture-scripting-normative-contract-tables.md#document-precedence-normative) | Service-local request fields, persistence, and instrumentation consequences | 0001-0003 |
+| Scripting metric names and labels | [Scripting normative contract tables](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix) | Service-local metric emission; diagnostics follow the [Observability Contract](./system-architecture-scripting-observability-contract.md#metrics-consequences-table-4-owned-schema) | — |
+| Scripting queue ownership, command handoff, version fencing, dry-run safety, and reload admission | [Scripting cross-service contracts](./system-architecture-scripting-contracts.md) | Service-local handler, storage, and retry consequences | 0001-0003 |
+| Script-patch promotion, rollback, convergence, and degraded operation | [Scripting rollout and rollback](./system-architecture-scripting-rollout-and-rollback.md) | API-specific participation and operator procedure | — |
 | Gameplay edge routing, sharding, route lifecycle, and close translation | [Gateway architecture](./system-architecture-gateway.md) | Protocol-specific carriers and client-visible translation | 0004, 0006-0008, 0018 |
 | Session front-end and lease-owner routing | [Game Session API contracts](./microservices/game-session-service/api-contracts.md#session-front-end-and-lease-owner-routing) | Caller-specific routing and retry behavior | 0011 |
 | Settings ownership, precedence, and effective caps | [Settings model](./system-architecture-settings-model.md#ownership-and-precedence) | Local settings consumed and fail-closed behavior | 0012 |
-| Session continuity, active-token refresh, and logout | [Session behavior](./system-architecture-session-behavior.md) | Transport reconnect procedure and service-local cleanup | 0013, 0030, 0031 |
-| JWT issuance, registry identity, profiles, token authority generations, outage validity, and key rotation | [JWT and token contracts](./system-architecture-jwt-and-token-contracts.md) | Route carriage and service-local validation consequences | 0014, 0035-0038 |
-| Backup evidence, restore readiness, and recovery proof | [Backup and recovery](./system-architecture-backup-recovery.md) | Service-specific backup hooks and operator commands | 0015 |
+| Session continuity, active-binding inventory and indexes, and binding-refresh orchestration | [Session behavior](./system-architecture-session-behavior.md) | Redis key shape, transport reconnect procedure, and service-local cleanup | 0013, 0030, 0031 |
+| JWT issuance, registry identity, profiles, token refresh/replacement, generation, revocation, fencing, outage validity, key rotation, and logout | [JWT and token contracts](./system-architecture-jwt-and-token-contracts.md) | Route carriage and service-local validation consequences | 0014, 0035-0038 |
+| Backup/recovery lifecycle and restore readiness | [Backup & Disaster Recovery](./system-architecture-backup-recovery.md) | Service-specific backup hooks and operator commands | 0015 |
+| Recovery evidence schemas, lineage, participant dispositions, hardening results, and compliance fields | [Backup Recovery Evidence and Compliance](./system-architecture-backup-recovery-evidence-and-compliance.md#canonical-recovery-record) | Service-specific recovery-evidence hooks and operator commands | 0015 |
 | Durable command outcome lifecycle and status | [Tick execution flows](./system-architecture-tick-execution-flows.md#command-outcome-status-surface-required) | Optional projections and caller presentation | 0016 |
 | Distributed trace propagation and correlation | [Tracing](./system-architecture-tracing.md) | Service-local instrumentation details | 0017 |
 | Identifier representation and boundary validation | [Identifier glossary](./system-architecture-identifier-glossary.md) | Domain-specific identity meaning and validation | 0005, 0020 |
 | Authentication admission, `JOIN`, and gameplay identity binding | [Authentication](./system-architecture-authentication.md) | Admission and identity-binding semantics consume Account-owned durable membership state, mutations, and entitlement authority; Game Session translates the flow | 0021, 0022, 0024, 0025, 0026, 0040, 0042, 0045 |
 | Route-class authorization and operator receiving boundaries | [Authorization route matrix](./system-architecture-authz-route-matrix.md) | Receiving-service semantic authorization and audit evidence | 0023, 0047, 0048 |
 | Gameplay workload trust and secret delivery | [Security](./system-architecture-security.md) | Workload-local credential consumption | 0024, 0032 |
-| Tenant identity, isolation, tenant authority generations, and realm admission pointers | [Multi-tenancy](./system-architecture-multi-tenancy.md) | Service-owned tenant data and routing consequences | 0027, 0041 |
-| Durable membership state, membership mutations, and runtime entitlement authority | [Account runtime and data](./microservices/account-service/runtime-and-data.md#membership-and-entitlement-authority) | Authentication and other consumers enforce Account-owned state during admission and `JOIN` | 0028 |
+| Player execution context schema and gameplay identity carriage | [Authentication](./system-architecture-authentication.md#gameplay-player-execution-context-contract-normative) | Receiving-service scope validation and domain authorization | 0024 |
+| Tenant identity and isolation | [Multi-tenancy](./system-architecture-multi-tenancy.md) | Service-owned tenant data and routing consequences | 0027 |
+| Realm admission-pointer identity and authority | [Multi-tenancy](./system-architecture-multi-tenancy.md#realm-catalog-and-admission-pointer-contract) | Game Session runtime pointer API, persistence, mutation, and serving consequences | 0041 |
+| Published version state and replacement-instance version cutover lifecycle | [Versioning and runtime](./system-architecture-versioning-runtime.md) | Consumer-specific admission and refresh behavior | 0041 |
+| Durable tenant membership and authority state, membership mutations, and runtime entitlement authority | [Account runtime and data](./microservices/account-service/runtime-and-data.md#membership-and-entitlement-authority) | Authentication and other consumers enforce Account-owned state during admission and `JOIN` | 0028 |
 | Tenant-aware edge connect token | [Gateway architecture](./system-architecture-gateway.md#tenant-aware-edge-connect-token-gameplay-handshake) | Token issuance and gameplay-context validation | 0029 |
 | Plaintext Telnet policy and command-channel controls | [Security](./system-architecture-security.md#plaintext-telnet-policy) | Gateway and TCP Proxy transport enforcement | 0033 |
 | Brute-force and abuse controls | [Security](./system-architecture-security.md#brute-force-defense-and-abuse-handling) | Route- and service-specific limits | 0034 |
 | Redis operator access and recovery evidence | [Redis operations access](./system-architecture-redis-ops-access.md) | Service-owned prefixes and recovery hooks | 0039 |
+| Coordination Redis reset sequence and phase lifecycle | [Redis operations](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence) | Reset-model context, scenario scope, storage handling, and current fallback | — |
 | Account lifecycle state | [Account runtime and data](./microservices/account-service/runtime-and-data.md#account-lifecycle-state-model) | Consumer treatment of suspended or deleted accounts | 0043 |
-| Billing instrument ownership and subscription authority | [Account Stripe integration](./microservices/account-service/stripe-integration.md) | Provider adapters and entitlement projections | 0044 |
+| Billing instrument ownership and provider integration | [Account Stripe integration](./microservices/account-service/stripe-integration.md) | Provider adapters and reconciliation operations | 0044 |
+| Subscription lifecycle, plan changes, and cancellation timing | [Account subscription management](./microservices/account-service/subscription-management.md) | Provider event handling and runtime entitlement projection | — |
 | Friend presence privacy | [Social and Groups API contracts](./microservices/social-groups-service/api-contracts.md#friend-presence-privacy-contract) | Request pagination and subject-local redaction | 0046 |
 | External identity attachment | [Account runtime and data](./microservices/account-service/runtime-and-data.md) | Provider adapter details; provider lifecycle remains an explicit design gap | 0049 |
 | Account export and erasure request binding | [Account API contracts](./microservices/account-service/api-contracts.md#subject-binding-rules-normative) | Artifact delivery and storage-specific erasure mechanics; a platform retention-registry owner remains an explicit gap | 0050 |

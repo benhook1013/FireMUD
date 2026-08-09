@@ -1247,6 +1247,7 @@ class ScriptWorkItemServiceImplTest {
     item.setEventType("onCommand");
     item.setEventSchemaVersion("v1");
     item.setScriptEventId("event-1");
+    item.setSourceService("game-session-service");
     item.setCreatedAt(Instant.ofEpochMilli(100));
     item.setCancelReason("GAME_SESSION_UNAVAILABLE");
     ScriptEventAudit audit = new ScriptEventAudit();
@@ -1263,21 +1264,19 @@ class ScriptWorkItemServiceImplTest {
     when(workItemRepository.save(item)).thenReturn(item);
     when(auditRepository.findByWorkItemId(77L)).thenReturn(Optional.of(audit));
     when(ingressAuditRepository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRunAndSourceService(
                 "1",
                 "game-1",
                 "region-1",
                 3L,
                 "entity-1",
                 "",
-                "",
-                "",
-                "",
                 "onCommand",
                 "v1",
                 "patch-1",
                 "event-1",
-                false))
+                false,
+                "game-session-service"))
         .thenReturn(Optional.of(ingressAudit));
     when(pinProjectionService.getPinConvergence("1", "game-1"))
         .thenReturn(
@@ -1339,6 +1338,7 @@ class ScriptWorkItemServiceImplTest {
     item.setEventType("onCommand");
     item.setEventSchemaVersion("v1");
     item.setScriptEventId("event-2");
+    item.setSourceService("game-session-service");
     item.setCreatedAt(Instant.ofEpochMilli(100));
     ScriptEventAudit audit = new ScriptEventAudit();
     ScriptEventIngressAudit ingressAudit = new ScriptEventIngressAudit();
@@ -1354,21 +1354,19 @@ class ScriptWorkItemServiceImplTest {
     when(workItemRepository.save(item)).thenReturn(item);
     when(auditRepository.findByWorkItemId(78L)).thenReturn(Optional.of(audit));
     when(ingressAuditRepository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRunAndSourceService(
                 "1",
                 "game-1",
                 "region-1",
                 3L,
                 "entity-1",
                 "",
-                "",
-                "",
-                "",
                 "onCommand",
                 "v1",
                 "patch-1",
                 "event-2",
-                false))
+                false,
+                "game-session-service"))
         .thenReturn(Optional.of(ingressAudit));
     when(pinProjectionService.getPinConvergence("1", "game-1"))
         .thenReturn(
@@ -1440,6 +1438,7 @@ class ScriptWorkItemServiceImplTest {
     item.setEventType("onCommand");
     item.setEventSchemaVersion("v1");
     item.setScriptEventId("event-1");
+    item.setSourceService("game-session-service");
     ScriptPatchPinProjectionService pinProjectionService =
         Mockito.mock(ScriptPatchPinProjectionService.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -1448,21 +1447,19 @@ class ScriptWorkItemServiceImplTest {
     when(workItemRepository.findById(77L)).thenReturn(Optional.of(item));
     when(auditRepository.findByWorkItemId(77L)).thenReturn(Optional.empty());
     when(ingressAuditRepository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRunAndSourceService(
                 "1",
                 "game-1",
                 "region-1",
                 3L,
                 "entity-1",
                 "",
-                "",
-                "",
-                "",
                 "onCommand",
                 "v1",
                 "patch-1",
                 "event-1",
-                false))
+                false,
+                "game-session-service"))
         .thenReturn(Optional.empty());
     when(pinProjectionService.getPinConvergence("1", "game-1"))
         .thenReturn(

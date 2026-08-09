@@ -166,7 +166,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     String schemaVersion = schemaVersion(request);
     ScriptEventRegistryService.EventDefinition definition =
         eventRegistryService.getDefinition(request.getEventType(), schemaVersion).orElse(null);
-    ScriptEventIngressAudit existing = findExisting(request, schemaVersion);
+    ScriptEventIngressAudit existing = findExisting(request, schemaVersion, sourceService);
     if (existing != null) {
       return new TriggerAdmission(
           existing.isAdmitted(),
@@ -989,32 +989,31 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   }
 
   private ScriptEventIngressAudit findExisting(
-      TriggerScriptEventRequest request, String schemaVersion) {
+      TriggerScriptEventRequest request, String schemaVersion, String sourceService) {
     if (request.getTenantId().isBlank()
         || request.getEventType().isBlank()
         || request.getScriptPatchVersion().isBlank()
         || request.getScriptEventId().isBlank()) {
       return null;
     }
-    RoutingBundleSupport.RoutingBundle routingBundle =
-        RoutingBundleSupport.normalize(
-            request.getWorldSlug(), request.getRealmSlug(), request.getPointerVersion());
+    // Routing is audit payload rather than ingress identity, but malformed bundles still fail
+    // before an idempotency lookup can replay a prior result.
+    RoutingBundleSupport.normalize(
+        request.getWorldSlug(), request.getRealmSlug(), request.getPointerVersion());
     return repository
-        .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+        .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRunAndSourceService(
             request.getTenantId(),
             normalize(request.getGameInstanceId()),
             normalize(request.getRegionId()),
             request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L,
             normalize(request.getEntityId()),
             normalizePlayableStateScope(request.getPlayableStateScope()),
-            routingBundle.worldSlug(),
-            routingBundle.realmSlug(),
-            routingBundle.pointerVersion(),
             request.getEventType(),
             schemaVersion,
             request.getScriptPatchVersion(),
             request.getScriptEventId(),
-            request.getIsDryRun())
+            request.getIsDryRun(),
+            sourceService)
         .orElse(null);
   }
 

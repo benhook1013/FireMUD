@@ -24,21 +24,19 @@ public class ScriptEventIngressAuditRepository {
   }
 
   public Optional<ScriptEventIngressAudit>
-      findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+      findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRunAndSourceService(
           String tenantId,
           String gameInstanceId,
           String regionId,
           Long regionEpoch,
           String entityId,
           String playableStateScope,
-          String worldSlug,
-          String realmSlug,
-          String pointerVersion,
           String eventType,
           String eventSchemaVersion,
           String scriptPatchVersion,
           String scriptEventId,
-          boolean dryRun) {
+          boolean dryRun,
+          String sourceService) {
     return dsl.selectFrom(SCRIPT_EVENT_INGRESS_AUDIT)
         .where(
             SCRIPT_EVENT_INGRESS_AUDIT
@@ -49,14 +47,12 @@ public class ScriptEventIngressAuditRepository {
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.REGION_EPOCH.eq(regionEpoch))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.ENTITY_ID.eq(entityId))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.PLAYABLE_STATE_SCOPE.eq(playableStateScope))
-                .and(SCRIPT_EVENT_INGRESS_AUDIT.WORLD_SLUG.eq(worldSlug))
-                .and(SCRIPT_EVENT_INGRESS_AUDIT.REALM_SLUG.eq(realmSlug))
-                .and(SCRIPT_EVENT_INGRESS_AUDIT.POINTER_VERSION.eq(pointerVersion))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_TYPE.eq(eventType))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_EVENT_ID.eq(scriptEventId))
-                .and(SCRIPT_EVENT_INGRESS_AUDIT.DRY_RUN.eq(dryRun)))
+                .and(SCRIPT_EVENT_INGRESS_AUDIT.DRY_RUN.eq(dryRun))
+                .and(SCRIPT_EVENT_INGRESS_AUDIT.SOURCE_SERVICE.eq(sourceService)))
         .fetchOptional(this::toEntity);
   }
 

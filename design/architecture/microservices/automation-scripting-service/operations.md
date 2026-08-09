@@ -8,6 +8,10 @@ This document collects the service readiness model, quota and fairness behavior,
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 - Operators and SREs should pair this document with [Scripting Quotas and Operations](../../system-architecture-scripting-quotas-and-operations.md), [Scripting Operations Cookbook](../../system-architecture-scripting-operations-cookbook.md), [Scripting Observability Contract](../../system-architecture-scripting-observability-contract.md), and [Redis Architecture](../../system-architecture-redis.md).
 
+## Implementation Status
+
+The current service implementation still combines pre-DSL trigger state and later handoff processing in its work-item row, lacks evaluation lease/fencing-generation recovery, and does not carry stable per-command identity and dedupe through the live producer/consumer boundary. Multi-command work items are therefore not a conformant admitted capability until that boundary is widened. The target durable boundary, state mapping, and recovery behavior are owned by [Scripting Runtime Execution](../../system-architecture-scripting-runtime-execution.md#pre-dsl-trigger-and-evaluated-descriptor-boundary).
+
 ## Readiness and Liveness
 
 - `liveness` is local-only and indicates that the process is alive and the scheduler/runtime loops are not wedged.
@@ -17,7 +21,7 @@ This document collects the service readiness model, quota and fairness behavior,
 
 ## Fairness Quotas and Budgets
 
-`ScriptQuotaService` limits how many times a script may execute within a configurable window. Counters are stored in Redis using keys of the form `automation:quota:<tenantId>:<scriptId>`. When a quota is exceeded the event is ignored and `script_quota_denied_total{scope, script_category, reason}` is incremented. Saga orchestration emits separate Saga-specific metrics and must not be conflated with quota enforcement.
+`ScriptQuotaService` limits how many times a script may execute within a configurable window. Counters are stored in Redis using keys of the form `automation:quota:<tenantId>:<scriptId>`. When a quota is exceeded the event is denied under the owning admission and audit semantics. The metric family, labels, and increment unit for that decision are defined only by [Table 4](../../system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix). Saga orchestration emits separate Saga-specific metrics and must not be conflated with quota enforcement.
 
 Dry-run and test executions use separate budgets and isolated capacity so privileged tooling cannot starve live automation.
 
@@ -30,21 +34,23 @@ Game Session and Logging & Admin use the script patch visibility APIs and events
 Rollback orchestration rules:
 
 - Pinning must satisfy base-version cohesion (`patch.baseVersionId == runtimeVersionId` for the instance).
-- Rollback convergence waiting is bounded. If `GetAutomationPinConvergence` plus Game Session convergence checks do not match the expected `controlPlaneRequestId` before the configured timeout, rollback enters terminal timeout state (`ROLLBACK_CONVERGENCE_TIMEOUT`) and admission and ticks remain paused until explicit operator action.
-- Timeout transition must emit `ScriptRollbackConvergenceTimedOut` and increment `automation_rollback_convergence_timeout_total{scope, operation, reason}`.
-- Rollback orchestration must be implemented as an explicit durable state machine (`PAUSING`, `REPINNING`, `RECONCILING_SCHEDULES`, `CANCELING`, `PURGING`, `CONVERGING`, `DRAINING`, `RESUMING`, `COMPLETED`, terminal `ROLLBACK_CONVERGENCE_TIMEOUT`) so partial failures can resume from last durable state instead of restarting or accidentally unpausing.
-- `DRAINING` remains active until `GetAutomationDrainStatus` confirms that the current rollback-scope `admissionEpoch` has no active pre-pause executions and no remaining cancelable outbox work.
+- Rollback convergence waiting is bounded and delegates to the [Pin Convergence Acknowledgment Predicate](../../system-architecture-scripting-rollout-and-rollback.md#pin-convergence-acknowledgment-predicate). This service must not declare convergence from its own acknowledgment; it consumes the owner workflow outcome and keeps admission and ticks paused when the canonical predicate has not succeeded.
+- Game Session alone owns the convergence deadline, `ROLLBACK_CONVERGENCE_TIMEOUT` transition, and terminal timeout signal. Automation consumes that durable workflow state or signal; it must not run a competing timeout, emit the timeout signal, or define a local timeout metric. Any metric consequence follows [Table 4](../../system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix).
+- Rollback orchestration follows the durable state machine in [Scripting Rollout and Rollback](../../system-architecture-scripting-rollout-and-rollback.md#rollback-orchestration-state-machine-required). This service must resume its idempotent participation from the last durable owner state rather than restarting or accidentally unpausing.
+- **Target-state drain mapping:** `DRAINING` remains active until a fresh `GetAutomationDrainStatus` response for the current `{tenantId, gameInstanceId, regionId?}` scope and `admissionEpoch` reports `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0`. `activeExecutionCount` is exactly current-epoch `EVALUATING` pre-DSL triggers plus `HANDOFF_IN_FLIGHT` evaluated descriptors; `pendingCancelableWorkItemCount` is exactly current-epoch `PENDING_EVALUATION` pre-DSL triggers plus `PENDING`/`INDEXED` evaluated descriptors. Terminal states, rows from another scope or epoch, and derived queue pointers are excluded.
+- **Current fail-closed counts:** the live projection counts `EVALUATING`, including unresolved stale rows, and `HANDOFF_IN_FLIGHT` as active; it counts every current handoff-capable `PENDING_EVALUATION` row as pending because the separate `PENDING`/`INDEXED` descriptor layer is not yet persisted. Any unresolved count, stale response, or earlier-epoch response keeps `DRAINING` active.
+- During target-state `DRAINING`, `PENDING_EVALUATION` is durably canceled without entering the DSL. `EVALUATING` is resolved only after reading the descriptor-commit marker: committed descriptors resume without DSL re-entry; an explicitly canceled uncommitted trigger becomes terminal `CANCELED`, while an expired stale uncommitted trigger becomes terminal `DEAD_LETTERED`. The status, reason, and audit mapping are defined in [Scripting Runtime Execution](../../system-architecture-scripting-runtime-execution.md#pre-dsl-trigger-and-evaluated-descriptor-boundary).
 
 ## Metrics and Audit Guidance
 
-The authoritative observability contract lives in [Scripting Observability Contract](../../system-architecture-scripting-observability-contract.md). Service-level metric examples include:
+The authoritative metric-family names, labels, and increment units live only in [Table 4](../../system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix). The examples below are pointers to those definitions, not service-local metric schemas:
 
 - `automation_script_triggers_total`, `automation_script_skips_total`, and `automation_script_triggers_dropped_total` for scheduler activity and drops.
 - `automation_script_queue_delay_seconds` and `automation_script_leadership_changes_total` for queue latency and leader stability.
 - `automation_script_timer_catchup_truncated_total` for catch-up firings intentionally truncated by resume-window limits.
-- `automation_script_tenant_budget_allowed_total{scope, tier}` / `automation_script_tenant_budget_denied_total{scope, tier}` for bounded operator-facing automation budget pressure, with tenant-specific drilldown coming from audit rows and control-plane reads rather than raw metric labels.
+- `automation_script_tenant_budget_allowed_total` / `automation_script_tenant_budget_denied_total` for bounded operator-facing automation budget pressure, with tenant-specific drilldown coming from audit rows and control-plane reads rather than raw metric labels.
 - `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total` for quota enforcement and tick integration.
-- `automation_script_sandbox_failures_total{scope, script_category, reason}`, `automation_script_errors_total{scope, script_category, reason}`, and `automation_script_runtime_seconds{scope, script_category, eventType}` for sandbox and runtime health.
+- `automation_script_sandbox_failures_total`, `automation_script_errors_total`, and `automation_script_runtime_seconds` for sandbox and runtime health.
 
 Queue and quota behavior must be observable either through the canonical `cache.automation_queue_*` patterns in `system-architecture-redis-cache.md` or through the mapped automation metrics documented above.
 
@@ -52,7 +58,7 @@ Queue and quota behavior must be observable either through the canonical `cache.
 
 When diagnosing sandbox-related or automation-runtime issues in production, operators should:
 
-- Check `script_event_audit` records for `finalStage`, `finalOutcome`, `finalReason`, and associated scope fields such as `tenantId`, `scriptId`, `gameInstanceId`, `regionId`, `regionEpoch`, `tickId`, resolved `playableStateScope` (`shared` or `isolated`), and `sourceService` when present. For emitted commands, inspect the supplementary command-handoff records for `automationDispatchId`, Game Session command id, and handoff outcome/reason; inspect rendered command text/shape only when required by the canonical command-handoff schema, so shared-state and isolated-state work can be distinguished without treating one handler audit row as one command.
+- Check `script_event_ingress_audit` for event-scope admission outcomes, and `script_event_audit` records for `finalStage`, `finalOutcome`, `finalReason`, and associated scope fields such as `tenantId`, `scriptId`, `gameInstanceId`, `regionId`, `regionEpoch`, `tickId`, resolved `playableStateScope` (`shared` or `isolated`), and `sourceService` when present. For emitted-command diagnostics, `(automationDispatchId, commandOrdinal)` is target-state only because `commandOrdinal` is not exposed at the current live boundary. Current correlation uses `outboxWorkItemId`, `automationDispatchId`, `gameSessionCommandId`, and the exposed Game Session command/result/fence fields. Inspect target-state command-handoff records by the canonical pair only after that boundary is widened, and inspect rendered command text/shape only when required by the canonical command-handoff schema, so shared-state and isolated-state work can be distinguished without treating one handler audit row as one command.
 - Inspect sandbox and runtime metrics such as `automation_script_sandbox_failures_total`, `automation_script_runtime_seconds`, and queue delay metrics.
-- Verify patch and pin convergence using `GetScriptPatchStatus`, `GetScriptPatchInstanceRolloutStatus`, and `GetAutomationPinConvergence`.
+- Verify patch visibility using `GetScriptPatchStatus` and `GetScriptPatchInstanceRolloutStatus`. When a promotion or rollback is active, the named [Pin Convergence Acknowledgment Predicate](../../system-architecture-scripting-rollout-and-rollback.md#pin-convergence-acknowledgment-predicate) must perform both `GetAutomationPinConvergence` and `GetGameSessionPinConvergence` reads and accept convergence only when both fresh responses match the same target `scriptPatchVersion` and `controlPlaneRequestId`; the Automation response must additionally have `isProjectionStale=false` and `projectionLagMs <= SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS`. One owner's acknowledgment never substitutes for the other.
 - Verify plugin policy/runtime convergence using `GetPluginStatus`, `ListPluginRuntimeEvents`, and `GetPluginPolicyConvergence` together with the design-time publication reads from Game Design.

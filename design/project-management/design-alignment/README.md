@@ -4,7 +4,7 @@ This workstream establishes a complete, reviewable chain from FireMUD product ca
 
 ## Status
 
-Completed phases: capability allocation, implementation/proof reconciliation, cross-domain convergence, structural enforcement, independent validation, and human-led adversarial review of all `183` queue/navigation rows in the remotely backed review archive. Active workstreams: selective application of reviewed decisions and contract-authority consolidation. On `develop`, `40` of the `182` active decision keys have checked applied provenance; the other `142` reviewed active decision keys remain pending selective import and are not yet canonical repository state. Candidate ADR identifiers 0051-0173 belong only to the source archive and do not define the pending set.
+Completed phases: capability allocation, implementation/proof reconciliation, cross-domain convergence, structural enforcement, independent validation, human-led adversarial review of all `183` queue/navigation rows in the remotely backed review archive, and contract-authority consolidation for the currently applied ADR 0001-0050 baseline plus its major adjacent non-ADR contract families. The active workstream is selective application of reviewed decisions, with family-local contract consolidation performed as each pending outcome becomes canonical. On `develop`, `40` of the `182` active decision keys have checked applied provenance; the other `142` reviewed active decision keys remain pending selective import and are not yet canonical repository state. Candidate ADR identifiers 0051-0173 belong only to the source archive and do not define the pending set.
 
 | Phase | Status | Output |
 | --- | --- | --- |
@@ -16,7 +16,7 @@ Completed phases: capability allocation, implementation/proof reconciliation, cr
 | Cross-domain convergence | Complete and independently validated as a point-in-time baseline | [Frozen capability implementation reconciliation](./capability-implementation-reconciliation.md) |
 | Human-led adversarial decision review | Complete in the `design/adversarial-decision-review` source archive | Human-owned dispositions for all `183` queue/navigation rows |
 | Accepted-decision application | In progress | `40` active decision keys have checked applied provenance; `142` reviewed active decision keys remain pending selective import |
-| Contract-authority consolidation | Foundation established for the merged baseline and `40` applied review outcomes; secondary-document consolidation remains in progress | [Architecture contract authority map](../../architecture/README.md#contract-authority-map) and the first link-plus-local-consequence conversions |
+| Contract-authority consolidation | Applied-baseline pass complete for ADRs 0001-0050 and major adjacent non-ADR families; continue incrementally for each pending import, then perform a whole-corpus authority review | [Architecture contract authority map](../../architecture/README.md#contract-authority-map) and owner-link-plus-local-consequence conversions |
 
 ## Implementation Status
 
@@ -60,10 +60,18 @@ This table describes merged repository state, not merely completed human review.
 
 | Decision parcel | Human review | Applied to `develop` | Contract consolidation | Implementation and proof |
 | --- | --- | --- | --- | --- |
-| Existing ADR baseline, ADRs 0001-0011 | Complete in the review archive | ADR records and accepted design are present; record presence alone is not applied-review provenance | Initial owner allocation complete; exhaustive secondary-document consolidation remains pending | Live gaps remain in the domain trackers |
-| Applied review packet 1, 9 active decision keys | Complete | Checked provenance merged through ADRs 0012-0019 by #2527, with recovery and CI follow-through in #2537 | Initial owner allocation complete; exhaustive secondary-document consolidation remains pending | Live gaps remain in the domain trackers |
-| Applied review packet 2, 31 active decision keys | Complete | Checked provenance merged through ADRs 0020-0050 across #2528, #2574, #2583, #2581, and #2529 | Initial owner allocation complete; exhaustive secondary-document consolidation remains pending | Live gaps remain in the domain trackers |
-| Pending review packets 3-7, 142 active decision keys | Complete in the review archive | Pending selective import; archive-local candidate ADR identifiers 0051-0173 are non-canonical source evidence | Not started; consolidate after each accepted family lands | Reconcile owning trackers as each family lands |
+| Existing ADR baseline, ADRs 0001-0011 | Complete in the review archive | ADR records and accepted design are present; record presence alone is not applied-review provenance | Baseline owner-and-secondary consolidation complete through #2593 and #2594 | Live gaps remain in the domain trackers |
+| Applied review packet 1, 9 active decision keys | Complete | Checked provenance merged through ADRs 0012-0019 by #2527, with recovery and CI follow-through in #2537 | Baseline owner-and-secondary consolidation complete through #2593 and #2594 | Live gaps remain in the domain trackers |
+| Applied review packet 2, 31 active decision keys | Complete | Checked provenance merged through ADRs 0020-0050 across #2528, #2574, #2583, #2581, and #2529 | Baseline owner-and-secondary consolidation complete through #2593 and #2594 | Live gaps remain in the domain trackers |
+| Pending review packets 3-7, 142 active decision keys | Complete in the review archive | Pending selective import; archive-local candidate ADR identifiers 0051-0173 are non-canonical source evidence | Consolidate every affected ADR and non-ADR contract family during selective import; follow with a whole-corpus authority review | Reconcile owning trackers as each family lands |
+
+## Contract Authority Consolidation Scope
+
+Contract-authority consolidation applies to repeated normative product and architecture contracts whether or not an ADR records their rationale. ADRs organize the selective application process, but they are not the boundary of the deduplication work. PRs #2593 and #2594 complete the baseline pass for currently applied ADRs 0001-0050 and the major adjacent non-ADR contract families encountered across those design areas.
+
+Consolidation names one canonical owner for a target contract and reduces competing secondary definitions to owner links plus local API, persistence, transport, operational, user-visible, implementation-drift, or proof consequences. It is not editorial deduplication: useful examples, runbooks, evidence schemas, local constraints, and explanatory context remain where they serve their owning document.
+
+Each pending decision-family import must consolidate all related normative duplication in the affected design area, including non-ADR contracts. After packets 3-7 are applied, perform one broad design-area authority review across the complete product and architecture corpus to identify residual owner conflicts and non-ADR duplication that family-local imports did not expose.
 
 ## Authority Boundaries
 
@@ -88,9 +96,10 @@ This table describes merged repository state, not merely completed human review.
 
 1. Select a reviewed, pending decision family from the source archive against current `develop` rather than rebasing the archive wholesale.
 2. Verify its human-owned disposition and strongest evidence against current canonical product and architecture documents.
-3. Import any required ADR and the owning design changes, consolidate repeated contract ownership, and add checked applied-review provenance in the same change.
+3. Import any required ADR and the owning design changes, consolidate affected ADR and non-ADR contract ownership, and add checked applied-review provenance in the same change.
 4. Reconcile the live domain trackers only where the merged decision changes implementation, verification, or remaining-gap state.
 5. Validate and merge the family before importing a dependent family. The completed taxonomy, allocation, inventory, reconciliation baseline, and human-led review are historical prerequisites, not steps to rerun for each import.
+6. After packets 3-7 are applied, run the whole-corpus authority review defined above before declaring post-ADR design alignment complete.
 
 ## Automated Gates
 

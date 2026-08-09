@@ -2,10 +2,17 @@
 
 This document describes **how** FireMUD uses Redis in different roles and environments. It complements the conceptual hub (`system-architecture-redis.md`) by defining concrete usage patterns, profiles, and configuration wiring.
 
+## Implementation Status
+
+The live automation handoff still carries optional `dueTickId` for scheduler/timer work and omits a due point for immediate event-driven handoffs. The target tagged, mutually exclusive `duePoint` contract is not yet the live wire boundary; callers must not represent a wall-clock due point as a tick value.
+
+The target automation handoff also requires the complete Trigger Identity plus `automationDispatchId` and `commandOrdinal`. The current Game Session request does not yet carry that complete contract, so the target fields and uniqueness rules below are not implementation proof.
+
 ---
 
 ## Table of Contents
 
+- [Implementation Status](#implementation-status)
 - [Redis Roles and Usage Patterns](#redis-roles-and-usage-patterns)
 - [Environment Profiles and Mappings](#environment-profiles-and-mappings)
 - [Maxmemory, Eviction, and Sizing](#maxmemory-eviction-and-sizing)
@@ -20,8 +27,6 @@ FireMUD runs two logical Redis roles in all non‑trivial environments:
 
 Scope-key convention: `{tenantRegionTag}` is the canonical opaque tag for the complete `<tenantId, gameInstanceId, regionId>` scope, while `{tenantInstanceTag}` is the canonical opaque tag for `<tenantId, gameInstanceId>`. Region-scoped coordination metadata keys therefore carry `gameInstanceId` through `{tenantRegionTag}`; callers must not substitute a tenant-only or region-only tag.
 
-Current live boundary: `EnqueueAutomationCommandIfAbsent` currently carries optional `dueTickId` for scheduler/timer handoffs and omits a due point for immediate event-driven handoffs. The tagged, mutually exclusive `duePoint` contract below is target-state and must be introduced before wall-clock `dueAt` handoffs are admitted; until then, live callers must not represent a wall-clock due point as a tick value.
-
 - **Coordination Redis**
   - Responsibilities:
     - Tick queues, locks, timers, and executor leases.
@@ -30,7 +35,7 @@ Current live boundary: `EnqueueAutomationCommandIfAbsent` currently carries opti
     - Automation coordination structures that participate in tick timelines.
   - Characteristics:
     - Treated as a long-running **coordination buffer with bounded tail-loss** in persistent environments; durable history for tick effects and gameplay outcomes lives in PostgreSQL tick effect ledgers and domain stores.
-    - Owned by the **Game Session Service** for gameplay coordination and gameplay session prefixes such as `tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`, and `session:game:*`; Account Service owns `session:auth:*`; Automation & Scripting Service owns automation-specific coordination prefixes as documented below.
+    - Owned by the **Game Session Service** for gameplay coordination and gameplay session prefixes such as `tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`, the canonical `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` records, and their derived `session:game:index:*` projections, including the separately approved `session:game:auth:issuer-generation:v1:*` consumer projection; Account Service owns the explicit `session:auth:token:*` and `session:auth:generation:*` prefixes; Automation & Scripting Service owns automation-specific coordination prefixes as documented below.
     - AOF enabled in `dev_local`, `hobby_self_hosted`, and `production_clustered`–like profiles.
     - Subject to tail‑loss SLOs and replay guarantees described in the Redis hub doc.
   - Example prefixes:
@@ -39,6 +44,7 @@ Current live boundary: `EnqueueAutomationCommandIfAbsent` currently carries opti
     - `retry:{tenantRegionTag}`
     - `tick-executor-lease:{tenantRegionTag}`
     - `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`
+    - `session:game:index:*` derived gameplay lookup projections
     - `sessionctx:*` bootstrap/session-context keys used by the current Game Session implementation.
     - Automation coordination prefixes that follow shard‑local rules.
 
@@ -72,7 +78,7 @@ Keep the cheat sheet and the owning service Redis sections aligned with the cano
 
 - `tick:{tenantRegionTag}:session-binding:<entityId>`
 - `binding_generation`
-- The target full automation Trigger Identity and per-command `automationDispatchId` plus `commandOrdinal` child identity. The current Automation handoff record exposes `commandOrdinal`, but the live Game Session `EnqueueAutomationCommandIfAbsentRequest` does not yet carry it or the full Trigger Identity; the target API must add those fields rather than inventing a `commandKind` discriminator or claiming the current wire shape is complete.
+- The target full automation Trigger Identity and per-command `automationDispatchId` plus `commandOrdinal` child identity.
 
 ### Automation & Scheduler Coordination Prefixes
 
@@ -105,7 +111,7 @@ Automation workloads split into two broad classes, with different expectations a
     - Subject to the same `(regionEpoch, tickId)` timeline, leases, and lock semantics as player commands.
     - Must respect the “one action per entity per tick” invariant and other tick fairness rules from the tick architecture docs.
   - Design rule: automation in this category must be reviewed like core gameplay logic and is **not** allowed to depend on TTL-only caches or best-effort queues for correctness.
-  - Canonical handoff contract:
+  - Canonical handoff contract (target state):
     - Automation & Scripting creates or reuses a durable PostgreSQL trigger-instance / outbox row keyed by the applicable Trigger Identity branch. A schedule-derived pre-claim row uses `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, entityId, scriptId, eventType, eventSchemaVersion, scriptPatchVersion, isDryRun, scheduleDefinitionId, duePoint, triggerMode)`, plus plugin identity when applicable; the winning claim derives one immutable `scriptEventId`, and retries reuse it. An immediate event-driven row omits the scheduler-only fields and uses its generated stable `scriptEventId` to distinguish one event occurrence from another; its storage uniqueness branch must remain distinct from scheduled rows. The immutable source Trigger Identity, including source `regionId` and `regionEpoch`, is retained on the row; current enqueue routing fields are separate. The per-command `automationDispatchId` plus `commandOrdinal` is stored as the child handoff identity, not as a replacement for the trigger identity. The row also retains `cadence`, `unit`, `priorityTag`, `targetScopeType`, `targetScopeId`, binding priority/exclusivity, `scheduleSemanticsHash`, the pin operation's `controlPlaneRequestId`, owner/version metadata, due-point state, and `runtimeRegionId`/`runtimeRegionEpoch` when those fields apply.
     - Automation & Scripting then calls a Game Session gRPC/API contract such as `EnqueueAutomationCommandIfAbsent`, carrying the complete immutable Trigger Identity and child handoff identity:
       - Trigger Identity: `tenantId`, `gameInstanceId`, `playableStateScope`, source `regionId`, source `regionEpoch`, `entityId`, `scriptId`, `eventType`, `eventSchemaVersion`, `scriptPatchVersion`, `scriptEventId`, and `isDryRun`, plus applicable plugin identity.
@@ -243,7 +249,7 @@ Coordination and Cache/Rate‑Limit Redis are sized and configured differently.
 
 - **Goal:** predictable restart behavior and bounded memory usage for coordination keys.
 - **Recommendations:**
-  - Keep peak memory for coordination prefixes (`tick:*`, `timer:*`, `retry:*`, `session:game:*`, `session:auth:*`, `tick-executor-lease:*`, etc.) within the canonical Coordination Redis budget from `system-architecture-redis-operations.md` (normally **≤ 30–40% of `maxmemory`**).
+  - Keep peak memory for coordination prefixes (`tick:*`, `timer:*`, `retry:*`, `session:game:*`, `session:auth:token:*`, `session:auth:generation:*`, `tick-executor-lease:*`, etc.) within the canonical Coordination Redis budget from `system-architecture-redis-operations.md` (normally **≤ 30–40% of `maxmemory`**).
   - Use AOF preamble and rewrite settings that keep AOF size within the budgets described in **Redis Operations & Migrations**.
   - Avoid eviction for coordination keys whenever possible; if `maxmemory` is configured with eviction, treat eviction events as incidents rather than normal operation.
 
