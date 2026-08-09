@@ -44,6 +44,8 @@ This file is the always-on project, authority, and safety kernel for AI work. Re
 
 The main `gpt-5.6-sol` thread owns planning, human design discussion, task decomposition, integration, validation, and final repository decisions. It does not delegate product or architecture design decisions. Subagent approval is model-specific: `gpt-5.6-sol` may run at medium autonomously, but using it at high requires explicit human approval. Luna reasoning levels are not approval-gated.
 
+- Once the human selects an active workstream, continue through its next unambiguous tracked steps, including implementation, validation, PR publication, and review fixes, without seeking confirmation at every boundary. A progress update is not a stopping point.
+- An explicit pause or stop overrides autonomous continuation. Finish only the stated in-progress boundary, publish any promised safe checkpoint, report the state, and do not begin substitute work.
 - Use process proportional to the risk and size of the change. Do not create ledgers, audit suites, repeated review machinery, or speculative governance infrastructure for small edits unless a concrete correctness risk requires it.
 - Delegate bounded bulk reading, mechanical work, or focused investigation only with a disjoint scope and explicit success conditions.
 - Every delegation prompt repeats the authoritative workflow's full prohibition text; omitting it grants no permission.

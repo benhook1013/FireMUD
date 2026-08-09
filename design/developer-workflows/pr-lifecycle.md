@@ -16,6 +16,7 @@ Use this guide for pull-request status, review handling, CI, Renovate, merging, 
 
 - Focus hosted and CLI review effort on one active, next-to-merge PR. Do not scatter a rate-limited review budget across stacked successors while their base is still changing.
 - Run at most one CodeRabbit CLI review at a time and consume and fix its findings before starting the next CLI cycle. A hosted review and one CLI review may run concurrently; do not wait idly for hosted review when useful CLI work remains, but consume completed hosted findings in the next fix cycle before later review checkpoints.
+- Treat CI and hosted review as asynchronous. Continue safe work that will not invalidate the active review; when no such work exists, report and yield rather than repeatedly polling or inventing unrelated work.
 - Do not push review-invalidating commits while hosted review is active. Prepare fixes locally, consume the completed hosted output, then publish one combined fix batch.
 - After all known findings are fixed and pushed, the main orchestrator may request the next hosted full review when it observes that no review is active and the rate limit should be free. Verify the resulting summary because a request may be skipped, fail internally, or be rate-limited.
 - After each review/fix run, report hosted and per-CLI finding counts, their practical significance, whether another review cycle is recommended, and a concise summary of subagent use. This evidence, rather than quota availability alone, determines whether review should continue.
@@ -34,6 +35,7 @@ Use this guide for pull-request status, review handling, CI, Renovate, merging, 
 ## Branch And PR Hygiene
 
 - Open or update a PR autonomously when an implementation branch reaches a coherent review checkpoint. Stacked PRs are acceptable when their base dependencies are explicit and they let independent work continue while CI or review runs; do not create tiny placeholder PRs without review-worthy content.
+- When active work moves to another worktree, report its absolute path and branch so the human's IDE context and delegated-worker paths remain aligned.
 - When retargeting a stacked PR after its parent merges, change the base before rebasing or pushing the child. Required workflows listen for GitHub's `edited` event but run replacement gates only when `changes.base.ref` is present; title/body edits use a separate metadata-only concurrency group and neither cancel an active required gate run nor start replacement jobs.
 - For recurring branch, worktree, and PR inventory, use `dev-tools/validation/report-worktree-pr-topology.sh` rather than ad hoc status commands.
 - After a merge, remove its defunct local worktree and merged local/remote branch only after confirming no open PR or active stacked branch depends on it. Preserve unmerged branches and worktrees.
