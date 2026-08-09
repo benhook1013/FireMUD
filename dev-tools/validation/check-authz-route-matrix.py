@@ -187,12 +187,26 @@ ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES = {
         "GET /accounts/{accountId}/exports/{exportId}/content",
     ): "export_content",
 }
+ACCOUNT_STATE_VOCABULARY = [
+    "active",
+    "security_locked",
+    "deactivated_pending_delete",
+]
 ACCOUNT_EXPORT_BRANCH_CLASSIFICATIONS = {
     "active": "account_scoped",
     "security_locked": "security_lock_export_scoped",
     "deactivated_pending_delete": "pending_deletion_scoped",
 }
 ACCOUNT_EXPORT_BRANCHES = set(ACCOUNT_EXPORT_BRANCH_CLASSIFICATIONS.items())
+ACCOUNT_EXPORT_APPLICABILITY_RULES = [
+    {
+        "service": identity[0],
+        "route": identity[1],
+        "action_family": action_family,
+        "account_state_classifications": ACCOUNT_EXPORT_BRANCH_CLASSIFICATIONS,
+    }
+    for identity, action_family in ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES.items()
+]
 ACTIVE_ACCOUNT_EXPORT_REQUIRED_LIVE_CHECKS = {
     "account_state_export_eligible",
     "current_account_generation",
@@ -212,6 +226,30 @@ PENDING_DELETION_EXPORT_CONTENT_AUDIT_CONTRACT = (
 ACTIVE_ACCOUNT_EXPORT_CONTENT_AUDIT_CONTRACT = (
     "required_account_export_job_and_outcome"
 )
+RECOVERY_EXPORT_AUDITED_ACTION_FAMILIES = {
+    "export_initiate",
+    "export_content",
+}
+CHARACTER_ROUTE_CONTRACTS = {
+    (
+        "account-service",
+        "GET /auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters",
+    ): {
+        "character_operation": "existing_character_discovery",
+        "selected_character_requirement": "not_applicable",
+        "gameplay_binding": "not_performed",
+        "final_play_binding_cas": "not_performed",
+    },
+    (
+        "account-service",
+        "POST /auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters",
+    ): {
+        "character_operation": "character_creation",
+        "selected_character_requirement": "none",
+        "gameplay_binding": "not_performed",
+        "final_play_binding_cas": "not_performed",
+    },
+}
 SECURITY_LOCK_EXPORT_CREDENTIAL_BINDING = {
     "source": "security_lock_export_credential_registry",
     "required": ["accountId", "recoveryCaseId"],
@@ -1533,13 +1571,14 @@ def validate_pending_deletion_generation(
             f"{sorted(forbidden_checks)}"
         )
     if (
-        route.get("action_family") == "export_content"
+        route.get("action_family") in RECOVERY_EXPORT_AUDITED_ACTION_FAMILIES
         and route.get("audit_contract")
         != PENDING_DELETION_EXPORT_CONTENT_AUDIT_CONTRACT
     ):
+        action_family = route.get("action_family")
         append_unique_error(
             errors,
-            f"{label} export_content must declare audit_contract "
+            f"{label} {action_family} must declare audit_contract "
             f"{PENDING_DELETION_EXPORT_CONTENT_AUDIT_CONTRACT}",
         )
 
@@ -1589,13 +1628,14 @@ def validate_security_lock_export_generation(
             f"{sorted(forbidden_checks)}"
         )
     if (
-        route.get("action_family") == "export_content"
+        route.get("action_family") in RECOVERY_EXPORT_AUDITED_ACTION_FAMILIES
         and route.get("audit_contract")
         != SECURITY_LOCK_EXPORT_CONTENT_AUDIT_CONTRACT
     ):
+        action_family = route.get("action_family")
         append_unique_error(
             errors,
-            f"{label} export_content must declare audit_contract "
+            f"{label} {action_family} must declare audit_contract "
             f"{SECURITY_LOCK_EXPORT_CONTENT_AUDIT_CONTRACT}",
         )
 
@@ -1646,14 +1686,49 @@ def validate_export_bindings(routes: list[Any], errors: list[str]) -> None:
             )
 
 
+def validate_account_export_applicability(
+    document: dict[str, Any], errors: list[str]
+) -> None:
+    if document.get("account_state_vocabulary") != ACCOUNT_STATE_VOCABULARY:
+        append_unique_error(
+            errors,
+            "account_state_vocabulary must declare exactly "
+            f"{ACCOUNT_STATE_VOCABULARY}",
+        )
+
+    applicability = document.get("account_export_applicability")
+    if not isinstance(applicability, dict):
+        append_unique_error(
+            errors,
+            "account_export_applicability must be a mapping",
+        )
+        return
+    if (
+        applicability.get("coverage") != "exhaustive"
+        or applicability.get("overlap") != "forbidden"
+        or applicability.get("unmatched") != "deny"
+    ):
+        append_unique_error(
+            errors,
+            "account_export_applicability must declare coverage=exhaustive, "
+            "overlap=forbidden, and unmatched=deny",
+        )
+    if applicability.get("rules") != ACCOUNT_EXPORT_APPLICABILITY_RULES:
+        append_unique_error(
+            errors,
+            "account_export_applicability.rules must declare exactly the canonical "
+            "export initiation, status, and content account-state rules",
+        )
+
+
 def validate_export_initiation_routes(
     routes: list[Any],
     errors: list[str],
     live_checks_cache: LiveChecksCache | None = None,
 ) -> None:
     matched_route = False
-    observed_branches: dict[tuple[str, str], set[tuple[str, str]]] = {
-        identity: set() for identity in ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES
+    observed_branches: dict[tuple[str, str], list[tuple[str, str]]] = {
+        identity: [] for identity in ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES
     }
     for route in routes:
         if not isinstance(route, dict):
@@ -1690,7 +1765,7 @@ def validate_export_initiation_routes(
         if isinstance(account_state, str) and isinstance(
             route.get("classification"), str
         ):
-            observed_branches[identity].add(
+            observed_branches[identity].append(
                 (account_state, route["classification"])
             )
         if (
@@ -1745,7 +1820,10 @@ def validate_export_initiation_routes(
                     "account_authorization_branches",
                 )
     for identity in ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES:
-        if observed_branches[identity] != ACCOUNT_EXPORT_BRANCHES:
+        if (
+            len(observed_branches[identity]) != len(ACCOUNT_EXPORT_BRANCHES)
+            or set(observed_branches[identity]) != ACCOUNT_EXPORT_BRANCHES
+        ):
             append_unique_error(
                 errors,
                 f"{identity[0]} {identity[1]} must declare exactly the mutually "
@@ -1767,12 +1845,92 @@ def validate_export_initiation_routes(
                 f"{label} legacy export route must declare route_status "
                 "current_openapi_operator_surface",
             )
-        if route.get("canonical_target") != EXPORT_INITIATION_ROUTE:
+        if route.get("canonical_target_route") != EXPORT_INITIATION_ROUTE:
             append_unique_error(
                 errors,
                 f"{label} legacy export route must point to canonical target "
                 f"{EXPORT_INITIATION_ROUTE}",
             )
+
+    security_lock_action_families = [
+        route.get("action_family")
+        for route in routes
+        if isinstance(route, dict)
+        and route.get("classification") == "security_lock_export_scoped"
+    ]
+    if (
+        len(security_lock_action_families)
+        != len(SECURITY_LOCK_EXPORT_ACTION_FAMILIES)
+        or any(
+            not isinstance(action_family, str)
+            for action_family in security_lock_action_families
+        )
+        or set(security_lock_action_families) != SECURITY_LOCK_EXPORT_ACTION_FAMILIES
+    ):
+        append_unique_error(
+            errors,
+            "security_lock_export_scoped routes must declare exactly action_family "
+            f"set {sorted(SECURITY_LOCK_EXPORT_ACTION_FAMILIES)}",
+        )
+    pending_deletion_action_families = [
+        route.get("action_family")
+        for route in routes
+        if isinstance(route, dict)
+        and route.get("classification") == "pending_deletion_scoped"
+        and route_set_key(route) in ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES
+    ]
+    declared_pending_action_families = [
+        action_family
+        for action_family in pending_deletion_action_families
+        if isinstance(action_family, str)
+    ]
+    if len(declared_pending_action_families) != len(
+        set(declared_pending_action_families)
+    ):
+        append_unique_error(
+            errors,
+            "pending_deletion_scoped account export routes must declare unique "
+            "action_family values",
+        )
+    if (
+        len(pending_deletion_action_families)
+        != len(PENDING_DELETION_EXPORT_ACTION_FAMILIES)
+        or any(
+            not isinstance(action_family, str)
+            for action_family in pending_deletion_action_families
+        )
+        or set(pending_deletion_action_families)
+        != PENDING_DELETION_EXPORT_ACTION_FAMILIES
+    ):
+        append_unique_error(
+            errors,
+            "pending_deletion_scoped routes must declare exactly action_family "
+            f"set {sorted(PENDING_DELETION_EXPORT_ACTION_FAMILIES)}",
+        )
+
+
+def validate_character_routes(
+    routes: list[Any],
+    errors: list[str],
+    cardinality_errors: set[str] | None = None,
+) -> None:
+    for (service, route_name), expected_contract in CHARACTER_ROUTE_CONTRACTS.items():
+        route = resolve_unique_route(
+            routes,
+            service,
+            route_name,
+            errors,
+            cardinality_errors,
+        )
+        if route is None:
+            continue
+        label = route_label(route)
+        for field, expected_value in expected_contract.items():
+            if route.get(field) != expected_value:
+                append_unique_error(
+                    errors,
+                    f"{label} must declare {field}={expected_value}",
+                )
 
 
 def validate_capacity_admission_wire_contract(
@@ -2883,7 +3041,10 @@ def validate_generation_applicability(
         if (
             route.get("classification") == "account_scoped"
             and route.get("action_family") == "export_content"
-            and applicability_value(route, "account_state", label, errors) == "active"
+            and applicability_value(
+                route, "account_state", route_label(route), errors
+            )
+            == "active"
             and route.get("audit_contract")
             != ACTIVE_ACCOUNT_EXPORT_CONTENT_AUDIT_CONTRACT
         ):
@@ -2911,48 +3072,6 @@ def validate_generation_applicability(
         )
         validate_account_authorization_route(
             route, label, errors, checks, live_checks_cache
-        )
-    security_lock_action_families = [
-        route.get("action_family")
-        for route in routes
-        if isinstance(route, dict)
-        and route.get("classification") == "security_lock_export_scoped"
-    ]
-    if (
-        len(security_lock_action_families)
-        != len(SECURITY_LOCK_EXPORT_ACTION_FAMILIES)
-        or any(
-            not isinstance(action_family, str)
-            for action_family in security_lock_action_families
-        )
-        or set(security_lock_action_families) != SECURITY_LOCK_EXPORT_ACTION_FAMILIES
-    ):
-        append_unique_error(
-            errors,
-            "security_lock_export_scoped routes must declare exactly action_family "
-            f"set {sorted(SECURITY_LOCK_EXPORT_ACTION_FAMILIES)}",
-        )
-    pending_deletion_action_families = [
-        route.get("action_family")
-        for route in routes
-        if isinstance(route, dict)
-        and route.get("classification") == "pending_deletion_scoped"
-        and route_set_key(route) in ACCOUNT_EXPORT_ROUTE_ACTION_FAMILIES
-    ]
-    if (
-        len(pending_deletion_action_families)
-        != len(PENDING_DELETION_EXPORT_ACTION_FAMILIES)
-        or any(
-            not isinstance(action_family, str)
-            for action_family in pending_deletion_action_families
-        )
-        or set(pending_deletion_action_families)
-        != PENDING_DELETION_EXPORT_ACTION_FAMILIES
-    ):
-        append_unique_error(
-            errors,
-            "pending_deletion_scoped routes must declare exactly action_family "
-            f"set {sorted(PENDING_DELETION_EXPORT_ACTION_FAMILIES)}",
         )
 
 
@@ -3451,7 +3570,8 @@ def applicability_value(
     if not values:
         return None
     if any(value != values[0] for value in values[1:]):
-        errors.append(
+        append_unique_error(
+            errors,
             f"{label} has conflicting applicability values for {key}: {values!r}"
         )
         return None
@@ -3480,7 +3600,8 @@ def validate_applicability(
     for key, expected_value in expected.items():
         actual_value = applicability_value(route, key, label, errors)
         if actual_value != expected_value:
-            errors.append(
+            append_unique_error(
+                errors,
                 f"{label} must declare applicability {key}={expected_value!r}"
             )
 
@@ -3609,7 +3730,9 @@ def _ws_game_routes_by_mode(
     ws_routes = matching_routes(routes, "spring-cloud-gateway", "/ws/game/**")
     by_mode: dict[str, list[dict[str, Any]]] = {}
     for route in ws_routes:
-        mode = applicability_value(route, "connection_mode", "/ws/game/**", errors)
+        mode = applicability_value(
+            route, "connection_mode", route_label(route), errors
+        )
         if isinstance(mode, str):
             by_mode.setdefault(mode, []).append(route)
     return ws_routes, by_mode
@@ -3639,7 +3762,7 @@ def _validate_first_party_ws_game_route(
     label = "/ws/game/** first_party_web"
     validate_applicability(
         route,
-        label,
+        route_label(route),
         REQUIRED_FIRST_PARTY_WS_APPLICABILITY,
         errors,
     )
@@ -3754,7 +3877,7 @@ def _validate_ws_game_revoke_route(
     )
     validate_applicability(
         revoke_route,
-        "POST /ws/game/connect-token/revoke",
+        route_label(revoke_route),
         REQUIRED_REVOKE_APPLICABILITY,
         errors,
     )
@@ -4101,8 +4224,10 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
         cardinality_errors,
     )
     validate_generation_applicability(routes, errors, live_checks_cache)
+    validate_account_export_applicability(document, errors)
     validate_export_initiation_routes(routes, errors, live_checks_cache)
     validate_export_bindings(routes, errors)
+    validate_character_routes(routes, errors, cardinality_errors)
     validate_profile_authority_routes(
         routes, errors, live_checks_cache, cardinality_errors
     )

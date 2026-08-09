@@ -10,6 +10,18 @@ Routing note:
 - Use `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` for DSL/lifecycle semantics.
 - Use `design/architecture/system-architecture-scripting-runtime-execution.md` for execution-state behavior.
 
+## Target-State Quota and Budget Contract
+
+The target runtime applies deterministic, layered limits without allowing test traffic or one scope to consume another scope's live capacity:
+
+- Event-scope admission does not charge live per-script quota or tenant execution budget.
+- Each resolved handler consumes one per-script quota slot at handler admission; live tenant and cluster execution budgets charge when execution capacity is reserved, with no refund after charging.
+- `onLoad` readiness uses a separate bounded `PUBLISH_READINESS` capacity class and is excluded from ordinary live quota and budget windows.
+- Dry-run/test execution uses isolated budgets and capacity and is represented only by dry-run/test metric families, never live work-item outcome metrics.
+- Output ceilings bound emitted commands and serialized work before durable live work is persisted or handed off.
+
+The detailed charge points, resource levels, and operator procedures below refine this contract without changing its ownership or charge points.
+
 ## Implementation Status
 
 Current Automation quota and budget behavior is consolidated here. The policy sections below define the target contract and do not repeat these implementation details.
@@ -29,6 +41,7 @@ Companion docs:
 
 ## Table of Contents
 
+- [Target-State Quota and Budget Contract](#target-state-quota-and-budget-contract)
 - [Implementation Status](#implementation-status)
 - [Audience](#audience)
 - [Sandboxing & Security](#sandboxing--security)

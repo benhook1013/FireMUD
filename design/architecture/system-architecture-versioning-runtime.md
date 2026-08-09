@@ -614,8 +614,8 @@ At or after `sourceDrainDeadlineAt`, the current claimant performs the ordered s
 
 1. Claim or renew the fenced drain item.
 2. Request World Management to acquire the source lifecycle fence, transition the source to `TERMINATING`, and confirm that further source commands are rejected.
-3. Deliver the bounded update notice when policy requires it, using the notice replay identity.
-4. Close remaining source sockets only after both command-rejection confirmation and notice delivery.
+3. Close remaining source sockets after command-rejection confirmation, regardless of whether the update notice is unavailable or has not completed.
+4. Independently deliver the bounded update notice when policy requires it, using the notice replay identity and its own bounded timeout/reconciliation path; notice delivery cannot hold source sockets open indefinitely.
 5. Reconcile the idempotent World Management `InstanceTermination` workflow until the standard [instance termination handoff](#instance-termination-handoff) confirms the source terminal.
 
 The drain item remains durable until every required effect is confirmed and the persisted source lifecycle is terminal. A committed pointer, drain record, effect request, or expired lease is not by itself evidence that the corresponding runtime effect occurred.

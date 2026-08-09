@@ -2441,6 +2441,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             len(self.validator.PENDING_DELETION_EXPORT_ACTION_FAMILIES),
             len(pending_routes),
         )
+        self.assertEqual(
+            len(pending_routes),
+            len({route["action_family"] for route in pending_routes}),
+        )
 
         for mutation_name, mutate in (
             ("missing", lambda route: route.pop("action_family")),
@@ -2462,11 +2466,61 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     and route.get("action_family") == "export_content"
                 )
                 mutate(mutated_route)
-                errors = validate_document(self.validator, document)
+                errors = []
+                self.validator.validate_export_initiation_routes(
+                    document["routes"], errors
+                )
                 self.assertIn(
                     "pending_deletion_scoped routes must declare exactly "
                     "action_family set ['export_content', 'export_initiate', "
                     "'export_status']",
+                    errors,
+                )
+                if mutation_name == "duplicate":
+                    self.assertIn(
+                        "pending_deletion_scoped account export routes must declare "
+                        "unique action_family values",
+                        errors,
+                    )
+
+    def test_character_routes_are_distinct_pre_play_operations(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        for identity, expected_contract in self.validator.CHARACTER_ROUTE_CONTRACTS.items():
+            with self.subTest(route=identity[1]):
+                route = route_for(baseline, *identity)
+                self.assertEqual(
+                    expected_contract,
+                    {
+                        field: route[field]
+                        for field in expected_contract
+                    },
+                )
+
+        creation_identity = (
+            "account-service",
+            "POST /auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters",
+        )
+        document = copy.deepcopy(baseline)
+        creation = route_for(document, *creation_identity)
+        creation["selected_character_requirement"] = "required"
+        errors = []
+        self.validator.validate_character_routes(document["routes"], errors)
+        self.assertIn(
+            f"{self.validator.route_label(creation)} must declare "
+            "selected_character_requirement=none",
+            errors,
+        )
+
+        for identity in self.validator.CHARACTER_ROUTE_CONTRACTS:
+            with self.subTest(route=identity[1], field="gameplay_binding"):
+                document = copy.deepcopy(baseline)
+                route = route_for(document, *identity)
+                route["gameplay_binding"] = "performed"
+                errors = []
+                self.validator.validate_character_routes(document["routes"], errors)
+                self.assertIn(
+                    f"{self.validator.route_label(route)} must declare "
+                    "gameplay_binding=not_performed",
                     errors,
                 )
 
@@ -2603,7 +2657,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     and route.get("action_family") == "export_content"
                 )
                 mutate(mutated_route)
-                errors = validate_document(self.validator, document)
+                errors = []
+                self.validator.validate_export_initiation_routes(
+                    document["routes"], errors
+                )
                 self.assertIn(
                     "security_lock_export_scoped routes must declare exactly "
                     "action_family set ['export_content', 'export_initiate', "
@@ -2762,7 +2819,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                             errors,
                         )
 
-    def test_recovery_export_content_audit_contracts_are_exact(self):
+    def test_recovery_export_audit_contracts_are_exact(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         expected_contracts = (
             (
@@ -2777,42 +2834,47 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             ),
         )
         for classification, auth_path, expected_contract in expected_contracts:
-            with self.subTest(classification=classification):
-                route = next(
-                    route
-                    for route in baseline["routes"]
-                    if route.get("classification") == classification
-                    and route.get("auth_path") == auth_path
-                    and route.get("action_family") == "export_content"
-                )
-                self.assertEqual(expected_contract, route["audit_contract"])
-
-                for mutation_name, mutate in (
-                    ("missing", lambda route: route.pop("audit_contract")),
-                    (
-                        "unexpected",
-                        lambda route: route.__setitem__(
-                            "audit_contract", "unexpected_audit_contract"
-                        ),
-                    ),
+            for action_family in self.validator.RECOVERY_EXPORT_AUDITED_ACTION_FAMILIES:
+                with self.subTest(
+                    classification=classification,
+                    action_family=action_family,
                 ):
-                    with self.subTest(mutation=mutation_name):
-                        document = copy.deepcopy(baseline)
-                        mutated_route = next(
-                            route
-                            for route in document["routes"]
-                            if route.get("classification") == classification
-                            and route.get("auth_path") == auth_path
-                            and route.get("action_family") == "export_content"
-                        )
-                        mutate(mutated_route)
-                        errors = validate_document(self.validator, document)
-                        self.assertIn(
-                            f"routes[{route_index(document, mutated_route)}] "
-                            f"{self.validator.route_label(mutated_route)} "
-                            f"export_content must declare audit_contract {expected_contract}",
-                            errors,
-                        )
+                    route = next(
+                        route
+                        for route in baseline["routes"]
+                        if route.get("classification") == classification
+                        and route.get("auth_path") == auth_path
+                        and route.get("action_family") == action_family
+                    )
+                    self.assertEqual(expected_contract, route["audit_contract"])
+
+                    for mutation_name, mutate in (
+                        ("missing", lambda route: route.pop("audit_contract")),
+                        (
+                            "unexpected",
+                            lambda route: route.__setitem__(
+                                "audit_contract", "unexpected_audit_contract"
+                            ),
+                        ),
+                    ):
+                        with self.subTest(mutation=mutation_name):
+                            document = copy.deepcopy(baseline)
+                            mutated_route = next(
+                                route
+                                for route in document["routes"]
+                                if route.get("classification") == classification
+                                and route.get("auth_path") == auth_path
+                                and route.get("action_family") == action_family
+                            )
+                            mutate(mutated_route)
+                            errors = validate_document(self.validator, document)
+                            self.assertIn(
+                                f"routes[{route_index(document, mutated_route)}] "
+                                f"{self.validator.route_label(mutated_route)} "
+                                f"{action_family} must declare audit_contract "
+                                f"{expected_contract}",
+                                errors,
+                            )
 
     def test_active_account_export_content_audit_contract_is_exact(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -2986,6 +3048,131 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors,
         )
 
+    def test_account_export_applicability_is_closed_and_fail_closed(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        self.assertEqual(
+            self.validator.ACCOUNT_STATE_VOCABULARY,
+            baseline["account_state_vocabulary"],
+        )
+        applicability = baseline["account_export_applicability"]
+        self.assertEqual("exhaustive", applicability["coverage"])
+        self.assertEqual("forbidden", applicability["overlap"])
+        self.assertEqual("deny", applicability["unmatched"])
+        self.assertEqual(
+            self.validator.ACCOUNT_EXPORT_APPLICABILITY_RULES,
+            applicability["rules"],
+        )
+
+        for mutation_name, mutate, expected_error in (
+            (
+                "vocabulary",
+                lambda document: document["account_state_vocabulary"].append(
+                    "unknown"
+                ),
+                "account_state_vocabulary must declare exactly",
+            ),
+            (
+                "coverage",
+                lambda document: document["account_export_applicability"].__setitem__(
+                    "coverage", "partial"
+                ),
+                "account_export_applicability must declare coverage=exhaustive",
+            ),
+            (
+                "overlap",
+                lambda document: document["account_export_applicability"].__setitem__(
+                    "overlap", "allowed"
+                ),
+                "account_export_applicability must declare coverage=exhaustive",
+            ),
+            (
+                "unmatched",
+                lambda document: document["account_export_applicability"].__setitem__(
+                    "unmatched", "allow"
+                ),
+                "account_export_applicability must declare coverage=exhaustive",
+            ),
+            (
+                "rules",
+                lambda document: document["account_export_applicability"][
+                    "rules"
+                ].pop(),
+                "account_export_applicability.rules must declare exactly",
+            ),
+        ):
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                mutate(document)
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(expected_error in error for error in errors),
+                    errors,
+                )
+
+        active_route = next(
+            route
+            for route in baseline["routes"]
+            if self.validator.route_set_key(route)
+            == self.validator.EXPORT_INITIATION_ROUTE_IDENTITY
+            and route.get("classification") == "account_scoped"
+        )
+
+        document = copy.deepcopy(baseline)
+        overlapping_route = copy.deepcopy(active_route)
+        overlapping_route["applicability"]["all_of"] = [
+            {"client_variant": "additional"}
+        ]
+        document["routes"].append(overlapping_route)
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "account-service POST /accounts/{accountId}/exports must declare "
+                "exactly the mutually exclusive account export branches" in error
+                for error in errors
+            ),
+            errors,
+        )
+
+        document = copy.deepcopy(baseline)
+        unmatched_route = next(
+            route
+            for route in document["routes"]
+            if self.validator.route_set_key(route)
+            == self.validator.EXPORT_INITIATION_ROUTE_IDENTITY
+            and route.get("classification") == "account_scoped"
+        )
+        unmatched_route["applicability"]["account_state"] = "unknown"
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "must declare one of the canonical account export states" in error
+                for error in errors
+            ),
+            errors,
+        )
+
+    def test_export_applicability_conflict_uses_one_route_label_diagnostic(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = next(
+            route
+            for route in document["routes"]
+            if self.validator.route_set_key(route)
+            == (
+                "account-service",
+                "GET /accounts/{accountId}/exports/{exportId}/content",
+            )
+            and route.get("classification") == "account_scoped"
+        )
+        route["applicability"]["all_of"] = [
+            {"account_state": "security_locked"}
+        ]
+        errors = validate_document(self.validator, document)
+        expected_error = (
+            f"{self.validator.route_label(route)} has conflicting applicability "
+            "values for account_state: ['active', 'security_locked']"
+        )
+        self.assertEqual(1, errors.count(expected_error))
+
     def test_active_account_export_routes_are_canonical_and_caller_only(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route_specs = (
@@ -3026,7 +3213,18 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         legacy = route_for(baseline, "account-service", "ExportAccount")
         self.assertEqual("current_openapi_operator_surface", legacy["route_status"])
         self.assertEqual(
-            "POST /accounts/{accountId}/exports", legacy["canonical_target"]
+            "POST /accounts/{accountId}/exports", legacy["canonical_target_route"]
+        )
+        self.assertNotIn("canonical_target", legacy)
+        self.assertIsInstance(
+            route_for(baseline, "game-session-service", "PLAY")["canonical_target"],
+            dict,
+        )
+        self.assertIsInstance(
+            route_for(baseline, "account-service", "IssueConnectToken")[
+                "canonical_target"
+            ],
+            dict,
         )
         self.assertTrue(
             any(
@@ -3046,7 +3244,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 ),
             ),
             (
-                "canonical_target",
+                "canonical_target_route",
                 "ExportAccount",
                 (
                     "account-service ExportAccount legacy export route must point to "
@@ -3762,8 +3960,8 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         errors = validate_document(self.validator, document)
         self.assertTrue(
             any(
-                "/ws/game/** has conflicting applicability values for connection_mode"
-                in error
+                f"{self.validator.route_label(route)} has conflicting applicability "
+                "values for connection_mode" in error
                 for error in errors
             )
         )
@@ -3818,11 +4016,11 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
 
     def test_first_party_ws_and_revoke_operations_are_mutually_exclusive(self):
-        for connection_mode, operation, expected_label in (
+        for connection_mode, operation, route_name in (
             (
                 "first_party_web",
                 "connect_token_cookie_revoke",
-                "/ws/game/** first_party_web",
+                "/ws/game/**",
             ),
             (
                 "first_party_web",
@@ -3830,17 +4028,17 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 "POST /ws/game/connect-token/revoke",
             ),
         ):
-            with self.subTest(expected_label=expected_label):
+            with self.subTest(route_name=route_name):
                 document = self.validator.yaml.safe_load(
                     MATRIX.read_text(encoding="utf-8")
                 )
-                if expected_label.startswith("/ws/game"):
+                if route_name == "/ws/game/**":
                     route = websocket_route(document, connection_mode)
                 else:
                     route = route_for(
                         document,
                         "spring-cloud-gateway",
-                        "POST /ws/game/connect-token/revoke",
+                        route_name,
                     )
                 operation_predicate = next(
                     predicate
@@ -3851,7 +4049,8 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 errors = validate_document(self.validator, document)
                 self.assertTrue(
                     any(
-                        f"{expected_label} must declare applicability operation"
+                        f"{self.validator.route_label(route)} must declare "
+                        "applicability operation"
                         in error
                         for error in errors
                     )

@@ -97,6 +97,36 @@ auth_path_vocabulary:
   - pending_deletion_access
   - player_bootstrap
   - security_lock_export
+account_state_vocabulary:
+  - active
+  - security_locked
+  - deactivated_pending_delete
+account_export_applicability:
+  coverage: exhaustive
+  overlap: forbidden
+  unmatched: deny
+  rules:
+    - service: account-service
+      route: POST /accounts/{accountId}/exports
+      action_family: export_initiate
+      account_state_classifications:
+        active: account_scoped
+        security_locked: security_lock_export_scoped
+        deactivated_pending_delete: pending_deletion_scoped
+    - service: account-service
+      route: GET /accounts/{accountId}/exports/{exportId}
+      action_family: export_status
+      account_state_classifications:
+        active: account_scoped
+        security_locked: security_lock_export_scoped
+        deactivated_pending_delete: pending_deletion_scoped
+    - service: account-service
+      route: GET /accounts/{accountId}/exports/{exportId}/content
+      action_family: export_content
+      account_state_classifications:
+        active: account_scoped
+        security_locked: security_lock_export_scoped
+        deactivated_pending_delete: pending_deletion_scoped
 internal_workload_rules:
   caller_constraints: all_declared_constraints_must_pass
   caller_policy_alternatives: disjunctive
@@ -986,6 +1016,10 @@ routes:
     membership_authority_generation_applies: true
     realm_grant_authority: account_owned_when_non_public
     realm_grant_version: required_when_grant_gated
+    character_operation: existing_character_discovery
+    selected_character_requirement: not_applicable
+    gameplay_binding: not_performed
+    final_play_binding_cas: not_performed
     required_live_checks: [membership, membership_generation, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match]
     canonical_errors:
       any_of: [JOIN_REQUIRED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE, CONNECT_SCOPE_MISMATCH]
@@ -1004,6 +1038,10 @@ routes:
     membership_authority_generation_applies: true
     realm_grant_authority: account_owned_when_non_public
     realm_grant_version: required_when_grant_gated
+    character_operation: character_creation
+    selected_character_requirement: none
+    gameplay_binding: not_performed
+    final_play_binding_cas: not_performed
     required_live_checks: [membership, membership_generation, realm_visibility, conditional_realm_access_grant, runtime_entitlements, admission_pointer, connect_scope_match]
     canonical_errors:
       any_of: [JOIN_REQUIRED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE, CONNECT_SCOPE_MISMATCH]
@@ -1535,7 +1573,7 @@ routes:
         required_live_checks: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
     response_profile: asynchronous_versioned_cross_owner_export_manifest
     response_contract: reports_owner_completion_retries_omissions_and_policy_retention
-    canonical_target: POST /accounts/{accountId}/exports
+    canonical_target_route: POST /accounts/{accountId}/exports
     implementation_status:
       known_drift:
         - Current implementation returns synchronous Account/profile-local data rather than the versioned cross-owner manifest.
@@ -1675,6 +1713,7 @@ routes:
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
     action_family: export_initiate
+    audit_contract: required_account_recovery_case_export_job_and_outcome
     required_fields: [request_id]
     required_live_checks: [security_lock_export_credential_registry, security_lock_recovery_state, security_lock_export_action_family, export_availability]
     credential_binding:
@@ -1721,6 +1760,7 @@ routes:
     membership_authority_generation_applies: false
     pending_deletion_workflow_binding: required
     action_family: export_initiate
+    audit_contract: required_account_deletion_workflow_export_job_and_outcome
     required_fields: [request_id]
     required_live_checks: [pending_deletion_state, pending_deletion_credential_registry, pending_deletion_action_family, export_availability]
     export_operation_binding:
