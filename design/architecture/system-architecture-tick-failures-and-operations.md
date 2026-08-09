@@ -203,10 +203,10 @@ Command recovery must converge just like effect recovery. The canonical command 
 
 Recovery-specific behavior is:
 
-- Any accepted command still in `RECEIVED` or `ENQUEUED` during reset or tail-loss reconciliation, and not durably tied to a surviving `tick_batch_id`, is terminalized using the owner-defined lost-before-staging mapping.
+- Only an `ACCEPTED_VOLATILE` command still in `RECEIVED` or `ENQUEUED` during reset or tail-loss reconciliation, and not durably tied to a surviving `tick_batch_id`, is terminalized as `LOST_BEFORE_STAGING` using the owner-defined mapping. `ACCEPTED_DURABLE` remains governed by its feature-specific durable intake and safe-replay contract, even before batch binding.
 - Commands in `BOUND_TO_BATCH` follow the batch/effect replay path; command status remains distinct from effect-ledger status while the owner-defined mapping is applied.
 - Recovery, reset, and purge retain the structured terminal reason on the authoritative command record. A nonblank operator purge reason remains the command's failure message rather than existing only in logs or audit metadata.
-- Command reconciliation runs in the same operational scope as ledger replay/reset tooling, so clients can retry the same `commandId` for status lookup without leaving a pre-staging dedupe record indefinitely non-terminal.
+- Command reconciliation runs in the same operational scope as ledger replay/reset tooling, so clients can retry the same `commandId` for status lookup without leaving a pre-staging dedupe record indefinitely non-terminal. The lookup must include the `{tenantId, gameInstanceId}` scope and authorize the caller against the command's bound subject/actor identity or an explicitly authorized internal/operator authority; `commandId` alone is insufficient. The canonical lifecycle and status contract is [Tick Execution Flows: Command Outcome Status Surface](./system-architecture-tick-execution-flows.md#command-outcome-status-surface-required).
 
 ### EffectId, Ledger Rows, and Guard Keys
 

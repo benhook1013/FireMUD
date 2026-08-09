@@ -274,7 +274,7 @@ This pattern ensures all real-time gameplay is unified through WebSocket on the 
 
 Spring Cloud Gateway provides centralized management of client traffic, offering:
 
-- JWTs presented on admin or REST endpoints are validated by the consuming service. The `gameplay-connect` JWT is the exception: Gateway validates it during the `/ws/game/**` handshake. Gameplay protocol clients do not otherwise provide JWTs; all non-proxy `/ws/game/**` WebSocket clients must provide this short-lived connect token for handshake-time edge policy as described below.
+- Ordinary JWTs presented on admin or REST endpoints are validated by the consuming service. The `gameplay-connect` JWT is the explicit exception: Gateway validates it during the `/ws/game/**` handshake, using the connect-token handshake classifications below, including `CONNECT_TOKEN_REJECTED` for unsupported or rejected carrier/token content. Gameplay protocol clients do not otherwise provide JWTs; all non-proxy `/ws/game/**` WebSocket clients must provide this short-lived connect token for handshake-time edge policy as described below.
 - Cross-cutting filters (e.g., rate limiting, logging, CORS)
 
 > **Redis topology guidance:** Coordination Redis and Cache/Rate‑Limit Redis are

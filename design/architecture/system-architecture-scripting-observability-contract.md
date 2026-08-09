@@ -287,39 +287,14 @@ When `policyViolations` is present, `decision` values and final outcomes must al
 
 ## Metrics (Authoritative Names and Label Rules)
 
-The normative metric-family catalog lives in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix`. This section describes observability behavior and grouping expectations for those families.
+The normative metric-family catalog, labels, and increment units live in [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix). This section describes observability behavior and grouping expectations for those families without redefining their schemas.
 
-- Trigger admission and drops
-  - `automation_script_triggers_total{scope, script_category, eventType, outcome, priorityTag, optional plugin_family, optional plugin_version_family}`
-  - `automation_script_skips_total{scope, script_category, reason, priorityTag, optional plugin_family}`
-  - `automation_script_triggers_dropped_total{scope, script_category, reason, priorityTag, optional plugin_family}`
-- Quotas and budgets
-  - `script_quota_allowed_total{scope, script_category}`
-  - `script_quota_denied_total{scope, script_category, reason}`
-  - `automation_script_tenant_budget_allowed_total{scope, tier}` / `automation_script_tenant_budget_denied_total{scope, tier}`
-- Tick integration and queueing
-  - `automation_tick_events_enqueued_total{scope}`
-  - `automation_tick_version_fence_dropped_total{scope, script_category, reason}`
-  - `automation_tick_plugin_version_fence_dropped_total{scope, plugin_family, plugin_version_family, reason}`
-  - `automation_script_queue_delay_seconds{scope, script_category}`
-  - `automation_queue_orphaned_entries_total{scope}` (when applicable)
-  - `automation_script_timer_catchup_truncated_total{scope, script_category, eventType, reason}`
-- Sandbox and runtime health
-  - `automation_script_sandbox_failures_total{scope, script_category, plugin_family, reason}`
-  - `automation_script_errors_total{scope, script_category, plugin_family, reason}`
-  - `automation_script_output_budget_exceeded_total{scope, script_category, plugin_family, reason}`
-  - `automation_script_runtime_seconds{scope, script_category, plugin_family, eventType}`
-- Dry-run/test traffic (separate from live)
-  - `automation_script_test_runs_total{scope, script_category, plugin_family, eventType, result}`
-  - `automation_script_test_runtime_seconds{scope, script_category, plugin_family, eventType}`
-  - `automation_script_test_sandbox_failures_total{scope, script_category, plugin_family, eventType, reason}`
-  - `automation_script_test_capacity_denied_total{scope}`
-- Plugin policy
-  - `automation_plugin_policy_violations_total{scope, plugin_family, plugin_version_family, component_class, reason}`
-- Rollback convergence timeout
-  - `automation_rollback_convergence_timeout_total{scope, operation, reason}`
-- Rollback drain fencing
-  - `automation_rollback_drain_canceled_total{scope, operation, finalStage, reason}`
+- Trigger admission and drops: `automation_script_triggers_total`, `automation_script_skips_total`, and `automation_script_triggers_dropped_total`.
+- Quotas and budgets: `script_quota_allowed_total`, `script_quota_denied_total`, `automation_script_tenant_budget_allowed_total`, and `automation_script_tenant_budget_denied_total`.
+- Tick integration and queueing: `automation_tick_events_enqueued_total`, `automation_tick_version_fence_dropped_total`, `automation_tick_plugin_version_fence_dropped_total`, `automation_script_queue_delay_seconds`, `automation_queue_orphaned_entries_total`, `automation_queue_oldest_entry_age_seconds`, `automation_script_leadership_changes_total`, and `automation_script_timer_catchup_truncated_total`.
+- Work-item, sandbox, and runtime health: `automation_script_work_item_outcomes_total`, `automation_script_sandbox_failures_total`, `automation_script_errors_total`, `automation_script_output_budget_exceeded_total`, and `automation_script_runtime_seconds`.
+- Dry-run/test traffic: `automation_script_test_runs_total`, `automation_script_test_runtime_seconds`, `automation_script_test_sandbox_failures_total`, and `automation_script_test_capacity_denied_total`.
+- Plugin policy and rollback: `automation_plugin_policy_violations_total`, `automation_rollback_convergence_timeout_total`, and `automation_rollback_drain_canceled_total`.
 
 Label rules:
 

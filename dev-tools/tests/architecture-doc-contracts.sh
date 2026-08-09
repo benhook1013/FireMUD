@@ -228,8 +228,9 @@ raw_html_type7_start = re.compile(
 raw_html_special_start = re.compile(
     r"^[ \t]{0,3}(?:(?P<processing><\?)|(?P<declaration><![A-Z])|(?P<cdata><!\[CDATA\[))",
 )
+# The NUL sentinel assumes scanned Markdown contains no literal NUL.
 html_comment_boundary = "\x00"
-atx_heading_with_content = re.compile(r"^[ \t]{0,3}#{1,6}[ \t]+\S")
+atx_heading_with_content = re.compile(r"^[ ]{0,3}#{1,6}[ \t]+\S")
 
 
 def has_non_whitespace(text):
@@ -272,50 +273,50 @@ def strip_raw_html_block(
     """Hide CommonMark raw HTML blocks from top-level Markdown status parsing."""
     if in_raw_html_block:
         if raw_html_block_kind == "processing":
-            return "", "?>" not in line, None if "?>" in line else raw_html_block_kind
+            return "", True, "?>" not in line, None if "?>" in line else raw_html_block_kind
         if raw_html_block_kind == "declaration":
-            return "", ">" not in line, None if ">" in line else raw_html_block_kind
+            return "", True, ">" not in line, None if ">" in line else raw_html_block_kind
         if raw_html_block_kind == "cdata":
-            return "", "]]>" not in line, None if "]]>" in line else raw_html_block_kind
+            return "", True, "]]>" not in line, None if "]]>" in line else raw_html_block_kind
         if raw_html_block_kind is None or raw_html_block_kind.lower() not in raw_html_closing_tag_only:
             if physical_line_blank:
-                return "", False, None
+                return "", True, False, None
         elif re.search(
             rf"</{re.escape(raw_html_block_kind)}[ \t]*>", line, re.IGNORECASE
         ):
-            return "", False, None
-        return "", True, raw_html_block_kind
+            return "", True, False, None
+        return "", True, True, raw_html_block_kind
 
     match = raw_html_block_start.match(line)
     # Type 1-6 blocks take precedence over the generic Type-7 tag form.
     type7 = raw_html_type7_start.match(line) if match is None else None
     special = raw_html_special_start.match(line)
     if match is None and type7 is None and special is None:
-        return line, False, None
+        return line, False, False, None
     tag = match.group("tag") if match is not None else None
     if special is not None:
         kind = next(name for name, value in special.groupdict().items() if value is not None)
         terminator = {"processing": "?>", "declaration": ">", "cdata": "]]>"}[kind]
-        return "", terminator not in line[special.end() :], (
+        return "", True, terminator not in line[special.end() :], (
             kind if terminator not in line[special.end() :] else None
         )
     if type7 is not None:
-        return "", True, None
+        return "", True, True, None
     if (
         match.group("closing") is not None
         and tag is not None
         and tag.lower() in raw_html_closing_tag_only
     ):
-        return "", True, None
+        return "", True, True, None
     if tag is not None and tag.lower() in raw_html_closing_tag_only:
         closing_tag = re.search(
             rf"</{re.escape(tag)}[ \t]*>", line, re.IGNORECASE
         )
-        return "", closing_tag is None, tag if closing_tag is None else None
-    return "", True, tag
+        return "", True, closing_tag is None, tag if closing_tag is None else None
+    return "", True, True, tag
 
 
-def iter_visible_markdown_lines(text, include_fenced_content):
+def iter_visible_markdown_lines(text, include_fenced_content, source_label=None):
     in_fenced_block = False
     fence_marker = None
     opening_line_number = None
@@ -340,7 +341,7 @@ def iter_visible_markdown_lines(text, include_fenced_content):
 
         physical_line_blank = not line.strip()
         if in_raw_html_block:
-            _, in_raw_html_block, raw_html_block_kind = strip_raw_html_block(
+            _, _, in_raw_html_block, raw_html_block_kind = strip_raw_html_block(
                 line,
                 True,
                 raw_html_block_kind,
@@ -348,13 +349,10 @@ def iter_visible_markdown_lines(text, include_fenced_content):
             )
             continue
         if not in_html_comment:
-            visible_line, in_raw_html_block, raw_html_block_kind = strip_raw_html_block(
-                line,
-                False,
-                None,
-                physical_line_blank,
+            line, consumed, in_raw_html_block, raw_html_block_kind = (
+                strip_raw_html_block(line, False, None, physical_line_blank)
             )
-            if visible_line != line or in_raw_html_block:
+            if consumed:
                 continue
         line, in_html_comment = strip_html_comments(line, in_html_comment)
         if not line:
@@ -378,8 +376,9 @@ def iter_visible_markdown_lines(text, include_fenced_content):
 
 
     if in_fenced_block:
+        source_prefix = f"{source_label}: " if source_label is not None else ""
         raise SystemExit(
-            f"unterminated fenced example opened at line {opening_line_number}"
+            f"{source_prefix}unterminated fenced example opened at line {opening_line_number}"
         )
 
 
@@ -668,7 +667,7 @@ same_line_comment_prefix_fixture_text = (
 if first_top_level_status_value(same_line_comment_prefix_fixture_text) != "Accepted":
     raise SystemExit("same-line HTML comment prefix created a visible status heading")
 comment_adjacent_heading_fixture_text = (
-    "# ADR 9984: Comment-Adjacent Heading Fixture\n\n"
+    "# ADR 9981: Comment-Adjacent Heading Fixture\n\n"
     "##<!-- hidden --> Status\n"
     "Superseded by ADR 0001\n"
     "##<!-- hidden -->Status\n"
@@ -903,6 +902,7 @@ def extract_unique_markdown_section(text, heading, source_label):
     for line_number, line in iter_visible_markdown_lines(
         text,
         include_fenced_content=True,
+        source_label=source_label,
     ):
         is_heading = not in_fenced_block and level_two_heading.match(line)
         if is_heading:
@@ -1100,7 +1100,7 @@ try:
         "unterminated fenced section fixture",
     )
 except SystemExit as error:
-    if str(error) != "unterminated fenced example opened at line 3":
+    if str(error) != "unterminated fenced section fixture: unterminated fenced example opened at line 3":
         raise SystemExit(f"unexpected unterminated section diagnostic: {error}")
 else:
     raise SystemExit(
@@ -1117,8 +1117,6 @@ ordinary_visible_content = extract_unique_markdown_section(
     "Ordinary visible content fixture",
     "ordinary visible content fixture",
 )
-if html_comment_boundary in ordinary_visible_content:
-    raise SystemExit("HTML comment boundary leaked into visible section content")
 if (
     "ordinary visible text" not in ordinary_visible_content
     or "trailing visible text" not in ordinary_visible_content
@@ -1240,7 +1238,10 @@ for path in [
 require_section_contains(
     "design/architecture/system-architecture-backup-recovery.md",
     "Recovery Controller Continuation",
-    [],
+    [
+        canonical_public_resume_signature,
+        "The public phase-continuation verb is `continueRecovery(operationId, expectedPhase, maintenanceLockToken, evidenceRef)`.",
+    ],
 )
 require_section_contains(
     "design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md",

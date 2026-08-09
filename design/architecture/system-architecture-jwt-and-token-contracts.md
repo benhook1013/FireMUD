@@ -357,7 +357,7 @@ JWT verification model (normative):
 
 [ADR 0014](./decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md) defines the accepted lifecycle. Planned rotation must prepublish a new public JWK, wait for the bounded validator-cache interval and prove validator visibility, promote the matching Account signer atomically, retain the retiring public key until the last token it signed has expired plus allowed clock skew, then prune and prove acceptance/rejection behavior. A common generation and phase must make separately updated signing and JWKS resources distinguishable; they must not be treated as an atomic multi-resource write.
 
-Custody-specific rotation evidence supplements that lifecycle: target non-exportable-signer mode requires Account-authorized signer-side retirement of the superseded private key, while the interim Account-only mounted fallback requires Account-authorized materialization-controller private-slot pruning and private/public projection proof. Both modes must preserve Account-owned JWKS convergence.
+Custody-specific rotation evidence supplements that lifecycle: Account owns target non-exportable-signer retirement and hard-cutover decisions, and the signer only executes the exact retirement operation explicitly authorized by Account inside the approved signer custody boundary. The interim Account-only mounted fallback instead requires separate Account-authorized materialization-controller private-slot pruning and private/public projection proof. Both modes must preserve Account-owned JWKS convergence.
 
 Normal rotation preserves existing sessions. Signer rollback after promotion must keep public keys for every key used by either application version until all affected tokens expire plus skew.
 

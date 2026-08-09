@@ -613,9 +613,9 @@ Each external effect uses a durable replay identity derived from `{sourceDrainId
 At or after `sourceDrainDeadlineAt`, the current claimant performs the ordered sequence below:
 
 1. Claim or renew the fenced drain item.
-2. Deliver the bounded update notice when policy requires it, using the notice replay identity.
-3. Request World Management to acquire the source lifecycle fence, transition the source to `TERMINATING`, and confirm that further source commands are rejected.
-4. Close remaining source sockets only after that command-rejection confirmation.
+2. Request World Management to acquire the source lifecycle fence, transition the source to `TERMINATING`, and confirm that further source commands are rejected.
+3. Deliver the bounded update notice when policy requires it, using the notice replay identity.
+4. Close remaining source sockets only after both command-rejection confirmation and notice delivery.
 5. Reconcile the idempotent World Management `InstanceTermination` workflow until the standard [instance termination handoff](#instance-termination-handoff) confirms the source terminal.
 
 The drain item remains durable until every required effect is confirmed and the persisted source lifecycle is terminal. A committed pointer, drain record, effect request, or expired lease is not by itself evidence that the corresponding runtime effect occurred.

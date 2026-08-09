@@ -306,8 +306,8 @@ Before the first deployment into `hobby-self-hosted`, `staging`, or `production`
 
 - `postgres-credentials`
 - `postgres-admin-credentials` when rotation Jobs are used
-- `jwt-jwks` and the public-JWKS consumption evidence required by the selected player-facing custody mode
-- exactly one selected JWT custody mode: the current legacy Secret/path checks, the interim Account-only mounted fallback, or target non-exportable signer custody
+- the Account-owned `jwt-jwks` ConfigMap and public-JWKS consumption evidence required by every player-facing custody mode
+- exactly one selected JWT custody mode: the interim Account-only mounted fallback or target non-exportable signer custody
 - for the interim mounted fallback only, `jwt-signing-keys` and `internalBindings.jwt.signingKeysRef`, with the private mount limited to Account Service
 - for target non-exportable signer custody only, signer-health evidence and proof that no private signing material is mounted or distributed to application workloads outside the approved signer boundary
 - a missing, unknown, or unimplemented selected custody mode fails closed; public JWKS readiness does not imply that private signing material is required

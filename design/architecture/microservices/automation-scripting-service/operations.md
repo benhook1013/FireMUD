@@ -35,20 +35,20 @@ Rollback orchestration rules:
 
 - Pinning must satisfy base-version cohesion (`patch.baseVersionId == runtimeVersionId` for the instance).
 - Rollback convergence waiting is bounded and delegates to the [Pin Convergence Acknowledgment Predicate](../../system-architecture-scripting-rollout-and-rollback.md#pin-convergence-acknowledgment-predicate). This service must not declare convergence from its own acknowledgment; it consumes the owner workflow outcome and keeps admission and ticks paused when the canonical predicate has not succeeded.
-- Timeout transition must emit `ScriptRollbackConvergenceTimedOut` and increment `automation_rollback_convergence_timeout_total{scope, operation, reason}`.
+- Timeout transition must emit `ScriptRollbackConvergenceTimedOut` and increment `automation_rollback_convergence_timeout_total` according to [Table 4](../../system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix).
 - Rollback orchestration follows the durable state machine in [Scripting Rollout and Rollback](../../system-architecture-scripting-rollout-and-rollback.md#rollback-orchestration-state-machine-required). This service must resume its idempotent participation from the last durable owner state rather than restarting or accidentally unpausing.
-- `DRAINING` remains active until `GetAutomationDrainStatus` confirms the canonical two-layer state mapping has no active pre-DSL evaluation or descriptor handoff and no pending trigger or evaluated descriptor that can refill the current rollback-scope `admissionEpoch`; see [Scripting Runtime Execution](../../system-architecture-scripting-runtime-execution.md#current-state-mapping-drain-and-rebuild-rules).
+- `DRAINING` remains active until `GetAutomationDrainStatus` confirms the canonical two-layer state mapping for the requested `{tenantId, gameInstanceId, regionId?}` rollback scope. Its `admissionEpoch` is the current scope epoch; `activeExecutionCount` includes only current-epoch `EVALUATING` pre-DSL triggers and `HANDOFF_IN_FLIGHT` evaluated descriptors in that scope, while `pendingCancelableWorkItemCount` includes only current-epoch `PENDING_EVALUATION` pre-DSL triggers and `PENDING`/`INDEXED` evaluated descriptors that can refill the scope. Terminal states, rows from another scope or epoch, and derived queue pointers are excluded; a stale or earlier-epoch response cannot prove drain completion. The two-layer mapping is defined in [Scripting Runtime Execution](../../system-architecture-scripting-runtime-execution.md#current-state-mapping-drain-and-rebuild-rules).
 
 ## Metrics and Audit Guidance
 
-The authoritative observability contract lives in [Scripting Observability Contract](../../system-architecture-scripting-observability-contract.md). Service-level metric examples include:
+The authoritative metric-family names, labels, and increment units live in [Table 4](../../system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix). Service-level metric examples include:
 
 - `automation_script_triggers_total`, `automation_script_skips_total`, and `automation_script_triggers_dropped_total` for scheduler activity and drops.
 - `automation_script_queue_delay_seconds` and `automation_script_leadership_changes_total` for queue latency and leader stability.
 - `automation_script_timer_catchup_truncated_total` for catch-up firings intentionally truncated by resume-window limits.
-- `automation_script_tenant_budget_allowed_total{scope, tier}` / `automation_script_tenant_budget_denied_total{scope, tier}` for bounded operator-facing automation budget pressure, with tenant-specific drilldown coming from audit rows and control-plane reads rather than raw metric labels.
+- `automation_script_tenant_budget_allowed_total` / `automation_script_tenant_budget_denied_total` for bounded operator-facing automation budget pressure, with tenant-specific drilldown coming from audit rows and control-plane reads rather than raw metric labels.
 - `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total` for quota enforcement and tick integration.
-- `automation_script_sandbox_failures_total{scope, script_category, reason}`, `automation_script_errors_total{scope, script_category, reason}`, and `automation_script_runtime_seconds{scope, script_category, eventType}` for sandbox and runtime health.
+- `automation_script_sandbox_failures_total`, `automation_script_errors_total`, and `automation_script_runtime_seconds` for sandbox and runtime health.
 
 Queue and quota behavior must be observable either through the canonical `cache.automation_queue_*` patterns in `system-architecture-redis-cache.md` or through the mapped automation metrics documented above.
 
