@@ -181,7 +181,7 @@ Concrete replay example:
 
 Generates biome-aware terrain maps with elevation, water features, forest density, and region partitioning. Room creation is configurable: either generate **sparse rooms** only at points of interest (POIs), or generate a **full grid of rooms** based on the terrain data.
 
-#### Generation Pipeline:
+#### Generation Pipeline
 
 | Step | Purpose | Common Techniques |
 | --- | --- | --- |
