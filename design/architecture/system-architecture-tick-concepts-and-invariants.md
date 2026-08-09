@@ -31,8 +31,8 @@ Refer to those sections for the authoritative wording and examples.
 When designing new tick-driven features, keep these invariants in mind:
 
 - **Single authoritative executor per region** – all tick-side state for a `<tenantId, gameInstanceId, regionId>` is owned by one executor at a time.
-- **Lease and lock tokens are authoritative** – region leases and per-entity locks in Redis always carry opaque tokens; tick scripts must validate those tokens (and the current `tickId`) inside a single Lua invocation before applying or cleaning up any staged work.
-- **One action per entity per tick** – fairness is enforced by limiting how many **tick work items** (player commands, AI/automation commands, due timers, retries, and remote follow-ups) a single entity can execute per tick. The scheduler and tick-execution flow choose at most one such work item per entity per tick; any additional due work for that entity is deferred to later ticks according to the retry and scheduling rules. This applies equally to player commands, AI scripts, automation, and remote follow-ups drained from other regions (which are enqueued into the same per-entity queues at the target region).
+- **Lease and lock tokens are scoped and validated proofs** – region leases and per-entity locks in Redis carry opaque tokens scoped to the current region timeline; tick scripts must validate those tokens (and the current `tickId`) inside a single Lua invocation before applying or cleaning up any staged work. Lease possession alone is not durable authority: staging and recovery also require the current region epoch and durable executor fence under the handshake owned by [Tick System and Runtime Design](./system-architecture-ticks.md).
+- **Separate actor-action and passive/inbound-effect lanes** – fairness limits each eligible entity to at most one root intentional actor action per tick. Passive pulses, environmental work, inbound or remote effects, actor-generated consequences, and retries of already-admitted effects use their own bounded lane and do not consume that actor-action slot. Every source declares its lane and cost class; a command remains an actor action even when its source is a timer or automation handoff.
 - **No cross-region locks** – cross-region interactions are modeled as messages, not shared locks or multi-region transactions.
 - **Idempotent side effects** – the region-scoped tick timeline `(region_epoch, tickId)` and effect guards must be used so that replays after failure do not double-apply mutations.
 
@@ -55,7 +55,7 @@ The main tick document contains the detailed rules and Redis key shapes behind e
 
 ### Fairness Under Tail-Loss and Resets
 
-Fairness and the “one action per entity per tick” rule apply to steady-state execution within a stable `region_epoch`. Around the coordination tail-loss window and explicit resets:
+Lane fairness and the “one root actor action per eligible entity per tick” rule apply to steady-state execution within a stable `region_epoch`. Around the coordination tail-loss window and explicit resets:
 
 - Redis tail-loss and scoped coordination resets may cause some actions near the tail of the timeline to be dropped, replayed, or slightly re-ordered.
 - In these cases, the system prioritizes **EffectId convergence** (each `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, tickId, effectKey, targetAggregateType, targetAggregateId)` ends up durably APPLIED or ABANDONED without double-apply) over strict per-entity fairness across the reset boundary.
@@ -220,10 +220,10 @@ Downstream behavior for stalled regions (rejecting new commands, marking instanc
 
 Lock contention and transient failures are handled by a bounded retry and backoff policy that preserves fairness:
 
-- Each rescheduled action carries a per-command retry counter and a `next_eligible_tick_id` value; retries are delayed using an exponential backoff in ticks, for example `nextTick = currentTick + min(2^retryCount, MAX_BACKOFF_TICKS)`.
-- Retries are appended to the back of the originating entity’s queue and are scheduled **no earlier than a future tick**; the executor never spins inside a single tick waiting for locks.
+- Each rescheduled item carries its lane, stable action/effect identity, bounded retry counter, and a `next_eligible_tick_id` value; retries are delayed using an exponential backoff in ticks, for example `nextTick = currentTick + min(2^retryCount, MAX_BACKOFF_TICKS)`.
+- Actor-action retries compete in the actor-action lane and preserve the original action identity; passive/effect retries remain passive and never create a new same-tick root actor action. Retries are scheduled **no earlier than a future tick**; the executor never spins inside a single tick waiting for locks.
 - After a bounded number of failed attempts (for example `MAX_RETRIES`), the command is marked permanently failed, a player-visible error is emitted, and metrics/logs capture the contention so operators can see hotspots.
-- Fairness is guaranteed per entity: within a given entity’s queue, commands are processed FIFO; cross-entity fairness is best-effort and driven by normal tick scheduling plus the backoff rules.
+- Fairness is guaranteed per entity for root actor actions: within a given entity’s actor-action queue, commands are processed FIFO; passive/effect ordering and cross-entity fairness are bounded by their lane budgets and normal tick scheduling plus the backoff rules.
 - Metrics such as `tick_conflict_hotspot_detected_total` and `tick_retry_queue_depth` surface regions where contention is persistent so operators can adjust region layout, tick budgets, or feature design.
 
 These invariants ensure that contention is handled predictably: retries remain bounded, hot entities cannot monopolize the loop indefinitely, and operators have clear signals when configuration or design changes are required.
@@ -233,7 +233,7 @@ At the configuration level:
 - Lua staging scripts enforce hard per-tick caps on how many commands or events move from queues into `pending`, using keys such as:
   - `game.tick-max-commands`
   - `automation.tick-max-events`
-- These caps exist so no single player or script can monopolize the tick loop, even if they enqueue many actions; excess work spills into subsequent ticks according to the same fairness rules.
+- These caps exist so no single player or script can monopolize either lane, even if it enqueues many actions or effects; excess work spills into subsequent ticks according to the lane-specific ordering and fairness rules.
 
 Runtime health is also expressed via ratios such as `tick_execution_time_ms_p95` or `tick_execution_time_ms_p99` over `tick_lock_ttl_ms`:
 

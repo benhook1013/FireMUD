@@ -10,7 +10,7 @@ This document explains how FireMUD coordinates data consistency across its indep
 | --- | --- |
 | **Command** | A gameplay action issued by a player or AI (e.g., attack, move, use item). Executed inside a tick as a **self-contained gameplay unit** that may touch multiple services but is coordinated via Redis and idempotent domain handlers. |
 | **Transaction** | A unit of work that must either fully succeed or be rolled back **within a single service boundary** (for example, a PostgreSQL transaction in Entity Management). Gameplay commands are composed of one or more such local transactions plus idempotent retries; there is **no global, cross-service ACID transaction** for a command. |
-| **Tick** | A scheduled gameplay loop slice. Each tick processes at most one command per entity and uses Redis for coordination, staging/cleanup, and fairness. Ticks are not atomic across all commands — each command is executed as an independent composition of local transactions and retries. |
+| **Tick** | A scheduled gameplay loop slice. Each tick selects at most one root actor action per eligible entity while separately bounding passive/inbound effects and already-admitted effect retries. Redis coordinates staging/cleanup and fairness; ticks are not atomic across all work, and each action/effect is an independent composition of local transactions and retries. |
 | **Saga** | A short-lived, synchronous cross-service orchestration composed of multiple local transactions plus optional compensation. Used only for **non-gameplay** workflows that can complete in one caller-owned execution path and do not need durable timers, restart-safe continuation, or operator-visible in-flight state independent of one JVM lifetime. |
 | **Temporal workflow** | A long-running, durable control-plane workflow. Used when orchestration must survive restarts, wait durably for time or external events, or expose explicit operator-visible workflow state/history. |
 
@@ -31,6 +31,8 @@ From the player’s perspective, a command appears atomic (“either my move hap
 
 - **Per-service atomicity** – each participating service wraps its own changes in a local database transaction.
 - **At-least-once delivery + idempotency** – tick effects may be retried; idempotent guards ensure repeated applications converge to the same logical outcome.
+- **Lane-preserving retries** – actor-action retries retain the original action identity and compete only in the actor-action lane; passive/effect retries retain their effect identity and lane, without granting a new root actor action.
+- **Fenced replay** – recovery validates the current region epoch and durable executor fence before replay or cleanup; lease loss routes work through the takeover/reconciliation contract owned by the tick architecture.
 - **Eventual cross-service convergence** – if different services commit at slightly different times, domain invariants converge as retries and reconciliation complete; there is no single ACID boundary spanning them.
 
 This model provides:

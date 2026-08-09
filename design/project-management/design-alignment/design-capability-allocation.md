@@ -27,16 +27,16 @@ This ledger maps canonical product and architecture sources to the stable capabi
 | Infrastructure | 6 | 6 | 0 | 100% classified |
 | Generated references | 2 | 2 | 0 | 100% classified |
 | Microservice architecture | 76 | 74 | 0; 2 explicit governance/template exemptions | 100% classified |
-| Architecture decisions | 51 | 50 | 0; 1 registry exemption | 100% classified |
+| Architecture decisions | 53 | 52 | 0; 1 registry exemption | 100% classified |
 | Product documentation | 7 | 7 | 0 | 100% classified |
-| **Total** | **225** | **222** | **0; 3 explicit exemptions** | **100% classified** |
+| **Total** | **227** | **224** | **0; 3 explicit exemptions** | **100% classified** |
 
 ## Allocation Ledger
 
 | Design source | Heading or scope | Primary capability | Secondary handoffs | Source class | Notes or gap |
 | --- | --- | --- | --- | --- | --- |
 | [Microservice architecture allocation](./design-capability-allocation-microservices.md) | All 76 files under `design/architecture/microservices/**` | Per-source allocation | Per-source handoffs | Service design, contract, runtime/data, configuration, operations, and reference sources | All 76 files are accounted for as 74 allocated sources plus 2 exempt governance/template files: `service-documentation-structure.md` and `service-template.md`; complete path-set coverage |
-| [Architecture decision registry](../../architecture/decisions/README.md) | Registry plus 50 ADRs | Per-record allocation | Per-record affected capabilities | Decision record | The registry is an index; accepted, superseded, and withdrawn records remain distinguishable |
+| [Architecture decision registry](../../architecture/decisions/README.md) | Registry plus 52 ADRs | Per-record allocation | Per-record affected capabilities | Decision record | The registry is an index; accepted, superseded, and withdrawn records remain distinguishable |
 | [System architecture allocation](./design-capability-allocation-system.md) | All 83 direct architecture, 6 infrastructure, and 2 generated sources | Per-source allocation | Per-source handoffs | Normative design, runbook, reference, index, and generated sources | Complete path-set coverage |
 | [Product documentation](../../product/README.md#canonical-sources) | All 7 files under `design/product/**` | Per-source allocation | Per-source product behavior scope | Requirements, taxonomy, index, and observable product behavior | Complete path-set coverage |
 
@@ -95,6 +95,8 @@ This ledger maps canonical product and architecture sources to the stable capabi
 | `design/architecture/decisions/adr-0048-durable-idempotent-operator-write-execution.md` | `PO-1` | `GR-1`, `PO-4`, `SF-2` | Accepted |
 | `design/architecture/decisions/adr-0049-optional-provider-specific-external-identity-linking.md` | `AA-1` | `EA-3`, `SF-1` | Accepted |
 | `design/architecture/decisions/adr-0050-versioned-export-retention-and-erasure-policy.md` | `AA-1` | `AA-2`, `PO-1`, `PO-3`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0051-separate-actor-action-and-effect-lanes.md` | `GR-1` | `GR-4`, `AS-1` | Accepted |
+| `design/architecture/decisions/adr-0052-redis-liveness-lease-with-durable-executor-fence.md` | `GR-1` | `SF-2`, `PO-4` | Accepted |
 
 ## Product Documentation Allocation
 

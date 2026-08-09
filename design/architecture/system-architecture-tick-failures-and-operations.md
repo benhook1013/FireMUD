@@ -13,8 +13,9 @@ This document describes the full target-state recovery and operator model. Curre
 - the live durable ownership row is currently `{tenantId, gameInstanceId}`-scoped;
 - the live owner/status API is `GetRuntimeOwnershipStatus`, not yet a full region-scoped status surface;
 - the live fence token is opaque and compare-and-match based;
-- the live `tick_batch` / `tick_effect` ledger is real and now carries the current gameplay-command selected-work manifest on `tick_batch`, including current-boundary `enqueueSeq`, source metadata, and digest-checked replay reuse for surviving staged batches. The live `enqueueSeq` is allocated by one database-wide sequence; the region-scoped, cross-source allocator defined below is target-state. Timer/retry/remote-follow-up source-claim manifests, region-scoped replay controller breadth, and cross-region result-return semantics also remain target-state follow-through.
+- the live `tick_batch` / `tick_effect` ledger is real and now carries the current gameplay-command selected-work manifest on `tick_batch`, including current-boundary `enqueueSeq`, source metadata, and digest-checked replay reuse for surviving staged batches; live selected-work manifests do not yet preserve the required `lane` and `cost_class` metadata. The live `enqueueSeq` is allocated by one database-wide sequence; the region-scoped, cross-source allocator defined below is target-state. Timer/retry/remote-follow-up source-claim manifests, region-scoped replay controller breadth, and cross-region result-return semantics also remain target-state follow-through.
 - the live gameplay-command staging path does not yet provide the complete target automation handoff identity: it derives `effectKey` from `commandId` and uses a deterministic text/slot fallback when no command ID is available. The target fail-closed contract below requires the full admitted identity and rejects an effect that cannot be assigned a complete `EffectId`; this document does not claim that target behavior is already live.
+- The accepted lane and fencing consequences are target-state requirements in this recovery model: selected-work manifests and replay records must preserve each item's declared `lane` and `cost_class`, while takeover reconciliation remains subject to the Redis lease plus durable executor-fence handshake owned by [Tick System and Runtime Design](./system-architecture-ticks.md). This document does not duplicate that owner protocol.
 
 Naming convention: API, workflow, and EffectId prose uses `regionEpoch`. Snake-case forms such as `region_epoch`, `last_region_epoch`, and `target_region_epoch` are reserved for explicitly identified SQL/storage fields, Redis payloads/keys, or schema examples.
 
@@ -42,6 +43,7 @@ When implementing new failure-handling flows or adding operational procedures, e
 Tick recovery is driven by durable PostgreSQL tick state plus domain-level idempotency rules, with Redis acting only as a volatile coordination layer. Game Session creates the durable PostgreSQL `tick_batch` and `SCHEDULED` ledger rows first; only then may it stage the batch in Redis `pending`. Redis `pending` is staging/acceleration coordination only and is never authoritative for tick intent or recovery.
 
 - On executor crash or failover, a new worker acquires the region lease, re-establishes the authoritative recovery baseline from the durable tick-batch, tick effect ledger, follow-up tables, and the active status/progress surface: current live uses `GetRuntimeOwnershipStatus` plus `ObserveRuntimeTickProgress` for the owner, opaque `executorFence`, and committed `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)` progress; target-state uses `RegionStatus`/`GetRegionTickStatus`. It then inspects any surviving `tick:{tenantRegionTag}:pending`, `retry:{tenantRegionTag}`, and timer keys only as optional coordination hints while replay converges from durable state.
+- Before replay, cleanup, or takeover adoption, the successor validates the current `regionEpoch` and durable executor fence under the owner contract; a lost or ambiguous handoff pauses and enters fenced reconciliation rather than staging new work. Lane identity is immutable during recovery: actor-action retries remain actor actions, passive/effect retries remain passive effects, and replay cannot mint a new root actor action for the same tick.
 - Redis is treated as a volatile coordination layer with **at-least-once** semantics; network retries, executor failover, and AOF replay can all cause the same logical effect to be attempted more than once.
 - Domain services rely on `(regionEpoch, tickId)` and effect guards to ensure that replays do not double-apply logical effects even when Redis state is partially lost.
 
@@ -71,6 +73,7 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
   - `tenant_id`, `game_instance_id`, `playable_state_scope`, `region_id`, `region_epoch`, `tick_id`
   - `tick_batch_id`
   - `effect_key` (stable, human-readable descriptor passed through from staging)
+  - `lane` ∈ {`actor_action`, `passive_effect`} and bounded `cost_class` declared by the source; recovery and replay preserve both values
   - `target_aggregate_type`, `target_aggregate_id` (required target aggregate identity)
   - `automation_dispatch_id`, `command_ordinal` (both required for script-generated effects; nullable for non-scripting commands)
   - `command_id`
@@ -81,7 +84,7 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
 - Target-state requires one durable tick-batch record per `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)`, owned by Game Session, and stores at minimum:
   - `tick_batch_id`
   - `executor_fence` (or equivalent opaque durable fence captured at batch allocation time); this is the canonical durable fence used for compare-and-match protection.
-  - `lease_token` may be retained as lease-acquisition trace/audit metadata, but it is not an authoritative durable fence and must not authorize batch allocation, commit, cleanup, or recovery writes.
+  - `lease_token_correlation` may be retained as optional non-secret lease-acquisition trace/audit metadata; raw Redis lease tokens are never persisted, and this correlation is not an authoritative durable fence and must not authorize batch allocation, commit, cleanup, or recovery writes.
   - `expected_effect_count`
   - `status`
   - selected-work manifest entries for the batch
@@ -90,6 +93,7 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
 - The selected-work manifest is required for deterministic replay and source cleanup. At minimum it records, per selected source item:
   - the batch scope `(tenantId, gameInstanceId, regionId, regionEpoch)`; its `enqueue_seq` is allocated from the complete `<tenantId, gameInstanceId, regionId>` scope and is not reset or reused when a reset bumps `regionEpoch` and restarts `tickId` at `0`
   - `source_kind`
+  - `lane` and `cost_class`
   - source item identity
   - `entity_id`
   - the canonical ordering tuple used when the batch was formed
@@ -104,7 +108,7 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
 - Any service-level schema or storage doc that introduces the concrete `tick_batch` / manifest tables must mirror these minimum fields explicitly rather than redefining a narrower contract locally.
 - The current live tick-batch table enforces uniqueness only on its durable `tick_batch_id` key (`tick_batch_tick_batch_id_key` / `idx_tick_batch_tick_batch_id`); it does not yet enforce the coordinate tuple.
 - Completing the target-state invariant requires a migration that audits and reconciles duplicate coordinate tuples, then adds and proves a unique PostgreSQL constraint/index on `(tenant_id, game_instance_id, region_id, region_epoch, tick_id)`. Until then, the recorded `tick_batch_id`, lease/fence checks, and application duplicate detection are the current safeguards but do not provide database-level tuple uniqueness.
-- Batch allocation and every durable tick-control mutation are fenced using the recorded canonical `executor_fence` (or equivalent opaque durable fence). A `lease_token` is trace/audit context only and cannot substitute for the durable fence.
+- Batch allocation and every durable tick-control mutation are fenced using the recorded canonical `executor_fence` (or equivalent opaque durable fence). An optional non-secret `lease_token_correlation` is trace/audit context only; raw Redis lease tokens are not persisted, and the correlation cannot substitute for the durable fence.
 - Target-state batch allocation is one atomic, CAS-fenced durable operation: the transaction reads the authoritative current `regionEpoch` and `executorFence`, conditionally creates or adopts the coordinate-unique batch only when both still match, writes the batch manifest and initial ledger rows, and commits the durable allocation before any Redis `pending` staging. A changed epoch, lost lease, stale fence, or competing owner causes the transaction to affect no batch and fail closed; it must not allocate first and validate later. The current live lease/fence checks are the available guard, but do not yet claim this complete database CAS/uniqueness behavior.
 - `created_at` and `updated_at` are audit/age fields only. They are never members of the canonical work-order tuple or a replay tie-breaker. If a legacy source exposes only a timestamp, the scheduler must normalize it once into the persisted `due_point_normalized` plus deterministic `enqueue_seq`/identity tie-breakers before selection; it must not sort directly by wall-clock insertion time.
 - Recovery that observes multiple durable rows for the same coordinates treats the region as inconsistent, pauses it, and requires reconcile tooling before normal ticks resume.

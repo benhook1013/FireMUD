@@ -294,6 +294,12 @@ ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/adr-0050-versioned-export-retention-and-erasure-policy.md": adr_allocation(
         "AA-1", "Accepted", "AA-2", "PO-1", "PO-3", "SF-2"
     ),
+    "design/architecture/decisions/adr-0051-separate-actor-action-and-effect-lanes.md": adr_allocation(
+        "GR-1", "Accepted", "GR-4", "AS-1"
+    ),
+    "design/architecture/decisions/adr-0052-redis-liveness-lease-with-durable-executor-fence.md": adr_allocation(
+        "GR-1", "Accepted", "SF-2", "PO-4"
+    ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
     "README.md": "Service overview",

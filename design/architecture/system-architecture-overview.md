@@ -433,11 +433,12 @@ Minimal canonical room-read example:
 
 FireMUD uses a **Hybrid Tick Model** to balance responsiveness and fairness:
 
-- **One action per entity per tick** (pulled from command queues)
+- **Separate actor-action and passive/inbound-effect lanes:** each eligible entity may contribute at most one root intentional actor action per tick, while bounded passive, inbound, and already-admitted effect work is scheduled independently and does not consume that actor slot.
+- **Fenced tick handoff:** lease possession alone is insufficient; target work requires the expected `regionEpoch`, a newly installed durable `executorFence`, and revalidation of the same Redis lease token under the tick owner. The complete handshake is a target contract, not a claim that it is live.
 - **Region-scoped ticks** execute independently for parallelism
 - **Tick state** (locks, queues, timers) is stored and coordinated via Redis
 
-> 🔗 See [Tick System and Runtime Design](./system-architecture-ticks.md) for tick execution, staging/rollback, retry policies, and crash recovery.
+> 🔗 See [Tick System and Runtime Design](./system-architecture-ticks.md) for the canonical lane, phase, budget, staging/rollback, retry, lease, and crash-recovery contracts.
 
 ---
 

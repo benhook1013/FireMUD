@@ -152,11 +152,11 @@ This registry is the authoritative mapping from **script name → category → r
 
 #### Region-lease scripts (tick and coordination)
 
-These scripts operate on region-scoped coordination keys (`tick:{tenantRegionTag}:*`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`, `tick-executor-lease:{tenantRegionTag}`) and must run under an active region lease.
+These scripts operate on region-scoped coordination keys (`tick:{tenantRegionTag}:*`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`, `tick-executor-lease:{tenantRegionTag}`) and must run under an active region lease. The canonical authority, durable fence, and staging boundary remain owned by the [tick executor contract](./system-architecture-ticks.md#region-authority-and-tick-executor).
 
 Every region-lease script must perform the following validations before executing any writes:
 
-- **Lease token and epoch** – re-read `tick-executor-lease:{tenantRegionTag}` and compare its stored token and epoch to the supplied values in `ARGV`. If they differ or the key is missing, the script returns a non-mutating outcome such as `"STALE_LEASE"` / `"UNSUPPORTED_EPOCH"` and performs no writes.
+- **Lease token and epoch** – re-read `tick-executor-lease:{tenantRegionTag}` and compare its stored opaque lease token to the same supplied token and its stored `region_epoch` to the separate expected `region_epoch` in `ARGV`. The epoch must not be encoded into the opaque lease token. If either differs or the key is missing, the script returns a non-mutating outcome such as `"STALE_LEASE"` / `"UNSUPPORTED_EPOCH"` and performs no writes.
 - **Lock tokens** – for each `tick:{tenantRegionTag}:lock:<entityId>` key included in `KEYS`, compare the stored token to the expected value. Any mismatch or absence yields a `"STALE_LOCK"` result without mutation.
 - **`tickId` guard via meta** – when touching `tick:{tenantRegionTag}:pending` or other tick-scoped structures, use the canonical metadata key `tick:{tenantRegionTag}:meta` as the monotonic guard: read `current_tick_id` from that hash and verify it is ≤ the requested `tickId` before staging new work. Commit/cleanup scripts abort if the guard indicates the requested `tickId` is out of order so only the intended tick makes progress. Any `tickId` fields embedded inside `pending` payloads are informational only and must not be used as guards.
 - **`current_tick_state` gate via meta** – region-lease scripts must also read `current_tick_state` from `tick:{tenantRegionTag}:meta` and obey the canonical state machine from the Redis hub doc:
@@ -276,23 +276,25 @@ Bulk key-walking is reserved for **offline maintenance tooling**, not tick execu
     - Inputs:
       - `KEYS[1] = tick-executor-lease:{tenantRegionTag}`
       - `ARGV[1] = expectedLeaseToken`
-      - `ARGV[2] = lease_ttl_ms`
+      - `ARGV[2] = expectedRegionEpoch`
+      - `ARGV[3] = lease_ttl_ms`
     - Behavior (sketch):
-      - Read `KEYS[1]`; if missing or if the stored token does not equal `expectedLeaseToken`, return `"STALE_LEASE"` and perform **no writes**.
-      - If the token matches, extend the TTL via `PEXPIRE` (or `SET ... PX ... XX`) and return `"RENEWED"`.
+      - Read `KEYS[1]`; if missing, if the stored token does not equal `expectedLeaseToken`, or if the stored epoch does not equal `expectedRegionEpoch`, return `"STALE_LEASE"` / `"UNSUPPORTED_EPOCH"` and perform **no writes**.
+      - If both values match, extend the TTL via `PEXPIRE` (or `SET ... PX ... XX`) and return `"RENEWED"`; renewal never advances `executorFence`.
+      - `"RENEWED"` is Redis-local liveness proof only. It does not authorize staging or effect dispatch until the tick owner completes durable fence installation or revalidation and the required same-token post-install check.
     - Callers treat `"STALE_LEASE"` as loss of leadership for that `<tenantId, gameInstanceId, regionId>` and stop acting as executor, matching the lease semantics described in the Redis architecture document.
 
 - **Pattern 2 – Compare-and-set on `region_epoch` + `tickId` (monotonic guards)**
   - Scripts that touch `tick:{tenantRegionTag}:pending` treat both `region_epoch` and `tickId` as monotonic guards:
     - Inputs include:
-      - The expected `region_epoch` in `ARGV` (or encoded into the lease token associated with `tick-executor-lease:{tenantRegionTag}`).
+      - The separate expected `region_epoch` in `ARGV`; it is not encoded into the opaque lease token associated with `tick-executor-lease:{tenantRegionTag}`.
       - The requested `tickId` for the staged work.
     - The script reads the current epoch/tick metadata from the canonical metadata key:
       - `KEYS` must include `tick:{tenantRegionTag}:meta` (a hash as defined in the Redis architecture doc).
       - The script loads `region_epoch` and `current_tick_id` from that hash.
       - The script also loads `current_tick_state` and refuses to advance to a newer tick while the stored state is non-terminal.
     - Behavior (hot-path tick staging/cleanup):
-      - If the stored `region_epoch` does not match the expected epoch, the script returns a non-mutating `"STALE_EPOCH"` outcome and does not modify state; callers treat this as “reset or handoff happened, abandon this attempt and reacquire lease under the new epoch”.
+      - If the stored `region_epoch` does not match the expected epoch, the script returns a non-mutating `"STALE_EPOCH"` outcome and does not modify state; callers treat this as “reset or topology timeline severance happened, abandon this attempt and reacquire under the resulting epoch”. Ordinary executor handoff changes only `executorFence` and does not bump `region_epoch`.
       - For hot-path tick execution, callers must only invoke staging/cleanup scripts with `requestedTickId` equal to the scheduler’s current tick for that region (as derived from RegionStatus/ledger); under that assumption:
         - If `current_tick_id` is unset, the script sets `current_tick_id = requestedTickId`, `current_tick_state = STAGED`, and stages new effects.
         - If `current_tick_id == requestedTickId` and `current_tick_state in {STAGED, RESOLVING}`, the script proceeds and treats existing effect entries as already staged (see Pattern 3).

@@ -329,10 +329,10 @@ Signals include:
 Runbook:
 
 1. use external infrastructure and PostgreSQL authority evidence to select and record the authoritative Redis primary before changing fences. Preserve that selected primary's ability to accept coordination traffic, fence every disqualified or conflicting primary at the infrastructure or network layer, and retain external evidence for both the selection and each fencing decision; do not ask the affected Redis deployment to prove its own fencing
-2. verify PostgreSQL authority and the surviving Redis primary have converged on one authoritative epoch
+2. verify PostgreSQL authority and the surviving Redis primary have converged on one authoritative epoch; this agreement is insufficient to authorize new tick progress
 3. invoke one `coordination-maintenance recover --mode reset --scope region ... --preserve-sessions` operation for each safely isolated affected region; it clears region-local bindings and blocks normal command intake until preserved sessions complete rebind
 4. if region isolation cannot be proved, retain the external primary fence and invoke one cluster-scoped `recover --mode reset --scope cluster --invalidate-sessions` operation; the cluster fallback keeps traffic blocked and invalidates gameplay sessions according to its explicit policy
-5. let the recover operation own its internal pause/fencing, reset, reconciliation, rebind or invalidation, and smoke verification; then require the external public `resume(operationId, expectedPhase=awaiting_resume, maintenanceLockToken, evidenceRef)` gate before the separate internal success-release phase permits ticks or command intake to resume
+5. let the recover operation own its internal pause/fencing, reset, reconciliation, rebind or invalidation, and smoke verification; before new tick progress, the successor must complete the [tick executor contract](./system-architecture-ticks.md#region-authority-and-tick-executor)'s acquire/new durable-fence/same-token revalidation and reconcile unfinished work from prior fences; then require the external public `resume(operationId, expectedPhase=awaiting_resume, maintenanceLockToken, evidenceRef)` gate before the separate internal success-release phase permits ticks or command intake to resume
 
 ## Normalization and Hash-Tag Migration
 
