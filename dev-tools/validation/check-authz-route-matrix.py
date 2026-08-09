@@ -1885,9 +1885,9 @@ def validate_account_export_routes(
                         f"{required_error}",
                     )
         if expected_action_family == "export_content":
-            required_content_checks = {"export_availability"}
-            if account_state == "active":
-                required_content_checks.add("recent_account_authentication")
+            required_content_checks = set(EXPORT_CONTENT_REQUIRED_LIVE_CHECKS)
+            if account_state != "active":
+                required_content_checks.discard("recent_account_authentication")
             for required_check in sorted(required_content_checks - (checks or set())):
                 append_unique_error(
                     errors,
@@ -3959,14 +3959,20 @@ def _validate_ws_game_revoke_route(
     )
     if revoke_route is None:
         return
+    label = route_label(revoke_route)
+    if revoke_route.get("scope") != "public":
+        errors.append(f"{label} must use scope public")
+    if revoke_route.get("classification") != "public":
+        errors.append(f"{label} must use classification public")
+    revoke_checks = route_live_checks(
+        revoke_route,
+        "POST /ws/game/connect-token/revoke",
+        errors,
+        live_checks_cache,
+    )
     missing_revoke = sorted(
         REQUIRED_CONNECT_TOKEN_REVOKE_CHECKS
-        - route_live_checks(
-            revoke_route,
-            "POST /ws/game/connect-token/revoke",
-            errors,
-            live_checks_cache,
-        )
+        - revoke_checks
     )
     validate_applicability(
         revoke_route,
@@ -3978,6 +3984,13 @@ def _validate_ws_game_revoke_route(
         errors.append(
             "POST /ws/game/connect-token/revoke is missing required live checks: "
             f"{missing_revoke}"
+        )
+    unexpected_revoke = sorted(revoke_checks - REQUIRED_CONNECT_TOKEN_REVOKE_CHECKS)
+    if unexpected_revoke:
+        errors.append(
+            "POST /ws/game/connect-token/revoke must require only exact Origin and "
+            "anti-CSRF live checks: "
+            f"{unexpected_revoke}"
         )
 
 

@@ -24,11 +24,11 @@ The complete per-command handoff diagnostic model is **target-state**. The live 
 
 Event-scope ingress decisions and handler-scoped execution outcomes are separate observability facts.
 
-- Event-scope ingress audit/logging records pre-resolution decisions for the incoming event, such as auth failure, reload backpressure, rollback pause, pin-state unavailability, signer-policy unavailability, or version unavailability. A rejected pre-handler ingress returns `admitted=false` with its event-scope `admissionOutcome` and `admissionReason`, records the same pair in `script_event_ingress_audit`, and has the corresponding Table 4 ingress-drop consequence using the bounded reason. These records use the uniqueness key and atomic first-claim/retry rules in [Table 1](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields), must not invent a synthetic `scriptId`, and must not create a handler-scoped `script_event_audit` row.
-- `script_event_audit` records resolved-handler/materialized-work lifecycles, including scheduler/timer-scoped, tenant-readiness `onLoad`, and dry-run/test executions after a concrete script or plugin handler identity exists. Pre-handler dry-run rejection, signer-policy unavailability, and rollback backpressure remain ingress-audit outcomes; an admitted event with zero handlers is metric-only.
+- Event-scope ingress audit/logging records pre-resolution decisions for the incoming event, such as auth failure, reload backpressure, rollback pause, pin-state unavailability, signer-policy unavailability, or version unavailability. A rejected pre-handler ingress returns `admitted=false` with its event-scope `admissionOutcome` and `admissionReason`, records the same pair in `script_event_ingress_audit`, and has the corresponding Table 4 ingress-drop consequence using the bounded reason. These records use the uniqueness key and atomic first-claim/retry rules in [Table 1](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields), must not invent a synthetic `scriptId`, `bindingId`, or command identity, and must not create a handler-scoped `script_event_audit` row.
+- `script_event_audit` records resolved-handler/materialized-work lifecycles, including scheduler/timer-scoped, tenant-readiness `onLoad`, and dry-run/test executions after a concrete script or plugin handler identity exists. Pre-handler dry-run rejection, signer-policy unavailability, and rollback backpressure remain ingress-audit outcomes; a live admitted event with zero handlers is metric-only.
 - per-command handoff history is a separate durable child surface keyed by the complete Command-Handoff Identity; `outboxWorkItemId` is retained only as parent-work correlation so one handler audit row can still correlate to multiple emitted gameplay commands.
 - A successful event-scope ingress record means the event was accepted for handler resolution. It is not a summary of every handler outcome.
-- If ingress is accepted and resolves three handlers, tooling should expect one event-scope ingress record and three handler-scoped `script_event_audit` records, one per resolved Trigger Identity. The Table 4 metric consequence does not add a separate admitted-event increment.
+- If live ingress is accepted and resolves three handlers, tooling should expect one event-scope ingress record and three handler-scoped `script_event_audit` records, one per resolved Trigger Identity. The Table 4 metric consequence does not add a separate admitted-event increment.
 - If one resolved handler emits three gameplay commands, tooling should expect one handler-scoped `script_event_audit` row plus three durable handoff-event rows under `ListScriptHandoffEvents`.
 
 ### Per-Command Handoff Records (Target-State)
@@ -42,7 +42,7 @@ A resolved handler may emit zero, one, or many gameplay commands. `script_event_
 
 ## `script_event_audit` (Required Fields)
 
-Each observed resolved-handler/materialized-work trigger, scheduler/timer trigger, tenant-readiness `onLoad` trigger, or materialized dry-run/test execution must write (or update) a single audit record keyed by the trigger identity described in [Table 1](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields). Pre-handler dry-run rejection, signer-policy unavailability, and rollback backpressure remain ingress-audit outcomes, and an admitted event with zero handlers remains metric-only.
+Each observed resolved-handler/materialized-work trigger, scheduler/timer trigger, tenant-readiness `onLoad` trigger, or materialized dry-run/test execution must write (or update) a single audit record keyed by the trigger identity described in [Table 1](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields). Pre-handler dry-run rejection, signer-policy unavailability, and rollback backpressure remain ingress-audit outcomes, and a live admitted event with zero handlers remains metric-only.
 
 Write behavior requirements:
 
@@ -50,7 +50,7 @@ Write behavior requirements:
 - The event-scope first claim and its admission outcome must be written atomically with the one `script_event_ingress_audit` row. The durable claim remains `IN_PROGRESS` until handler resolution and all matched-handler materialization attempts complete. A concurrent retry that finds `IN_PROGRESS` waits for the same fenced claim or receives a retryable signal without an admission result; it must not resolve/fan out again, return a partial count, or write another ingress row. A retry with the same finalized key returns the exact stored admission response, and a changed applicable identity field is an identity conflict, not a retry.
 - Audit writers must be idempotent and stage-monotonic; `finalStage` must never move backwards.
 - Conflicting concurrent writes for the same Trigger Identity must converge on a single row with deterministic precedence (higher stage wins).
-- Handler-scoped admission rejections and backpressure outcomes (for example `quota_denied`, `script_disabled`, or timer-scope `skipped_reloading`) must still produce the row for that Trigger Identity with `finalStage=ADMISSION`. Pre-resolution event-scope denials belong in the ingress audit/logging surface described above.
+- Handler-scoped admission rejections and backpressure outcomes (for example `quota_denied`, `script_disabled`, timer-scope `skipped_reloading`, or post-resolution `rollback_paused`) must still produce the row for that Trigger Identity with `finalStage=ADMISSION`. Pre-resolution event-scope denials belong in the ingress audit/logging surface described above.
 
 Audit records must include at least:
 
@@ -99,7 +99,7 @@ Any API, proto, or query surface that exposes `script_event_audit` records must 
 
 Stages:
 
-- `ADMISSION` – the trigger was accepted/rejected before any DSL evaluation (quotas, reload backpressure, disabled scripts, invalid version, policy enforcement).
+- `ADMISSION` – the resolved handler was accepted/rejected before any DSL evaluation (quotas, reload backpressure, disabled scripts, invalid version, policy enforcement). Pre-handler rollback pause remains an ingress-audit decision.
 - `DSL_EVAL` – the DSL graph was evaluated in the sandbox (validation, loop safety, runtime guards).
 - `WORK_ITEM_PERSIST` – the resulting script work item was persisted durably (for example, into a Postgres outbox) before being indexed into the rebuildable automation queue projection.
 - `TICK_HANDOFF` – the work item was handed off to Game Session and accepted into tick queues (the point at which live `finalOutcome=success` is allowed).
@@ -125,7 +125,7 @@ Stage semantics:
 - Tenant-readiness `onLoad` completion must use `finalStage=DSL_EVAL` and `finalOutcome=readiness_success`; it is not a live gameplay success signal.
 - `finalOutcome=dry_run_success` must imply `finalStage=DRY_RUN_RESULT` and `isDryRun=true`. It means only that the non-committing test evaluation completed and returned inspectable would-be commands.
 - Backpressure outcomes like `skipped_reloading` must use `finalStage=ADMISSION`.
-- Rollback pause backpressure `rollback_paused` must use `finalStage=ADMISSION`.
+- Post-resolution handler rollback pause backpressure `rollback_paused` must use `finalStage=ADMISSION`; pre-handler rollback pause is recorded only as the event-scope ingress outcome in `script_event_ingress_audit`.
 - Quota denials must use `finalStage=ADMISSION` unless quotas are evaluated inside the DSL runtime for a given trigger (rare; avoid mixing).
 - Intentional rollback/control-plane fencing after admission must stay visible as `finalOutcome=canceled` at the last attempted live stage, with bounded `finalReason` values such as `rollback_epoch_advanced`, `superseded_by_newer_patch`, `operator_canceled`, or `operator_purged`.
 
@@ -294,12 +294,11 @@ When `policyViolations` is present, `decision` values and final outcomes must al
 
 The metric-family catalog, labels, and increment units live exclusively in [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix). This section records illustrative observability consequences and local diagnostic guidance; it does not define or extend metric schemas.
 
-- The live families `automation_script_work_item_outcomes_total`, `automation_script_sandbox_failures_total`, `automation_script_errors_total`, and `automation_script_runtime_seconds` are emitted only for `isDryRun=false`. Dry-run/test observations use `automation_script_test_runs_total`, `automation_script_test_sandbox_failures_total`, and `automation_script_test_runtime_seconds` as applicable; isolated capacity denials use `automation_script_test_capacity_denied_total`.
-- Dry-run/test traffic must not increment live-traffic counters such as `automation_script_sandbox_failures_total`, `automation_script_errors_total`, `automation_script_triggers_total`, or `script_quota_denied_total`. Handler-scoped `dry_run_capacity_exhausted` remains visible through the Table 4 test-only consequences `automation_script_test_runs_total` and `automation_script_test_capacity_denied_total{scope}`, plus its audit row. Live dashboards and SLOs must remain interpretable without privileged tooling skewing error rates.
+- Dry-run/test executions remain separate from live dashboards and SLOs. Use the Table 4 dry-run/test consequences for materialized handler attempts and its single ingress-drop consequence for pre-handler denials; the handler audit row remains the source of per-execution detail.
 
 Metric semantics:
 
-- Event-scope admission, skip, and drop outcomes remain distinct from resolved handler outcomes. An admitted event that resolves zero handlers has only the bounded, metric-only `outcome="admitted_no_handlers"` consequence defined by Table 4, with `script_category="UNRESOLVED"` and no `plugin_family` or `plugin_version_family`; it is not returned in an ingress response or written to any `script_event_ingress_audit` or `script_event_audit` field.
+- Event-scope admission, skip, and drop outcomes remain distinct from resolved handler outcomes. A live admitted event that resolves zero handlers has only the bounded, metric-only `outcome="admitted_no_handlers"` consequence defined by Table 4, with `script_category="UNRESOLVED"` and no `plugin_family` or `plugin_version_family`; it is not returned in an ingress response or written to any `script_event_ingress_audit` or `script_event_audit` field.
 - Each rejected pre-handler event has the Table 4 ingress-drop consequence with its bounded event-scope `admissionReason`, including `signer_policy_unavailable` when applicable. It does not imply a handler audit row or handler `finalOutcome`.
 - The Table 4 rollback-drain metric consequence counts old-epoch executions intentionally fenced during rollback draining before live work could persist or hand off. Use it for bounded rollback-drain visibility rather than a generic infrastructure failure counter.
   It is not the counter for ordinary operator-initiated cancel/purge actions on not-yet-running work items unless those items had already crossed into execution and were then fenced by rollback epoch advancement.

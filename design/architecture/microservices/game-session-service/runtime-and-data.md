@@ -47,7 +47,7 @@ Game Session treats Redis Coordination and Cache/Rate-Limit roles as separate co
 
 ### Redis role and prefix details
 
-- Coordination prefixes are reset-tolerant in line with [Redis Reset & Recovery](../../system-architecture-redis-reset-and-recovery.md), except for reset-sensitive gameplay session bindings under `session:game:*`. Region-, tenant-, and cluster-scoped resets retain or invalidate gameplay sessions only under the canonical reset owner's exactly one explicit `--preserve-sessions` or `--invalidate-sessions` policy; no default is inferred. Game Session’s coordination design must therefore remain safe under the documented Redis tail-loss envelope rather than assuming perfect recovery of every transient coordination key.
+- Coordination prefixes are reset-tolerant in line with [Redis Reset & Recovery](../../system-architecture-redis-reset-and-recovery.md), except for reset-sensitive gameplay session bindings under `session:game:*`. That document owns reset lifecycle and session policy; Game Session retains only local consequences: the canonical session record is the policy-selected binding, while derived gameplay indexes reconcile independently under either policy. Account token and generation authority remains outside session policy. Game Session’s coordination design must therefore remain safe under the documented Redis tail-loss envelope rather than assuming perfect recovery of every transient coordination key.
 - The canonical opaque `{tenantRegionTag}` is derived by the shared key builders from the full `<tenantId, gameInstanceId, regionId>` tuple. It is the region scope for lease, queue, timer, retry, pending, and lock keys below; key examples must retain `{tenantRegionTag}` rather than substituting a differently named or partial tag.
 - Coordination ownership includes registered Lua-script access to prefixes such as:
   - `tick:{tenantRegionTag}:queue:<entityId>`
@@ -91,7 +91,7 @@ Target-state Game Session maintains the bounded active-binding index families ow
 - `session:game:index:tenant:{tenantGameplayTag}` -> active `sessionId` set
 - `session:game:index:realm-grant:{tenantGameplayTag}:<worldSlug>:<realmSlug>:<accountId>` -> active `sessionId` set for grant-gated realms
 
-Game Session is the target-state local writer and reconciler for these indexes. Binding transitions use the owner-defined generation/fence and repair protocol; this service must not use wildcard scans or treat index presence as authorization. Missing or ambiguous index/coordination state fails closed for admission and reconnect, while local cleanup remains idempotent.
+These indexes are derived gameplay projections, not preserved-session state or Account authority. Game Session is the target-state local writer and reconciler for them under the reset consequences in [Redis Reset & Recovery](../../system-architecture-redis-reset-and-recovery.md); affected tenant-owned indexes may be dropped and rebuilt under either explicit session policy, while the one global account index retains its tenant-qualified members and requires account-wide coverage for replacement. Binding transitions use the owner-defined generation/fence and repair protocol; this service must not use wildcard scans or treat index presence as authorization. Missing or ambiguous index/coordination state fails closed for admission and reconnect, while local cleanup remains idempotent.
 
 Gameplay session bindings persist the local identity and receiver-validation fields required by the owner contract:
 

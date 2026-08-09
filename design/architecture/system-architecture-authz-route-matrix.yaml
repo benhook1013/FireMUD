@@ -987,8 +987,8 @@ routes:
       any_of: [POLICY_DENY, BACKEND_UNAVAILABLE, PROTOCOL_MISMATCH, INTERNAL_ERROR]
   - service: spring-cloud-gateway
     route: POST /ws/game/connect-token/revoke
-    scope: tenant
-    classification: public_production_onboarding
+    scope: public
+    classification: public
     applicability:
       all_of:
         - connection_mode: first_party_web

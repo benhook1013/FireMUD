@@ -290,7 +290,7 @@ Outputs:
 
 These APIs provide deterministic operator hooks for stuck/canceled work so control-plane rollback and recovery do not depend on ad-hoc database access.
 
-The persisted `outboxWorkItemId` and its public/current wire aliases (`workItemId` and `automationWorkItemId`) are parent correlation only, not command identity. The existing outbox and dead-letter operations target evaluated commands through explicit `references[]`; each reference is the complete [Command-Handoff Identity](./system-architecture-scripting-normative-contract-tables.md#command-handoff-identity-target-state), including `commandOrdinal`, with `outboxWorkItemId` retained only for correlation. Operators may copy a reference from a returned `items[]` row into a mutation request; a parent work-item identifier alone is insufficient.
+The persisted `outboxWorkItemId` and its public/current wire aliases (`workItemId` and `automationWorkItemId`) are parent correlation only, not command identity. The current replay mutation selects parent `workItemIds` and requeues eligible `script_work_items` rows; it does not select independent command descriptors. **Target-state only:** descriptor-level outbox and dead-letter operations use explicit `references[]`; each reference is the complete [Command-Handoff Identity](./system-architecture-scripting-normative-contract-tables.md#command-handoff-identity-target-state), including `commandOrdinal`, with `outboxWorkItemId` retained only for correlation. Operators may copy a reference from a returned `items[]` row into a target-state mutation request; a parent work-item identifier alone is insufficient, and pre-DSL rows must be rejected rather than assigned a synthetic command identity.
 
 #### `ListOutboxWorkItems`
 
@@ -311,6 +311,8 @@ Outputs:
 - `nextPageToken`
 
 #### `ReplayDeadLetteredWorkItems`
+
+The `references[]` selector and per-descriptor replay claims below are target-state only. Current replay selects parent `workItemIds` as documented by the live API contract and requeues the selected parent rows; it does not select or independently replay emitted command descriptors.
 
 Inputs:
 

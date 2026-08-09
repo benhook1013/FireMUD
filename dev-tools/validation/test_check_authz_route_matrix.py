@@ -1316,7 +1316,6 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 set(route["required_live_checks"])
             )
         )
-
         route["required_live_checks"].remove("target_tenant_generation")
         errors = validate_document(self.validator, document)
         self.assertTrue(
@@ -3015,11 +3014,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                         mutated_route = export_route_for(document, action_family)
                         mutate(mutated_route)
                         errors = validate_document(self.validator, document)
-                        expected_error = (
-                            "active account export_content"
-                            if action_family == "export_content"
-                            else f"active account {action_family}"
-                        )
+                        expected_error = f"active account {action_family}"
                         self.assertIn(
                             f"routes[{route_index(document, mutated_route)}] "
                             f"{self.validator.route_label(mutated_route)} "
@@ -3122,9 +3117,9 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             account_state = self.validator.applicability_value(
                 route, "account_state", "test export content state", []
             )
-            state_required_checks = {"export_availability"}
-            if account_state == "active":
-                state_required_checks.add("recent_account_authentication")
+            state_required_checks = set(required_checks)
+            if account_state != "active":
+                state_required_checks.discard("recent_account_authentication")
             with self.subTest(
                 account_state=account_state
             ):
@@ -3678,13 +3673,19 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertNotIn("mutation_contract", route)
         self.assertNotIn("provider_instrument_contract", route)
 
-        route["mutation_contract"] = "unexpected_mutation_contract"
-        errors = validate_document(self.validator, document)
-        self.assertIn(
-            f"{self.validator.route_label(route)} billing_reporting route must not "
-            "declare mutation_contract",
-            errors,
-        )
+        for field in ("mutation_contract", "provider_instrument_contract"):
+            with self.subTest(field=field):
+                document = self.validator.yaml.safe_load(
+                    MATRIX.read_text(encoding="utf-8")
+                )
+                route = route_for(document, "account-service", "BillingArtifactsTenant")
+                route[field] = f"unexpected_{field}"
+                errors = validate_document(self.validator, document)
+                self.assertIn(
+                    f"{self.validator.route_label(route)} billing_reporting route must not "
+                    f"declare {field}",
+                    errors,
+                )
 
     def test_no_target_tenant_classifications_are_closed_and_explicit(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -4292,7 +4293,26 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             )
         )
 
-    def test_connect_token_revoke_declares_tenant_and_membership_generation_scope(self):
+    def test_connect_token_revoke_is_public_and_has_no_onboarding_checks(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(
+            document,
+            "spring-cloud-gateway",
+            "POST /ws/game/connect-token/revoke",
+        )
+        self.assertEqual("public", route["scope"])
+        self.assertEqual("public", route["classification"])
+        route["required_live_checks"].append("membership")
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "POST /ws/game/connect-token/revoke must require only exact Origin "
+                "and anti-CSRF live checks" in error
+                for error in errors
+            )
+        )
+
+    def test_connect_token_revoke_disables_generation_authority(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = route_for(
             document, "spring-cloud-gateway", "POST /ws/game/connect-token/revoke"

@@ -8,6 +8,7 @@ import re
 
 root = pathlib.Path(".")
 obsolete_public_resume_signature = "`resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)`"
+obsolete_gameplay_session_selector = "session:game:{tenantInstanceTag}"
 maintenance_lock_token_syntax = re.compile(r"--maintenance-lock-token(?![A-Za-z0-9_-])")
 maintenance_lock_token_prohibition = re.compile(
     r"(?:"
@@ -431,8 +432,18 @@ def reject_obsolete_envelope_phrases(path, text):
                 )
 
 
+def reject_obsolete_gameplay_session_selector(path, text):
+    if is_historical_adr_record(path, text):
+        return
+    if obsolete_gameplay_session_selector in text:
+        raise SystemExit(
+            f"{path}: gameplay session selectors must use the canonical "
+            "tenantGameplayTag/gameInstanceId shape"
+        )
+
+
 historical_adr_fixture = decision_history_dir / "adr-9999-history-fixture.md"
-historical_adr_fixture_text = "# ADR 9999: Historical Fixture\n\n## Status\n\nSuperseded by ADR 0001\n\nAccount-issued envelope\nrebind-envelope\n"
+historical_adr_fixture_text = "# ADR 9999: Historical Fixture\n\n## Status\n\nSuperseded by ADR 0001\n\nAccount-issued envelope\nrebind-envelope\nsession:game:{tenantInstanceTag}\n"
 indented_status_heading_fixture_cases = (
     (
         decision_history_dir / "adr-9990-one-space-status-heading-fixture.md",
@@ -476,6 +487,7 @@ accepted_adr_fixture_text = (
     "## Status\n\n"
     "Accepted\n"
     "rebind-envelope\n"
+    "session:game:{tenantInstanceTag}\n"
 )
 raw_html_adr_fixture = decision_history_dir / "adr-9997-raw-html-fixture.md"
 raw_html_adr_fixture_text = (
@@ -631,6 +643,10 @@ reject_obsolete_redis_rebind_envelope(
     historical_adr_fixture,
     historical_adr_fixture_text,
 )
+reject_obsolete_gameplay_session_selector(
+    historical_adr_fixture,
+    historical_adr_fixture_text,
+)
 for fixture_path, fixture_text in indented_status_heading_fixture_cases:
     if not is_historical_adr_record(fixture_path, fixture_text):
         raise SystemExit(
@@ -779,6 +795,16 @@ except SystemExit as error:
 else:
     raise SystemExit("Accepted ADR was not checked for obsolete Redis terminology")
 try:
+    reject_obsolete_gameplay_session_selector(
+        accepted_adr_fixture,
+        accepted_adr_fixture_text,
+    )
+except SystemExit as error:
+    if "gameplay session selectors" not in str(error):
+        raise SystemExit(f"unexpected Accepted ADR selector diagnostic: {error}")
+else:
+    raise SystemExit("Accepted ADR fixture was not checked for obsolete selectors")
+try:
     reject_obsolete_envelope_phrases(
         accepted_adr_fixture,
         accepted_adr_fixture_text,
@@ -823,11 +849,7 @@ for path in (root / "design").rglob("*.md"):
     text = path.read_text(encoding="utf-8")
     reject_obsolete_redis_rebind_envelope(path, text)
     reject_obsolete_envelope_phrases(path, text)
-    if "session:game:{tenantInstanceTag}" in text:
-        raise SystemExit(
-            f"{path}: gameplay session selectors must use the canonical "
-            "tenantGameplayTag/gameInstanceId shape"
-        )
+    reject_obsolete_gameplay_session_selector(path, text)
 
 canonical_world_dynamic = "world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>"
 for path in [
@@ -939,9 +961,13 @@ require_contains(
     "design/architecture/system-architecture-redis-reset-and-recovery.md",
     [
         "`session:auth:token:*` and `session:auth:generation:*`",
-        "Region and tenant resets preserve those Account-owned records",
+        "Region- and tenant-scoped resets preserve those records",
         "`session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`",
         "`session:game:index:character:{tenantGameplayTag}:<gameInstanceId>:<characterId>`",
+        "Derived gameplay indexes are independent of that choice",
+        "The one untagged global account index is an explicit exception",
+        "Account-owned idempotent durable generation-mutation/repair operation is the fallback",
+        "hot-path staging is prohibited until the canonical recovery release",
     ],
 )
 require_contains(
