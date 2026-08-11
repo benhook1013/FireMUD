@@ -48,11 +48,12 @@ The first supported World Management Class A caches are intentionally narrow and
 - `room:<tenantId>:<gameInstanceId>:<roomInstanceId>`
   - Owner: World Management Service.
   - Authoritative source: World Management’s room snapshot/read model.
-  - Required version: an opaque World-owned room component version (see [Canonical Room Runtime Contract](./system-architecture-overview.md#canonical-room-runtime-contract)).
+  - Required version and payload field: the exact opaque World-owned room component version (see [Canonical Room Runtime Contract](./system-architecture-overview.md#canonical-room-runtime-contract)) is stored alongside the room snapshot payload.
   - Version-advance rule: the World-owned room component version must advance on both topology-visible changes and any included dynamic-state changes.
   - Payload scope: navigation and visibility metadata needed for correctness-critical reads.
   - Payload exclusions: must not include presentation-only rendered room views, chat/history windows, or inventories/occupant rosters unless an explicit cross-service contract makes them part of the authoritative room snapshot.
   - Invalidator of record: topology-visible publish/activation paths, snapshot-fed dynamic mutations, and instance lifecycle transitions that rebuild or retire the room snapshot.
+  - Refresh discipline: write the room payload, exact component version, and TTL atomically; a missing or unverifiable component version is an authoritative-read miss and must be rebuilt before serving.
 - Reader contract:
   - Only `world-dynamic:*` and `room:*` may participate in correctness-critical World Management movement, pathfinding, and visibility decisions.
   - Validate `world-dynamic:*` against `roomDynamicVersion`. A `room:*` entry always requires the opaque World-owned room component version and cannot be validated by `roomDynamicVersion` alone.

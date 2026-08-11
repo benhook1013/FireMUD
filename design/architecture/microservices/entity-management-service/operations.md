@@ -2,6 +2,10 @@
 
 This document collects Entity Management’s readiness model, tick-lock/tick-idempotency operational assumptions, and deployment-level operational notes.
 
+## Implementation Status
+
+The complete participant-guard contract described here—root `EffectId`, typed operation and target, immutable `requestDigest`, and complete replay verification—is target-state. The current `EntityMutationEffectReplayService` and schema provide narrower effect/operation replay and do not yet enforce or prove the target mutation-boundary contract. [Transaction Strategies](../../system-architecture-transactions.md) is the canonical owner of participant-guard and replay-verification semantics.
+
 ## Operational Notes
 
 - Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health/readiness` and `/actuator/health/liveness` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
