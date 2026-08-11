@@ -8,6 +8,21 @@ The authoritative REST schema source lives in [../../../../services/entity-manag
 
 `ApplyActorCondition` has not yet converged on the target replay contract below. Its current request has no dedicated `effectId`; Game Session places the operation-unique durable effect ID in required `sourceId`, and Entity Management uses `{tenantId, sourceId}` for replay. That temporary implementation conflates replay identity with authored/source provenance and does not compare the complete condition payload on same-operation reuse. The proto, callers, persistence, and proof must migrate together before additional producers reuse one source across applications.
 
+The current LOOK adapter remains floor-free and is implementation-only:
+
+### Current room-entity implementation
+
+The current `ListRoomEntitiesRequest` carries `tenantId`, `RoomInstanceRef`, and `sessionAttestation`; it does not carry a caller-provided read-fence field. The current `entitySnapshotId` response value is a deterministic room-scope marker derived from the request scope, not proof that Entity Management observed a committed mutation version. The current adapter therefore does not claim exact caller-fence satisfaction.
+
+The current response includes:
+
+- `tenantId`, `gameInstanceId`, and `roomInstanceId` (a `RoomInstanceRef`) so consumers can unambiguously scope the entity list to a running instance.
+- `entitySnapshotId` so consumers can identify the room scope in responses. In the current adapter this is only the scope marker described above and is not a mutation-freshness or invalidation proof.
+- `entities[]`, each with `entityId`, `displayName`, `entityType` (`PLAYER`, `NPC`, `ITEM`), and optional `role`/`affiliation`.
+- `stateFlags` such as `isHidden`, `isInCombat`, or `isQuestTarget` so Game Logic can mask stealthy entities or highlight objectives.
+- `visionPriority` to help sort players before NPCs and list visible items at the end, keeping `LOOK` render ordering consistent.
+- `reloadHint` (enum) that signals whether the list is stable or dynamic, allowing Game Logic to decorate the `LOOK` output.
+
 ## REST
 
 - `GET /ping` – basic health check returning `"pong"`.
@@ -75,20 +90,7 @@ Publish gating must fail closed if Entity Management cannot attest a digest cons
 
 ## LOOK Entity Listing Contract
 
-`ListRoomEntities` is the dedicated endpoint for `LOOK` to discover which characters, items, and NPCs occupy a room. The current and target causal-read contracts are intentionally separate. The causal-floor shape and component-proof identity follow the [Identifier Glossary causal-read fence contract](../../system-architecture-identifier-glossary.md#cross-service-causal-read-fence-identity); the current transport names `worldSnapshotId` and `entitySnapshotId` are deterministic same-scope markers only, not independent freshness versions.
-
-### Current room-entity contract
-
-The current `ListRoomEntitiesRequest` carries `tenantId`, `RoomInstanceRef`, and `sessionAttestation`; it is floor-free and does not carry a caller-provided read-fence field. The current `entitySnapshotId` response value is a deterministic room-scope marker derived from the request scope, not proof that Entity Management observed a committed mutation version. The current adapter therefore does not claim exact caller-fence satisfaction.
-
-The current response includes:
-
-- `tenantId`, `gameInstanceId`, and `roomInstanceId` (a `RoomInstanceRef`) so consumers can unambiguously scope the entity list to a running instance.
-- `entitySnapshotId` so consumers can identify the room scope in responses. In the current adapter this is only the scope marker described above and is not a mutation-freshness or invalidation proof.
-- `entities[]`, each with `entityId`, `displayName`, `entityType` (`PLAYER`, `NPC`, `ITEM`), and optional `role`/`affiliation`.
-- `stateFlags` such as `isHidden`, `isInCombat`, or `isQuestTarget` so Game Logic can mask stealthy entities or highlight objectives.
-- `visionPriority` to help sort players before NPCs and list visible items at the end, keeping `LOOK` render ordering consistent.
-- `reloadHint` (enum) that signals whether the list is stable or dynamic, allowing Game Logic to decorate the `LOOK` output.
+`ListRoomEntities` is the dedicated endpoint for `LOOK` to discover which characters, items, and NPCs occupy a room. The target causal-floor and component-proof contract below is canonical; the current floor-free adapter is recorded as implementation status above. The target shape follows the [Identifier Glossary causal-read fence contract](../../system-architecture-identifier-glossary.md#cross-service-causal-read-fence-identity); current transport names `worldSnapshotId` and `entitySnapshotId` remain deterministic same-scope markers only, not independent freshness versions.
 
 ### Target causal-floor contract
 

@@ -1,5 +1,9 @@
 # FireMUD System Architecture: Diagram
 
+## Implementation Status
+
+The room-state assembly shown in this diagram is target-state. Current World and Entity room-read requests remain floor-free, and the causal-floor/served-through protocol is not implemented; current scope markers do not prove freshness.
+
 ```mermaid
 flowchart TD
     subgraph Clients

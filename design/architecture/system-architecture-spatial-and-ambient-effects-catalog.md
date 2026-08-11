@@ -4,6 +4,10 @@ This document defines the **required contracts** for tick-driven (and tick-adjac
 
 Effects described here are **not** optional guidance: any new implementation that introduces a spatial or ambient effect must add an entry to this catalog before the effect is used by runtime gameplay.
 
+## Implementation Status
+
+The target `DROP`/`PICKUP` contracts below are not yet fully implemented or proven: the current request and focused proof do not demonstrate the complete durable spatial-barrier and attested-targeting path.
+
 ## Common Requirements (All Effects)
 
 - [Transaction Strategies](./system-architecture-transactions.md) owns split spatial authority and operation-bound effect behavior. [Identifier Glossary](./system-architecture-identifier-glossary.md#cross-service-effect-identity) owns root `EffectId` and participant guard identity, while its [causal-read fence contract](./system-architecture-identifier-glossary.md#cross-service-causal-read-fence-identity) owns the causal floor and composite component-version identity. This catalog retains only effect-local writes, guards, and reconciliation consequences.
@@ -39,7 +43,7 @@ Reconciliation:
 - Retry World Management using the same root `EffectId` until the World location/occupancy mutation converges.
 - There is no Entity success/failure or retry branch for pure `MOVE`. An Entity leg exists only for a future MOVE variant that explicitly writes containment; that variant must declare Entity as a participant with its own write, guard, and reconciliation contract.
 
-`MOVE` commits World location/occupancy before destination presentation. `DROP` and `PICKUP` commit entirely in Entity against the admitted room scope, using the shared actor-lock/executor-fence and durable-barrier contract defined in [Transaction Strategies](./system-architecture-transactions.md#drop-pickup-targeting-and-actor-fence-critical-section). Lock expiry or handoff cannot admit a conflicting `MOVE` while the barrier lacks terminal evidence; Game Session owns retry orchestration and invokes Game Logic to re-resolve stale evidence under the same root `EffectId`, preserving the `requestDigest`. This catalog records only the effect-local writes and reconciliation consequences. An item never has two holders and an actor never has two authoritative locations. The current DROP/PICKUP proto/request and proof do not yet demonstrate the target path.
+`MOVE` commits World location/occupancy before destination presentation. `DROP` and `PICKUP` commit entirely in Entity against the admitted room scope, using the shared actor-lock/executor-fence and durable-barrier contract defined in [Transaction Strategies](./system-architecture-transactions.md#drop-pickup-targeting-and-actor-fence-critical-section). Lock expiry or handoff cannot admit a conflicting `MOVE` while the barrier lacks terminal evidence; Game Session owns retry orchestration and invokes Game Logic to re-resolve stale evidence under the same root `EffectId`, preserving the `requestDigest`. This catalog records only the effect-local writes and reconciliation consequences. An item never has two holders and an actor never has two authoritative locations.
 
 ### Drop (Inventory → Ground)
 

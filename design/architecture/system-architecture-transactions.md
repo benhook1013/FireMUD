@@ -24,7 +24,7 @@ The structured participant-guard request, shared `IdempotentEffectExecutor`, sta
 
 ### Command Atomicity and Outcome Aggregation
 
-[ADR 0053](./decisions/adr-0053-command-atomicity-by-invariant-class.md) owns command classification and player-visible terminal outcome semantics. Every command declares required and optional effects, permitted terminal combinations, whether `PARTIAL` is intentional, and any stronger-atomicity routing. `SUCCESS` requires every required effect to be durable or idempotently replayable; unresolved required work remains `PENDING`; `FAILURE` proves no required mutation or a local rejection without commit; `PARTIAL` is only a declared game-rule result. Optional failure can coexist with success only when classified before execution.
+[ADR 0053](./decisions/adr-0053-command-atomicity-by-invariant-class.md) owns command classification and player-visible command-result semantics. Every command declares required and optional effects, permitted terminal combinations, whether `PARTIAL` is intentional, and any stronger-atomicity routing. `SUCCESS` requires every required effect to be durable or idempotently replayable; unresolved required work produces a nonterminal player-visible `PENDING` result; `FAILURE` proves no required mutation or a local rejection without commit; `PARTIAL` is permitted only as a declared game-rule result. Optional failure can coexist with success only when classified before execution.
 
 Commands whose temporary partial state could violate unique ownership, value conservation/non-negative balance, conditional exchange, irreversible consumption, premium entitlement, or external commitment do not use independent tick effects. They use one co-located authoritative transaction where possible, otherwise a durable reservation/escrow workflow with idempotent steps and transactional outbox delivery. Routine distributed two-phase commit is not a gameplay pattern.
 
@@ -35,9 +35,9 @@ All real-time gameplay logic — movement, combat, item use, AI — is executed 
 - Staged in Redis with Lua-based staging and cleanup/abandon semantics
 - Applied via one or more **service-local transactions** guarded by effect identity
 - Automatically retried on failure (for example, lock contention or transient errors)
-- Reported through a durable command-status surface keyed by `(tenantId, gameInstanceId, commandId)` that persists both execution convergence (`executionOutcome`) and player-facing result (`gameplayResult`) independently of Redis coordination state
+- Reported through a durable command-status surface keyed by `(tenantId, gameInstanceId, commandId)` that persists both execution convergence (`executionOutcome`) and the player-visible command result (`gameplayResult`) independently of Redis coordination state
 
-For the command classes covered by its declared ADR 0053 semantics, the player-visible terminal result reflects the command’s required and optional effects, permitted terminal combinations, and any intentional `PARTIAL` outcome. That result contract is not a blanket claim that every distributed gameplay command is globally or player-visibly atomic: independent effects may be temporarily partial while unresolved required work remains `PENDING`, and stronger-routing classes use the co-located transaction or reservation/escrow boundary above. The implementation relies on:
+For the command classes covered by its declared ADR 0053 semantics, the player-visible command result reflects the command’s required and optional effects, permitted terminal combinations, and any intentional `PARTIAL` outcome. `PENDING` is nonterminal while required work remains unresolved. That result contract is not a blanket claim that every distributed gameplay command is globally or player-visibly atomic: independent effects may be temporarily partial while unresolved required work remains `PENDING`, and stronger-routing classes use the co-located transaction or reservation/escrow boundary above. The implementation relies on:
 
 - **Per-service atomicity** – each participating service wraps its own changes in a local database transaction.
 - **At-least-once delivery + idempotency** – tick effects may be retried; idempotent guards ensure repeated applications converge to the same logical outcome.
@@ -47,7 +47,7 @@ For the command classes covered by its declared ADR 0053 semantics, the player-v
 
 Within those declared command semantics, this model provides:
 
-- **Command-result aggregation from the player’s perspective, including declared `PENDING` and intentional `PARTIAL` outcomes rather than universal global atomicity**
+- **Player-visible command-result aggregation, including nonterminal `PENDING` and intentional `PARTIAL` outcomes rather than universal global atomicity**
 - **Tick-level fairness and isolation**
 - **Crash-safe, replayable execution through idempotency**
 - **No need for Saga orchestration inside the tick loop**
@@ -145,6 +145,7 @@ Durable backlog contract:
   - `firstObservedAt`, `lastAttemptAt`, `attemptCount`, `nextAttemptAt`
   - `status` (`PENDING`, `CONVERGED`, `DEAD_LETTER`)
   - `lastErrorCode` / `lastErrorMessage`
+- The reconciliation ledger's `status` is a closed enum of `PENDING`, `CONVERGED`, and `DEAD_LETTER`; it remains separate from the player-visible command result and is not expanded with `PARTIAL` or other command-result values.
 - Inserts and status transitions must be idempotent on `(tenantId, gameInstanceId, effectId)` so duplicate scheduling does not create duplicate backlog rows.
 - Backlog rows must be indexed at minimum by `(status, nextAttemptAt)` and `(tenantId, status, firstObservedAt)` for retry scans and operator triage.
 - For participant ack semantics, `applied` means the owning service can serve the effect through its documented durable read surface for the corresponding fence token. It does not mean `accepted for later batch flush`.
