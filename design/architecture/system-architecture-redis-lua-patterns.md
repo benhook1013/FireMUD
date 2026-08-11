@@ -326,12 +326,10 @@ Bulk key-walking is reserved for **offline maintenance tooling**, not tick execu
         - If FireMUD later introduces a dedicated recovery-restage script, it must be registered as a separate maintenance script category with its own explicit invariants, compatibility mode, and runbook entry; it must not silently reuse the normal tick staging contract.
         - Such a recovery-restage path is not considered specified or implementable until the corresponding maintenance runbook in the Redis operations docs names the entrypoint, scope restrictions, and post-run verification steps.
 
-- **Pattern 3 – Effect-key sets for staging (no duplicate staging)**
-  - Staged effects inside `pending` are keyed by a deterministic `effectKey` (for example `entity:<entityId>:apply:damage:<commandId>`), and scripts use **set-style semantics**:
-    - Before adding a staged effect, the script checks whether `effectKey` already exists in the pending structure (for example via `HEXISTS`, membership in a `SET`, or `ZSCORE` on a ZSET).
-    - If the effect is already present, the script returns a replay outcome for that effect and does not create a second entry.
-    - If it is not present, the script inserts or updates a single canonical entry for that `effectKey`.
-  - Callers treat “already staged” as success; domain services decide whether to apply or skip based on their own idempotency rules.
+- **Pattern 3 – Immutable pending-envelope identity and replay (no collision-prone staging)**
+  - Each staged member in `pending` carries an immutable envelope whose logical identity is the exact `tick_batch_id` plus the complete root `EffectId` participant projection: `root_effect_id` and the exact scope, epoch, tick, and participant/target projection needed to resolve one durable ledger row. `effect_key` remains descriptor metadata only; it is never the pending member identity or replay authority. Physical encoding may use a hash, set/ZSET member, or another registered representation, but it must preserve this complete logical envelope unchanged.
+  - Before adding or replaying a staged member, the script compares the complete envelope and bound request payload, including the immutable request digest, not `effect_key` alone. An exact full-envelope/request-payload match returns the prior stored staging/replay outcome without creating another member or changing its payload or TTL. A same `effect_key` with a different `tick_batch_id`, root `EffectId`, participant/target projection, scope, epoch, tick, or request payload is a conflict/fail-closed result and must not overwrite or merge the existing member.
+  - Missing, malformed, ambiguous, partial, or conflicting envelopes are non-mutating failures. Exact-envelope duplicate handling is local staging idempotency only; domain services still use their participant guards and Game Session still performs durable batch/ledger exact-set validation.
 
 - **Pattern 4 – Queue insertion with uniqueness**
   - When scripts enqueue work (for example timers or retryable actions), they use data structures that naturally deduplicate:

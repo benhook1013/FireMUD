@@ -12,6 +12,7 @@ Effects described here are **not** optional guidance: any new implementation tha
 - The default reconciliation policy is **retry until convergence using the same root `EffectId`**. Do not generate compensating deletes inside the tick loop.
 - Presentation reads follow the causal-floor and component-proof contract in [Identifier Glossary](./system-architecture-identifier-glossary.md). Current `worldSnapshotId`/`entitySnapshotId` values are scope markers only. Effect entries below record only local invalidation consequences; floor allocation, propagation, response acceptance, and composite-identity rules remain in the canonical contract.
 - For World-owned door, weather, and hazard effects, the participant guard, typed ambient-state mutation, and World component-version advance commit in one World-local transaction. A matching replay returns the stored outcome without applying the mutation or incrementing the component version twice. The canonical transaction rule belongs in [Transaction Strategies](./system-architecture-transactions.md); this catalog records only the effect-local consequence and proof obligation.
+- Set-state reconciliation must resolve the participant guard by the current root `EffectId`, typed operation, exact target aggregate, and immutable `requestDigest`. A matching guard returns its stored outcome; mutable state already matching the requested value is not replay evidence by itself. When a new request has no matching guard but the state is already satisfied, the owner records a new guarded no-op under that request's current `EffectId` and immutable digest. A missing, conflicting, or ambiguous guard remains reconciliation-required rather than being inferred as replay.
 
 ## Spatial Effects
 
@@ -103,7 +104,7 @@ Required writes:
 
 Reconciliation:
 
-- Retry WMS until the door state matches `targetState`. If the door is already in that state, treat as replay/no-op.
+- Retry WMS with the same root `EffectId` until the participant guard and door mutation converge. The replay/no-op path is valid only when the stored guard matches `DOOR_TOGGLE`, the exact room/door target aggregate, and the immutable request digest. If no matching guard exists but the door is already in `targetState`, issue the current request under a new guard and record a guarded no-op; mutable door state alone never proves replay. A conflicting or ambiguous guard remains reconciliation-required.
 
 ### Weather Update
 
@@ -111,16 +112,17 @@ Required inputs:
 
 - `EffectId`
 - region- or room-scoped instance identifiers (must never be version-scoped template identifiers)
+- The exact target-aggregate selector owned by the World weather contract; this catalog does not choose whether the canonical aggregate is region- or room-scoped.
 - new weather state (typed, schema-versioned)
 
 Required writes:
 
 - **World Management**
-  - Persist the typed weather update under the owner participant guard and advance the relevant World-owned ambient component version in the same local transaction. A matching guard replay returns the prior result without a second version increment.
+  - Persist the typed weather update under the owner participant guard for the exact target aggregate selected by the World weather contract, with the typed operation and immutable request digest, and advance the relevant World-owned ambient component version in the same local transaction. A matching guard replay returns the prior result without a second version increment.
 
 Reconciliation:
 
-- Retry WMS until the weather state matches the intended value for the effect.
+- Retry WMS with the same root `EffectId` until the participant guard and weather mutation converge. The replay/no-op path is valid only when the stored guard matches the typed weather operation, the exact World-selected target aggregate, and the immutable request digest. If no matching guard exists but weather is already at the requested value, issue the current request under a new guard and record a guarded no-op; mutable weather state alone never proves replay. Until the World weather contract defines the exact aggregate selector, a same-state observation remains reconciliation-required.
 
 ### Hazard State Update (Gameplay-Authoritative)
 
@@ -145,4 +147,4 @@ Read/API contract:
 
 Reconciliation:
 
-- Retry WMS with the same root `EffectId` until hazard state matches `targetState`.
+- Retry WMS with the same root `EffectId` until the participant guard and hazard mutation converge. The replay/no-op path is valid only when the stored guard matches `HAZARD_STATE_UPDATE`, the exact room/hazard target aggregate, and the immutable request digest. If no matching guard exists but hazard state is already `targetState`, issue the current request under a new guard and record a guarded no-op; mutable hazard state alone never proves replay. A conflicting or ambiguous guard remains reconciliation-required.

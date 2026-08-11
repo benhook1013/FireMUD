@@ -90,7 +90,7 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
   - `expected_effect_count`
   - `status`
   - selected-work manifest entries for the batch
-  - optional `pending_digest` or equivalent Redis-pending integrity field; it is not a substitute for the required sealed execution-context binding above
+  - optional `pending_digest` or equivalent Redis-pending integrity field; it is not a substitute for the required immutable exact pending envelope or the sealed execution-context binding above
   - `created_at`, `updated_at`
 - The selected-work manifest is required for deterministic replay and source cleanup. At minimum it records, per selected source item:
   - the batch scope `(tenantId, gameInstanceId, regionId, regionEpoch)`; its `enqueue_seq` is allocated from the complete `<tenantId, gameInstanceId, regionId>` scope and is not reset or reused when a reset bumps `regionEpoch` and restarts `tickId` at `0`
@@ -170,20 +170,17 @@ Replay of a tick is driven from ledger state:
 
     ```sql
     BEGIN;
-    -- This is one Game Session durable transaction. The current-live
-    -- authority row is RuntimeOwnershipStatus (instance-scoped); the
-    -- target-state equivalent is RegionStatus (region-scoped). The
-    -- authority row, not tick_batch, supplies the current epoch/fence.
+    -- This is the target-state sealed-context CAS. RegionStatus
+    -- supplies the region-scoped authority; current-live does not
+    -- enter this branch and uses the separate CAS described below.
     SELECT o.region_epoch, o.executor_fence
-    FROM runtime_ownership_status AS o
+    FROM region_status AS o
     WHERE o.tenant_id = :tenantId
       AND o.game_instance_id = :gameInstanceId
       AND o.region_id = :regionId
     FOR UPDATE;
-    -- In target state, read the corresponding RegionStatus row for the
-    -- complete region scope in this same transaction instead. Require one
-    -- current authority row and exact equality with :regionEpoch and
-    -- :executorFence before touching any ledger row.
+    -- Require exactly one current RegionStatus row and exact equality
+    -- with :regionEpoch and :executorFence before touching any ledger row.
     -- Read and lock the batch as a consistency check, not as authority:
     SELECT b.tick_batch_id, b.region_epoch, b.executor_fence,
            b.sealed_execution_context_digest, b.sealed_execution_context_ref
@@ -221,7 +218,7 @@ Replay of a tick is driven from ledger state:
     JOIN tick_batch AS b ON b.tick_batch_id = p.tick_batch_id
     LEFT JOIN sealed_execution_context AS sc
       ON sc.context_ref = b.sealed_execution_context_ref
-    JOIN runtime_ownership_status AS o
+    JOIN region_status AS o
       ON o.tenant_id = b.tenant_id
      AND o.game_instance_id = b.game_instance_id
      AND o.region_id = b.region_id
@@ -242,21 +239,21 @@ Replay of a tick is driven from ledger state:
          AND sc.context_digest = :contextDigest)
       );
     -- Require the affected-row set to equal the complete expected set;
-    -- otherwise ROLLBACK and fail closed/reject/retry. The target-state
-    -- RegionStatus join above is equivalent to this live RuntimeOwnershipStatus
-    -- join and is not an additional cross-service transaction.
+    -- otherwise ROLLBACK and fail closed/reject/retry. This target-state
+    -- RegionStatus authority join is one Game Session transaction; the
+    -- current-live manifest CAS is a separately selected branch.
     COMMIT;
     ```
 
-    The complete-set evidence check, current authority epoch/fence check, sealed context-digest check, all required Game Session ledger CAS operations, and replay-verification metadata commit together within this one Game Session durable transaction. A stale authority or batch fence/context, missing/extra/partial/conflicting projection, or concurrent winner affects an incomplete set and must roll back and fail closed/reject or retry; an audit/log write without this CAS is not proof and must not be used to skip the domain call. Domain-service guards and evidence remain in their own service-local transactions; this flow does not imply a cross-service database transaction. This remains the target-state transaction; the current live path has the ledger and manifest-digest boundary but does not yet claim the full authority-fenced sealed-context set CAS.
-- Every Lua script that stages effects is required to include the `effect_key` used in the ledger so Redis `pending` entries can always be correlated with ledger rows; staging scripts that cannot be tied back to a ledger identity are rejected.
+    The complete-set evidence check, target authority epoch/fence check, sealed context-digest check, all required Game Session ledger CAS operations, and replay-verification metadata commit together within this one Game Session durable transaction. A stale authority or batch fence/context, missing/extra/partial/conflicting projection, or concurrent winner affects an incomplete set and must roll back and fail closed/reject or retry; an audit/log write without this CAS is not proof and must not be used to skip the domain call. Domain-service guards and evidence remain in their own service-local transactions; this flow does not imply a cross-service database transaction. Current-live uses a separate CAS over the current `RuntimeOwnershipStatus` authority, exact `regionEpoch`/opaque `executorFence`, and the complete selected-work manifest plus `manifest_digest` against durable source, ledger, and participant evidence; sealed execution context is not required at that current-live boundary. Both branches fail closed on mismatches and leave durable state unchanged.
+- Every staging script must carry an immutable collision-safe pending envelope for each staged member. `effect_key` remains descriptor metadata only. The envelope must carry the exact `tick_batch_id` plus either the complete root `EffectId`/participant projection (`root_effect_id` plus the exact scope, epoch, tick, and target projection) or an equivalent immutable exact ledger-row identity that resolves to that complete projection. Stage, commit, rollback, and cleanup preserve the envelope unchanged; recovery exact-set-compares pending envelopes with the durable batch/ledger expected set and fails closed for missing, extra, duplicate, or conflicting envelopes. An `effect_key`-only, count-only, or digest-only correlation is insufficient, and malformed or orphan pending state cannot be committed.
 - Recovery rules for Redis/SQL mismatch are explicit:
   - durable tick-batch + `SCHEDULED` ledger rows exist, Redis `pending` missing:
     - replay proceeds from PostgreSQL using the durable batch manifest and `SCHEDULED` ledger rows; it does not rely on re-materializing the old tick through the normal hot-path staging scripts.
     - First implementation treats normal tick Lua scripts as hot-path guards only. Recovery drives effects directly to `APPLIED`/`ABANDONED` only where the evidence policy permits, leaves any inconclusive work non-terminal under its original root `EffectId`, escalates it for reconciliation, reconciles any surviving source claims/entries against the manifest, and then clears stale coordination residue.
   - Redis `pending` exists without a durable tick-batch:
     - treat the Redis entry as orphaned coordination state, clear it, alert, and do not commit work from it.
-  - durable tick-batch and Redis `pending` disagree on expected effect count or digest:
+  - durable tick-batch and Redis `pending` do not produce exact set equality for the immutable pending envelopes and durable batch/ledger expected set (including missing, extra, duplicate, malformed, or conflicting members; count/digest disagreement is only a diagnostic signal):
     - mark the batch inconsistent, pause the region, and require reconcile tooling before resuming normal ticks.
 
 ### Command Record Convergence Under Replay and Reset
