@@ -8,6 +8,8 @@ Accepted
 
 Current durable ownership remains game-instance-scoped. True region-partitioned lease installation, post-install revalidation, takeover reconciliation, and their focused proof remain partial; the live ownership/fence checks do not establish the complete region-scoped protocol.
 
+The region-scoped `RegionStatus.executorFence` installation described by this ADR is target-state. Current-live durable ownership remains instance-scoped in `RuntimeOwnershipStatus.executorFence`; its opaque generation token is the live stale-writer fence and does not establish that the target region-scoped installation is shipped.
+
 ## Canonical Design
 
 - [Tick System and Runtime Design](../system-architecture-ticks.md)
@@ -43,13 +45,13 @@ The identities are distinct:
 Canonical ownership protocol:
 
 1. Acquire the region's Redis lease without an expected active lease token: atomically claim only an absent or expired key using a unique opaque ownership token and bounded TTL, returning bounded `ACQUIRED` or `BUSY`. This proves Redis liveness possession only; it does not establish the semantic `regionEpoch`.
-2. Install a new PostgreSQL `RegionStatus.executorFence` with compare-and-set against the expected `regionEpoch` and prior ownership state; record the owner and a non-secret correlation of the Redis ownership token.
+2. **Target-state:** install a new region-scoped PostgreSQL `RegionStatus.executorFence` with compare-and-set against the expected `regionEpoch` and prior ownership state; record the owner and a non-secret correlation of the Redis ownership token. Current-live writes continue to use the instance-scoped `RuntimeOwnershipStatus.executorFence` boundary described above.
 3. Revalidate that the same Redis lease token is still current after fence installation. A claimant that lost the lease before revalidation remains inert even if its fence transaction committed.
 4. Only then may the executor stage work.
 5. Every post-acquisition region lease renewal and tick/lock Lua mutation compares the expected Redis token and region epoch. Renewal never advances `executorFence`.
 6. Every durable batch creation, ledger transition, commit watermark, recovery write, and region control mutation compares the current PostgreSQL region epoch and executor fence.
-7. Immediately before dispatching authoritative domain effects, revalidate Redis lease possession. Stable effect identity and domain guards protect the residual race after dispatch.
-8. A new owner acquires Redis, installs a newer durable fence, and reconciles or abandons prior-fence unfinished batches only where the canonical evidence policy permits; inconclusive work remains reconciliation-required before staging a new tick.
+7. Immediately before dispatching authoritative domain effects, revalidate that Redis still holds the same expected lease token and that the expected `regionEpoch` still matches the current Redis metadata/durable owner state. Stable effect identity and domain guards protect the residual race after dispatch.
+8. A new owner acquires Redis, installs a newer durable fence, and reconciles or abandons prior-fence unfinished batches only where the canonical evidence policy permits; inconclusive work remains reconciliation-required before staging a new tick. Terminal outcomes for older or historical reconciliation remain in the durable ledger/reconciliation records under their original epoch and root effect identity; they must not overwrite or regress `tick:{tenantRegionTag}:meta`, which is updated only by the current epoch's scheduler timeline.
 
 Redis outage, partition, lease expiry, or lease uncertainty stops region execution immediately. PostgreSQL outage may allow bounded Redis renewal to avoid unnecessary ownership churn, but no new durable batch, effect dispatch, commit, or success result begins until the durable fence is revalidated.
 

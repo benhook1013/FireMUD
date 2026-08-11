@@ -304,7 +304,7 @@ ADR_ALLOCATION_EXPECTATIONS = {
         "SF-2", "Accepted", "GR-1", "GR-2", "GR-3", "GR-4"
     ),
     "design/architecture/decisions/adr-0054-split-spatial-authority-with-causal-read-composition.md": adr_allocation(
-        "SF-2", "Accepted", "GR-1", "GR-2", "GR-3", "GR-4"
+        "SF-2", "Accepted", "GR-1", "GR-2", "GR-3", "GR-4", "SF-1"
     ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {

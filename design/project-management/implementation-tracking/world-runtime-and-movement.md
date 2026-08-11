@@ -29,14 +29,15 @@ This tracker is the permanent reader-facing implementation record for world runt
 
 ### Runtime Room Identity and Boundary Validation
 
-- `roomInstanceId` is the canonical opaque runtime identity at cross-service boundaries. The current canonical wire examples use `R-<roomInstanceRowId>`, but consumers must not infer World Management storage semantics from the token or treat it as a database key.
-- `RoomInstanceRef` and the room-scoped gameplay context carry the runtime identity as text. World Management owns the mapping from that identity to its internal numeric room row and record references.
+- The target `roomInstanceId` is the authoritative typed scoped-numeric runtime identity within `(tenantId, gameInstanceId)`; transport text uses canonical decimal form where required. Consumers use it only inside the complete `RoomInstanceRef` and do not infer storage or authorization from its value.
+- The current implementation is different: the live codec emits `R-<roomInstanceRowId>` and carries that storage-derived value as text. World Management owns the current mapping from that value to its internal numeric room row and record references.
 - World Management keeps internal identity names distinct: runtime room values use `roomInstanceId`, room table storage uses `roomInstanceRowId` and `room_instance_row_id`, and exit foreign keys use `from_room_instance_record_id` and `to_room_instance_record_id`. The runtime room bridge resolves exits using the fetched room row key rather than assuming the public runtime value equals the row key.
-- World Management has one runtime-room codec boundary. Public room reads require canonical `R-...` values, emit canonical runtime ids for the current room and exit targets, and carry the current `worldSnapshotId` scope marker; they fail closed on malformed, bare numeric, or legacy `room-...` values. Its runtime read DTO and gRPC payload are distinct from design-time room DTOs; `GetRoom` returns typed runtime state rather than an opaque `room_json` shim.
+- Current World Management has one runtime-room codec boundary. Public room reads require canonical `R-...` values, emit canonical current/exit runtime ids, and carry the current `worldSnapshotId` scope marker; current readers fail closed on malformed, bare numeric, or legacy `room-...` values. The target scoped-numeric codec is not live. Its runtime read DTO and gRPC payload are distinct from design-time room DTOs; `GetRoom` returns typed runtime state rather than an opaque `room_json` shim.
 - The correctness-critical World Management room snapshot cache is keyed by `room:<tenantId>:<gameInstanceId>:R-<roomInstanceRowId>`, while internal repository and persistence seams retain row/record terminology.
 - Game Session's `game.logic.default-room-id` defaults to `R-1021` in both bound properties and service configuration, keeping fresh `PLAY`, `LOOK`, movement, and communication fallback paths on the canonical runtime identity family.
-- Shared runtime-room readers are used by World Management, Game Logic, Entity Management, and Game Session. They reject malformed or legacy storage-shaped values before downstream calls, attestation issuance, replay, persistence, or transport dispatch. This covers LOOK, movement, communication, room-ground inventory, session routing, movement idempotency, and automation enter/leave event publication.
+- Shared current runtime-room readers are used by World Management, Game Logic, Entity Management, and Game Session. They reject malformed, bare numeric, or legacy storage-shaped values before downstream calls, attestation issuance, replay, persistence, or transport dispatch. This covers LOOK, movement, communication, room-ground inventory, session routing, movement idempotency, and automation enter/leave event publication; the target reader validation is part of the atomic migration below.
 - Gameplay-session and internal-probe attestation issuance and claim validation reject legacy room ids. Persisted legacy gameplay bindings are treated as stale input and cleared by session-routing normalization; they are not silently upgraded. Game Logic maps malformed-room rejection at the `ResolveLook` envelope to `INVALID_ARGUMENT` rather than `LOOK_UNAVAILABLE`.
+- The target migration is atomic across the runtime-room codec, cache keys, cross-service examples, every shared-reader validation path, attestation/replay/persistence boundaries, and focused proof. Until that migration is complete, current readers continue rejecting bare numeric room ids; this tracker records status only and does not authorize a partial code migration.
 
 ### Authoritative Room Reads and LOOK
 
@@ -107,7 +108,8 @@ This tracker is the permanent reader-facing implementation record for world runt
 - Room-view overlays such as hazards or combat state, richer visibility policy, and nested-container inspection remain later work. Any overlay must extend the authoritative `LookResult` and causal-floor/component-version model rather than introduce an independent room view.
 - `worldTopology` provides the settings home for scope-sensitive actions such as `SHOUT`; those actions are not implemented here.
 - Later world-generation stages, delayed repair, richer generation payloads, generator provenance, and broader editor callers can extend the live lifecycle and Draft contracts. They must not create parallel lifecycle orchestration or Draft mutation paths.
-- The current public runtime encoding is `R-<roomInstanceRowId>` even though consumers must treat it as opaque. Replacing that encoding with a non-storage-derived opaque identifier would be a separate contract decision; no current public/runtime identity drift is recorded at the completed 03.2 boundary.
+- The current public runtime encoding is `R-<roomInstanceRowId>`, while the authoritative target is scoped-numeric `roomInstanceId` in the complete `RoomInstanceRef`. Migrating the codec, cache keys, reader validation, and all dependent attestation/replay/persistence/proof boundaries is one atomic obligation. Until it lands, current readers continue rejecting bare numeric input; no partial migration or code change is implied by this tracker status.
+- The target Weather aggregate scope (region-scoped versus room-scoped) remains an explicit unresolved World-owner decision. Current `region_instance.weather` / `world_event` storage does not settle that decision.
 
 ## To Discuss
 
@@ -118,7 +120,8 @@ No competing implementation state is recorded for the current runtime-room ident
 - new topology-sensitive player actions beyond the settings homes already in place;
 - travel or pathfinding semantics that cannot be expressed as an ordinary authoritative exit transition; or
 - a new generation or repair phase that materially changes the durable world-lifecycle workflow; or
-- whether and how to replace the current `R-<roomInstanceRowId>` encoding while preserving World Management's exclusive mapping authority.
+- completion of the atomic migration from current `R-<roomInstanceRowId>` codec/cache/reader validation to the authoritative scoped-numeric `roomInstanceId` contract.
+- the unresolved World-owner decision for the canonical Weather aggregate scope (region-scoped versus room-scoped).
 
 ## Service and Contract Map
 

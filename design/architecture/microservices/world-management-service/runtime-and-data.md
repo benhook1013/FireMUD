@@ -26,19 +26,19 @@ World Management is the authoritative owner of character and NPC location for ea
 - Other services, including Entity Management and Game Session, treat these tables as read-only and rely on World Management gRPC APIs or cached projections.
 - Any derived caches or denormalized views of location must be refreshed from World Management rather than persisting independent authoritative location fields.
 
-World Management is the fact owner for targeting predicates over location, occupancy, range, and mutable room state. Its bounded `TargetingFactSnapshot` responses contain only the compiled source/candidate facts for the requested `RoomInstanceRef` scope and a current world location/version token. For `DROP` and `PICKUP`, Game Session supplies the root `EffectId`, actor, `RoomInstanceRef`, `regionEpoch`, and current `executorFence`; World validates its own token and returns an attestation bound to that tuple and the immutable `requestDigest`. A token, epoch, or fence mismatch makes the plan stale and requires Game Logic to re-resolve under the same root `EffectId`, preserving that `requestDigest`, rather than acting on old occupancy or spatial state.
+World Management is the fact owner for targeting predicates over location, occupancy, range, and mutable room state. Its bounded `TargetingFactSnapshot` responses contain only the compiled source/candidate facts for the requested `RoomInstanceRef` scope and a current world location/version token. For `DROP` and `PICKUP`, the target attestation carries `regionId` from Game Session's durable region authority alongside `RoomInstanceRef`, `regionEpoch`, `executorFence`, the same root `EffectId`, and the unchanged immutable `requestDigest`; World validates its own token and rejects mismatched scope, epoch, or fence. The canonical barrier, Game Logic re-resolution, and Entity commit binding are defined in [Transaction Strategies](../../system-architecture-transactions.md#drop-pickup-targeting-and-actor-fence-critical-section) and [ADR 0054](../../decisions/adr-0054-split-spatial-authority-with-causal-read-composition.md). The current proto/request and focused proof do not yet demonstrate this path.
 
 ### Spatial Effects Contract
 
 Movement, drops, pickups, and room presence are cross-service by design:
 
-- World Management is authoritative for occupancy/location and persistent ambient room state keyed by runtime `RoomInstanceRef`.
+- World Management is authoritative for occupancy/location and persistent ambient world state keyed by runtime `RoomInstanceRef`; the target Weather aggregate scope remains unresolved in the owner contract.
 - Entity Management is authoritative for containment and item instances, including synthetic room-ground containers keyed by the same `RoomInstanceRef`.
 - All spatial effects must carry the target `RoomInstanceRef` and a canonical tick `EffectId`.
-- `DROP` and `PICKUP` commit their holder changes in an Entity-local transaction only after the World attestation has passed the shared Game Session actor-lock/executor-fence critical section; Entity verifies the attestation binding before its local commit. Game Session's durable barrier survives actor-lock lease expiry or owner handoff until Entity provides terminal evidence, so lock expiry or handoff alone cannot clear the barrier or admit a conflicting `MOVE`. Every `MOVE` for the actor uses the same lock, so it cannot interleave; stale evidence or a fence change is re-resolved by Game Session through Game Logic under the same root `EffectId`, preserving the unchanged immutable `requestDigest`. The current proto/request and focused proof do not yet demonstrate this validation path.
+- `DROP` and `PICKUP` use the canonical Game Session barrier/attestation sequence before the Entity-local holder commit; World Management owns only the World fact validation and attestation issuance. The binding and handoff rules are defined in [Transaction Strategies](../../system-architecture-transactions.md#drop-pickup-targeting-and-actor-fence-critical-section) and [ADR 0054](../../decisions/adr-0054-split-spatial-authority-with-causal-read-composition.md). The current proto/request and focused proof do not yet demonstrate this validation path.
 - Both services must implement durable idempotency guards so partial success can be retried safely until convergence.
 - Cross-service retry orchestration is owned by the Game Session reconciliation backlog. World Management exposes participant acknowledgements for each `EffectId`; it is not the owner of cross-service retry scheduling.
-- Ambient world mutations such as doors, hazards, and weather are applied only via effect-shaped commands carrying `EffectId` plus `RoomInstanceRef`. Operators and scripts must not write World Management instance tables directly.
+- Ambient world mutations such as doors and hazards are applied only via effect-shaped commands carrying `EffectId` plus their owner-selected runtime scope. Weather must use the eventual World-owner aggregate selector (region-scoped or room-scoped); this document does not choose between them. Operators and scripts must not write World Management instance tables directly.
 
 Concrete per-effect required writes and reconciliation rules live in [Spatial and Ambient Effects Catalog](../../system-architecture-spatial-and-ambient-effects-catalog.md).
 
@@ -95,8 +95,8 @@ When changing Redis usage or adding prefixes here, follow the [Redis Design Chec
   - As richer version-scoped generation-input tables land, they must either be covered by the World digest manifest below or by a dedicated generation-config hash that remains frozen into `published_release_bundle` before launch.
 - `generation_run`, or equivalent, persists deterministic generation artifacts for replay-safe publish and reconciliation.
 - Runtime-instance `generation_run` rows tied to instance creation are diagnostic/runtime provenance only and are not cutover payload rows.
-- `world_event` stores timed runtime changes such as weather updates and is keyed by `(tenantId, gameInstanceId)` with optional `region_instance` scope.
-- `region_instance.weather`, or equivalent, records current weather state for live regions.
+- `world_event` stores timed runtime changes such as weather updates and is keyed by `(tenantId, gameInstanceId)` with optional `region_instance` scope in the current storage model; that current scope does not settle the target Weather aggregate.
+- `region_instance.weather`, or equivalent, records current weather state for live regions where the current implementation has that field. The target Weather aggregate remains an explicit unresolved World-owner decision between region-scoped and room-scoped state.
 
 Redis caches hot rooms for active sessions to speed up lookups. Cached rooms use keys `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` and must never be keyed by template identifiers because runtime rows may diverge from template state.
 

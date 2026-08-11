@@ -99,7 +99,7 @@ This ledger maps canonical product and architecture sources to the stable capabi
 | `design/architecture/decisions/adr-0051-separate-actor-action-and-effect-lanes.md` | `GR-1` | `GR-4`, `AS-1` | Accepted |
 | `design/architecture/decisions/adr-0052-redis-liveness-lease-with-durable-executor-fence.md` | `GR-1` | `SF-2`, `PO-4` | Accepted |
 | `design/architecture/decisions/adr-0053-command-atomicity-by-invariant-class.md` | `SF-2` | `GR-1`, `GR-2`, `GR-3`, `GR-4` | Accepted |
-| `design/architecture/decisions/adr-0054-split-spatial-authority-with-causal-read-composition.md` | `SF-2` | `GR-1`, `GR-2`, `GR-3`, `GR-4` | Accepted |
+| `design/architecture/decisions/adr-0054-split-spatial-authority-with-causal-read-composition.md` | `SF-2` | `GR-1`, `GR-2`, `GR-3`, `GR-4`, `SF-1` | Accepted |
 
 ## Product Documentation Allocation
 

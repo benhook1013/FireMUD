@@ -149,7 +149,7 @@ Validation precedence is fixed: first parse every checked queue row and validate
 | [ADR 0051](./adr-0051-separate-actor-action-and-effect-lanes.md) | Accepted | `GR-1` | `GR-4`, `AS-1` | Separate deterministic actor-action and passive/inbound-effect tick lanes |
 | [ADR 0052](./adr-0052-redis-liveness-lease-with-durable-executor-fence.md) | Accepted | `GR-1` | `SF-2`, `PO-4` | Redis region liveness lease installed and revalidated against a durable executor fence |
 | [ADR 0053](./adr-0053-command-atomicity-by-invariant-class.md) | Accepted | `SF-2` | `GR-1`, `GR-2`, `GR-3`, `GR-4` | Local idempotent gameplay effects with stronger atomicity selected by invariant class |
-| [ADR 0054](./adr-0054-split-spatial-authority-with-causal-read-composition.md) | Accepted | `SF-2` | `GR-1`, `GR-2`, `GR-3`, `GR-4` | Split spatial authority with operation-bound effects and causal presentation reads |
+| [ADR 0054](./adr-0054-split-spatial-authority-with-causal-read-composition.md) | Accepted | `SF-2` | `GR-1`, `GR-2`, `GR-3`, `GR-4`, `SF-1` | Split spatial authority with operation-bound effects and causal presentation reads |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../../product/capability-taxonomy.md).
 

@@ -36,12 +36,13 @@ The existing split is sound, but two contracts are too weak. Reusing an `EffectI
 
 ### Authority
 
-- World Management exclusively owns room topology, character/NPC location, occupancy, and persistent ambient room state.
+- World Management exclusively owns room topology, character/NPC location, occupancy, and persistent ambient world state.
 - Entity Management exclusively owns inventory, equipment, containment, and room-ground holders keyed by `RoomInstanceRef`.
 - Game Logic resolves actions and composes reads; it owns no competing spatial state.
 - Game Session owns durable cross-service effect intent, required-participant status, retry, and reconciliation.
+- The canonical Weather aggregate scope (region-scoped versus room-scoped) remains an explicit unresolved World-owner decision; this ADR does not choose it.
 
-`MOVE` commits World-owned location and occupancy before destination presentation is resolved. For `DROP` and `PICKUP`, Game Session's durable in-flight barrier and actor-lock/fence gate carry World attestation evidence through the Entity-local holder commit; Entity verifies the binding at commit. Lock expiry, owner crash, or fence change leaves the barrier reconciliation-required and blocks a conflicting `MOVE` until terminal evidence; stale re-resolution is requested by Game Session through Game Logic under the same root `EffectId`, preserving the `requestDigest`. A later valid `MOVE` is allowed after Entity commit and barrier terminalization. The detailed barrier/handoff contract is in [Transaction Strategies](../system-architecture-transactions.md#drop-pickup-targeting-and-actor-fence-critical-section); this closes TOCTOU through durable evidence and fencing, not a distributed World/Entity transaction. An item never has two holders and an actor never has two authoritative locations; those invariants remain within one owning transaction rather than reconciliation.
+`MOVE` commits World-owned location and occupancy before destination presentation is resolved. For `DROP` and `PICKUP`, Game Session's durable in-flight barrier and actor-lock/fence gate carry World attestation evidence through the Entity-local holder commit, binding `regionId` from Game Session's durable region authority alongside `RoomInstanceRef`, `regionEpoch`, `executorFence`, the same root `EffectId`, and the unchanged `requestDigest`; World validation and Game Logic re-resolution preserve that binding, and Entity verifies it at commit. Lock expiry, owner crash, or fence change leaves the barrier reconciliation-required and blocks a conflicting `MOVE` until terminal evidence. A later valid `MOVE` is allowed after Entity commit and barrier terminalization. The detailed barrier/handoff contract is in [Transaction Strategies](../system-architecture-transactions.md#drop-pickup-targeting-and-actor-fence-critical-section); this closes TOCTOU through durable evidence and fencing, not a distributed World/Entity transaction. An item never has two holders and an actor never has two authoritative locations; those invariants remain within one owning transaction rather than reconciliation.
 
 ### Effect Identity and Participant Guards
 
