@@ -98,18 +98,18 @@ Ingress deduplication is not sufficient on its own: every accepted command must 
 - Minimum terminal command outcomes:
   - `APPLIED`
   - `ABANDONED`
-  - `LOST_BEFORE_STAGING` – accepted into volatile coordination flow but never durably tied to a surviving `tick_batch_id` before reset/tail-loss/reconcile.
+  - `LOST_BEFORE_STAGING` – an `ACCEPTED_VOLATILE` command whose `ingressStatus` is `RECEIVED` or `ENQUEUED`, has no surviving `tickBatchId`, and is terminalized by reset/tail-loss reconciliation; `ACCEPTED_DURABLE` follows its feature-specific replay/re-drive contract instead.
 - Legacy live command states map to the canonical lifecycle as follows:
   - `STAGED` means `ENQUEUED` when it has only been written to the Redis source queue. It maps to `BOUND_TO_BATCH` only when a durable batch/effect record explicitly links the command to a `tick_batch_id`; the legacy value alone is not proof of binding.
   - `DRAINED` means `BOUND_TO_BATCH`; Redis `pending` was consumed into a durable tick batch and the command remains pending execution or terminal reconciliation.
   - `RETRY_QUEUED` means the command has already reached `BOUND_TO_BATCH` and its current retry source is enqueued. The prior batch binding remains part of the command lifecycle; retry source state does not make it a new ingress command.
 - These legacy values are non-terminal. They must not be exposed as new canonical terminal outcomes, and purge/recovery must classify the current attempt by the durable batch binding rather than by the legacy label alone.
 - Required recovery behavior:
-  - Region/tenant/cluster resets and tail-loss reconciliation must drive every accepted command record that is not `BOUND_TO_BATCH` or already `TERMINAL` to an explicit terminal outcome. This ingress-only terminalization rule does not authorize terminalizing batch-bound effects whose old-epoch evidence is inconclusive; those remain non-terminal reconciliation work under the original root `EffectId`.
-  - For `ACCEPTED_VOLATILE`, `LOST_BEFORE_STAGING` is an expected terminal outcome and must be returned by command-status APIs/events rather than leaving the command indefinitely deduplicated with no execution result.
+  - Region/tenant/cluster resets and tail-loss reconciliation may assign `LOST_BEFORE_STAGING` only to an `ACCEPTED_VOLATILE` record whose `ingressStatus` is `RECEIVED` or `ENQUEUED` and which has no surviving `tickBatchId`. `BOUND_TO_BATCH` and `TERMINAL` records are never eligible for this ingress-only loss outcome. The decision must use one owner-defined CAS/version-fenced transition so a concurrent bind wins; this rule does not authorize terminalizing batch-bound effects whose old-epoch evidence is inconclusive, which remain non-terminal reconciliation work under the original root `EffectId`.
+  - For eligible `ACCEPTED_VOLATILE` records, `LOST_BEFORE_STAGING` is an expected terminal outcome and must be returned by command-status APIs/events rather than leaving the command indefinitely deduplicated with no execution result. `ACCEPTED_DURABLE` records, including those still before batch binding, follow their feature-specific durable intake replay/re-drive contract and are never classified as `LOST_BEFORE_STAGING` by this reset rule.
   - Re-sends with the same `(tenantId, gameInstanceId, commandId)` after a terminal outcome return that prior terminal outcome and must not enqueue a new logical command.
   - Re-sends with a new `commandId` remain new commands.
-- `ACCEPTED_DURABLE` designs may replace `LOST_BEFORE_STAGING` with a stronger replay/re-drive contract, but that contract must be documented explicitly in the feature design.
+- `ACCEPTED_DURABLE` designs must use their feature-specific durable replay/re-drive contract instead of `LOST_BEFORE_STAGING`; that contract must be documented explicitly in the feature design.
 
 #### Command Outcome Status Surface (Required)
 
@@ -136,7 +136,7 @@ Command outcome convergence must be externally observable through one canonical 
 - Terminal outcome semantics:
   - `executionOutcome = APPLIED` – only after every required authoritative effect is durably `APPLIED` or confirmed as an idempotent replay/no-op under ADR 0053 and the command is no longer replay-pending. Unresolved or inconclusive required work remains `PENDING`/reconciliation-required under the original root `EffectId`.
   - `executionOutcome = ABANDONED` – only after the existing evidence policy proves that no required mutation succeeded (or the command’s authoritative transaction rejected without commit) and the command is eligible for that terminal outcome. Inconclusive old-epoch work is not `ABANDONED`.
-  - `executionOutcome = LOST_BEFORE_STAGING` – command never became batch-bound and was terminated by reconcile/reset handling.
+  - `executionOutcome = LOST_BEFORE_STAGING` – only an `ACCEPTED_VOLATILE` command still in `RECEIVED` or `ENQUEUED` with no surviving `tickBatchId` can receive this reconcile/reset outcome; `ACCEPTED_DURABLE` uses its feature-specific replay/re-drive contract.
   - `gameplayResult` is a separate player-facing/result-facing projection derived from the command type’s documented semantics:
     - Minimum shared vocabulary: `SUCCESS`, `PARTIAL`, `FAILED`, `TIMEOUT`, `NOT_APPLIED`. `SUCCESS` requires all required work to be resolved and proven applied/idempotently replayable. `PARTIAL` is valid only for a command family whose permitted terminal subset was declared before execution under ADR 0053; a timeout or multi-leg failure does not silently become an undeclared `PARTIAL`.
     - `gameplayResult` may remain `null` until the command reaches terminal state.
@@ -154,11 +154,11 @@ operations docs should link here instead of restating partial mappings in prose.
 | Batch-bound local or same-region failure proven to have no required mutation | `ABANDONED` | `FAILED` | failure code/message when applicable |
 | Cross-region command family with a predeclared permitted partial terminal subset, and all required work resolved | `APPLIED` | `PARTIAL` | failure code/message for the permitted failed leg when applicable |
 | Cross-region timeout before any successful remote leg, with authoritative target evidence proving no remote mutation | `ABANDONED` | `TIMEOUT` | failure code/message for the timeout |
-| Lost before staging during reset/tail-loss reconcile | `LOST_BEFORE_STAGING` | `NOT_APPLIED` | failure code/message for the reconcile cause |
-| Operator rollback purge before `BOUND_TO_BATCH` | `LOST_BEFORE_STAGING` | `NOT_APPLIED` | `failureCode=ROLLBACK_PURGED`, required `failureMessage` from ingress `reason` |
+| `ACCEPTED_VOLATILE` `RECEIVED`/`ENQUEUED` command lost before staging during reset/tail-loss reconcile, with no surviving batch | `LOST_BEFORE_STAGING` | `NOT_APPLIED` | failure code/message for the reconcile cause |
+| `ACCEPTED_VOLATILE` `RECEIVED`/`ENQUEUED` command purged before `BOUND_TO_BATCH`, with no surviving batch | `LOST_BEFORE_STAGING` | `NOT_APPLIED` | `failureCode=ROLLBACK_PURGED`, required `failureMessage` from ingress `reason` |
 | Operator rollback purge after `BOUND_TO_BATCH`, only where purge is permitted and evidence proves no required mutation | `ABANDONED` | `NOT_APPLIED` | `failureCode=ROLLBACK_PURGED`, required `failureMessage` from ingress `reason` |
 
-For operator rollback purge, the ingress request `reason` is required and non-blank. The durable command projection and `GetGameplayCommandStatus` response must retain and return the same structured terminal reason as `failureCode=ROLLBACK_PURGED` and `failureMessage=<the required ingress reason>`. `PURGED` is the operator action/legacy label, not a competing `executionOutcome` value. Purge may terminalize source-queued work and an explicitly purgeable batch-bound retry only when the existing evidence policy permits it; it must not rewrite work that a concurrent drain has claimed, work whose application is inconclusive, or work that has reached an applied terminal state.
+For operator rollback purge, the ingress request `reason` is required and non-blank. The durable command projection and `GetGameplayCommandStatus` response must retain and return the same structured terminal reason as `failureCode=ROLLBACK_PURGED` and `failureMessage=<the required ingress reason>`. `PURGED` is the operator action/legacy label, not a competing `executionOutcome` value. The pre-bind `LOST_BEFORE_STAGING` mapping applies only to an `ACCEPTED_VOLATILE` `RECEIVED`/`ENQUEUED` command with no surviving batch; an `ACCEPTED_DURABLE` command follows its feature-specific replay/re-drive contract. Purge may terminalize source-queued work and an explicitly purgeable batch-bound retry only when the existing evidence policy permits it; it must not rewrite work that a concurrent drain has claimed, work whose application is inconclusive, or work that has reached an applied terminal state.
 
 #### Ingress Deduplication Store (Required)
 
@@ -293,6 +293,7 @@ Conceptually, tick commit proceeds through these phases:
      - The target-state tick-batch record stores at minimum:
      - `tick_batch_id`
      - `executor_fence`
+     - exactly one immutable sealed execution-context binding: `sealed_execution_context_digest`, or a durable `sealed_execution_context_ref` whose referenced record contains that digest. If a reference is used, Game Session resolves the immutable referenced context in the same durable transaction before replay; both/missing bindings, an absent/ambiguous reference, or a digest mismatch fails closed. Replay compares the supplied context digest with this resolved sealed binding; a mutable or reconstructed context is not sufficient.
      - `lease_token_correlation` (optional non-secret trace/audit correlation; never the raw Redis lease token)
      - `expected_effect_count`
      - `status` (`CREATED`, `REDIS_STAGED`, `COMMITTED`, `ABANDONED`)
@@ -378,6 +379,7 @@ From the perspective of the `(regionEpoch, tickId)` timeline:
 - Recovery treats PostgreSQL as the source of truth for staging intent:
   - `tick_batch` exists, Redis `pending` missing:
     - Recovery replays directly from the durable batch manifest and `SCHEDULED` ledger rows to drive effects to terminal `APPLIED` or `ABANDONED` outcomes only when durable evidence permits; inconclusive old-epoch work remains non-terminal reconciliation work under its original root `EffectId`. Missing Redis state is not treated as “no work existed”.
+    - Before changing any `SCHEDULED` row, one Game Session durable transaction reads and locks the current authority (`RuntimeOwnershipStatus` in the live instance-scoped deployment, or target-state `RegionStatus` for the complete region scope), then requires exact current `regionEpoch`/`executorFence` equality and a matching `contextDigest` against the batch’s sealed execution-context digest or referenced sealed context. The batch’s captured fence alone is not authority; a mismatch affects zero rows and fails closed. Domain-service evidence and guards remain in their own service-local transactions, so this CAS does not imply a cross-service database transaction.
     - First implementation does **not** re-stage old ticks through the normal hot-path `pending` scripts once Redis state is missing. The durable batch manifest is authoritative for what was selected, and replay proceeds without requiring the old tick to be materialized back into Redis.
     - If source entries were intentionally left in place until `REDIS_STAGED`, recovery may reconcile those source structures against the durable batch manifest to clean up or reclassify them, but it must not re-select different work for the same `tick_batch_id`.
   - Redis `pending` exists, `tick_batch` missing:

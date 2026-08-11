@@ -2,6 +2,10 @@
 
 This document summarizes the **core concepts and invariants** of the FireMUD tick system. It is aimed at developers and reviewers who need to understand fairness, region authority, and idempotency without reading the full runtime design in `system-architecture-ticks.md`.
 
+## Implementation Status
+
+This document describes the target-state invariants. The target ownership model is a region-scoped Redis liveness lease paired with a durable executor fence and authority-fenced takeover/replay recovery for each `<tenantId, gameInstanceId, regionId>`. The live deployment has not yet converged on that region-scoped boundary: durable ownership is currently instance-scoped at `{tenantId, gameInstanceId}`, exposed through `RuntimeOwnershipStatus` with selected region fields and an opaque compare-and-match fence. True region-scoped lease/fence installation, `RegionStatus` authority, and takeover reconciliation remain target-state implementation and proof work. The invariants below therefore remain the canonical target contract and must not be read as a claim that the target recovery protocol is already live.
+
 ## What This Covers
 
 - Hybrid tick model and player/AI fairness.

@@ -30,13 +30,13 @@ Required writes:
 - **World Management (authoritative occupancy/location)**
   - Update `character_location` / `npc_location` so the actor’s location becomes `toRoomInstanceRef`.
   - Update occupancy projections so `ListRoomOccupants(toRoomInstanceRef)` includes the actor and `ListRoomOccupants(fromRoomInstanceRef)` does not.
-- **Entity Management (containment)**
-  - No required write for pure movement unless the game models “carried room state” as containment. Movement must not be implemented by moving an entity between synthetic room-ground containers.
+- **Entity Management**
+  - Pure movement has no Entity participant or containment write. It must not be implemented by moving an entity between synthetic room-ground containers.
 
 Reconciliation:
 
-- If EMS succeeds but WMS fails, retry WMS using the same root `EffectId` until WMS converges.
-- If WMS succeeds but EMS fails, treat EMS as no-op (movement does not require containment writes).
+- Retry World Management using the same root `EffectId` until the World location/occupancy mutation converges.
+- There is no Entity success/failure or retry branch for pure `MOVE`. An Entity leg exists only for a future MOVE variant that explicitly writes containment; that variant must declare Entity as a participant with its own write, guard, and reconciliation contract.
 
 `MOVE` commits World location/occupancy before destination presentation. `DROP` and `PICKUP` commit entirely in Entity against the admitted room scope, but Entity's local transaction must first enforce a stale-rejecting World-authoritative actor-location precondition. The operation reuses the World `TargetingFactSnapshot` location/version token: World validates that token against its own current facts, while Game Session protects the ordered DROP/PICKUP execution under the actor/executor fence before Entity commits. Stale evidence re-resolves under the same root `EffectId`. An item never has two holders and an actor never has two authoritative locations. The current DROP/PICKUP proto/request and proof do not yet carry or demonstrate this token and validation path; this catalog does not duplicate the selected mechanism.
 

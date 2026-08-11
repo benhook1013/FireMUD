@@ -2,6 +2,12 @@
 
 This document defines Entity Management’s runtime model, persistence ownership, versioning rules, Redis role, and instance/cutover data classification.
 
+## Implementation Status
+
+- Current runtime item/equipment/container mutation RPCs that carry an `effectId` use `entity_mutation_effects` as the domain-local replay table. Entity Management records the applied protobuf response for `{tenantId, effectId}` and returns that stored response on duplicate delivery so `GET`, `DROP`, `PUT`, `TAKE`, `WEAR`, and `REMOVE` do not double-apply after Game Session replay or retry.
+- The `entitymanagement.mutation.effect.execution{operation,effect_status}` metric distinguishes first apply, replay/no-op, in-progress conflict, reported reuse outcome, and unreadable stored-response outcomes.
+- This current `{tenantId,effectId}` identity is not the target ADR 0054 participant guard; changed operation, target, or request reuse is not yet proven fail-closed.
+
 ## Architecture and Design Notes
 
 - Uses JPA for persistence of entity data.
@@ -11,7 +17,7 @@ This document defines Entity Management’s runtime model, persistence ownership
 - Entity Management instances are intended to be replaceable workers over authoritative persistent state and documented caches. Item, inventory, containment, and character data that must survive instance loss belongs in the service-owned database rows and cache invalidation model, not as the sole authoritative copy in one process.
 - Database writes are deferred and batched for ordinary entity updates, not triggered on every gameplay action. The Game Session Service coordinates real-time updates using Redis; the database is normally updated when ticks complete.
 - Spatial containment mutations that participate in cross-service effects are the exception: before Entity Management acknowledges a spatial `EffectId` back to Game Session, it must durably flush the effect’s idempotency guard plus the affected containment/container rows for that effect within the same local transaction. A participant acknowledgement must never be emitted for Redis-only staged state.
-- Runtime item/equipment/container mutation RPCs that carry an `effectId` use `entity_mutation_effects` as the current domain-local replay table. Entity Management records the applied protobuf response for `{tenantId, effectId}` and returns that stored response on duplicate delivery so `GET`, `DROP`, `PUT`, `TAKE`, `WEAR`, and `REMOVE` cannot double-apply after Game Session replay or retry. This current key is not the ADR 0054 participant guard derived from root `EffectId`, typed operation, and target aggregate and bound to an immutable request digest; changed reuse is not proven fail-closed. The `entitymanagement.mutation.effect.execution{operation,effect_status}` metric distinguishes first apply, replay/no-op, in-progress conflict, reported reuse outcome, and unreadable stored-response outcomes.
+- Target-state cross-service participant guards use a structured root `EffectId`, typed operation, target aggregate, and immutable request digest; matching retries return the durable result, while an operation, target, or digest mismatch fails closed. This target guard is not the current domain-local replay table described above.
 - This design reduces write frequency and contention, making optimistic locking a natural fit because most entities are updated by only one process at a time and conflicts are rare.
 - Item transfers and other gameplay actions span services but execute within ticks using Redis scripts for rollback. Sagas are reserved for non-gameplay workflows. See [Transaction Strategies](../../system-architecture-transactions.md).
 - For long-running, non-gameplay workflows such as publishing a game version, this service participates as a domain step in durable publish workflows coordinated by the Game Design Service as described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).

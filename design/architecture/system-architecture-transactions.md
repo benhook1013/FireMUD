@@ -2,6 +2,10 @@
 
 This document explains how FireMUD coordinates data consistency across its independent microservices. It distinguishes between **real-time gameplay commands** (executed within ticks using Redis), **short synchronous cross-service orchestration** (executed through the shared `common-saga` helper), and **long-running durable control-plane workflows** (executed through Temporal). It clarifies when each pattern is needed — and when it is not.
 
+## Implementation Status
+
+The structured participant-guard request and replay-verification helper described below are target-state contracts. The current replay tables and helpers remain narrower and domain-local; complete propagation and validation of the root `EffectId`, typed operation, target aggregate, immutable request digest, and complete participant set are not yet fully implemented or proven. The target contract remains authoritative: matching requests may replay safely, while an operation, target, or digest mismatch fails closed.
+
 ---
 
 ## Terminology Clarification
@@ -81,7 +85,8 @@ Tick execution is replayable: retries, failover, and Redis AOF replay can cause 
 - Owning services implement durable idempotency guards (unique constraints, monotonic updates, transactional outbox) under the derived participant guard identity. Duplicate matching attempts become prior-result/no-op outcomes; a guard conflict fails closed. Each service persists its guard outcome and any outbox/reconciliation reference, while Game Session aggregates required participant outcomes under the root `EffectId`.
 - For gameplay-visible mutations, derived participant-guard rows backed by the stable root `EffectId` are the default idempotency boundary. Simpler `last_tick_id` watermark patterns are allowed only for aggregates explicitly documented as receiving at most one logical mutation per tick.
 - To keep this contract consistent across services, tick-driven handlers use a shared idempotency helper from `common-data-runtime` (for example an `IdempotentEffectExecutor`) instead of ad-hoc “check or insert” patterns. The helper:
-  - Accepts `EffectId` plus callbacks for “apply-if-first” and “handle-replay”.
+  - Accepts a structured `ParticipantGuardRequest` containing the root `EffectId` (`rootEffectId`), typed operation, target aggregate type, target aggregate ID, and immutable request digest (`requestDigest`), plus callbacks for “apply-if-first” and “handle-replay”.
+  - Treats an existing guard as a valid replay only when all of those request fields match the persisted guard identity and digest; a changed operation, target aggregate, or digest fails closed and must not invoke the replay callback.
   - Encapsulates the canonical guard pattern (insert-if-absent, treat conflicts as replay) and throws well-defined exceptions on guard violations.
   - Emits a simple, standardized counter such as `tick_effect_outcome_total{service, effect_type, outcome}` so operators can distinguish first-apply vs replay behavior across services without per-tenant configuration.
 - **Replay verification transaction (target state):** Replay evidence is not an audit-only side effect and is not proved by a root effect or one ledger row in isolation. The verifier reconstructs the complete expected concrete participant-projection set from the sealed required-participant and manifest context. It validates every expected participant guard and corresponding durable domain evidence, rejects missing, extra, partial, or conflicting projections, and CASes all required rows transactionally within their owning durable boundaries before the fenced Game Session reconciliation transaction records the result. A stale status, fence/context, missing evidence, incomplete set, set mismatch, or concurrent winner fails closed and rolls back/rejects or retries; external logs and audit streams are projections and cannot authorize a replay transition.

@@ -8,6 +8,10 @@ Accepted
 
 The decision is accepted; command-family classification, stronger-atomicity routing, and focused proof remain partial. Existing durable command, batch, effect, and remote-follow-up foundations prove only migrated families and per-effect convergence.
 
+## Canonical Design
+
+- [Transaction Strategies](../system-architecture-transactions.md)
+
 ## Decision Record
 
 - Decision date: 2026-07-19

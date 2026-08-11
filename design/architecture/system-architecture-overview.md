@@ -416,8 +416,8 @@ Operator-facing command convergence reads must use the durable `GetGameplayComma
 
 Minimal canonical room-read example:
 
-1. Game Session handling `LOOK` for `{tenantId=42, gameInstanceId=7, roomInstanceId=R-44, characterId=71}` calls Game Logic `ResolveLook`.
-2. Game Session allocates a causal floor such as `(tenantId=42, gameInstanceId=7, roomInstanceId=R-44, regionEpoch=17, committedTickId=42)` from durable region commit authority and passes it on `ResolveLook`; Game Logic propagates it unchanged to World Management and receives scoped `servedThroughTickId` plus an opaque World component version.
+1. Game Session handling `LOOK` for `{tenantId=7b3b074e-d597-4e9b-b96f-4f5946d26120, gameInstanceId=9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, roomInstanceId=44, characterId=c7f4b18b-6eb5-4fd8-a906-c9606d17d4dc}` calls Game Logic `ResolveLook`.
+2. Game Session allocates a causal floor such as `(tenantId=7b3b074e-d597-4e9b-b96f-4f5946d26120, gameInstanceId=9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, roomInstanceId=44, regionEpoch=17, committedTickId=42)` from durable region commit authority and passes it on `ResolveLook`; Game Logic propagates it unchanged to World Management and receives scoped `servedThroughTickId` plus an opaque World component version. Here `roomInstanceId=44` is the typed scoped-numeric live-room identity within the complete tenant/game-instance scope, not an undocumented `R-<rowId>` encoding; see the [Identifier Glossary](./system-architecture-identifier-glossary.md#world-identifiers).
 3. Game Logic asks Entity Management to satisfy the same scope/epoch floor and receives scoped `servedThroughTickId` plus an opaque Entity component version.
 4. Success path: both downstream reads are same-scope/epoch with served-through values at or beyond `committedTickId`; Game Logic validates those proofs and composes only the requested floor and both versions into the room-view identity.
 5. Rejection path: if either participant is behind the floor or has a mixed scope/epoch, Game Logic retries or returns an explicit room-view failure; it does not claim an exact cross-database historical snapshot.

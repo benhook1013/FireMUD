@@ -55,7 +55,7 @@ The canonical design allocation covers all 229 discovered product and architectu
 
 | Capability | Sources reviewed | Decisions inventoried | Human-review candidates | Coverage state |
 | --- | ---: | ---: | ---: | --- |
-| Existing ADR set | 54 ADR records (52 accepted; 2 historical/superseded) plus the architecture decision registry/index | 9 original aliases within the 68 cross-cutting decisions; later accepted records are allocated directly | Complete in the source archive | Complete and allocated through ADR 0054 |
+| Existing ADR set | 54 ADR records (52 accepted; 1 superseded; 1 withdrawn) plus the architecture decision registry/index | 9 original aliases within the 68 cross-cutting decisions; later accepted records are allocated directly | Complete in the source archive | Complete and allocated through ADR 0054 |
 | Cross-cutting system architecture | 22 canonical sources plus ADRs | 68 | Complete in the source archive | Complete and independently audited |
 | Microservice architecture | 76 sources | 23 rows = 22 active decisions + superseded historical `MS-AA-TOKEN-REVOCATION` alias; stronger evidence for 40 existing keys | Complete in the source archive | Complete and independently audited |
 | Specialized runtime architecture | 39 sources | 54 new; stronger evidence for 20 existing keys | Complete in the source archive | Complete and independently audited |

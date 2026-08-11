@@ -8,6 +8,10 @@ Accepted
 
 The live bounded scheduler proves only the universal selection model. It does not yet prove the revised actor-action/passive-effect lane classification, lane-specific budgets, or retry and replay behavior; those remain implementation and focused-proof gaps.
 
+## Canonical Design
+
+- [Tick System and Runtime Design](../system-architecture-ticks.md)
+
 ## Decision Record
 
 - Decision date: 2026-07-19

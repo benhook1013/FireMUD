@@ -8,6 +8,10 @@ Accepted
 
 Current durable ownership remains game-instance-scoped. True region-partitioned lease installation, post-install revalidation, takeover reconciliation, and their focused proof remain partial; the live ownership/fence checks do not establish the complete region-scoped protocol.
 
+## Canonical Design
+
+- [Tick System and Runtime Design](../system-architecture-ticks.md)
+
 ## Decision Record
 
 - Decision date: 2026-07-19

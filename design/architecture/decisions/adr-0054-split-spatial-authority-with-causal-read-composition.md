@@ -8,6 +8,11 @@ Accepted
 
 The decision is accepted; current LOOK composition proves only bounded scope equality, not the target causal-floor/composite-version contract. The current proto seam still carries scope markers rather than the target `CausalReadFence`, `servedThroughTickId`, and component-version fields, and World-authoritative movement/targeting proof remains incomplete.
 
+## Canonical Design
+
+- [Transaction Strategies](../system-architecture-transactions.md)
+- [Identifier Glossary](../system-architecture-identifier-glossary.md)
+
 ## Decision Record
 
 - Decision date: 2026-07-19
