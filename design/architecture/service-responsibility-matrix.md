@@ -60,7 +60,7 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Admission-pointer reads, prepared-upgrade proof reads, gated version-upgrade preparation mutation (action-family schema, shared cross-language `mutationDigest/v1` golden vectors, and Account authorization-reference issuance/redemption required), implemented-but-externally-gated open/close/retarget CAS, and implemented-but-externally-gated cutover invocation; Gateway edge participation covers operator/proof reads and write ingress | | | ✔ | ✔ | | | | | ✔ | | ✔ |
 | Runtime feature-flag truth and override participation (Game Session owns runtime truth) | | | | ✔ | | | | | ✔ | | |
 | Tick & coordination health metrics (diagnostic scope: `<tenantId, gameInstanceId, regionId>`) | | | | ✔ | | | | | | | |
-| Canonical room-state causal-floor production and composite room-view composition (target floor allocation/propagation; current request paths remain floor-free) | | ✔ | | ✔ | ✔ | ✔ | | | | | |
+| Causal-read fence allocation and composite room-view composition (Game Session is the authoritative owner of `CausalReadFence` allocation; Game Logic is the composition owner; World Management and Entity Management are participant providers; current request paths remain floor-free) | | ✔ | | ✔ | ✔ | ✔ | | | | | |
 | Entity definition and persistence | | | | | ✔ | | | | | | |
 | NPC state, inventory, and stats | | | | | ✔ | | | | | | |
 | Player inventory and stats | | | | | ✔ | ✔ | | | | | |

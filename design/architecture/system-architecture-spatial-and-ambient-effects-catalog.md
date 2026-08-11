@@ -38,7 +38,7 @@ Reconciliation:
 - Retry World Management using the same root `EffectId` until the World location/occupancy mutation converges.
 - There is no Entity success/failure or retry branch for pure `MOVE`. An Entity leg exists only for a future MOVE variant that explicitly writes containment; that variant must declare Entity as a participant with its own write, guard, and reconciliation contract.
 
-`MOVE` commits World location/occupancy before destination presentation. `DROP` and `PICKUP` commit entirely in Entity against the admitted room scope, but Entity's local transaction must first enforce a stale-rejecting World-authoritative actor-location precondition. The operation reuses the World `TargetingFactSnapshot` location/version token: World validates that token against its own current facts, while Game Session protects the ordered DROP/PICKUP execution under the actor/executor fence before Entity commits. Stale evidence re-resolves under the same root `EffectId`. An item never has two holders and an actor never has two authoritative locations. The current DROP/PICKUP proto/request and proof do not yet carry or demonstrate this token and validation path; this catalog does not duplicate the selected mechanism.
+`MOVE` commits World location/occupancy before destination presentation. `DROP` and `PICKUP` commit entirely in Entity against the admitted room scope, using the shared actor-lock/executor-fence and durable-barrier contract defined in [Transaction Strategies](./system-architecture-transactions.md#drop-pickup-targeting-and-actor-fence-critical-section). Lock expiry or handoff cannot admit a conflicting `MOVE` while the barrier lacks terminal evidence; Game Session owns retry orchestration and invokes Game Logic to re-resolve stale evidence under the same root `EffectId`, preserving the `requestDigest`. This catalog records only the effect-local writes and reconciliation consequences. An item never has two holders and an actor never has two authoritative locations. The current DROP/PICKUP proto/request and proof do not yet demonstrate the target path.
 
 ### Drop (Inventory → Ground)
 
@@ -48,7 +48,7 @@ Required inputs:
 - `actorEntityId`
 - `itemInstanceId`
 - `roomInstanceRef` (where the drop occurs)
-- Derived validation metadata: the World `TargetingFactSnapshot` location/version token and the current Game Session actor/executor-fence context; these are not a second effect identity.
+- Derived validation metadata: the World `TargetingFactSnapshot` attestation bound to the root `EffectId`, `actorEntityId`, `RoomInstanceRef`, `regionEpoch`, current `executorFence`, and request digest, plus the Game Session actor-lock/barrier context; these are not a second effect identity.
 
 Required writes:
 
@@ -69,7 +69,7 @@ Required inputs:
 - `actorEntityId`
 - `itemInstanceId`
 - `roomInstanceRef`
-- Derived validation metadata: the World `TargetingFactSnapshot` location/version token and the current Game Session actor/executor-fence context; these are not a second effect identity.
+- Derived validation metadata: the World `TargetingFactSnapshot` attestation bound to the root `EffectId`, `actorEntityId`, `RoomInstanceRef`, `regionEpoch`, current `executorFence`, and request digest, plus the Game Session actor-lock/barrier context; these are not a second effect identity.
 
 Required writes:
 
@@ -80,7 +80,7 @@ Required writes:
 
 Reconciliation:
 
-- Retry the EMS move using the same root `EffectId` until applied. If the item is already moved, treat as replay/no-op.
+- Retry the EMS move using the same root `EffectId` until applied. Treat an already-moved item as replay only when the stored participant guard matches the same root `EffectId`, immutable request digest, and exact actor-inventory destination. If the item is held by another actor/container or the destination differs, return a conflict/stale/reconciliation outcome rather than replay/no-op.
 
 ## Ambient Effects (World Management Authoritative)
 

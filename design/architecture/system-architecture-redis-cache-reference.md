@@ -51,7 +51,7 @@ The first supported World Management Class A caches are intentionally narrow and
   - Invalidator of record: topology-visible publish/activation paths, snapshot-fed dynamic mutations, and instance lifecycle transitions that rebuild or retire the room snapshot.
 - Reader contract:
   - Only `world-dynamic:*` and `room:*` may participate in correctness-critical World Management movement, pathfinding, and visibility decisions.
-  - Validate against `roomDynamicVersion` or the opaque World-owned room component version.
+  - Validate `world-dynamic:*` against `roomDynamicVersion`. A `room:*` entry always requires the opaque World-owned room component version and cannot be validated by `roomDynamicVersion` alone.
   - Fall back to authoritative reads if the version cannot be verified.
   - TTL-only world or presentation caches must use distinct prefixes and must not be substituted for these Class A contracts.
 

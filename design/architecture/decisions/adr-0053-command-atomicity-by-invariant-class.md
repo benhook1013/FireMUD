@@ -42,7 +42,7 @@ Canonical command outcomes are:
 - `FAILURE`: the command's defined terminal outcome proves no required mutation succeeded, or its single authoritative transaction rejected without committing.
 - `PARTIAL`: only an explicitly designed terminal subset permitted by the game rules; it must never conceal an invariant breach.
 
-Optional-effect failure can coexist with success only when that effect was classified optional before execution. Lost or timed-out responses retain `PENDING/UNKNOWN`; clients query or retry using the original `commandId`, and owners reuse the original `EffectId`.
+Optional-effect failure can coexist with success only when that effect was classified optional before execution. Lost or timed-out responses remain `PENDING` and reconciliation-required; clients query or retry using the original `commandId`, and owners reuse the original `EffectId`.
 
 Independent tick effects are forbidden when temporary partial state could violate unique ownership, value conservation or non-negative balance, mutually conditional exchange, irreversible consumption, premium entitlement, or an external commitment. Such commands route to one authoritative service-local transaction when the invariant can be co-located, or to a tick-adjacent durable reservation/escrow workflow with idempotent steps and transactional outbox delivery.
 

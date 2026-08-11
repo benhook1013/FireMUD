@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The decision is accepted; current LOOK composition proves only bounded scope equality, not the target causal-floor/composite-version contract. The current proto seam still carries scope markers rather than the target `CausalReadFence`, `servedThroughTickId`, and component-version fields, and World-authoritative movement/targeting proof remains incomplete.
+The decision is accepted; current LOOK composition proves only bounded scope equality, not the target causal-floor/composite-version contract. The current proto seam still carries scope markers rather than the target `CausalReadFence`, `servedThroughTickId`, and component-version fields, and World-authoritative movement/targeting proof remains incomplete, including the durable barrier and actor-lock/executor-fence attestation flow.
 
 ## Canonical Design
 
@@ -30,7 +30,7 @@ The decision is accepted; current LOOK composition proves only bounded scope equ
 
 A monolithic spatial service could make room reads and spatial mutations local, but would combine topology, occupancy, ambient state, inventory, equipment, containment, and ground items into one scaling and failure domain. Moving only ground items to World would make every drop and pickup a cross-owner transfer.
 
-The existing split is sound, but two contracts are too weak. Reusing an `EffectId` without binding its operation and payload can turn a collision into a false replay. The current LOOK “fence” is effectively a room-scope equality string, not evidence that independent databases served one exact temporal snapshot.
+The existing split is sound, but two contracts are too weak. Reusing an `EffectId` without binding its operation and payload can turn a collision into a false replay. The current LOOK “fence” is effectively a room-scope equality string, not evidence that independent databases served one exact temporal snapshot. Spatial targeting also needs an explicit critical section: a location fact must not be validated and then used after a same-actor movement has interleaved.
 
 ## Decision
 
@@ -41,7 +41,7 @@ The existing split is sound, but two contracts are too weak. Reusing an `EffectI
 - Game Logic resolves actions and composes reads; it owns no competing spatial state.
 - Game Session owns durable cross-service effect intent, required-participant status, retry, and reconciliation.
 
-`MOVE` commits World-owned location and occupancy before destination presentation is resolved. `DROP` and `PICKUP` reuse the World `TargetingFactSnapshot` location/version token; World validates that token, while Game Session's actor/executor fence protects ordered execution before Entity commits. Stale targeting evidence is re-resolved under the same root `EffectId`. An item never has two holders and an actor never has two authoritative locations; those invariants remain within one owning transaction rather than reconciliation.
+`MOVE` commits World-owned location and occupancy before destination presentation is resolved. For `DROP` and `PICKUP`, Game Session's durable in-flight barrier and actor-lock/fence gate carry World attestation evidence through the Entity-local holder commit; Entity verifies the binding at commit. Lock expiry, owner crash, or fence change leaves the barrier reconciliation-required and blocks a conflicting `MOVE` until terminal evidence; stale re-resolution is requested by Game Session through Game Logic under the same root `EffectId`, preserving the `requestDigest`. A later valid `MOVE` is allowed after Entity commit and barrier terminalization. The detailed barrier/handoff contract is in [Transaction Strategies](../system-architecture-transactions.md#drop-pickup-targeting-and-actor-fence-critical-section); this closes TOCTOU through durable evidence and fencing, not a distributed World/Entity transaction. An item never has two holders and an actor never has two authoritative locations; those invariants remain within one owning transaction rather than reconciliation.
 
 ### Effect Identity and Participant Guards
 
@@ -87,7 +87,7 @@ Rejected because the current token proves scope rather than time, while genuine 
 
 ## Implementation and Proof Obligations
 
-Proof must cover guard request-digest mismatch, duplicate replay, crash after one participant, MOVE before destination LOOK, DROP/PICKUP against stale location and re-resolution under the same root `EffectId`, no double holder/location, participant reconciliation, same-floor presentation, served-through-floor validation, opaque component-version handling, mixed scope/epoch rejection, and lagging-participant retry.
+Proof must cover guard request-digest mismatch, duplicate replay, crash after one participant, MOVE before destination LOOK, DROP/PICKUP against stale location and re-resolution through Game Logic under the same root `EffectId`, World-attestation binding and Entity rejection, actor-lock lease expiry, owner crash, fence-change fencing, old Entity commit versus new MOVE, barrier handoff/reconciliation and terminal evidence, a valid MOVE after commit, no double holder/location, participant reconciliation, PICKUP replay only for the matching participant guard/digest/exact destination (with another holder treated as conflict/stale/reconcile), same-floor presentation, served-through-floor validation, opaque component-version handling, mixed scope/epoch rejection, and lagging-participant retry.
 
 ## Reversibility and Revisit Triggers
 
