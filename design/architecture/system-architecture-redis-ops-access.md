@@ -235,7 +235,7 @@ The public CLI surface listed above is target state only; it is not currently im
     - accepts either `--old-region-epoch <epoch>` for `--scope region` or `--old-region-epoch-map <path>` for tenant/cluster scopes.
     - owns `replay-first` convergence as well as old-epoch reset convergence:
       - without an epoch bump, it drives in-epoch `SCHEDULED` ledger rows toward `APPLIED` or `ABANDONED` for the selected current-epoch scope.
-      - after an epoch bump, it drives old-epoch rows toward terminal reset outcomes for the selected reset scope.
+      - after an epoch bump, it publishes `APPLIED`/`ABANDONED` reset outcomes for old-epoch rows only with the owner-fenced per-effect evidence/attestation required by the [Inconclusive Old-Epoch Reconciliation Policy](./system-architecture-tick-failures-and-operations.md#inconclusive-old-epoch-reconciliation-policy); inconclusive old-epoch work remains non-terminal and reconciliation-required under its original root `EffectId`.
     - may support `--discover-old-epochs` as an implementation convenience, but only if it resolves epochs from PostgreSQL and emits the discovered map in its audit output.
   - Internal command-convergence phase
     - consumes the same maintenance lock token as the prior internal phase.

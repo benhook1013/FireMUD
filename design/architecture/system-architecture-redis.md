@@ -128,8 +128,12 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
       current_tick_terminal_at_ms
       ```
 
+    - `tick-executor-lease:{tenantRegionTag}` is separate from this metadata: its value is only the opaque Redis liveness token and its TTL. It never stores or encodes `region_epoch`. The epoch is semantic timeline state, sourced by the tick owner from the durable reset/RegionStatus contract and carried separately to Lua; Lua compares that expected epoch with the `region_epoch` in `tick:{tenantRegionTag}:meta`. Possessing the token proves only Redis liveness possession, while matching the epoch proves that the operation belongs to the current semantic timeline.
+
     - The canonical Redis-side state machine for a region is:
-      - `missing meta` or `current_tick_state in {APPLIED, ABANDONED}` with no newer tick staged:
+      - A genuinely missing `meta` key, outside reset recovery, may be initialized from the authoritative scheduler/RegionStatus baseline with `current_tick_id = requestedTickId` and `current_tick_state = STAGED`.
+      - An existing `meta` key must contain a valid `region_epoch`, `current_tick_id`, and recognized `current_tick_state`. If `current_tick_id` is unset while any other metadata is present—including a nonterminal, unknown, or contradictory state—the staging request returns non-mutating `INVALID_ARGS`; it does not repair or mutate the record, and the region remains fenced.
+      - `current_tick_state in {APPLIED, ABANDONED}` with a valid current tick and no newer tick staged:
         - The next winning executor may initialize or advance the meta record to `current_tick_id = requestedTickId`, `current_tick_state = STAGED` if `requestedTickId` is exactly the scheduler/control-plane tick derived from PostgreSQL RegionStatus for that region.
       - `STAGED -> RESOLVING`:
         - The first script or caller that hands staged effects to durable domain/application processing flips the state to `RESOLVING`.
@@ -144,17 +148,18 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
         - Staging for tick `T+1` is allowed only after tick `T` is both terminal in Redis meta and `coordination_cleared` under the scheduler/runtime rules in `system-architecture-ticks.md`.
     - Tick- and epoch-aware Lua scripts:
       - Read `region_epoch` (and when needed `current_tick_id`) from this key and compare it to the expected epoch/tick supplied from PostgreSQL/lease context.
-      - Return non-mutating outcomes such as `"STALE_EPOCH"` when the stored epoch does not match the expected value, so callers can abandon work tied to an old epoch and reacquire leases under the new epoch.
+      - Apply the canonical lease-renewal and staging result mapping in [Redis Lua Patterns](./system-architecture-redis-lua-patterns.md#canonical-region-lease-and-tick-staging-result-mapping). These outcomes are non-mutating, so callers abandon stale work and reacquire under the resulting epoch/lease.
       - Treat `current_tick_state` as the gate for hot-path progress:
         - Staging scripts may create or extend `pending` only when `requestedTickId == current_tick_id` and `current_tick_state in {STAGED, RESOLVING}`, or when they are initializing the next tick from a terminal prior state.
         - Hot-path scripts must never advance directly from `STAGED`/`RESOLVING` to a newer `current_tick_id`; only a terminal `APPLIED` or `ABANDONED` state plus separate scheduler-observed `coordination_cleared` unlocks the next tick.
     - Schedulers and operators:
       - Obtain their authoritative baseline for `(region_epoch, tickId)` from PostgreSQL RegionStatus/tick effect ledger and heartbeats, not from `current_tick_id`.
       - On a normal cold start with empty Coordination Redis and no active recovery, the next winning tick executor initializes `tick:{tenantRegionTag}:meta` during hot-path staging from PostgreSQL `RegionStatus`; schedulers and operators do not treat missing `meta` as a manual pre‑seeding task. While reset recovery is active, missing metadata keeps the scope fenced and hot-path staging must not create or recreate it until the canonical recovery release in [Redis Reset & Recovery](./system-architecture-redis-reset-and-recovery.md).
+      - During reset recovery, the reset owner first establishes the durable new epoch, then initializes and verifies `tick:{tenantRegionTag}:meta` from that same authoritative baseline while the scope remains fenced. Only after that readback and the owner-defined recovery gates complete may the scope be released. The reset lifecycle and release prerequisites remain canonical in [Redis Reset & Recovery](./system-architecture-redis-reset-and-recovery.md#canonical-reset-sequence-boundary); this hub records only the local metadata and stale-key consequences.
       - Treat Redis `pending` contents as an implementation detail of the hot path, not as proof of durable convergence. The durable proof that a tick is safe to move past is explicit terminal `APPLIED` or `ABANDONED` evidence for every required participant in the PostgreSQL ledger or equivalent durable terminal records; reconciliation-backlog presence and `replay_ok` attempt outcomes are insufficient by themselves. Only after that proof does the caller record `APPLIED` or `ABANDONED` in `tick:{tenantRegionTag}:meta`.
       - Recovery after tail loss or reset does **not** reconstruct old ticks by silently restaging them through normal hot-path scripts. Recovery completes or abandons older work from durable manifests, ledger rows, and reconciliation backlog state, then records the resulting terminal meta state before allowing newer ticks to stage.
 - Redis-local split-brain and reset consequences:
-  - Region lease and coordination scripts receive the expected `region_epoch` and opaque lease token, compare them with the local metadata, and return non-mutating stale outcomes such as `STALE_EPOCH` or `STALE_LEASE` on mismatch.
+  - `tick-executor-lease:{tenantRegionTag}` stores only the opaque lease token; `region_epoch` is read from the separate `tick:{tenantRegionTag}:meta` view and/or the durable reset contract. Region lease and coordination Lua receives both values separately, compares them before mutation, and follows the canonical result mapping in [Redis Lua Patterns](./system-architecture-redis-lua-patterns.md#canonical-region-lease-and-tick-staging-result-mapping).
   - After a reset, keys carrying an older `region_epoch` are ignored or explicitly cleaned up by reset tooling; Redis does not choose the durable epoch or authorize a new owner.
 
 - **Non‑authoritative for game data**
@@ -654,9 +659,9 @@ Redis designs in FireMUD assume several invariants that are defined and enforced
 
 - **Region lease key consequences**
   - The tick owner defines `regionEpoch`, durable `executorFence`, lease acquisition, revalidation, takeover, outage, and reset semantics in [Tick System: Region Authority and Tick Executor](./system-architecture-ticks.md#region-authority-and-tick-executor). Redis does not define or advance those durable identities.
-  - Region lease and coordination Lua receives the expected `region_epoch` and opaque lease token in `ARGV`, compares them with local region metadata before mutation, and returns non-mutating outcomes such as `"STALE_EPOCH"` or `"STALE_LEASE"` on mismatch.
+  - `tick-executor-lease:{tenantRegionTag}` stores only the opaque lease token; `region_epoch` is read from the separate `tick:{tenantRegionTag}:meta` view and/or the durable reset contract. Region lease and coordination Lua receives both values separately, compares them before mutation, and follows the canonical result mapping in [Redis Lua Patterns](./system-architecture-redis-lua-patterns.md#canonical-region-lease-and-tick-staging-result-mapping).
   - Lease uncertainty, partition, or expiry must make Redis mutations fail closed. Redis key presence, token correlation, or a successful local script is not durable ownership proof and cannot authorize staging or effect dispatch.
-  - Ordinary handoff retains the epoch while replacing the durable fence; reset tooling invalidates old-epoch keys and rebuilds local metadata only after the tick owner establishes the new durable epoch and releases recovery.
+  - Ordinary handoff retains the epoch while replacing the durable fence; for a reset, the reset owner establishes the durable new epoch, initializes and verifies local metadata while recovery remains fenced, and releases the scope only after the owner-defined gates complete, while old-epoch keys remain stale and are ignored or cleaned according to [Redis Reset & Recovery](./system-architecture-redis-reset-and-recovery.md#canonical-reset-sequence-boundary).
 - **Idempotent domain effects**
   - Domain-level effects (damage application, currency transfers, quest progress, etc.) are recorded via idempotent identifiers or transaction rows in PostgreSQL (see `system-architecture-transactions.md`).
   - Coordination keys such as `pending` entries and retries rely on these idempotency guards: re-running ticks or retries must not double-apply domain effects even if Redis state is replayed or partially lost within the tail-loss envelope (`tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)` in `system-architecture-redis-operations.md`).

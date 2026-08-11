@@ -134,7 +134,7 @@ Gameplay WebSocket route policy is canonicalized on `/ws/game/**` for player-fac
 Diagram callouts:
 
 - External operator writes for moderation, quota overrides, runtime feature flags, and tick remediation enter through Logging & Admin via Gateway; direct domain-admin routes are read-only unless explicitly documented as bypass-safe.
-- Canonical room state is not assembled by direct World ↔ Entity joins; World Management emits the room-read fence, Game Logic composes room views only from same-fence responses, and Game Session renders/caches the resulting transcript.
+- Canonical room state is not assembled by direct World ↔ Entity joins; World Management supplies the causal-read floor, Game Logic composes room views only from same-scope/epoch responses at or beyond that floor with actual component versions, and Game Session renders/caches the resulting transcript.
 
 Admin and creator API exposure on the `external admin/creator API plane` is intentionally allowlisted: external tools call domain admin APIs only through Gateway-routed HTTP(S) routes for owning services (for example Logging & Admin, Account, Game Session, Social & Groups, and Game Design). External mutating operator workflows for moderation, quota overrides, runtime feature-flag overrides, and tick remediation must enter through Logging & Admin; direct domain-admin routes are reserved for reads and explicitly documented bypass-safe workflows. External domain gRPC is not part of the edge contract unless a dedicated design update explicitly introduces it. Internal service-to-service gRPC remains direct and does not traverse Gateway or the `infrastructure management plane`.
 
@@ -168,7 +168,7 @@ All internal synchronous communication from the **Game Session Service** to down
 
 Coordination Redis arrows in this diagram follow ownership boundaries from ADR 0009: Game Session owns gameplay coordination prefixes (for example `session:game:*`, `tick:*`, `timer:*`, `retry:*`, and `tick-executor-lease:*`), Account owns `session:auth:*`, Automation & Scripting owns `automation:*`, and non-owner services (for example Entity) participate only through approved shared-helper contracts rather than ad hoc key ownership.
 
-Canonical room-state assembly is intentionally not shown as a direct World-to-Entity join: World Management emits the room-read fence for gameplay-driven room views, Entity Management returns a matching same-scope entity fence, and Game Logic composes only when the two fences match so mixed-tick room state is never emitted as canonical output.
+Canonical room-state assembly is intentionally not shown as a direct World-to-Entity join: World Management supplies the causal floor for gameplay-driven room views, Entity Management serves the same scope and epoch at or beyond that floor, and Game Logic composes the requested floor plus actual component versions. Behind-floor or mixed-scope/epoch responses are rejected or retried; bounded newer skew is valid for presentation.
 
 ## Datastore Layer
 

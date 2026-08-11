@@ -89,6 +89,8 @@ This tracker is the permanent reader-facing implementation record for world runt
 
 ## Active Gaps
 
+- TICK-04 confirms World ownership of topology, location, occupancy, and ambient room state. Authoritative character/session location mutation, exact mutation preconditions, and causal-floor/component-version proof remain open; current Game Session room binding is not that authority.
+
 - Broader travel, pathfinding, combat adjacency, richer movement failure semantics, and additional client polish are outside the completed directional-movement baseline.
 - World Management still needs the authoritative character/session location-transition mutation contract used by live movement; the current Game Session binding update is not a substitute for that ownership boundary.
 - Prepare and activate lifecycle commands still hold local transactions across blocking Game Design attestation reads; they need the same staged/fenced transaction separation already used around termination cleanup.

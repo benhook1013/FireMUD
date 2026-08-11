@@ -149,15 +149,13 @@ Room snapshots deliberately exclude live entities, items, and inventory contents
 
 Game Logic may memoize snapshots for the duration of a tick but must refresh them after movement. The current scope-derived adapter value does not prove mutation freshness, and FireMUD must not treat it as authoritative mutation versioning or treat stale rendered `LOOK` output as room truth.
 
-### Target same-fence contract
+### Target causal-floor contract
 
-The target protocol maps `worldSnapshotId` to a World Management-owned committed `roomSnapshotVersion`: one opaque or epoch-bearing fence that advances after every durable mutation included in the room view. World Management will publish the relevant room-mutation changes so that this committed value can advance rather than relying on time-based guesswork. The exact-fence propagation protocol is explicitly deferred: the current request has no named requested-fence field and the current implementation does not claim this behavior complete. When the target protocol is implemented, it must carry the exact World Management committed same-scope fence into each participant read and require each participant to echo that exact satisfied token; a scope-local substitute or independently minted participant fence is not equivalent.
+The target protocol follows the [causal-read fence contract](../../system-architecture-identifier-glossary.md#cross-service-causal-read-fence-identity). A target `GetRoomSnapshot` request carries a `CausalReadFence` for the same `RoomInstanceRef` and `regionEpoch`, including at least `committedTickId`. The exact request-field shape is deferred to the coordinated proto/design change; the current request has no caller-provided floor and the current implementation does not claim this behavior complete.
 
-Once that target protocol is designed and implemented, cross-service LOOK read consistency is fence-based:
+When the target protocol is implemented, World Management serves the requested room scope and epoch at or beyond the causal floor and returns its actual World component version. A bounded component version newer than the floor is valid for presentation. A behind-floor or mixed tenant, game instance, room, or epoch response is rejected or retried with `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE` as applicable. World and Entity do not echo or mint one shared temporal token, and this contract does not claim an exact cross-database historical snapshot.
 
-- Game Logic must propagate the logical `roomSnapshotVersion` carried as `worldSnapshotId` from `GetRoomSnapshot` as the requested fence for the same-scope Entity Management read, then compare it with the identical `entitySnapshotId` returned by `ListRoomEntities`.
-- Entity Management must either answer with that exact committed same-scope fence token after satisfying it, or return target-state `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE`; it must not mint a competing entity-local fence.
-- If a participant cannot satisfy the requested fence or the returned participant fence differs, Game Logic treats that as a caller-side retry condition, obtains a fresh World Management snapshot, and retries the same-scope composition. It must not return mixed-state output or require a separate mismatch service error.
+Game Logic composes the requested causal floor with the actual World and Entity component versions in the room-view identity. It retries a participant that is behind the floor or has mixed scope/epoch; it does not require exact equality between the current `worldSnapshotId` and `entitySnapshotId` markers.
 
 ## Room Identity Migration
 
@@ -174,7 +172,7 @@ Illustrative target-state `GetRoomSnapshot` fragments:
   "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
   "gameInstanceId": "9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78",
   "roomInstanceId": "1021",
-  "worldSnapshotId": "room-snapshot-epoch-17",
+  "worldComponentVersion": "world-component-version-17",
   "roomName": "Candle-lit Antechamber"
 }
 ```
@@ -188,9 +186,9 @@ Illustrative target-state `GetRoomSnapshot` fragments:
 }
 ```
 
-`worldSnapshotId` carries the canonical committed `roomSnapshotVersion` for LOOK-relevant world data for a specific `RoomInstanceRef` only in the target contract. The target value is opaque or epoch-bearing, changes after every relevant durable mutation, and is emitted by World Management as the single logical fence. Entity Management must return the identical satisfied value as `entitySnapshotId`; it must not derive an independent entity-only version. Game Logic combines the equal transport fields to produce the final `lookSnapshotId` returned to Game Session. The current scope-derived adapter value remains incomplete until the committed version and its propagation protocol are implemented.
+The current `worldSnapshotId` remains the deterministic same-scope marker described above and provides no mutation-freshness proof. In the target protocol, the response includes the actual World component version after serving the requested causal floor; it is not a shared token that Entity Management must echo. Game Logic exposes the requested floor plus the World and Entity component versions in the composite room-view identity. Bounded newer component versions may compose, while behind-floor or mixed-scope/epoch responses are rejected or retried. No exact cross-database historical snapshot is claimed.
 
-The unresolved target work is tracked in [World Runtime and Movement](../../../project-management/implementation-tracking/world-runtime-and-movement.md#active-gaps): World-owned fence allocation after Entity-owned LOOK-visible mutations, propagation to the participant read, participant acknowledgement, and durable commit ordering are not yet defined or live.
+The unresolved target work is tracked in [World Runtime and Movement](../../../project-management/implementation-tracking/world-runtime-and-movement.md#active-gaps): causal-floor allocation and propagation, participant floor satisfaction, component-version responses, and durable commit ordering are not yet defined or live.
 
 ## Instance Termination Contract
 

@@ -135,6 +135,9 @@ The recorded Markdown and contract checks for these slices include `./gradlew li
 
 ## Active Gaps
 
+- TICK-03 is now the accepted command-level boundary: required versus optional effects, permitted terminal combinations, intentional `PARTIAL`, and stronger atomicity routing must be classified per command family. Current implementation and proof remain partial; no status promotion is implied.
+- TICK-04 makes Game Session the durable owner of cross-service effect intent, required-participant status, retry, and reconciliation. The runtime still needs operation/digest-bound participant guards, stable root `EffectId` reuse, and focused crash/retry/dead-letter proof across World and Entity.
+
 - Ownership is durable only at the current game-instance queue boundary. True region-partitioned execution, a cluster scheduler, and lease-owner forwarding from session front ends are not implemented.
 - The scheduler has no adaptive gameplay-timing feedback loop. Pressure remains observable and operator-driven; changing gameplay timing requires preview or production-like data and a deliberate decision.
 - Only the current built-in state-changing command families consume the durable effect path. Later authored or game-defined authoritative mutations must use it; read-only views remain direct by design.

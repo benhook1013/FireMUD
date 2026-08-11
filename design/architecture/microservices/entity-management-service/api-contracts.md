@@ -73,7 +73,7 @@ Publish gating must fail closed if Entity Management cannot attest a digest cons
 
 ## LOOK Entity Listing Contract
 
-`ListRoomEntities` is the dedicated endpoint for `LOOK` to discover which characters, items, and NPCs occupy a room. The current and target fence contracts are intentionally separate. The logical fence name is `roomReadFence`; the transport names `worldSnapshotId` and `entitySnapshotId` are aliases defined in the identifier glossary, not independent service-local versions.
+`ListRoomEntities` is the dedicated endpoint for `LOOK` to discover which characters, items, and NPCs occupy a room. The current and target causal-read contracts are intentionally separate. The causal-floor owner is the [Identifier Glossary causal-read fence contract](../../system-architecture-identifier-glossary.md#cross-service-causal-read-fence-identity); the current transport names `worldSnapshotId` and `entitySnapshotId` are deterministic same-scope markers only, not independent freshness versions.
 
 ### Current room-entity contract
 
@@ -88,23 +88,18 @@ The current response includes:
 - `visionPriority` to help sort players before NPCs and list visible items at the end, keeping `LOOK` render ordering consistent.
 - `reloadHint` (enum) that signals whether the list is stable or dynamic, allowing Game Logic to decorate the `LOOK` output.
 
-### Target same-fence contract
+### Target causal-floor contract
 
-The target protocol will let the room-read composition propagate the World Management-owned committed `roomReadFence` (wire field `worldSnapshotId`) to Entity Management without inventing a parallel entity-local version. The exact request-field shape is intentionally deferred to the coordinated proto/design change; this document must not imply that the current request already carries it.
+The target `ListRoomEntities` request carries the same `CausalReadFence` as World Management for the `RoomInstanceRef` and `regionEpoch`, including at least `committedTickId`. The exact request-field shape is deferred to the coordinated proto/design change; the current request remains unchanged and does not claim floor satisfaction.
 
-After that protocol exists, Entity Management will return the exact satisfied fence as `entitySnapshotId` for the same `RoomInstanceRef`. When composing a full LOOK view, Game Logic combines:
-
-- `worldSnapshotId`/`roomReadFence` from World Management’s `GetRoomSnapshot`; and
-- the identical `entitySnapshotId`/`roomReadFence` returned by `ListRoomEntities`,
-
-then returns a `lookSnapshotId` alongside the rendered `LookResult` so Game Session can cache the final transcript deterministically. The target contract does not concatenate independent service versions; equality of the two transport fields proves that both reads satisfied one committed fence. The current scope-derived adapter value is not sufficient proof of mutation freshness.
+After that protocol exists, Entity Management serves the same scope and epoch at or beyond the requested floor and returns its actual Entity component version. A bounded version newer than the floor is valid for presentation. A behind-floor or mixed tenant, game instance, room, or epoch response is rejected or retried. Game Logic composes the requested floor plus the World and Entity component versions in the room-view identity and returns that identity with `LookResult` so Game Session can retain its transcript rendering/cache behavior; it does not require equality between the current transport markers and does not claim an exact cross-database historical snapshot.
 
 Room-entity data is derived from runtime entity state plus authoritative world location. Ground items are discovered by querying items contained by the synthetic room-ground container for the target `RoomInstanceRef`. Characters and NPCs are included when their current location (owned by World Management) matches the target `RoomInstanceRef`:
 
-- The caller obtains the authoritative room snapshot and committed `roomReadFence` from World Management before invoking `ListRoomEntities`. The target request/response evolution must carry enough information for Entity Management to prove satisfaction of that fence; the current proto/request path does not yet claim this behavior complete.
+- The caller obtains the authoritative room snapshot and causal floor from World Management before invoking `ListRoomEntities`. The target request/response evolution must carry enough information for Entity Management to prove service of that floor; the current proto/request path does not yet claim this behavior complete.
 - `ListRoomEntities` materializes display data plus room-ground inventory state owned by Entity Management for the same `RoomInstanceRef`.
-- `ListRoomEntities` must return the exact Entity Management echo (`entitySnapshotId`) for the same room scope; when Game Logic cannot align it byte-for-byte with the World Management `worldSnapshotId`/`roomReadFence`, composition must fail instead of returning mixed-tick data.
-- The read fence is satisfied only by durable post-commit state. Redis-staged containment changes that have not yet committed the effect guard and container/item row updates for that fence are not eligible to satisfy the room-read fence.
+- `ListRoomEntities` must return the actual Entity component version after serving the requested floor. Game Logic rejects or retries behind-floor or mixed-scope/epoch responses rather than returning an invalid composite view.
+- The causal floor is satisfied only by durable post-commit state. Redis-staged containment changes that have not yet committed the effect guard and container/item row updates for the requested floor are not eligible to satisfy it.
 
 Illustrative target-state `ListRoomEntities` fragments:
 
@@ -115,7 +110,7 @@ Illustrative target-state `ListRoomEntities` fragments:
   "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
   "gameInstanceId": "9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78",
   "roomInstanceId": "1021",
-  "entitySnapshotId": "room-snapshot-epoch-17",
+  "entityComponentVersion": "entity-component-version-23",
   "entities": [
     {
       "entityId": "char-mara",
@@ -132,16 +127,16 @@ Illustrative target-state `ListRoomEntities` fragments:
 {
   "error": {
     "code": "STALE_READ_FENCE",
-    "message": "Entity state could not satisfy the requested room read fence."
+    "message": "Entity state could not satisfy the requested causal read floor."
   }
 }
 ```
 
 Entity Management must not maintain a competing room-occupancy index that can drift from World Management’s location tables. Visibility and filtering rules are applied after aggregation so LOOK output remains player-correct.
 
-In the target protocol, when the propagated fence is missing, stale, or cannot be satisfied from durable post-commit state, Entity Management returns `STALE_READ_FENCE` or `READ_FENCE_UNAVAILABLE`. A participant fence difference is a caller-side composition retry condition, not a separate service error from this API: Game Logic must obtain a fresh World Management snapshot and retry the same-scope composition, or fail the room view explicitly if the fresh read cannot be materialized. These target errors are not claims about the current request path.
+In the target protocol, when the propagated causal floor is missing, stale, or cannot be satisfied from durable post-commit state, Entity Management returns `STALE_READ_FENCE` or `READ_FENCE_UNAVAILABLE`. A behind-floor or mixed-scope/epoch response is a caller-side composition retry condition, not a separate service error from this API: Game Logic must obtain a fresh World Management snapshot and retry the same-scope composition, or fail the room view explicitly if the fresh read cannot be materialized. These target errors are not claims about the current request path.
 
-The unresolved target work is tracked in [World Runtime and Movement](../../../project-management/implementation-tracking/world-runtime-and-movement.md#active-gaps), including allocation of the World-owned fence after Entity-owned LOOK-visible mutations, propagation, participant acknowledgement, and durable commit ordering.
+The unresolved target work is tracked in [World Runtime and Movement](../../../project-management/implementation-tracking/world-runtime-and-movement.md#active-gaps), including causal-floor propagation, participant floor satisfaction, component-version responses, and durable commit ordering.
 
 Concrete per-effect required writes and reconciliation rules live in [`system-architecture-spatial-and-ambient-effects-catalog.md`](../../system-architecture-spatial-and-ambient-effects-catalog.md).
 

@@ -56,12 +56,13 @@ World Management may use a numeric room row key as `roomInstanceId` only when it
 
 Tick-driven, cross-service mutations are at-least-once and must be idempotent.
 
-- `EffectId` – the canonical target-specific idempotency identity derived from region-scoped tick context (`tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, `tickId`, `effectKey`) plus `targetAggregateType` and `targetAggregateId`. The canonical tuple is complete: no participant may add an unregistered `domainScope` or replace a tuple member with a service-local identifier. A multi-aggregate operation carries one stable operation `effectKey` and one deterministic expected target set, then projects one complete `EffectId` for each affected aggregate; it does not reuse one target's terminal outcome for another target. Replay or reconciliation evaluates the complete expected set while preserving each target-specific `EffectId`.
-- **EffectId derivation and propagation:** the Game Session/tick coordinator derives the identity once from the admitted command and authoritative tick context. It propagates the same canonical serialized `effectId` and its structured tuple fields to every participant, ledger row, guard, outbox record, and reconciliation record. Participants validate scope and target identity, project the same tuple into their local guard, and must not generate a random ID, re-derive from mutable payload, or silently omit `playableStateScope` or `gameInstanceId`. An implementation may use a physical opaque `effectId` column, but that column is only valid when its canonical tuple projection is retained or deterministically recoverable.
+- `EffectId` – the stable root identity for one logical effect. Game Session assigns it once from the admitted operation and its authoritative tick context; retry, recovery, and reconciliation preserve it. It is not derived from mutable payload or regenerated for a replay. An implementation may store it opaquely only when the canonical identity projection remains retained or deterministically recoverable.
+- **Participant guard identity** – a deterministic identity derived from the root `EffectId`, typed operation, and target aggregate. Its durable guard binds that identity to the immutable request digest and durable outcome. Same guard identity with the same request returns the prior result; a changed operation, target, or digest fails closed. Derived reactions receive deterministic child `EffectId` values.
+- The root effect identity, required participant set, and participant outcomes are Game Session reconciliation data. The durable guard/effect behavior is owned by [Transaction Strategies](./system-architecture-transactions.md) and must not be replaced with an ad-hoc service-local key.
 
-## Cross-Service Read Fence Identity
+## Cross-Service Causal-Read Fence Identity
 
-Cross-service read composition (for example `LOOK` world + entity joins) must use one logical fence contract to prevent mixed-tick snapshots.
+Cross-service presentation composition (for example `LOOK`) uses a causal floor; it does not claim a globally atomic historical snapshot.
 
 ### Current Scope-Marker Contract
 
@@ -69,13 +70,12 @@ Cross-service read composition (for example `LOOK` world + entity joins) must us
 - The current adapters derive those values from `(tenantId, gameInstanceId, roomInstanceId)` alone. They are deterministic same-scope markers that may compare equal, but they do not prove mutation freshness, committed ordering, or a durable read fence.
 - `roomSnapshotVersion` and the target `roomReadFence` allocation/propagation protocol are not present in the current request/proto path. Current marker equality must not be described as complete target-state behavior.
 
-### Target Room-Read Fence Contract
+### Target Causal-Floor Contract
 
-- `roomReadFence` is the canonical opaque, same-scope room-read fence. It is one byte-stable logical token, not a concatenation of service versions and not a caller-derived timestamp. The fence is valid only within its `RoomInstanceRef` scope.
-- **Wire aliases and source authority:** World Management's committed `roomSnapshotVersion` is the target source fence and is carried as `worldSnapshotId` / `world_snapshot_id`; Entity Management returns `entitySnapshotId` / `entity_snapshot_id` as its observed/echoed value for that same fence. `lookSnapshotId` is a derived composed-view identifier and is not a substitute for `roomReadFence`.
-- The fence is valid only within `(tenantId, gameInstanceId, roomInstanceId)` scope for room-composition APIs such as `LOOK`, and must not be compared across scopes. Target tick-ledger-backed values are non-decreasing for a given scope as observed by a caller.
-- Participants return the fence they observed or echoed when that value is available, including a value that differs from the caller's requested fence. A participant fails the read-fence part only with `STALE_READ_FENCE` when it knows the requested fence is stale or unsatisfied, or `READ_FENCE_UNAVAILABLE` when it cannot observe or echo a usable fence; it must not turn a returned fence difference into a separate participant mismatch error.
-- The composition caller compares the returned same-scope `worldSnapshotId` and `entitySnapshotId` values. If they differ, the caller rejects the mixed-fence payload and retries with a fresh World Management snapshot when caller ordering permits; otherwise it fails the room-view refresh explicitly. It must never mix data from different fences or silently substitute a newer or best-effort snapshot.
+- `CausalReadFence` identifies the requested floor: at least `(tenantId, gameInstanceId, roomInstanceId, regionEpoch, committedTickId)`. It is valid only in that scope and is never a claim that World and Entity served an exact same-time snapshot.
+- A participant serves the same scope and epoch at or beyond the floor and returns its actual component version. Game Logic returns a composed-view identity containing the requested floor plus the World and Entity component versions.
+- Mixed scope or epoch, or a component behind the floor, is rejected or retried. Component versions newer than the floor may differ. Exact read-as-of semantics require a separate historical-snapshot design.
+- The current `worldSnapshotId` / `entitySnapshotId` values remain scope markers only; they are not the target causal floor or component-version contract.
 
 ## Short Synchronous Saga Identity
 

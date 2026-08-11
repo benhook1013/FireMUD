@@ -300,6 +300,12 @@ ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/adr-0052-redis-liveness-lease-with-durable-executor-fence.md": adr_allocation(
         "GR-1", "Accepted", "SF-2", "PO-4"
     ),
+    "design/architecture/decisions/adr-0053-command-atomicity-by-invariant-class.md": adr_allocation(
+        "SF-2", "Accepted", "GR-1", "GR-2", "GR-3", "GR-4"
+    ),
+    "design/architecture/decisions/adr-0054-split-spatial-authority-with-causal-read-composition.md": adr_allocation(
+        "SF-2", "Accepted", "GR-1", "GR-2", "GR-3", "GR-4"
+    ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
     "README.md": "Service overview",

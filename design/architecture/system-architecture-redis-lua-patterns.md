@@ -25,7 +25,7 @@ Every coordination script belongs to a **script category** that constrains which
 
 | Category | Example key families | Shard-locality rules |
 | --- | --- | --- |
-| Region lease | `tick-executor-lease:{tenantRegionTag}` | Single-key scripts scoped to a single `{tenantRegionTag}` hash tag. |
+| Region lease | `tick-executor-lease:{tenantRegionTag}` and its separate `tick:{tenantRegionTag}:meta` epoch view | Acquisition is single-key; renewal and lease-guarded coordination reads/writes only region-local keys in one `{tenantRegionTag}` hash slot. The lease value remains the opaque token only. |
 | Entity lock | `tick:{tenantRegionTag}:lock:<entityId>` | Single-key or small multi-key scripts; all lock keys share the same `{tenantRegionTag}` as their corresponding `pending` structures. |
 | Tick staging / pending | `tick:{tenantRegionTag}:pending` and related effect structures | Single-key or shard-local multi-key scripts that operate entirely within one `{tenantRegionTag}` slot. |
 | Timers and retries | `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}` | Shard-local scripts operating on keys that share the same `{tenantRegionTag}`; no cross-slot operations. |
@@ -97,6 +97,22 @@ Hard requirements:
 - Every script must define which outcomes are retryable and under what conditions, and CI must verify that retryable non-mutating outcomes are truly side-effect-free.
 - Callers must treat unknown outcomes as fatal (log, metric, alert) rather than guessing whether a mutation occurred.
 
+### Canonical Region-Lease and Tick-Staging Result Mapping
+
+This is the owner-facing result contract for region-lease renewal and tick-staging registry entries. The patterns below project these rules into their local key and argument checks; they do not define alternate epoch or lease outcome families. Scripts validate required arguments before inspecting coordination state, and every result listed as non-mutating performs no writes or TTL refreshes.
+
+| Condition | Result | Caller meaning |
+| --- | --- | --- |
+| Required expected `region_epoch` input is missing, malformed, or unsupported | `INVALID_ARGS` | Contract/configuration error; remain fenced and do not retry blindly. |
+| The lease key is missing, or its stored opaque token does not match the expected lease token | `STALE_LEASE` | Redis liveness possession is absent; stop acting under the lease and reacquire. |
+| The metadata key is absent for renewal, or staging has no authorized cold-start baseline | `INVALID_ARGS` | No semantic epoch is available for this operation; remain fenced for owner-led initialization/recovery. |
+| An existing `tick:{tenantRegionTag}:meta` record has a missing/malformed current `region_epoch`, or existing tick metadata is structurally contradictory | `INVALID_ARGS` | Metadata cannot safely authorize progress; keep the region fenced for owner-led repair/recovery. |
+| The expected epoch is valid but differs from the stored current `region_epoch` | `STALE_EPOCH` | The operation belongs to an old semantic timeline; abandon it and re-bootstrap from the durable owner contract. |
+| The entire metadata key is genuinely absent and staging has an authoritative scheduler/RegionStatus baseline while recovery is inactive | `STAGED` (or the applicable idempotent staging result) | Initialize the separate epoch/tick metadata and stage the requested tick. |
+| A valid expected epoch matches the stored epoch and all tick-state guards pass | `RENEWED`, `STAGED`, or the applicable replay/no-op result | The operation may continue according to the script’s local mutation contract. |
+
+The lease key stores only the opaque Redis liveness token. `region_epoch` is a separate semantic value read from the canonical tick metadata or supplied by the durable reset/RegionStatus owner; it is never encoded into the token. A genuinely missing metadata record may be initialized by staging only from the authoritative scheduler/RegionStatus baseline while recovery is inactive. An existing record with an unset `current_tick_id` and any other nonterminal, unknown, or contradictory metadata is `INVALID_ARGS` and remains unchanged.
+
 ### Determinism Requirements
 
 To keep AOF replay and retries safe, Lua scripts must be **deterministic functions of their inputs and current Redis state**:
@@ -142,13 +158,7 @@ Many coordination structures stored in Redis (for example `tick:{tenantRegionTag
 
 Not every mutating script participates in the same coordination context. For clarity and review, scripts are grouped into a small set of categories, each with its own validation rules.
 
-The **Lua Script Registry** in `firemud-common` records, for each script:
-
-- The script name and category (for example `region_lease_tick`, `session_only`, `automation_queue`, `maintenance`).
-- The expected key roles and order (`KEYS[1] = lockKey`, `KEYS[2] = pendingKey`, etc.).
-- Required invariants for that category (for example, lease and lock token validation for region-lease scripts, session binding and expiry checks for session-only scripts).
-
-This registry is the authoritative mapping from **script name → category → required invariants** and is referenced by both application code and CI. When adding a new script or changing an existing one, update the registry entry so reviewers can see which category rules and validations apply without reverse-engineering the Lua source.
+The Lua Script Registry contract defined above is the owner-facing mapping from script name to category, key roles, required invariants, outcomes, and reset metadata. The following category sections project that shared contract into local key and argument behavior; they do not define a second registry or result vocabulary.
 
 #### Region-lease scripts (tick and coordination)
 
@@ -156,11 +166,11 @@ These scripts operate on region-scoped coordination keys (`tick:{tenantRegionTag
 
 Every region-lease script must perform the following validations before executing any writes:
 
-- **Lease token and epoch** – re-read `tick-executor-lease:{tenantRegionTag}` and compare its stored opaque lease token to the same supplied token and its stored `region_epoch` to the separate expected `region_epoch` in `ARGV`. The epoch must not be encoded into the opaque lease token. If either differs or the key is missing, the script returns a non-mutating outcome such as `"STALE_LEASE"` / `"UNSUPPORTED_EPOCH"` and performs no writes.
+- **Lease token and epoch** – re-read `tick-executor-lease:{tenantRegionTag}` and compare its stored opaque lease token to the same supplied token. Read the separate expected `region_epoch` input and compare it with the current `region_epoch` in `tick:{tenantRegionTag}:meta`; the epoch is never encoded into the opaque lease token. Apply the [canonical result mapping](#canonical-region-lease-and-tick-staging-result-mapping); no failure result mutates Redis.
 - **Lock tokens** – for each `tick:{tenantRegionTag}:lock:<entityId>` key included in `KEYS`, compare the stored token to the expected value. Any mismatch or absence yields a `"STALE_LOCK"` result without mutation.
 - **`tickId` guard via meta** – when touching `tick:{tenantRegionTag}:pending` or other tick-scoped structures, use the canonical metadata key `tick:{tenantRegionTag}:meta` as the monotonic guard: read `current_tick_id` from that hash and verify it is ≤ the requested `tickId` before staging new work. Commit/cleanup scripts abort if the guard indicates the requested `tickId` is out of order so only the intended tick makes progress. Any `tickId` fields embedded inside `pending` payloads are informational only and must not be used as guards.
 - **`current_tick_state` gate via meta** – region-lease scripts must also read `current_tick_state` from `tick:{tenantRegionTag}:meta` and obey the canonical state machine from the Redis hub doc:
-  - A new tick may be initialized only from a missing meta record or from a terminal state (`APPLIED` or `ABANDONED`) of the immediately prior tick.
+  - A new tick may be initialized only from a genuinely missing meta record outside reset recovery, or from a valid terminal state (`APPLIED` or `ABANDONED`) of the immediately prior tick.
   - Replays for the same tick may continue only while `current_tick_state in {STAGED, RESOLVING}`.
   - Hot-path scripts must never advance `current_tick_id` past a non-terminal tick.
 
@@ -275,12 +285,13 @@ Bulk key-walking is reserved for **offline maintenance tooling**, not tick execu
   - Region lease **renewal** uses a small, dedicated compare-and-extend helper that follows the same pattern:
     - Inputs:
       - `KEYS[1] = tick-executor-lease:{tenantRegionTag}`
+      - `KEYS[2] = tick:{tenantRegionTag}:meta`
       - `ARGV[1] = expectedLeaseToken`
       - `ARGV[2] = expectedRegionEpoch`
       - `ARGV[3] = lease_ttl_ms`
     - Behavior (sketch):
-      - Read `KEYS[1]`; if missing, if the stored token does not equal `expectedLeaseToken`, or if the stored epoch does not equal `expectedRegionEpoch`, return `"STALE_LEASE"` / `"UNSUPPORTED_EPOCH"` and perform **no writes**.
-      - If both values match, extend the TTL via `PEXPIRE` (or `SET ... PX ... XX`) and return `"RENEWED"`; renewal never advances `executorFence`.
+      - Validate `expectedRegionEpoch` as a required supported epoch input, then read the separate current epoch from `KEYS[2]`. Read `KEYS[1]` only for its opaque token. Apply the [canonical result mapping](#canonical-region-lease-and-tick-staging-result-mapping); each failure is non-mutating.
+      - If the token and epoch match, extend the TTL via `PEXPIRE` (or `SET ... PX ... XX`) and return `"RENEWED"`; renewal never advances `executorFence` or writes epoch state into the lease value.
       - `"RENEWED"` is Redis-local liveness proof only. It does not authorize staging or effect dispatch until the tick owner completes durable fence installation or revalidation and the required same-token post-install check.
     - Callers treat `"STALE_LEASE"` as loss of leadership for that `<tenantId, gameInstanceId, regionId>` and stop acting as executor, matching the lease semantics described in the Redis architecture document.
 
@@ -294,9 +305,10 @@ Bulk key-walking is reserved for **offline maintenance tooling**, not tick execu
       - The script loads `region_epoch` and `current_tick_id` from that hash.
       - The script also loads `current_tick_state` and refuses to advance to a newer tick while the stored state is non-terminal.
     - Behavior (hot-path tick staging/cleanup):
-      - If the stored `region_epoch` does not match the expected epoch, the script returns a non-mutating `"STALE_EPOCH"` outcome and does not modify state; callers treat this as “reset or topology timeline severance happened, abandon this attempt and reacquire under the resulting epoch”. Ordinary executor handoff changes only `executorFence` and does not bump `region_epoch`.
+      - Validate the required expected epoch input and compare it with the separate stored `region_epoch`; apply the [canonical result mapping](#canonical-region-lease-and-tick-staging-result-mapping), and keep the caller fenced on any non-mutating validation or stale result until it re-bootstraps. Ordinary executor handoff changes only `executorFence` and does not bump `region_epoch`.
       - For hot-path tick execution, callers must only invoke staging/cleanup scripts with `requestedTickId` equal to the scheduler’s current tick for that region (as derived from RegionStatus/ledger); under that assumption:
-        - If `current_tick_id` is unset, the script sets `current_tick_id = requestedTickId`, `current_tick_state = STAGED`, and stages new effects.
+        - If the entire `meta` key is genuinely missing, and recovery is inactive, the script may initialize `region_epoch`, `current_tick_id = requestedTickId`, and `current_tick_state = STAGED` from the authoritative scheduler/RegionStatus baseline before staging new effects.
+        - If `current_tick_id` is unset while the existing `meta` key contains any other state or metadata, the script returns non-mutating `"INVALID_ARGS"`; it must not repair the record or stage effects, and the region remains fenced.
         - If `current_tick_id == requestedTickId` and `current_tick_state in {STAGED, RESOLVING}`, the script proceeds and treats existing effect entries as already staged (see Pattern 3).
         - If `current_tick_id < requestedTickId`, the script may only advance to the newer tick when the stored `current_tick_state` is terminal (`APPLIED` or `ABANDONED`) and `requestedTickId` is the immediate next scheduler tick for that region.
         - If `current_tick_id > requestedTickId`, or if the stored state for an older tick is non-terminal, the script returns a non-mutating “out-of-date” outcome and does not modify state; callers must not attempt to re-stage older ticks through these hot-path scripts and should instead rely on ledger-driven replay/maintenance flows to reconcile older work.

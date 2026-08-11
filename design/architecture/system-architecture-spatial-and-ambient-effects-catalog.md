@@ -6,11 +6,11 @@ Effects described here are **not** optional guidance: any new implementation tha
 
 ## Common Requirements (All Effects)
 
-- Every effect has a canonical `EffectId` computed by Game Session and propagated unchanged to all participating services. See `design/architecture/system-architecture-transactions.md`.
+- [Transaction Strategies](./system-architecture-transactions.md) owns split spatial authority and operation-bound effect behavior. [Identifier Glossary](./system-architecture-identifier-glossary.md#cross-service-effect-identity) owns root `EffectId` and participant guard identity, while its [causal-read fence contract](./system-architecture-identifier-glossary.md#cross-service-causal-read-fence-identity) owns the causal floor and composite component-version identity. This catalog retains only effect-local writes, guards, and reconciliation consequences.
 - Every effect must be scoped by instance identifiers. For room-scoped effects, this is `RoomInstanceRef = (tenantId, gameInstanceId, roomInstanceId)`. See `design/architecture/system-architecture-identifier-glossary.md`.
-- Every participating service must implement a **durable idempotency guard** keyed by `EffectId` so retries become no-ops rather than double-application.
+- Every participating service must commit its durable guard with effect-visible domain rows so matching retries return the prior result and a changed operation, target, or digest fails closed.
 - The default reconciliation policy is **retry until convergence using the same `EffectId`**. Do not generate compensating deletes inside the tick loop.
-- For cross-service room reads used to render player-visible outcomes (for example `LOOK`), participants must support one same-scope read fence token. In the current adapter seam, World Management `worldSnapshotId` / `world_snapshot_id` and Entity Management `entitySnapshotId` / `entity_snapshot_id` are deterministic scope markers, not proof of mutation freshness. The target-state contract maps the World Management marker to a committed `roomSnapshotVersion` freshness fence and propagates that exact token to participants; it is not present in the current request/proto path. Future tick-ledger work may introduce an `asOfTickId` field only by updating the proto and architecture contracts together. Canonical scope/comparison semantics are defined in `design/architecture/system-architecture-identifier-glossary.md`. Participants return an observed/echoed fence when available; a returned fence difference is a caller-side fresh-snapshot retry condition. A participant fails only with `STALE_READ_FENCE` or `READ_FENCE_UNAVAILABLE`; the difference never permits mixing data from different fences.
+- Presentation reads use the causal floor and actual component versions defined in [Identifier Glossary](./system-architecture-identifier-glossary.md). Current `worldSnapshotId`/`entitySnapshotId` values are scope markers only. Target presentation requests carry the same room scope and epoch floor; participants return their actual component versions, bounded newer skew is allowed, and a participant behind the floor or a mixed scope/epoch is rejected or retried. The composed identity exposes the requested floor plus component versions; it does not claim an exact distributed historical snapshot.
 
 ## Spatial Effects
 
@@ -36,6 +36,8 @@ Reconciliation:
 
 - If EMS succeeds but WMS fails, retry WMS using the same `EffectId` until WMS converges.
 - If WMS succeeds but EMS fails, treat EMS as no-op (movement does not require containment writes).
+
+`MOVE` commits World location/occupancy before destination presentation. `DROP` and `PICKUP` commit entirely in Entity against the admitted room scope and a World-authoritative actor-location precondition; an item never has two holders and an actor never has two authoritative locations.
 
 ### Drop (Inventory → Ground)
 
@@ -94,7 +96,7 @@ Required writes:
 
 - **World Management**
   - Apply the door state mutation under an idempotency guard keyed by `EffectId`.
-  - **Target-state only:** advance the committed `roomSnapshotVersion` for the room/instance so LOOK caching can invalidate. The current `worldSnapshotId` scope marker provides no freshness proof and is not a cache-invalidation authority.
+  - **Target-state only:** advance the World-owned ambient component version used in the composite `LOOK` identity so the Game Session presentation cache can invalidate. The current `worldSnapshotId` scope marker provides no freshness proof and is not a cache-invalidation authority.
 
 Reconciliation:
 
@@ -111,7 +113,7 @@ Required inputs:
 Required writes:
 
 - **World Management**
-  - Persist the typed weather update and advance the relevant snapshot/version fields.
+  - Persist the typed weather update and advance the relevant World-owned ambient component version.
 
 Reconciliation:
 
@@ -130,12 +132,12 @@ Required writes:
 
 - **World Management**
   - Persist hazard state as typed ambient room state under an idempotency guard keyed by `EffectId`.
-  - **Target-state only:** advance the committed `roomSnapshotVersion` for the room instance so downstream LOOK/gameplay caches invalidate deterministically. The current `worldSnapshotId` scope marker provides no freshness proof and is not a cache-invalidation authority.
+  - **Target-state only:** advance the World-owned ambient component version used in the composite `LOOK` identity so downstream LOOK/gameplay caches invalidate deterministically. The current `worldSnapshotId` scope marker provides no freshness proof and is not a cache-invalidation authority.
 
 Read/API contract:
 
 - Hazard state used by gameplay is authoritative in World Management and exposed via typed ambient fields in `GetRoomSnapshot`.
-- **Target-state only:** Game Logic must treat committed `roomSnapshotVersion` (carried by the target `worldSnapshotId` alias) as the cache validator for hazard reads; when it advances, cached hazard state is stale. The current scope-derived `worldSnapshotId` marker is not freshness proof and must not validate a cache.
+- **Target-state only:** Game Logic must use the World component version in the composite identity as the cache validator for hazard reads; when it advances, cached hazard state is stale. The current scope-derived `worldSnapshotId` marker is not freshness proof and must not validate a cache.
 - Game Logic and Automation & Scripting must not maintain independent authoritative hazard tables or map-only hazard interpretations.
 
 Reconciliation:

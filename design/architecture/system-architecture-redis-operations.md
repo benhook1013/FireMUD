@@ -223,7 +223,7 @@ Before performing any coordination reset, operators should walk a short pre-rese
 
 ### Scoped Tick Effect Ledger Reconcile
 
-Every coordination reset that affects tick execution must include a tick-effect-ledger reconcile step that drives old-epoch rows to `APPLIED` or `ABANDONED` and ensures new executors do not resume `SCHEDULED` work from the old epoch.
+Every coordination reset that affects tick execution must include the Game Session–owned tick-effect-ledger reconcile step. Old-epoch rows may become `APPLIED` or `ABANDONED` only with the evidence and authority-fenced attestation required by the [Inconclusive Old-Epoch Reconciliation Policy](./system-architecture-tick-failures-and-operations.md#inconclusive-old-epoch-reconciliation-policy); inconclusive work remains a reconciliation-required non-terminal marker under its original `EffectId`, and reset tooling must not bulk-terminalize it or let new executors resume it as current-epoch `SCHEDULED` work.
 
 ### Runbook: Mis-Sharded Coordination Keys
 
