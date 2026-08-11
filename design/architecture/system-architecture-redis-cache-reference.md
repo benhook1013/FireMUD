@@ -2,6 +2,10 @@
 
 This companion document holds the reference-heavy material for Redis cache and rate limiting. The parent policy doc covers cache ownership, invalidation rules, consistency expectations, and canonical cache policy.
 
+## Implementation Status
+
+The `room:*` Class A cache contract below is target-state only. It is not a current correctness path until World Management has an opaque room component version and a proven invalidation path. Current readers must not substitute `worldSnapshotId` or `roomDynamicVersion` for that component version; they must use authoritative reads when the target validation contract is unavailable. The future reader, invalidation, and version-advance rules below remain normative.
+
 ## Cache Adoption Checklist
 
 When introducing or changing a cache/rate-limit prefix, designs must answer the following questions before implementation and CI should enforce that the answers are reflected in this reference doc and the owning service README as the target state:
@@ -32,7 +36,7 @@ This example shows a correctness-critical cache owned by Entity Management.
 
 ### Canonical World Management Cache Contracts (`world-dynamic:*` and `room:*`, Class A)
 
-The first supported World Management Class A caches are intentionally narrow and room-scoped.
+The first supported World Management Class A caches are intentionally narrow and room-scoped. The `room:*` contract is target-state only until its required opaque component version and invalidation path exist.
 
 - `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>`
   - Owner: World Management Service.
@@ -52,6 +56,7 @@ The first supported World Management Class A caches are intentionally narrow and
 - Reader contract:
   - Only `world-dynamic:*` and `room:*` may participate in correctness-critical World Management movement, pathfinding, and visibility decisions.
   - Validate `world-dynamic:*` against `roomDynamicVersion`. A `room:*` entry always requires the opaque World-owned room component version and cannot be validated by `roomDynamicVersion` alone.
+  - This `room:*` reader contract is target state only until the required opaque component version and invalidation path exist; current readers must not substitute `worldSnapshotId` or `roomDynamicVersion`.
   - Fall back to authoritative reads if the version cannot be verified.
   - TTL-only world or presentation caches must use distinct prefixes and must not be substituted for these Class A contracts.
 
