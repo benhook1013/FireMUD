@@ -21,7 +21,7 @@ The target traffic-plane shape remains three distinct planes: internal infrastru
 
 - `session front-end` – The connected Game Session pod that owns socket I/O, connection-local state, and per-session sequencing.
 - `lease owner` – The Game Session execution owner currently holding the `<tenantId, gameInstanceId, regionId>` lease required to mutate region-scoped coordination state.
-- `canonical room state` – A room view assembled only when World Management and Entity Management satisfy the requested same-scope/epoch causal floor; actual component versions are exposed in the composite identity, and bounded newer skew may be accepted.
+- `canonical room state` – A Game Logic-composed room view assembled from same-scope/epoch World and Entity served-through proofs at or beyond the Game Session-requested causal floor; see the [canonical room-read interoperability contract](./system-architecture-overview.md#canonical-room-read-interoperability) for component-version identity and ownership details.
 - `control-plane API` – An infrastructure or domain admin API classification that is not part of player gameplay traffic; when describing ingress surfaces, prefer the named traffic planes below.
 - `bypass-safe workflow` – An explicitly documented external admin workflow allowed to bypass Logging & Admin ingress because it does not rely on Logging & Admin-owned policy, cross-domain write orchestration, or control-plane availability guarantees.
 - `infrastructure management plane` – Internal Gateway management and health-control traffic used for infrastructure operations such as route configuration and liveness checks; this is not an external product API surface.

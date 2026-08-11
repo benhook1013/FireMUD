@@ -56,8 +56,8 @@ World Management may use a numeric room row key as `roomInstanceId` only when it
 
 Tick-driven, cross-service mutations are at-least-once and must be idempotent.
 
-- `EffectId` – the stable root identity for one logical effect. Game Session assigns it once from the admitted operation and its authoritative tick context; retry, recovery, and reconciliation preserve it. It is not derived from mutable payload or regenerated for a replay. An implementation may store it opaquely only when the canonical identity projection remains retained or deterministically recoverable.
-- **Participant guard identity** – a deterministic identity derived from the root `EffectId`, typed operation, and target aggregate. Its durable guard binds that identity to the immutable request digest and durable outcome. Same guard identity with the same request returns the prior result; a changed operation, target, or digest fails closed. Derived reactions receive deterministic child `EffectId` values.
+- `EffectId` – the stable root identity for one logical effect. Game Session assigns it once from the admitted operation and its authoritative tick context; ordinary retry, recovery, and replay preserve it. It is not derived from mutable payload or regenerated for a replay. A fresh root is reserved for a **post-abandon re-drive**: the original effect must be conclusively terminal `ABANDONED` with its source claim terminalized, then recovery allocates a later coordinate, fresh root, new retry/source identity, and durable lineage. An implementation may store it opaquely only when the canonical identity projection remains retained or deterministically recoverable.
+- **Participant guard identity** – a deterministic uniqueness identity derived from exactly the root `EffectId`, typed operation, and target aggregate. Its durable guard binds that identity to the immutable request digest; the durable outcome and other evidence/reconciliation fields are mutable guard-row state protected by CAS, not part of uniqueness identity. Same guard identity with the same request returns the prior result; a changed operation, target, or digest fails closed. Derived reactions receive deterministic child `EffectId` values.
 - The root effect identity, required participant set, and participant outcomes are Game Session reconciliation data. The durable guard/effect behavior is owned by [Transaction Strategies](./system-architecture-transactions.md) and must not be replaced with an ad-hoc service-local key.
 
 ## Cross-Service Causal-Read Fence Identity
@@ -67,14 +67,14 @@ Cross-service presentation composition (for example `LOOK`) uses a causal floor;
 ### Current Scope-Marker Contract
 
 - The current live proto seam carries the room-scope correlation value as World Management `worldSnapshotId` / `world_snapshot_id` and Entity Management `entitySnapshotId` / `entity_snapshot_id`.
-- The current adapters derive those values from `(tenantId, gameInstanceId, roomInstanceId)` alone. They are deterministic same-scope markers that may compare equal, but they do not prove mutation freshness, committed ordering, or a durable read fence.
-- `roomSnapshotVersion` and the target `roomReadFence` allocation/propagation protocol are not present in the current request/proto path. Current marker equality must not be described as complete target-state behavior.
+- Current World Management and Entity Management requests are floor-free: their adapters derive those values from `(tenantId, gameInstanceId, roomInstanceId)` alone. They are deterministic same-scope markers that may compare equal, but they do not prove mutation freshness, committed ordering, or a durable read fence.
+- Target Game Session allocation/propagation of a `CausalReadFence` and participant `servedThroughTickId` proof are not implemented in the current request/proto path. Current marker equality must not be described as complete target-state behavior.
 
 ### Target Causal-Floor Contract
 
 - `CausalReadFence` identifies the requested floor: at least `(tenantId, gameInstanceId, roomInstanceId, regionEpoch, committedTickId)`. It is valid only in that scope and is never a claim that World and Entity served an exact same-time snapshot.
-- A participant serves the same scope and epoch at or beyond the floor and returns its actual component version. Game Logic returns a composed-view identity containing the requested floor plus the World and Entity component versions.
-- Mixed scope or epoch, or a component behind the floor, is rejected or retried. Component versions newer than the floor may differ. Exact read-as-of semantics require a separate historical-snapshot design.
+- A participant response includes the same scope and epoch, a scoped comparable `servedThroughTickId`, and an opaque local component version. Game Logic accepts the response only when `servedThroughTickId >= committedTickId` for the requested floor; it returns a composed-view identity containing the requested floor plus the World and Entity component versions, but must not compare the opaque component-version values themselves.
+- Mixed scope or epoch, or a response whose `servedThroughTickId` is behind the floor, is rejected or retried. No numeric ordering, newer-skew unit, or newer-skew maximum is assigned to opaque component versions. Exact read-as-of semantics require a separate historical-snapshot design.
 - The current `worldSnapshotId` / `entitySnapshotId` values remain scope markers only; they are not the target causal floor or component-version contract.
 
 ## Short Synchronous Saga Identity

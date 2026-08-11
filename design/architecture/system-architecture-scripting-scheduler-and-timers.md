@@ -38,6 +38,12 @@ Within that model:
 
 From the tick system’s perspective, script timers are a source of work that ultimately enters the tick scheduler. Every scheduler and timer source must declare immutable `lane` (`actor_action` or `passive_effect`) and bounded `cost_class` before admission, and must carry those fields unchanged through durable schedule state, firing claims, work items, retries, and recovery. Missing or changed values reject timer firing, admission, retry, or recovery rather than being inferred or reclassified. A timer or automation source that emits a gameplay command remains an `actor_action`; only a timer representing a pulse, environmental change, inbound effect, or already-admitted consequence may use `passive_effect`. The determinism rules in the DSL reference apply equally to timer-driven triggers, while lane selection and budgets remain owned by the tick contract.
 
+#### Automation Command Admission (Target-State)
+
+The target `EnqueueAutomationCommandIfAbsent` contract carries the complete applicable Trigger Identity and the child handoff identity `(automationDispatchId, commandOrdinal)` together with immutable `lane` and bounded `cost_class` values. The durable admission row stores the same values before any tick-queue mutation. Duplicate admission is a replay/no-op only when the trigger identity, child identity, lane, and cost class all match; missing or changed lane/cost values are non-mutating validation rejections and must never be inferred or reclassified.
+
+The lane and cost class are part of every target conflict, request-digest, readback, retry, and recovery comparison. A readback or retry with a missing, changed, or contradictory value rejects and remains fenced; recovery preserves the originally admitted values rather than deriving new scheduling metadata. This contract is target-state and does not make the current live wire or durable rows claim these fields: the live `EnqueueAutomationCommandIfAbsent` boundary remains narrower and does not yet carry the full Trigger Identity, `commandOrdinal`, `lane`, or `cost_class`, so live enforcement and focused proof remain outstanding as tracked in [Automation and Scheduler Runtime](../project-management/implementation-tracking/automation-and-scheduler-runtime.md).
+
 #### Timer Resume Rule (Normative)
 
 When reload, rollback, or schedule preservation keeps a logical timer alive across a version transition, the scheduler must recalculate its next due point using the same explicit rule:

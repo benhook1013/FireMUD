@@ -133,7 +133,7 @@ Illustrative responses:
 
 ### Current room-snapshot contract
 
-The current `GetRoomSnapshotRequest` carries `tenantId`, `RoomInstanceRef`, locale, and session attestation; it does not carry a caller-provided read-fence field. The current `worldSnapshotId` response value is a deterministic room-scope marker, not proof of a committed mutation version.
+The current `GetRoomSnapshotRequest` carries `tenantId`, `RoomInstanceRef`, locale, and session attestation; it is floor-free and does not carry a caller-provided read-fence field. The current `worldSnapshotId` response value is a deterministic room-scope marker, not proof of a committed mutation version.
 
 The current response returns:
 
@@ -151,11 +151,11 @@ Game Logic may memoize snapshots for the duration of a tick but must refresh the
 
 ### Target causal-floor contract
 
-The target protocol follows the [causal-read fence contract](../../system-architecture-identifier-glossary.md#cross-service-causal-read-fence-identity). A target `GetRoomSnapshot` request carries a `CausalReadFence` for the same `RoomInstanceRef` and `regionEpoch`, including at least `committedTickId`. The exact request-field shape is deferred to the coordinated proto/design change; the current request has no caller-provided floor and the current implementation does not claim this behavior complete.
+The target protocol follows the [causal-read fence contract](../../system-architecture-identifier-glossary.md#cross-service-causal-read-fence-identity). Game Session allocates the target `CausalReadFence` from durable region commit authority when it invokes `ResolveLook`; Game Logic propagates that floor unchanged to World Management and Entity Management. A target `GetRoomSnapshot` request carries the floor for the same `RoomInstanceRef` and `regionEpoch`, including at least `committedTickId`. The exact request-field shape remains deferred to the coordinated proto/design change; the current request is floor-free and the current implementation does not claim this behavior complete.
 
-When the target protocol is implemented, World Management serves the requested room scope and epoch at or beyond the causal floor and returns its actual World component version. A bounded component version newer than the floor is valid for presentation. A behind-floor or mixed tenant, game instance, room, or epoch response is rejected or retried with `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE` as applicable. World and Entity do not echo or mint one shared temporal token, and this contract does not claim an exact cross-database historical snapshot.
+When the target protocol is implemented, World Management serves the requested room scope and epoch and returns a scoped `servedThroughTickId` plus an opaque World component version. If World cannot serve through the requested floor from its durable state, it returns `STALE_READ_FENCE` or `READ_FENCE_UNAVAILABLE` as applicable. If World returns a scoped `servedThroughTickId` below the requested `committedTickId`, Game Logic treats that as a caller-side retry/composition rejection rather than a second World service error. Mixed tenant, game instance, room, or epoch is rejected for composition, and Game Logic retries the participant or composition rather than treating scope markers or opaque component versions as directly comparable. World and Entity do not echo or mint one shared temporal token, and this contract does not claim an exact cross-database historical snapshot.
 
-Game Logic composes the requested causal floor with the actual World and Entity component versions in the room-view identity. It retries a participant that is behind the floor or has mixed scope/epoch; it does not require exact equality between the current `worldSnapshotId` and `entitySnapshotId` markers.
+Game Logic validates each participant's scoped served-through proof, then composes only the requested causal floor plus the World and Entity opaque component versions in the room-view identity. It retries a participant that is behind the floor or has mixed scope/epoch; it does not require exact equality between the current `worldSnapshotId` and `entitySnapshotId` markers or compare opaque component versions directly.
 
 ## Room Identity Migration
 
@@ -171,7 +171,9 @@ Illustrative target-state `GetRoomSnapshot` fragments:
 {
   "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
   "gameInstanceId": "9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78",
+  "regionEpoch": 17,
   "roomInstanceId": "1021",
+  "servedThroughTickId": 42,
   "worldComponentVersion": "world-component-version-17",
   "roomName": "Candle-lit Antechamber"
 }
@@ -181,14 +183,14 @@ Illustrative target-state `GetRoomSnapshot` fragments:
 {
   "error": {
     "code": "READ_FENCE_UNAVAILABLE",
-    "message": "Room snapshot could not be materialized for the requested read fence."
+    "message": "Room snapshot could not be materialized for the requested causal read floor."
   }
 }
 ```
 
-The current `worldSnapshotId` remains the deterministic same-scope marker described above and provides no mutation-freshness proof. In the target protocol, the response includes the actual World component version after serving the requested causal floor; it is not a shared token that Entity Management must echo. Game Logic exposes the requested floor plus the World and Entity component versions in the composite room-view identity. Bounded newer component versions may compose, while behind-floor or mixed-scope/epoch responses are rejected or retried. No exact cross-database historical snapshot is claimed.
+The current `worldSnapshotId` remains the deterministic same-scope marker described above and provides no mutation-freshness proof. In the target protocol, the response includes an opaque World component version plus scoped `servedThroughTickId` after serving the requested causal floor; it is not a shared token that Entity Management must echo. Game Logic validates each participant's served-through proof and exposes only the requested floor plus the World and Entity opaque component versions in the composite room-view identity. Same-scope/epoch responses with served-through values at or beyond the requested floor may compose, while `STALE_READ_FENCE` or `READ_FENCE_UNAVAILABLE` responses and mixed-scope/epoch composition failures are retried according to the Game Logic contract. Opaque component versions are not directly compared, and no exact cross-database historical snapshot is claimed.
 
-The unresolved target work is tracked in [World Runtime and Movement](../../../project-management/implementation-tracking/world-runtime-and-movement.md#active-gaps): causal-floor allocation and propagation, participant floor satisfaction, component-version responses, and durable commit ordering are not yet defined or live.
+The unresolved target work is tracked in [World Runtime and Movement](../../../project-management/implementation-tracking/world-runtime-and-movement.md#active-gaps): Game Session floor allocation from durable region commit authority and Game Logic propagation are target obligations, while World participant floor satisfaction and the opaque component-version plus scoped `servedThroughTickId` response remain unimplemented and unproved. The current proto/request and focused proof do not carry or demonstrate this contract; the exact coordinated wire shape and proof encoding remain implementation gaps.
 
 ## Instance Termination Contract
 

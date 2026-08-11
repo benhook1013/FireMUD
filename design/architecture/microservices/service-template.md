@@ -8,6 +8,10 @@
 
 {{ Bullet list of core responsibilities. }}
 
+## Implementation Status
+
+{{ State the current implementation status and focused proof status, and link the relevant implementation tracker. }}
+
 ## Architecture / Design Notes
 
 - {{ Key architecture choice or pattern (e.g., gRPC, REST). }}

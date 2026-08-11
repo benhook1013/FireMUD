@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The live bounded scheduler proves only the universal selection model. It does not yet prove the revised actor-action/passive-effect lane classification, lane-specific budgets, or retry and replay behavior; those remain implementation and focused-proof gaps.
+
 ## Decision Record
 
 - Decision date: 2026-07-19
@@ -59,7 +63,7 @@ Rejected because it preserves agency but allows effect floods, chained amplifica
 
 ## Implementation and Proof Obligations
 
-The existing bounded scheduler proves the universal selection model, not this revised classification. Implementation must classify every current work source, preserve deterministic ordering and replay identities, apply both per-entity and regional budgets, prove bounded deferral under effect floods, and cover simultaneous command/poison, multiple incoming attacks, action/effect retries, ineligibility after start-of-tick effects, and reset/replay behavior.
+Implementation must classify every current work source, preserve deterministic ordering and replay identities, apply both per-entity and regional budgets, prove bounded deferral under effect floods, and cover simultaneous command/poison, multiple incoming attacks, action/effect retries, ineligibility after start-of-tick effects, and reset/replay behavior.
 
 ## Reversibility and Revisit Triggers
 

@@ -44,14 +44,14 @@ The first supported World Management Class A caches are intentionally narrow and
 - `room:<tenantId>:<gameInstanceId>:<roomInstanceId>`
   - Owner: World Management Service.
   - Authoritative source: World Management’s room snapshot/read model.
-  - Required version field: `roomSnapshotVersion`.
-  - Version-advance rule: `roomSnapshotVersion` must advance on both topology-visible changes and any included dynamic-state changes.
+  - Required version: an opaque World-owned room component version (see [Canonical Room Runtime Contract](./system-architecture-overview.md#canonical-room-runtime-contract)).
+  - Version-advance rule: the World-owned room component version must advance on both topology-visible changes and any included dynamic-state changes.
   - Payload scope: navigation and visibility metadata needed for correctness-critical reads.
   - Payload exclusions: must not include presentation-only rendered room views, chat/history windows, or inventories/occupant rosters unless an explicit cross-service contract makes them part of the authoritative room snapshot.
   - Invalidator of record: topology-visible publish/activation paths, snapshot-fed dynamic mutations, and instance lifecycle transitions that rebuild or retire the room snapshot.
 - Reader contract:
   - Only `world-dynamic:*` and `room:*` may participate in correctness-critical World Management movement, pathfinding, and visibility decisions.
-  - Validate against `roomDynamicVersion` or `roomSnapshotVersion`.
+  - Validate against `roomDynamicVersion` or the opaque World-owned room component version.
   - Fall back to authoritative reads if the version cannot be verified.
   - TTL-only world or presentation caches must use distinct prefixes and must not be substituted for these Class A contracts.
 
@@ -83,7 +83,7 @@ CI and code review checks are expected to:
 | Inventory/container views | `inventory:<tenantId>:<containerId>` | Versioned | Validated against a container or aggregate `version`/`lastModified` field in PostgreSQL. |
 | Character graphs | `character-cache:<tenantId>:<characterId>` | Versioned | Backed by character graph rows with explicit versioning. |
 | Dynamic world aggregates | `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>` | Versioned | Backed by authoritative room-instance dynamic-state rows with `roomDynamicVersion`; invalidated on dynamic-state writes and relevant instance lifecycle changes. |
-| Room topology snapshots | `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` | Versioned | Cached room snapshots scoped to a running instance and validated against `roomSnapshotVersion`, which advances on topology-visible and included dynamic changes. |
+| Room topology snapshots | `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` | Versioned | Cached room snapshots scoped to a running instance and validated against the opaque World-owned room component version, which advances on topology-visible and included dynamic changes. |
 | Room LOOK views | `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>` | TTL-only | Recomputed on demand from `ResolveLook`, cached for a short TTL, and primarily used for reconnect/UI redraw rather than as the canonical answer for fresh gameplay reads. |
 | Short-lived chat buffers | `chat:say:<tenantId>:<characterId>`, `chat:guild:<tenantId>:<guildId>`, `chat:city:<tenantId>:<cityId>`, etc. | TTL-only | Rolling windows of recent messages with fixed-size buffers. |
 

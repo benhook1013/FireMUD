@@ -36,7 +36,7 @@ When designing new tick-driven features, keep these invariants in mind:
 - **No cross-region locks** – cross-region interactions are modeled as messages, not shared locks or multi-region transactions.
 - **Idempotent side effects** – the region-scoped tick timeline `(region_epoch, tickId)` and effect guards must be used so that replays after failure do not double-apply mutations.
 
-The identifier glossary owns the stable root `EffectId` for a tick-driven mutation. A concrete ledger/guard/storage projection may include the collision-safe tuple `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId)` for scope, ordering, and target lookup, but that tuple is a storage projection rather than the root identity. The ADR-level `targetAggregateIdentity` is represented by the target aggregate type and ID (or an equivalent explicitly proven collision-safe encoding). Participant guard identity is derived from the root `EffectId`, typed operation, and target aggregate and binds the immutable request digest and durable outcome; a bare tick tuple or bare `effectKey` is not sufficient for that guard contract.
+The identifier glossary owns the stable root `EffectId` for a tick-driven mutation. A concrete ledger/guard/storage projection may include the collision-safe tuple `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId)` for scope, ordering, and target lookup, but that tuple is a storage projection rather than the root identity. The ADR-level `targetAggregateIdentity` is represented by the target aggregate type and ID (or an equivalent explicitly proven collision-safe encoding). Participant guard uniqueness is derived from exactly the root `EffectId`, typed operation, and target aggregate; the immutable request digest is bound to that identity, while durable outcome/evidence state is mutable guard-row state protected by CAS. A bare tick tuple or bare `effectKey` is not sufficient for that guard contract. Ordinary retries and replay preserve the root `EffectId`; a fresh root is allowed only for a **post-abandon re-drive** after conclusive terminal `ABANDONED` plus source-claim terminalization, later coordinate allocation, and durable lineage.
 
 The tick system adopts the same **coordination timeline** concept as the Redis architecture: for each `<tenantId, gameInstanceId, regionId>` there is a canonical timeline defined by `(region_epoch, tickId)`. Within a given `region_epoch`:
 
@@ -80,12 +80,12 @@ Redis coordination state is subject to a bounded tail-loss envelope (see `system
 
 The tick system and Redis tail-loss SLOs combine into a simple contract:
 
-- For each concrete ledger/guard/storage projection `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, tickId, effectKey, targetAggregateType, targetAggregateId)`, linked to its root `EffectId` and participant guard contract, there must eventually be exactly one **terminal** outcome in PostgreSQL (`APPLIED` or `ABANDONED`), even if:
+- For the complete expected concrete participant-projection set for each root effect, including each `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, tickId, effectKey, targetAggregateType, targetAggregateId)` projection linked to its root `EffectId` and guard contract, every expected projection must eventually have exactly one **terminal** outcome in PostgreSQL (`APPLIED` or `ABANDONED`) when the existing evidence policy permits terminalization. Reconciliation must reject missing, extra, partial, or conflicting projections rather than treating one root row as sufficient, even if:
   - The last few ticks for that region are dropped or replayed within the tail-loss envelope, or
   - Executors crash and re-acquire leases under the same `region_epoch`.
 - Any work that cannot be safely replayed after Redis loss or tick re-execution must be:
   - Guarded with idempotency checks that detect and short-circuit replays, or
-  - Intentionally marked `ABANDONED` in the tick effect ledger with a precise reason (for example, reset scopes as described in the failures and operations doc).
+  - Intentionally marked `ABANDONED` in the tick effect ledger with a precise reason only when durable evidence proves it was not applied and the existing policy permits terminalization (for example, reset scopes as described in the failures and operations doc). Inconclusive old-epoch work remains non-terminal reconciliation-required under its original root `EffectId`; reset scope alone does not authorize bulk terminalization.
 
 Players may observe brief rollbacks or duplicated feedback around failover boundaries, but they must never experience permanent double-application of critical effects or silent corruption of authoritative state.
 
@@ -221,9 +221,9 @@ Downstream behavior for stalled regions (rejecting new commands, marking instanc
 Lock contention and transient failures are handled by a bounded retry and backoff policy that preserves fairness:
 
 - Each rescheduled item carries its lane, stable action/effect identity, bounded retry counter, and a `next_eligible_tick_id` value; retries are delayed using an exponential backoff in ticks, for example `nextTick = currentTick + min(2^retryCount, MAX_BACKOFF_TICKS)`.
-- Actor-action retries compete in the actor-action lane and preserve the original action identity; passive/effect retries remain passive and never create a new same-tick root actor action. Retries are scheduled **no earlier than a future tick**; the executor never spins inside a single tick waiting for locks.
-- After a bounded number of failed attempts (for example `MAX_RETRIES`), the command is marked permanently failed, a player-visible error is emitted, and metrics/logs capture the contention so operators can see hotspots.
-- Fairness is guaranteed per entity for root actor actions: within a given entity’s actor-action queue, commands are processed FIFO; passive/effect ordering and cross-entity fairness are bounded by their lane budgets and normal tick scheduling plus the backoff rules.
+- Actor-action retries compete in the actor-action lane and preserve the original action identity; passive/effect retries remain passive and never create a new same-tick root actor action. Retries are scheduled **no earlier than a future tick**; the executor never spins inside a single tick waiting for locks. A fresh root is not created for these ordinary retries. Only a post-abandon re-drive, after terminal `ABANDONED` and source-claim terminalization, may allocate a later coordinate and fresh root with durable lineage.
+- After a bounded number of failed attempts (for example `MAX_RETRIES`), the command is surfaced as retry-budget exhausted and escalated, with player-visible diagnostics and metrics/logs capturing the contention; retry exhaustion alone never authorizes `ABANDONED` or another permanent terminal failure. Terminalization still requires applicable durable evidence, while inconclusive work remains reconciliation-required until that evidence exists.
+- Accepted TICK-12 fairness remains per entity within the same contention-retry/source queue: items retain FIFO order across retries and tick boundaries. Cross-source precedence, including whether that queue-local FIFO is applied before or after priority/due ordering, remains pending TICK-09. Passive/effect ordering and cross-entity fairness are bounded by their lane budgets and normal tick scheduling plus the backoff rules.
 - Metrics such as `tick_conflict_hotspot_detected_total` and `tick_retry_queue_depth` surface regions where contention is persistent so operators can adjust region layout, tick budgets, or feature design.
 
 These invariants ensure that contention is handled predictably: retries remain bounded, hot entities cannot monopolize the loop indefinitely, and operators have clear signals when configuration or design changes are required.
@@ -233,7 +233,7 @@ At the configuration level:
 - Lua staging scripts enforce hard per-tick caps on how many commands or events move from queues into `pending`, using keys such as:
   - `game.tick-max-commands`
   - `automation.tick-max-events`
-- These caps exist so no single player or script can monopolize either lane, even if it enqueues many actions or effects; excess work spills into subsequent ticks according to the lane-specific ordering and fairness rules.
+- These caps exist so no single player or script can monopolize either lane, even if it enqueues many actions or effects; excess work spills into subsequent ticks according to the lane budgets, backoff, and persisted ordering inputs, with exact relative ordering pending TICK-09.
 
 Runtime health is also expressed via ratios such as `tick_execution_time_ms_p95` or `tick_execution_time_ms_p99` over `tick_lock_ttl_ms`:
 

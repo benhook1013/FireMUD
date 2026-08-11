@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The decision is accepted; current LOOK composition proves bounded scope equality but not the causal-floor/composite-version contract. World-authoritative movement is incomplete.
+The decision is accepted; current LOOK composition proves only bounded scope equality, not the target causal-floor/composite-version contract. The current proto seam still carries scope markers rather than the target `CausalReadFence`, `servedThroughTickId`, and component-version fields, and World-authoritative movement/targeting proof remains incomplete.
 
 ## Decision Record
 
@@ -36,7 +36,7 @@ The existing split is sound, but two contracts are too weak. Reusing an `EffectI
 - Game Logic resolves actions and composes reads; it owns no competing spatial state.
 - Game Session owns durable cross-service effect intent, required-participant status, retry, and reconciliation.
 
-`MOVE` commits World-owned location and occupancy before destination presentation is resolved. `DROP` and `PICKUP` commit inside Entity against the admitted room scope and a World-authoritative actor-location precondition. An item never has two holders and an actor never has two authoritative locations; those invariants remain within one owning transaction rather than reconciliation.
+`MOVE` commits World-owned location and occupancy before destination presentation is resolved. `DROP` and `PICKUP` reuse the World `TargetingFactSnapshot` location/version token; World validates that token, while Game Session's actor/executor fence protects ordered execution before Entity commits. Stale targeting evidence is re-resolved under the same root `EffectId`. An item never has two holders and an actor never has two authoritative locations; those invariants remain within one owning transaction rather than reconciliation.
 
 ### Effect Identity and Participant Guards
 
@@ -54,9 +54,9 @@ FireMUD does not claim a globally atomic historical snapshot across World and En
 
 Correctness-sensitive mutations carry exact expected scope, epoch, location, and relevant aggregate versions or attestations. The owner fails closed when those preconditions are stale.
 
-Presentation composition such as `LOOK` uses a causal read floor containing at least `(tenantId, gameInstanceId, roomInstanceId, regionEpoch, committedTickId)`. Each participant must serve the same scope and epoch at or beyond that floor and return its actual component version. Game Logic returns a composite snapshot identity containing the requested floor plus World and Entity component versions. It never treats equality of scope strings as temporal equality.
+For presentation composition such as `LOOK`, Game Session allocates a `CausalReadFence` from durable region commit authority and passes it on `ResolveLook`; Game Logic propagates that fence unchanged to World and Entity. The fence contains at least `(tenantId, gameInstanceId, roomInstanceId, regionEpoch, committedTickId)`. Each participant returns the same scope and epoch, a scoped comparable `servedThroughTickId`, and an opaque local component version. Game Logic accepts a response only when `servedThroughTickId >= requested committedTickId`; it never compares opaque component versions. The composite snapshot identity remains the requested floor plus the World and Entity opaque component versions; `servedThroughTickId` is validation proof, not a component-version ordering value. It never treats equality of scope strings as temporal equality.
 
-Bounded component skew newer than the requested floor is acceptable for presentation. Mixing tenant, game instance, room, epoch, or a component that has not reached the floor is rejected or retried. A feature requiring exact cross-database read-as-of semantics needs a separate historical snapshot design rather than overloading LOOK.
+Mixing tenant, game instance, room, or epoch, or a response whose `servedThroughTickId` is behind the requested floor, is rejected or retried. A feature requiring exact cross-database read-as-of semantics needs a separate historical snapshot design rather than overloading LOOK. The current proto and proof gaps remain explicit; current scope-marker responses do not establish this target contract.
 
 ## Consequences
 
@@ -82,8 +82,8 @@ Rejected because the current token proves scope rather than time, while genuine 
 
 ## Implementation and Proof Obligations
 
-Proof must cover guard request-digest mismatch, duplicate replay, crash after one participant, MOVE before destination LOOK, DROP/PICKUP against stale location, no double holder/location, participant reconciliation, same-floor presentation, bounded newer component skew, mixed scope/epoch rejection, and lagging-participant retry.
+Proof must cover guard request-digest mismatch, duplicate replay, crash after one participant, MOVE before destination LOOK, DROP/PICKUP against stale location and re-resolution under the same root `EffectId`, no double holder/location, participant reconciliation, same-floor presentation, served-through-floor validation, opaque component-version handling, mixed scope/epoch rejection, and lagging-participant retry.
 
 ## Reversibility and Revisit Triggers
 
-Component versions and causal-floor fields can evolve without changing ownership. Revisit if measured read skew materially harms gameplay, one service becomes an operational bottleneck, or a feature truly requires exact historical multi-service snapshots.
+Component versions and causal-floor fields can evolve without changing ownership. Revisit if causal-read retries materially harm gameplay, one service becomes an operational bottleneck, or a feature truly requires exact historical multi-service snapshots.

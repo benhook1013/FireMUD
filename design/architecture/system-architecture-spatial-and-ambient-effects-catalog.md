@@ -8,9 +8,10 @@ Effects described here are **not** optional guidance: any new implementation tha
 
 - [Transaction Strategies](./system-architecture-transactions.md) owns split spatial authority and operation-bound effect behavior. [Identifier Glossary](./system-architecture-identifier-glossary.md#cross-service-effect-identity) owns root `EffectId` and participant guard identity, while its [causal-read fence contract](./system-architecture-identifier-glossary.md#cross-service-causal-read-fence-identity) owns the causal floor and composite component-version identity. This catalog retains only effect-local writes, guards, and reconciliation consequences.
 - Every effect must be scoped by instance identifiers. For room-scoped effects, this is `RoomInstanceRef = (tenantId, gameInstanceId, roomInstanceId)`. See `design/architecture/system-architecture-identifier-glossary.md`.
-- Every participating service must commit its durable guard with effect-visible domain rows so matching retries return the prior result and a changed operation, target, or digest fails closed.
-- The default reconciliation policy is **retry until convergence using the same `EffectId`**. Do not generate compensating deletes inside the tick loop.
-- Presentation reads use the causal floor and actual component versions defined in [Identifier Glossary](./system-architecture-identifier-glossary.md). Current `worldSnapshotId`/`entitySnapshotId` values are scope markers only. Target presentation requests carry the same room scope and epoch floor; participants return their actual component versions, bounded newer skew is allowed, and a participant behind the floor or a mixed scope/epoch is rejected or retried. The composed identity exposes the requested floor plus component versions; it does not claim an exact distributed historical snapshot.
+- Game Session assigns one stable root `EffectId` to each logical effect. Each participating owner derives a deterministic participant-guard identity from that root, the typed operation, and the target aggregate, and binds it to the immutable request digest and stored outcome. Matching retries return the prior result; a changed operation, target, or digest fails closed under the owner contract in [Transaction Strategies](./system-architecture-transactions.md).
+- The default reconciliation policy is **retry until convergence using the same root `EffectId`**. Do not generate compensating deletes inside the tick loop.
+- Presentation reads follow the causal-floor and component-proof contract in [Identifier Glossary](./system-architecture-identifier-glossary.md). Current `worldSnapshotId`/`entitySnapshotId` values are scope markers only. Effect entries below record only local invalidation consequences; floor allocation, propagation, response acceptance, and composite-identity rules remain in the canonical contract.
+- For World-owned door, weather, and hazard effects, the participant guard, typed ambient-state mutation, and World component-version advance commit in one World-local transaction. A matching replay returns the stored outcome without applying the mutation or incrementing the component version twice. The canonical transaction rule belongs in [Transaction Strategies](./system-architecture-transactions.md); this catalog records only the effect-local consequence and proof obligation.
 
 ## Spatial Effects
 
@@ -34,10 +35,10 @@ Required writes:
 
 Reconciliation:
 
-- If EMS succeeds but WMS fails, retry WMS using the same `EffectId` until WMS converges.
+- If EMS succeeds but WMS fails, retry WMS using the same root `EffectId` until WMS converges.
 - If WMS succeeds but EMS fails, treat EMS as no-op (movement does not require containment writes).
 
-`MOVE` commits World location/occupancy before destination presentation. `DROP` and `PICKUP` commit entirely in Entity against the admitted room scope and a World-authoritative actor-location precondition; an item never has two holders and an actor never has two authoritative locations.
+`MOVE` commits World location/occupancy before destination presentation. `DROP` and `PICKUP` commit entirely in Entity against the admitted room scope, but Entity's local transaction must first enforce a stale-rejecting World-authoritative actor-location precondition. The operation reuses the World `TargetingFactSnapshot` location/version token: World validates that token against its own current facts, while Game Session protects the ordered DROP/PICKUP execution under the actor/executor fence before Entity commits. Stale evidence re-resolves under the same root `EffectId`. An item never has two holders and an actor never has two authoritative locations. The current DROP/PICKUP proto/request and proof do not yet carry or demonstrate this token and validation path; this catalog does not duplicate the selected mechanism.
 
 ### Drop (Inventory → Ground)
 
@@ -45,19 +46,20 @@ Required inputs:
 
 - `EffectId`
 - `actorEntityId`
-- `itemEntityId`
+- `itemInstanceId`
 - `roomInstanceRef` (where the drop occurs)
+- Derived validation metadata: the World `TargetingFactSnapshot` location/version token and the current Game Session actor/executor-fence context; these are not a second effect identity.
 
 Required writes:
 
 - **World Management**
   - No required write unless the game also models a world-side “sound/door/hazard reaction”; such reactions must be expressed as separate ambient effects with their own `EffectId` (derived deterministically from the parent).
 - **Entity Management**
-  - Move `itemEntityId` into the synthetic room-ground container for `roomInstanceRef`.
+  - Move `itemInstanceId` into the synthetic room-ground container for `roomInstanceRef`.
 
 Reconciliation:
 
-- If the EMS move succeeds and any follow-up ambient effects fail, retry ambient effects using their effect ids. Do not undo the item move.
+- If the EMS move succeeds and any follow-up ambient effects fail, retry ambient effects using their root effect identities. Do not undo the item move.
 
 ### Pickup (Ground → Inventory)
 
@@ -65,19 +67,20 @@ Required inputs:
 
 - `EffectId`
 - `actorEntityId`
-- `itemEntityId`
+- `itemInstanceId`
 - `roomInstanceRef`
+- Derived validation metadata: the World `TargetingFactSnapshot` location/version token and the current Game Session actor/executor-fence context; these are not a second effect identity.
 
 Required writes:
 
 - **World Management**
   - No required write.
 - **Entity Management**
-  - Move `itemEntityId` out of the synthetic room-ground container for `roomInstanceRef` into the actor’s inventory container.
+  - Move `itemInstanceId` out of the synthetic room-ground container for `roomInstanceRef` into the actor’s inventory container.
 
 Reconciliation:
 
-- Retry the EMS move using the same `EffectId` until applied. If the item is already moved, treat as replay/no-op.
+- Retry the EMS move using the same root `EffectId` until applied. If the item is already moved, treat as replay/no-op.
 
 ## Ambient Effects (World Management Authoritative)
 
@@ -95,8 +98,8 @@ Required inputs:
 Required writes:
 
 - **World Management**
-  - Apply the door state mutation under an idempotency guard keyed by `EffectId`.
-  - **Target-state only:** advance the World-owned ambient component version used in the composite `LOOK` identity so the Game Session presentation cache can invalidate. The current `worldSnapshotId` scope marker provides no freshness proof and is not a cache-invalidation authority.
+  - Apply the door state mutation under the owner participant guard derived from the root `EffectId`, typed `DOOR_TOGGLE` operation, and target room/door aggregate, bound to the request digest and stored outcome.
+  - **Target-state only:** advance the World-owned ambient component version used in the composite `LOOK` identity in that same local transaction so the Game Session presentation cache can invalidate. A matching guard replay returns the prior result without a second version increment. The current `worldSnapshotId` scope marker provides no freshness proof and is not a cache-invalidation authority.
 
 Reconciliation:
 
@@ -113,7 +116,7 @@ Required inputs:
 Required writes:
 
 - **World Management**
-  - Persist the typed weather update and advance the relevant World-owned ambient component version.
+  - Persist the typed weather update under the owner participant guard and advance the relevant World-owned ambient component version in the same local transaction. A matching guard replay returns the prior result without a second version increment.
 
 Reconciliation:
 
@@ -131,8 +134,8 @@ Required inputs:
 Required writes:
 
 - **World Management**
-  - Persist hazard state as typed ambient room state under an idempotency guard keyed by `EffectId`.
-  - **Target-state only:** advance the World-owned ambient component version used in the composite `LOOK` identity so downstream LOOK/gameplay caches invalidate deterministically. The current `worldSnapshotId` scope marker provides no freshness proof and is not a cache-invalidation authority.
+  - Persist hazard state as typed ambient room state under the owner participant guard derived from the root `EffectId`, typed `HAZARD_STATE_UPDATE` operation, and target room/hazard aggregate, bound to the request digest and stored outcome.
+  - **Target-state only:** advance the World-owned ambient component version used in the composite `LOOK` identity in that same local transaction so downstream LOOK/gameplay caches invalidate deterministically. A matching guard replay returns the prior result without a second version increment. The current `worldSnapshotId` scope marker provides no freshness proof and is not a cache-invalidation authority.
 
 Read/API contract:
 
@@ -142,4 +145,4 @@ Read/API contract:
 
 Reconciliation:
 
-- Retry WMS with the same `EffectId` until hazard state matches `targetState`.
+- Retry WMS with the same root `EffectId` until hazard state matches `targetState`.

@@ -6,7 +6,7 @@ The sections below define the target-state runtime contract. Current implementat
 
 - Hidden same-type Game Session recovery within ADR 0013's qualifying conditions remains an implementation or proof gap; the target is to preserve the session through upstream rebind rather than require a player-visible re-`LOGIN` / re-`PLAY` cycle.
 - Current `onCommand` ingress uses the live `{tenantId, gameInstanceId}` boundary as a region surrogate until true region partitioning is shipped; it carries the current `regionEpoch` and a producer-supplied `readSnapshotToken` derived from the command and ownership fence.
-- Durable command/effect execution currently covers movement, the `GET` / `DROP` / `PUT` / `TAKE` / `WEAR` / `REMOVE` item surface, and `BLOCK`; other state-changing command families still need to migrate onto the same effect-idempotent replay/no-op seam.
+- Durable command/effect execution currently covers movement, the `GET` / `DROP` / `PUT` / `TAKE` / `WEAR` / `REMOVE` item surface, and `BLOCK`; other state-changing command families still need to migrate onto the same current effect replay/no-op seam. The current movement/item replay rows do not yet prove the ADR 0054 participant guard bound to root `EffectId`, typed operation, target, and request digest, or fail-closed changed reuse.
 - Current Game Session code still defaults `FIREMUD_AUTH_SESSION_EXPIRATION_MS` to one hour and does not enforce the target five-minute continuity cap.
 - Current Game Session code has not converged on the canonical bounded `session:game:*` index families or proved their repair protocol: it still uses transitional `sessionctx:*` and tenant/identity lookup records and does not implement/prove the generation-safe global `accountIndexMember` set, the partitioned global issuer index, or their cross-slot repair/acknowledgement flows. This is implementation/proof drift, not a transfer of ownership or a different member shape.
 
@@ -167,12 +167,12 @@ Game Session now has a real current-boundary durable gameplay execution seam ins
 
 The first migrated command families are movement plus the first item/equipment/container mutation surface:
 
-- built-in movement input now enqueues durably instead of performing its authoritative room mutation directly in the dispatch handler;
-- movement execution reuses the shared move-planning logic to preserve player-visible semantics, but `MoveCommandHandler` no longer exposes a public synchronous session-write path and the authoritative room change now flows through one dedicated idempotent movement-apply seam keyed by `effectId`;
-- duplicate movement effect application converges to replay/no-op rather than a second room mutation;
+- built-in movement input now enqueues durably instead of performing the current Game Session room-binding/projection update directly in the dispatch handler; World-authoritative character location and occupancy mutation remains unimplemented;
+- movement execution reuses the shared move-planning logic to preserve player-visible semantics, but `MoveCommandHandler` no longer exposes a public synchronous session-write path and the current Game Session room-binding/projection update now flows through one dedicated domain-local replay seam keyed by `effectId`; this is not the World-authoritative location/occupancy mutation and does not prove the ADR 0054 operation/target/request-digest participant guard;
+- duplicate movement application at this current seam converges to replay/no-op rather than a second room-binding update; changed reuse of an `effectId` is not proven fail-closed;
 - player-visible movement output is delivered asynchronously through the same active-websocket plus screen-buffer-aware delivery path used for runtime recipient delivery;
 - item/equipment/container mutation commands, including `GET`, `DROP`, `PUT`, `TAKE`, `WEAR`, and `REMOVE`, enqueue durably from the player-facing command path and execute from the durable post-drain effect executor before their player-visible outputs are delivered;
-- Game Session passes the durable `tick_effect.effectId` to Entity Management for those item/equipment/container mutations so duplicate downstream delivery can replay the stored domain response instead of applying the mutation again;
+- Game Session passes the durable `tick_effect.effectId` to Entity Management for those item/equipment/container mutations so duplicate downstream delivery can replay the stored domain response instead of applying the mutation again. This current `{tenantId,effectId}` identity is domain-local replay only, not the ADR 0054 participant guard bound to root effect, typed operation, target, and request digest; changed reuse is not proven fail-closed;
 - `BLOCK` is the first transient action-state command on the same durable execution seam: Game Session stores/replays the durable effect, Game Logic routes `ApplyActorCondition`, and Entity Management persists the short-lived `blocking` active condition.
 - read-only item views such as `INVENTORY`, `EQUIPMENT`, and `CONTAINER` remain direct view commands because they do not mutate authoritative gameplay state.
 
