@@ -3,6 +3,18 @@
 Use this prompt to review player and control-plane traffic from the external edge through protocol translation and session handling, including visible behavior during failure and reconnection.
 
 Apply the [shared review contract](./00-shared-review-contract.md).
+Apply the [orchestrated review workstream contract](./02-orchestrated-review-workstream-contract.md).
+
+## Orchestrated Execution
+
+A full invocation is an orchestrated review workstream. The invoking main thread takes primary ownership and delegates these prompt-specific bounded evidence lanes:
+
+- public and internal route ownership, edge trust, and identity binding;
+- browser, WebSocket, Telnet, TLS Telnet, MCP, and client handshake, framing, encoding, and negotiation;
+- ordering, backpressure, disconnect, reconnect, takeover, and replay; and
+- transport and client parity, visible failures, and proof.
+
+The primary reconciles route-to-session seams and intentional client differences across the lanes.
 
 ## Starting Sources
 

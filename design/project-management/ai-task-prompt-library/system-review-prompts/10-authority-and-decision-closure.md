@@ -3,6 +3,18 @@
 Use this prompt once the main target-state design is believed to be complete, or after a substantial reallocation of canonical design authority.
 
 Apply the [shared review contract](./00-shared-review-contract.md).
+Apply the [orchestrated review workstream contract](./02-orchestrated-review-workstream-contract.md).
+
+## Orchestrated Execution
+
+A full invocation is an orchestrated review workstream: the invoking main thread takes primary ownership and delegates bounded evidence lanes for:
+
+- product outcomes and allocated design authority;
+- architecture, service, and public-traffic contract ownership, including secondary-document duplication;
+- consequential-decision and ADR state and incorporation; and
+- tracker and status authority, including target, current, and proof claims.
+
+The primary thread reconciles contract families and retains judgment over ambiguity and consequential decisions.
 
 ## Starting Sources
 

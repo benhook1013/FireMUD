@@ -3,6 +3,18 @@
 Use this prompt to review whether FireMUD's checked-in deployment and operations design is coherent, executable, diagnosable, and recoverable. It reviews repository contracts and artifacts, not the live state of an environment.
 
 Apply the [shared review contract](./00-shared-review-contract.md).
+Apply the [orchestrated review workstream contract](./02-orchestrated-review-workstream-contract.md).
+
+## Orchestrated Execution
+
+A full invocation is an orchestrated review workstream: the invoking main thread takes primary ownership and delegates bounded evidence lanes for:
+
+- environment isolation, bindings, secrets, certificates, and operator access;
+- artifact lineage, build, deployment, migration, readiness, promotion, and rollback;
+- backup freshness, retention, restore, quarantine, hardening, and traffic reopening; and
+- logs, metrics, traces, SLOs, alerts, dashboards, runbooks, incidents, and player-impact signals.
+
+The primary thread reconciles operational dependencies and distinguishes checked-in evidence from live or event-bound evidence.
 
 ## Starting Sources
 

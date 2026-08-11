@@ -3,6 +3,18 @@
 Use this prompt to review whether player, creator, and operator journeys are coherent, understandable, recoverable, and honestly represented across target and implemented surfaces.
 
 Apply the [shared review contract](./00-shared-review-contract.md).
+Apply the [orchestrated review workstream contract](./02-orchestrated-review-workstream-contract.md).
+
+## Orchestrated Execution
+
+A full invocation is an orchestrated review workstream: the invoking main thread takes primary ownership and delegates bounded evidence lanes for:
+
+- player journeys, tracing first-attempt success and failure or recovery paths with accessibility;
+- creator journeys, tracing first-attempt success and failure or recovery paths with accessibility;
+- operator journeys, tracing first-attempt success and failure or recovery paths with accessibility; and
+- an intentional cross-cutting pass for cross-client language, state, accessibility, target/current status, and proof consistency.
+
+The primary thread reconciles shared journeys and ensures API or tracker existence is not treated as proof of a usable experience.
 
 ## Starting Sources
 

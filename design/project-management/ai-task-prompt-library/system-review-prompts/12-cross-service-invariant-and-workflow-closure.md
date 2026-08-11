@@ -3,6 +3,19 @@
 Use this prompt to test whether FireMUD's important workflows remain coherent when followed across service, storage, transport, and operational boundaries.
 
 Apply the [shared review contract](./00-shared-review-contract.md).
+Apply the [orchestrated review workstream contract](./02-orchestrated-review-workstream-contract.md).
+
+## Orchestrated Execution
+
+A full invocation is an orchestrated review workstream: the invoking main thread takes primary ownership and delegates bounded evidence lanes for:
+
+- account, identity, admission, and session lifecycle;
+- gameplay and runtime mutations;
+- authoring, publication, and activation;
+- social, moderation, operator, and data-rights workflows; and
+- delivery, migration, backup, restore, traffic, and recovery.
+
+The primary thread reconciles shared invariants and seams across these workflow families.
 
 ## Starting Sources
 
