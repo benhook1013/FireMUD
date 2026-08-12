@@ -32,11 +32,11 @@ World Management and Entity Management own separate databases and component-vers
 
 ## Decision
 
-Cross-service presentation reads such as `LOOK` use a common causal floor containing at least `(tenantId, gameInstanceId, roomInstanceId, regionEpoch, committedTickId)`.
+Cross-service presentation reads such as `LOOK` use a common causal floor containing at least `(tenantId, gameInstanceId, regionId, roomInstanceId, regionEpoch, committedTickId)`, with `regionId` supplied by Game Session's durable region authority rather than inferred from a World row identifier.
 
 Each participant must:
 
-- match the requested tenant, game instance, room, and region epoch;
+- match the requested tenant, game instance, `regionId`, room, and region epoch;
 - prove that it has applied through at least the requested committed tick; and
 - return its own actual component version.
 

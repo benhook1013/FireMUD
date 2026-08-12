@@ -8,8 +8,8 @@ This document summarizes the canonical Redis-related metrics, alerting surfaces,
 - `redis_coordination_aof_growth_bytes_total`
 - `redis_coordinator_restart_duration_seconds`
 - `redis_coordination_tail_loss_ms{scope}`
-- `redis_replication_lag_ms{redis_role,nodeId,upstreamNodeId}`
-- `redis_replication_offset_lag_bytes{redis_role,nodeId,upstreamNodeId}`
+- `redis_replication_lag_ms{redis_role,scope}`
+- `redis_replication_offset_lag_bytes{redis_role,scope}`
 - `coordination_maintenance_active{scope_type,scope_bucket,operation}`
 - error and outcome metrics for stale lease, stale lock, unsupported epoch, and similar replay/coordination failures
 - size and count metrics for coordination prefixes such as `tick:*`, `timer:*`, `retry:*`, `session:*`, and `tick-executor-lease:*`
@@ -159,7 +159,7 @@ These are conservative heuristics used to spot unintended coordination misuse ea
 
 Alerts and dashboards should reference the explicit SLOs and budgets defined in [`system-architecture-redis-operations.md`](./system-architecture-redis-operations.md), using clear labels and scope-aware wording so incidents tie back to agreed envelopes rather than vague “Redis is bad” signals.
 
-Replica-promotion dashboards should use `redis_replication_lag_ms` as the canonical decision metric and compare it directly against the measured `redis_unreplicated_write_window_slo_ms` for the affected deployment:
+Replica-promotion dashboards should use `redis_replication_lag_ms` as the canonical decision metric and compare it directly against the measured `redis_unreplicated_write_window_slo_ms` for the same Coordination Redis deployment, canonical environment class, and active configuration/ruleset. The comparison uses the worst candidate replica across all node series in that scope. `scope` is a bounded deployment/environment bucket; exact node and upstream identities belong in structured logs or control-plane evidence, never in Prometheus labels:
 
 - acceptable band: `redis_replication_lag_ms <= 0.5 * redis_unreplicated_write_window_slo_ms`
 - warning band: `0.5 * redis_unreplicated_write_window_slo_ms < redis_replication_lag_ms < redis_unreplicated_write_window_slo_ms`

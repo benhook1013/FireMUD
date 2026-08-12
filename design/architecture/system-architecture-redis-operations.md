@@ -101,7 +101,7 @@ This handoff uses the complete [canonical post-reset verification checklist](./s
 
 ## Redis SLOs & Budgets
 
-This section centralizes the normative targets for Redis behavior that other docs reference. Individual environments may tune concrete values, but changes should be treated as deliberate SLO updates rather than silent drift.
+This section centralizes the normative targets for Redis behavior that other docs reference. Individual environments may tune concrete values, but changes should be treated as deliberate SLO updates rather than silent drift. The loss-window and replica-promotion comparisons are scoped to one Coordination Redis deployment, its canonical environment class, and its active configuration/ruleset; an environment may claim a production-like SLO only when its profile and evidence explicitly permit that claim. Ephemeral preview/CI stacks and other non-eligible environments must not be used to validate it.
 
 ### Coordination Redis Core Targets
 
@@ -202,8 +202,8 @@ Behavior:
 
 Runbook:
 
-1. Monitor `redis_replication_lag_ms{redis_role="coordination",nodeId,upstreamNodeId}` as the canonical promotion-lag metric, with `redis_replication_offset_lag_bytes{...}` as supporting evidence.
-2. Compare the worst candidate-promotion lag against the measured unreplicated-write-window SLO:
+1. Monitor the bounded `redis_replication_lag_ms{redis_role="coordination",scope}` metric as the canonical promotion-lag metric, with `redis_replication_offset_lag_bytes{redis_role="coordination",scope}` as supporting evidence. `scope` is the documented deployment/environment bucket; exact `nodeId` and `upstreamNodeId` values belong in structured logs or control-plane evidence, not Prometheus labels.
+2. Across all candidate replicas in this same deployment/environment/ruleset scope, select the worst candidate-promotion lag and compare it against that scope's measured unreplicated-write-window SLO:
    - acceptable: `redis_replication_lag_ms <= 0.5 * redis_unreplicated_write_window_slo_ms`
    - warning: `0.5 * redis_unreplicated_write_window_slo_ms < redis_replication_lag_ms < redis_unreplicated_write_window_slo_ms`
    - red: `redis_replication_lag_ms >= redis_unreplicated_write_window_slo_ms`

@@ -112,7 +112,7 @@ At this API boundary:
 The shared dry-run safety, namespace, authorization, budget, and capacity rules are defined in the [cross-service scripting contracts](../../system-architecture-scripting-contracts.md#6-dry-run--test-traffic-safety). At this API boundary, the service exposes a non-committing test path used by Game Design and Logging & Admin tools:
 
 - Test runs use the production sandbox and loop-safety/resource limits, but return would-be commands to the caller instead of persisting/indexing work or handing off to tick queues.
-- Materialized handler-scoped test executions are recorded in `script_event_audit` with `isDryRun=true`; pre-handler dry-run rejection remains in `script_event_ingress_audit` and does not create a handler row. The normative audit table defines the `DRY_RUN_RESULT` success outcome and prohibits live `handoff_accepted`.
+- Materialized handler-scoped test executions are recorded in `script_event_audit` with `isDryRun=true`; pre-handler dry-run rejection remains in `script_event_ingress_audit` and does not create a handler row. The normative audit table defines `finalStage=DRY_RUN_RESULT` with `finalOutcome=dry_run_success` and prohibits live `handoff_accepted`.
 - Pre-resolution dry-run budget denial is returned as the event-scope outcome `TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED` with `admissionReason=dry_run_budget_exceeded`, not as a transport error. After handler work is materialized, capacity denial is recorded with handler-scoped `finalOutcome=quota_denied` and a bounded reason. Authorization failures remain deterministic application-level errors such as `DRY_RUN_UNAUTHORIZED`.
 
 ## Reload Backpressure Contract
