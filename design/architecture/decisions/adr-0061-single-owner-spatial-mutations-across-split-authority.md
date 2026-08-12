@@ -44,7 +44,7 @@ Authority is split as follows:
 Each logical mutation declares its actual authoritative participants. A single-owner mutation does not add another required mutation participant merely because it consumed evidence from another service.
 
 - `MOVE` mutates World location/occupancy in one World transaction. Pure movement has no Entity mutation participant.
-- `DROP` and `PICKUP` mutate the item's holder in one Entity transaction. They use the existing World `TargetingFactSnapshot` actor-location/location-version token, admitted for the same room/epoch and validated under the Game Session actor/executor fence before Entity commits; Entity also checks the expected holder and aggregate version. Stale evidence re-resolves under the same root `EffectId` and immutable request digest, without transferring item authority to World.
+- `DROP` and `PICKUP` mutate the item's holder in one Entity transaction. They use the existing World `TargetingFactSnapshot` actor-location/location-version token, admitted under the Game Session actor/executor fence and passed to Entity as owner-issued location evidence. Before committing, Entity atomically validates that token for the same room/epoch together with the expected holder and Entity aggregate version; stale or mismatched World location evidence fails admission and re-resolves under the same root `EffectId` and immutable request digest, without transferring item authority to World.
 
 Every owner derives a participant guard identity from the root `EffectId`, typed operation, and target aggregate, and binds it to an immutable request digest and durable result. Same guard and same request replays the prior result; the same guard with a different operation, target, or digest fails closed.
 
