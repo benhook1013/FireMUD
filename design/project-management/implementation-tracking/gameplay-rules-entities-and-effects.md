@@ -110,6 +110,9 @@ Damage, mitigation, resistances, combat timing, body-region resolution, defeat, 
 
 ## Active Gaps
 
+- Accepted TICK-03 requires command-level required/optional effect classification and invariant-sensitive routing; current gameplay families do not yet provide complete classification or terminal-outcome proof. See [ADR 0053](../../architecture/decisions/adr-0053-command-atomicity-by-invariant-class.md) and its [tick failure/operations owner](../../architecture/system-architecture-tick-failures-and-operations.md).
+- Accepted TICK-04 requires one durable root `EffectId` with operation/target/request-digest-bound participant guards and causal read composition. Existing replay proof is domain-bounded and does not prove the cross-service guard, stale-precondition, or mixed-floor cases. See [ADR 0054](../../architecture/decisions/adr-0054-split-spatial-authority-with-causal-read-composition.md) and its [identifier-glossary owner](../../architecture/system-architecture-identifier-glossary.md).
+
 - The parent inventory slice remains partially implemented as a domain: manual happy-path verification over both WebSocket and Telnet is still unchecked, and later nested-container UX, crafting/material flows, banking/vendor/mail/trade, loot generation, scripted item behavior, durability, and richer client filtering are not implemented.
 - Broader holder families must reuse the direct-holder and guarded-handoff model. Cross-domain transfer replay is not implicit; it needs an explicit caller-owned contract. Stronger audit invariant/alert tooling is also future work.
 - Broader character ownership and publish-copy/version synchronization across services remain incomplete; the current item and effect seams do not establish a complete cross-service ownership handoff for later gameplay domains.

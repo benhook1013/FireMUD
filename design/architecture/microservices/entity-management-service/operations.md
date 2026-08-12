@@ -2,6 +2,10 @@
 
 This document collects Entity Management’s readiness model, tick-lock/tick-idempotency operational assumptions, and deployment-level operational notes.
 
+## Implementation Status
+
+The complete participant-guard contract described here—root `EffectId`, typed operation and target, immutable `requestDigest`, and complete replay verification—is target-state. The current `EntityMutationEffectReplayService` and schema provide narrower effect/operation replay and do not yet enforce or prove the target mutation-boundary contract. [Transaction Strategies](../../system-architecture-transactions.md) is the canonical owner of participant-guard and replay-verification semantics.
+
 ## Operational Notes
 
 - Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health/readiness` and `/actuator/health/liveness` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
@@ -35,12 +39,12 @@ Entity Management implements tick idempotency using the per-aggregate last-tick 
 
 For a multi-entity operation that uses the per-aggregate watermark, Entity Management must claim the complete composite watermark atomically. It resolves all target rows, locks or inserts them in deterministic target-aggregate order, validates every row against the same `(regionEpoch, tickId)`, and advances every row in one local database transaction. If any target is stale, already claimed, or unavailable, the operation makes no partial watermark advance and applies no mutation. Sequential per-target claims are not sufficient because they can expose a partially admitted operation.
 
-Complex multi-entity operations (for example trades that touch two inventories) use the operation-level effect guard pattern described in the same tick document. They derive the complete target guard set from one stable operation `effectKey`, project one complete target-specific `EffectId` per affected aggregate, insert or verify every target guard in the same transaction before applying changes, and treat a conflict as completion only after the complete expected guard set and authoritative target state are present. A partial conflict must reconcile the original operation and its target-specific EffectIds or fail closed; it must not be treated as proof that the whole operation already applied.
+Complex multi-entity operations (for example trades that touch two inventories) use the operation-level effect guard pattern owned by [Transaction Strategies](../../system-architecture-transactions.md#tick-effects-are-at-least-once-idempotency-is-mandatory) and referenced by the tick document. They derive the complete target guard set from one stable root `EffectId` and its typed operation/target projections, while retaining the operation’s stable `effectKey` in the explicit ledger/guard projection; they insert or verify every participant guard in the same transaction before applying changes, and treat a conflict as completion only after the complete expected guard set and authoritative target state are present. A partial conflict must reconcile the original root effect and its participant guard identities or fail closed; it must not be treated as proof that the whole operation already applied.
 
 Examples:
 
 - **Damage application** – when a tick instructs Entity Management to apply damage to `entityId`, the handler:
-  - derives the operation-level EffectId, including the stable `effectKey` and target aggregate identity, and inserts/verifies the corresponding `tick_effect_guard` row in the same transaction as the HP mutation;
+  - uses the stable root `EffectId`, derives the typed damage operation/target guard identity, and inserts/verifies the corresponding `tick_effect_guard` row in the same transaction as the HP mutation; the stable `effectKey` remains in the explicit guard/ledger projection;
   - treats a guard conflict as a replay only after verifying the complete effect and target state, and otherwise reconciles or fails closed with the original EffectId. Damage does not assume an at-most-one-damage-per-aggregate-per-tick invariant, so the per-aggregate `entity_tick_state` watermark is not sufficient for this path.
 
 - **Trade between two entities** – when a tick performs a trade between `fromEntityId` and `toEntityId`:
@@ -48,5 +52,5 @@ Examples:
   - before encoding, the handler validates every identity-bearing and typed field against its declared type and domain; it does not encode malformed input, fallback identities, or alternate textual spellings. Quantity is parsed as its declared numeric type and rendered as canonical base-10 decimal, so semantically equal values such as `1` and `01` produce identical bytes;
   - the handler serializes the admitted identity, the stable per-effect trade discriminator, and the validated canonical fields in a fixed versioned order using canonical UTF-8 length-prefixed fields, for example `trade:v1|<len(identity)>:<identity>|<len(effectDiscriminator)>:<effectDiscriminator>|<len(fromEntityId)>:<fromEntityId>|<len(toEntityId)>:<toEntityId>|<len(itemId)>:<itemId>|<len(quantity)>:<canonicalQuantity>`; the exact resulting bytes are the retry identity and must be reused unchanged, while sibling effects from one command and separate admitted trades remain distinct;
   - no canonical one-trade-per-`(fromEntityId,toEntityId,itemId)`-per-tick invariant exists, so the participant/item tuple alone cannot be the effect key;
-  - it inserts one complete `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType=INVENTORY, targetAggregateId)` guard row for each affected inventory aggregate before moving items between inventories; and
-  - on any primary-key conflict, it verifies that guard rows for both affected inventories and the corresponding inventory state are complete and consistent; only then is the trade an already-applied no-op. A partial guard set reconciles the original operation `effectKey` and both target-specific `EffectId` values rather than being accepted as completion.
+  - it inserts one complete `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType=INVENTORY, targetAggregateId)` `tick_effect_guard` storage projection, linked to the root `EffectId` and participant guard identity, for each affected inventory aggregate before moving items between inventories; and
+  - on any primary-key conflict, it verifies that guard projections for both affected inventories and the corresponding inventory state are complete and consistent; only then is the trade an already-applied no-op. A partial guard set reconciles the original root effect and both participant guard identities rather than being accepted as completion.

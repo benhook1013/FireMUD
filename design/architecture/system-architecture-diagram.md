@@ -1,5 +1,9 @@
 # FireMUD System Architecture: Diagram
 
+## Implementation Status
+
+The room-state assembly shown in this diagram is target-state. Current World and Entity room-read requests remain floor-free, and the causal-floor/served-through protocol is not implemented; current scope markers do not prove freshness.
+
 ```mermaid
 flowchart TD
     subgraph Clients
@@ -134,7 +138,7 @@ Gameplay WebSocket route policy is canonicalized on `/ws/game/**` for player-fac
 Diagram callouts:
 
 - External operator writes for moderation, quota overrides, runtime feature flags, and tick remediation enter through Logging & Admin via Gateway; direct domain-admin routes are read-only unless explicitly documented as bypass-safe.
-- Canonical room state is not assembled by direct World ↔ Entity joins; World Management emits the room-read fence, Game Logic composes room views only from same-fence responses, and Game Session renders/caches the resulting transcript.
+- Canonical room state is not assembled by direct World ↔ Entity joins; for this causal-read path, Game Logic performs the fan-out to World and Entity, propagates the Game Session-allocated causal-read floor unchanged, validates same-scope/epoch served-through proofs with opaque component versions, and returns the composition for Game Session to render/cache. The direct `SessionExec -> World/Entity/Logic` edges are general orchestration/dependency paths, not direct LOOK fan-out. Current scope markers remain non-temporal.
 
 Admin and creator API exposure on the `external admin/creator API plane` is intentionally allowlisted: external tools call domain admin APIs only through Gateway-routed HTTP(S) routes for owning services (for example Logging & Admin, Account, Game Session, Social & Groups, and Game Design). External mutating operator workflows for moderation, quota overrides, runtime feature-flag overrides, and tick remediation must enter through Logging & Admin; direct domain-admin routes are reserved for reads and explicitly documented bypass-safe workflows. External domain gRPC is not part of the edge contract unless a dedicated design update explicitly introduces it. Internal service-to-service gRPC remains direct and does not traverse Gateway or the `infrastructure management plane`.
 
@@ -168,7 +172,7 @@ All internal synchronous communication from the **Game Session Service** to down
 
 Coordination Redis arrows in this diagram follow ownership boundaries from ADR 0009: Game Session owns gameplay coordination prefixes (for example `session:game:*`, `tick:*`, `timer:*`, `retry:*`, and `tick-executor-lease:*`), Account owns `session:auth:*`, Automation & Scripting owns `automation:*`, and non-owner services (for example Entity) participate only through approved shared-helper contracts rather than ad hoc key ownership.
 
-Canonical room-state assembly is intentionally not shown as a direct World-to-Entity join: World Management emits the room-read fence for gameplay-driven room views, Entity Management returns a matching same-scope entity fence, and Game Logic composes only when the two fences match so mixed-tick room state is never emitted as canonical output.
+Canonical room-state assembly is intentionally not shown as a direct World-to-Entity join: Game Session allocates the causal floor from durable region commit authority, Game Logic propagates it unchanged to World and Entity, and composes same-scope/epoch responses whose served-through proofs meet that floor with opaque owner-local component versions. Behind-floor or mixed-scope/epoch responses are rejected or retried; current scope markers do not prove freshness.
 
 ## Datastore Layer
 

@@ -37,3 +37,8 @@ Entry format:
   - Context: delegated edits encountered accepted ADR metadata while reconciling the consequential-decision inventory.
   - Observation: an ADR reference establishes eligibility for recorded review, but does not prove a human disposition by itself.
   - Expected pattern: agents preserve pending status unless the checked review queue records the completed human disposition; delegated workers may mutate external review state only when the exact scope and authorization explicitly permit it; otherwise they must not.
+
+- `2026-08-11`: Luna capacity fallback requires a delayed same-tier retry
+  - Context: bounded delegation can fail before work starts when the selected Luna model/tier has no available capacity.
+  - Observation: immediately upgrading or silently falling back loses the diagnostic distinction between a transient capacity failure and a genuine fallback.
+  - Expected pattern: when capacity blocks the selected Luna model/tier, wait 30–60 seconds and retry that same model/tier once; upgrade only if it remains unavailable. Report the failed model/tier, wait duration or retry count, and selected fallback immediately when fallback starts, and repeat the capacity failure, delayed retry, and fallback in the round handoff.

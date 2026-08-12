@@ -2,6 +2,10 @@
 
 This companion document holds the reference-heavy material for Redis cache and rate limiting. The parent policy doc covers cache ownership, invalidation rules, consistency expectations, and canonical cache policy.
 
+## Implementation Status
+
+The `room:*` Class A cache contract below is target-state only. It is not a current correctness path until World Management has an opaque room component version and a proven invalidation path. Current readers must not substitute `worldSnapshotId` or `roomDynamicVersion` for that component version; they must use authoritative reads when the target validation contract is unavailable. The future reader, invalidation, and version-advance rules below remain normative.
+
 ## Cache Adoption Checklist
 
 When introducing or changing a cache/rate-limit prefix, designs must answer the following questions before implementation and CI should enforce that the answers are reflected in this reference doc and the owning service README as the target state:
@@ -32,7 +36,7 @@ This example shows a correctness-critical cache owned by Entity Management.
 
 ### Canonical World Management Cache Contracts (`world-dynamic:*` and `room:*`, Class A)
 
-The first supported World Management Class A caches are intentionally narrow and room-scoped.
+The first supported World Management Class A caches are intentionally narrow and room-scoped. The `room:*` contract is target-state only until its required opaque component version and invalidation path exist.
 
 - `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>`
   - Owner: World Management Service.
@@ -44,14 +48,16 @@ The first supported World Management Class A caches are intentionally narrow and
 - `room:<tenantId>:<gameInstanceId>:<roomInstanceId>`
   - Owner: World Management Service.
   - Authoritative source: World Management’s room snapshot/read model.
-  - Required version field: `roomSnapshotVersion`.
-  - Version-advance rule: `roomSnapshotVersion` must advance on both topology-visible changes and any included dynamic-state changes.
+  - Required scope, version, and payload fields: the owner-validated `regionId` and `regionEpoch`, plus the exact opaque World-owned room component version (see [Canonical Room Runtime Contract](./system-architecture-overview.md#canonical-room-runtime-contract)), are stored alongside the room snapshot payload.
+  - Version-advance rule: the World-owned room component version must advance on both topology-visible changes and any included dynamic-state changes.
   - Payload scope: navigation and visibility metadata needed for correctness-critical reads.
   - Payload exclusions: must not include presentation-only rendered room views, chat/history windows, or inventories/occupant rosters unless an explicit cross-service contract makes them part of the authoritative room snapshot.
-  - Invalidator of record: topology-visible publish/activation paths, snapshot-fed dynamic mutations, and instance lifecycle transitions that rebuild or retire the room snapshot.
+  - Invalidator of record: topology-visible publish/activation paths, snapshot-fed dynamic mutations, instance lifecycle transitions that rebuild or retire the room snapshot, and owner region-epoch changes.
+  - Refresh discipline: write the room payload, exact owner scope (`regionId`, `regionEpoch`), component version, and TTL atomically; a missing or unverifiable scope/version is an authoritative-read miss and must be rebuilt before serving. A region-epoch change invalidates the prior entry and prevents cross-epoch reuse.
 - Reader contract:
   - Only `world-dynamic:*` and `room:*` may participate in correctness-critical World Management movement, pathfinding, and visibility decisions.
-  - Validate against `roomDynamicVersion` or `roomSnapshotVersion`.
+  - Validate `world-dynamic:*` against `roomDynamicVersion`. A `room:*` entry always requires the exact owner `regionId`/`regionEpoch` scope and opaque World-owned room component version and cannot be validated by `roomDynamicVersion` alone.
+  - This `room:*` reader contract is target state only until the required opaque component version and invalidation path exist; current readers must not substitute `worldSnapshotId` or `roomDynamicVersion`.
   - Fall back to authoritative reads if the version cannot be verified.
   - TTL-only world or presentation caches must use distinct prefixes and must not be substituted for these Class A contracts.
 
@@ -64,7 +70,7 @@ Cache/Rate-Limit Redis hosts prefixes that are not part of the coordination log 
 | `inventory:<tenantId>:<containerId>` | Cache | Versioned (Class A) | Reset-tolerant | Entity Management cached inventory/container aggregates. |
 | `character-cache:<tenantId>:<characterId>` | Cache | Versioned (Class A) | Reset-tolerant | Entity Management cached character graphs for hot reads. |
 | `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>` | Cache | Versioned (Class A) | Reset-tolerant | World Management room-scoped dynamic-state cache. |
-| `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` | Cache | Versioned (Class A) | Reset-tolerant | World Management correctness-critical room snapshot cache. |
+| `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` | Cache | Versioned (Class A) | Reset-tolerant | World Management correctness-critical room snapshot cache; payload stores and validates owner `regionId`/`regionEpoch` with the opaque component version, atomically with refresh/TTL, and invalidates on epoch change. |
 | `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>` | Cache | TTL-only (Class B) | Reset-tolerant | Legacy reconnect-adjacent rendered-room snapshot helper. This prefix is not authoritative for fresh `LOOK`, is not part of the canonical target-state read model, and remains implementation debt pending fuller cleanup. |
 | `chat:say:<tenantId>:<characterId>`, `chat:tell:<tenantId>:<conversationId>`, `chat:guild:<tenantId>:<guildId>`, `chat:city:<tenantId>:<cityId>`, `chat:account:<tenantId>:<accountId>` | Cache | TTL-only (Class B) | Reset-tolerant | Social & Groups short-lived chat history buffers. |
 | `automation:queue:{tenantInstanceTag}:*`, `automation:quota:<tenantId>:*`, `automation:tenant-budget:<tenantId>:tier:<tier>`, `automation:test:capacity:<tenantId>:*`, `automation:test:capacity:cluster*` | Cache / Rate-Limit | TTL-only (Class B) | Reset-tolerant | Automation & Scripting queued work items, per-script quota counters, per-tenant live execution budget counters, and tenant/cluster dry-run/test capacity leases. Durable triggers/effect tables in PostgreSQL, not Redis, guarantee eventual execution and quota correctness. |
@@ -83,7 +89,7 @@ CI and code review checks are expected to:
 | Inventory/container views | `inventory:<tenantId>:<containerId>` | Versioned | Validated against a container or aggregate `version`/`lastModified` field in PostgreSQL. |
 | Character graphs | `character-cache:<tenantId>:<characterId>` | Versioned | Backed by character graph rows with explicit versioning. |
 | Dynamic world aggregates | `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>` | Versioned | Backed by authoritative room-instance dynamic-state rows with `roomDynamicVersion`; invalidated on dynamic-state writes and relevant instance lifecycle changes. |
-| Room topology snapshots | `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` | Versioned | Cached room snapshots scoped to a running instance and validated against `roomSnapshotVersion`, which advances on topology-visible and included dynamic changes. |
+| Room topology snapshots | `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` | Versioned | Target-only cached room snapshots carry owner `regionId`/`regionEpoch` alongside the opaque World-owned component version; refresh/TTL is atomic, epoch changes invalidate, and current readers use authoritative reads when scope/version proof is unavailable. |
 | Room LOOK views | `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>` | TTL-only | Recomputed on demand from `ResolveLook`, cached for a short TTL, and primarily used for reconnect/UI redraw rather than as the canonical answer for fresh gameplay reads. |
 | Short-lived chat buffers | `chat:say:<tenantId>:<characterId>`, `chat:guild:<tenantId>:<guildId>`, `chat:city:<tenantId>:<cityId>`, etc. | TTL-only | Rolling windows of recent messages with fixed-size buffers. |
 

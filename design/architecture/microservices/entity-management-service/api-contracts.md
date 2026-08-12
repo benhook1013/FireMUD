@@ -8,6 +8,21 @@ The authoritative REST schema source lives in [../../../../services/entity-manag
 
 `ApplyActorCondition` has not yet converged on the target replay contract below. Its current request has no dedicated `effectId`; Game Session places the operation-unique durable effect ID in required `sourceId`, and Entity Management uses `{tenantId, sourceId}` for replay. That temporary implementation conflates replay identity with authored/source provenance and does not compare the complete condition payload on same-operation reuse. The proto, callers, persistence, and proof must migrate together before additional producers reuse one source across applications.
 
+The current LOOK adapter remains floor-free and is implementation-only:
+
+### Current room-entity implementation
+
+The current `ListRoomEntitiesRequest` carries `tenantId`, `RoomInstanceRef`, and `sessionAttestation`; it does not carry a caller-provided read-fence field. The current `entitySnapshotId` response value is a deterministic room-scope marker derived from the request scope, not proof that Entity Management observed a committed mutation version. The current adapter therefore does not claim exact caller-fence satisfaction.
+
+The current response includes:
+
+- `tenantId`, `gameInstanceId`, and `roomInstanceId` (a `RoomInstanceRef`) so consumers can unambiguously scope the entity list to a running instance.
+- `entitySnapshotId` so consumers can identify the room scope in responses. In the current adapter this is only the scope marker described above and is not a mutation-freshness or invalidation proof.
+- `entities[]`, each with `entityId`, `displayName`, `entityType` (`PLAYER`, `NPC`, `ITEM`), and optional `role`/`affiliation`.
+- `stateFlags` such as `isHidden`, `isInCombat`, or `isQuestTarget` so Game Logic can mask stealthy entities or highlight objectives.
+- `visionPriority` to help sort players before NPCs and list visible items at the end, keeping `LOOK` render ordering consistent.
+- `reloadHint` (enum) that signals whether the list is stable or dynamic, allowing Game Logic to decorate the `LOOK` output.
+
 ## REST
 
 - `GET /ping` – basic health check returning `"pong"`.
@@ -29,6 +44,8 @@ curl http://localhost:8080/ping
 - `GetDraftDesignDigest` – returns publish-gating digest for Draft entity templates using typed scope request `GetDraftDesignDigestRequest { tenantId, scope: oneof { versionId, scriptPatchVersion } }`. Entity Management supports `versionId` scope only and must return `UNSUPPORTED_SCOPE` for `scriptPatchVersion`. Minimum response fields are `{tenantId, scope, appliedCommitId, contentDigest, digestSchemaVersion}`. `appliedCommitId` means the highest Game Design commit whose full revision set has been durably applied to the target Draft entity scope. `contentDigest` must cover only version-scoped entity template/binding rows and must exclude live runtime entities and audit/history metadata.
 
 Target-state gameplay mutation RPCs that change item, equipment, or container state accept the canonical `effectId` and its complete structured identity supplied by Game Session durable effect execution. Entity Management validates the `{tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId}` projection before applying the mutation; `{tenantId, effectId}` alone is not a sufficient substitute for the scoped identity. `ApplyActorCondition` requires a dedicated `effectId` as the operation-level replay identity, while `sourceId` remains separate authored/source provenance. Duplicate delivery returns the stored applied/no-op response instead of applying the mutation again. Read-only query RPCs do not require an `effectId`. Current live mutation surfaces may still expose an optional or narrower effect field; that is an implementation gap, not permission to define a competing idempotency contract.
+
+For `DROP` and `PICKUP`, Entity is the holder-mutation participant in the canonical barrier/attestation contract defined in [Transaction Strategies](../../system-architecture-transactions.md#drop-pickup-targeting-and-actor-fence-critical-section) and [ADR 0054](../../decisions/adr-0054-split-spatial-authority-with-causal-read-composition.md). Its target commit binding includes `regionId` from Game Session's durable region authority alongside `RoomInstanceRef`, `regionEpoch`, `executorFence`, the same root `EffectId`, and the unchanged immutable `requestDigest`; World validation and Game Logic re-resolution preserve that binding, and Entity rejects a missing or mismatched attestation before holder mutation. The current proto/request and focused proof do not yet carry or demonstrate this attestation path, so they do not claim the target contract.
 
 ```bash
 grpcurl -plaintext localhost:6565 entity_management.v1.EntityManagementService/Ping
@@ -73,38 +90,20 @@ Publish gating must fail closed if Entity Management cannot attest a digest cons
 
 ## LOOK Entity Listing Contract
 
-`ListRoomEntities` is the dedicated endpoint for `LOOK` to discover which characters, items, and NPCs occupy a room. The current and target fence contracts are intentionally separate. The logical fence name is `roomReadFence`; the transport names `worldSnapshotId` and `entitySnapshotId` are aliases defined in the identifier glossary, not independent service-local versions.
+`ListRoomEntities` is the dedicated endpoint for `LOOK` to discover which characters, items, and NPCs occupy a room. The target causal-floor and component-proof contract below is canonical; the current floor-free adapter is recorded as implementation status above. The target shape follows the [Identifier Glossary causal-read fence contract](../../system-architecture-identifier-glossary.md#cross-service-causal-read-fence-identity); current transport names `worldSnapshotId` and `entitySnapshotId` remain deterministic same-scope markers only, not independent freshness versions.
 
-### Current room-entity contract
+### Target causal-floor contract
 
-The current `ListRoomEntitiesRequest` carries `tenantId`, `RoomInstanceRef`, and `sessionAttestation`; it does not carry a caller-provided read-fence field. The current `entitySnapshotId` response value is a deterministic room-scope marker derived from the request scope, not proof that Entity Management observed a committed mutation version. The current adapter therefore does not claim exact caller-fence satisfaction.
+The target `ListRoomEntities` request carries the same `CausalReadFence` as World Management for the `RoomInstanceRef`, operational `regionId`, and `regionEpoch`, including at least `committedTickId`. Game Session allocates that floor from durable region commit authority before invoking `ResolveLook`; Game Logic propagates the unchanged floor to Entity Management. The exact request-field shape remains deferred to the coordinated proto/design change; the current request remains floor-free and does not claim floor satisfaction.
 
-The current response includes:
-
-- `tenantId`, `gameInstanceId`, and `roomInstanceId` (a `RoomInstanceRef`) so consumers can unambiguously scope the entity list to a running instance.
-- `entitySnapshotId` so consumers can identify the room scope in responses. In the current adapter this is only the scope marker described above and is not a mutation-freshness or invalidation proof.
-- `entities[]`, each with `entityId`, `displayName`, `entityType` (`PLAYER`, `NPC`, `ITEM`), and optional `role`/`affiliation`.
-- `stateFlags` such as `isHidden`, `isInCombat`, or `isQuestTarget` so Game Logic can mask stealthy entities or highlight objectives.
-- `visionPriority` to help sort players before NPCs and list visible items at the end, keeping `LOOK` render ordering consistent.
-- `reloadHint` (enum) that signals whether the list is stable or dynamic, allowing Game Logic to decorate the `LOOK` output.
-
-### Target same-fence contract
-
-The target protocol will let the room-read composition propagate the World Management-owned committed `roomReadFence` (wire field `worldSnapshotId`) to Entity Management without inventing a parallel entity-local version. The exact request-field shape is intentionally deferred to the coordinated proto/design change; this document must not imply that the current request already carries it.
-
-After that protocol exists, Entity Management will return the exact satisfied fence as `entitySnapshotId` for the same `RoomInstanceRef`. When composing a full LOOK view, Game Logic combines:
-
-- `worldSnapshotId`/`roomReadFence` from World Management’s `GetRoomSnapshot`; and
-- the identical `entitySnapshotId`/`roomReadFence` returned by `ListRoomEntities`,
-
-then returns a `lookSnapshotId` alongside the rendered `LookResult` so Game Session can cache the final transcript deterministically. The target contract does not concatenate independent service versions; equality of the two transport fields proves that both reads satisfied one committed fence. The current scope-derived adapter value is not sufficient proof of mutation freshness.
+After that protocol exists, Entity Management serves the same region/scope/epoch and returns that proof, a scoped `servedThroughTickId`, and an opaque Entity component version. That returned version follows the [Identifier Glossary causal-read contract](../../system-architecture-identifier-glossary.md#cross-service-causal-read-fence-identity): Entity advances it atomically with relevant durable containment-owner commits and returns the stored version on matching replay/no-op. Game Logic accepts the participant when the returned region/scope/epoch matches and `servedThroughTickId >=` the requested `committedTickId`; a behind-floor or mixed tenant, game instance, region, room, or epoch response is rejected or retried. Opaque component versions are not directly compared. Game Logic validates the served-through proof, then composes only the requested floor plus the World and Entity component versions in the room-view identity and returns that identity with `LookResult` so Game Session can retain its transcript rendering/cache behavior; it does not claim an exact cross-database historical snapshot.
 
 Room-entity data is derived from runtime entity state plus authoritative world location. Ground items are discovered by querying items contained by the synthetic room-ground container for the target `RoomInstanceRef`. Characters and NPCs are included when their current location (owned by World Management) matches the target `RoomInstanceRef`:
 
-- The caller obtains the authoritative room snapshot and committed `roomReadFence` from World Management before invoking `ListRoomEntities`. The target request/response evolution must carry enough information for Entity Management to prove satisfaction of that fence; the current proto/request path does not yet claim this behavior complete.
+- Game Session obtains the complete causal floor, including `regionId`, from durable region commit authority before invoking `ResolveLook`; Game Logic propagates that floor unchanged to `ListRoomEntities`. The target request/response evolution must carry enough information for Entity Management to prove service of that region/scope/epoch floor; the current proto/request path does not yet carry the floor or served-through proof and does not claim this behavior complete.
 - `ListRoomEntities` materializes display data plus room-ground inventory state owned by Entity Management for the same `RoomInstanceRef`.
-- `ListRoomEntities` must return the exact Entity Management echo (`entitySnapshotId`) for the same room scope; when Game Logic cannot align it byte-for-byte with the World Management `worldSnapshotId`/`roomReadFence`, composition must fail instead of returning mixed-tick data.
-- The read fence is satisfied only by durable post-commit state. Redis-staged containment changes that have not yet committed the effect guard and container/item row updates for that fence are not eligible to satisfy the room-read fence.
+- `ListRoomEntities` must return the same region/scope/epoch proof, an opaque Entity component version, and scoped `servedThroughTickId` after serving the requested floor. Game Logic accepts same-region/scope/epoch `servedThroughTickId >= committedTickId`, rejects or retries behind-floor or mixed-region/scope/epoch responses, and does not directly compare opaque component versions.
+- The causal floor is satisfied only by durable post-commit state. Redis-staged containment changes that have not yet committed the effect guard and container/item row updates for the requested floor are not eligible to satisfy it.
 
 Illustrative target-state `ListRoomEntities` fragments:
 
@@ -114,8 +113,11 @@ Illustrative target-state `ListRoomEntities` fragments:
 {
   "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
   "gameInstanceId": "9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78",
+  "regionId": "R7",
+  "regionEpoch": 17,
   "roomInstanceId": "1021",
-  "entitySnapshotId": "room-snapshot-epoch-17",
+  "servedThroughTickId": 42,
+  "entityComponentVersion": "entity-component-version-23",
   "entities": [
     {
       "entityId": "char-mara",
@@ -132,16 +134,16 @@ Illustrative target-state `ListRoomEntities` fragments:
 {
   "error": {
     "code": "STALE_READ_FENCE",
-    "message": "Entity state could not satisfy the requested room read fence."
+    "message": "Entity state could not satisfy the requested causal read floor."
   }
 }
 ```
 
 Entity Management must not maintain a competing room-occupancy index that can drift from World Management’s location tables. Visibility and filtering rules are applied after aggregation so LOOK output remains player-correct.
 
-In the target protocol, when the propagated fence is missing, stale, or cannot be satisfied from durable post-commit state, Entity Management returns `STALE_READ_FENCE` or `READ_FENCE_UNAVAILABLE`. A participant fence difference is a caller-side composition retry condition, not a separate service error from this API: Game Logic must obtain a fresh World Management snapshot and retry the same-scope composition, or fail the room view explicitly if the fresh read cannot be materialized. These target errors are not claims about the current request path.
+In the target protocol, when the propagated causal floor is missing, stale, or cannot be satisfied from durable post-commit state, Entity Management returns `STALE_READ_FENCE` or `READ_FENCE_UNAVAILABLE`. A behind-floor or mixed-region/scope/epoch response is a caller-side composition retry condition, not a separate service error from this API: Game Session must obtain a fresh durable region-commit floor, pass it through `ResolveLook`, and have Game Logic retry the same-region/scope composition, or fail the room view explicitly if the fresh floor cannot be materialized. These target errors are not claims about the current request path.
 
-The unresolved target work is tracked in [World Runtime and Movement](../../../project-management/implementation-tracking/world-runtime-and-movement.md#active-gaps), including allocation of the World-owned fence after Entity-owned LOOK-visible mutations, propagation, participant acknowledgement, and durable commit ordering.
+The unresolved target work is tracked in [World Runtime and Movement](../../../project-management/implementation-tracking/world-runtime-and-movement.md#active-gaps): Game Session floor allocation and Game Logic propagation are target obligations, while Entity participant floor satisfaction and the opaque component-version plus scoped `servedThroughTickId` response remain unimplemented and unproved. The current proto and focused proof do not cover this path; the exact proof encoding and any remaining wire details are implementation gaps, not a competing contract.
 
 Concrete per-effect required writes and reconciliation rules live in [`system-architecture-spatial-and-ambient-effects-catalog.md`](../../system-architecture-spatial-and-ambient-effects-catalog.md).
 

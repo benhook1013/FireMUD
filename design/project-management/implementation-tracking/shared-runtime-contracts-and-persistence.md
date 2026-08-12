@@ -125,6 +125,8 @@ The evidence records focused and repository-level proof for the implemented seam
 
 ## Active Gaps
 
+- TICK-03/TICK-04 are accepted design boundaries, not implementation claims: durable command aggregation, operation-bound `EffectId` guards, causal-floor composition, and bounded retry/reconciliation remain incomplete across service owners.
+
 - The shared time guard is implemented, but runtime cooldown state, common timed-state handling for buffs/conditions, scheduled-effect execution, and richer gameplay-clock APIs are not implemented by this tracker.
 - The bounded fan-out pulse scheduler and the separate Redis queue/lease control seam are live. Whether pulse scheduling should move to a different queue/lease scheduler remains a separate possible follow-up and requires real load evidence before design or implementation.
 - New secured endpoints and blocking gRPC clients must adopt the exact token profile where one is required, certificate-derived workload identity and method allowlists, typed `PlayerExecutionContext` for delegated gameplay, and normal `ErrorDetail` application failures. This record does not pre-audit hypothetical future surfaces.

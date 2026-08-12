@@ -1,6 +1,6 @@
 # Consequential Design Decision Inventory
 
-Status: Inventory and human-led review are complete and independently coverage/fidelity-audited. On `develop`, reviewed outcomes for 40 of 182 distinct active decisions are applied and merged; 142 reviewed decisions remain pending selective import. The historical navigation alias is excluded from both counts. ADR numbering records how applied outcomes were materialized but does not define the application boundary.
+Status: Inventory and human-led review are complete and independently coverage/fidelity-audited. On `develop`, reviewed outcomes for 44 of 182 distinct active decisions are applied and merged; 138 reviewed decisions remain pending selective import. The historical navigation alias is excluded from both counts. ADR numbering records how applied outcomes were materialized but does not define the application boundary.
 
 ## Implementation Status
 
@@ -51,16 +51,16 @@ The inventory is split into this control ledger and exhaustive source-scoped led
 - [Specialized runtime decisions](./decision-inventory-specialized-runtime.md) contains 54 decisions and stronger evidence for 20 cross-cutting decisions from 39 Redis, scripting, tick, identity, token, migration, shared-library, spatial, authorization, and tracing documents.
 - [Product and operations decisions](./decision-inventory-product-operations.md) contains 38 decisions and stronger evidence for 11 existing keys from the remaining 35 product, frontend, authoring, protocol, infrastructure, deployment, recovery, observability, and generated-settings sources.
 
-The canonical design allocation covers all 225 discovered product and architecture sources: 222 receive a primary capability allocation and 3 are explicit governance, template, or registry exemptions. This inventory inspects 223 potentially decision-bearing sources: 222 allocated decision-bearing sources (172 allocated non-ADR product and architecture documents and 50 ADR records) plus one exempt architecture decision registry/index. The two exempt microservice governance/template documents are covered by allocation but excluded from decision evidence. A source may provide evidence without producing a distinct decision row. The source-scoped ledgers contain 182 distinct active decisions with no duplicates across ledgers. The 23 microservice service-only rows comprise 22 active decisions plus the superseded historical service-scan alias `MS-AA-TOKEN-REVOCATION`, so the source-scoped ledgers have 183 key/navigation rows while the distinct decision count remains 182. The completed human-review archive likewise has one row for each of the 182 active decision keys plus the historical service-scan alias. The nine legacy ADR labels in [Legacy ADR Alias Navigation](#legacy-adr-alias-navigation) map to nine of those active keys; they substitute as historical navigation labels and do not add archive or provenance rows. The historical service-scan alias is the only extra navigation row and is excluded from applied-review disposition. Collectively, the inventories reference all 79 leaf capabilities in the taxonomy.
+The canonical design allocation covers all 229 discovered product and architecture sources: 226 are allocated decision-bearing sources and 3 are explicit exemptions (the ADR registry/index plus two microservice governance/template documents). The decision evidence set is 227 sources: the 226 allocated sources plus the exempt ADR registry/index; the two exempt microservice governance/template documents are discovered but excluded from decision evidence. A source may provide evidence without producing a distinct decision row. The source-scoped ledgers contain 182 distinct active decisions with no duplicates across ledgers. The 23 microservice service-only rows comprise 22 active decisions plus the superseded historical service-scan alias `MS-AA-TOKEN-REVOCATION`, so the source-scoped ledgers have 183 key/navigation rows while the distinct decision count remains 182. The completed human-review archive likewise has one row for each of the 182 active decision keys plus the historical service-scan alias. The nine legacy ADR labels in [Legacy ADR Alias Navigation](#legacy-adr-alias-navigation) map to nine of those active keys; they substitute as historical navigation labels and do not add archive or provenance rows. The historical service-scan alias is the only extra navigation row and is excluded from applied-review disposition. Collectively, the inventories reference all 79 leaf capabilities in the taxonomy.
 
 | Capability | Sources reviewed | Decisions inventoried | Human-review candidates | Coverage state |
 | --- | ---: | ---: | ---: | --- |
-| Existing ADR set | 50 ADR records (48 accepted; 2 historical/superseded) plus the architecture decision registry/index | 9 original aliases within the 68 cross-cutting decisions; later accepted records are allocated directly | Complete in the source archive | Complete and allocated through ADR 0050 |
+| Existing ADR set | 54 ADR records (52 accepted; 1 superseded; 1 withdrawn) plus the architecture decision registry/index | 9 original aliases within the 68 cross-cutting decisions; later accepted records are allocated directly | Complete in the source archive | Complete and allocated through ADR 0054 |
 | Cross-cutting system architecture | 22 canonical sources plus ADRs | 68 | Complete in the source archive | Complete and independently audited |
 | Microservice architecture | 76 sources | 23 rows = 22 active decisions + superseded historical `MS-AA-TOKEN-REVOCATION` alias; stronger evidence for 40 existing keys | Complete in the source archive | Complete and independently audited |
 | Specialized runtime architecture | 39 sources | 54 new; stronger evidence for 20 existing keys | Complete in the source archive | Complete and independently audited |
 | Product and operations architecture | 35 sources | 38 new; stronger evidence for 11 existing keys | Complete in the source archive | Complete and independently audited |
-| **Total active decisions / navigation rows** | **All 225 design sources: 222 allocated decision-bearing sources (172 allocated non-ADR documents and 50 ADR records), 1 exempt architecture decision registry/index, and 2 excluded governance/template exemptions; 222 allocated and 3 total exemptions** | **182 active decisions; 183 navigation/key rows including one historical alias** | **All 183 queue/navigation rows reviewed in the source archive** | **40 of 182 distinct decisions have reviewed outcomes applied and merged to `develop`; 142 remain pending selective import** |
+| **Total active decisions / navigation rows** | **All 229 design sources: 226 allocated decision-bearing sources (172 allocated non-ADR documents and 54 ADR records), 1 exempt architecture decision registry/index, and 2 excluded governance/template exemptions; 226 allocated and 3 total exemptions** | **182 active decisions; 183 navigation/key rows including one historical alias** | **All 183 queue/navigation rows reviewed in the source archive** | **44 of 182 distinct decisions have reviewed outcomes applied and merged to `develop`; 138 remain pending selective import** |
 
 ## Legacy ADR Alias Navigation
 
@@ -117,14 +117,14 @@ Future imports preserve the archive's exact disposition and review date, materia
 | --- | --- | ---: | ---: | --- |
 | 1 | Known conflicts and drift | 9 | 9 | `applied` |
 | 2 | Identity, authority, and security | 32 | 31 | `applied`; one historical alias is navigation-only |
-| 3 | Execution correctness and durability | 43 | 0 | `pending-import` |
+| 3 | Execution correctness and durability | 43 | 4 | `partially-applied` |
 | 4 | Publishing, settings, and authored behavior | 36 | 0 | `pending-import` |
 | 5 | Gameplay and player experience | 21 | 0 | `pending-import` |
 | 6 | Operations and delivery | 25 | 0 | `pending-import` |
 | 7 | Existing ADR-backed and lower-risk remainder | 17 | 0 | `pending-import` |
-| **Total** | | **183** | **40** | `review-complete`; `import-in-progress` |
+| **Total** | | **183** | **44** | `review-complete`; `import-in-progress` |
 
-The source-archive total counts 183 navigation rows. Packet 2 contains 31 distinct decision keys plus the `MS-AA-TOKEN-REVOCATION` historical alias, producing 32 archive rows but only 31 applicable decisions. The merged applied-provenance checklist excludes that alias and therefore has 182 rows: 40 reviewed outcomes already applied and merged to `develop` and 142 unchecked decisions pending selective import. The 40 applied decisions are Packet 1's nine decisions plus Packet 2's 31 distinct decisions. The nine legacy ADR labels above are mappings to active checklist keys rather than additional rows.
+The source-archive total counts 183 navigation rows. Packet 2 contains 31 distinct decision keys plus the `MS-AA-TOKEN-REVOCATION` historical alias, producing 32 archive rows but only 31 applicable decisions. The merged applied-provenance checklist excludes that alias and therefore has 182 rows: 44 reviewed outcomes already applied and merged to `develop` and 138 unchecked decisions pending selective import. The 44 applied decisions are Packet 1's nine decisions, Packet 2's 31 distinct decisions, and Packet 3's four imported decisions. The nine legacy ADR labels above are mappings to active checklist keys rather than additional rows.
 
 ### Priority Overrides
 
@@ -196,10 +196,10 @@ Packet 2 historical-alias rule: `MS-AA-TOKEN-REVOCATION` is a superseded service
 
 #### Packet 3 P0
 
-- [ ] `TICK-01`
-- [ ] `TICK-02`
-- [ ] `TICK-03`
-- [ ] `TICK-04`
+- [x] `TICK-01` — `revised` on 2026-07-19; [ADR 0051](../../architecture/decisions/adr-0051-separate-actor-action-and-effect-lanes.md)
+- [x] `TICK-02` — `revised` on 2026-07-19; [ADR 0052](../../architecture/decisions/adr-0052-redis-liveness-lease-with-durable-executor-fence.md)
+- [x] `TICK-03` — `revised` on 2026-07-19; [ADR 0053](../../architecture/decisions/adr-0053-command-atomicity-by-invariant-class.md)
+- [x] `TICK-04` — `revised` on 2026-07-19; [ADR 0054](../../architecture/decisions/adr-0054-split-spatial-authority-with-causal-read-composition.md)
 - [ ] `TICK-06`
 - [ ] `HOTPATH-01`
 - [ ] `RECON-01`
