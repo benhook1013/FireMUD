@@ -1,5 +1,9 @@
 # World Management Service Runtime and Data
 
+## Implementation Status
+
+- The current room-cache implementation remains an unversioned TTL-only payload and must use authoritative reads until the target opaque component-version and invalidation proof exists.
+
 ## Template and Runtime Ownership
 
 World Management owns both version-scoped template topology and runtime world-instance state, but the two surfaces are strictly separated:
@@ -100,7 +104,7 @@ When changing Redis usage or adding prefixes here, follow the [Redis Design Chec
 - `world_event` stores timed runtime changes such as weather updates and is keyed by `(tenantId, gameInstanceId)` with optional `region_instance` scope in the current storage model; that current scope does not settle the target Weather aggregate, and Weather writes remain fenced until the selector is accepted.
 - `region_instance.weather`, or equivalent, records current weather state for live regions where the current implementation has that field. The target Weather aggregate remains an explicit unresolved World-owner decision between region-scoped and room-scoped state; this field is not a permitted mutation path while that decision is pending.
 
-Redis caches hot rooms for active sessions to speed up lookups. Target Class A cached rooms use keys `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` and must never be keyed by template identifiers because runtime rows may diverge from template state. The current implementation remains an unversioned TTL-only payload and must use authoritative reads until the target opaque component-version and invalidation proof exists.
+Redis caches hot rooms for active sessions to speed up lookups. Target Class A cached rooms use keys `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` and must never be keyed by template identifiers because runtime rows may diverge from template state.
 
 ## Replacement-Instance State Classification
 

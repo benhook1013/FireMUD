@@ -1,5 +1,9 @@
 # Spring Cloud Gateway Configuration
 
+## Implementation Status
+
+The current Gateway `RequestRateLimiter` derives keys from raw client IP rather than the target versioned opaque subject hash. Canonicalization, shared helper adoption, HMAC key delivery/rotation, privacy and cardinality proof, and legacy-key expiry remain implementation work.
+
 ## Configuration Sources
 
 Spring Cloud Gateway reads its configuration from a small set of sources. The full environment variable catalog and deployment-wide patterns live in [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
@@ -36,7 +40,7 @@ For the TCP Proxy -> Gateway WebSocket mTLS hop, the TCP Proxy client identity a
 
 - Spring Cloud Gateway uses Cache/Rate-Limit Redis exclusively for rate limiting and any future gateway-local caches.
 - It connects via `FIREMUD_REDIS_CACHE_HOST` and `FIREMUD_REDIS_CACHE_PORT` as documented in [Redis Connection](../../infrastructure/environment-and-secrets.md#redis-connection) and [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md).
-- Target rate-limit buckets and related keys follow the isolated `ratelimit:<tenantId>:<subjectHash>:<timeWindow>` pattern and explicit loss semantics described in [Rate-Limit Bucket Design](../../system-architecture-redis-cache.md#rate-limit-bucket-design). The current raw-IP key derivation remains implementation and privacy/cardinality proof debt.
+- Target rate-limit buckets and related keys follow the isolated `ratelimit:<tenantId>:<subjectHash>:<timeWindow>` pattern, canonical subject-hash helper, and explicit loss semantics described in [Rate-Limit Bucket Design](../../system-architecture-redis-cache.md#rate-limit-bucket-design).
 - Tenant markers in keys are for isolation and observability only. Limit values and policy decisions remain global and are not derived at Spring Cloud Gateway from tenant identity.
 - These rate-limit structures are best-effort TTL-only counters, not durable correctness state.
 - Spring Cloud Gateway does not read or write gameplay chat caches (`chat:*`) or other service-owned cache prefixes.

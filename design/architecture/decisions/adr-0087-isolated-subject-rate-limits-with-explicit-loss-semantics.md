@@ -32,7 +32,7 @@ Hashing unrelated clients into a fixed modulo bucket couples their allowance and
 
 ## Decision
 
-An enforcement bucket represents one actual rate-limit subject or one deliberately shared policy scope. Per-client, connection, account candidate, credential, token, or source enforcement uses a normalized opaque stable hash that preserves one-to-one subject isolation; it never maps individual subjects modulo a small common bucket count. Raw credential or address material is not embedded in keys or metric labels.
+An enforcement bucket represents one actual rate-limit subject or one deliberately shared policy scope. Per-client, connection, account candidate, credential, token, or source enforcement uses a normalized opaque stable hash that preserves one-to-one subject isolation; it never maps individual subjects modulo a small common bucket count. Raw credential or address material is not embedded in keys or metric labels. The canonical cache owner contract defines a domain-separated, versioned full-length HMAC-SHA-256 mapping, rotation isolation, and fail-closed handling for any detected collision; those algorithm details are tunable through a new registered helper version without changing this decision's isolation and loss-semantics boundary.
 
 Cardinality is bounded through TTLs, fixed live-window counts, active-subject and admission limits, per-tenant and deployment memory budgets, and explicit overload behavior. Small fixed shared buckets may represent intentionally coarse tenant, endpoint, source-class, or global-pressure signals, but they are heuristics and cannot alone impose an individual security consequence.
 
@@ -66,7 +66,7 @@ Rejected by ADR 0034 because it adds a network call and shared-store dependency 
 
 ## Implementation and Proof Obligations
 
-Proof must cover stable one-to-one subject hashing, key privacy, TTL and live-window expiry, active-subject and per-tenant cardinality bounds, memory pressure and overload behavior, deliberately shared-bucket collisions, bounded multi-signal skew, Redis eviction/reset, store outage, fail-open or fail-closed behavior per entrypoint, and separation between heuristic and authoritative limits.
+Proof must cover stable one-to-one subject hashing, canonicalization and domain separation, full digest length, key/version rotation isolation, detected-collision failure, key privacy and raw-input non-disclosure, TTL and live-window expiry, active-subject and per-tenant cardinality bounds, memory pressure and overload behavior, deliberately shared-bucket collisions, bounded multi-signal skew, Redis eviction/reset, store outage, fail-open or fail-closed behavior per entrypoint, and separation between heuristic and authoritative limits.
 
 Gateway currently derives rate-limit keys directly from raw client IP without an evidenced tenant/cardinality profile. Game Session currently performs Redis-backed per-session limiting and does not evidence Cache/Rate-Limit role isolation, contrary to ADR 0034. The current implementation and focused proof are not claimed by this decision.
 

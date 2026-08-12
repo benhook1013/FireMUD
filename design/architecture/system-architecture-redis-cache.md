@@ -98,10 +98,11 @@ Some dynamic aggregates will be easier to cache if the authoritative store expos
   - The owner may obtain that proof from the authoritative store, an owner-controlled version index with equivalent consistency, or an exact expected version/fence already required by the operation. A version embedded only in the cache payload is not proof of currentness.
   - The owning service (for example Entity Management or World Management) maintains a version counter or timestamp on the aggregate root (such as a container, character effective stats, or a room’s dynamic state row) and increments or updates it whenever the aggregate changes.
   - Redis entries for that aggregate store both version and payload together, typically inside a single serialized object.
-  - When fetching, callers can:
+  - When fetching, the owning service must:
     - Read the current version or fence from the authoritative store or an equivalently consistent owner-controlled index.
     - Compare it with the version/scope in Redis during the same operation.
     - Reuse the cached payload only when the complete scope and proof match; otherwise recompute from authoritative state or fail closed.
+  - Every other service calls the owning service's API and must not read, validate, or reuse that owner's Class A Redis entry directly.
 - Versioning is applied per aggregate root (for example `inventory:<tenantId>:<containerId>`), not per field, and is treated as part of the aggregate’s API contract.
 
 - **Best-effort caches (TTL-only)** – payloads that are inexpensive to recompute or where occasional staleness is acceptable:
@@ -252,6 +253,10 @@ Rate limiting keys (for example those used by Spring Cloud Gateway’s `RequestR
 
 - Per-subject prefixes are preferred over global counters. An individual client, credential, token, connection, or account candidate maps to one normalized opaque stable subject hash for the active window; it must not be reduced modulo a common bucket count or split by request-derived shards.
 - Use the canonical pattern `ratelimit:<tenantId>:<subjectHash>:<timeWindow>` and publish helper builders so services reuse the same privacy-preserving one-to-one subject mapping.
+- The canonical helper renders `subjectHash` as `rsh-v1-<keyId>-<lowercase-hex-HMAC>`. The HMAC is the complete 32-byte HMAC-SHA-256 output and is never truncated or reduced modulo a bucket count. `keyId` is a non-secret identifier for one environment-scoped key delivered through the canonical secret mechanism; the HMAC key itself never appears in Redis, logs, metrics, or request context.
+- The exact HMAC preimage uses `segment(bytes) = ascii(canonical_decimal_count(byte_length(bytes))) + ":" + bytes`, then concatenates `segment(utf8("FireMUD/rateLimitSubject/v1"))`, `segment(utf8(keyId))`, `segment(utf8(subjectKind))`, `segment(utf8(tenantId))`, `segment(utf8(policyScope))`, and `segment(canonicalSubjectBytes)` in that order. Each registered subject kind defines one canonicalization before hashing; client addresses use validated network bytes, with IPv4-mapped IPv6 normalized to the equivalent IPv4 bytes. The domain label, tenant, kind, and policy scope prevent cross-domain or cross-policy reuse.
+- All replicas enforcing the same policy scope use the same active key ID and material. Activating a new unique key ID intentionally isolates new buckets from the old key; old buckets expire by their bounded TTL and are never reinterpreted or rehashed. Each limiter treats that cutover as its declared Cache/Rate-Limit reset behavior, including any temporary weakening or tightening, and must not rely on rotation continuity for a hard invariant.
+- A digest collision must never silently merge subjects: implementations use the full 256-bit output, publish cross-language golden vectors, and treat any detected same-digest/different-canonical-subject condition as a fatal integrity failure under the limiter's declared fail-closed or unavailable-store behavior. There is no collision fallback bucket.
 - Deliberately shared coarse signals use a separately named policy scope (for example `ratelimit:global-pressure:<timeWindow>` or a declared source-class bucket). Such buckets are heuristics and cannot alone impose an individual security consequence.
 - The current Game Session `ratelimit:<sessionId>` shape is a legacy implementation, not a member of the target family. Before target shared helpers consume unversioned `ratelimit:*` keys, legacy writers must stop and the maximum legacy TTL must elapse with an empty-key readback; an adopter that cannot prove that drain uses a distinct versioned prefix. Target parsers and scripts reject the legacy arity rather than inferring tenant, subject, or window fields.
 
@@ -274,8 +279,10 @@ To keep rate limiting robust under high cardinality and load, `bucket` values sh
   - Bound isolated subject cardinality with TTLs, active-subject admission limits, per-tenant/deployment memory budgets, and explicit overload behavior. Do not obtain boundedness by mapping unrelated subjects into collision pools.
   - If a subject key is too hot, scale the Cache/Rate-Limit deployment or use an explicitly declared coarse heuristic alongside the subject bucket; request-derived shards must not multiply allowance or change the subject's identity.
 - **Key count and rotation**
-- Choose active-subject and admission limits so the total number of isolated `ratelimit:*` keys per tenant across all live `timeWindow` values stays within a measured range for the deployment.
+  - Choose active-subject and admission limits so the total number of isolated `ratelimit:*` keys per tenant across all live `timeWindow` values stays within a measured range for the deployment.
   - Allow old `timeWindow` keys to expire naturally via TTL; do not attempt to retain historical rate-limit keys in Redis for analytics or debugging.
+
+Before claiming the subject helper implemented, focused proof must establish stable output for identical key/input, different output when the key ID/material, subject kind, tenant, policy scope, or canonical subject changes, canonical equivalence for alternate spellings of the same address, full-length output, rotation isolation and TTL expiry, cross-language golden-vector agreement, and absence of raw subject material from Redis keys and metric labels.
 
 This approach gives small games straightforward per-client buckets by default while providing a clear, hash-based pattern for larger or noisier workloads without introducing many configuration knobs.
 
