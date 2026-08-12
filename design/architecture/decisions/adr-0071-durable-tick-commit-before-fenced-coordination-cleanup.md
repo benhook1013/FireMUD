@@ -37,9 +37,9 @@ The lifecycle needs one durable authority, an exact cleanup identity, and an exp
 
 Game Session owns the tick lifecycle. Redis contains disposable coordination state and does not share lifecycle authority.
 
-Before Redis staging, Game Session durably creates the unique tick batch, selected-work manifest, and `SCHEDULED` effect ledger rows. Selected source work remains discoverable until that durable association exists. Domain effects execute under immutable effect identities and request digests, with authoritative owner guards preventing duplicate logical mutation.
+For a work-bearing tick, before Redis staging, Game Session durably creates the unique tick batch, selected-work manifest, and `SCHEDULED` effect ledger rows. Selected source work remains discoverable until that durable association exists. Domain effects execute under immutable effect identities and request digests, with authoritative owner guards preventing duplicate logical mutation. A truly empty cadence boundary follows [ADR 0077](./adr-0077-durable-global-effect-fanout-and-lightweight-idle-ticks.md)'s fenced empty-tick watermark/heartbeat path instead of creating a batch.
 
-`durable_committed` is one durable visibility boundary in which:
+For a work-bearing tick, `durable_committed` is one durable visibility boundary in which:
 
 - every effect ledger row belonging to the batch is terminal as `APPLIED` or `ABANDONED`;
 - the tick batch is `COMMITTED`; and
@@ -51,7 +51,7 @@ Heartbeat publication follows `durable_committed` and may precede coordination c
 
 `coordination_cleared` is a separate live boundary. Cleanup uses an atomic exact compare-and-delete of Redis pending and lock state matching the expected epoch, tick, `tick_batch_id`, digest or expected effect count, ownership tokens, and required fence relationship. A stale owner cannot delete successor coordination. A successor uses a dedicated fenced recovery-cleanup path for old-owner state; it does not impersonate the prior owner or advance commit state through cleanup.
 
-Tick `N+1` remains gated while tick `N` has an unresolved durable batch or matching coordination state that has not reached `coordination_cleared`. Admission checks both durable batch state and Redis coordination; the absence of one cannot override unresolved evidence in the other.
+For a work-bearing tick, tick `N+1` remains gated while tick `N` has an unresolved durable batch or matching coordination state that has not reached `coordination_cleared`. Admission checks both durable batch state and Redis coordination; the absence of one cannot override unresolved evidence in the other. A truly empty tick instead uses ADR 0077's fenced watermark commit as its durable progress and admission boundary and does not wait for a nonexistent batch.
 
 A durable cleanup audit marker may be recorded for historical diagnostics, but it is optional and is not a correctness authority. Current clearance is established by the exact fenced cleanup and admission checks.
 
@@ -82,7 +82,7 @@ Rejected because PostgreSQL commit and Redis cleanup cannot be one atomic bounda
 
 ## Implementation and Proof Obligations
 
-Proof must cover durable batch creation before Redis staging; source discoverability before durable association; duplicate domain attempts with one guarded logical mutation; atomic terminal-ledger, batch-commit, and watermark visibility under the current fence; crash before and after every durable-commit step; heartbeat outbox or deterministic successor synthesis; duplicate heartbeat consumer handling; crash before heartbeat publication; heartbeat before cleanup; exact cleanup comparison across epoch, tick, batch, digest/count, ownership tokens, and fence relationship; stale-owner cleanup rejection; successor recovery cleanup; Redis pending with no batch; batch with no Redis pending; conflicting digest/count; Redis loss after commit; and rejection of tick `N+1` until both durable and coordination gates permit it.
+Proof for work-bearing ticks must cover durable batch creation before Redis staging; source discoverability before durable association; duplicate domain attempts with one guarded logical mutation; atomic terminal-ledger, batch-commit, and watermark visibility under the current fence; crash before and after every durable-commit step; heartbeat outbox or deterministic successor synthesis; duplicate heartbeat consumer handling; crash before heartbeat publication; heartbeat before cleanup; exact cleanup comparison across epoch, tick, batch, digest/count, ownership tokens, and fence relationship; stale-owner cleanup rejection; successor recovery cleanup; Redis pending with no batch; batch with no Redis pending; conflicting digest/count; Redis loss after commit; and rejection of tick `N+1` until both durable and coordination gates permit it. Empty-tick proof follows ADR 0077 and must cover the fenced watermark path and its admission/race boundary without a batch.
 
 The current implementation and runtime proof are not claimed to satisfy this decision.
 

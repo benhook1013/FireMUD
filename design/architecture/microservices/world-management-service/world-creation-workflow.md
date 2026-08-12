@@ -25,6 +25,8 @@ World creation consumes a previously resolved immutable launch descriptor for th
 
 For replacement-instance launches, World Management now persists the frozen `remapSetId` on `world_instance` so later cutover/termination consumers can prove they are still operating on the same approved cross-version remap identity that launch resolution selected.
 
+Game Design owns the immutable mapping from `<tenantId, gameTemplateId, controlPlaneRequestId>` to `launchDescriptorId`. After validating that descriptor, the Game Session instance-creation orchestrator owns the durable mapping from the same launch attempt and `launchDescriptorId` to one `gameInstanceId`; an exact retry reuses both mappings, while a conflicting descriptor, template, or instance fails closed. World workflow execution consumes those identities under the distinct business scope `<tenantId, gameInstanceId, controlPlaneRequestId>`, while each lifecycle step uses the shared digest-bound workflow/step guards and its deterministic occurrence and role. `controlPlaneRequestId` is the sole launch/workflow request identity; neither a separate world-creation request ID, a Temporal run/attempt identity, nor a generated instance may replace it.
+
 The target workflow uses the published world topology for the chosen `tenantId` and `version_id`, inserts a starter region instance, schedules initial events, and can generate terrain chunks and materialize instance-scoped population schedules for expansive worlds. Activation-time topology must be derived only from the attested published template graph plus runtime generation runs whose canonical inputs are covered by the same published `generationConfigRevision`. Throughout the workflow, the Temporal workflow and its activities:
 
 - Reads only **template/topology** rows keyed by `(tenantId, versionId)` (for example `region_template`, `zone_template`, `room_template`, or authored generation metadata); and
@@ -91,7 +93,7 @@ Initial-slice delivery expectation:
 
 Required audit/output shape when optional step 3 is skipped:
 
-- The workflow must emit a durable stage outcome for the omitted step under the same `worldCreationRequestId` / `launchDescriptorId`.
+- The workflow must emit a durable stage outcome for the omitted step under the same `controlPlaneRequestId` / `launchDescriptorId`.
 - That outcome must distinguish `SKIPPED_NOT_REQUIRED` from `FAILED` or `NOT_STARTED`.
 - Operators must be able to determine from persisted workflow state that terrain generation and/or population materialization were intentionally not required by the published launch descriptor.
 - Logging & Admin workflow-status surfaces for this workflow must expose the same recorded outcome so operators do not have to inspect raw service tables to distinguish “not required” from “failed”.
@@ -102,7 +104,7 @@ Illustrative stage outcome:
 {
   "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
   "gameInstanceId": "9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78",
-  "worldCreationRequestId": "wc-77",
+  "controlPlaneRequestId": "wc-77",
   "launchDescriptorId": "ld-55",
   "stepName": "generateTerrainAndMaterializePopulationSchedules",
   "outcome": "SKIPPED_NOT_REQUIRED",

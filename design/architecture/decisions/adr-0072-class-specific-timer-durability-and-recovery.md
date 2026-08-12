@@ -46,15 +46,15 @@ Time scaling is applied explicitly when a new duration or due point is calculate
 
 Recovery classes are:
 
-1. **Correctness-bearing one-shot** – intent is durable outside Redis before acknowledgement and converges to one logical execution or an explicit terminal outcome. Retry preserves its logical identity and must not duplicate the effect.
+1. **Correctness-bearing one-shot** – intent is durable outside Redis before acknowledgement and converges to one logical execution or an explicit terminal outcome. Retry preserves its logical identity and must not duplicate the effect. A runtime-scoped one-shot that crosses a region scope or epoch fence remains under its original identity for authority-fenced reconciliation; it is never rebound or ordinarily re-driven on the new timeline, and any authorized fresh identity requires conclusive old-lineage terminalization, current-scope revalidation, and durable lineage under [ADR 0067](./adr-0067-abandon-old-epoch-work-and-reschedule-with-new-lineage.md).
 2. **Durable recurring** – the authored schedule declares exactly one missed-occurrence policy:
    - `SKIP_MISSED` advances to the next valid future occurrence without executing missed occurrences; or
-   - `COALESCE_ONE` may create at most one synthetic firing for the logical schedule in one durable resume-window identity.
+   - `COALESCE_ONE` may create at most one synthetic firing for the complete stable schedule-instance identity in one durable resume-window identity.
 3. **Advisory or cosmetic** – missed occurrences may drop, and the timer resumes with a future occurrence under its declared cadence.
 
 Redis timer keys, due indexes, leader checkpoints, and wake-up hints are rebuildable and disposable for every class. Durable timer identity, due state, recovery policy, resume-window identity, and terminal or skipped outcomes live outside Redis whenever the class requires recovery or audit.
 
-`COALESCE_ONE` never replays a burst of missed cadence boundaries. One configurable global cap bounds synthetic firings across schedules in a resume window. Selection is deterministic and fair across logical schedules. Candidates excluded by the cap are not deferred into an unbounded backlog; their skipped outcomes and reasons are audited.
+`COALESCE_ONE` never replays a burst of missed cadence boundaries. One configurable global cap bounds synthetic firings across schedule instances in a resume window. Selection is deterministic and fair across complete stable schedule-instance identities, including target-scope and plugin-binding dimensions. Candidates excluded by the cap are not deferred into an unbounded backlog; their skipped outcomes and reasons are audited.
 
 If a feature needs elapsed downtime to affect gameplay, it computes one deterministic feature effect from the elapsed interval under its own bounded rules. It does not model that aggregation as replay of every missed firing.
 
@@ -93,7 +93,7 @@ Rejected because correctness-bearing one-shots would disappear and recurring fea
 
 ## Implementation and Proof Obligations
 
-Proof must cover mandatory clock-unit and recovery-class declarations; wall-clock stability across tick-cadence changes; tick/game-time cadence under changed real-world tick duration; explicit time-scale behavior; durable one-shot reconstruction and one logical execution or terminal outcome; duplicate recovery; `SKIP_MISSED`; one `COALESCE_ONE` firing per logical schedule and durable resume-window identity; the global cap; deterministic fair selection; audited exclusions; no burst or deferred missed-firing backlog; deterministic elapsed-time aggregation; corrected exact-boundary resume mathematics; distinction between reload preservation and downtime recovery; Redis loss and index rebuild; and player/operator-visible skipped and terminal outcomes.
+Proof must cover mandatory clock-unit and recovery-class declarations; wall-clock stability across tick-cadence changes; tick/game-time cadence under changed real-world tick duration; explicit time-scale behavior; durable one-shot reconstruction and one logical execution or terminal outcome; old-scope/epoch one-shot reconciliation without rebinding or unproven new lineage; duplicate recovery; `SKIP_MISSED`; one `COALESCE_ONE` firing per complete stable schedule-instance identity and durable resume-window identity; the global cap; deterministic fair selection; audited exclusions; no burst or deferred missed-firing backlog; deterministic elapsed-time aggregation; corrected exact-boundary resume mathematics; distinction between reload preservation and downtime recovery; Redis loss and index rebuild; and player/operator-visible skipped and terminal outcomes.
 
 The current implementation and runtime proof are not claimed by this decision.
 

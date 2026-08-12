@@ -373,7 +373,7 @@ Common scenarios and invariants:
 - **Crash during the measured Redis unreplicated-write window**
   - Redis: some recent `pending`/lock/queue keys for the last ticks may be missing.
   - PostgreSQL: effects applied before the crash remain; very recent, in-flight effects may or may not have been applied.
-  - Invariants: no double-apply; some ticks may be lost or need manual reconstruction.
+  - Invariants: apply the ADR 0058 class-specific outcome for each affected work item. Durable commands, staged effects/retries, and correctness-bearing timers are replayed, reconstructed, reconciled, or evidence-terminalized; only class-declared lossy hints may be dropped. No correctness-bearing work is silently treated as lost.
   - Action:
     - Metrics and dashboards surface gaps or stuck regions.
     - Operators treat a breached unreplicated-write SLO as a trigger to run the **ledger replay controller** (and, where appropriate, the scoped reset/reconcile flows) for affected `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch)` combinations.
@@ -392,10 +392,10 @@ Common scenarios and invariants:
 - **Redis coordination cluster outage**
   - Redis: coordination keys temporarily unavailable; a tail window of recent `pending`/lock/queue state may be lost depending on failure and AOF configuration.
   - PostgreSQL: remains authoritative; effects committed before the outage are not rolled back.
-  - Invariants: no double-apply; some ticks may be lost or skipped, but already-applied effects are not undone.
+  - Invariants: apply the ADR 0058 class-specific outcome. Durable commands/effects/correctness-bearing timers are replayed, reconstructed, reconciled, or evidence-terminalized from their durable records; only class-declared lossy hints may be dropped, while already-applied effects are not undone.
   - Action: Game Session halts ticks/commands for affected regions, following the Redis outage policy; after Redis recovers, the recovery subsystem and operators decide whether to skip, retry, or repair missing ticks.
 
-These scenarios assume the Redis AOF is configured as described in `system-architecture-redis.md`. If AOF or replication settings differ, the same idempotency rules still apply, but the tail window for potential tick loss may change.
+These scenarios assume the Redis persistence/profile contract described in `system-architecture-redis.md`. If AOF or replication settings differ, the same ADR 0058 class-specific outcomes and ledger replay rules still apply, but the measured coordination-exposure evidence and affected recovery scope may change.
 
 ## Stalled Regions and Downstream Behavior
 

@@ -44,7 +44,7 @@ Authority is split as follows:
 Each logical mutation declares its actual authoritative participants. A single-owner mutation does not add another required mutation participant merely because it consumed evidence from another service.
 
 - `MOVE` mutates World location/occupancy in one World transaction. Pure movement has no Entity mutation participant.
-- `DROP` and `PICKUP` mutate the item's holder in one Entity transaction. They use World-authoritative actor-location evidence admitted for the same room/epoch but do not transfer item authority to World.
+- `DROP` and `PICKUP` mutate the item's holder in one Entity transaction. They use the existing World `TargetingFactSnapshot` actor-location/location-version token, admitted for the same room/epoch and validated under the Game Session actor/executor fence before Entity commits; Entity also checks the expected holder and aggregate version. Stale evidence re-resolves under the same root `EffectId` and immutable request digest, without transferring item authority to World.
 
 Every owner derives a participant guard identity from the root `EffectId`, typed operation, and target aggregate, and binds it to an immutable request digest and durable result. Same guard and same request replays the prior result; the same guard with a different operation, target, or digest fails closed.
 
@@ -54,7 +54,7 @@ Correctness mutations carry exact scope, epoch, and relevant expected state:
 - drop and pickup include World-authoritative actor-location evidence plus expected current holder and Entity aggregate version; and
 - ambient changes include the owning World aggregate and expected version.
 
-Derived ambient or gameplay reactions use deterministic child effect identities and declare whether they are required or optional. Only declared required participants delay logical player success. Presentation reads use ADR 0059's causal floor and distinct component versions, never service-local snapshot equality.
+Derived ambient or gameplay reactions use deterministic child effect identities and declare whether they are required or optional. Only declared required participants delay logical player success. Presentation reads use ADR 0059's causal floor and distinct component versions, never service-local snapshot equality; that presentation causal floor is not a mutation guard and is never substituted for the World targeting token.
 
 ## Consequences
 

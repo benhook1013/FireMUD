@@ -42,14 +42,14 @@ An accepted command lost before durable staging terminates at the command lifecy
 
 No effect ledger row is invented for a command that never produced a durably claimed or staged effect.
 
-Each durably claimed or staged effect is keyed by an immutable effect identity and request digest. Physical execution is at least once: retries may invoke the handler multiple times after crashes, lost acknowledgements, or replay.
+Before any participant verification, the canonical Game Session context binds each durably claimed or staged effect's root `EffectId` to its typed operation, immutable request digest, required-participant context, and sealed manifest. Participants validate that sealed binding before their local guard/effect work; a conflicting operation, digest, or participant binding fails closed. Physical execution is at least once: retries may invoke the handler multiple times after crashes, lost acknowledgements, or replay.
 
 The owning domain's durable idempotency guard permits at most one logical authoritative state mutation for that identity and digest. Reuse of the identity with a conflicting digest fails closed.
 
 Every staged effect ledger row reaches exactly one terminal status:
 
 - `APPLIED` when authoritative domain evidence proves that the logical mutation committed; or
-- `ABANDONED` when the effect is intentionally not applied or cannot safely complete, with an explicit reason.
+- `ABANDONED` only when authoritative evidence proves the effect was unapplied, or an approved explicit auditable exception authorizes terminalization, with an explicit reason. Retry exhaustion or technical failure alone never qualifies.
 
 Literal one-time physical invocation is not promised. Duplicate presentation feedback may occur around retries or connection failure, but it does not authorize duplicate authoritative mutation.
 
@@ -88,7 +88,7 @@ Rejected as the normal contract because unresolved effects could remain ambiguou
 
 ## Implementation and Proof Obligations
 
-Proof must cover accepted-command loss before staging without an invented effect row; stable effect identity and digest-conflict rejection; crashes before and after domain commit; lost acknowledgements; duplicate physical invocation with one logical mutation; authoritative `REPLAY_NOOP` evidence terminalizing as `APPLIED`; explicit `ABANDONED` reasons; command-result derivation across zero, one, and multiple required effects; duplicate presentation feedback without duplicate state; replay and reset convergence; and absence of silent drop or permanently ambiguous staged rows.
+Proof must cover accepted-command loss before staging without an invented effect row; sealed root/operation/digest/participant/manifest binding before participant verification and conflict rejection; crashes before and after domain commit; lost acknowledgements; duplicate physical invocation with one logical mutation; authoritative `REPLAY_NOOP` evidence terminalizing as `APPLIED`; evidence-qualified or explicitly approved auditable `ABANDONED` outcomes with retry-exhaustion and technical-failure rejection; command-result derivation across zero, one, and multiple required effects; duplicate presentation feedback without duplicate state; replay and reset convergence; and absence of silent drop or permanently ambiguous staged rows.
 
 The current implementation and runtime proof are not claimed to satisfy this decision.
 

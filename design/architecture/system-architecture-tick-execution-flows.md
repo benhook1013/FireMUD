@@ -155,7 +155,7 @@ operations docs should link here instead of restating partial mappings in prose.
 | Pure local success with all required effects durably applied or replay-confirmed | `APPLIED` | `SUCCESS` | none |
 | Batch-bound local or same-region failure proven to have no required mutation | `ABANDONED` | `FAILED` | failure code/message when applicable |
 | Cross-region command family with a predeclared permitted partial terminal subset, and all required work resolved | `APPLIED` | `PARTIAL` | failure code/message for the permitted failed leg when applicable |
-| Cross-region origin-coordinator timeout selected by serialized arbitration before any successful remote result, with unresolved target uncertainty retained durably | `ABANDONED` | `TIMEOUT` | operational timeout reason plus retained uncertainty evidence |
+| Cross-region origin-coordinator timeout selected by serialized arbitration before any durably admitted remote terminal result, success or failure, with unresolved target uncertainty retained durably | `ABANDONED` | `TIMEOUT` | operational timeout reason plus retained uncertainty evidence |
 | `ACCEPTED_VOLATILE` `RECEIVED`/`ENQUEUED` command lost before staging during reset/coordination-loss reconcile, with no surviving batch | `LOST_BEFORE_STAGING` | `NOT_APPLIED` | failure code/message for the reconcile cause |
 | `ACCEPTED_VOLATILE` `RECEIVED`/`ENQUEUED` command purged before `BOUND_TO_BATCH`, with no surviving batch | `LOST_BEFORE_STAGING` | `NOT_APPLIED` | `failureCode=ROLLBACK_PURGED`, required `failureMessage` from ingress `reason` |
 | Operator rollback purge after `BOUND_TO_BATCH`, only where purge is permitted and evidence proves no required mutation | `ABANDONED` | `NOT_APPLIED` | `failureCode=ROLLBACK_PURGED`, required `failureMessage` from ingress `reason` |
@@ -473,7 +473,7 @@ Required policy defaults:
 - Remote result return-path contract:
   - target regions do not mutate origin coordinator rows directly through ad hoc RPCs or transient bus messages;
   - they write one durable origin-addressed result row keyed by coordinator identity;
-  - origin-side reconciliation is the only component that advances the coordinator. Result admission and timeout arbitration occur in one origin coordinator transaction and lock domain: a result durably admitted before arbitration wins and is evaluated before timeout; if timeout wins, the origin terminal outcome is immutable; any later result is recorded separately as late.
+  - origin-side reconciliation is the only component that advances the coordinator. Result admission and timeout arbitration occur in one origin coordinator transaction and lock domain: a result durably admitted before arbitration wins and is evaluated before timeout; an admitted remote failure wins as `REMOTE_ABANDONED` and is not a timeout; `TIMEOUT` is selected only when arbitration occurs before any durably admitted remote terminal result, success or failure. If timeout wins, the origin terminal outcome is immutable; any later result is recorded separately as late.
 - If origin has already reached `REMOTE_TIMEOUT_ABANDONED`, any later remote result must not silently mutate prior terminal state:
   - Default: record a separate `LATE_RESULT_IGNORED` classification for observability and keep origin terminal state unchanged.
   - Feature-specific override: `LATE_RESULT_RECONCILED` is allowed only if the feature documents an explicit reconciliation/compensation flow.

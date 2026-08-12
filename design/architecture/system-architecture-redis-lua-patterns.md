@@ -15,7 +15,7 @@ re-invocation behavior for tick-related scripts.
   - Key roles and order (`KEYS[1]`, `KEYS[2]`, etc.).
   - Allowed prefixes and hash-tag assumptions.
   - The Redis role (`redis_role`) the script is allowed to talk to (for coordination scripts this is always `coordination`).
-  - Reset behavior (`reset_sensitivity`) and ADR 0058 work-class outcome mapping (`loss_outcome_class`, `tail_loss_behavior`) describing how the script’s keys behave under region/tenant/cluster resets and the measured unreplicated-write exposure described in `system-architecture-redis.md` and `system-architecture-redis-reset-and-recovery.md`.
+  - Reset behavior (`reset_sensitivity`) and ADR 0058 work-class outcome mapping (`loss_outcome_class`, `tail_loss_behavior`) describing how the script’s keys behave under region/tenant/cluster resets and the measured unreplicated-write exposure described in `system-architecture-redis.md` and `system-architecture-redis-reset-and-recovery.md`. Both outcome fields are required metadata, even for a script whose declared loss class is explicitly lossy or whose writes are coordination-only.
 
 Any proposal that relies on special per-script runtime flags or bespoke operational handling should be treated as **advanced** and pushed back toward these shared patterns and the central registry.
 
@@ -413,6 +413,7 @@ All coordination-related Lua scripts live in a **Lua Script Registry** in the sh
 - The Redis role the script is allowed to target (for coordination scripts this is strictly `coordination`; they must never reference Cache/Rate-Limit prefixes such as `inventory:*`, `view:*`, `ratelimit:*`, or `automation:queue:*`).
 - Reset and coordination-loss metadata:
   - `reset_sensitivity` describing which reset scopes (region, tenant, cluster) must be considered when changing script behavior or key shape.
+  - `loss_outcome_class` naming the ADR 0058 work class and its required loss/recovery disposition.
   - `tail_loss_behavior` describing what is expected to happen if the script’s writes are lost or replayed within the measured unreplicated-write exposure (for example “pure lease; safe to lose”, “can enqueue duplicates; relies on domain idempotency”, “must not silently drop without a corresponding ledger row”).
   - Shard-locality metadata for multi-key scripts, including whether all `KEYS` must share the same `{tenantRegionTag}`, `{tenantInstanceTag}`, or `{tenantGameplayTag}` hash tag and slot.
 
@@ -426,7 +427,7 @@ CI enforces the following invariants for registered scripts:
 - Registry entries for coordination scripts are rejected if:
   - They declare a Redis role other than `coordination`, or
   - They reference prefixes that belong to Cache/Rate-Limit Redis, or
-  - They omit required `reset_sensitivity` / `tail_loss_behavior` metadata.
+  - They omit required `reset_sensitivity`, `loss_outcome_class`, or `tail_loss_behavior` metadata.
 - For scripts that declare shard-local multi-key behavior, CI verifies that:
   - All declared `KEYS` share the same hash tag (for example `{tenantRegionTag}`), and
   - No script attempts cross-slot operations under the `coordination` role.

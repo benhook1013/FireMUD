@@ -38,9 +38,9 @@ The existing formulas provide safe initial values, but their constants are not p
 The current shared formulas remain bootstrap defaults only:
 
 - `tick_budget_ms = tick_interval_ms * 0.8`
-- `lock_ttl_ms = clamp(tick_budget_ms * 8, 500, 5_000)`
+- `lock_ttl_ms` starts from `tick_budget_ms * 8`; the canonical shared resolver applies deterministic integer rounding and validates a positive integer result.
 
-All consumers use the shared helper and canonical resolved settings. Services must not define private derivations, multipliers, clamps, or fallback formulas.
+All consumers use the shared helper and canonical resolved settings as opaque resolved values. Services must not define private derivations, multipliers, clamps, or fallback formulas. Numeric minimum and maximum bounds remain pending an owning settings decision.
 
 `tick_interval_ms` is gameplay cadence. It is configurable only at the declared game and operator configuration levels, remains subject to operator and platform caps, and is fixed throughout one live `regionEpoch`.
 
@@ -53,7 +53,7 @@ A cadence change:
 
 Old volatile timer entries are not reinterpreted under the new epoch. An absolute due instant remains the same unless the owning feature's explicit semantics require a new duration calculation.
 
-`tick_budget_ms` and `lock_ttl_ms` are operator safety settings within platform hard bounds. Production values are calibrated from measured evidence including:
+`tick_budget_ms` and `lock_ttl_ms` are operator safety settings. Production values are calibrated from measured evidence including:
 
 - p95 and p99 tick execution time;
 - participating RPC latency and error behavior;
@@ -62,7 +62,7 @@ Old volatile timer entries are not reinterpreted under the new epoch. An absolut
 - the declared takeover and recovery objective; and
 - representative load and fault-injection tests.
 
-Tenant or game configuration cannot override these safety values unless the individual setting is explicitly declared eligible at that level, and any eligible override remains constrained by operator caps and platform hard bounds.
+Tenant or game configuration cannot override these safety values unless the individual setting is explicitly declared eligible at that level, and any eligible override remains constrained by the owning settings contract. Services consume the resolved opaque values rather than deriving them from local inputs.
 
 Correctness does not depend on a lock living long enough for an attempt to finish. It comes from current Redis lease possession, the durable `executorFence`, exact owner preconditions, and durable idempotency guards. Lock TTL controls liveness, duplicate attempt frequency, contention duration, and recovery time.
 
@@ -89,7 +89,7 @@ One derived ratio must not conceal a failure in another dimension.
 
 ### Permanent Cadence-Derived Formulas
 
-Rejected as the production contract because fixed `0.8`, `8x`, and clamp constants are not evidence that a deployment can meet its execution, pause, downstream-latency, cleanup, or recovery objectives. They remain useful shared bootstrap defaults.
+Rejected as the production contract because fixed `0.8` and `8x` constants are not evidence that a deployment can meet its execution, pause, downstream-latency, cleanup, or recovery objectives. Those shared derivations remain useful bootstrap inputs; numeric minimum and maximum bounds are pending an owning settings decision.
 
 ### Service-Local Timing Formulas
 
@@ -101,12 +101,12 @@ Rejected because existing due-tick ordering and replay identity would be reinter
 
 ## Implementation and Proof Obligations
 
-Implement one canonical resolver with platform hard bounds, operator safety configuration, declared lower-level eligibility, provenance, and shared bootstrap defaults. Expose the separate health dimensions and the evidence used to accept production values.
+Implement one canonical resolver with deterministic integer rounding, positive-integer validation, operator safety configuration, declared lower-level eligibility, provenance, and shared bootstrap defaults; numeric minimum and maximum bounds remain pending an owning settings decision. Expose the separate health dimensions and the evidence used to accept production values.
 
-Prove default and configured resolution; cap enforcement; rejection of ineligible tenant/game overrides; lease expiry during execution; durable-fence rejection of stale attempts; duplicate idempotent replay; GC/runtime pauses; slow and failed participant RPCs; cleanup lag; takeover timing; backlog pressure; cadence-change pause and epoch fencing; durable timer reconstruction; preserved absolute due intent; and derived new-epoch ordering.
+Prove default and configured resolution; owning-settings validation and rejection of invalid, non-positive, or ineligible tenant/game overrides; lease expiry during execution; durable-fence rejection of stale attempts; duplicate idempotent replay; GC/runtime pauses; slow and failed participant RPCs; cleanup lag; takeover timing; backlog pressure; cadence-change pause and epoch fencing; durable timer reconstruction; preserved absolute due intent; and derived new-epoch ordering.
 
 The current implementation, environment calibration, and focused proof are not claimed by this decision.
 
 ## Reversibility and Revisit Triggers
 
-Bootstrap constants, calibrated values, hard bounds, and declared eligibility may evolve from measured evidence without changing authority or fencing. Revisit the separation only if production evidence demonstrates that one shared derivation reliably satisfies cadence, execution, lock-liveness, and recovery requirements across every supported deployment class.
+Bootstrap constants, calibrated values, owning numeric bounds, and declared eligibility may evolve from measured evidence without changing authority or fencing. Revisit the separation only if production evidence demonstrates that one shared derivation reliably satisfies cadence, execution, lock-liveness, and recovery requirements across every supported deployment class.

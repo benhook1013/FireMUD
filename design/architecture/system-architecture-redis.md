@@ -171,7 +171,7 @@ Redis coordination keys form a long-running, measured-exposure **coordination bu
   - Losing coordination state within a bounded window must not create irreversible financial effects, cross‑tenant data leaks, or unfixable domain inconsistencies.
 
 - **Measured coordination-write exposure and class-specific outcomes**
-  - Coordination Redis is configured with AOF and measured replication/failover evidence. `redis_unreplicated_write_window_slo_ms` is an environment exposure target, not a product RPO or permission to lose every write made during that window; `ticks_exposed = ceil(window_ms / tick_interval_ms)` is diagnostic only.
+  - In production-like and other non-ephemeral profiles, Coordination Redis is configured with AOF and measured replication/failover evidence. An explicitly ephemeral single-node coordination stack may omit AOF and opts out of the measured exposure/replay guarantees; it must remain reset-tolerant and must not be used to claim those SLOs. `redis_unreplicated_write_window_slo_ms` is an environment exposure target, not a product RPO or permission to lose every write made during that window; `ticks_exposed = ceil(window_ms / tick_interval_ms)` is diagnostic only.
   - Accepted commands, staged effects/retries, correctness-bearing timers, sessions/leases/hints, and premium/financial/external operations follow the distinct durable outcomes in ADR 0058. Tick ledgers and domain guards drive correctness-bearing work to applied, replay-no-op, or evidence-backed abandonment rather than silently losing or duplicating it.
   - A breach increases durable reconstruction, explicit terminalization, or operator-reconciliation scope and reports affected backlog counts. It never weakens financial, security, isolation, or no-resurrection invariants.
   - Flows that cannot tolerate Redis loss (for example, real-money purchases, cross-tenant transfers, or unique external side effects) use durable domain mechanisms and may use Redis only for optional coordination.
@@ -479,7 +479,7 @@ Gateway connect-token replay state is a narrow security-critical exception to th
 
 ## Redis Profiles
 
-Redis deployments approximate one of a small set of **profiles**. These profiles describe the expected persistence, restart behavior, and SLO assumptions for Coordination Redis:
+Redis deployments approximate one of a small set of **profiles**. These named profiles are non-ephemeral and describe the expected persistence, restart behavior, and SLO assumptions for Coordination Redis; only an explicitly labelled ephemeral single-node stack may omit AOF.
 
 - **`dev_local`**
   - Used for individual developers and lightweight local stacks.

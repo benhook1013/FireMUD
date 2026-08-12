@@ -62,14 +62,14 @@ This example walks through how a typical `onEnterRegion` script executes end-to-
 5. **Automation queue staging**
    - Actions produced by the handler are converted into domain commands and persisted as a durable script work item (outbox), then indexed into `automation:queue:{tenantInstanceTag}:<entityId>` for the affected entity.
    - The firing admission links the durable firing claim, handler audit row, work item, queue-pointer projection, and due-point advancement in one atomic durable transition or a resumable idempotent recovery operation. Recovery completes missing links from the existing claim rather than re-evaluating the handler.
-   - Each work item carries the originating `scriptEventId`, `scriptId`, `gameInstanceId`, `playableStateScope`, version metadata, and region context. In the target handoff contract, it receives one stable `automationDispatchId` when its emitted commands are first persisted, and every logical command receives a deterministic `commandOrdinal` under that shared dispatch. Both values are reused for every handoff, retry, and downstream disposition. The current live Game Session handoff carries `automationDispatchId`, command id/text, selected provenance, and parent work-item correlation, but does not yet carry `commandOrdinal` or the complete Trigger Identity; current diagnostics must use those live fields as a fallback rather than imply the target contract is implemented. The target `ListScriptHandoffEvents` child records are keyed by `(automationDispatchId, commandOrdinal)` and retain the full parent Trigger Identity while the handler audit remains one row.
+   - Each work item carries the originating `scriptEventId`, `scriptId`, `gameInstanceId`, `playableStateScope`, version metadata, and region context. In the target handoff contract, it receives one stable `automationDispatchId` when its emitted commands are first persisted, and every logical command receives a deterministic `commandOrdinal` under that shared dispatch. Both values are reused for every handoff, retry, and downstream disposition. The current live Game Session handoff carries `automationDispatchId`, command id/text, selected provenance, and parent work-item correlation, but does not yet carry `commandOrdinal` or the complete Trigger Identity; current diagnostics must use those live fields as a fallback rather than imply the target contract is implemented. The target `ListScriptHandoffEvents` child records are keyed by the complete Command-Handoff Identity, with `(automationDispatchId, commandOrdinal)` retained only as its dispatch-group suffix, and retain the full parent Trigger Identity while the handler audit remains one row.
 
 6. **Automation ticks and tick command enqueue**
    - Automation's durable execution loop claims pending work items and hands emitted commands to Game Session.
    - It then hands the resulting commands to the Game Session Service over internal gRPC so Game Session can enqueue them into `tick:{tenantRegionTag}:queue:<entityId>` using the tick engine’s Lua registry and invariants.
 
 7. **Execution, audit, and observability**
-   - On subsequent ticks, the Game Session Service executes at most one command per entity per tick, so `onEnterRegion` effects follow the same fairness and conflict-resolution rules as player actions.
+   - On subsequent ticks, the Game Session Service selects at most one root actor action per eligible entity in the actor-action lane; separately bounded passive, inbound, and actor-generated effect lanes may also process work without consuming that actor-action slot. All lanes follow their canonical fairness and conflict-resolution rules.
    - Metrics such as `automation_script_triggers_total`, `automation_script_skips_total`, `automation_script_triggers_dropped_total`, `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total` are updated throughout this flow; see the metrics glossary in `design/architecture/system-architecture-scripting-quotas-and-operations.md` for names and label conventions.
    - An audit record is written to `script_event_audit` for each resolved handler Trigger Identity, with identifiers such as `scriptEventId`, `scriptId`, `tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, and `tickId`, plus stage-aware outcome fields (`finalStage`, `finalOutcome`, `finalReason`) so operators can distinguish “DSL evaluated” from “accepted into tick queues”, enabling replay and troubleshooting as described in the same quotas and operations document.
 
@@ -79,7 +79,7 @@ One admitted event can still produce different outcomes per bound handler. For e
 
 - Game Session emits one `TriggerScriptEvent` for `eventType=onEnterRegion` with a single `scriptEventId`.
 - The Automation & Scripting Service accepts that event at ingress, resolves three handlers, and creates three handler-scoped Trigger Identities.
-- The first handler is admitted, evaluates successfully, and reaches `finalStage=TICK_HANDOFF`, `finalOutcome=handoff_accepted` after every required child dispatch is durably accepted; its later gameplay results remain per dispatch. The target handoff identity uses one persisted `automationDispatchId` for the work-item handoff and distinct `commandOrdinal` values for its commands, and retries reuse the same dispatch.
+- The first handler is admitted, evaluates successfully, and reaches `finalStage=TICK_HANDOFF`, `finalOutcome=handoff_accepted` after every required child dispatch is durably accepted; its later gameplay results remain per dispatch. The target Command-Handoff Identity carries the complete source/target scope together with one persisted `automationDispatchId` and distinct `commandOrdinal` values for its commands; retries reuse those identities.
 - The second handler is rejected during admission with `finalStage=ADMISSION`, `finalOutcome=quota_denied`, `finalReason=per_script_window_exhausted`.
 - The third handler is skipped with `finalStage=ADMISSION`, `finalOutcome=script_disabled`, `finalReason=admin_hard_disable`.
 
@@ -87,14 +87,14 @@ The first handler's audit remains one row for its Trigger Identity even if it em
 
 | `commandOrdinal` | `automationDispatchId` | Parent `outboxWorkItemId` | Handoff outcome |
 | --- | --- | --- | --- |
-| `0` | `work-9` | `work-9` | `accepted` |
-| `1` | `work-9` | `work-9` | `accepted` |
+| `0` | `dispatch-9` | `work-9` | `accepted` |
+| `1` | `dispatch-9` | `work-9` | `accepted` |
 
-If Game Session later fences only `(automationDispatchId=work-9, commandOrdinal=1)`, that command-handoff record gets the bounded version-fence disposition; the handler audit and the `(automationDispatchId=work-9, commandOrdinal=0)` sibling record remain unchanged.
+If Game Session later fences the command whose dispatch/ordinal suffix is `(automationDispatchId=dispatch-9, commandOrdinal=1)` within the applicable complete Command-Handoff Identity, that command-handoff record gets the bounded version-fence disposition; the handler audit and the `(automationDispatchId=dispatch-9, commandOrdinal=0)` sibling suffix remain unchanged.
 
 In this case the unary ingress response still reports only that the event itself was accepted for handler resolution. Operators and replay tooling must inspect `script_event_audit` by Trigger Identity to understand the handler-level mix of success, denial, and skip outcomes for that one inbound event.
 
-They must inspect the separate per-command handoff records by `automationDispatchId` for command-level outcomes.
+They must inspect the separate per-command handoff records by their complete Command-Handoff Identity; `(automationDispatchId, commandOrdinal)` is only the display and dispatch-group suffix for that lookup.
 For the handler-scoped idempotency and audit-row rule behind this fan-out behavior, see the **Idempotency & Retries** section in `design/architecture/microservices/automation-scripting-service/README.md`.
 
 If the `scriptPatchVersion` pinned by the Game Session Service for a given game is later marked failed or unknown for that tenant, subsequent `onEnterRegion` triggers referencing it follow the reload failure behavior described in `design/architecture/system-architecture-scripting-quotas-and-operations.md` instead of the happy-path flow.
@@ -127,19 +127,19 @@ This example shows how a script that runs on a fixed cadence (for example, an NP
 
 5. **Execution, audit, and observability**
    - Automation later claims the durable work items, uses `automation:queue` only as a rebuildable pointer index, and hands the resulting commands to the Game Session Service over internal gRPC so Game Session can enqueue them into the appropriate `tick:{tenantRegionTag}:queue:<entityId>`.
-   - On subsequent ticks, the Game Session Service executes at most one command per entity per tick, so patrol movements and emotes follow the same fairness and conflict-resolution rules as player actions.
+   - On subsequent ticks, the Game Session Service selects at most one root actor action per eligible entity in the actor-action lane; separately bounded passive, inbound, and actor-generated effect lanes may also process work without consuming that actor-action slot. Patrol movements and emotes follow the canonical lane fairness and conflict-resolution rules.
    - Each fired interval contributes to `automation_script_triggers_total` (tagged with `eventType=onInterval`) and, if it produces work that is accepted into tick queues, increases `automation_tick_events_enqueued_total`. An audit record is written to `script_event_audit` so missed or delayed intervals can be debugged using stage-aware fields (`finalStage`, `finalOutcome`, `finalReason`) alongside identifiers like `scriptEventId`, `scriptId`, `scheduleDefinitionId`, the persisted due point, and `tickId`.
-   - The current `ListScriptHandoffEvents` read carries Automation-owned dispatch and handoff fields; the handler audit does not carry a single dispatch ID. The live Game Session handoff still lacks `commandOrdinal` and complete Trigger Identity propagation, so its narrower fields are only a diagnostic fallback. A combined downstream execution-disposition view keyed by the complete Trigger Identity plus `(automationDispatchId, commandOrdinal)` remains target-state until the handoff is widened. See the metrics and audit sections in `design/architecture/system-architecture-scripting-quotas-and-operations.md` for interpretation.
+   - The current `ListScriptHandoffEvents` read carries Automation-owned dispatch and handoff fields; the handler audit does not carry a single dispatch ID. The live Game Session handoff still lacks `commandOrdinal` and complete Trigger Identity propagation, so its narrower fields are only a diagnostic fallback. A combined downstream execution-disposition view keyed by the complete Command-Handoff Identity, with `(automationDispatchId, commandOrdinal)` only as its suffix, remains target-state until the handoff is widened. See the metrics and audit sections in `design/architecture/system-architecture-scripting-quotas-and-operations.md` for interpretation.
 
 As with `onEnterRegion`, reload failures or version issues are surfaced via specific outcomes (for example, `skipped_reloading`, `rollback_paused`, `version_unavailable`) and corresponding metrics, detailed in the quotas and operations document.
 
 ### Timer Reliability Notes
 
-Timer-driven handlers such as `onInterval` follow the same **at-most-once per trigger** semantics described in the DSL reference:
+Recurring timer-driven handlers such as `onInterval` produce at most one logical durable firing/work item per Trigger Identity:
 
 - If an `onInterval` firing is skipped because of quotas, tenant budgets, cluster ceilings, or version issues, that specific firing is atomically consumed by due-point advancement or quarantine/tombstoning and is not automatically replayed later, although subsequent firings based on the cadence may still occur.
-- If an admitted `onInterval` firing fails with `infrastructure_error`, lower layers may retry individual downstream operations in an idempotent way, but the DSL body is not re-executed for the same full applicable Trigger Identity.
-- Designers and operators should use `script_event_audit` and automation metrics to detect heavily throttled or consistently failing timers and adjust cadence, budgets, or script design as needed.
+- Before `EVALUATED_COMMITTED`, a failed physical evaluation attempt may retry under the same full applicable Trigger Identity and must converge on the same work-item and child identities. After that descriptor-commit boundary, recovery replays the durable descriptors and does not re-enter the DSL; independently idempotent downstream operations may still retry.
+- Designers and operators should use the event-scope candidate audit for pre-admission skips, `script_event_audit` for admitted handler outcomes, and automation metrics to detect heavily throttled or consistently failing timers and adjust cadence, budgets, or script design as needed.
 
 ### `scheduleDefinitionId` Example
 

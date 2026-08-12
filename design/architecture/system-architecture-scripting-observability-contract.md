@@ -138,10 +138,11 @@ When a downstream service reports a later handoff or execution result, the targe
 
 - `automationDispatchId` – the stable dispatch-group identifier shared by the emitted gameplay commands; `commandOrdinal` distinguishes each command under it within the complete command-handoff scope.
 - `commandOrdinal` – the deterministic ordinal of that emitted command within the handler handoff.
-- `gameSessionCommandId` – the Game Session command identity when assigned.
-- `handoffOutcome` – the durable handoff result for this child.
-- `executionOutcome` and `gameplayResult` – the current authoritative Game Session command lifecycle and terminal result when available.
-- `commandStatusLink` – a link or stable reference to the authoritative Game Session command-status record.
+- `gameSessionCommandId` – the Game Session command identity when assigned; it is `null`/absent while the child has not been accepted into Game Session.
+- `handoffOutcome` – the durable handoff result for this child, present after a handoff attempt and independent of later gameplay execution.
+- `executionOutcome` – the authoritative Game Session execution lifecycle result when available; it remains `null`/absent until execution reaches a result or terminal disposition.
+- `gameplayResult` – the terminal gameplay result when available (for example `applied` or `not_applied`); it remains `null`/absent while execution is unresolved.
+- `commandStatusLink` – a link or stable reference to the authoritative Game Session command-status record when `gameSessionCommandId` is assigned; it is `null`/absent before that point.
 - `outcome` – bounded enum. Minimum required value: `version_fence_dropped`.
 - `reason` – bounded reason such as `script_patch_mismatch` or `plugin_version_mismatch`.
 - `recordedAt` – timestamp.
@@ -158,10 +159,10 @@ Rules:
 
 During rollback, operator views must show the handler's `finalStage`/`finalOutcome` beside the `commandHandoffDispositions[]` returned from `ListScriptHandoffEvents`. A `TICK_HANDOFF` with `finalOutcome=handoff_accepted` therefore remains visible even when one or more individual commands later receive `version_fence_dropped`; a child result must never overwrite the handler result or collapse sibling command records.
 
-Concrete example. Both child records below use the complete `T123` Trigger Identity (`tenantId=11111111-1111-4111-8111-111111111111`, `gameInstanceId=44444444-4444-4444-8444-444444444444`, `playableStateScope=isolated`, `regionId=R2`, `regionEpoch=14`, `entityId=npc-guard-9`, `scriptId=guard-on-enter`, `eventType=onEnterRegion`, `eventSchemaVersion=1`, `scriptPatchVersion=P22`, `scriptEventId=evt-7f4c`, `isDryRun=false`) plus the command discriminator. `outboxWorkItemId=work-9` is parent correlation only. The `(automationDispatchId, commandOrdinal)` notation in the bullets is a display suffix, not a standalone key.
+Concrete example. Both child records below use the complete `T123` Trigger Identity (`tenantId=11111111-1111-4111-8111-111111111111`, `gameInstanceId=44444444-4444-4444-8444-444444444444`, `playableStateScope=isolated`, `regionId=R2`, `regionEpoch=14`, `entityId=npc-guard-9`, `scriptId=guard-on-enter`, `eventType=onEnterRegion`, `eventSchemaVersion=1`, `scriptPatchVersion=P22`, `scriptEventId=evt-7f4c`, `isDryRun=false`) plus the command discriminator. `automationDispatchId=dispatch-9` identifies the dispatch group, while `outboxWorkItemId=work-9` is parent correlation only. The `(automationDispatchId, commandOrdinal)` notation in the bullets is a display suffix, not a standalone key.
 
 - `script_event_audit` row for Trigger Identity `T123` ends with `finalStage=TICK_HANDOFF`, `finalOutcome=handoff_accepted`.
-- The handler emitted two commands. Later, Game Session rejects only the child ending in `(automationDispatchId=work-9, commandOrdinal=1)` under the same complete command-handoff scope during rollback convergence and appends a child disposition with `outcome=version_fence_dropped`, `reason=script_patch_mismatch`, `sourceService=game-session`, and `recordedAt=...`; the child ending in `(automationDispatchId=work-9, commandOrdinal=0)` remains a separate sibling record.
+- The handler emitted two commands. Later, Game Session rejects only the child ending in `(automationDispatchId=dispatch-9, commandOrdinal=1)` under the same complete command-handoff scope during rollback convergence and appends a child disposition with `outcome=version_fence_dropped`, `reason=script_patch_mismatch`, `sourceService=game-session`, and `recordedAt=...`; the child ending in `(automationDispatchId=dispatch-9, commandOrdinal=0)` remains a separate sibling record.
 - Queries for `T123` must surface the handler row, derived summary, and both authoritative command-handoff records so operators can distinguish durable handoff from the gameplay command that was later fenced.
 
 Illustrative record shape:
@@ -223,9 +224,14 @@ Illustrative record shape:
       "scriptEventId": "evt-7f4c",
       "isDryRun": false,
       "commandOrdinal": 0,
-      "automationDispatchId": "work-9",
+      "automationDispatchId": "dispatch-9",
       "outboxWorkItemId": "work-9",
       "playableStateScope": "isolated",
+      "gameSessionCommandId": "gs-cmd-0",
+      "handoffOutcome": "accepted",
+      "executionOutcome": null,
+      "gameplayResult": null,
+      "commandStatusLink": "/commands/gs-cmd-0",
       "outcome": "accepted",
       "reason": "game_session_accepted",
       "sourceService": "game-session",
@@ -244,9 +250,14 @@ Illustrative record shape:
       "scriptEventId": "evt-7f4c",
       "isDryRun": false,
       "commandOrdinal": 1,
-      "automationDispatchId": "work-9",
+      "automationDispatchId": "dispatch-9",
       "outboxWorkItemId": "work-9",
       "playableStateScope": "isolated",
+      "gameSessionCommandId": "gs-cmd-1",
+      "handoffOutcome": "accepted",
+      "executionOutcome": "version_fence_dropped",
+      "gameplayResult": "not_applied",
+      "commandStatusLink": "/commands/gs-cmd-1",
       "outcome": "version_fence_dropped",
       "reason": "script_patch_mismatch",
       "sourceService": "game-session",

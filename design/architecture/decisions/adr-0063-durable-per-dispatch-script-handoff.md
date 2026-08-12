@@ -37,11 +37,11 @@ Evaluation itself may retry after a crash. Durable identity therefore has to dis
 
 The PostgreSQL work-item outbox is the authoritative record after DSL evaluation. `automation:queue:*` and equivalent Redis structures are rebuildable routing pointers only; they are not execution logs or outcome authority.
 
-Each emitted command has a durable child dispatch row beneath its parent work item. Each child uses a deterministic `automationDispatchId` derived under the stable parent identity. The durable child records the command handoff lifecycle and links to its downstream outcome evidence.
+Each emitted command has a durable child dispatch row beneath its parent work item. Each child uses the complete [Command-Handoff Identity](../system-architecture-scripting-normative-contract-tables.md#command-handoff-identity-target-state): stable source/target scope, persisted `automationDispatchId`, and deterministic `commandOrdinal`/canonical output position. `automationDispatchId` is a dispatch-group suffix and is not globally unique; the parent Trigger Identity and `outboxWorkItemId` are retained for correlation but are not part of command-child uniqueness. The durable child stores the immutable command/request digest and links to downstream outcome evidence; the same complete identity with the same digest converges on the existing child, while a conflicting digest fails closed.
 
 Retries select only unfinished child dispatches. A previously accepted or otherwise terminal child is not emitted again merely because another child from the same evaluation failed.
 
-The parent reaches `HANDED_OFF` only after every required child dispatch has been accepted by its downstream authority. A permanent partial failure is an explicit non-success or dead-letter outcome; it must not be collapsed into `HANDED_OFF` or generic success.
+The parent reaches `HANDED_OFF` only after every required child dispatch has been accepted by its downstream authority. A required-child permanent failure is an explicit non-success or dead-letter outcome; it must not be collapsed into `HANDED_OFF` or generic success. Optional children do not gate that transition: unfinished optional children continue under bounded post-handoff retry until accepted or explicit terminal failure/dead-letter. A permanent optional failure remains child/derived diagnostic evidence and does not rewrite required-child parent success; compaction waits until every child is terminal.
 
 Evaluation may retry under the same Trigger Identity, but retries may create only one durable logical work item and one durable outcome for each deterministic child dispatch. Duplicate evaluation or handoff attempts converge on those existing records.
 
@@ -67,7 +67,7 @@ Rejected despite offering one convenient timeline because it would centralize Au
 
 ## Implementation and Proof Obligations
 
-Proof must cover deterministic child identity across evaluation retries, multi-command partial acceptance, retry of unfinished children only, duplicate dispatch convergence, parent `HANDED_OFF` only after all required children are accepted, explicit permanent partial failure and dead-letter behavior, Redis loss and pointer rebuild, and compaction only after every child is terminal and the downstream diagnostic/replay horizon has elapsed.
+Proof must cover complete Command-Handoff Identity and digest-conflict rejection across evaluation retries, multi-command partial acceptance, retry of unfinished children only, duplicate dispatch convergence, parent `HANDED_OFF` only after all required children are accepted, independent bounded retry and terminal/dead-letter behavior for optional children, required-child permanent failure, Redis loss and pointer rebuild, and compaction only after every child is terminal and the downstream diagnostic/replay horizon has elapsed.
 
 ## Reversibility and Revisit Triggers
 

@@ -49,6 +49,10 @@ Occurrence keys are stable semantic keys for the repeated or branched position. 
 
 Workflow run IDs, process or JVM execution IDs, retry-attempt IDs, and message or delivery IDs are trace and diagnostic metadata only. They may be recorded alongside the durable identity but are never the sole or authoritative deduplication key.
 
+### Current Automation Adopter Mapping
+
+The `script-patch-readiness` workflow/request scope is `<tenantId, scriptPatchVersion>`. Each readiness `onLoad` step uses the stable `onLoad` step name, a deterministic occurrence key from the applicable tenant-readiness Trigger Identity and handler occurrence, and the `FORWARD` execution role. Its immutable request digest covers the admitted `tenantId`, `scriptId`, `eventSchemaVersion`, `scriptPatchVersion`, `eventType=onLoad`, `isDryRun=false`, deterministic `scriptEventId`, and immutable handler descriptor content/version. Runtime-only game, playable-state, region, epoch, and entity fields are absent. The same guard with the same digest replays, while the same guard with a different digest fails closed.
+
 ## Consequences
 
 - Caller retry, worker restart, redelivery, and workflow run replacement converge on the same logical workflow and step identities.

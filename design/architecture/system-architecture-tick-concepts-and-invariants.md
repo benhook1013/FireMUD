@@ -84,7 +84,7 @@ Redis coordination state has an environment-measured unreplicated-write exposure
 
 ## Tick Coordination-Loss Contract
 
-The tick system and the Redis measured exposure SLO combine into a simple contract:
+The tick system and the Redis-measured exposure SLO combine into a simple contract:
 
 - For the complete expected concrete participant-projection set for each root effect, including each `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, tickId, effectKey, targetAggregateType, targetAggregateId)` projection linked to its root `EffectId` and guard contract, every expected projection must eventually have exactly one **terminal** outcome in PostgreSQL (`APPLIED` or `ABANDONED`) when the existing evidence policy permits terminalization. Reconciliation must reject missing, extra, partial, or conflicting projections rather than treating one root row as sufficient, even if:
   - Coordination writes near the measured exposure window are dropped, delayed, or replayed, or
@@ -103,7 +103,7 @@ Per-tick isolation is defined explicitly so replay and fairness remain determini
 
 - Actions may only see staged state from the **current** tick for their `<tenantId, gameInstanceId, regionId>`.
 - Changes from other tick regions or from **future** ticks in the same region are invisible while a tick is in progress.
-- Changes staged earlier in the same tick are composable: later actions in that tick may observe them when computing their own outcomes.
+- Changes staged earlier in the same tick are composable only where the semantic phase permits it: confirmed start-passive and inbound outcomes may feed root actor resolution, and a generated effect may observe its own parent's confirmed result and deterministic child ordinals. Root actor resolution does not observe mutations from other root actor actions, or their generated effects, in the same tick; those cross-actor consequences become visible in the next tick under [ADR 0070](./decisions/adr-0070-bounded-within-tick-visibility-by-semantic-phase.md).
 - When required state is missing or inconsistent, the action must fail and retry under the normal retry/backoff rules rather than speculatively mixing cross-tick or cross-region reads.
 
 These rules ensure clean, replayable ticks and keep visual or scripting shortcuts from leaking inconsistent state across ticks.
@@ -150,9 +150,9 @@ Two related configuration concepts control how long tick work is allowed to run 
 
 - `tick_interval_ms` – the configured target interval between ticks for a region.
 - `tick_budget_ms` – the soft execution budget for a tick. The shared bootstrap default is `tick_interval_ms * 0.8`.
-- `lock_ttl_ms` – the TTL used for per-entity locks. The shared bootstrap default is `clamp(tick_budget_ms * 8, 500, 5_000)`.
+- `lock_ttl_ms` – the TTL used for per-entity locks. The shared bootstrap derivation starts from `tick_budget_ms * 8`; the canonical resolver rounds deterministically and validates a positive integer. Numeric minimum and maximum bounds remain pending an owning settings decision.
 
-These formulas are shared bootstrap defaults only. Production values remain explicitly pending evidence from p95/p99 execution, RPC latency/errors, runtime pauses, cleanup lag, takeover/recovery objectives, representative load, and fault injection. One resolver owns the defaults, operator caps, provenance, and platform hard bounds; services may not define private derivations. Cadence, execution budget, and lock lifetime are separate health dimensions. See [ADR 0073](./decisions/adr-0073-evidence-calibrated-tick-budgets-and-lock-ttls.md).
+These formulas are shared bootstrap defaults only. Production values remain explicitly pending evidence from p95/p99 execution, RPC latency/errors, runtime pauses, cleanup lag, takeover/recovery objectives, representative load, and fault injection. One resolver owns the defaults, operator safety settings, validation, and provenance; numeric minimum and maximum bounds remain pending the owning settings decision, and services may not define private derivations. Cadence, execution budget, and lock lifetime are separate health dimensions. See [ADR 0073](./decisions/adr-0073-evidence-calibrated-tick-budgets-and-lock-ttls.md).
 
 The only allowed exception is an explicit **solo-tick budget mode** for commands marked `requiresSoloTick: true`:
 

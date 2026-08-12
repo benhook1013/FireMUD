@@ -126,7 +126,7 @@ This section summarizes common failure and rollback scenarios and how operators 
     - For `onInterval`, high counts for `automation_script_skips_total{scope,reason="tenant_budget_exceeded"}` indicate intentional pre-evaluation timer skips when tenant runtime budget is exhausted. Use `automation_script_triggers_dropped_total` only when the timer candidate is rejected under explicit pre-handler rejection semantics, such as `reason="cluster_limit_reached"`.
     - Handler-scoped `onInterval` denials are diagnosed separately through `automation_script_triggers_total` outcomes and `script_event_audit` entries with `finalStage=ADMISSION` and outcomes such as `quota_denied`, `tenant_budget_exceeded`, or `version_unavailable`.
   - Behavior:
-    - Timer-based triggers are at-most-once per scheduled firing; dropped or skipped intervals are not replayed, although future firings may still occur.
+    - Recurring timer triggers produce at most one logical durable firing per Trigger Identity; dropped or skipped intervals are not replayed, although future firings may still occur. A failed physical evaluation attempt before `EVALUATED_COMMITTED` may retry only under the same identity and must converge on that same logical firing.
   - Operator actions:
     - Reduce cadence (increase `intervalTicks`) or lower priority for noisy timers.
     - Adjust per-tenant budgets or cluster ceilings if drops reflect legitimate load rather than misbehaving scripts.
@@ -167,7 +167,7 @@ Symptoms:
 Behavior:
 
 - The Automation & Scripting Service continues to enforce quotas, budgets, and failure-rate circuit breakers for individual scripts; misbehaving handlers may be transitioned to `runtimeStatus=DISABLED_DUE_TO_ERRORS`.
-- Timer and event triggers remain at-most-once per firing; skipped or failed triggers are not automatically replayed even if the patch is later rolled back.
+- Recurring timer and event triggers produce at most one logical durable firing per Trigger Identity; skipped firings are not automatically replayed even if the patch is later rolled back. A failed physical evaluation attempt before `EVALUATED_COMMITTED` may retry only under the same identity and must converge on the same logical firing; committed descriptors recover without re-entering the DSL.
 
 Operator actions:
 

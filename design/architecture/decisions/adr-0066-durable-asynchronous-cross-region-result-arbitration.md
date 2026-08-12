@@ -51,7 +51,7 @@ A terminal origin outcome is immutable. A late result cannot reopen or rewrite i
 
 Every feature payload carries exact target identity and the required ownership, location, and aggregate-version preconditions. The target applies the effect only when its recorded target epoch and those feature-specific preconditions still hold under the current authoritative state and executor fence.
 
-The canonical player result vocabulary is `SUCCESS`, `PARTIAL`, and `FAILED`. The origin derives that result from the durable local, remote, timeout, and any separately linked reconciliation outcomes.
+Effect status, ADR 0053 command outcome, status-surface `gameplayResult`, and any higher-level three-way player-success summary remain separate. The status surface preserves `TIMEOUT` and `NOT_APPLIED` as distinct canonical `gameplayResult` values; it must not relabel either value as `FAILED`. When no required consequence applied, either value derives a higher-level `FAILED` player-success summary. If another required consequence committed, that summary may be `PARTIAL` only when the feature explicitly permits the terminal subset, never `SUCCESS`, while the underlying command/status evidence remains unchanged. The origin derives these layers from durable local, remote, timeout, and separately linked reconciliation outcomes after serialized result-versus-timeout arbitration; a late result cannot rewrite a terminal command result or player summary.
 
 Conserved or paired workflows, including currency, trade, refunds, rewards, and unique external consequences, use an explicit saga/outbox workflow outside the tick loop. They do not rely on default late-result ignore behavior.
 
@@ -80,7 +80,7 @@ Rejected because a late target result could rewrite a player-visible conclusion 
 
 ## Implementation and Proof Obligations
 
-Proof must cover durable scheduling without Redis hints; duplicate follow-up, claim, execution, and result delivery; independent region commit; atomic result-versus-timeout races in both orders; paused and stalled deadline suspension; operational maximum-real-wait terminalization; immutable origin outcome; separately recorded late results; linked reconciliation and compensation; stale target epoch, identity, ownership, location, and version rejection; canonical player result derivation; and saga/outbox behavior for conserved or paired consequences.
+Proof must cover durable scheduling without Redis hints; duplicate follow-up, claim, execution, and result delivery; independent region commit; atomic result-versus-timeout races in both orders; paused and stalled deadline suspension; operational maximum-real-wait terminalization; immutable origin outcome; separately recorded late results; linked reconciliation and compensation; stale target epoch, identity, ownership, location, and version rejection; separate effect-status, ADR 0053 command-outcome, status-surface `gameplayResult`, and player-summary derivation including preservation of `TIMEOUT`/`NOT_APPLIED` and explicit `PARTIAL` gating; and saga/outbox behavior for conserved or paired consequences.
 
 The current implementation and runtime proof are not claimed to satisfy this decision.
 

@@ -135,7 +135,7 @@ When a work item is handed to Game Session, the local wire boundary is:
 - `PENDING` - persisted, eligible for indexing and draining.
 - `INDEXED` - a pointer/index has been published into `automation:queue:*` (best-effort; may be rederived).
 - `HANDOFF_IN_FLIGHT` - being handed off to Game Session (idempotent retries allowed).
-- `HANDED_OFF` - Game Session has durably accepted every required child dispatch (`script_event_audit.finalStage=TICK_HANDOFF` is now eligible for `finalOutcome=handoff_accepted`). A parent with accepted and unfinished children remains `HANDOFF_IN_FLIGHT`; a permanent required-child failure produces an explicit non-success/dead-letter aggregate rather than `HANDED_OFF`.
+- `HANDED_OFF` - This evaluated descriptor/child was durably accepted by Game Session. The parent aggregate may become `HANDED_OFF`, making `script_event_audit.finalStage=TICK_HANDOFF` eligible for `finalOutcome=handoff_accepted`, only after every required child is durably accepted. A parent with accepted and unfinished children remains `HANDOFF_IN_FLIGHT`; a permanent required-child failure produces an explicit non-success/dead-letter aggregate rather than `HANDED_OFF`.
 - `CANCELED` - permanently canceled by control plane (for example rollback, disable, or operator purge).
 - `DEAD_LETTERED` - permanently non-progressing after a fenced terminal decision; bounded retention and operator visibility are required.
 
@@ -284,7 +284,7 @@ Component safety classification for core scripts is fixed at validation and read
 
 Retry behavior:
 
-- Logical failures are treated as final for a trigger. Infrastructure retry may re-run evaluation under the same full Trigger Identity only when durable uniqueness converges on the same work item and child dispatch identities; it must never create a duplicate logical command.
+- Logical failures are treated as final for a trigger. Before `EVALUATED_COMMITTED`, infrastructure retry may re-run evaluation only under the same full Trigger Identity and must converge on the same work-item and child identities; it must never create a duplicate logical command. After `EVALUATED_COMMITTED`, recovery replays the durable descriptors and never re-enters the DSL. The audit `finalStage` remains the last stage actually reached rather than being advanced by an attempted retry.
 - For event ingress, pre-handler rollback pause is an ingress-audit backpressure outcome only. Timer candidates use the Table 3 candidate-audit rule instead. Post-resolution handler backpressure such as `skipped_reloading` and `rollback_paused` is not treated as final for low-rate external events.
 - Infrastructure errors may be retried by lower layers following platform-wide retry policies and idempotency contracts.
 
@@ -296,7 +296,7 @@ Rollback of a script patch must not allow previously queued work from the rolled
 
 ## Timer Failure Semantics
 
-Timer admission, due-point identity, catch-up, reload, and failure outcomes follow the [normative timer semantics](./system-architecture-scripting-normative-contract-tables.md#table-3-timer-semantics-matrix). Runtime-specific behavior is at-most-once DSL evaluation for an admitted timer identity: an infrastructure failure may retry independently idempotent downstream operations, but must not re-enter the DSL for the same trigger. The scheduler makes a best-effort attempt within configured capacity; individual firings are not guaranteed.
+Timer admission, due-point identity, catch-up, reload, and failure outcomes follow the [normative timer semantics](./system-architecture-scripting-normative-contract-tables.md#table-3-timer-semantics-matrix). Before `EVALUATED_COMMITTED`, an admitted timer evaluation may retry only under the same full Trigger Identity and must converge on the same work-item and child identities. After that commit boundary, recovery replays durable descriptors and never re-enters the DSL; independently idempotent downstream operations may still retry. Recurring/advisory firings remain bounded scheduling signals rather than guaranteed cadence ledgers, while correctness-bearing one-shot timers converge to one execution or an explicit terminal outcome.
 
 ## `onLoad` Semantics and Failure Handling
 
