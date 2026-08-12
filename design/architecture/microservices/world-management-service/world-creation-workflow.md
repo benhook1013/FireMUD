@@ -121,10 +121,11 @@ Illustrative operator-facing workflow status fragment:
 ```json
 {
   "workflowFamily": "world-lifecycle",
-  "workflowId": "world-lifecycle:7b3b074e-d597-4e9b-b96f-4f5946d26120:world-instance:9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78",
+  "workflowId": "world-lifecycle:7b3b074e-d597-4e9b-b96f-4f5946d26120:world-instance:9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78:request:wc-77",
   "workflowStatus": "RUNNING",
   "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
   "gameInstanceId": "9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78",
+  "controlPlaneRequestId": "wc-77",
   "steps": [
     {
       "stepName": "generateTerrainAndMaterializePopulationSchedules",
@@ -156,7 +157,7 @@ If retries are exhausted before admission:
 - No gameplay admission is permitted for that `gameInstanceId`.
 - `FAILED_PRE_ACTIVATION` is terminal for that `gameInstanceId`; operators must create a new instance with a new `gameInstanceId` for retry.
 
-The target guard must be enforced with the step’s durable writes so “step completed” cannot be recorded without the corresponding instance rows. The current World Management implementation preserves `controlPlaneRequestId`, lifecycle fencing, and generation request inputs in its command paths, but does not yet demonstrate the complete occurrence/role/digest-bound guard or fail-closed conflict behavior across workflow retries. Current lifecycle tests prove the implemented lifecycle and idempotency seams, not the full ADR 0078 retry, conflict, crash, replay, and durable-guard proof; that implementation and proof drift remains open.
+The target guard must be enforced with the step’s durable writes so “step completed” cannot be recorded without the corresponding instance rows. The current World Management implementation preserves `controlPlaneRequestId`, lifecycle fencing, and the implemented `generationConfigRevision` in its command paths; the target `generationRequestId` occurrence identity and its propagation remain unimplemented. It also does not yet demonstrate the complete occurrence/role/digest-bound guard or fail-closed conflict behavior across workflow retries. Current lifecycle tests prove the implemented lifecycle and idempotency seams, not the full ADR 0078 retry, conflict, crash, replay, and durable-guard proof; that implementation and proof drift remains open.
 
 The durable workflow state is owned by Temporal using the canonical `world-lifecycle` workflow identity. Operators can inspect progress through the normal lifecycle read surface and any Temporal-backed operator tooling that projects the same `workflowId`.
 

@@ -359,7 +359,7 @@ The same policy applies whenever a region-, tenant-, or cluster-scoped reset or 
 - records an auditable attestation outcome and retries only within the emitted replay-convergence budget; and
 - permits exactly these outcomes: `APPLIED` when durable domain state or the authoritative guard proves the effect occurred; `ABANDONED` with an explicit reset/reconciliation reason only when durable state proves it was unapplied and cannot be safely re-driven; or an explicit reconciliation-required non-terminal state while the evidence remains inconclusive.
 
-If the bounded attestation remains inconclusive, the original effect remains non-terminal under an explicit reconciliation-required marker. It is not an `ABANDONED` outcome, is never sent through normal current-epoch replay, and blocks the affected reset scope from declaring convergence until an authority-fenced worker records a terminal decision or an explicitly approved, auditable exception. A later epoch must not reuse the old row as though it were a new current-epoch effect.
+If the bounded attestation remains inconclusive, the original effect remains non-terminal under an explicit reconciliation-required marker. It is not an `ABANDONED` outcome, is never sent through normal current-epoch replay, and blocks the affected reset scope from declaring convergence until an authority-fenced worker records a terminal decision supported by authoritative evidence. A later epoch must not reuse the old row as though it were a new current-epoch effect.
 
 Current-epoch executors must never re-drive the old `EffectId`. Any feature that needs to carry work across the epoch boundary requires separately designed maintenance or saga/outbox tooling. A new current-epoch identity is a **post-abandon re-drive** only: the old effect and source claim must first be terminal `ABANDONED`, then the tooling allocates a later coordinate, fresh root and retry/source identity, and durable lineage. Ordinary retry/replay preserves the old root, and inconclusive work cannot be re-driven.
 
@@ -554,7 +554,7 @@ Coordination resets are expressed in terms of Redis scopes (region, tenant, clus
     - Only features that explicitly document alternative behavior may opt into a post-abandon re-drive under the new epoch, and such behavior must be implemented via dedicated reset tooling after terminal `ABANDONED`/source-claim disposition, with a later coordinate, fresh root/source identity, and durable lineage; it is not ad-hoc replay of a `SCHEDULED` row.
   - Player impact:
     - In-flight actions follow ADR 0058 class-specific outcomes; correctness-bearing work is durably reconstructed or explicitly terminalized only where authoritative evidence permits, while inconclusive work remains fenced/reconciliation-required and lossy hints may be delayed or dropped.
-    - Players may observe explicit non-application, delay, replay, or feature-declared abandonment around the reset boundary; game UX must not describe ambiguous loss as silent success.
+    - Players may observe explicit non-application, delay, replay, or evidence-qualified abandonment around the reset boundary; game UX must not describe ambiguous loss as silent success.
 
 - **Tenant-scoped reset**
   - Timeline impact:
@@ -619,7 +619,7 @@ Region resets and epoch bumps intentionally sever the old coordination timeline 
   - The ledger replay controller applies the [Inconclusive Old-Epoch Reconciliation Policy](#inconclusive-old-epoch-reconciliation-policy): it marks confirmed reflections `APPLIED`, converges only effects confirmed unapplied to `ABANDONED` with a reset-specific reason (for example `RESET_REGION_SCOPED` or `RESET_TENANT_SCOPED`), and keeps inconclusive effects non-terminal under their original EffectId for authority-fenced reconciliation rather than attempting to “replay them into the new epoch”. Normal current-epoch replay is forbidden.
   - Target-region tick executors ignore old-epoch work based on epoch/tick guards in their coordination scripts; they only stage and apply effects for the current epoch.
 - Origin regions:
-  - Observe evidence-backed `ABANDONED` outcomes (or timeouts that qualify for `ABANDONED`) for remote legs and compute the appropriate high-level command outcome only when the command family declared that terminal combination before execution; unresolved required work remains `PENDING`/reconciliation-required rather than becoming `PARTIAL`.
+  - Observe evidence-backed `ABANDONED` outcomes for remote legs and compute the appropriate high-level command outcome only when the command family declared that terminal combination before execution; unresolved required work, including timeouts without authoritative non-application evidence, remains `PENDING`/reconciliation-required rather than becoming `PARTIAL`.
   - Surface player-facing feedback consistent with that outcome (for example “your cross-region trade failed due to region reset; your currency has been refunded”).
 
 Designs that genuinely need to carry cross-region work across region resets or epoch changes must be treated as **exceptional** and implemented using out-of-band saga/outbox workflows with their own reset/runbook stories, not as normal tick behavior.

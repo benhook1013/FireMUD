@@ -202,7 +202,7 @@ Behavior:
 
 Runbook:
 
-1. Monitor the bounded `redis_replication_lag_ms{redis_role="coordination",scope}` metric as the canonical promotion-lag metric, with `redis_replication_offset_lag_bytes{redis_role="coordination",scope}` as supporting evidence. `scope` is the documented deployment/environment bucket; exact `nodeId` and `upstreamNodeId` values belong in structured logs or control-plane evidence, not Prometheus labels.
+1. Monitor the bounded `redis_replication_lag_ms{redis_role="coordination",scope=~"$scope"}` metric as the canonical promotion-lag metric, with `redis_replication_offset_lag_bytes{redis_role="coordination",scope=~"$scope"}` as supporting evidence. `scope` is the documented deployment/environment bucket; exact `nodeId` and `upstreamNodeId` values belong in structured logs or control-plane evidence, not Prometheus labels.
 2. Across all candidate replicas in this same deployment/environment/ruleset scope, select the worst candidate-promotion lag and compare it against that scope's measured unreplicated-write-window SLO:
    - acceptable: `redis_replication_lag_ms <= 0.5 * redis_unreplicated_write_window_slo_ms`
    - warning: `0.5 * redis_unreplicated_write_window_slo_ms < redis_replication_lag_ms < redis_unreplicated_write_window_slo_ms`

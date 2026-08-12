@@ -41,7 +41,7 @@ Do not treat topology-changing scaling as a simple replica adjustment.
    - Apply changes via Helm or Kustomize for the target environment.
 3. **Validate Behavior**
    - Monitor request latency, error rates, and tick duration metrics.
-   - Ensure tick regions remain in canonical non-incident states (`RUNNING` or bounded `DEGRADED`) per `design/architecture/system-architecture-tick-concepts-and-invariants.md` and that Redis tail-loss SLOs from `design/architecture/system-architecture-redis-operations.md` are not being violated.
+   - Ensure tick regions remain in canonical non-incident states (`RUNNING` or bounded `DEGRADED`) per `design/architecture/system-architecture-tick-concepts-and-invariants.md` and that Redis coordination-write exposure SLOs from `design/architecture/system-architecture-redis-operations.md` are not being violated.
 
 ## Scaling Redis
 
@@ -89,7 +89,7 @@ When deciding **what** to scale, prefer signals tied to the tick model and Redis
   - For intuition, you may also track `tick_execution_time_ms_p99 / tick_interval_ms`, but decisions should be grounded in the TTL-based ratio because production `lock_ttl_ms` is the shared resolver's evidence-calibrated setting. The interval-based relationship is a bootstrap default only, not a production TTL derivation.
   - Treat any `tick_interval_ms` change as a topology-level/runtime-contract change for the affected live `regionEpoch`, not as a harmless tuning knob. If cadence changes would alter timer ordering normalization, perform them with an epoch bump and timer re-derivation as required by the tick invariants.
   - Example: moving a live region from `100ms` cadence to `200ms` cadence requires pause, epoch bump, timer `due_tick_id` re-derivation, and resume on the new epoch; it is not an in-place tuning-only change.
-- Tail-loss envelopes:
+- Coordination-write exposure envelopes:
   - Monitor measured Coordination Redis unreplicated-write exposure against `redis_unreplicated_write_window_slo_ms`; use the [Redis metrics catalog](./system-architecture-redis-metrics-catalog.md) for metric definitions and [Redis operations](./system-architecture-redis-operations.md) for operational response/SLO procedures.
   - If measured unreplicated-write exposure regularly exceeds `redis_unreplicated_write_window_slo_ms`, prioritize scaling or tuning **Coordination Redis** (hardware, AOF configuration, or shard layout) before adding more tick producers.
 - Cross-region backlog:
@@ -100,7 +100,7 @@ When deciding **what** to scale, prefer signals tied to the tick model and Redis
   - Track `tick_retry_queue_depth`, `tick_conflict_hotspot_detected_total`, and stalled-region indicators from the tick concepts/failures docs.
   - Persistent contention or stalled-progress alerts should drive **design or layout changes** (region boundaries, command costs) rather than only adding replicas.
 
-Scaling decisions should be made against these metrics so that additional capacity actually improves tick health, tail-loss envelopes, and cross-region behavior instead of only shifting bottlenecks.
+Scaling decisions should be made against these metrics so that additional capacity actually improves tick health, coordination-write exposure envelopes, and cross-region behavior instead of only shifting bottlenecks.
 
 ## Starting Guardrails (Baseline Sizing)
 
@@ -112,7 +112,7 @@ The exact safe limits for a deployment depend on hardware and tuning, but the fo
 - **Per-region coordination load**
   - Aim for `tick:{tenantRegionTag}:pending` to represent at most **one in-flight tick** plus a small buffer of staged work; thousands of uncommitted effects for a single region should be treated as an anomaly and investigated.
   - Keep `timer:{tenantRegionTag}` and `retry:{tenantRegionTag}` counts per region within the “tens of thousands” envelope from the Redis operations doc; sustained higher values usually indicate that timers or retries are being used as data stores rather than scheduling hints.
-- **Redis tail-loss envelope**
+- **Redis unreplicated-write exposure envelope**
   - Size Coordination Redis so that measured unreplicated-write exposure remains within `redis_unreplicated_write_window_slo_ms` under expected peak load.
   - If measured unreplicated-write exposure regularly exceeds that envelope after scaling application services, prioritize Coordination Redis capacity (CPU, memory, AOF layout) or region density before adding more tick producers.
 
@@ -136,8 +136,8 @@ Baseline guardrails are only a starting point. Before materially increasing regi
   - p95/p99 write latency for the primary tick-path tables
   - retention horizon, partitioning scheme, and vacuum/GC cadence for high-churn tables
 
-Scaling decisions must not rely only on Redis tail-loss and pod density signals. If ledger age, replay scan lag, follow-up claim latency, or backlog-table bloat is rising, treat PostgreSQL as the bottleneck and scale or redesign there before increasing tick concurrency.
+Scaling decisions must not rely only on Redis unreplicated-write exposure and pod density signals. If ledger age, replay scan lag, follow-up claim latency, or backlog-table bloat is rising, treat PostgreSQL as the bottleneck and scale or redesign there before increasing tick concurrency.
 
 Scaling plans should include this calibration so “add replicas” and “increase regions per pod” decisions are tied to measured tick and coordination cost, not only static guardrail numbers.
 
-Environment docs and load-test reports should record any deviations from these starting numbers along with the observed tick and tail-loss metrics so operators can make informed scaling decisions in future iterations.
+Environment docs and load-test reports should record any deviations from these starting numbers along with the observed tick and unreplicated-write exposure metrics so operators can make informed scaling decisions in future iterations.

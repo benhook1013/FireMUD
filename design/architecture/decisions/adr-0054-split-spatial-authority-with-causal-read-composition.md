@@ -60,6 +60,8 @@ The presentation-read contract recorded in this subsection is superseded by [ADR
 
 Presentation reads follow ADR 0059 exclusively; this ADR retains no independent causal-floor, served-through, component-version, or acceptance rules.
 
+### Mutation Preconditions
+
 Correctness-sensitive mutations carry exact expected scope, epoch, location, and relevant aggregate versions or attestations. The owner fails closed when those preconditions are stale.
 
 ## Consequences

@@ -14,6 +14,7 @@ The current implemented baseline is narrower than the full target-state observab
 - Synthetic player-flow canaries, the independent deadman/heartbeat mirror, and the related canonical canary alert families now have a canonical operator-run runtime harness in `dev-tools/observability/run-player-experience-smoke.py`. The authoritative external pager deployment remains environment-specific, but the repo now provides the shared runner, retained-evidence validator, and mirrored metric vocabulary required for prod-like observability smoke.
 - The current smoke harness still accepts configurable endpoint labels for evidence output; those labels are not approved target-state Prometheus values until normalized to the bounded `playerflow` target enum defined below. Hosts, URLs, deployment identifiers, and runtime identifiers remain configuration/evidence details rather than metric labels.
 - Routine backup dashboards and alert snippets use artifact freshness, lineage, integrity/readability, and current recovery-convergence signals. Tick-pause panels remain maintenance/reset views only and are not routine backup health signals.
+- The target measured Coordination Redis SLO is `redis_unreplicated_write_window_slo_ms`. Current checked-in Prometheus rules still emit `redis_coordination_tail_loss_budget_ms`, derived from `tick_interval_ms`; that current rule is not the target measured-SLO series. Alerting must distinguish the current derived rule from a future rule that emits or evaluates the measured SLO rather than claiming that the target is already emitted.
 
 ---
 
@@ -359,8 +360,8 @@ Player SLO owner mapping (normative):
 
 When Alertmanager is unavailable but Prometheus is still accessible, Logging & Admin may present a limited view of critical conditions based on recording rules evaluated directly in Prometheus. To keep behavior predictable, only a small set of fallback signals is supported:
 
-- **Redis coordination tail-loss SLO breaches**
-  - Recording rules based on canonical bounded-scope series such as `redis_coordination_tail_loss_ms{scope}` that compare observed tail loss with the measured `redis_unreplicated_write_window_slo_ms` and expose a derived breach indicator such as `redis_coordination_tail_loss_slo_breached{scope}`. Exact tenant/game-instance/region drilldown belongs on the durable control-plane and runtime-health surfaces, not ordinary Prometheus labels.
+- **Redis coordination write-exposure SLO breaches**
+  - The current checked-in rule `redis_coordination_tail_loss_budget_ms` is derived from `tick_interval_ms` and is a current compatibility signal, not the measured SLO. A target rule may compare observed coordination-write exposure with `redis_unreplicated_write_window_slo_ms` and expose a bounded-scope breach indicator such as `redis_coordination_tail_loss_slo_breached{scope}`. Exact tenant/game-instance/region drilldown belongs on the durable control-plane and runtime-health surfaces, not ordinary Prometheus labels.
 - **Tick execution safety ratios**
   - Recording rule that exposes `tick_execution_time_ms_p99 / tick_lock_ttl_ms` per approved bounded `scope`, using the recording rules defined in the Redis operations metrics catalog. Exact region drilldown belongs on control-plane/runtime-health reads and must not be added as a raw metric label in this fallback path.
 - **Login success ratio**

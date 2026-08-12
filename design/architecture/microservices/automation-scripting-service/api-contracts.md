@@ -113,7 +113,7 @@ The shared dry-run safety, namespace, authorization, budget, and capacity rules 
 
 - Test runs use the production sandbox and loop-safety/resource limits, but return would-be commands to the caller instead of persisting/indexing work or handing off to tick queues.
 - Materialized handler-scoped test executions are recorded in `script_event_audit` with `isDryRun=true`; pre-handler dry-run rejection remains in `script_event_ingress_audit` and does not create a handler row. The normative audit table defines `finalStage=DRY_RUN_RESULT` with `finalOutcome=dry_run_success` and prohibits live `handoff_accepted`.
-- Pre-resolution dry-run budget denial is returned as the event-scope outcome `TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED` with `admissionReason=dry_run_budget_exceeded`, not as a transport error. After handler work is materialized, capacity denial is recorded with handler-scoped `finalOutcome=quota_denied` and a bounded reason. Authorization failures remain deterministic application-level errors such as `DRY_RUN_UNAUTHORIZED`.
+- A successful materialized handler dry-run uses the pair `finalStage=DRY_RUN_RESULT`, `finalOutcome=dry_run_success`. If handler resolution succeeds but capacity is denied before DSL evaluation, use the handler-scoped pair `finalStage=ADMISSION`, `finalOutcome=quota_denied` with bounded `finalReason=dry_run_capacity_exhausted`. Pre-resolution dry-run budget denial remains the event-scope pair `TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED` / `admissionReason=dry_run_budget_exceeded`, not a transport error, and creates no handler row. Authorization failures remain deterministic application-level errors such as `DRY_RUN_UNAUTHORIZED`.
 
 ## Reload Backpressure Contract
 

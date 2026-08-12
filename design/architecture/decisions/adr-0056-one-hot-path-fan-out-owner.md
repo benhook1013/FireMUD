@@ -37,7 +37,7 @@ Each synchronous gameplay operation has one ingress/dispatch step and exactly on
 Examples:
 
 - `LOOK`: Game Session dispatches to Game Logic; Game Logic composes World and Entity.
-- `MOVE`: Game Session dispatches the fenced operation; Game Logic coordinates World and Entity.
+- `MOVE`: Game Session dispatches the fenced operation; Game Logic coordinates the World-owned pure-MOVE mutation. Entity is a separate presentation read only unless the operation writes Entity-owned containment.
 - inventory commands: Game Logic coordinates Entity, while unrelated projections and supplemental audit delivery are asynchronous.
 - combat: Game Logic plus the required authoritative state owner; achievements, analytics, transcripts, and remote consequences are asynchronous.
 - chat: Social executes delivery using its local sufficiently fresh moderation snapshot; Logging and Admin is not called per message.

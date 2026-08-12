@@ -19,6 +19,7 @@ For the scripting editor UX and how graphs are created and managed, see:
 ## Table of Contents
 
 - [Audience](#audience)
+- [Implementation Status](#implementation-status)
 - [What the Scripting DSL Is](#what-the-scripting-dsl-is)
 - [Core Concepts for Designers](#core-concepts-for-designers)
 - [Building Scripts in the Visual Editor](#building-scripts-in-the-visual-editor)
@@ -26,6 +27,12 @@ For the scripting editor UX and how graphs are created and managed, see:
 - [Validation, Loop Safety, and Errors](#validation-loop-safety-and-errors)
 - [How Scripts Run Over Time](#how-scripts-run-over-time)
 - [Where to Go for More Detail](#where-to-go-for-more-detail)
+
+---
+
+## Implementation Status
+
+The current runtime provides only bounded per-observation timer catch-up and does not yet prove one durable `resumeWindowId` across repeated observations, leader takeovers, or region-epoch transitions. Unresolved `EVALUATING` work remains fail-closed and active, and the live runtime lacks an `EVALUATED_COMMITTED` descriptor-replay layer. Retry-before-`EVALUATED_COMMITTED` and descriptor recovery without DSL re-entry remain target-state behavior. See [ADR 0072](./decisions/adr-0072-class-specific-timer-durability-and-recovery.md), the [automation and scheduler runtime tracker](../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status), and the [normative timer semantics matrix](./system-architecture-scripting-normative-contract-tables.md#table-3-timer-semantics-matrix).
 
 ---
 
@@ -190,7 +197,7 @@ Key properties:
 
 ### Timers and Reliability (Target State)
 
-The durable timer-recovery guarantees in this section describe target-state behavior. Current implementation provides only bounded per-observation catch-up and does not yet prove one durable `resumeWindowId` across repeated observations, leader takeovers, or region-epoch transitions; see [ADR 0072](./decisions/adr-0072-class-specific-timer-durability-and-recovery.md) and the [automation and scheduler runtime tracker](../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status) for implementation status.
+This section is target-state only; current timer and recovery limitations are summarized in [Implementation Status](#implementation-status).
 
 Recurring and advisory timer handlers such as `onInterval` (or an advisory `onTimerExpire`) are **best-effort** and produce at most one logical durable firing per Trigger Identity. A physical evaluation attempt may retry before its descriptor commit boundary, but it reuses that identity and converges on the same work item rather than creating another logical firing. A correctness-bearing one-shot timer is not best-effort: its intent is durably recorded outside Redis before acknowledgement; physical execution may be at least once and replay-safe, while recovery under the same identity converges to one logical terminal outcome under [ADR 0072](./decisions/adr-0072-class-specific-timer-durability-and-recovery.md).
 

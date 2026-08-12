@@ -49,7 +49,7 @@ The owning domain's durable idempotency guard permits at most one logical author
 Every staged effect ledger row reaches exactly one terminal status:
 
 - `APPLIED` when authoritative domain evidence proves that the logical mutation committed; or
-- `ABANDONED` only when authoritative evidence proves the effect was unapplied, or an approved explicit auditable exception authorizes terminalization, with an explicit reason. Retry exhaustion or technical failure alone never qualifies.
+- `ABANDONED` only when authoritative evidence proves the effect was unapplied and any already-declared applicable feature rule permits it to be no longer valid, with an explicit reason. Inconclusive execution remains `SCHEDULED`/reconciliation-required; timeout, retry exhaustion, missing coordination, age, or technical failure alone never proves `ABANDONED`.
 
 Literal one-time physical invocation is not promised. Duplicate presentation feedback may occur around retries or connection failure, but it does not authorize duplicate authoritative mutation.
 
@@ -84,11 +84,11 @@ Rejected because a staged effect could disappear without a durable player or ope
 
 ### Manual-Only Terminalization
 
-Rejected as the normal contract because unresolved effects could remain ambiguous indefinitely and recovery would depend on operator availability. Service-owned operator intervention remains available for exceptional cases without replacing bounded automatic convergence.
+Rejected as the normal contract because unresolved effects could remain ambiguous indefinitely and recovery would depend on operator availability. Service-owned operator intervention may investigate and drive evidence-based reconciliation without replacing bounded automatic convergence.
 
 ## Implementation and Proof Obligations
 
-Proof must cover accepted-command loss before staging without an invented effect row; sealed root/operation/digest/participant/manifest binding before participant verification and conflict rejection; crashes before and after domain commit; lost acknowledgements; duplicate physical invocation with one logical mutation; authoritative `REPLAY_NOOP` evidence terminalizing as `APPLIED`; evidence-qualified or explicitly approved auditable `ABANDONED` outcomes with retry-exhaustion and technical-failure rejection; command-result derivation across zero, one, and multiple required effects; duplicate presentation feedback without duplicate state; replay and reset convergence; and absence of silent drop or permanently ambiguous staged rows.
+Proof must cover accepted-command loss before staging without an invented effect row; sealed root/operation/digest/participant/manifest binding before participant verification and conflict rejection; crashes before and after domain commit; lost acknowledgements; duplicate physical invocation with one logical mutation; authoritative `REPLAY_NOOP` evidence terminalizing as `APPLIED`; evidence-qualified `ABANDONED` outcomes with timeout, retry-exhaustion, missing-coordination, age, and technical-failure rejection; command-result derivation across zero, one, and multiple required effects; duplicate presentation feedback without duplicate state; replay and reset convergence; and absence of silent drop or permanently ambiguous staged rows.
 
 The current implementation and runtime proof are not claimed to satisfy this decision.
 
