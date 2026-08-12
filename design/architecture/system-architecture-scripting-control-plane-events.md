@@ -2,7 +2,11 @@
 
 This document defines the durable event contracts emitted by the scripting control plane. It complements [Scripting & Automation: Control Plane API](./system-architecture-scripting-control-plane-api.md), which defines the API surface and authoritative mutating/read contracts used by operators and services.
 
-All events must be:
+## Implementation Status
+
+The durable transport boundary is accepted, but the current catalogue does not yet specify or prove each family's concrete retention owner/window, reconstruction procedure, consumer-progress store, and backpressure behavior. `ScriptPatchRollbackRequested` and `SignerPolicyVersionObserved` likewise have no complete standalone delivery contract. Those family-level choices belong to the still-pending `CP-01` decision import; until that lands, no family may claim an implemented durable flow merely from the payload shape below, rollback consumers use the fully defined `ScriptPatchPinChanged(changeType=ROLLBACK)` form, and signer-policy observation remains authoritative through the current read contract.
+
+Every admitted event family must be:
 
 - Durable (delivered at-least-once).
 - Idempotent for consumers (carry stable identity fields; include `controlPlaneRequestId` when operator-caused).
@@ -30,6 +34,7 @@ To keep control-plane behavior predictable, transport and ordering guarantees mu
   - Read models must apply events by sequence (not arrival time) and ignore stale or duplicate sequence numbers.
 - **Replay**: each event family must name a concrete replay retention or authoritative reconstruction path; the placeholder “N days” is not a durable guarantee by itself.
 - **Idempotency**: consumers must use the event's stable identity (including `controlPlaneRequestId` when operator-caused), persist independent delivery progress, and remain safe under at-least-once delivery.
+- **Family admission gate**: a payload shape below is not by itself authorization to publish a durable event. Before a family is adopted, its contract must name the retention owner and concrete window, replay API or authoritative reconstruction procedure, durable independent-consumer progress store, bounded retry/backpressure behavior, and stable event identity. Until that profile exists, the producer's committed state and read API remain authoritative and no consumer may depend on delivery of that family.
 
 ## `ScriptPatchPinChanged` (Game Session -> Durable Event Flow)
 
@@ -49,7 +54,7 @@ Fields:
 
 ## `ScriptPatchRollbackRequested` (Game Session -> Durable Event Flow)
 
-Optional dedicated event. If not used, `ScriptPatchPinChanged(changeType=ROLLBACK)` is required.
+Reserved family name only; it has no adopted payload or durable-delivery profile and must not be published or consumed. Current rollback flows use `ScriptPatchPinChanged(changeType=ROLLBACK)`. A future dedicated family requires the complete family admission profile above and the pending `CP-01` decision import rather than inferring its contract from this heading.
 
 ## `ScriptPatchTenantStatusChanged` (Automation & Scripting -> Durable Event Flow)
 
@@ -112,7 +117,7 @@ Operator consumption rule:
 
 - Use this event family for instance rollout history, rollback audit trails, and per-instance pin progression.
 
-## `PluginVersionActivated` / `PluginVersionDisabled` (Automation & Scripting -> Durable Event Flow)
+## `PluginVersionRuntimeStateChanged` (Automation & Scripting -> Durable Event Flow)
 
 Emitted when operator actions change plugin active versions or disablement state.
 
@@ -136,7 +141,7 @@ Operator consumption rule:
 
 ## `SignerPolicyVersionObserved` (Automation & Scripting -> Durable Event Flow)
 
-Emitted when Automation & Scripting observes or refreshes plugin signer policy for a scope.
+Reserved target-state family name and candidate payload only; it must not be published or consumed until its complete family admission profile defines stable identity, global and tenant partition scopes, monotonic sequencing, retention, reconstruction, independent consumer progress, and backpressure behavior. Until then, Automation & Scripting's committed signer-policy observation state and read API are authoritative.
 
 Fields:
 

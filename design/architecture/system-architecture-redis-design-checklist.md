@@ -178,7 +178,6 @@ Use this when adding or changing Lua scripts that operate on coordination or cac
 
 - [ ] Structured payloads include an explicit `schemaVersion`.
 - [ ] Script:
-  - [ ] Treats missing `schemaVersion` as a defined default.
   - [ ] Supports every caller and stored-payload version evidenced to coexist during the rollout, rollback, recovery, or retained-data window.
   - [ ] Treats missing `schemaVersion` as legacy only when one unambiguous versionless shape is registered and proved; otherwise it fails without mutation.
   - [ ] Returns an explicit non‑mutating outcome for unknown versions.

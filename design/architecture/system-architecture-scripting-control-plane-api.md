@@ -632,7 +632,7 @@ Semantics:
   - `plugin.abilitySchemaDigest` must match the immutable digest recorded for the same base version used by the running instance.
   - Any mismatch fails deterministically with an application error (for example `PLUGIN_BASE_VERSION_MISMATCH` or `PLUGIN_ABILITY_SCHEMA_MISMATCH`) and must not mutate active plugin state.
 - Current implementation note: the live control-plane path now enforces `PUBLISHED` design-time state, non-revoked signer metadata, non-blocking component-policy decisions, `plugin.baseVersionId == runtimeVersionId`, `plugin.abilitySchemaDigest` matching the Automation participant digest in the running published release bundle, supported built-in `COMMAND_ALIAS` bindings, and no instance-scoped binding conflicts against the currently pinned script patch plus already-enabled plugins before updating the runtime registry.
-- On success, updates the registry for `(tenantId, gameInstanceId, pluginId)`, reconciles any durable plugin-owned schedules/timers so the displaced `pluginVersionId` cannot keep minting new triggers, and emits `PluginVersionActivated` (or `PluginVersionDisabled` as appropriate if this operation also transitions state).
+- On success, updates the registry for `(tenantId, gameInstanceId, pluginId)`, reconciles any durable plugin-owned schedules/timers so the displaced `pluginVersionId` cannot keep minting new triggers, and emits `PluginVersionRuntimeStateChanged` with the committed runtime state.
 
 Outputs:
 
@@ -656,7 +656,7 @@ Semantics:
 - Idempotent.
 - Transitions the plugin into a non-admitting state immediately.
 - Triggers are rejected at admission with a dedicated outcome (for example `finalOutcome=plugin_disabled`) and recorded in `script_event_audit`.
-- Emits `PluginVersionDisabled(newState=DISABLED)`.
+- Emits `PluginVersionRuntimeStateChanged(newState=DISABLED)`.
 
 #### `DrainPlugin`
 
@@ -673,7 +673,7 @@ Semantics:
 
 - Idempotent.
 - Transitions the plugin to `DRAINING` so no new triggers are admitted while previously admitted work is allowed to complete within bounded limits.
-- Emits `PluginVersionDisabled(newState=DRAINING)` (or a dedicated draining event if introduced later).
+- Emits `PluginVersionRuntimeStateChanged(newState=DRAINING)`.
 
 ### Automation & Scripting: Event Ingress Admission Contract (Normative)
 

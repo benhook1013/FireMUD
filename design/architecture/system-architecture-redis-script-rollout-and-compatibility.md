@@ -26,7 +26,9 @@ Script rollout compatibility applies to Coordination Redis. Cache/Rate-Limit Red
 
 The Lua Compatibility Registry lives in the shared `firemud-common` module alongside key builders and Lua descriptors. It is owned by platform/coordination maintainers and declares per script:
 
-- `schemaVersionsSupported`, with the evidence and retention window that makes each version possible
+- `callerVersionsSupported`, identifying the application/caller versions that may invoke the script
+- `schemaVersionsSupported`, identifying the stored payload schema versions the script can interpret, with the evidence and retention window that makes each version possible
+- the evidenced coexistence set, covering every actual caller-version/stored-schema-version combination that may overlap during rollout, rollback, recovery, or the retained-data window
 - `KEYS` / `ARGV` contract
 - `outcomesSupported`
 - compatibility tag and rationale
@@ -39,6 +41,7 @@ For the purposes of this registry, `compatible` is intentionally narrow and evid
 - it does not allow reinterpreting existing payload semantics during AOF replay
 - it does not imply a permanent `N`/`N-1` support promise; obsolete versions may be removed only after deployment and retained-data evidence closes their coexistence window
 - an unknown or ambiguous version must fail before mutation, and a missing version is accepted only under the recorded, proven legacy rule
+- compatibility tests must exercise every combination in the evidenced caller-version/stored-schema-version coexistence set, including the relevant rollout, rollback, recovery, and retained-data cases
 
 ## Concrete Examples
 

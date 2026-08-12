@@ -59,7 +59,7 @@ Scope-key convention: `{tenantRegionTag}` is the canonical opaque tag for the co
     - Schema and TTL policies for cache and rate‑limit prefixes are defined centrally in shared infrastructure libraries rather than per service.
   - Example prefixes:
     - `inventory:<tenantId>:<containerId>`
-    - `view:room-look:<tenantId>:<gameInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>` (exact viewer/session and policy context bound)
+    - `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>` (exact room, viewer/session, and policy context bound)
     - `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>`
     - `ratelimit:<tenantId>:<subjectHash>:<timeWindow>` (one opaque stable subject hash per individual subject)
     - `automation:queue:{tenantInstanceTag}:<entityId>` and automation quota counters.

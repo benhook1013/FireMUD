@@ -183,7 +183,7 @@ From a correctness perspective, cache usage falls into two broad classes:
 
 To avoid noisy-neighbor effects on coordination workloads, cache writers must also enforce **per-value size limits** and avoid unbounded lists or blobs in Redis:
 
-- Cap serialized values to a practical ceiling (for example, roughly 32 KB or two protobuf pages) before writing them to Redis. If an aggregate such as a current room view would exceed that size, split it into chunked entries under the same exact viewer/session and policy-context binding rather than storing a multi-megabyte blob.
+- Cap serialized values to a practical ceiling (for example, roughly 32 KB or two protobuf pages) before writing them to Redis. If an aggregate such as a current room view would exceed that size, split it into chunked entries under the same exact room, viewer/session, and policy-context binding rather than storing a multi-megabyte blob.
 - CI or static checks should exercise representative payloads to keep them within these limits, and reviewers must explicitly justify any intentional exception.
 - Large or streaming-style responses stay in PostgreSQL/object storage or behind dedicated APIs rather than being replicated wholesale into Redis, even on the Cache/Rate-Limit cluster.
 
@@ -293,15 +293,15 @@ Cached aggregates in Redis should follow structured, namespaced key patterns to 
 - `character-cache:<tenantId>:<characterId>` – cached character graphs for hot reads.
 - `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>` – cached room-level dynamic state used in correctness-critical world decisions.
 - `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` – cached room snapshots/topology slices used for LOOK/navigation, scoped to a running instance.
-- `view:room-look:<tenantId>:<gameInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>` – cached rendered or pre-assembled room view data bound to the exact viewer/session and policy context.
+- `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>` – cached rendered or pre-assembled room view data bound to the exact room, viewer/session, and policy context.
 - `chat:city:<tenantId>:<cityId>` – cached short-lived windows of city chat history.
 
 #### Usage Restrictions for `view:room-look:*`
 
-`view:room-look:<tenantId>:<gameInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>` is always treated as a **Class B, TTL-only cache** for rendered LOOK-style room views:
+`view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>` is always treated as a **Class B, TTL-only cache** for rendered LOOK-style room views:
 
 - It is never a correctness source for combat, pathfinding/movement, or visibility/line-of-sight decisions.
-- The key must be bound to the exact viewer/session and policy context. It must not be reused across viewers, sessions, authorization/presentation-policy contexts, or incompatible read-fence contexts.
+- The key must be bound to the exact room, viewer/session, and policy context. It must not be reused across rooms, viewers, sessions, authorization/presentation-policy contexts, or incompatible read-fence contexts.
 - Correctness-critical flows must call World Management and Entity Management APIs (and any Class A caches they own), or use separate, explicitly versioned Class A prefixes registered in this catalog.
 - Helper APIs that expose `view:room-look:*` should be scoped to Game Session’s view pipeline and other presentation-only consumers; Game Logic and similar subsystems should continue to consume authoritative LOOK results via gRPC, not by reading this prefix directly.
 

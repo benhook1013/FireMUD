@@ -40,7 +40,7 @@ jOOQ is the standard SQL execution and query path. Generated jOOQ schema types d
 
 Hibernate and JPA are not a second persistence authority. FireMUD does not maintain parallel Hibernate/JPA entity mappings, repositories, DDL generation, or an ORM-managed schema path alongside jOOQ and Flyway.
 
-Dynamic or plain SQL is a narrow escape hatch only for a required PostgreSQL feature that the applicable jOOQ generated or DSL surface does not support. Each use must remain aligned with the Flyway-owned object names and schema contract, remain inside the owning service's persistence boundary, and carry focused proof against PostgreSQL for its parameters, result mapping, transaction behavior, and relevant failure cases. Convenience, avoiding code generation, or preserving a parallel DAO style does not qualify for the escape hatch.
+Dynamic or plain SQL is a narrow escape hatch only for a required PostgreSQL feature that the applicable jOOQ-generated or DSL surface does not support. Each use must remain aligned with the Flyway-owned object names and schema contract, remain inside the owning service's persistence boundary, and carry focused proof against PostgreSQL for its parameters, result mapping, transaction behavior, and relevant failure cases. Convenience, avoiding code generation, or preserving a parallel DAO style does not qualify for the escape hatch.
 
 ## Consequences
 

@@ -38,7 +38,7 @@ If validation is unavailable, ambiguous, below the required fence, or mismatched
 
 Other services call the owning API; they do not read an owner's Class A Redis keys directly. Owner invalidation reduces stale hits and load but does not replace currentness validation.
 
-Class B caches are disposable TTL-only presentation or performance data for which bounded staleness is accepted. They may support reconnect redraw, rendered `LOOK` views, analytics, or debugging, but never movement, combat, pathing, visibility, authorization, financial, or other correctness-sensitive decisions. A rendered viewer cache must bind the exact viewer/session and policy context in its key or equivalent opaque binding; a generic room payload is not a safe substitute.
+Class B caches are disposable TTL-only presentation or performance data for which bounded staleness is accepted. They may support reconnect redraw, rendered `LOOK` views, analytics, or debugging, but never movement, combat, pathing, visibility, authorization, financial, or other correctness-sensitive decisions. A rendered room-view cache must bind the exact room, viewer/session, and policy context in its key or equivalent opaque binding; a generic room payload is not a safe substitute.
 
 Every prefix declares its owner, authoritative source, scope, correctness class, validation or accepted-staleness rule, invalidator, TTL, reset behavior, and payload schema. A prefix whose semantics change must be migrated or versioned rather than silently reusing old TTL-only entries as validated data.
 
@@ -64,7 +64,7 @@ Rejected because delayed, lost, or reordered invalidation and unexpired stale en
 
 Each Class A prefix must prove complete scope, atomic payload/version publication, authoritative version or fence acquisition, current-version cache hits, mismatch and unavailable-validation fallback, stale invalidation races, concurrent mutation, Redis loss/reset, and authoritative mutation guards after cached reads. Tests must prove that stale or wrong-scope entries cannot change the logical outcome.
 
-Each Class B prefix must prove that it is absent from correctness-sensitive call paths and that its declared staleness, TTL, size, eviction, reset, and reconstruction behavior are acceptable. Rendered viewer caches must prove exact viewer/session/policy-context binding.
+Each Class B prefix must prove that it is absent from correctness-sensitive call paths and that its declared staleness, TTL, size, eviction, reset, and reconstruction behavior are acceptable. Rendered room-view caches must prove exact room/viewer/session/policy-context binding.
 
 The current `room:*` implementation remains an unversioned TTL-only payload without the target Class A validation or invalidation proof. Reusing that prefix for the target Class A contract requires an explicit payload/key migration. The current implementation and focused proof are not claimed by this decision.
 
