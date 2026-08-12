@@ -41,7 +41,7 @@ Do not treat topology-changing scaling as a simple replica adjustment.
    - Apply changes via Helm or Kustomize for the target environment.
 3. **Validate Behavior**
    - Monitor request latency, error rates, and tick duration metrics.
-   - Ensure tick regions remain in canonical non-incident states (`RUNNING` or bounded `DEGRADED`) per `design/architecture/system-architecture-tick-concepts-and-invariants.md` and that Redis coordination-write exposure SLOs from `design/architecture/system-architecture-redis-operations.md` are not being violated.
+   - Ensure tick regions remain in canonical non-incident states (`RUNNING` or bounded `DEGRADED`) per `design/architecture/system-architecture-tick-concepts-and-invariants.md`. For profiles eligible to claim the measured Redis coordination-write exposure SLO, confirm the SLO from `design/architecture/system-architecture-redis-operations.md` is not violated; ephemeral preview/CI opt-outs validate reset tolerance and latency instead.
 
 ## Scaling Redis
 
@@ -90,7 +90,8 @@ When deciding **what** to scale, prefer signals tied to the tick model and Redis
   - Treat any `tick_interval_ms` change as a topology-level/runtime-contract change for the affected live `regionEpoch`, not as a harmless tuning knob. If cadence changes would alter timer ordering normalization, perform them with an epoch bump and timer re-derivation as required by the tick invariants.
   - Example: moving a live region from `100ms` cadence to `200ms` cadence requires pause, epoch bump, timer `due_tick_id` re-derivation, and resume on the new epoch; it is not an in-place tuning-only change.
 - Coordination-write exposure envelopes:
-  - Monitor measured Coordination Redis unreplicated-write exposure against `redis_unreplicated_write_window_slo_ms`; use the [Redis metrics catalog](./system-architecture-redis-metrics-catalog.md) for metric definitions and [Redis operations](./system-architecture-redis-operations.md) for operational response/SLO procedures.
+  - Validate measured Coordination Redis unreplicated-write exposure against `redis_unreplicated_write_window_slo_ms` only in profiles eligible to claim that measured SLO under [Redis operations](./system-architecture-redis-operations.md). Ephemeral preview/CI profiles may opt out of that SLO; they must instead validate reset tolerance and latency, while still requiring canonical `RUNNING` or bounded `DEGRADED` region status.
+  - For eligible profiles, monitor measured Coordination Redis unreplicated-write exposure against `redis_unreplicated_write_window_slo_ms`; use the [Redis metrics catalog](./system-architecture-redis-metrics-catalog.md) for metric definitions and [Redis operations](./system-architecture-redis-operations.md) for operational response/SLO procedures.
   - If measured unreplicated-write exposure regularly exceeds `redis_unreplicated_write_window_slo_ms`, prioritize scaling or tuning **Coordination Redis** (hardware, AOF configuration, or shard layout) before adding more tick producers.
 - Cross-region backlog:
   - Use `remote_followups_due_total`, `remote_followups_drain_lag_ms`, and `remote_followups_backlog_over_budget_total` from `system-architecture-tick-execution-flows.md` to decide whether target regions are draining remote work fast enough.

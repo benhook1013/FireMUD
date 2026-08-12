@@ -382,8 +382,8 @@ For a current Coordination Redis cold start, incomplete recovery, or reset incid
 
 Coordination resets interact with measured coordination exposure and replay in predictable ways:
 
-- A **reset** is a deliberate, unbounded loss of coordination state for the chosen scope:
-  - The system discards **all** coordination state for that scope rather than the bounded measured unreplicated-write exposure of an ordinary failover. ADR 0058 defines class-specific durable outcomes; no tick-derived loss formula applies.
+- A **reset** is a deliberate loss of all **reset-eligible** coordination state for the chosen scope:
+  - The system discards all reset-eligible coordination state rather than the bounded measured unreplicated-write exposure of an ordinary failover; it does not discard all coordination state. Account-owned auth token/generation projections and the Gateway replay authority remain under their owner-specific exclusions and cutover rules defined earlier in this document. ADR 0058 defines class-specific durable outcomes; no tick-derived loss formula applies.
   - This is only safe when:
     - All critical outcomes are recorded durably in PostgreSQL or another authoritative store.
     - Double‑apply is prevented via idempotency guards (for example, effect IDs, transaction IDs).

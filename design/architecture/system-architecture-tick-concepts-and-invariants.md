@@ -82,7 +82,7 @@ Redis coordination state has an environment-measured unreplicated-write exposure
   - premium, financial, cross-tenant, and unique external effects use durable owner/outbox boundaries.
 - Region leases may be briefly lost and re-acquired under the same or a new `region_epoch`; a breached SLO expands reconstruction, terminalization, and operator-reconciliation scope rather than weakening those outcomes.
 
-## Tick Coordination-Loss Contract
+## Tick Coordination Exposure Contract
 
 The tick system and the Redis-measured exposure SLO combine into a simple contract:
 

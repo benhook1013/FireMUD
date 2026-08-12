@@ -20,7 +20,7 @@ This document summarizes the canonical Redis-related metrics, alerting surfaces,
   - `redis_tick_timers_over_budget_total`
   - `redis_session_payload_oversized_total`
 
-The exported replication metrics are pre-aggregated worst-candidate-replica values within one Coordination Redis deployment, environment class, and active configuration/ruleset scope. Because no replica identity label is exported, these metrics do not identify individual replicas; exact candidate and node identities remain control-plane and structured-log evidence.
+For replication-lag, replication-offset, and dashboard-comparison metrics, bounded `scope` consistently identifies one Coordination Redis deployment together with its canonical environment class and active configuration/ruleset. The exported replication metrics are pre-aggregated worst-candidate-replica values within that scope. Because no replica identity label is exported, these metrics do not identify individual replicas; exact candidate and node IDs remain control-plane and structured-log evidence.
 
 ## Session Schema and Cleanup Metrics
 
@@ -161,7 +161,7 @@ These are conservative heuristics used to spot unintended coordination misuse ea
 
 Alerts and dashboards should reference the explicit SLOs and budgets defined in [`system-architecture-redis-operations.md`](./system-architecture-redis-operations.md), using clear labels and scope-aware wording so incidents tie back to agreed envelopes rather than vague “Redis is bad” signals.
 
-Replica-promotion dashboards should use the pre-aggregated `redis_replication_lag_ms` as the canonical decision metric and compare it directly against the measured `redis_unreplicated_write_window_slo_ms` for the same Coordination Redis deployment, canonical environment class, and active configuration/ruleset. The metric already represents the worst candidate replica in that scope. `scope` is a bounded deployment/environment bucket; exact candidate, node, and upstream identities belong in structured logs or control-plane evidence, never in Prometheus labels:
+Replica-promotion dashboards should use the pre-aggregated `redis_replication_lag_ms` as the canonical decision metric and compare it directly against the measured `redis_unreplicated_write_window_slo_ms` for the same Coordination Redis deployment, canonical environment class, and active configuration/ruleset. The metric already represents the worst candidate replica in that scope. `scope` is the bounded deployment/environment/ruleset mapping defined above; exact candidate, node, and upstream identities belong in structured logs or control-plane evidence, never in Prometheus labels:
 
 - acceptable band: `redis_replication_lag_ms <= 0.5 * redis_unreplicated_write_window_slo_ms`
 - warning band: `0.5 * redis_unreplicated_write_window_slo_ms < redis_replication_lag_ms < redis_unreplicated_write_window_slo_ms`

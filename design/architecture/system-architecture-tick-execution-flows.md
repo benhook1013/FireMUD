@@ -51,7 +51,7 @@ Within a region’s tick, root actor commands and their effects proceed through 
    - This phase is read-only with respect to durable state; it decides *what* to touch without mutating Redis or PostgreSQL.
 3. **Region-Local Mutations**
    - Before target tick staging or any tick-domain ledger or domain write, Game Session requires a present, nonblank root `EffectId`; a missing or blank identity is a non-mutating rejection. No-ID bypasses are limited to explicitly non-tick/control-plane paths. The current live command/text fallback remains an implementation gap and is not target behavior.
-   - For purely local effects, the executor acquires the relevant entity lock(s) under `tick:{tenantRegionTag}:lock:<entityId>` and stages effects into `tick:{tenantRegionTag}:pending` via Lua.
+   - For purely local effects, each Lua invocation acquires at most one entity lock under `tick:{tenantRegionTag}:lock:<entityId>`; piecemeal multi-lock acquisition is prohibited. Multi-entity invariants use the owning transaction, durable effect workflow, or reservation/saga boundary described by [ADR 0074](./decisions/adr-0074-one-entity-lock-per-redis-script.md).
    - Domain services apply changes under local transactions and the root-`EffectId` participant-guard contract owned by Transaction Strategies.
 4. **Cross-Region Effects (if any)**
    - For cross-region commands, the origin region:
@@ -238,7 +238,7 @@ At each tick for a `<tenantId, gameInstanceId, regionId>`, the executor:
    - For remote follow-ups, only that transaction may set the batch claim or remove the row from the due set. A rollback releases the candidate lock and leaves the follow-up discoverable for a later selection.
 4. Stages effects:
    - This step is allowed only after the durable PostgreSQL `tick_batch`, ledger rows, and source claims have committed. Redis `pending` is staging/acceleration coordination only; it is never the authoritative record or a prerequisite that can precede durable batch creation.
-   - Under the region lease and entity locks, calls Lua scripts to write intended effects into `tick:{tenantRegionTag}:pending`.
+   - Under the region lease, each Lua invocation acquires at most one entity lock and writes intended effects into `tick:{tenantRegionTag}:pending`; multi-entity invariants follow [ADR 0074](./decisions/adr-0074-one-entity-lock-per-redis-script.md).
 5. Applies and commits:
    - Invokes domain services to apply effects under idempotent rules.
    - Runs a final Lua commit/cleanup script to reconcile Redis state, clear `pending`, and release locks.
@@ -309,7 +309,7 @@ Conceptually, tick commit proceeds through these phases:
      - the selected-work manifest for this batch
      - an immutable collision-safe pending envelope for each staged member carrying the exact `tick_batch_id` plus the complete root `EffectId`/participant projection, or an equivalent exact ledger-row identity; `effect_key` remains descriptor metadata only and is not sufficient correlation by itself
    - The selected-work manifest is the authoritative record of which source items were chosen for the tick before Redis staging. At minimum, each selected item records:
-     - the batch scope `(tenantId, gameInstanceId, regionId, regionEpoch)`; `enqueue_seq` values are allocated from the complete `<tenantId, gameInstanceId, regionId>` scope and are not reused after a `regionEpoch` reset
+     - the batch scope `(tenantId, gameInstanceId, regionId, regionEpoch)`; `entity_enqueue_seq` values are allocated monotonically per entity within that complete scope. A `regionEpoch` reset starts a new entity-local sequence domain; old-epoch ordering identities remain immutable and are never rebound.
      - `lane` (`actor_action` or `passive_effect`) declared by the work source
      - explicit semantic `phase`; ordering and comparisons are phase-local or phase-aware
      - bounded `cost_class` declared by the work source and consumed by the applicable lane budget
