@@ -71,7 +71,7 @@ Gameplay features must **not** assume that a command is a single, all-or-nothing
 If a proposed gameplay feature truly requires stronger semantics than this model (for example, a hard guarantee that a multi-service trade never produces a momentary imbalance), it should either:
 
 - Be redesigned to fit the idempotent, eventually consistent tick model, or
-- Be treated as a **tick-adjacent workflow** that uses the outbox/saga patterns below and accepts higher latency and operational complexity.
+- Be treated as a **tick-adjacent workflow** whose short `common-saga`/outbox orchestration handles only post-tick business or external side effects; it never replaces tick gameplay effect guards/replay and accepts higher latency and operational complexity.
 
 ### Tick Effects Are At-Least-Once: Idempotency Is Mandatory
 

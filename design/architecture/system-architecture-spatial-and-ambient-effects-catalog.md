@@ -91,6 +91,8 @@ Reconciliation:
 
 Ambient effects are durable mutations to world instance state such as doors, hazards, and weather. They must use effect-shaped mutation contracts (for example `ApplyRoomAmbientStatePatch(RoomInstanceRef, EffectId, patch)`), not direct table writes.
 
+Weather mutation admission and reconciliation remain fenced and non-mutating until the World owner accepts the exact region- versus room-scoped aggregate selector. This includes current `world_event` and `region_instance.weather` write paths; this catalog does not choose that selector.
+
 ### Door Toggle
 
 Required inputs:
@@ -122,11 +124,11 @@ Required inputs:
 Required writes:
 
 - **World Management**
-  - Persist the typed weather update under the owner participant guard for the exact target aggregate selected by the World weather contract, with the typed operation and immutable request digest, and advance the relevant World-owned ambient component version in the same local transaction. A matching guard replay returns the prior result without a second version increment.
+  - Once the World weather contract has accepted its exact target aggregate selector, persist the typed weather update under the owner participant guard for that aggregate, with the typed operation and immutable request digest, and advance the relevant World-owned ambient component version in the same local transaction. A matching guard replay returns the prior result without a second version increment. Until then, no Weather write is admitted.
 
 Reconciliation:
 
-- Retry WMS with the same root `EffectId` until the participant guard and weather mutation converge. The replay/no-op path is valid only when the stored guard matches the typed weather operation, the exact World-selected target aggregate, and the immutable request digest. If no matching guard exists but weather is already at the requested value, issue the current request under a new guard and record a guarded no-op; mutable weather state alone never proves replay. Until the World weather contract defines the exact aggregate selector, a same-state observation remains reconciliation-required.
+- After the selector is accepted, retry WMS with the same root `EffectId` until the participant guard and weather mutation converge. The replay/no-op path is valid only when the stored guard matches the typed weather operation, the exact World-selected target aggregate, and the immutable request digest. If no matching guard exists but weather is already at the requested value, issue the current request under a new guard and record a guarded no-op; mutable weather state alone never proves replay. Until the World weather contract defines the exact aggregate selector, every Weather request remains fenced/reconciliation-required and a same-state observation is not replay evidence.
 
 ### Hazard State Update (Gameplay-Authoritative)
 

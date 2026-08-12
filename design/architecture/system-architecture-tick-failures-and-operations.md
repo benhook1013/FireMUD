@@ -204,19 +204,24 @@ Replay of a tick is driven from ledger state:
     -- context from mutable state.
     -- expected is the sealed set of concrete participant projections for this
     -- effect: root EffectId + typed operation + exact target aggregate,
-    -- including
-    -- every required participant and its immutable request-digest binding.
-    -- Read all expected guard rows and durable domain evidence under the
-    -- current fence/context. Require set equality: every expected projection
-    -- is present exactly once, no extra projection exists, and no projection
-    -- is missing, partial, or conflicting.
-    -- CAS every required SCHEDULED ledger row in the expected set and persist
-    -- its matching evidence digest/reference in the same owner transaction.
+    -- including every required participant and its immutable request-digest
+    -- binding. Read all expected guard rows and durable domain evidence under
+    -- the current fence/context. Require set equality: every expected
+    -- projection is present exactly once, no extra projection exists, and no
+    -- projection is missing, partial, or conflicting.
+    -- Partition that complete set before the CAS into:
+    --   expected_scheduled: exact expected ledger rows still SCHEDULED;
+    --   expected_terminal: exact expected rows already terminal.
+    -- Separately verify every expected_terminal projection against its durable
+    -- terminal evidence. APPLIED is valid replay evidence; ABANDONED remains
+    -- governed by the existing evidence-qualified terminalization policy.
+    -- CAS only expected_scheduled rows and persist their matching evidence
+    -- digest/reference in the same owner transaction.
     UPDATE tick_effects AS e
     SET status = 'APPLIED',
         replay_verification_evidence_digest = p.evidence_digest,
         replay_verification_recorded_at = :now
-    FROM expected_participant_projections AS p
+    FROM expected_scheduled AS p
     JOIN tick_batch AS b ON b.tick_batch_id = p.tick_batch_id
     LEFT JOIN sealed_execution_context AS sc
       ON sc.context_ref = b.sealed_execution_context_ref
@@ -240,10 +245,15 @@ Replay of a tick is driven from ledger state:
          AND b.sealed_execution_context_ref IS NOT NULL
          AND sc.context_digest = :contextDigest)
       );
-    -- Require the affected-row set to equal the complete expected set;
-    -- otherwise ROLLBACK and fail closed/reject/retry. This target-state
-    -- RegionStatus authority join is one Game Session transaction; the
-    -- current-live manifest CAS is a separately selected branch.
+    -- Require the affected-row set to equal expected_scheduled only, and
+    -- separately require expected_terminal to equal the already-terminal
+    -- expected projections with valid evidence; otherwise ROLLBACK and fail
+    -- closed/reject/retry. If expected_scheduled is empty, commit an
+    -- idempotent replay success only when every expected projection is valid
+    -- APPLIED evidence, rather than treating zero affected rows as success.
+    -- This target-state RegionStatus authority join is one Game Session
+    -- transaction; the current-live manifest CAS is a separately selected
+    -- branch.
     COMMIT;
     ```
 
