@@ -42,7 +42,7 @@ Loss guarantees are class-specific:
 | Work/data class | Required outcome after Redis loss |
 | --- | --- |
 | Accepted player command | A durable command record remains; rebuild/requeue or explicitly terminalize as not applied. It never silently vanishes or reports false success. |
-| Staged effect or retry | Durable intent and owner guards converge to applied, replay-no-op, or abandoned without logical duplication. |
+| Staged effect or retry | Durable intent and owner guards converge to `APPLIED` (with `REPLAY_NOOP` only as an outcome/reason) or evidence-qualified `ABANDONED`; inconclusive work remains nonterminal and reconciliation-required. |
 | Correctness-bearing timer | Durable timer intent exists outside Redis and its scheduling projection is rebuilt. |
 | Explicitly lossy timer or advisory hint | Delay/drop is allowed only under its feature-declared budget and player semantics. |
 | Session, lease, cache, or wake-up key | Total Redis loss is allowed; consequence is pause, reconnect/reauthentication, cache miss, or latency—never canonical-state loss or resurrection. |

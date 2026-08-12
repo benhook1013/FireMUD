@@ -288,7 +288,7 @@ Retry behavior:
 - For event ingress, pre-handler rollback pause is an ingress-audit backpressure outcome only. Timer candidates use the Table 3 candidate-audit rule instead. Post-resolution handler backpressure such as `skipped_reloading` and `rollback_paused` is not treated as final for low-rate external events.
 - Infrastructure errors may be retried by lower layers following platform-wide retry policies and idempotency contracts.
 
-When script components call other services over gRPC, target-state handoff effects must pass an idempotency key derived from the complete Command-Handoff Identity plus the target aggregate type and ID and tick context when applicable, so downstream operations can retry without duplicating effects. The `(automationDispatchId, commandOrdinal)` pair alone is insufficient; current live calls remain subject to the narrower fallback described above.
+When script components call other services over gRPC, target-state handoff calls must carry the complete Command-Handoff Identity for child-dispatch deduplication, fence reporting, replay selection, and correlation, and separately pass the stable root `EffectId`, typed operation, exact target aggregate, and immutable request digest to the downstream owner. The owner stores and compares that digest under the effect guard and fails closed on a conflicting operation, target, or digest, so downstream operations can retry without duplicating effects. The `(automationDispatchId, commandOrdinal)` pair alone is insufficient; current live calls remain subject to the narrower fallback described above.
 
 ## Version Fencing and Rollback Safety
 

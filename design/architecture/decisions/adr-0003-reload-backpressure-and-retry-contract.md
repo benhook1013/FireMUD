@@ -11,7 +11,7 @@ Script hot reload pauses admission for a tenant while `pendingPatchVersion` is v
 ## Decision
 
 - During `reloadState=RELOADING`, the Automation & Scripting Service must return an explicit application-level backpressure signal on event ingress (for example `TriggerScriptEventResponse.admitted=false` with `admission_outcome=TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_RELOADING`) and record the pre-resolution denial in `script_event_ingress_audit`. If reload backpressure is applied after a concrete handler is resolved, that handler's `script_event_audit` row uses `finalStage=ADMISSION`, `finalOutcome=skipped_reloading`, `finalReason=reloading`.
-- For low-rate, external entity-scoped events (for example `onSpawn`, `onEnterRegion`, `onCommand`), callers may retry with the same full applicable Trigger Identity, including the same `scriptEventId`, using bounded exponential backoff and jitter.
+- For low-rate, external entity-scoped events (for example `onSpawn`, `onEnterRegion`, `onCommand`), callers must retry reload backpressure with the same full applicable Trigger Identity, including the same `scriptEventId`, using bounded exponential backoff and jitter.
 - For recurring and advisory timer-derived events (`onInterval`, or advisory uses of `onTimerExpire`), the scheduler does not backfill triggers that were not admitted during reload; the declared `SKIP_MISSED` or `COALESCE_ONE` policy applies. A correctness-bearing one-shot is not best-effort: its durable intent remains recoverable under the same logical identity and converges to one execution or an explicit terminal outcome under [ADR 0072](./adr-0072-class-specific-timer-durability-and-recovery.md).
 
 ## Consequences

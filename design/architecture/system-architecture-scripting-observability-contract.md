@@ -141,12 +141,14 @@ When a downstream service reports a later handoff or execution result, the targe
 - `gameSessionCommandId` – the Game Session command identity when assigned; it is `null`/absent while the child has not been accepted into Game Session.
 - `handoffOutcome` – the durable handoff result for this child, present after a handoff attempt and independent of later gameplay execution.
 - `executionOutcome` – the authoritative Game Session execution lifecycle result when available; it remains `null`/absent until execution reaches a result or terminal disposition.
-- `gameplayResult` – the terminal gameplay result when available (for example `applied` or `not_applied`); it remains `null`/absent while execution is unresolved.
+- `gameplayResult` – the terminal gameplay result when available, using the canonical uppercase vocabulary `SUCCESS`, `PARTIAL`, `FAILED`, `TIMEOUT`, or `NOT_APPLIED`; it remains `null`/absent while execution is unresolved.
 - `commandStatusLink` – a link or stable reference to the authoritative Game Session command-status record when `gameSessionCommandId` is assigned; it is `null`/absent before that point.
 - `outcome` – bounded enum. Minimum required value: `version_fence_dropped`.
 - `reason` – bounded reason such as `script_patch_mismatch` or `plugin_version_mismatch`.
 - `recordedAt` – timestamp.
 - `sourceService` – producer of the disposition (for example `game-session`).
+
+`outcome` and `reason` describe the child handoff disposition and remain separate from effect status, `executionOutcome`, and `gameplayResult`. In particular, `outcome=version_fence_dropped` (and its reason) does not by itself prove that gameplay was not applied: leave `executionOutcome` and `gameplayResult` `null` while authoritative application evidence is unresolved. Proven no-mutation maps to `executionOutcome=ABANDONED` and `gameplayResult=NOT_APPLIED`; proven commit maps to `executionOutcome=APPLIED` and the canonical command-result rules. A fence disposition must never fabricate terminalization.
 
 Each returned child retains the parent `outboxWorkItemId` only for correlation and retains the complete applicable Trigger Identity needed for diagnosis, including plugin `bindingId` when applicable; the target-state `(automationDispatchId, commandOrdinal)` fields complete that child identity and must not be treated as globally unique or replaced with the parent `scriptEventId`. A pair shown without the Trigger Identity and scope is only a display suffix, never an identity, uniqueness, or deduplication key.
 
@@ -255,8 +257,8 @@ Illustrative record shape:
       "playableStateScope": "isolated",
       "gameSessionCommandId": "gs-cmd-1",
       "handoffOutcome": "accepted",
-      "executionOutcome": "version_fence_dropped",
-      "gameplayResult": "not_applied",
+      "executionOutcome": null,
+      "gameplayResult": null,
       "commandStatusLink": "/commands/gs-cmd-1",
       "outcome": "version_fence_dropped",
       "reason": "script_patch_mismatch",
