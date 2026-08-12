@@ -1,6 +1,6 @@
 # FireMUD System Architecture: Database Migrations
 
-This document is the current target authority for SQL persistence, schema ownership, migration compatibility, and cross-service identifier migration. Each service owns its logical PostgreSQL schema and applies its own Flyway history; reusable migration artifacts are adopter-local, not a central schema authority.
+This document is the current target authority for SQL persistence, schema ownership, migration compatibility, and cross-service identifier migration classification and routing. Each service owns its logical PostgreSQL schema and applies its own Flyway history; reusable migration artifacts are adopter-local, not a central schema authority. For identifier migrations, this document classifies and routes the change; concrete mapping and workflow authority remains with the affected relationship or version-graph owner under [ADR 0082](./decisions/adr-0082-semantic-boundary-for-cross-service-identifier-migration.md).
 
 ## Implementation Notes
 
@@ -33,6 +33,7 @@ This document is the current target authority for SQL persistence, schema owners
 ## Per-Service Organization
 
 - Every microservice maintains its own migration folder and changelog.
+- Service Flyway migrations own only schema-scoped objects in that service's schema. Shared database- or cluster-scoped objects such as extensions, roles, and cluster settings have one platform/database owner and a versioned infrastructure/database migration lineage; service migrations may assert those prerequisites but must not independently create or upgrade them.
 - Schemas are isolated: services never modify each other's tables.
 - Tables reside in dedicated schemas for each service to ensure isolation.
   Schema names match the owning service (for example `account_service`). See

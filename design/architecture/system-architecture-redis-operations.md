@@ -34,6 +34,8 @@ Canonical public operation:
 
 `coordination-maintenance recover --mode reset --scope ... <session-policy-option>`
 
+`--mode reset` is the operator's proposed/expected classification for compare-and-match, not selection authority. The controller derives `replay_first` or `reset_first` from durable evidence and rejects a proposal that contradicts that result; a bounded replay that later loses progress upgrades the same operation and maintenance lock to reset under the documented audit rule.
+
 Choose exactly one session-policy option for each reset: `--preserve-sessions` or `--invalidate-sessions`. These are separate valid command forms, not a shell alternation expression.
 
 This one public operation acquires the maintenance lock, fences the scope, and runs these ordered phases. The public `resume(operationId, expectedPhase, maintenanceLockToken, evidenceRef)` safety gate is required between pre-release continuation and the internal success release:

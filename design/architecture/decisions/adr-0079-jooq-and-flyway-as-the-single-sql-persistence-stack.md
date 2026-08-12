@@ -34,7 +34,7 @@ Some PostgreSQL capabilities may not be expressible through the generated jOOQ s
 
 ## Decision
 
-Flyway is the sole authority for SQL schema creation and evolution. Every table, column, constraint, index, function, extension, and other durable database object used by application code is introduced or changed through the owning service's Flyway migrations. Application startup, jOOQ generation, tests, and operational migration tooling consume that same migration lineage; no application framework may generate or mutate the production schema as a second authority.
+Flyway is the sole authority for SQL schema creation and evolution of service-owned schemas. Each service's Flyway migrations own schema-scoped service objects—tables, columns, constraints, indexes, functions, and other objects within that service schema—used by application code. Shared database- or cluster-scoped objects such as extensions, roles, and cluster settings have one platform/database owner and a versioned infrastructure/database migration lineage; service migrations may assert those prerequisites but must not independently create or upgrade them. Application startup, jOOQ generation, tests, and operational migration tooling consume the applicable migration lineage; no application framework may generate or mutate the production schema as a second authority.
 
 jOOQ is the standard SQL execution and query path. Generated jOOQ schema types derived from the Flyway-managed schema are the default for tables, fields, records, joins, predicates, and writes. Service repositories and transaction code use that generated surface rather than maintaining a second hand-written schema model.
 

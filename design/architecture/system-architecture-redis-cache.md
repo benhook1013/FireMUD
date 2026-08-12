@@ -95,7 +95,7 @@ Some dynamic aggregates will be easier to cache if the authoritative store expos
 
 - **Strongly validated caches (versioned)** – payloads that are validated against a version or `lastModified` value stored in the authoritative system:
   - Only the service that owns the authoritative aggregate may consume the entry for a correctness-sensitive read. It must prove during that operation that the complete cached scope and payload version or fence match the current authoritative requirement.
-  - The owner may obtain that proof from the authoritative store, an owner-controlled version index with equivalent consistency, or an exact expected version/fence already required by the operation. A version embedded only in the cache payload is not proof of currentness.
+  - The owner may obtain that proof from the authoritative store, an owner-controlled version index with equivalent consistency, or an exact expected version/fence already required by the operation. An exact expected version/fence is valid for this purpose only when the owning service derives it from, or authenticates it against, authoritative workflow/operation state; a caller-supplied or otherwise untrusted value is not currentness proof. A version embedded only in the cache payload is not proof of currentness.
   - The owning service (for example Entity Management or World Management) maintains a version counter or timestamp on the aggregate root (such as a container, character effective stats, or a room’s dynamic state row) and increments or updates it whenever the aggregate changes.
   - Redis entries for that aggregate store both version and payload together, typically inside a single serialized object.
   - When fetching, the owning service must:
