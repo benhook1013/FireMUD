@@ -13,7 +13,7 @@ Use these prompts for:
 
 ## Using The Prompts
 
-Every system or engineering review uses the [shared review contract](./system-review-prompts/00-shared-review-contract.md). The caller supplies the review scope and any permissions that differ from its read-only default.
+Every system or engineering review uses the [shared review contract](./system-review-prompts/00-shared-review-contract.md). The caller supplies the review scope and any permissions that differ from its read-only default. Broad system prompts numbered `10` through `12` and `21` through `27` are workstream specifications rather than single-worker tasks. They also use the [orchestrated review workstream contract](./system-review-prompts/02-orchestrated-review-workstream-contract.md): the invoking main thread owns decomposition, delegated evidence collection, synthesis, and the final completion decision.
 
 The [orchestration guide](./system-review-prompts/01-review-orchestration.md) coordinates the one-time whole-system pass and explains how to combine findings. It does not create a recurring review process.
 
@@ -36,8 +36,9 @@ These prompts form the deliberate post-design review suite.
 
 - [Shared review contract](./system-review-prompts/00-shared-review-contract.md) – Common authority, permission, evidence, output, and completion rules.
 - [Review orchestration](./system-review-prompts/01-review-orchestration.md) – Execution and synthesis of a coordinated whole-system review.
+- [Orchestrated review workstream contract](./system-review-prompts/02-orchestrated-review-workstream-contract.md) – Primary-orchestrator, evidence-lane, handoff, integration, and completion rules for broad review prompts.
 
-### Post-Design Foundations
+### Orchestrated Post-Design Foundations
 
 - [Authority and decision closure](./system-review-prompts/10-authority-and-decision-closure.md) – Checks that target contracts have one clear owner and unresolved decisions remain visible.
 - [Capability, journey, status, and evidence census](./system-review-prompts/11-capability-journey-status-and-evidence-census.md) – Checks every product capability and persona journey against design, implementation tracking, and proof status.
@@ -45,7 +46,7 @@ These prompts form the deliberate post-design review suite.
 
 ## Commissioned System Reviews
 
-These prompts may run independently for a commissioned selection, but that result is not complete whole-system coverage; the whole-system orchestration also invokes them in its declared order.
+These prompts may run independently for a commissioned selection, but that result is not complete whole-system coverage; the whole-system orchestration also invokes them in its declared order. Prompts numbered `21` through `27` are orchestrated workstreams when invoked at full scope. A tightly bounded focused invocation may remain single-threaded under the orchestrated workstream contract.
 
 - [Service boundary review](./system-review-prompts/20-service-boundary-review.md) – Reusable review for one selected deployed service.
 - [Identity, tenancy, account lifecycle, and data rights](./system-review-prompts/21-identity-tenancy-account-lifecycle-and-data-rights.md) – Accounts, admission, sessions, entitlements, commerce, and account data.

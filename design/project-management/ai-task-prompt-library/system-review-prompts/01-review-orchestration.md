@@ -6,6 +6,8 @@ Normal pull-request review owns change-level design, implementation, and proof r
 
 Apply the [shared review contract](./00-shared-review-contract.md) throughout.
 
+Prompts numbered `10` through `12` and `21` through `27` also apply the [orchestrated review workstream contract](./02-orchestrated-review-workstream-contract.md). During this whole-system pass, the whole-system main thread remains the primary orchestrator: it decomposes those prompts into evidence lanes and integrates their results directly rather than creating nested prompt-level orchestrators or delegating a prompt's final synthesis.
+
 ## Whole-System Pass
 
 Run the pass in this order:
@@ -14,10 +16,10 @@ Run the pass in this order:
 2. Run the [capability, journey, status, and evidence census](./11-capability-journey-status-and-evidence-census.md).
 3. Run [cross-service invariant and workflow closure](./12-cross-service-invariant-and-workflow-closure.md).
 4. Run the [service boundary review](./20-service-boundary-review.md) once for each deployed service in the current microservice index. Review shared modules only through the contracts and services that consume them; do not treat them as deployed services.
-5. Run the focused system reviews numbered `21` through `27` against the full declared design boundary.
+5. Run the system reviews numbered `21` through `27` in `full` mode against their complete declared design boundaries.
 6. Reconcile overlapping findings and issue one combined completion assessment.
 
-Related scopes may run in parallel after authority and capability ownership are established. Parallel work does not remove the need for final cross-scope reconciliation.
+Related workstreams and their evidence lanes may run in bounded waves after authority and capability ownership are established. Parallel work does not remove the need for prompt-level integration or final cross-scope reconciliation.
 
 ## Review Packet
 

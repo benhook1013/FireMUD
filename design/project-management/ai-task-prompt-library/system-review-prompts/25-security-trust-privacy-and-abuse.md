@@ -3,6 +3,18 @@
 Use this prompt to review the current accepted security contracts and their implementation boundaries. This is not a substitute for a whole-platform threat model.
 
 Apply the [shared review contract](./00-shared-review-contract.md).
+Apply the [orchestrated review workstream contract](./02-orchestrated-review-workstream-contract.md).
+
+## Orchestrated Execution
+
+A full invocation is an orchestrated review workstream: the invoking main thread takes primary ownership and delegates bounded evidence lanes for:
+
+- authentication, token, route, service, and workload authorization;
+- tenant isolation, privacy, and data, log, trace, and artifact controls;
+- TLS, mTLS, header trust, secrets, rotation, and break-glass operational boundaries; and
+- replay, brute-force, flooding, moderation, rate, quota, and resource-exhaustion controls, including stale or unavailable-authority failure behavior.
+
+The primary thread reconciles end-to-end trust boundaries and keeps the deferred whole-platform threat-model limitation prominent in the aggregate review.
 
 ## Starting Sources
 

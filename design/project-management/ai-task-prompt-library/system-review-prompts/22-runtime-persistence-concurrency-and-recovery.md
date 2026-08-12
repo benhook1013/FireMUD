@@ -3,6 +3,18 @@
 Use this prompt to review how gameplay and automation mutations remain correct through concurrency, retries, partial failures, crashes, replay, and recovery.
 
 Apply the [shared review contract](./00-shared-review-contract.md).
+Apply the [orchestrated review workstream contract](./02-orchestrated-review-workstream-contract.md).
+
+## Orchestrated Execution
+
+A full invocation is an orchestrated review workstream. The invoking main thread takes primary ownership and delegates these prompt-specific bounded evidence lanes:
+
+- command, tick, and gameplay mutation families;
+- data authority, transactions, and migrations across SQL, Redis, and derived stores;
+- concurrency, leases, fencing, idempotency, retry, and automation scheduling; and
+- crash, replay, reset, failover, restore, reconciliation, and operator evidence.
+
+The primary traces cross-lane mutation and failure paths end to end.
 
 ## Starting Sources
 

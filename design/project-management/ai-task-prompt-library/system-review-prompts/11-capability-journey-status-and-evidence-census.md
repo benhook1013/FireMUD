@@ -3,6 +3,11 @@
 Use this prompt for the comprehensive post-design census of intended product coverage, current implementation status, and focused proof. It may be rerun later only when the human deliberately commissions another complete census.
 
 Apply the [shared review contract](./00-shared-review-contract.md).
+Apply the [orchestrated review workstream contract](./02-orchestrated-review-workstream-contract.md).
+
+## Orchestrated Execution
+
+A full invocation is an orchestrated review workstream: the invoking main thread takes primary ownership and delegates one primary evidence lane per top-level capability-taxonomy group. Every current leaf is assigned exactly once, and each lane applies every check in the Review section to each assigned leaf. Intentional cross-cutting passes reconcile persona journeys and handoffs, and verify tracker-index, production-anchor, and focused-proof completeness; they do not reassign leaf ownership. The census cannot be sampled: any omitted leaf or required cross-cutting item makes the review incomplete. The primary thread reconciles taxonomy coverage, journey and handoff findings, and status-versus-proof claims.
 
 ## Starting Sources
 

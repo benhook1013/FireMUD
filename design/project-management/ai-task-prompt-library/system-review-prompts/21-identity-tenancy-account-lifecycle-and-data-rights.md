@@ -3,6 +3,18 @@
 Use this prompt to review the normal authority and lifecycle rules for accounts, tenants, membership, gameplay admission, entitlements, commerce, and account data. Adversarial threat analysis belongs to the security review.
 
 Apply the [shared review contract](./00-shared-review-contract.md).
+Apply the [orchestrated review workstream contract](./02-orchestrated-review-workstream-contract.md).
+
+## Orchestrated Execution
+
+A full invocation is an orchestrated review workstream. The invoking main thread takes primary ownership and delegates these prompt-specific bounded evidence lanes:
+
+- registration, authentication, token lifecycle, and external identity;
+- tenant, account, realm, game, and character identity, membership, admission, and session continuity;
+- entitlements, commerce, provider callbacks, and reconciliation; and
+- export, erasure, retention, and deletion evidence.
+
+The primary reconciles identity, scope, freshness, and lifecycle handoffs across the lanes.
 
 ## Starting Sources
 

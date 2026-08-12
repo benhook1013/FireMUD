@@ -3,6 +3,18 @@
 Use this prompt to review the creator workflow from editable source material through validation, publishing, activation, runtime execution, rollback, and later revision.
 
 Apply the [shared review contract](./00-shared-review-contract.md).
+Apply the [orchestrated review workstream contract](./02-orchestrated-review-workstream-contract.md).
+
+## Orchestrated Execution
+
+A full invocation is an orchestrated review workstream. The invoking main thread takes primary ownership and delegates these prompt-specific bounded evidence lanes:
+
+- game, world, entity, asset, and settings authoring;
+- revisions, collaboration, validation, preview, and playtest isolation;
+- scripts, plugins, automation, scheduling, trust, and quotas; and
+- publication lineage, activation, runtime propagation, cutover, and rollback.
+
+The primary reconciles the author-to-runtime lifecycle and version/settings handoffs across the lanes.
 
 ## Starting Sources
 
