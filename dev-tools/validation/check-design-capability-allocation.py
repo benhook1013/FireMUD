@@ -378,6 +378,33 @@ ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/adr-0078-digest-bound-workflow-and-step-retry-identities.md": adr_allocation(
         "SF-2", "Accepted", "SF-1"
     ),
+    "design/architecture/decisions/adr-0079-jooq-and-flyway-as-the-single-sql-persistence-stack.md": adr_allocation(
+        "SF-2", "Accepted", "SF-1", "PO-3"
+    ),
+    "design/architecture/decisions/adr-0080-service-owned-schemas-with-adopter-local-shared-migrations.md": adr_allocation(
+        "SF-2", "Accepted", "PO-3"
+    ),
+    "design/architecture/decisions/adr-0081-objective-compatibility-gates-for-database-evolution.md": adr_allocation(
+        "SF-2", "Accepted", "AR-3", "PO-3"
+    ),
+    "design/architecture/decisions/adr-0082-semantic-boundary-for-cross-service-identifier-migration.md": adr_allocation(
+        "SF-2", "Accepted", "AR-1", "AR-3"
+    ),
+    "design/architecture/decisions/adr-0083-no-general-event-broker-until-measured-adoption-gates.md": adr_allocation(
+        "SF-2", "Accepted", "SF-1", "PO-4", "AS-1", "GR-1"
+    ),
+    "design/architecture/decisions/adr-0084-evidence-scoped-redis-lua-compatibility.md": adr_allocation(
+        "SF-2", "Accepted", "SF-1", "GR-1", "PO-4"
+    ),
+    "design/architecture/decisions/adr-0085-evidence-gated-coordination-replay-and-fenced-reset.md": adr_allocation(
+        "SF-2", "Accepted", "PO-4", "PO-3", "GR-1"
+    ),
+    "design/architecture/decisions/adr-0086-owner-validated-class-a-caches-and-presentation-only-class-b.md": adr_allocation(
+        "SF-2", "Accepted", "GR-2", "GR-3", "EA-1", "PO-4"
+    ),
+    "design/architecture/decisions/adr-0087-isolated-subject-rate-limits-with-explicit-loss-semantics.md": adr_allocation(
+        "SF-2", "Accepted", "PO-2", "AA-1", "PO-4"
+    ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
     "README.md": "Service overview",

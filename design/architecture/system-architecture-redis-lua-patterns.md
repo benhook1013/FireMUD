@@ -10,7 +10,7 @@ re-invocation behavior for tick-related scripts.
 ## Default Author/Reviewer Expectations
 
 - New or changed scripts must fit one of the existing **script categories** and satisfy the idempotency, determinism, and `schemaVersion` rules described here.
-- Compatibility decisions (for example `compatible`, `requires_region_reset`, `requires_tenant_reset`, `requires_cluster_reset`) and rollout plans are made via the **Lua Script Registry**, not by introducing per-script operational knobs.
+- Compatibility decisions (for example `compatible`, `requires_region_reset`, `requires_tenant_reset`, `requires_cluster_reset`) and rollout plans are made via the **Lua Script Registry**, not by introducing per-script operational knobs. The supported caller and stored-payload version set must be evidenced for the actual rollout, rollback, recovery, and retained-data windows; this is not an automatic `N`/`N-1` promise.
 - The registry is the **single source of truth** for script metadata, including:
   - Key roles and order (`KEYS[1]`, `KEYS[2]`, etc.).
   - Allowed prefixes and hash-tag assumptions.
@@ -50,8 +50,8 @@ Before authoring or reviewing a new script, use this quick checklist:
 - All keys are passed via `KEYS[...]` and built using shared key helpers; no hard-coded string concatenation of prefixes.
 - The script’s category (region-lease, session-only, maintenance, automation, etc.) is clearly identified, and the expected **invariants** (lease token, epoch, lock tokens, session binding) are validated before any write.
 - Structured payloads include an explicit `schemaVersion`, and the script:
-  - Treats missing versions as a well-defined default.
-  - Understands at least `N` and `N‑1` for the current rollout.
+  - Maps a missing version to a legacy shape only when the registry records one unambiguous meaning and focused proof covers every versionless value in scope.
+  - Understands every caller/payload version combination evidenced to coexist for the supported rollout, rollback, recovery, or retention window.
   - Returns a non-mutating `"UNSUPPORTED_SCHEMA_VERSION"` outcome for unknown versions.
 - Writes are **idempotent** with respect to their inputs:
   - Lock and lease operations treat repeated acquire/refresh calls as no-ops with stable outcomes.
@@ -140,23 +140,24 @@ Scripts that violate these determinism requirements cannot guarantee safe replay
 Many coordination structures stored in Redis (for example `tick:{tenantRegionTag}:pending` payloads or structured `session:*` values) evolve over time. To keep script behavior compatible with both **old** and **new** shapes while preserving determinism:
 
 - Every structured payload that may evolve must include a small, explicit `schemaVersion` field in its serialized representation.
-- Scripts that read these payloads:
-  - Treat a missing `schemaVersion` as a well-defined default (for example, version `1`).
-  - Support **at least** the current and previous schema versions (`N` and `N‑1`) during rollout windows.
-  - Never silently ignore unknown versions; instead they return a clear, non-mutating outcome such as `"UNSUPPORTED_SCHEMA_VERSION"` that callers can log and surface in metrics.
+- Scripts that read these payloads validate the schema version and required shape before any mutation. Unknown or ambiguous versions return a clear, non-mutating outcome such as `"UNSUPPORTED_SCHEMA_VERSION"`.
+- Compatibility support covers every caller version and stored payload version that evidence shows may coexist during the supported rollout, rollback, recovery, or retained-data window. It may be one, two, or more versions; the registry must not imply a permanent ordinal window.
+- A missing `schemaVersion` is a supported legacy default only when the script-family compatibility record identifies one unambiguous legacy shape and focused proof shows that all versionless values in scope have that meaning. Otherwise missing version is unsupported and fails without mutation.
 - Migration-friendly branching:
   - Scripts branch on `schemaVersion` only to:
     - Apply added fields with sensible defaults (for example, treat absent optional fields as `nil` / default values).
-    - Adjust interpretation of existing fields in a way that remains idempotent for both `N` and `N‑1`.
+    - Adjust interpretation of existing fields in a way that remains idempotent for every caller/payload version combination in the evidenced coexistence set.
   - They avoid “upgrade in place” behavior inside Lua (for example, rewriting the payload to a new shape as a side effect of reads) unless that behavior is explicitly designed and tested for replay.
 - Rollout order mirrors the guidance in the Redis architecture doc:
-  1. Deploy new scripts that understand both `N‑1` and `N` payloads everywhere.
-  2. Update services to start writing `schemaVersion = N` payloads.
-  3. Once metrics show old versions have drained, remove the `N‑1` branch from scripts in a separate change.
+  1. Record the evidenced caller/payload coexistence set, mutation outcomes, and smallest reset sensitivity in the registry.
+  2. Deploy scripts that validate and safely handle every supported combination before writers or callers enter that coexistence window.
+  3. Remove obsolete support only after deployment and retention evidence proves that coexistence is no longer possible.
 - Tests for versioned scripts:
-  - Exercise both `N‑1` and `N` payloads (and the “missing version” default case).
+  - Exercise every caller/payload version combination in the evidenced coexistence set and the missing-version case only when the registry records a proven unambiguous legacy shape.
   - Assert that re-running the script with the same payload and `schemaVersion` is idempotent.
-  - Assert that unknown versions do not mutate Redis state and return the expected `"UNSUPPORTED_SCHEMA_VERSION"` (or equivalent) outcome.
+  - Assert that unknown or ambiguous versions do not mutate Redis state and return the expected `"UNSUPPORTED_SCHEMA_VERSION"` (or equivalent) outcome.
+
+This document owns the evidence-scoped compatibility, deterministic script, validation, and outcome contract, including immutable version-specific scripts and the smallest fenced reset when coexistence is impossible. The rollout document owns adopter/runbook mechanics, the registry records per-script evidence, and [ADR 0084](./decisions/adr-0084-evidence-scoped-redis-lua-compatibility.md) explains why the contract was accepted.
 
 ### Script Categories and Validation Hedge
 
@@ -400,7 +401,7 @@ Script changes must be rolled out in a way that respects both AOF replay semanti
   - The Lua Script Registry records a `compatibility_level` (or equivalent) and `reset_sensitivity` for each script and version.
   - Upgrades that move a script into a stricter compatibility level must be reflected in the registry before rollout, and their expected reset scope must be documented in design docs and runbooks.
 - **AOF replay and schemaVersion**
-  - `schemaVersion` changes must be backwards compatible for at least `N-1` versions, and scripts must treat unknown versions as non-mutating (`"UNSUPPORTED_SCHEMA_VERSION"`) so AOF replay cannot apply effects with mismatched schemas.
+  - `schemaVersion` changes must support every caller and stored-payload version in the evidenced coexistence set; unknown or ambiguous versions, including unproven missing versions, must fail before mutation with `"UNSUPPORTED_SCHEMA_VERSION"` or the equivalent so AOF replay cannot apply effects with mismatched schemas.
   - When a reset-required change is introduced, operators follow the reset runbooks so that any surviving AOF history for old scripts is discarded for the relevant scope rather than replayed under incompatible semantics.
 
 ## Lua Script Registry and CI Expectations

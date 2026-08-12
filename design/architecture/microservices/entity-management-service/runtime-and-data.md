@@ -7,10 +7,11 @@ This document defines Entity Management’s runtime model, persistence ownership
 - Current runtime item/equipment/container mutation RPCs that carry an `effectId` use `entity_mutation_effects` as the domain-local replay table. Entity Management records the applied protobuf response for `{tenantId, effectId}` and returns that stored response on duplicate delivery so `GET`, `DROP`, `PUT`, `TAKE`, `WEAR`, and `REMOVE` do not double-apply after Game Session replay or retry.
 - The `entitymanagement.mutation.effect.execution{operation,effect_status}` metric distinguishes first apply, replay/no-op, in-progress conflict, reported reuse outcome, and unreadable stored-response outcomes.
 - This current `{tenantId,effectId}` identity is not the target ADR 0054 participant guard; changed operation, target, or request reuse is not yet proven fail-closed.
+- Current `jOOQ + Flyway` adoption and focused persistence proof remain implementation work.
 
 ## Architecture and Design Notes
 
-- Uses JPA for persistence of entity data.
+- Uses the service-owned PostgreSQL schema and the platform `jOOQ + Flyway` persistence direction. Flyway owns schema evolution and generated jOOQ types are the default SQL access path; the narrow PostgreSQL-specific plain-SQL escape hatch requires focused proof and does not create a parallel ORM authority.
 - Exposes gRPC endpoints for other microservices.
 - Caches frequently accessed character data in Redis for quick lookups.
 - Applies optimistic locking to avoid conflicting updates on the same entity.

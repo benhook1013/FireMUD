@@ -587,6 +587,7 @@ Contract rules:
 - This is append-only runtime lifecycle history, not a projection of design-time publication events.
 - `SetPluginActiveVersion`, `DisablePlugin`, `DrainPlugin`, and scheduled policy reconciliation must append one event only when they materially change runtime plugin state or the active version.
 - Idempotent no-op retries against an already-applied target must not append duplicate events or advance the latest-row `lastChangedAt`.
+- An already-applied idempotent request (the requested active version and resulting runtime state already equal the committed state) returns the existing committed state without updating `lastChangedAt`, appending history, emitting the durable event, or triggering projections.
 - Operators that need the current runtime truth still use `GetPluginStatus`; operators that need transition history use this read rather than inferring chronology from row timestamps.
 
 #### `GetPluginPolicyConvergence`
@@ -632,7 +633,9 @@ Semantics:
   - `plugin.abilitySchemaDigest` must match the immutable digest recorded for the same base version used by the running instance.
   - Any mismatch fails deterministically with an application error (for example `PLUGIN_BASE_VERSION_MISMATCH` or `PLUGIN_ABILITY_SCHEMA_MISMATCH`) and must not mutate active plugin state.
 - Current implementation note: the live control-plane path now enforces `PUBLISHED` design-time state, non-revoked signer metadata, non-blocking component-policy decisions, `plugin.baseVersionId == runtimeVersionId`, `plugin.abilitySchemaDigest` matching the Automation participant digest in the running published release bundle, supported built-in `COMMAND_ALIAS` bindings, and no instance-scoped binding conflicts against the currently pinned script patch plus already-enabled plugins before updating the runtime registry.
-- On success, updates the registry for `(tenantId, gameInstanceId, pluginId)`, reconciles any durable plugin-owned schedules/timers so the displaced `pluginVersionId` cannot keep minting new triggers, and emits `PluginVersionActivated` (or `PluginVersionDisabled` as appropriate if this operation also transitions state).
+- On success, if `targetPluginVersionId` materially displaces the currently active version, updates the registry for `(tenantId, gameInstanceId, pluginId)`, reconciles any durable plugin-owned schedules/timers so the displaced `pluginVersionId` cannot keep minting new triggers, and emits `PluginVersionRuntimeStateChanged` with the committed runtime state. Schedule reconciliation is performed only for that material active-version displacement.
+- If the requested active version and resulting runtime state already equal the committed state, returns the existing committed state without updating `lastChangedAt`, appending history, emitting the durable event, triggering projections, or reconciling schedules/timers.
+- If the target version is already active but the runtime state must materially change, updates the registry and emits `PluginVersionRuntimeStateChanged` without reconciling schedules/timers.
 
 Outputs:
 
@@ -654,9 +657,9 @@ Inputs:
 Semantics:
 
 - Idempotent.
-- Transitions the plugin into a non-admitting state immediately.
+- When the plugin is not already `DISABLED`, transitions it into a non-admitting state immediately.
 - Triggers are rejected at admission with a dedicated outcome (for example `finalOutcome=plugin_disabled`) and recorded in `script_event_audit`.
-- Emits `PluginVersionDisabled(newState=DISABLED)`.
+- If the plugin is already `DISABLED`, returns the existing committed state without updating `lastChangedAt`, appending history, emitting the durable event, or triggering projections. Otherwise, emits `PluginVersionRuntimeStateChanged(newState=DISABLED)` after the committed state change.
 
 #### `DrainPlugin`
 
@@ -672,8 +675,8 @@ Inputs:
 Semantics:
 
 - Idempotent.
-- Transitions the plugin to `DRAINING` so no new triggers are admitted while previously admitted work is allowed to complete within bounded limits.
-- Emits `PluginVersionDisabled(newState=DRAINING)` (or a dedicated draining event if introduced later).
+- When the plugin is not already `DRAINING`, transitions it to `DRAINING` so no new triggers are admitted while previously admitted work is allowed to complete within bounded limits.
+- If the plugin is already `DRAINING`, returns the existing committed state without updating `lastChangedAt`, appending history, emitting the durable event, or triggering projections. Otherwise, emits `PluginVersionRuntimeStateChanged(newState=DRAINING)` after the committed state change.
 
 ### Automation & Scripting: Event Ingress Admission Contract (Normative)
 

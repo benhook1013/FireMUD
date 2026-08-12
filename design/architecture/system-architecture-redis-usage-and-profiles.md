@@ -59,9 +59,9 @@ Scope-key convention: `{tenantRegionTag}` is the canonical opaque tag for the co
     - Schema and TTL policies for cache and rate‑limit prefixes are defined centrally in shared infrastructure libraries rather than per service.
   - Example prefixes:
     - `inventory:<tenantId>:<containerId>`
-    - `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>`
+    - `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>` (exact room, viewer/session, and policy context bound)
     - `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>`
-    - `ratelimit:<tenantId>:<bucket>:<timeWindow>[:<shard>]`
+    - `ratelimit:<tenantId>:<subjectHash>:<timeWindow>` (one opaque stable subject hash per individual subject)
     - `automation:queue:{tenantInstanceTag}:<entityId>` and automation quota counters.
 
 Coordination Redis and Cache/Rate‑Limit Redis are treated as **separate deployments** in all persistent, player-facing environments so cache eviction/pressure cannot silently impact coordination SLOs. The only supported exception is explicitly ephemeral test/CI stacks that opt out of tail-loss and role-separation guarantees; those stacks may collapse roles temporarily, but must be clearly labelled as ephemeral and must not be used to validate coordination behavior or SLOs. See [Environment Profiles and Mappings](#environment-profiles-and-mappings) for details.
@@ -71,6 +71,8 @@ New prefixes must declare:
 - Which role they live on (Coordination vs Cache/Rate‑Limit),
 - Whether they are reset‑tolerant, reset‑sensitive, or reset‑forbidden, and
 - How they behave under tail‑loss and eviction.
+
+Rate-limit cardinality must be bounded by TTL, active-subject admission, and deployment/per-tenant memory envelopes rather than modulo collision pools. Deliberately shared coarse buckets are separately named heuristics and cannot alone impose individual security consequences. Each limiter also declares its store-unavailable behavior and whether it is a heuristic or hard gate; evictable Cache/Rate-Limit Redis is never the sole authority for a hard invariant.
 
 The **Redis Cheat Sheet** keeps a representative mapping from prefixes to roles and owning services.
 
@@ -182,7 +184,7 @@ Redis deployments in FireMUD approximate one of three main profiles. Each enviro
     - Tail‑loss SLOs relaxed but invariants and key rules still enforced.
   - Cache/Rate‑Limit Redis:
     - May run without AOF and with more aggressive eviction.
-    - Configuration emphasizes low friction over durability.
+    - Configuration emphasizes low friction over durability; subject cardinality remains bounded by TTL and active-subject admission rather than collision buckets.
 
 - **`hobby_self_hosted`**
   - Use case: small/self‑hosted FireMUD games with real players.
