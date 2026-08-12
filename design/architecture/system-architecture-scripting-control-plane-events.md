@@ -119,7 +119,7 @@ Operator consumption rule:
 
 ## `PluginVersionRuntimeStateChanged` (Automation & Scripting -> Durable Event Flow)
 
-Emitted when operator actions change plugin active versions or disablement state.
+Emitted when operator actions or scheduled policy reconciliation materially change plugin active versions or runtime state. This family remains subject to the existing family admission gate and `CP-01` profile; this producer rule does not authorize publication beyond that gate.
 
 Fields:
 
@@ -128,14 +128,16 @@ Fields:
 - `pluginId`
 - `previousPluginVersionId` / `newPluginVersionId` (when applicable)
 - `newState` (`ENABLED` | `DISABLED` | `DRAINING`)
+- `statusReason` (optional generally; required for policy/security-driven changes, including fail-closed `DISABLED` transitions)
 - `instanceSequence`
-- `controlPlaneRequestId` (if operator-driven)
-- `actor` and `reason` (if operator-driven)
+- `controlPlaneRequestId` (operator-driven only)
+- `actor` and `reason` (operator-driven only)
 - `occurredAt`
 
 Operator consumption rule:
 
-- Use this event family for runtime activation state only.
+- Use this event family for runtime activation state only, including material changes from operator actions and scheduled policy reconciliation.
+- `controlPlaneRequestId`, `actor`, and `reason` are omitted for scheduled policy reconciliation; `statusReason` records the policy/security cause.
 - Tooling that needs the full picture must join `PluginVersionStatusChanged` with instance-scoped runtime events/read APIs rather than overloading runtime events to explain design-time publication history.
 - Automation's operator read model must persist an append-only instance-scoped history for this family so `ListPluginRuntimeEvents` can expose real transition chronology without inferring it from the latest registry row.
 
