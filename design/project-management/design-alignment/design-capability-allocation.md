@@ -8,7 +8,7 @@ This ledger maps canonical product and architecture sources to the stable capabi
 
 - Source-set allocation and the declared coverage summary are mechanically checked by [`check-design-capability-allocation.py`](../../../dev-tools/validation/check-design-capability-allocation.py); the complete gate contract is listed in the [design-alignment workstream](./README.md#automated-gates).
 - Historical focused validation run on 2026-07-30 is retained as historical evidence: `python3 dev-tools/validation/check-design-capability-allocation.py` returned `design capability allocation passed: 225 sources (222 allocated, 3 explicit exemptions)`.
-- Current canonical validator evidence dated 2026-08-11: `design capability allocation passed: 229 sources (226 allocated, 3 explicit exemptions)`.
+- Current canonical validator evidence dated 2026-08-12: `design capability allocation passed: 253 sources (250 allocated, 3 explicit exemptions)`.
 - Markdown/link validation on 2026-07-31: `linkCheck` checked 3,496 links with 0 errors; `lintMarkdown` checked 407 files with 0 issues.
 - Runtime proof is not applicable to this documentation-only allocation change.
 - Implementation and verification evidence do not belong in this allocation ledger. The initial cross-capability baseline is preserved in the frozen [capability implementation reconciliation snapshot](./capability-implementation-reconciliation.md); live status and focused-proof anchors are maintained in the permanent implementation trackers.
@@ -28,16 +28,16 @@ This ledger maps canonical product and architecture sources to the stable capabi
 | Infrastructure | 6 | 6 | 0 | 100% classified |
 | Generated references | 2 | 2 | 0 | 100% classified |
 | Microservice architecture | 76 | 74 | 0; 2 explicit governance/template exemptions | 100% classified |
-| Architecture decisions | 55 | 54 | 0; 1 registry exemption | 100% classified |
+| Architecture decisions | 79 | 78 | 0; 1 registry exemption | 100% classified |
 | Product documentation | 7 | 7 | 0 | 100% classified |
-| **Total** | **229** | **226** | **0; 3 explicit exemptions** | **100% classified** |
+| **Total** | **253** | **250** | **0; 3 explicit exemptions** | **100% classified** |
 
 ## Allocation Ledger
 
 | Design source | Heading or scope | Primary capability | Secondary handoffs | Source class | Notes or gap |
 | --- | --- | --- | --- | --- | --- |
 | [Microservice architecture allocation](./design-capability-allocation-microservices.md) | All 76 files under `design/architecture/microservices/**` | Per-source allocation | Per-source handoffs | Service design, contract, runtime/data, configuration, operations, and reference sources | All 76 files are accounted for as 74 allocated sources plus 2 exempt governance/template files: `service-documentation-structure.md` and `service-template.md`; complete path-set coverage |
-| [Architecture decision registry](../../architecture/decisions/README.md) | Registry plus 54 ADRs | Per-record allocation | Per-record affected capabilities | Decision record | The registry is an index; accepted, superseded, and withdrawn records remain distinguishable |
+| [Architecture decision registry](../../architecture/decisions/README.md) | Registry plus 78 ADRs | Per-record allocation | Per-record affected capabilities | Decision record | The registry is an index; accepted, superseded, and withdrawn records remain distinguishable |
 | [System architecture allocation](./design-capability-allocation-system.md) | All 83 direct architecture, 6 infrastructure, and 2 generated sources | Per-source allocation | Per-source handoffs | Normative design, runbook, reference, index, and generated sources | Complete path-set coverage |
 | [Product documentation](../../product/README.md#canonical-sources) | All 7 files under `design/product/**` | Per-source allocation | Per-source product behavior scope | Requirements, taxonomy, index, and observable product behavior | Complete path-set coverage |
 
@@ -100,6 +100,30 @@ This ledger maps canonical product and architecture sources to the stable capabi
 | `design/architecture/decisions/adr-0052-redis-liveness-lease-with-durable-executor-fence.md` | `GR-1` | `SF-2`, `PO-4` | Accepted |
 | `design/architecture/decisions/adr-0053-command-atomicity-by-invariant-class.md` | `SF-2` | `GR-1`, `GR-2`, `GR-3`, `GR-4` | Accepted |
 | `design/architecture/decisions/adr-0054-split-spatial-authority-with-causal-read-composition.md` | `SF-2` | `GR-1`, `GR-2`, `GR-3`, `GR-4`, `SF-1` | Accepted |
+| `design/architecture/decisions/adr-0055-durable-cross-region-effects-with-static-live-topology.md` | `GR-2` | `GR-1`, `SF-2`, `AA-3`, `PO-4` | Accepted |
+| `design/architecture/decisions/adr-0056-one-hot-path-fan-out-owner.md` | `GR-1` | `GR-2`, `GR-3`, `SF-2`, `PO-4` | Accepted |
+| `design/architecture/decisions/adr-0057-game-session-owned-reconciliation-with-isolated-workers.md` | `GR-1` | `SF-2`, `GR-2`, `GR-3`, `PO-4` | Accepted |
+| `design/architecture/decisions/adr-0058-class-specific-redis-loss-outcomes.md` | `SF-2` | `PO-3`, `GR-1`, `PO-4` | Accepted |
+| `design/architecture/decisions/adr-0059-causal-floor-cross-service-presentation-reads.md` | `SF-1` | `SF-2`, `GR-2`, `GR-3` | Accepted |
+| `design/architecture/decisions/adr-0060-world-owned-ambient-facts-and-logic-owned-consequences.md` | `GR-2` | `GR-4`, `GR-1`, `SF-2`, `PO-1` | Accepted |
+| `design/architecture/decisions/adr-0061-single-owner-spatial-mutations-across-split-authority.md` | `GR-2` | `GR-3`, `GR-4`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0062-layered-gameplay-command-delivery-semantics.md` | `SF-1` | `SF-2`, `GR-1`, `AA-2`, `PO-2` | Accepted |
+| `design/architecture/decisions/adr-0063-durable-per-dispatch-script-handoff.md` | `AS-1` | `SF-2`, `GR-1`, `PO-4` | Accepted |
+| `design/architecture/decisions/adr-0064-stage-qualified-script-outcomes.md` | `AS-1` | `PO-4`, `SF-2`, `SF-1` | Accepted |
+| `design/architecture/decisions/adr-0065-deterministic-fair-entity-tick-scheduling.md` | `GR-1` | `SF-2`, `GR-4`, `PO-4` | Accepted |
+| `design/architecture/decisions/adr-0066-durable-asynchronous-cross-region-result-arbitration.md` | `GR-1` | `SF-2`, `GR-2`, `PO-4` | Accepted |
+| `design/architecture/decisions/adr-0067-abandon-old-epoch-work-and-reschedule-with-new-lineage.md` | `GR-1` | `SF-2`, `GR-2`, `AS-1`, `PO-4` | Accepted |
+| `design/architecture/decisions/adr-0068-evidence-derived-bounded-tick-ledger-recovery.md` | `PO-4` | `GR-1`, `SF-2`, `PO-1`, `SF-1` | Accepted |
+| `design/architecture/decisions/adr-0069-at-least-once-effect-execution-with-one-logical-terminal-outcome.md` | `GR-1` | `SF-2`, `PO-4` | Accepted |
+| `design/architecture/decisions/adr-0070-bounded-within-tick-visibility-by-semantic-phase.md` | `GR-1` | `GR-2`, `GR-4`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0071-durable-tick-commit-before-fenced-coordination-cleanup.md` | `GR-1` | `SF-2`, `PO-4` | Accepted |
+| `design/architecture/decisions/adr-0072-class-specific-timer-durability-and-recovery.md` | `AS-1` | `GR-1`, `GR-2`, `SF-1` | Accepted |
+| `design/architecture/decisions/adr-0073-evidence-calibrated-tick-budgets-and-lock-ttls.md` | `SF-1` | `GR-1`, `PO-4`, `AR-2` | Accepted |
+| `design/architecture/decisions/adr-0074-one-entity-lock-per-redis-script.md` | `GR-1` | `SF-2`, `GR-4`, `PO-4` | Accepted |
+| `design/architecture/decisions/adr-0075-depth-cost-and-count-bounds-for-generated-effect-chains.md` | `GR-4` | `GR-1`, `AS-1`, `PO-4` | Accepted |
+| `design/architecture/decisions/adr-0076-failure-class-specific-durable-tick-retries.md` | `GR-1` | `PO-2`, `PO-4`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0077-durable-global-effect-fanout-and-lightweight-idle-ticks.md` | `GR-1` | `GR-2`, `AS-1`, `SF-1`, `PO-4` | Accepted |
+| `design/architecture/decisions/adr-0078-digest-bound-workflow-and-step-retry-identities.md` | `SF-2` | `SF-1` | Accepted |
 
 ## Product Documentation Allocation
 

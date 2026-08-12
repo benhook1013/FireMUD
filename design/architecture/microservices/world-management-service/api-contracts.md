@@ -6,6 +6,7 @@ This API contract is target-state canonical; implementation coverage is partial 
 
 - The current World Management gameplay bridge serializes runtime room ids as `R-<roomInstanceRowId>` and rejects scoped decimal `roomInstanceId` values such as `1021`. That storage-derived encoding is not the canonical target identity defined by the [Identifier Glossary](../../system-architecture-identifier-glossary.md).
 - The bridge, cross-service callers, examples, and focused proof have not migrated together to the scoped decimal `roomInstanceId` contract. The checked-in proof still exercises the legacy encoding.
+- The typed `ApplyRoomAmbientStatePatch` contract below is target-state: the current service has no complete handler or durable operation/digest-bound guard, so player-significant ambient mutations remain on the fenced Game Session admission/reconciliation path and are not direct table writes.
 - Required executable migration/proof gate: `./gradlew :world-management-service:test :game-logic-service:test :game-session-service:test :tcp-proxy-service:crossServiceTest`. This gate must update the bridge, callers, examples, and checked-in proof together and pass before the target examples below may be treated as current. This document does not claim that the gate exists or passes.
 
 ## gRPC APIs
@@ -13,7 +14,7 @@ This API contract is target-state canonical; implementation coverage is partial 
 - `GetRoom` – retrieves room data including exits and environmental effects through `RoomInstanceRef`.
 - `GetRoomSnapshot` – returns a minimal, LOOK-focused view scoped by `RoomInstanceRef`.
 - `ListRoomOccupants` – returns the authoritative typed occupant list for actors in a room, scoped by `RoomInstanceRef`.
-- `ApplyRoomAmbientStatePatch` – applies an ambient state patch to the target `RoomInstanceRef`, guarded by `EffectId`.
+- `ApplyRoomAmbientStatePatch` – applies a typed ambient fact patch to the target runtime scope under expected epoch/version preconditions and an operation/aggregate/request-digest-bound guard derived from the root `EffectId`; matching replay returns the durable prior result and a conflicting identity or payload fails closed.
 - `GetDraftDesignDigest` – returns the publish-gating digest for Draft world templates using the typed scope request `GetDraftDesignDigestRequest { tenantId, scope: oneof { versionId, scriptPatchVersion } }`. World Management supports `versionId` scope only and must return `UNSUPPORTED_SCOPE` for `scriptPatchVersion`.
 - `ValidateWorldUpgradeMappings` – validates world-owned durable references and approved remap sets for replacement-instance cutover to a target `(tenantId, versionId)`.
 - `PrepareWorldInstance` – creates or reuses the canonical `PREPARING` world lifecycle row for a resolved launch descriptor, validates release-bundle and `versionStateEpoch` proof against Game Design, and materializes first-cut instance topology rows without admitting gameplay yet.

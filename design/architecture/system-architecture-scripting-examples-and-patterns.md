@@ -79,7 +79,7 @@ One admitted event can still produce different outcomes per bound handler. For e
 
 - Game Session emits one `TriggerScriptEvent` for `eventType=onEnterRegion` with a single `scriptEventId`.
 - The Automation & Scripting Service accepts that event at ingress, resolves three handlers, and creates three handler-scoped Trigger Identities.
-- The first handler is admitted, evaluates successfully, and reaches `finalStage=TICK_HANDOFF`, `finalOutcome=success` after all of its commands are accepted; the target handoff identity uses one persisted `automationDispatchId` for the work-item handoff and distinct `commandOrdinal` values for its commands, and retries reuse the same dispatch.
+- The first handler is admitted, evaluates successfully, and reaches `finalStage=TICK_HANDOFF`, `finalOutcome=handoff_accepted` after every required child dispatch is durably accepted; its later gameplay results remain per dispatch. The target handoff identity uses one persisted `automationDispatchId` for the work-item handoff and distinct `commandOrdinal` values for its commands, and retries reuse the same dispatch.
 - The second handler is rejected during admission with `finalStage=ADMISSION`, `finalOutcome=quota_denied`, `finalReason=per_script_window_exhausted`.
 - The third handler is skipped with `finalStage=ADMISSION`, `finalOutcome=script_disabled`, `finalReason=admin_hard_disable`.
 

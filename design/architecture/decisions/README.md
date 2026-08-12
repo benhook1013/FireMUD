@@ -150,6 +150,30 @@ Validation precedence is fixed: first parse every checked queue row and validate
 | [ADR 0052](./adr-0052-redis-liveness-lease-with-durable-executor-fence.md) | Accepted | `GR-1` | `SF-2`, `PO-4` | Redis region liveness lease installed and revalidated against a durable executor fence |
 | [ADR 0053](./adr-0053-command-atomicity-by-invariant-class.md) | Accepted | `SF-2` | `GR-1`, `GR-2`, `GR-3`, `GR-4` | Local idempotent gameplay effects with stronger atomicity selected by invariant class |
 | [ADR 0054](./adr-0054-split-spatial-authority-with-causal-read-composition.md) | Accepted | `SF-2` | `GR-1`, `GR-2`, `GR-3`, `GR-4`, `SF-1` | Split spatial authority with operation-bound effects and causal presentation reads |
+| [ADR 0055](./adr-0055-durable-cross-region-effects-with-static-live-topology.md) | Accepted | `GR-2.1` | `GR-1.3`, `GR-1.4`, `SF-2.3`, `AA-3.3`, `PO-4.2` | Durable cross-region effects with static live topology and maintenance cutover |
+| [ADR 0056](./adr-0056-one-hot-path-fan-out-owner.md) | Accepted | `GR-1.2` | `GR-2.2`, `GR-3.2`, `SF-2.3`, `PO-4.2` | One hot-path fan-out owner with a transitive two-participant ceiling |
+| [ADR 0057](./adr-0057-game-session-owned-reconciliation-with-isolated-workers.md) | Accepted | `GR-1.4` | `SF-2.3`, `GR-2.3`, `GR-3.2`, `PO-4.2` | Game Session-owned reconciliation with isolated workers and durable dispositions |
+| [ADR 0058](./adr-0058-class-specific-redis-loss-outcomes.md) | Accepted | `SF-2.2` | `SF-2.1`, `SF-2.3`, `PO-3.4`, `GR-1.4`, `PO-4.2` | Class-specific Redis-loss outcomes with durable-intent authority |
+| [ADR 0059](./adr-0059-causal-floor-cross-service-presentation-reads.md) | Accepted | `SF-1.2` | `SF-2.3`, `GR-2.1`, `GR-3.2` | Causal-floor cross-service presentation reads and component-version identity |
+| [ADR 0060](./adr-0060-world-owned-ambient-facts-and-logic-owned-consequences.md) | Accepted | `GR-2.3` | `GR-2.2`, `GR-4.1`, `GR-1.4`, `SF-2.3`, `PO-1.4` | World-owned ambient facts and Logic-owned gameplay consequences |
+| [ADR 0061](./adr-0061-single-owner-spatial-mutations-across-split-authority.md) | Accepted | `GR-2.3` | `GR-2.2`, `GR-3.2`, `GR-4.1`, `SF-2.3` | Single-owner spatial mutations across split World and Entity authority |
+| [ADR 0062](./adr-0062-layered-gameplay-command-delivery-semantics.md) | Accepted | `SF-1.1` | `SF-2.3`, `GR-1.2`, `AA-2.2`, `PO-2.4` | Layered gameplay command and internal-event delivery semantics |
+| [ADR 0063](./adr-0063-durable-per-dispatch-script-handoff.md) | Accepted | `AS-1.5` | `SF-2.3`, `GR-1.1`, `SF-2.2`, `PO-4.1` | Durable per-dispatch script handoff and deterministic child dispatches |
+| [ADR 0064](./adr-0064-stage-qualified-script-outcomes.md) | Accepted | `AS-1.5` | `PO-4.1`, `SF-2.3`, `SF-1.1` | Stage-qualified script outcomes and command-level authority links |
+| [ADR 0065](./adr-0065-deterministic-fair-entity-tick-scheduling.md) | Accepted | `GR-1.2` | `SF-2.2`, `SF-2.3`, `GR-4.1`, `PO-4.2` | Deterministic fair entity tick scheduling and persisted selected manifests |
+| [ADR 0066](./adr-0066-durable-asynchronous-cross-region-result-arbitration.md) | Accepted | `GR-1.4` | `SF-2.3`, `GR-2.1`, `GR-2.2`, `GR-1.2`, `PO-4.2` | Durable asynchronous cross-region result arbitration |
+| [ADR 0067](./adr-0067-abandon-old-epoch-work-and-reschedule-with-new-lineage.md) | Accepted | `GR-1.4` | `SF-2.3`, `GR-2.1`, `AS-1.4`, `PO-4.4` | Evidence-qualified old-epoch reconciliation and new-lineage re-drive |
+| [ADR 0068](./adr-0068-evidence-derived-bounded-tick-ledger-recovery.md) | Accepted | `PO-4.2` | `GR-1.4`, `SF-2.3`, `PO-1.4`, `SF-1.4` | Evidence-derived bounded tick-ledger recovery |
+| [ADR 0069](./adr-0069-at-least-once-effect-execution-with-one-logical-terminal-outcome.md) | Accepted | `GR-1.2` | `GR-1.4`, `SF-2.3`, `PO-4.2` | At-least-once effect execution with one logical terminal outcome |
+| [ADR 0070](./adr-0070-bounded-within-tick-visibility-by-semantic-phase.md) | Accepted | `GR-1.2` | `GR-2.1`, `GR-4.1`, `SF-2.3` | Bounded within-tick visibility by semantic phase |
+| [ADR 0071](./adr-0071-durable-tick-commit-before-fenced-coordination-cleanup.md) | Accepted | `GR-1.4` | `SF-2.3`, `GR-1.3`, `PO-4.2` | Durable tick commit before fenced coordination cleanup |
+| [ADR 0072](./adr-0072-class-specific-timer-durability-and-recovery.md) | Accepted | `AS-1.4` | `GR-1.2`, `GR-2.3`, `AS-1.5`, `SF-1.4` | Class-specific timer durability and recovery |
+| [ADR 0073](./adr-0073-evidence-calibrated-tick-budgets-and-lock-ttls.md) | Accepted | `SF-1.4` | `GR-1.2`, `GR-1.3`, `PO-4.2`, `AR-2.3` | Evidence-calibrated tick budgets and lock TTLs |
+| [ADR 0074](./adr-0074-one-entity-lock-per-redis-script.md) | Accepted | `GR-1.3` | `SF-2.2`, `GR-4.1`, `PO-4.4` | One entity lock per Redis script |
+| [ADR 0075](./adr-0075-depth-cost-and-count-bounds-for-generated-effect-chains.md) | Accepted | `GR-4.1` | `GR-1.2`, `AS-1.2`, `PO-4.2` | Depth, cost, and count bounds for generated effect chains |
+| [ADR 0076](./adr-0076-failure-class-specific-durable-tick-retries.md) | Accepted | `GR-1.2` | `PO-2.4`, `PO-4.2`, `SF-2.3` | Failure-class-specific durable tick retries |
+| [ADR 0077](./adr-0077-durable-global-effect-fanout-and-lightweight-idle-ticks.md) | Accepted | `GR-1.2` | `GR-2.1`, `AS-1.4`, `SF-1.4`, `PO-4.2` | Durable global-effect fan-out and lightweight idle ticks |
+| [ADR 0078](./adr-0078-digest-bound-workflow-and-step-retry-identities.md) | Accepted | `SF-2.3` | `SF-2.4`, `SF-1.2` | Digest-bound workflow and step retry identities |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../../product/capability-taxonomy.md).
 

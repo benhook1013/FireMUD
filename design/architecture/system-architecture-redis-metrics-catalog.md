@@ -159,8 +159,8 @@ These are conservative heuristics used to spot unintended coordination misuse ea
 
 Alerts and dashboards should reference the explicit SLOs and budgets defined in [`system-architecture-redis-operations.md`](./system-architecture-redis-operations.md), using clear labels and scope-aware wording so incidents tie back to agreed envelopes rather than vague “Redis is bad” signals.
 
-Replica-promotion dashboards should use `redis_replication_lag_ms` as the canonical decision metric and compare it directly against `tail_loss_budget_ms` for the affected deployment:
+Replica-promotion dashboards should use `redis_replication_lag_ms` as the canonical decision metric and compare it directly against the measured `redis_unreplicated_write_window_slo_ms` for the affected deployment:
 
-- acceptable band: `redis_replication_lag_ms <= 0.5 * tail_loss_budget_ms`
-- warning band: `0.5 * tail_loss_budget_ms < redis_replication_lag_ms < tail_loss_budget_ms`
-- red line: `redis_replication_lag_ms >= tail_loss_budget_ms`
+- acceptable band: `redis_replication_lag_ms <= 0.5 * redis_unreplicated_write_window_slo_ms`
+- warning band: `0.5 * redis_unreplicated_write_window_slo_ms < redis_replication_lag_ms < redis_unreplicated_write_window_slo_ms`
+- red line: `redis_replication_lag_ms >= redis_unreplicated_write_window_slo_ms`

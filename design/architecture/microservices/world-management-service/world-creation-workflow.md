@@ -45,7 +45,7 @@ Before `PREPARING` or `ACTIVE` world state is accepted, World Management must al
 
 If any of those proofs drift, activation fails closed with application-level attestation/version-state mismatch outcomes rather than proceeding on stale descriptor state.
 
-The same `(tenantId, gameTemplateId, controlPlaneRequestId)` launch attempt must therefore replay against the same descriptor values on every retry, and a fresh launch attempt requires a new `controlPlaneRequestId` if it is allowed to resolve against newer valid published state.
+The same `(tenantId, gameTemplateId, controlPlaneRequestId)` launch attempt must therefore replay against the same descriptor values on every retry, and a fresh launch attempt requires a new `controlPlaneRequestId` if it is allowed to resolve against newer valid published state. This is the workflow-local launch-attempt scope; step retry identity follows the shared [Transaction Strategies](../../system-architecture-transactions.md) contract and [ADR 0078](../../decisions/adr-0078-digest-bound-workflow-and-step-retry-identities.md), not this tuple alone.
 
 It never mutates template rows for Published versions; any structural changes to the world layout must occur through design-time workflows on Draft versions before publishing a new `versionId`. More broadly, world creation is allowed to invoke procedural generators only in **runtime/instance** mode as described in [Procedural Generation](../../system-architecture-procedural-generation.md); any attempt to write template rows from this workflow, even for non-Published versions, must be rejected by World Management validation. All template edits must flow through Game Design Service design-time APIs.
 
@@ -134,11 +134,12 @@ Illustrative operator-facing workflow status fragment:
 
 ### Workflow Activity Idempotency
 
-World creation steps write durable instance rows and must be safely retryable. Each externally retryable step must implement a durable idempotency guard keyed by a stable business idempotency key plus step identity, at minimum:
+World creation steps write durable instance rows and must be safely retryable under the general workflow/request and step-guard contract owned by [Transaction Strategies](../../system-architecture-transactions.md) and explained by [ADR 0078](../../decisions/adr-0078-digest-bound-workflow-and-step-retry-identities.md). This adopter document supplies workflow-local inputs without redefining the guard policy:
 
-- `(tenantId, gameInstanceId, worldCreationRequestId, stepName, expectedGenerationConfigRevision)`
-
-For generation stages, the idempotency key must additionally include `generationRequestId` so retries across different workflow runs converge on one logical result.
+- Stable business scope is the resolved launch attempt for `<tenantId, gameInstanceId, controlPlaneRequestId>` and its immutable `launchDescriptorId`.
+- The stable step name identifies the lifecycle operation, while a deterministic occurrence key distinguishes each logical occurrence of that operation; for generation stages, the existing `generationRequestId` is part of that occurrence input so retries across workflow runs converge on the same logical generation result.
+- The execution role distinguishes forward preparation/activation work from applicable pre-activation compensation; it is not inferred from a Temporal run, process, retry attempt, or message/delivery identifier.
+- The immutable request-digest input covers the exact resolved launch descriptor and step request values used by the operation, including `expectedGenerationConfigRevision` and, where applicable, `generationRequestId`. Digest construction, persistence, comparison, and guard storage remain governed by the shared contract and are not specified here.
 
 On a retry of the same workflow identity:
 
@@ -151,7 +152,7 @@ If retries are exhausted before admission:
 - No gameplay admission is permitted for that `gameInstanceId`.
 - `FAILED_PRE_ACTIVATION` is terminal for that `gameInstanceId`; operators must create a new instance with a new `gameInstanceId` for retry.
 
-This guard must be enforced in the same local transaction as the step’s durable writes so “step completed” cannot be recorded without the corresponding instance rows. For steps that invoke runtime generation, the guard must also carry a deterministic `generationRequestId` so retries across new workflow runs resolve to the same generation run instead of creating duplicate topology writes. See `design/architecture/system-architecture-transactions.md` for idempotency and retry expectations.
+The target guard must be enforced with the step’s durable writes so “step completed” cannot be recorded without the corresponding instance rows. The current World Management implementation preserves `controlPlaneRequestId`, lifecycle fencing, and generation request inputs in its command paths, but does not yet demonstrate the complete occurrence/role/digest-bound guard or fail-closed conflict behavior across workflow retries. Current lifecycle tests prove the implemented lifecycle and idempotency seams, not the full ADR 0078 retry, conflict, crash, replay, and durable-guard proof; that implementation and proof drift remains open.
 
 The durable workflow state is owned by Temporal using the canonical `world-lifecycle` workflow identity. Operators can inspect progress through the normal lifecycle read surface and any Temporal-backed operator tooling that projects the same `workflowId`.
 
@@ -165,7 +166,7 @@ Instance expiry and operator-driven shutdown must use an explicit cross-service 
 
 - Game Session must first mark the target instance non-admissible/draining before World starts termination.
 - World Management starts or resumes the canonical `world-lifecycle` Temporal workflow and marks the instance `TERMINATING`.
-- Entity Management runs an idempotent cleanup step keyed by `(tenantId, gameInstanceId, terminationRequestId, stepName)` (with Temporal `workflowId` / run identity as execution trace only) that removes synthetic room-ground containers and containment rows scoped to the terminating instance.
+- Entity Management runs a cleanup step under the shared workflow/step guard contract, using the termination workflow’s stable `<tenantId, gameInstanceId, terminationRequestId>` business scope, a deterministic cleanup occurrence, the applicable forward execution role, and the immutable cleanup request inputs (with Temporal `workflowId` / run identity as execution trace only). It removes synthetic room-ground containers and containment rows scoped to the terminating instance. Full guard adoption and focused conflict/replay proof remain an implementation gap.
 - World Management finalizes world-side cleanup and marks the instance `TERMINATED` only after Entity Management confirms cleanup completion; current world-side cleanup hard-deletes runtime `world_event`, `room_instance_exit`, `room_instance`, `zone_instance`, and `region_instance` rows for the terminating instance while retaining the terminal `world_instance` lifecycle row.
 - The current first implementation cut now exposes that contract synchronously through `TerminateWorldInstance(tenantId, gameInstanceId, expectedLifecycleEpoch, terminationRequestId)`, with Game Session reading fresh lifecycle state through `GetWorldInstanceLifecycle` immediately before termination.
 - If cleanup fails after admission is already closed, the world remains `TERMINATING` and the same termination workflow identity must retry to convergence instead of restoring the instance to live admission.

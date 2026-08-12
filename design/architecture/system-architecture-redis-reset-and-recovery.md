@@ -17,7 +17,7 @@ Every `coordination-maintenance` command in this document is unavailable for cur
 - [Reset vs Accept Loss](#reset-vs-accept-loss)
 - [Common Reset Scenarios](#common-reset-scenarios)
 - [Current Operator Fallback](#current-operator-fallback)
-- [Interaction with Tail-Loss and Replay](#interaction-with-tail-loss-and-replay)
+- [Interaction with Measured Coordination Exposure and Replay](#interaction-with-measured-coordination-exposure-and-replay)
 - [Operator Expectations](#operator-expectations)
 - [Related Documentation](#related-documentation)
 
@@ -25,7 +25,7 @@ Every `coordination-maintenance` command in this document is unavailable for cur
 
 ## Coordination Reset Model
 
-Coordination Redis is treated as a **long‑lived, tail‑loss‑bounded coordination buffer** in persistent environments, **not** as a durable log of record; it remains volatile and reset‑tolerant under controlled conditions. Authoritative history for gameplay outcomes always lives in PostgreSQL tick effect ledgers and domain stores as described in `system-architecture-redis.md`, and neither coordination keys nor AOF contents are ever treated as the primary log of record. The reset model centers on three scopes:
+Coordination Redis is treated as a **long‑lived, measured-exposure coordination buffer** in persistent environments, **not** as a durable log of record; it remains volatile and reset‑tolerant under controlled conditions. Authoritative history for gameplay outcomes always lives in PostgreSQL tick effect ledgers and domain stores as described in `system-architecture-redis.md`, and neither coordination keys nor AOF contents are ever treated as the primary log of record. The reset model centers on three scopes:
 
 - **Region‑scoped reset** – affects a single `<tenantId, gameInstanceId, regionId>`:
   - Clears tick queues, timers, retry structures, and region‑scoped locks/leases for one region.
@@ -147,7 +147,7 @@ The Redis-only cold-start/reset flow below is distinct from ADR 0015's PostgreSQ
   - Coordination Redis retains its AOF/replication history.
   - Keys such as `tick:{tenantRegionTag}:pending` and timers may survive.
   - Tick executors can replay or complete in‑flight ticks using idempotent domain logic and PostgreSQL guards.
-  - This is the normal “Redis recovered” path; tail‑loss is bounded by the configured SLO.
+  - This is the normal “Redis recovered” path; the unreplicated-write exposure is evaluated against the measured environment SLO and ADR 0058 class-specific outcomes.
 
 Worked example (illustrative, non-normative, local failover consequences): `<tenantId=7b3b074e-d597-4e9b-b96f-4f5946d26120, gameInstanceId=9a2bb6d1-74c7-4f81-a9e8-418e65f6ad78, regionId=R7>`
 
@@ -259,12 +259,12 @@ Once the bounded recovery controller and its coordination-maintenance CLI are im
 
 1. **Can you safely accept the loss?**
    - Choose **Accept loss** when:
-     - Metrics show tail‑loss stayed within the documented SLO window, and
+     - Metrics show the measured unreplicated-write exposure stayed within the documented environment SLO, and
      - Invariants (no double‑apply of critical effects, no cross‑tenant leaks, no broken financial flows) remain intact.
    - Behavior:
-     - Acknowledge that some coordination state (timers, pending effects, non‑critical queues) has been lost within the tail‑loss envelope and **do nothing** beyond monitoring.
+     - Acknowledge only the class-specific coordination consequences in ADR 0058; loss of correctness-bearing commands, effects, retries, or timers still requires durable reconstruction or explicit terminalization, not silent acceptance.
    - Examples:
-     - Short Redis outage where `tail_loss_ms` and tick metrics confirm only the last 1–2 seconds of activity were affected.
+     - Short Redis outage where replication/promotion evidence confirms the measured exposure remained within the environment SLO and only reset-tolerant hints were affected.
      - Eviction of cache‑like coordination hints that are inherently best‑effort.
 
 2. **Otherwise, reset at the smallest safe scope**
@@ -310,7 +310,7 @@ Recommended actions:
 
 Expected impact:
 
-- Players in that region may see some actions dropped or replayed within the tail‑loss envelope.
+- Players may see delay, replay, or explicit non-application according to ADR 0058 class-specific outcomes; no correctness-bearing work is silently discarded.
 - No permanent loss of authoritative game data in PostgreSQL.
 
 ### Buggy Coordination Script Affecting Multiple Regions for One Tenant
@@ -328,7 +328,7 @@ Recommended actions:
 
 Expected impact:
 
-- In‑progress actions for that tenant may be dropped/replayed within the tail‑loss envelope.
+- In-progress actions follow ADR 0058 durable reconstruction/terminalization outcomes; Redis loss does not authorize silent discard.
 - Long‑lived domain state remains safe; scripts and tick processing resume in a clean coordination environment.
 
 ### Manual Break-Glass Edits to Coordination Keys
@@ -378,12 +378,12 @@ For a current Coordination Redis cold start, incomplete recovery, or reset incid
 
 ---
 
-## Interaction with Tail-Loss and Replay
+## Interaction with Measured Coordination Exposure and Replay
 
-Coordination resets interact with tail‑loss and replay in predictable ways:
+Coordination resets interact with measured coordination exposure and replay in predictable ways:
 
-- A **reset** is effectively a deliberate, large tail‑loss event for the chosen scope:
-  - Instead of losing up to `tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)` of state, the system discards **all** coordination state for that scope.
+- A **reset** is a deliberate, unbounded loss of coordination state for the chosen scope:
+  - The system discards **all** coordination state for that scope rather than the bounded measured unreplicated-write exposure of an ordinary failover. ADR 0058 defines class-specific durable outcomes; no tick-derived loss formula applies.
   - This is only safe when:
     - All critical outcomes are recorded durably in PostgreSQL or another authoritative store.
     - Double‑apply is prevented via idempotency guards (for example, effect IDs, transaction IDs).
@@ -398,7 +398,7 @@ Coordination resets interact with tail‑loss and replay in predictable ways:
 
 Designers should use the **Redis Design Checklist** to confirm that new flows remain safe under:
 
-- Normal tail‑loss and replay.
+- Normal measured coordination-write exposure and replay.
 - Scoped resets at region/tenant/cluster levels.
 
 ---
@@ -416,7 +416,7 @@ Operators interacting with Coordination Redis should assume:
   - Runbooks must include clear guidance to reset and verify affected regions/tenants afterwards.
 
 - **Metrics drive decisions**:
-  - Tail‑loss SLO observability (described in `system-architecture-redis-operations.md`) surfaces when loss windows exceed acceptable bounds.
+  - Measured unreplicated-write-window observability (described in `system-architecture-redis-operations.md`) surfaces when exposure exceeds the environment SLO.
   - Tick watermarks, retry depths, and script error codes inform whether to accept loss or reset at the smallest safe scope.
 
 - **Auditability matters**:
@@ -432,6 +432,6 @@ Operators interacting with Coordination Redis should assume:
 
 - `system-architecture-redis.md` – conceptual hub for roles, invariants, and key naming.
 - `system-architecture-redis-operations.md` – concrete reset and migration runbooks.
-- `system-architecture-redis-design-checklist.md` – checklist for assessing reset‑tolerance and tail‑loss compatibility.
+- `system-architecture-redis-design-checklist.md` – checklist for assessing reset tolerance and measured coordination-write exposure compatibility.
 - `system-architecture-redis-lua-patterns.md` – Lua script requirements for idempotency and replay safety.
 - `system-architecture-redis-ops-access.md` – ACL and tooling expectations for operators.

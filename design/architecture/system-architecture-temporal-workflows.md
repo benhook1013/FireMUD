@@ -58,14 +58,18 @@ The shared auto-configuration provides:
 
 ## Canonical Identity Conventions
 
+The general semantic contract for durable workflow/request and step retry identity is owned by [Transaction Strategies](./system-architecture-transactions.md), with the rationale recorded in [ADR 0078](./decisions/adr-0078-digest-bound-workflow-and-step-retry-identities.md). This document owns only Temporal-local key encoding and adopter consequences; it does not replace that shared contract.
+
 Workflow identity is explicit and deterministic.
 
-- Workflow ID format:
+- Workflow ID format (Temporal-local encoding):
   - `<workflowFamily>:<tenantId>:<scopeKey>:<businessKey>`
-- Business-step key format:
+- Current `FiremudWorkflowIds` business-step key format:
   - `<workflowId>#<stepName>#<businessKey>`
 
-These conventions are implemented in `FiremudWorkflowIds`.
+The current `businessStepKey` is an incomplete implementation encoding, not the canonical full step guard. Target Temporal adoption adds a stable step name, deterministic occurrence key, and execution role to the local step encoding (for example, `<workflowId>#<stableStepName>#<deterministicOccurrenceKey>#<executionRole>` or an equivalent deterministic representation). The durable guard must store and compare the immutable request digest with those identity fields under the shared contract; the current helper and adopters do not yet prove that enforcement or the focused retry, conflict, crash, and replay behavior.
+
+`FiremudWorkflowIds` implements the workflow-ID encoding and currently exposes the legacy business-step projection above. Adopters must treat that projection as an implementation migration gap rather than evidence of a complete digest-bound guard.
 
 Guidance:
 
@@ -79,7 +83,7 @@ Current adopter examples:
 - full Game Design publish uses the caller-supplied `publish_request_id` from `PublishVersionRequest`, so retries converge on the same caller-visible durable workflow instead of minting a fresh internal UUID.
 - script-patch readiness uses the stable patch/readiness domain tuple documented in Automation Scripting.
 
-`workflowId` is the durable process identity. `businessStepKey` is the durable activity/update-side idempotency key for business effects inside the workflow.
+`workflowId` is the durable process identity. `businessStepKey` is the local activity/update-side key projection for business effects inside the workflow; it is not, by itself, the complete durable step guard until the target occurrence, role, and digest fields are enforced.
 
 ## Canonical Task Queue Convention
 
@@ -111,7 +115,7 @@ The shared foundation does not impose a speculative universal workflow interface
 Required mapping discipline for adopting services:
 
 - operator-facing status rows or read APIs must carry the same `workflowId` and `workflowFamily` that Temporal uses;
-- business-step idempotency inside activities must use the same `businessStepKey` convention documented here;
+- business-step idempotency inside activities must use the target local step encoding and durable guard semantics: stable step name, deterministic occurrence key, execution role, and stored/compared immutable request digest. The current `businessStepKey` projection is not proof of that complete guard;
 - adopting services must document their exact query/signal/update names in their owning service docs and implementation tracker instead of inventing hidden names in code only.
 
 ## Configuration Contract
@@ -134,7 +138,7 @@ Each adopting service should:
 2. enable Temporal through service configuration;
 3. contribute one or more `TemporalWorkerRegistrar` beans;
 4. keep workflow implementation classes service-local;
-5. use `TemporalTaskQueueResolver` and `FiremudWorkflowIds` rather than inventing service-local queue or ID formatting.
+5. use `TemporalTaskQueueResolver` and `FiremudWorkflowIds` for the local queue and workflow-ID encodings rather than inventing service-local formats, while adopting the full step guard contract above for activity idempotency.
 
 ## Related Documentation
 

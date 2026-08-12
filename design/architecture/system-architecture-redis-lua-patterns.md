@@ -15,7 +15,7 @@ re-invocation behavior for tick-related scripts.
   - Key roles and order (`KEYS[1]`, `KEYS[2]`, etc.).
   - Allowed prefixes and hash-tag assumptions.
   - The Redis role (`redis_role`) the script is allowed to talk to (for coordination scripts this is always `coordination`).
-  - Reset and tail-loss behavior (`reset_sensitivity`, `tail_loss_behavior`) describing how the script’s keys behave under region/tenant/cluster resets and within the tail-loss envelope described in `system-architecture-redis.md` and `system-architecture-redis-reset-and-recovery.md`.
+  - Reset behavior (`reset_sensitivity`) and ADR 0058 work-class outcome mapping (`loss_outcome_class`, `tail_loss_behavior`) describing how the script’s keys behave under region/tenant/cluster resets and the measured unreplicated-write exposure described in `system-architecture-redis.md` and `system-architecture-redis-reset-and-recovery.md`.
 
 Any proposal that relies on special per-script runtime flags or bespoke operational handling should be treated as **advanced** and pushed back toward these shared patterns and the central registry.
 
@@ -26,7 +26,7 @@ Every coordination script belongs to a **script category** that constrains which
 | Category | Example key families | Shard-locality rules |
 | --- | --- | --- |
 | Region lease | `tick-executor-lease:{tenantRegionTag}` and its separate `tick:{tenantRegionTag}:meta` epoch view | Acquisition is single-key; renewal and lease-guarded coordination reads/writes only region-local keys in one `{tenantRegionTag}` hash slot. The lease value remains the opaque token only. |
-| Entity lock | `tick:{tenantRegionTag}:lock:<entityId>` | Single-key or small multi-key scripts; all lock keys share the same `{tenantRegionTag}` as their corresponding `pending` structures. |
+| Entity lock | `tick:{tenantRegionTag}:lock:<entityId>` | A lock-acquiring invocation touches at most one entity-lock key. Multi-entity commands use owning transactions or durable effect legs rather than multi-lock Lua. |
 | Tick staging / pending | `tick:{tenantRegionTag}:pending` and related effect structures | Single-key or shard-local multi-key scripts that operate entirely within one `{tenantRegionTag}` slot. |
 | Timers and retries | `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}` | Shard-local scripts operating on keys that share the same `{tenantRegionTag}`; no cross-slot operations. |
 | Gameplay session CAS / bindings | `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` plus tenant-tagged `session:game:index:*:{tenantGameplayTag}:*` | Gameplay session CAS/update scripts may be shard-local multi-key scripts where all gameplay-session keys share `{tenantGameplayTag}`. They own gameplay binding and reconnect state only; they do not operate on Account auth-token registry keys, tick keys, or the global account index in the same invocation. |
@@ -37,6 +37,8 @@ Every coordination script belongs to a **script category** that constrains which
 | Automation helpers (coordination role only) | `script-scheduler:{tenantRegionTag}:lastTickId` and similar | Shard-local scripts that operate on per-region scheduler metadata; must not touch Cache/Rate-Limit prefixes. |
 
 The Lua Script Registry encodes these category→prefix→shard rules so that callers do not hard-code prefixes or slots. New categories or key families must be added to this table and to the registry schema before scripts using them are accepted.
+
+Entity-lock hard rule: each Redis tick Lua invocation may acquire at most one `tick:{tenantRegionTag}:lock:<entityId>`. Piecemeal acquisition across invocations, a multi-lock whitelist, and a configurable multi-lock count are prohibited. A script fails closed when its declared or supplied key set would require more than one entity lock. Multi-entity invariants belong to an owning transaction or durable effect/workflow path, not Redis lock lifetime. See [ADR 0074](./decisions/adr-0074-one-entity-lock-per-redis-script.md).
 
 ## Idempotent Script Patterns and Examples
 
@@ -58,9 +60,9 @@ Before authoring or reviewing a new script, use this quick checklist:
 - The script has an entry in the **Lua Script Registry** (in `firemud-common`) that describes:
   - Key roles and order (`KEYS[1]`, `KEYS[2]`, etc.).
   - Allowed prefixes and hash-tag assumptions.
-  - The script category and whether it is single-key or shard-local multi-key.
+  - The script category and whether it is single-key or shard-local multi-key; an entity-lock script declares and receives at most one entity-lock key.
   - The Redis role it is permitted to touch (`redis_role=coordination` for tick/session scripts).
-  - Reset behavior (`reset_sensitivity` such as `safe_replay_after_reset`, `requires_region_reset`, `requires_tenant_reset`, `requires_cluster_reset`) and tail-loss behavior (`tail_loss_behavior` such as “duplicate enqueues possible but domain-idempotent”, “pure lease op, safe to lose”).
+  - Reset behavior (`reset_sensitivity` such as `safe_replay_after_reset`, `requires_region_reset`, `requires_tenant_reset`, `requires_cluster_reset`) and work-class outcome mapping (`loss_outcome_class` plus `tail_loss_behavior` such as “duplicate enqueues possible but domain-idempotent”, “pure lease op, safe to lose”).
 - Tests cover at least:
   - A fresh run from an initial state.
   - A pure replay with the same `KEYS`/`ARGV` and no intervening changes.
@@ -320,7 +322,7 @@ Bulk key-walking is reserved for **offline maintenance tooling**, not tick execu
       - Recovery rule:
         - The fenced recovery owner may initialize and verify `tick:{tenantRegionTag}:meta` with `current_tick_id = -1` and `current_tick_state = APPLIED`. This is Redis staging metadata only, remains distinct from durable PostgreSQL `lastCommittedTickId = -1`, and does not grant hot-path recovery authority.
         - After the owner-defined recovery release, the first fenced staging CAS must accept only `requestedTickId = 0` and atomically advance exactly `-1 → 0` and `APPLIED → STAGED`; no other requested tick may treat `-1` as an ordinary terminal prior tick. Subsequent ticks follow the ordinary immediate-next-tick terminal transition.
-        - These hot-path scripts are intentionally **not** the mechanism for reconstructing a lost older tick after tail-loss or reset.
+        - These hot-path scripts are intentionally **not** the mechanism for reconstructing a lost older tick after coordination loss or reset.
         - First implementation replays older work directly from durable tick-batch manifests and ledger rows without re-materializing that old tick into `pending`.
         - Older-tick recovery records `APPLIED` or `ABANDONED` only in the durable ledger/reconciliation state under the older tick's original epoch and root effect identity; it must not overwrite or regress `tick:{tenantRegionTag}:meta`. Redis `pending` contents alone are never sufficient evidence that the current epoch scheduler timeline may move on, and tick metadata updates are limited to that current timeline.
         - If FireMUD later introduces a dedicated recovery-restage script, it must be registered as a separate maintenance script category with its own explicit invariants, compatibility mode, and runbook entry; it must not silently reuse the normal tick staging contract.
@@ -409,9 +411,9 @@ All coordination-related Lua scripts live in a **Lua Script Registry** in the sh
 - Expected `KEYS` and `ARGV` ordering and allowed prefixes (including hash-tag rules).
 - Script category (for example, tick lock, timer queue, session CAS) and reset-tolerance assumptions.
 - The Redis role the script is allowed to target (for coordination scripts this is strictly `coordination`; they must never reference Cache/Rate-Limit prefixes such as `inventory:*`, `view:*`, `ratelimit:*`, or `automation:queue:*`).
-- Reset and tail-loss metadata:
+- Reset and coordination-loss metadata:
   - `reset_sensitivity` describing which reset scopes (region, tenant, cluster) must be considered when changing script behavior or key shape.
-  - `tail_loss_behavior` describing what is expected to happen if the script’s writes are lost or replayed within the tail-loss envelope (for example “pure lease; safe to lose”, “can enqueue duplicates; relies on domain idempotency”, “must not silently drop without a corresponding ledger row”).
+  - `tail_loss_behavior` describing what is expected to happen if the script’s writes are lost or replayed within the measured unreplicated-write exposure (for example “pure lease; safe to lose”, “can enqueue duplicates; relies on domain idempotency”, “must not silently drop without a corresponding ledger row”).
   - Shard-locality metadata for multi-key scripts, including whether all `KEYS` must share the same `{tenantRegionTag}`, `{tenantInstanceTag}`, or `{tenantGameplayTag}` hash tag and slot.
 
 The registry descriptors are sufficient to **drive a generic test harness**: any coordination script must be invokable in isolation using only the registry metadata (script identifier, expected `KEYS`/`ARGV`, and allowed prefixes). Callers must not hard-code key names or slots that diverge from the registry.

@@ -140,12 +140,12 @@ The ingress endpoint determines who owns `scriptEventId` generation and retry be
 
 ### Required Stage Set
 
-| `finalStage` | Meaning | “Success” allowed? |
+| `finalStage` | Meaning | Successful terminal outcome allowed? |
 | --- | --- | --- |
 | `ADMISSION` | Handler-scoped post-resolution pre-evaluation decisions: quotas, reload backpressure, disabled scripts, invalid version, policy enforcement. No DSL run occurs. For event ingress, pre-handler rollback pause is ingress-only; timer candidates use the Table 3 candidate-audit surface. | No |
-| `DSL_EVAL` | DSL graph evaluation and sandbox enforcement (validation, loop safety, runtime budgets). | No |
+| `DSL_EVAL` | DSL graph evaluation and sandbox enforcement (validation, loop safety, runtime budgets). | Only `readiness_success` or `completed_no_commands` in their declared cases |
 | `WORK_ITEM_PERSIST` | Durable persistence of the resulting work item (outbox). | No |
-| `TICK_HANDOFF` | Handoff to Game Session and acceptance into tick queues. | Yes |
+| `TICK_HANDOFF` | Durable handoff of every required dispatch to Game Session. | Only `handoff_accepted` |
 | `DRY_RUN_RESULT` | Non-committing dry-run/test result after DSL evaluation; would-be commands are returned to the authorized caller and are not persisted or handed off. Allowed only when `isDryRun=true`. | Yes, but only with `finalOutcome=dry_run_success`. |
 
 ### Required Audit Write Semantics (Normative)
@@ -163,14 +163,14 @@ The ingress endpoint determines who owns `scriptEventId` generation and retry be
 | Stage | Required rule |
 | --- | --- |
 | `ADMISSION` | Must record explicit post-resolution handler backpressure outcomes during `reloadState=RELOADING` (`finalOutcome=skipped_reloading`) and `PAUSED_FOR_ROLLBACK` (`finalOutcome=rollback_paused`) rather than silent drops. For event ingress, a pre-handler rollback pause remains only in `script_event_ingress_audit`; timer candidates use the Table 3 candidate-audit surface. |
-| `DSL_EVAL` | Sandbox failures must be recorded as `finalOutcome=sandbox_error` with a specific `finalReason` (for example `cpu_budget_exceeded`, `memory_budget_exceeded`). |
+| `DSL_EVAL` | Sandbox failures use `finalOutcome=sandbox_error`. A valid live handler that intentionally emits no commands uses `finalOutcome=completed_no_commands`; it does not claim handoff. |
 | `WORK_ITEM_PERSIST` | If durable persistence fails, the audit record must not show success. It must record a persistence failure outcome and must not claim that effects were enqueued. |
-| `TICK_HANDOFF` | `finalOutcome=success` is permitted only when Game Session has accepted commands into tick queues. “DSL evaluated successfully but handoff failed” must be a non-success handoff outcome. |
+| `TICK_HANDOFF` | `finalOutcome=handoff_accepted` is permitted only when Game Session has durably accepted every required child dispatch. Evaluation or partial handoff is not handoff acceptance. |
 | `DRY_RUN_RESULT` | `finalOutcome=dry_run_success` is permitted only for authorized `isDryRun=true` executions after DSL evaluation completes and the non-committing result has been returned or stored for inspection. It must not imply durable work-item persistence or tick handoff. |
 
 Additional non-committing terminal outcome rules:
 
-- Tenant-readiness `onLoad` completion must use `finalStage=DSL_EVAL`, `finalOutcome=readiness_success`, and a bounded `finalReason` such as `ready_for_tenant`. It must not use live `finalOutcome=success`, because no gameplay work item or tick handoff exists for readiness-only execution.
+- Tenant-readiness `onLoad` completion uses `finalStage=DSL_EVAL`, `finalOutcome=readiness_success`; a live handler that intentionally emits no commands uses `finalOutcome=completed_no_commands`. Neither claims `handoff_accepted`.
 - Control-plane or rollback fencing that intentionally prevents an already admitted execution from persisting or handing off must use `finalOutcome=canceled` with a bounded `finalReason` such as `rollback_epoch_advanced`, `superseded_by_newer_patch`, `operator_canceled`, or `operator_purged`.
 - **Target-state cancellation mapping:** a cancelable `PENDING_EVALUATION` trigger transitions durably to terminal `CANCELED` without entering the DSL and records `finalStage=ADMISSION`, `finalOutcome=canceled`, and the applicable bounded cancellation reason. An `EVALUATING` trigger must be fenced and its descriptor-commit marker inspected before transition: a committed descriptor resumes from durable descriptors without DSL re-entry; an explicit cancellation with no committed descriptor transitions to terminal `CANCELED` with `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and the applicable bounded cancellation reason. An expired stale lease with no committed descriptor instead transitions to terminal `DEAD_LETTERED` with `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and `finalReason=stale_execution_fenced`. Evaluated descriptors in `PENDING` or `INDEXED` transition to `CANCELED` with durable `cancelReason`, `finalStage=WORK_ITEM_PERSIST`, `finalOutcome=canceled`, and the applicable bounded cancellation reason. Every transition is stage-aware and no path re-enters the DSL.
 
@@ -204,7 +204,8 @@ Taxonomy governance rule:
 
 | Canonical value | Stage | Notes |
 | --- | --- | --- |
-| `success` | `TICK_HANDOFF` | Commands accepted into tick queues. |
+| `handoff_accepted` | `TICK_HANDOFF` | Every required child dispatch was durably accepted by Game Session; this is not gameplay application. |
+| `completed_no_commands` | `DSL_EVAL` | A valid live handler evaluated and intentionally emitted no commands. |
 | `readiness_success` | `DSL_EVAL` | Tenant-readiness `onLoad` completed successfully and contributed to patch readiness. No work item or tick handoff was created. |
 | `dry_run_success` | `DRY_RUN_RESULT` | Non-committing dry-run/test execution completed and returned would-be commands for inspection. |
 | `skipped_reloading` | `ADMISSION` | Explicit reload backpressure; caller may retry with same Trigger Identity if policy allows. |
@@ -257,17 +258,17 @@ The matrix below defines what the scheduler does when a firing becomes due under
 | Quota/budget denied | Skip the candidate; do not create a firing claim or replay it later. | Record an event-scope candidate audit keyed by deterministic `scheduleCandidateId`, with `finalStage=ADMISSION` and an explicit deny outcome/reason. |
 | `reloadState=RELOADING` | Do not admit new timer firings; do not backfill by default. | Record the non-admitted due candidate under deterministic `scheduleCandidateId` with `finalStage=ADMISSION` and `finalOutcome=skipped_reloading`; do not create a firing claim, handler Trigger Identity, or `scriptEventId`. |
 | `PAUSED_FOR_ROLLBACK` | Do not admit new timer firings while rollback cleanup and repin complete. | Record the non-admitted due candidate in the event-scope candidate-audit surface keyed by deterministic `scheduleCandidateId` with `finalStage=ADMISSION`, `finalOutcome=rollback_paused`, and `finalReason=rollback_pause`; this is not an ingress-audit record. Do not create a firing claim, handler Trigger Identity, or `scriptEventId`. |
-| Leader failover / short downtime | May perform bounded catch-up for missed cadence boundaries: at most one synthetic firing per cadence boundary crossed, and never more than `SCRIPT_TIMER_CATCH_UP_MAX_FIRINGS_PER_RESUME` for a resume window. Excess candidates are coalesced/dropped and never enqueued as triggers. | Catch-up firings must use `triggerMode=CATCH_UP` and deterministic `scriptEventId` derived from the due point plus all applicable Trigger Identity fields. Truncated catch-up must emit an operator-visible metric and bounded reason code. |
+| Leader failover / short downtime | Apply the schedule's declared `SKIP_MISSED` or `COALESCE_ONE` policy. A coalescing schedule may admit at most one synthetic firing in the durable resume window; one deterministic fair `SCRIPT_TIMER_CATCH_UP_MAX_FIRINGS_PER_RESUME` cap applies across schedules. Excluded candidates are dropped and never deferred as backlog. | Catch-up firings use `triggerMode=CATCH_UP` and deterministic identity from the coalesced due point and resume window. Skipped or cap-excluded candidates emit operator-visible audit, metric, and bounded reason evidence. |
 | Runtime scope / epoch change before due-point admission | Do not remint stale due points under the newer `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch)` timeline. A `playableStateScope` change is a schedule/runtime migration fence even when the other runtime fields are unchanged: create or confirm the new scope-owned schedule entry before retiring the old entry, as one atomic durable result or a resumable idempotent operation, then advance to the new scope's next valid due point without reusing the stale one. | Record the dropped candidate at event scope under deterministic `scheduleCandidateId` with `finalStage=ADMISSION`, `finalOutcome=canceled`, and `finalReason=runtime_scope_changed` (or `playable_state_scope_changed` for that specific fence), and emit the runtime-fence metric. Because admission did not occur, do not create a firing claim, handler Trigger Identity, or `scriptEventId`. |
 | Preserved timer across reload/rollback | Recalculate the next due point from the canonical resume formula using `resumeTickId`, `previousDueTickId`, and cadence; do not replay the paused window. If the cadence boundary is exactly `resumeTickId`, the firing is due immediately and must not be advanced by one interval. | The preserved firing cadence must remain derivable from durable schedule metadata and the documented resume rule. |
 | Long downtime or sustained overload | No guarantee of eventual execution for every firing; the system converges by running future firings once capacity returns. | Missed firings must be visible as skips/drops in metrics and audit. |
-| Infrastructure error after admission | Do not re-run the DSL body for the same full applicable Trigger Identity. Only idempotent downstream ops may retry; `scriptEventId` alone is not an execution identity. | `finalStage` must reflect where it failed; do not record `success`. |
+| Infrastructure error after admission | Evaluation may retry only under the same full Trigger Identity and must converge on the same work item/dispatch identities. Downstream retries remain idempotent. | `finalStage` must reflect where it failed; do not record `handoff_accepted` without full durable child acceptance. |
 
 ### Canonical Preserved-Timer Resume Formula (Normative)
 
 For `intervalTicks > 0`, let `remainder = (resumeTickId - previousDueTickId) % intervalTicks`:
 
-- If `previousDueTickId > resumeTickId`, keep `nextTick = previousDueTickId`.
+- If `previousDueTickId >= resumeTickId`, keep `nextTick = previousDueTickId`.
 - Otherwise, if `remainder = 0`, set `nextTick = resumeTickId` so an exact cadence boundary can fire immediately.
 - Otherwise, set `nextTick = resumeTickId + intervalTicks - remainder`.
 

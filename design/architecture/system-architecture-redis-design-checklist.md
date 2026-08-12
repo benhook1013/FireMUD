@@ -39,7 +39,7 @@ Before applying the detailed checklists below, follow this high‑level workflow
    - Confirm that `system-architecture-redis-reset-and-recovery.md` describes safe reset scopes for any affected prefixes.
    - Update or validate the corresponding runbooks in `system-architecture-redis-operations.md` and the Redis incident runbook so operators have a clear path for resets and “accept loss” decisions.
 6. **Wire observability and metrics**
-   - Ensure required metrics and alerts for AOF size/growth, tail‑loss, prefix key counts, and script outcomes are covered or updated in the Redis metrics catalog in `system-architecture-redis-operations.md`.
+   - Ensure required metrics and alerts for AOF size/growth, the measured unreplicated-write window, prefix key counts, and script outcomes are covered or updated in the Redis metrics catalog in `system-architecture-redis-operations.md`.
    - When the change introduces new state-machine fields or outcome codes, ensure the operations docs and metrics catalog name them explicitly (for example `current_tick_state`, `STALE_SESSION_GENERATION`, and stale automation-dispatch outcomes) rather than relying on generic script-failure buckets.
    - Verify that dashboards and alerts referenced in service docs and the incident runbook line up with the new or changed prefixes/scripts.
 
@@ -84,14 +84,14 @@ Use this when adding or changing coordination prefixes (for example `tick:*`, `t
 - [ ] If a coordination flow uses session-to-region bridge scripts, that category is called out explicitly in the Lua Script Registry and service docs rather than treated as an unnamed region-lease special case.
 - [ ] For tick-region coordination, epoch/tick metadata is read and written through the canonical `tick:{tenantRegionTag}:meta` hash key defined in the Redis architecture doc, not via ad-hoc per-script metadata keys.
 
-### Tail-Loss and Reset Behavior
+### Measured Coordination Exposure and Reset Behavior
 
 - [ ] The design explicitly states:
   - [ ] Whether the prefix is **reset‑tolerant**, **reset‑sensitive**, or **reset‑forbidden**.
-  - [ ] How losing up to `tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)` of entries per region affects gameplay.
-  - [ ] Whether tail‑loss is acceptable for all flows that depend on this prefix.
+  - [ ] How the environment-measured `redis_unreplicated_write_window_slo_ms` affects each ADR 0058 work class and its player-visible outcome.
+  - [ ] Whether coordination loss is acceptable for all flows that depend on this prefix and which durable intent or terminalization path applies when it is not.
 - [ ] The design defines a hard growth bound for the prefix and how it is enforced (`TTL`, `MAXLEN`, max cardinality, or equivalent), including default values for new deployments.
-- [ ] Flows that are **not** tail‑loss compatible (for example, real‑money or cross‑tenant transfers) use durable domain mechanisms and do not rely solely on Redis.
+- [ ] Flows whose ADR 0058 class is not Redis-loss-tolerant (for example, real-money or cross-tenant transfers) use durable domain mechanisms and do not rely solely on Redis.
 - [ ] The appropriate reset scope (region/tenant/cluster) is documented in the service design and referenced from **Redis Reset & Recovery**.
 
 ### Observability
@@ -103,7 +103,7 @@ Use this when adding or changing coordination prefixes (for example `tick:*`, `t
 - [ ] Exact tenant/game-instance/region diagnosis is obtained from control-plane APIs and structured logs/audit records (for example `GetRegionTickStatus`), not by adding raw identity labels to metrics.
 - [ ] Aggregated rollups remain available for dashboards and alerts so bounded metric cardinality does not hide scope-wide regressions.
 - [ ] For session-to-region bridge flows, metrics and alerts can distinguish stale-generation cleanup, successful region rebinds, and orphaned region bindings detected after session expiry.
-- [ ] Dashboards and alerts consider this prefix when assessing tail‑loss SLOs.
+- [ ] Dashboards and alerts consider this prefix when assessing the measured unreplicated-write-window SLO.
 
 ---
 
@@ -230,7 +230,7 @@ Use this when changing Redis profiles, topologies, or reset behavior.
 
 ### Observability and SLOs
 
-- [ ] Tail‑loss SLOs remain meaningful under the new profile/topology.
+- [ ] The measured unreplicated-write-window SLO remains meaningful under the new profile/topology.
 - [ ] Metrics and alerts:
   - [ ] Reflect any changes in restart times, AOF growth, or memory usage.
-  - [ ] Surface tail‑loss violations and coordination health for the affected flows.
+  - [ ] Surface unreplicated-write-window violations, affected durable reconstruction/terminalization counts, and coordination health for the affected flows.

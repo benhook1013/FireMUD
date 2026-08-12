@@ -122,6 +122,8 @@ Each evaluated descriptor/outbox record must include:
 
 Target-state per-command progress follows the [cross-service command boundary](./system-architecture-scripting-contracts.md#2-script-work-item-vs-tick-command-boundary): descriptor identity is the complete Command-Handoff Identity and is linked to the parent `outboxWorkItemId`. Each emitted command has independent durable progress, so a retry resumes only unresolved commands and cannot drop an unattempted command or replay a command already accepted or terminally rejected. A queue pointer may be deduplicated by parent `outboxWorkItemId` for index hygiene, but that does not deduplicate commands. The current live handoff limitation above means this target behavior is not current end-to-end proof; multi-command work items remain rejected until the boundary is widened.
 
+Each emitted command is also represented by one durable child dispatch row under the work item. At minimum it stores `outboxWorkItemId`, the deterministic `automationDispatchId` and `commandOrdinal`, immutable command digest and target scope, handoff status/result, attempt metadata, and the returned Game Session `commandId` when accepted. The durable uniqueness key is the complete Command-Handoff Identity; duplicate evaluation or delivery reads or advances the same child rather than creating another logical command. Retries select only unfinished children.
+
 When a work item is handed to Game Session, the local wire boundary is:
 
 - `EnqueueAutomationCommandIfAbsent` carries the local handoff fields described in [Current Implementation Status](#current-implementation-status), and its response returns the live Game Session `commandId`/admission outcome. The target handoff identity and fenced acceptance rule are owned by the [cross-service scripting contracts](./system-architecture-scripting-contracts.md#2-script-work-item-vs-tick-command-boundary).
@@ -133,7 +135,7 @@ When a work item is handed to Game Session, the local wire boundary is:
 - `PENDING` - persisted, eligible for indexing and draining.
 - `INDEXED` - a pointer/index has been published into `automation:queue:*` (best-effort; may be rederived).
 - `HANDOFF_IN_FLIGHT` - being handed off to Game Session (idempotent retries allowed).
-- `HANDED_OFF` - Game Session has accepted the corresponding tick commands into tick queues (`script_event_audit.finalStage=TICK_HANDOFF` is now eligible for `finalOutcome=success`).
+- `HANDED_OFF` - Game Session has durably accepted every required child dispatch (`script_event_audit.finalStage=TICK_HANDOFF` is now eligible for `finalOutcome=handoff_accepted`). A parent with accepted and unfinished children remains `HANDOFF_IN_FLIGHT`; a permanent required-child failure produces an explicit non-success/dead-letter aggregate rather than `HANDED_OFF`.
 - `CANCELED` - permanently canceled by control plane (for example rollback, disable, or operator purge).
 - `DEAD_LETTERED` - permanently non-progressing after a fenced terminal decision; bounded retention and operator visibility are required.
 
@@ -156,7 +158,7 @@ The pointer/index format must be forward-compatible (versioned envelope) so it c
 ### Operational Constraints
 
 - Outbox scanning for rebuild and cancellation must be bounded and backpressured (pagination, time windows, per-tenant limits) so it cannot become an unbounded full-table scan on large tenants.
-- Outbox retention must be explicitly defined for `HANDED_OFF`, `CANCELED`, and `DEAD_LETTERED` records, and must preserve enough history for rollback diagnosis and audit queries.
+- Outbox retention must be explicitly defined for `HANDED_OFF`, `CANCELED`, and `DEAD_LETTERED` records. Payload compaction or deletion waits until every child is terminal and the longest downstream replay, rollback-diagnosis, command-status, and audit horizon has elapsed; retained identity, digest, and disposition evidence must still prevent a duplicate logical dispatch.
 - The canonical defaults are owned by [Automation & Scripting Service Configuration](./microservices/automation-scripting-service/configuration.md): `SCRIPT_OUTBOX_HANDED_OFF_RETENTION_DAYS`, `SCRIPT_OUTBOX_CANCELED_RETENTION_DAYS`, `SCRIPT_DEAD_LETTER_MAX_AGE_SECONDS`, `SCRIPT_OUTBOX_TERMINAL_CLEANUP_INTERVAL_SECONDS`, `SCRIPT_OUTBOX_QUEUE_REBUILD_INTERVAL_SECONDS`, `SCRIPT_OUTBOX_QUEUE_REBUILD_BATCH_SIZE`, `SCRIPT_OUTBOX_EXECUTION_INTERVAL_SECONDS`, and `SCRIPT_OUTBOX_EXECUTION_BATCH_SIZE`.
 - The current Automation & Scripting implementation wires those retention knobs into a scheduled cleanup job for terminal `script_work_items`: `HANDED_OFF` and `CANCELED` rows expire by status-specific retention days, and `DEAD_LETTERED` rows expire by max age plus a row-count cap that removes the oldest excess rows first. The target retention policy also covers terminal dead-lettered records.
 - **Target-state only:** The derived queue contract is a projection only: queue drains dedupe repeated parent pointer envelopes by `outboxWorkItemId`, and a bounded rebuild republishes missing queue pointers only from evaluated descriptors in `PENDING` or `INDEXED` status. Rebuild and handoff must apply an explicit status gate before treating a row as evaluated command work. Pre-DSL `PENDING_EVALUATION` and `EVALUATING` rows are never published to or consumed from the evaluated-command queue; a separate pre-DSL projection may route evaluator work. Redis never becomes authoritative, and reindexing `EVALUATING` rows must not reclaim or replay them. The target descriptor rebuild and lease/fencing recovery contract above remain current implementation gaps.
@@ -278,11 +280,11 @@ The canonical stage and outcome taxonomy is defined in the [normative audit tabl
 
 Component safety classification for core scripts is fixed at validation and readiness time, not reevaluated as a live runtime policy on already-READY patches.
 
-Live `success` is valid only after tick-handoff acceptance, not merely after DSL evaluation; the owner table defines the stage-aware audit fields and allowed outcomes.
+`handoff_accepted` is valid only after every required child dispatch is durably accepted by Game Session; it is not gameplay success. A valid live evaluation that intentionally emits no commands uses `completed_no_commands` at `DSL_EVAL`. The owner table defines the stage-aware audit fields and allowed outcomes, while later gameplay truth remains per dispatch.
 
 Retry behavior:
 
-- Logical failures are treated as final for a trigger.
+- Logical failures are treated as final for a trigger. Infrastructure retry may re-run evaluation under the same full Trigger Identity only when durable uniqueness converges on the same work item and child dispatch identities; it must never create a duplicate logical command.
 - For event ingress, pre-handler rollback pause is an ingress-audit backpressure outcome only. Timer candidates use the Table 3 candidate-audit rule instead. Post-resolution handler backpressure such as `skipped_reloading` and `rollback_paused` is not treated as final for low-rate external events.
 - Infrastructure errors may be retried by lower layers following platform-wide retry policies and idempotency contracts.
 

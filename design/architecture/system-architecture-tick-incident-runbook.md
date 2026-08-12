@@ -165,15 +165,15 @@ Normal incident escalation groups by `<tenantId, gameInstanceId>`; `regionId` re
 - Metrics and dashboards show:
   - Elevated `gamesession_tick_replayed_total` relative to `gamesession_tick_executed_total` (or equivalent service-specific counters) for one or more regions.
   - `tick_effect_outcome_total{outcome="replay_ok"}` significantly higher than `tick_effect_outcome_total{outcome="first_apply"}` for specific `effect_type` or services.
-  - Redis tail-loss metrics (`redis_coordination_tail_loss_ms`) repeatedly approaching or breaching the SLO envelope, indicating frequent coordination replays.
+  - The measured Redis unreplicated-write metric (`redis_unreplicated_write_window_ms` or its deployment-specific equivalent) repeatedly approaching or breaching `redis_unreplicated_write_window_slo_ms`, indicating frequent coordination replays.
 - Logs and optional workflow traces:
   - Game Session and domain services log frequent idempotent replays or guard conflicts.
   - When the Trace Preconditions are satisfied, Jaeger traces for tick-driven flows show the same effect identities being attempted repeatedly.
 
 ### Decide (Tick replay storm)
 
-- If replays are elevated only during a short-lived Redis incident already covered by the Redis incident runbook, prioritize resolving the underlying Redis problem and accept a temporary increase in replays.
-- If replay rates remain high after Redis metrics and tail-loss have returned to normal:
+- If replays are elevated only during a short-lived Redis incident already covered by the Redis incident runbook, prioritize resolving the underlying Redis problem and apply ADR 0058 class-specific outcomes while accepting a temporary increase in replays.
+- If replay rates remain high after Redis metrics and measured exposure have returned to normal:
   - Treat this as a domain-level idempotency or design issue in the services contributing the most `replay_ok` outcomes.
   - Focus on those services and effect types first; do not attempt broad coordination resets unless the ledger or coordination metrics also indicate corruption.
 
@@ -190,11 +190,11 @@ Normal incident escalation groups by `<tenantId, gameInstanceId>`; `regionId` re
 3. **Use proved workflow traces to pinpoint replays**
    - When the Trace Preconditions are satisfied, search Jaeger for spans tagged with the effect identity for the hot `effect_type` and inspect:
      - How many times the same effect identity is attempted.
-     - Whether replays are driven by Redis tail-loss, downstream timeouts, or domain-level classification of errors.
-   - Otherwise, use replay counters, Redis tail-loss metrics, and structured service logs for the same diagnosis.
+     - Whether replays are driven by Redis unreplicated-write exposure, downstream timeouts, or domain-level classification of errors.
+   - Otherwise, use replay counters, Redis exposure metrics, and structured service logs for the same diagnosis.
 4. **Mitigate and follow up**
    - For infrastructure-driven replays:
-     - Investigate Redis tail-loss, database timeouts, or service saturation using the Redis and scaling runbooks.
+     - Investigate Redis unreplicated-write exposure, database timeouts, or service saturation using the Redis and scaling runbooks.
    - For domain-driven replays:
      - Fix idempotency guards, error classification, or handler logic so that effects converge to `first_apply` with fewer retries.
    - Consider temporarily reducing tick fan-out or region density for heavily affected regions until replay rates normalize.
@@ -226,7 +226,7 @@ Normal incident escalation groups by `<tenantId, gameInstanceId>`; `regionId` re
    - Correlate with `tick_cleanup_lag_ms` to confirm sustained divergence.
 2. **Inspect cleanup path**
    - Check Game Session logs for cleanup-token mismatches, Redis write failures, or retry exhaustion in cleanup phases. When the Trace Preconditions are satisfied, correlate those findings with workflow traces.
-   - Validate Redis health (latency, memory pressure, tail-loss) using Redis coordination dashboards.
+   - Validate Redis health (latency, memory pressure, and unreplicated-write exposure) using Redis coordination dashboards.
 3. **Apply scoped remediation**
    - For isolated regions, pause and resume tick scheduling to force a clean cleanup cycle.
    - If a region remains stuck, execute the region-scoped coordination reset flow in `system-architecture-redis-reset-and-recovery.md`.
@@ -291,7 +291,7 @@ Normal replay and re-enqueue in this section apply only to effects from the curr
      - If replay is safe, enqueue follow-up commands or trigger replay using the same idempotent handlers that tick execution uses.
      - If effects are no longer valid, mark rows `ABANDONED` with precise reasons (for example `EXPIRED`, `INVALID_TARGET`, `REGION_RESET_SCOPED`) only after the evidence proves no required mutation succeeded and the recovery policy permits terminalization.
    - Empty queues, missing responses or verifiers, timeouts, and retry exhaustion never qualify as evidence for re-enqueue or `ABANDONED`; retain reconciliation-required/non-terminal state until the required proof exists.
-   - For old-epoch rows, use the authority-fenced attestation under the original `EffectId` described in [Inconclusive Old-Epoch Reconciliation Policy](./system-architecture-tick-failures-and-operations.md#inconclusive-old-epoch-reconciliation-policy). Any business continuation across the epoch boundary must use an explicitly approved maintenance or saga/outbox path that creates a new current-epoch identity; it must not re-drive the original effect through normal replay.
+   - For old-epoch rows, first enumerate every durable old-epoch effect and follow-up independently of Redis hints. Use the authority-fenced attestation under the original `EffectId` described in [Inconclusive Old-Epoch Reconciliation Policy](./system-architecture-tick-failures-and-operations.md#inconclusive-old-epoch-reconciliation-policy); the affected scope cannot reopen while any row remains unresolved. Any business continuation across the epoch boundary must use an explicitly approved maintenance or saga/outbox path that creates a new current-epoch identity; it must not re-drive the original effect through normal replay.
    - For replay-controller starvation:
      - Reduce per-region replay batch monopolization or other hot-region pressure first.
      - If the region remains starved, run scoped replay-controller remediation for the affected `<tenantId,gameInstanceId,regionId,regionEpoch>` before escalating to broader reset actions.

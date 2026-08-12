@@ -386,7 +386,7 @@ To avoid unintentionally breaking large numbers of plugins when component polici
 
 - **Report-only phase** – a new policy version is loaded in a non-enforcing mode:
   - Policy violations are recorded as structured metadata on `script_event_audit` rows via `policyViolations[]` using the schema and size limits defined in `design/architecture/system-architecture-scripting-observability-contract.md`, and via `automation_plugin_policy_violations_total`, but plugin triggers are still admitted and executed.
-  - In report-only mode, `policyViolations[].decision` must be `REPORT_ONLY`, and `finalOutcome` must remain the actual pipeline result (`success`, `sandbox_error`, `infrastructure_error`, and so on). `finalOutcome=plugin_component_blocked` is invalid while report-only mode is active.
+  - In report-only mode, `policyViolations[].decision` must be `REPORT_ONLY`, and `finalOutcome` must remain the actual stage-qualified pipeline result (`handoff_accepted`, `completed_no_commands`, `sandbox_error`, `infrastructure_error`, and so on). `finalOutcome=plugin_component_blocked` is invalid while report-only mode is active.
   - Dashboards and alerts use these signals to show which plugins would be blocked if enforcement were enabled.
 - **Enforcing phase** – once violations are understood and unacceptable plugins have been migrated or disabled:
   - Enforcement is enabled for the policy version; subsequent violations must set `policyViolations[].decision=BLOCKED` and cause triggers to be rejected at admission with `finalStage=ADMISSION`, `finalOutcome=plugin_component_blocked`, and a `finalReason` that identifies the blocked component/policy decision.
@@ -394,7 +394,7 @@ To avoid unintentionally breaking large numbers of plugins when component polici
 
 Example:
 
-- In report-only mode, a plugin trigger that references a newly discouraged `world.admin.teleport` component may still execute and finish with `finalOutcome=success`, while `policyViolations[]` records that component with `decision=REPORT_ONLY` and `automation_plugin_policy_violations_total` increments for the same component and policy version.
+- In report-only mode, a plugin trigger that references a newly discouraged `world.admin.teleport` component may still execute and, when every required dispatch is accepted, finish with `finalOutcome=handoff_accepted`, while `policyViolations[]` records that component with `decision=REPORT_ONLY` and `automation_plugin_policy_violations_total` increments for the same component and policy version.
 - In enforcing mode for that same policy version, the same trigger must stop at admission with `finalStage=ADMISSION`, `finalOutcome=plugin_component_blocked`, and a `finalReason` that identifies the blocked `world.admin.teleport` component or policy decision. `policyViolations[]` then records `decision=BLOCKED`, and operators should see the same component reflected in `automation_plugin_policy_violations_total`.
 
 Policy configs should be versioned so operators can roll back to a previous allowlist if enforcement causes unexpected disruption. Report-only and enforcing behavior are configuration choices on the policy version and must be applied consistently across environments as part of the normal deployment pipeline.

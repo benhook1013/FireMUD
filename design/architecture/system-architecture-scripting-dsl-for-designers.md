@@ -192,10 +192,11 @@ Key properties:
 
 Timer-driven handlers such as `onInterval` and `onTimerExpire` are **best-effort, at-most-once** from the engine’s point of view:
 
+- Each authored recurring timer declares one recovery policy: `SKIP_MISSED` advances to the next valid future occurrence without firing missed occurrences, while `COALESCE_ONE` permits one bounded synthetic firing for missed time. See the [canonical timer semantics matrix](./system-architecture-scripting-normative-contract-tables.md#table-3-timer-semantics-matrix) for the recovery-class contract.
 - When a timer becomes due, the scheduler tries to fire it subject to per-script quotas, per-tenant budgets, and cluster ceilings. Under heavy load or when limits are reached, individual firings may be **skipped** and are not automatically replayed later, even if the timer continues to run at its configured cadence.
-- After downtime or leader failover, the scheduler may emit a bounded “catch-up” trigger (at most one synthetic firing per cadence boundary crossed) before resuming normal cadence; this catch-up does not change the at-most-once guarantee for any already-admitted full Trigger Identity.
+- After downtime or leader failover, a `COALESCE_ONE` timer may emit at most one coalesced firing for each logical schedule in one durable resume-window identity; it never replays one firing per cadence boundary. A global `SCRIPT_TIMER_CATCH_UP_MAX_FIRINGS_PER_RESUME` cap applies across schedules, and candidates excluded by that cap are dropped and audited rather than deferred as an unbounded backlog. `SKIP_MISSED` timers emit no catch-up firing.
 - Infrastructure hiccups (for example, Redis or gRPC outages) do not cause the same timer firing to be re-executed; the engine may retry idempotent downstream effects, but it does not re-run the DSL graph for a given full Trigger Identity.
-- As a result, timers should be treated as **hints**, not guaranteed ledgers. Design timer handlers so they can tolerate missed or delayed firings and recompute from current world state instead of assuming that every interval has executed exactly once.
+- As a result, recurring timer callbacks should be treated as **bounded scheduling signals**, not per-cadence ledgers. Design timer handlers so they can tolerate missed or delayed firings and recompute from current world state instead of assuming that every interval has executed exactly once.
 
 Example pattern:
 

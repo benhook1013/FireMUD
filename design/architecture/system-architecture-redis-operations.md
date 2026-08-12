@@ -105,11 +105,12 @@ This section centralizes the normative targets for Redis behavior that other doc
 
 ### Coordination Redis Core Targets
 
-- **Tail-loss window**
-  - production-like profiles target `tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)`
-  - ephemeral profiles may accept wider or unbounded tail loss but must be clearly labeled as such and must not validate tail-loss SLOs
-  - a sustained breach of this envelope is a tick-SLO violation, not just a Redis anomaly: coordination state inside the breach window can no longer be trusted for automatic replay decisions
-  - even under breach, domain-level idempotency and `EffectId` rules still prevent double-application; what degrades is the size of the trusted replay window and the amount of manual or tooling-driven reconciliation required
+- **Unreplicated coordination-write window**
+  - production-like profiles define `redis_unreplicated_write_window_slo_ms` from measured AOF, replication, promotion, and failover evidence; tick cadence does not set the value
+  - `ticks_exposed = ceil(redis_unreplicated_write_window_slo_ms / tick_interval_ms)` is diagnostic only and is not a product RPO
+  - ephemeral profiles may accept wider or unbounded exposure but must be clearly labeled and cannot validate production-like loss-window SLOs
+  - a sustained breach is a coordination SLO violation: automation widens durable reconstruction/terminalization checks and reports affected command, effect, retry, and correctness-timer counts
+  - class-specific outcomes in [ADR 0058](./decisions/adr-0058-class-specific-redis-loss-outcomes.md) remain mandatory during breach; the window never authorizes silent loss or double application
 - **Restart time**
   - planned restarts for `hobby_self_hosted` and `production_clustered` nodes should typically complete within 30–60 seconds
 - **Script runtime**
@@ -196,18 +197,18 @@ Facts:
 
 Behavior:
 
-- modest promotion lag is equivalent to a small AOF tail-loss window
+- modest promotion lag contributes to the measured unreplicated-write exposure
 - replay safety is preserved by lease/lock/epoch validation and PostgreSQL-backed effect ledgers
 
 Runbook:
 
 1. Monitor `redis_replication_lag_ms{redis_role="coordination",nodeId,upstreamNodeId}` as the canonical promotion-lag metric, with `redis_replication_offset_lag_bytes{...}` as supporting evidence.
-2. Compare the worst candidate-promotion lag against the same tail-loss SLO used elsewhere:
-   - acceptable: `redis_replication_lag_ms <= 0.5 * tail_loss_budget_ms`
-   - warning: `0.5 * tail_loss_budget_ms < redis_replication_lag_ms < tail_loss_budget_ms`
-   - red: `redis_replication_lag_ms >= tail_loss_budget_ms`
+2. Compare the worst candidate-promotion lag against the measured unreplicated-write-window SLO:
+   - acceptable: `redis_replication_lag_ms <= 0.5 * redis_unreplicated_write_window_slo_ms`
+   - warning: `0.5 * redis_unreplicated_write_window_slo_ms < redis_replication_lag_ms < redis_unreplicated_write_window_slo_ms`
+   - red: `redis_replication_lag_ms >= redis_unreplicated_write_window_slo_ms`
 3. If lag is in the acceptable band, promotion is acceptable from a replay perspective.
-4. If lag is in the warning band, investigate immediately and delay promotion unless the failover risk of waiting is worse than accepting a wider tail-loss window.
+4. If lag is in the warning band, investigate immediately and delay promotion unless the failover risk of waiting is worse than accepting a wider measured exposure.
 5. If lag crosses the red line, either wait for recovery or treat promotion as a deliberate drop-recent-coordination-state event handled by one bounded `coordination-maintenance recover --mode reset --scope <scope> <session-policy-option>` operation under the normal maintenance-lock and epoch-fencing workflow, with exactly one of `--preserve-sessions` or `--invalidate-sessions` selected.
 
 ## Key Shape Mistakes and Coordination Resets

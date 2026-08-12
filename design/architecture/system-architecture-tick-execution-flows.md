@@ -80,7 +80,7 @@ Because enqueueing uses reset-tolerant Redis coordination queues, command accept
 - Every accepted command has a stable `commandId` before the first backend retry boundary and returns it to the caller. A capable client may generate it; for line-oriented or Telnet sessions, the first trusted Game Session/session-front-end ingress assigns and retains it before forwarding or retrying. Human players do not type or manage this identity.
 - For any path that must assign a stable root `EffectId` at admission, Game Session assigns it before acknowledgement when possible; assignment failure before acknowledgement is rejected. An already acknowledged `ACCEPTED_VOLATILE` command may use `LOST_BEFORE_STAGING` only while it remains `RECEIVED`/`ENQUEUED` with no surviving `tickBatchId`; batch-bound or inconclusive work remains non-terminal/reconciliation-required.
 - Ingress acknowledgements use explicit levels:
-  - `ACCEPTED_VOLATILE` (default for gameplay commands): command is accepted into coordination flow but may still be lost within tail-loss/reset envelopes before staging.
+  - `ACCEPTED_VOLATILE` (default for gameplay commands): command is accepted into coordination flow but may still be lost within measured coordination exposure/reset boundaries before staging.
   - `ACCEPTED_DURABLE` (exceptional, feature-specific): command intent is durably recorded outside Redis before acknowledgement and can be re-driven after coordination loss.
 - For `ACCEPTED_VOLATILE`, clients and upstream services must treat acknowledgement as “accepted for processing, not guaranteed to execute” and reconcile via command outcome events/status APIs.
 - Re-submission rules:
@@ -100,14 +100,14 @@ Ingress deduplication is not sufficient on its own: every accepted command must 
 - Minimum terminal command outcomes:
   - `APPLIED`
   - `ABANDONED`
-  - `LOST_BEFORE_STAGING` – an `ACCEPTED_VOLATILE` command whose `ingressStatus` is `RECEIVED` or `ENQUEUED`, has no surviving `tickBatchId`, and is terminalized by reset/tail-loss reconciliation; `ACCEPTED_DURABLE` follows its feature-specific replay/re-drive contract instead.
+  - `LOST_BEFORE_STAGING` – an `ACCEPTED_VOLATILE` command whose `ingressStatus` is `RECEIVED` or `ENQUEUED`, has no surviving `tickBatchId`, and is terminalized by reset/coordination-loss reconciliation; `ACCEPTED_DURABLE` follows its feature-specific replay/re-drive contract instead.
 - Legacy live command states map to the canonical lifecycle as follows:
   - `STAGED` means `ENQUEUED` when it has only been written to the Redis source queue. It maps to `BOUND_TO_BATCH` only when a durable batch/effect record explicitly links the command to a `tick_batch_id`; the legacy value alone is not proof of binding.
   - `DRAINED` means `BOUND_TO_BATCH`; Redis `pending` was consumed into a durable tick batch and the command remains pending execution or terminal reconciliation.
   - `RETRY_QUEUED` means the command has already reached `BOUND_TO_BATCH` and its current retry source is enqueued. The prior batch binding remains part of the command lifecycle; retry source state does not make it a new ingress command.
 - These legacy values are non-terminal. They must not be exposed as new canonical terminal outcomes, and purge/recovery must classify the current attempt by the durable batch binding rather than by the legacy label alone.
 - Required recovery behavior:
-  - Region/tenant/cluster resets and tail-loss reconciliation may assign `LOST_BEFORE_STAGING` only to an `ACCEPTED_VOLATILE` record whose `ingressStatus` is `RECEIVED` or `ENQUEUED` and which has no surviving `tickBatchId`. `BOUND_TO_BATCH` and `TERMINAL` records are never eligible for this ingress-only loss outcome. The decision must use one owner-defined CAS/version-fenced transition so a concurrent bind wins; this rule does not authorize terminalizing batch-bound effects whose old-epoch evidence is inconclusive, which remain non-terminal reconciliation work under the original root `EffectId`.
+  - Region/tenant/cluster resets and coordination-loss reconciliation may assign `LOST_BEFORE_STAGING` only to an `ACCEPTED_VOLATILE` record whose `ingressStatus` is `RECEIVED` or `ENQUEUED` and which has no surviving `tickBatchId`. `BOUND_TO_BATCH` and `TERMINAL` records are never eligible for this ingress-only loss outcome. The decision must use one owner-defined CAS/version-fenced transition so a concurrent bind wins; this rule does not authorize terminalizing batch-bound effects whose old-epoch evidence is inconclusive, which remain non-terminal reconciliation work under the original root `EffectId`.
   - For eligible `ACCEPTED_VOLATILE` records, `LOST_BEFORE_STAGING` is an expected terminal outcome and must be returned by command-status APIs/events rather than leaving the command indefinitely deduplicated with no execution result. `ACCEPTED_DURABLE` records, including those still before batch binding, follow their feature-specific durable intake replay/re-drive contract and are never classified as `LOST_BEFORE_STAGING` by this reset rule.
   - Re-sends with the same `(tenantId, gameInstanceId, commandId)` after a terminal outcome return that prior terminal outcome and must not enqueue a new logical command.
   - Re-sends with a new `commandId` remain new commands.
@@ -155,8 +155,8 @@ operations docs should link here instead of restating partial mappings in prose.
 | Pure local success with all required effects durably applied or replay-confirmed | `APPLIED` | `SUCCESS` | none |
 | Batch-bound local or same-region failure proven to have no required mutation | `ABANDONED` | `FAILED` | failure code/message when applicable |
 | Cross-region command family with a predeclared permitted partial terminal subset, and all required work resolved | `APPLIED` | `PARTIAL` | failure code/message for the permitted failed leg when applicable |
-| Cross-region timeout before any successful remote leg, with authoritative target evidence proving no remote mutation | `ABANDONED` | `TIMEOUT` | failure code/message for the timeout |
-| `ACCEPTED_VOLATILE` `RECEIVED`/`ENQUEUED` command lost before staging during reset/tail-loss reconcile, with no surviving batch | `LOST_BEFORE_STAGING` | `NOT_APPLIED` | failure code/message for the reconcile cause |
+| Cross-region origin-coordinator timeout selected by serialized arbitration before any successful remote result, with unresolved target uncertainty retained durably | `ABANDONED` | `TIMEOUT` | operational timeout reason plus retained uncertainty evidence |
+| `ACCEPTED_VOLATILE` `RECEIVED`/`ENQUEUED` command lost before staging during reset/coordination-loss reconcile, with no surviving batch | `LOST_BEFORE_STAGING` | `NOT_APPLIED` | failure code/message for the reconcile cause |
 | `ACCEPTED_VOLATILE` `RECEIVED`/`ENQUEUED` command purged before `BOUND_TO_BATCH`, with no surviving batch | `LOST_BEFORE_STAGING` | `NOT_APPLIED` | `failureCode=ROLLBACK_PURGED`, required `failureMessage` from ingress `reason` |
 | Operator rollback purge after `BOUND_TO_BATCH`, only where purge is permitted and evidence proves no required mutation | `ABANDONED` | `NOT_APPLIED` | `failureCode=ROLLBACK_PURGED`, required `failureMessage` from ingress `reason` |
 
@@ -224,8 +224,8 @@ At each tick for a `<tenantId, gameInstanceId, regionId>`, the executor:
    - Phase 2 selects at most one root intentional actor action per eligible entity under the actor-action lane’s ordering and budget; a completed start-of-tick passive effect may make an entity ineligible, but selected-yet-uncompleted or deferred passive work does not, and passive work never consumes its actor-action slot.
    - Phase 3 admits only effects generated by the phase-2 selected actor actions under the passive/effect budget. Generated effects cannot recursively grant another root actor action in the same tick.
    - Passive or inbound work becoming due after start selection, or deferred because of lane, per-entity, cost, or region budget overflow, affects a later tick without changing its persisted ordering inputs or stable identity.
-   - Orders selections within each lane using stable persisted ordering inputs. Candidate inputs include, where applicable, policy-defined priority, normalized due point, enqueue sequence, source kind, stable source-item/effect identity, and entity identity; `created_at` may support diagnostics but is not an ordering input unless explicitly normalized and persisted.
-   - The exact cross-source relative precedence and final tie-break tuple remain deferred to TICK-09. Accepted TICK-12 FIFO remains within the same per-entity contention-retry/source queue; this parcel does not choose whether that queue-local FIFO is applied before or after priority/due ordering, or whether source identity subsumes or is supplemented by `commandId`/`effectKey`.
+   - Within one entity's eligible queue, orders work by the persisted tuple `(priority, due_tick_id, entity_enqueue_seq, source_kind, commandId_or_effectKey)`. `entity_enqueue_seq` is monotonic within the entity's current region epoch and assigned by the owning Game Session admission/scheduling path. Same-tick derived children use the persisted parent order plus deterministic child ordinals rather than completion timing.
+   - Across eligible entities, persisted rotating/deficit scheduling accounts for declared work cost and advances only with the durable selected batch. Permanently eligible non-best-effort work receives capacity within a healthy epoch; bounded aging or `maxDeferralTicks` applies where declared. Source quotas may bound intake inside a lane but cannot bypass lane fairness or create a competing scheduler.
    - Each work item type (queued command, timer, retry, remote follow-up) must expose its declared phase, lane, cost class, and stable persisted ordering inputs so selection can be reproduced across retries and failover. New work sources must not introduce undocumented scheduler precedence.
    - After ordering, the executor locks or reserves the selected source entries with their source-specific ownership checks while they remain discoverable. These locks prevent competing executors from selecting the same candidates but are not a substitute for durable source claims.
 3. Atomically binds selected work:
@@ -238,33 +238,33 @@ At each tick for a `<tenantId, gameInstanceId, regionId>`, the executor:
    - Invokes domain services to apply effects under idempotent rules.
    - Runs a final Lua commit/cleanup script to reconcile Redis state, clear `pending`, and release locks.
 
-### Work Ordering Inputs (TICK-09 Deferred)
+### Work Ordering Inputs (ADR 0065)
 
-Every selected work item must persist its declared phase, lane, bounded cost class, and the stable ordering inputs available for its source. The names below identify inputs that may be required for deterministic replay and failover; they do not define a canonical tuple or precedence. Exact relative ordering and the final tie-break tuple remain deferred to TICK-09.
+Every selected work item persists its declared phase, lane, bounded cost class, and stable ordering inputs. ADR 0065 now owns the exact within-entity ordering tuple and cross-entity fair-scheduling rule; no source may introduce a private FIFO or tie-breaker.
 
-The lane is explicit metadata, not an inferred property of the source kind: actor actions and actor-action retries use `actor_action`; passive pulses, environmental work, inbound/remote effects, generated consequences, and effect retries use `passive_effect`. Each item also declares a bounded cost class consumed by its lane budget. These local consequences follow the canonical lane and fence contract in [Tick System and Runtime Design](./system-architecture-ticks.md); they do not settle TICK-09 ordering.
+The lane is explicit metadata, not an inferred property of the source kind: actor actions and actor-action retries use `actor_action`; passive pulses, environmental work, inbound/remote effects, generated consequences, and effect retries use `passive_effect`. Each item also declares a bounded cost class consumed by its lane budget. These local consequences follow the canonical lane and fence contract in [Tick System and Runtime Design](./system-architecture-ticks.md) and the exact ordering contract in ADR 0065.
 
 - `lane`:
   - Fixed enum (`actor_action` or `passive_effect`) declared by the work source. Commands are never reclassified as passive merely because they were timer- or automation-originated.
 - `priority`:
-  - A policy-defined, low-cardinality value when the source contract supplies one; its precedence relative to other inputs remains pending TICK-09.
+  - A policy-defined value and the first component of the within-entity ordering tuple.
 - `due_point_normalized`:
   - Every scheduler/timer identity carries exactly one tagged persisted due point: `dueTickId` for tick-based scheduling or `dueAt` for wall-clock scheduling; it must carry neither both nor neither.
   - Tick-based queued commands, retries, and remote follow-ups use `dueTickId`.
-  - A timer using `dueAt` must be deterministically normalized to a persisted due-point input under the active scheduler contract before selection; its wall-clock value remains available for firing-time evaluation and diagnostics. A timer using `dueTickId` uses that persisted tick directly. Whether due-point precedence is before or after another ordering input remains pending TICK-09.
-- `enqueue_seq`:
-  - Strictly increasing across all candidate work sources within the complete `<tenantId, gameInstanceId, regionId>` allocation scope; one region-scoped allocator must assign it at ingress or scheduling time and persist it with the item. It is not a global, tenant-only, game-instance-only, or cross-region counter.
-  - A reset bumps `regionEpoch` and restarts `tickId` at `0`, but does not reset or reuse `enqueue_seq` within the same `<tenantId, gameInstanceId, regionId>` scope. New-epoch work therefore retains the continuing persisted sequencing input, while `regionEpoch` keeps old-epoch replay identities distinct. Its precedence remains pending TICK-09.
+  - A timer using `dueAt` is deterministically normalized to a persisted due-point input under the active scheduler contract before selection; its wall-clock value remains available for firing-time evaluation and diagnostics. A timer using `dueTickId` uses that persisted tick directly. The within-entity tuple uses `due_tick_id` after this normalization.
+- `entity_enqueue_seq`:
+  - Strictly increasing across all candidate work sources for one entity within its current `<tenantId, gameInstanceId, regionId, regionEpoch>` scope. The owning Game Session admission/scheduling path assigns and persists it; it is not a region-global, tenant-only, game-instance-only, or cross-region counter.
+  - A reset bumps `regionEpoch` and restarts `tickId` at `0`, creating a new entity-local sequence domain for new-epoch work. Old-epoch ordering identities remain immutable and are not rebound even if a sequence value is reused in the new epoch.
 - `source_kind`:
-  - Fixed, low-cardinality source classification (`command`, `retry`, `timer`, `remote_followup`, `generated_effect`) where applicable; its tie-break role remains pending TICK-09.
+  - Fixed, low-cardinality source classification (`command`, `retry`, `timer`, `remote_followup`, `generated_effect`) and the fourth tuple component.
 - `source_item_id`:
-  - Stable source item id before effect generation, or the stable root `EffectId` for `generated_effect`; it is preserved by replay and failover. Its relationship to other source or effect identifiers is not settled here.
+  - Stable source item id before effect generation, or the stable root `EffectId` for `generated_effect`; it is preserved by replay and failover. For the final tuple, the owner-provided `commandId_or_effectKey` is the final tie-break component.
 - `entityId`:
-  - Stable entity identity available to the owner contract; its ordering role remains pending TICK-09.
+  - Stable entity identity used to select the per-entity queue and fair cross-entity scheduler; it is not a private within-entity tie-breaker.
 - `commandId` / `effectKey`:
-  - Existing ingress/effect identifiers remain available where their owning contracts require them; whether either is a final tie-breaker or is subsumed by another source identity remains pending TICK-09.
+  - Existing ingress/effect identifiers remain available where their owning contracts require them and provide the final within-entity tie-break component.
 
-No source-specific precedence or tie-break rule is authorized by this parcel. If a new work source cannot declare a lane, phase, cost class, and stable persisted inputs, the design must update the owner contract through TICK-09 before implementation. `created_at`, `updated_at`, Redis insertion order, and wall-clock arrival order must not be used as implicit tie-breakers; any explicit normalization or additional input remains subject to TICK-09.
+If a new work source cannot declare a lane, phase, cost class, and stable persisted inputs, it cannot enter the scheduler. `created_at`, `updated_at`, Redis insertion order, completion timing, and wall-clock arrival order are not ordering inputs. The selected ordered manifest and scheduler-state advance commit atomically before source work becomes exclusive; replay executes that recorded order.
 
 ### Commit Point and Replay Semantics (Conceptual)
 
@@ -310,7 +310,7 @@ Conceptually, tick commit proceeds through these phases:
      - `source_kind` (`command`, `timer`, `retry`, `remote_followup`, `generated_effect`)
      - `source_item_id` (or the stable root `EffectId` for `generated_effect`)
      - `entityId`
-     - explicitly named persisted ordering inputs for the selected item: policy-defined `priority` where supplied, `due_point_normalized`, `enqueue_seq`, `source_kind`, `source_item_id` (or the stable root `EffectId` for `generated_effect`), `entityId`, and owning-contract `commandId`/`effectKey` where required; this parcel does not finalize a canonical phase-aware tuple or its precedence, which remain deferred to TICK-09
+     - explicitly named persisted ordering inputs for the selected item: phase, lane, bounded cost class, policy-defined `priority`, normalized `due_tick_id`, entity-local `entity_enqueue_seq`, `source_kind`, stable source identity, and owning-contract `commandId`/`effectKey` where required. Within an entity, the canonical tuple is `(priority, due_tick_id, entity_enqueue_seq, source_kind, commandId_or_effectKey)`; across entities, persisted rotating/deficit scheduler state and cost accounting are part of the manifest-bound selection.
      - source-claim/removal state indicating whether the source entry still resides in Redis/PostgreSQL source structures or has been durably claimed elsewhere
    - Source-specific minimum manifest fields:
      - `command`:
@@ -377,7 +377,7 @@ From the perspective of the `(regionEpoch, tickId)` timeline:
   - There is no remaining `pending` entry for that tick in Redis and lock cleanup for that tick has completed.
 - Any state before `durable_committed` is **replayable**:
   - Executors may crash after staging but before all effects are applied; the next executor replays remaining SCHEDULED entries using ledger and idempotency rules.
-  - AOF replay or tail-loss may cause staging scripts to be re-run; domain idempotency guards and the ledger ensure that replays converge to the same terminal outcome.
+  - AOF replay or measured coordination loss may cause staging scripts to be re-run; domain idempotency guards and the ledger ensure that replays converge to the same terminal outcome.
 - Recovery treats PostgreSQL as the source of truth for staging intent:
   - `tick_batch` exists, Redis `pending` missing:
     - Recovery replays directly from the durable batch manifest and `SCHEDULED` ledger rows to drive effects to terminal `APPLIED` or `ABANDONED` outcomes only when durable evidence permits; inconclusive old-epoch work remains non-terminal reconciliation work under its original root `EffectId`. Missing Redis state is not treated as “no work existed”.
@@ -411,7 +411,7 @@ Commands or effects that cannot complete inside their lane’s configured budget
 Retry queues store, for each action, a retry counter and `next_eligible_tick_id` so that:
 
 - Retries are scheduled for future ticks using an exponential backoff in ticks (for example, `nextTick = currentTick + min(2^retryCount, MAX_BACKOFF_TICKS)`).
-- Accepted TICK-12 FIFO applies within the same per-entity contention-retry/source queue; it does not settle precedence across different source queues or the relationship between queue-local FIFO and priority/due inputs.
+- Retries retain their ordering fields and re-enter the same fair scheduler; they do not use a retry-private FIFO or gain priority by failing. Within an entity, ordering remains `(priority, due_tick_id, entity_enqueue_seq, source_kind, commandId_or_effectKey)`.
 - Actor-action retries preserve the original root action identity and return to the actor-action lane; passive/effect retries preserve the original effect identity and remain in the passive lane. Neither retry creates a new root actor action in the same tick. Retry eligibility/attempt metadata (including retry count, `next_eligible_tick_id`, and source-claim state) is separate from the original participant ledger projection and collision-safe guard identity; ordinary retries do not mutate `regionEpoch`, `tickId`, `effectKey`, or the root/typed-operation/target projection. A future linked-attempt or supersession model requires an explicit contract. A fresh effect root is created only by the separately named post-abandon re-drive after conclusive `ABANDONED`/source-claim terminalization, a later coordinate, and durable lineage.
 - After a bounded number of attempts (for example `MAX_RETRIES`), the action is surfaced as retry-budget exhausted via metrics/player-visible diagnostics and escalated rather than retried indefinitely; retry exhaustion alone never authorizes `ABANDONED` or another permanent terminal failure. Terminalization still requires the applicable durable evidence, while inconclusive work remains reconciliation-required until that evidence exists.
 
@@ -422,7 +422,7 @@ Remote follow-up delivery envelopes (work created in one region but delivered to
 - Each tick includes a bounded “remote drain” step:
   - The executor pulls at most `MAX_REMOTE_FOLLOWUPS_PER_TICK` due follow-up rows from PostgreSQL for entities in the region.
   - A per-entity cap such as `MAX_REMOTE_FOLLOWUPS_PER_ENTITY_PER_TICK` prevents one hot entity from consuming the passive-effect budget.
-- Selection uses the persisted follow-up ordering inputs and the future TICK-09 ordering contract while avoiding starvation; this parcel does not choose oldest-due, FIFO, or another precedence rule:
+- Selection uses the persisted follow-up ordering inputs and ADR 0065's within-entity tuple plus rotating/deficit cross-entity scheduler while avoiding starvation:
   - Candidate selection and locking use database-side concurrency control (for example, `FOR UPDATE SKIP LOCKED` or equivalent) so multiple executors do not select the same follow-up.
   - The remote source claim is created only in the same durable PostgreSQL transaction that creates the target tick batch, selected-work manifest, and ledger rows. Only after that transaction commits may the follow-up be removed from the due set or treated as runnable. Redis `remote:*` hints and any per-entity queue projections are latency hints only; a crash before commit leaves the follow-up due in PostgreSQL, and a crash after the claim replays from the batch manifest rather than from Redis.
   - Intake per entity per tick is limited so other entities with due passive work still make progress; the target entity remains eligible for its separate actor-action selection unless start-of-tick passive effects make it ineligible.
@@ -442,7 +442,7 @@ Best-effort hint markers (`remote:{tenantInstanceTag}:<entityId>`) are only allo
 
 Cross-region flows participate in the same coordination timeline and reset rules as purely local ticks:
 
-- Each leg of a cross-region command has a stable root `EffectId`; its origin/target ledger and follow-up storage projections retain the specific `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId)` on that region, as described in `system-architecture-tick-failures-and-operations.md`.
+- Each leg of a cross-region command has a stable root `EffectId`; its origin/target ledger and follow-up storage projections retain the specific `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId)` on that region, as described in `system-architecture-tick-failures-and-operations.md`. The payload also carries exact target identity plus required ownership, location, and aggregate-version preconditions; a matching target epoch alone is insufficient.
 - Any origin-side waiting or aggregation state for those legs lives in a separate durable coordinator record. It must not keep the origin tick batch open or prevent `lastCommittedTickId` from advancing.
 - When a region/tenant/cluster reset bumps `regionEpoch` for a region, any surviving `SCHEDULED` ledger rows or follow-ups from the old epoch are reconciled under the existing evidence policy: only conclusively unapplied work may converge to `ABANDONED`, while inconclusive work remains non-terminal under its original root `EffectId`; none is silently retried on the new epoch.
 - Origin regions must treat:
@@ -459,23 +459,23 @@ To avoid ambiguity around timeouts and late replies, every cross-region command 
 1. `PENDING_REMOTE` – origin leg has created durable follow-up(s) and is waiting for target outcome until a defined deadline.
 2. `REMOTE_APPLIED` – target reported terminal success for the leg.
 3. `REMOTE_ABANDONED` – target reported terminal failure (`ABANDONED`) for the leg.
-4. `REMOTE_TIMEOUT_ABANDONED` – origin reached the defined deadline without a terminal remote result and authoritative target evidence proves that no remote mutation occurred; only then may the leg be marked `ABANDONED`. A deadline or control-plane health signal alone records timeout observed and leaves the coordinator `PENDING`/reconciliation-required.
-5. `LATE_RESULT_IGNORED` or `LATE_RESULT_RECONCILED` – terminal policy when a remote success/failure arrives after timeout.
+4. `REMOTE_TIMEOUT_ABANDONED` – the origin coordinator's serialized arbitration chose timeout as the terminal origin outcome. The coordinator records the operational reason and any unresolved remote uncertainty; timeout does not claim that the target never mutated.
+5. `LATE_RESULT_IGNORED` or `LATE_RESULT_RECONCILED` – a separately recorded late-result classification when a remote success/failure arrives after immutable origin terminalization; it never reopens or rewrites that outcome.
 
 Required policy defaults:
 
 - Deadlines are tick-based on the origin region timeline and recorded durably with the origin coordinating effect (`originDeadlineRegionEpoch`, `originDeadlineTickId`; storage may use names such as `remote_deadline_region_epoch` / `remote_deadline_tick_id`), not inferred from wall-clock timers.
 - The origin region is the only clock that evaluates remote completion timeouts. Target-region `dueTickId` controls when the remote leg first becomes eligible to run; it does not define when the origin gives up waiting for the result.
-- If the origin scope is canonical `PAUSED` or `STALLED`, normal tick-clock timeout progression is suspended. A durable recovery/controller path may record timeout observed using the stored origin deadline plus control-plane health evidence when normal origin ticks are not advancing, but those signals alone cannot converge the coordinator to `REMOTE_TIMEOUT_ABANDONED`; authoritative target evidence proving no remote mutation is required, otherwise it remains `PENDING`/reconciliation-required.
+- If the origin scope is canonical `PAUSED` or `STALLED`, normal tick-clock timeout progression is suspended. A separate operational maximum-real-wait policy may terminalize stranded coordination while recording its operational reason; it must not claim that gameplay tick time advanced.
 - The coordinator lifecycle above is outside the committing origin tick batch:
   - The origin tick that creates the remote follow-up still commits normally once its own batch rows are terminal.
   - Later remote results or timeouts enqueue subsequent origin-region work or update the separate coordinator record; they do not retroactively keep the original tick non-terminal.
 - Remote result return-path contract:
   - target regions do not mutate origin coordinator rows directly through ad hoc RPCs or transient bus messages;
   - they write one durable origin-addressed result row keyed by coordinator identity;
-  - origin-side reconciliation is the only component that advances the coordinator from `PENDING_REMOTE` to `REMOTE_APPLIED`, `REMOTE_ABANDONED`, `REMOTE_TIMEOUT_ABANDONED`, `LATE_RESULT_IGNORED`, or `LATE_RESULT_RECONCILED`.
+  - origin-side reconciliation is the only component that advances the coordinator. Result admission and timeout arbitration occur in one origin coordinator transaction and lock domain: a result durably admitted before arbitration wins and is evaluated before timeout; if timeout wins, the origin terminal outcome is immutable; any later result is recorded separately as late.
 - If origin has already reached `REMOTE_TIMEOUT_ABANDONED`, any later remote result must not silently mutate prior terminal state:
-  - Default: record `LATE_RESULT_IGNORED` for observability and keep origin terminal state unchanged.
+  - Default: record a separate `LATE_RESULT_IGNORED` classification for observability and keep origin terminal state unchanged.
   - Feature-specific override: `LATE_RESULT_RECONCILED` is allowed only if the feature documents an explicit reconciliation/compensation flow.
 - Every cross-region command type must explicitly declare one of two late-result classes in its design:
   - `late_result_safe_to_ignore`
@@ -492,16 +492,7 @@ Worked reset example:
 
 ## Tick Chaining and Reentrant Effect Control
 
-Some effects (for example, explosions, chained spells, scripted traps) spawn follow-up actions. To keep this behavior bounded:
-
-- Each action tracks a `tickChainDepth` that increments whenever it spawns follow-up work.
-- A configuration such as `MAX_TICK_CHAIN_DEPTH` (default 8) defines the maximum allowed chain depth for a single originating action.
-- When a follow-up would exceed `MAX_TICK_CHAIN_DEPTH`:
-  - The new action is not enqueued.
-  - Existing committed effects remain in place.
-  - A warning is logged so designers can adjust the feature or its tuning, and the player may receive a message indicating the chain was halted.
-
-Because chained effects remain passive/effect work and cannot grant another root actor action in the same tick, this depth guard is primarily a protection against runaway re-entrancy and unbounded script-driven chain reactions.
+Some effects (for example, explosions, chained spells, scripted traps) spawn follow-up actions. Each root chain is bounded by the shared bootstrap depth ceiling (`8`), deterministic total count and cost budgets, and a deterministic per-target cap. A generated child records immutable parent/root identity, `depth = parent.depth + 1`, and a digest-covered deterministic child ordinal. Admission suppresses only the child that would exceed a limit; committed parents and earlier children remain authoritative. Required/optional authored classification derives truthful `SUCCESS`, `PARTIAL`, or `FAILED` outcomes, and every suppression records durable evidence with bounded metric labels. Generated effects remain passive/effect work and cannot grant another root actor action in the same tick. See [ADR 0075](./decisions/adr-0075-depth-cost-and-count-bounds-for-generated-effect-chains.md).
 
 ## Worked Example: Cross-Region Lifesteal Command
 

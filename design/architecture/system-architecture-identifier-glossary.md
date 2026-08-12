@@ -83,20 +83,22 @@ Cross-service presentation composition (for example `LOOK`) uses a causal floor;
 
 Short synchronous `common-saga` orchestration uses persisted step identity and must be idempotent per step when retries are possible:
 
+- The general workflow/request and step-guard semantics are owned by [Transaction Strategies](./system-architecture-transactions.md) and [ADR 0078](./decisions/adr-0078-digest-bound-workflow-and-step-retry-identities.md); this glossary keeps only the identity vocabulary and local reference.
 - `sagaInstanceId` – identifies a specific synchronous saga execution.
 - `sagaStepName` – stable step name within the saga definition.
-- `SagaStepGuardKey` – a durable step idempotency key stored by the owning service, built from business identity plus `sagaStepName` and workflow-specific scope; `sagaInstanceId` is execution-trace metadata and must not be the sole dedupe key.
+- `SagaStepGuardKey` – the owning service’s local durable step-guard reference; its identity fields and immutable-digest binding follow [Transaction Strategies](./system-architecture-transactions.md) rather than this glossary. `sagaInstanceId` is execution-trace metadata and must not be the sole dedupe key.
 
 ## Temporal Workflow Identity
 
 Durable Temporal workflows use explicit workflow and step identity independent of one JVM lifetime:
 
+- The general workflow/request and step-retry semantics are owned by [Transaction Strategies](./system-architecture-transactions.md), with the rationale in [ADR 0078](./decisions/adr-0078-digest-bound-workflow-and-step-retry-identities.md). This section retains concise vocabulary and the Temporal-local encoding reference; adopter-specific usage and proof remain in adopter docs and trackers.
 - `workflowId` – the canonical durable workflow identity. FireMUD formats it as `<workflowFamily>:<tenantId>:<scopeKey>:<businessKey>`.
 - `workflowFamily` – the stable workflow class/family name such as `world-lifecycle`, `publish`, or `script-patch-readiness`.
 - `scopeKey` – the narrow business scope for the workflow, such as `world-instance`, `version`, or `game-instance`.
 - `businessKey` – the stable request or domain identity that makes workflow start/retry idempotent.
-- `businessStepKey` – the durable activity/update-side idempotency key. FireMUD formats it as `<workflowId>#<stepName>#<businessKey>`.
+- `businessStepKey` – the current legacy `FiremudWorkflowIds` activity/update-side key projection, formatted as `<workflowId>#<stepName>#<businessKey>`. It is an incomplete implementation and not the canonical full guard; target local encoding includes a stable step name, deterministic occurrence key, and execution role, with the immutable request digest stored and compared under the shared contract.
 
-Temporal adopter slices must use these identifiers directly rather than inventing service-local workflow-id formats.
+Temporal adopter slices must use the workflow identity and local encoding reference above rather than inventing service-local workflow-ID formats, while treating the legacy `businessStepKey` projection as an implementation gap until the full guard is adopted.
 
-See `design/architecture/system-architecture-ticks.md` and `design/architecture/system-architecture-transactions.md` for the full effect identity contract and replay semantics.
+See [Transaction Strategies](./system-architecture-transactions.md) and [ADR 0078](./decisions/adr-0078-digest-bound-workflow-and-step-retry-identities.md) for the full workflow/step identity and replay semantics. See `design/architecture/system-architecture-ticks.md` for the separate gameplay effect identity contract.

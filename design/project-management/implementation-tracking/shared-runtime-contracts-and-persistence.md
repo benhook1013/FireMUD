@@ -26,8 +26,8 @@ The implementation record below summarizes the shared runtime, service-contract,
 
 - [gRPC](../../architecture/system-architecture-grpc.md) defines authenticated internal transport and normal-response application errors.
 - [Database migrations](../../architecture/system-architecture-database-migrations.md) defines Flyway history and relational persistence conventions.
-- [Temporal workflows](../../architecture/system-architecture-temporal-workflows.md) defines durable workflow boundaries and operator truth.
-- [Scripting runtime execution](../../architecture/system-architecture-scripting-runtime-execution.md) and [scheduler/timers](../../architecture/system-architecture-scripting-scheduler-and-timers.md) consume the shared timing and workflow model.
+- [Temporal workflows](../../architecture/system-architecture-temporal-workflows.md) defines durable workflow boundaries and operator truth; [ADR 0078](../../architecture/decisions/adr-0078-digest-bound-workflow-and-step-retry-identities.md) defines the durable workflow/request and digest-bound step identity consumed by adopters.
+- [Scripting runtime execution](../../architecture/system-architecture-scripting-runtime-execution.md) and [scheduler/timers](../../architecture/system-architecture-scripting-scheduler-and-timers.md) consume the shared timing and workflow model. [ADR 0059](../../architecture/decisions/adr-0059-causal-floor-cross-service-presentation-reads.md), [ADR 0063](../../architecture/decisions/adr-0063-durable-per-dispatch-script-handoff.md), and [ADR 0069](../../architecture/decisions/adr-0069-at-least-once-effect-execution-with-one-logical-terminal-outcome.md) define shared identity, durable handoff, and logical terminal-outcome boundaries without claiming this tracker owns their service implementation.
 - [Logging and monitoring](../../architecture/system-architecture-logging-monitoring.md) defines audit, failure, and observability expectations at service boundaries.
 
 ## Consolidated Implementation Record
@@ -136,6 +136,7 @@ The evidence records focused and repository-level proof for the implemented seam
 - Account lifecycle transitions, purchased-entitlement fulfillment, complete billing/subscription enforcement, and the end-to-end account security-lock/appeal workflow remain Account-owned follow-through rather than shared-runtime completion claims.
 - Moderation policy propagation still needs the versioned snapshot, monotonic invalidation, bounded-cache push/pull refresh, shared freshness bound, and policy-version audit contract across Logging & Admin, Game Session, and Social & Groups; the current synchronous evaluation seam proves ownership and immediate fail-closed enforcement only.
 - `GameplaySessionAttestationServiceTest` proves helper-level token validation/matching only; focused consumer proof that legacy attestation values cannot authorize delegated work, establish workload identity, or serve as replay authority is absent.
+- [ADR 0059](../../architecture/decisions/adr-0059-causal-floor-cross-service-presentation-reads.md), [ADR 0069](../../architecture/decisions/adr-0069-at-least-once-effect-execution-with-one-logical-terminal-outcome.md), and [ADR 0078](../../architecture/decisions/adr-0078-digest-bound-workflow-and-step-retry-identities.md) are accepted shared contracts, not implementation evidence: component-version composition, owner-guard terminal convergence, and adopter-side durable digest-conflict enforcement remain incomplete across services.
 
 ## To Discuss
 
