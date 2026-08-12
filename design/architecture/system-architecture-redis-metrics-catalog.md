@@ -7,7 +7,10 @@ This document summarizes the canonical Redis-related metrics, alerting surfaces,
 - `redis_aof_current_size_bytes`
 - `redis_coordination_aof_growth_bytes_total`
 - `redis_coordinator_restart_duration_seconds`
-- `redis_coordination_tail_loss_ms{scope}`
+- `redis_coordination_tail_loss_ms{scope}` (current compatibility exposure series)
+- `redis_unreplicated_write_window_ms{scope}` (target measured exposure, pre-aggregated as the worst eligible candidate within the bounded deployment/environment/ruleset scope)
+- `redis_unreplicated_write_window_slo_breached{scope}` (target measured-SLO breach series)
+- `redis_coordination_tail_loss_slo_breached{scope}` (current compatibility alias/rule derived from the tick-based exposure budget, not the target measured-SLO breach)
 - `redis_replication_lag_ms{redis_role,scope}`
 - `redis_replication_offset_lag_bytes{redis_role,scope}`
 - `coordination_maintenance_active{scope_type,scope_bucket,operation}`
@@ -20,7 +23,7 @@ This document summarizes the canonical Redis-related metrics, alerting surfaces,
   - `redis_tick_timers_over_budget_total`
   - `redis_session_payload_oversized_total`
 
-For replication-lag, replication-offset, and dashboard-comparison metrics, bounded `scope` consistently identifies one Coordination Redis deployment together with its canonical environment class and active configuration/ruleset. The exported replication metrics are pre-aggregated worst-candidate-replica values within that scope. Because no replica identity label is exported, these metrics do not identify individual replicas; exact candidate and node IDs remain control-plane and structured-log evidence.
+For measured exposure, replication-lag, replication-offset, and dashboard-comparison metrics, bounded `scope` consistently identifies one Coordination Redis deployment together with its canonical environment class and active configuration/ruleset. `redis_unreplicated_write_window_ms{scope}` and the exported replication metrics are pre-aggregated worst-eligible-candidate values within that scope. Because no replica identity label is exported, these metrics do not identify individual candidates or replicas; exact candidate and node IDs remain control-plane and structured-log evidence. The target measured-SLO breach series is distinct from the current `redis_coordination_tail_loss_slo_breached{scope}` compatibility alias/rule, which derives from the tick-based exposure budget.
 
 ## Session Schema and Cleanup Metrics
 

@@ -120,8 +120,10 @@ The following Redis-focused incident flows build on the general recovery steps a
 
 ### Coordination AOF Tail-Loss SLO Breach
 
+Before entering this measured-SLO detect/decide path, verify that the affected deployment/environment/ruleset profile is eligible under [Redis Operations & Migrations](./system-architecture-redis-operations.md#redis-slos--budgets). Ephemeral, explicitly opt-out, or otherwise non-eligible profiles must not be compared with the measured SLO or classified as a measured-SLO breach; use their declared reset-tolerance class and latency/recovery evidence instead.
+
 1. **Detect**
-   - Measured-exposure indicators such as `redis_coordination_tail_loss_ms{scope}` regularly exceed `redis_unreplicated_write_window_slo_ms` for the same Coordination Redis deployment, environment, and active configuration/ruleset scope defined by [Redis Operations & Migrations](./system-architecture-redis-operations.md#redis-slos--budgets).
+   - The eligible-profile measured-exposure indicator `redis_unreplicated_write_window_ms{scope}` regularly exceeds `redis_unreplicated_write_window_slo_ms`, or `redis_unreplicated_write_window_slo_breached{scope}` is asserted, for the same Coordination Redis deployment, environment, and active configuration/ruleset scope defined by [Redis Operations & Migrations](./system-architecture-redis-operations.md#redis-slos--budgets).
    - Control-plane and structured-log evidence identifies the affected `<tenantId, gameInstanceId, regionId>` shards, whose region health may show sustained `DEGRADED` or `STALLED` state; those shard identities are diagnostic dimensions, not independent SLO values.
 2. **Decide**
    - For short-lived degradations where gameplay impact is minimal, investigate disk/replication performance, but keep serving traffic.
@@ -150,7 +152,7 @@ The following Redis-focused incident flows build on the general recovery steps a
    2. If the chosen mode is `reset_first`:
       - Execute the [Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence) for the same scope.
       - Keep only the incident-specific choices local to this runbook: scope selection, whether replay-first was exhausted first, whether gameplay sessions are preserved, and what evidence justified escalation.
-   3. Verify region health returns to `RUNNING` or bounded `DEGRADED` and measured exposure, including `redis_coordination_tail_loss_ms{scope}`, returns within `redis_unreplicated_write_window_slo_ms` for the same deployment/environment/ruleset scope after the chosen recovery mode completes. If replay cannot complete before `RESUME_AUTHORIZED`, the operation remains paused and quarantined until reset escalation or audited `release-lock`. A failure after `RESUME_AUTHORIZED` is reconciled only through the same operation's internal release worker; `release-lock` is prohibited.
+   3. Verify region health returns to `RUNNING` or bounded `DEGRADED` and eligible-profile measured exposure, including `redis_unreplicated_write_window_ms{scope}`, returns within `redis_unreplicated_write_window_slo_ms` for the same deployment/environment/ruleset scope after the chosen recovery mode completes. If replay cannot complete before `RESUME_AUTHORIZED`, the operation remains paused and quarantined until reset escalation or audited `release-lock`. A failure after `RESUME_AUTHORIZED` is reconciled only through the same operation's internal release worker; `release-lock` is prohibited.
 
 Alerts based on `redis_coordination_tail_loss_ms` should follow the conventions in `design/observability/grafana/redis-alerts-snippets.md` so they carry `owner` and `runbook` annotations that point back to this section.
 

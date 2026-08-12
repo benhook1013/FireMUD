@@ -54,7 +54,7 @@ Region topology is static while an active game instance is normally open. An unc
 
 Initial split/merge support is an operator-controlled maintenance cutover:
 
-1. establish an admission barrier covering player front ends, automation, timers, and remote-follow-up producers;
+1. establish an admission barrier covering player front ends, supported Logging & Admin operator effect admission/forwarding, automation, timers, and remote-follow-up producers; effects admitted before the barrier drain or reconcile under their owning lifecycle, and no post-barrier effect is admitted until reopen;
 2. freeze intake and ticks for affected regions;
 3. drain and reconcile until a declared bounded deadline;
 4. reconcile remaining commands, effects, coordinators, follow-ups, and results according to each owning lifecycle: commands use their command outcome/status contract, effects use evidence-qualified `APPLIED`/`ABANDONED`, coordinators use their `REMOTE_*` arbitration states, follow-ups retain their own target-leg lifecycle, and result rows retain ordinary or late-result classifications. Inconclusive work remains fenced and reconciliation-required rather than being bulk-terminalized; a follow-up that requires topology rollover remains reserved for step 7 rather than being prematurely abandoned;

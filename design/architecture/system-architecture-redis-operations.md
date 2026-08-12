@@ -101,11 +101,12 @@ This handoff uses the complete [canonical post-reset verification checklist](./s
 
 ## Redis SLOs & Budgets
 
-This section centralizes the normative targets for Redis behavior that other docs reference. Individual environments may tune concrete values, but changes should be treated as deliberate SLO updates rather than silent drift. The loss-window and replica-promotion comparisons are scoped to one Coordination Redis deployment, its canonical environment class, and its active configuration/ruleset; an environment may claim a production-like SLO only when its profile and evidence explicitly permit that claim. Ephemeral preview/CI stacks and other non-eligible environments must not be used to validate it.
+This section centralizes the normative targets for Redis behavior that other docs reference. Individual environments may tune concrete values, but changes should be treated as deliberate SLO updates rather than silent drift. The loss-window and replica-promotion comparisons are scoped to one Coordination Redis deployment, its canonical environment class, and its active configuration/ruleset; an environment may claim a production-like SLO only when its profile is eligible and its evidence explicitly permits that claim. Ephemeral preview/CI stacks and explicitly opt-out or otherwise non-eligible environments must not be used to validate the measured SLO; use their declared reset-tolerance class and latency/recovery evidence instead.
 
 ### Coordination Redis Core Targets
 
 - **Unreplicated coordination-write window**
+  - only an eligible profile may compare the measured `redis_unreplicated_write_window_ms{scope}` exposure or replica-promotion evidence with `redis_unreplicated_write_window_slo_ms` or declare its breach; ephemeral or opt-out profiles use reset-tolerance and latency/recovery evidence rather than this measured-SLO breach path
   - production-like profiles define `redis_unreplicated_write_window_slo_ms` from measured AOF, replication, promotion, and failover evidence; tick cadence does not set the value
   - `ticks_exposed = ceil(redis_unreplicated_write_window_slo_ms / tick_interval_ms)` is diagnostic only and is not a product RPO
   - ephemeral profiles may accept wider or unbounded exposure but must be clearly labeled and cannot validate production-like loss-window SLOs
@@ -202,8 +203,8 @@ Behavior:
 
 Runbook:
 
-1. Monitor the bounded `redis_replication_lag_ms{redis_role="coordination",scope=~"$scope"}` metric as the canonical promotion-lag metric, with `redis_replication_offset_lag_bytes{redis_role="coordination",scope=~"$scope"}` as supporting evidence. `scope` is the documented deployment/environment bucket; exact `nodeId` and `upstreamNodeId` values belong in structured logs or control-plane evidence, not Prometheus labels.
-2. Across all candidate replicas in this same deployment/environment/ruleset scope, select the worst candidate-promotion lag and compare it against that scope's measured unreplicated-write-window SLO:
+1. Monitor the bounded `redis_replication_lag_ms{redis_role="coordination",scope=~"$scope"}` metric as the canonical promotion-lag metric, with `redis_replication_offset_lag_bytes{redis_role="coordination",scope=~"$scope"}` as supporting evidence. `scope` is the documented deployment/environment/ruleset mapping; exact `nodeId` and `upstreamNodeId` values belong in structured logs or control-plane evidence, not Prometheus labels.
+2. Use the pre-aggregated worst eligible candidate-promotion lag already exported for this deployment/environment/ruleset scope and compare it against that scope's measured unreplicated-write-window SLO; the exact candidate and node identities remain control-plane or structured-log evidence:
    - acceptable: `redis_replication_lag_ms <= 0.5 * redis_unreplicated_write_window_slo_ms`
    - warning: `0.5 * redis_unreplicated_write_window_slo_ms < redis_replication_lag_ms < redis_unreplicated_write_window_slo_ms`
    - red: `redis_replication_lag_ms >= redis_unreplicated_write_window_slo_ms`

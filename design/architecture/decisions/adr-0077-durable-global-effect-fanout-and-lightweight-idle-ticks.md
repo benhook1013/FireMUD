@@ -49,7 +49,7 @@ Forcing a tick means waking an eligible region for its next canonical cadence bo
 
 ### Idle Cadence
 
-The initial model physically advances every region at each canonical cadence boundary, including when the region is idle. A truly empty boundary records a lightweight durable, fenced empty-tick watermark or heartbeat under the current region epoch, lease, and executor fence. It advances the committed tick identifier without invoking domain services, acquiring entity locks, creating Redis `pending` state, or creating an effect batch.
+The initial model physically advances every region at each canonical cadence boundary, including when the region is idle. A truly empty boundary records a lightweight durable, fenced empty-tick watermark or heartbeat under the current region epoch, lease, and executor fence. The empty-boundary decision and status advance are one fenced owner transaction serialized with durable due-work and source-claim admission: work that becomes due before that boundary decision is admitted through a normal batch, while work after the boundary belongs to a later coordinate. The transition advances the committed tick identifier without invoking domain services, acquiring entity locks, creating Redis `pending` state, or creating an effect batch.
 
 Tick/game time therefore continues while a region is idle. It freezes only while the region is explicitly `PAUSED` or `STALLED`, and resumes from that frozen timeline under the canonical recovery rules. Wall-clock timer eligibility and recovery remain governed separately by [ADR 0072](adr-0072-class-specific-timer-durability-and-recovery.md); an empty tick does not reinterpret wall-clock deadlines as tick/game time.
 

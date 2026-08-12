@@ -163,8 +163,9 @@ Normal incident escalation groups by `<tenantId, gameInstanceId>`; `regionId` re
 ### Detect (Tick replay storm)
 
 - Metrics and dashboards show:
-  - Elevated `gamesession_tick_replayed_total` relative to `gamesession_tick_executed_total` (or equivalent service-specific counters) for one or more regions.
+  - Elevated `gamesession_tick_replayed_total` relative to `gamesession_tick_executed_total` (or equivalent service-specific counters) for one or more regions; high counters alone may represent bounded draining and are not a domain idempotency/design finding.
   - `tick_effect_outcome_total{outcome="replay_ok"}` significantly higher than `tick_effect_outcome_total{outcome="first_apply"}` for specific `effect_type` or services.
+  - Durable-work evidence shows `tick_effects_replay_slo_breached{scope_class}` asserted and/or `tick_effects_pending_oldest_age_seconds{scope_class}` growing or remaining elevated; this is the evidence required to distinguish a replay breach from bounded draining.
   - The measured Redis unreplicated-write metric (`redis_unreplicated_write_window_ms` or its deployment-specific equivalent) repeatedly approaching or breaching `redis_unreplicated_write_window_slo_ms`, indicating frequent coordination replays.
 - Logs and optional workflow traces:
   - Game Session and domain services log frequent idempotent replays or guard conflicts.
@@ -173,7 +174,7 @@ Normal incident escalation groups by `<tenantId, gameInstanceId>`; `regionId` re
 ### Decide (Tick replay storm)
 
 - If replays are elevated only during a short-lived Redis incident already covered by the Redis incident runbook, prioritize resolving the underlying Redis problem and apply ADR 0058 class-specific outcomes while accepting a temporary increase in replays.
-- If replay rates remain high after Redis metrics and measured exposure have returned to normal:
+- If Redis exposure has normalized but `tick_effects_replay_slo_breached{scope_class}` remains asserted and/or `tick_effects_pending_oldest_age_seconds{scope_class}` remains elevated across the replay convergence window, with replay rates still high:
   - Treat this as a domain-level idempotency or design issue in the services contributing the most `replay_ok` outcomes.
   - Focus on those services and effect types first; do not attempt broad coordination resets unless the ledger or coordination metrics also indicate corruption.
 

@@ -50,11 +50,13 @@ When a `SCHEDULED` row exceeds the supported stale-work budget, the affected run
 
 Operators may inspect durable ledger rows with read-only SQL. Any disposition must go through Game Session's supported verifier/reconcile operation, which rechecks authoritative participant evidence and records an auditable transition. Operators must never directly edit a row to `APPLIED`.
 
-Technical retry exhaustion moves unresolved work to `DEAD_LETTER` or quarantine for diagnosis and explicit disposition. It does not fabricate `ABANDONED`; that terminal result requires authoritative evidence proving non-application and any already-declared applicable feature rule, such as that the effect cannot safely remain valid. Retry exhaustion, timeout, missing coordination, age, or technical failure alone never proves `ABANDONED`; inconclusive work remains nonterminal and reconciliation-required.
+Technical retry exhaustion moves unresolved work to `DEAD_LETTER` or quarantine as nonterminal operational dispositions for diagnosis and explicit disposition; the underlying ledger row remains `SCHEDULED` and reconciliation-required. It does not fabricate `ABANDONED`; that terminal result requires authoritative evidence proving non-application and any already-declared applicable feature rule, such as that the effect cannot safely remain valid. Retry exhaustion, timeout, missing coordination, age, or technical failure alone never proves `ABANDONED`; inconclusive, dead-lettered, and quarantined work remains nonterminal and reconciliation-required.
 
 `REPLAY_NOOP` is an `APPLIED` outcome or reason demonstrating that the intended logical effect was already durably present. It is not a separate ledger status.
 
-Active, unresolved, dead-lettered, or quarantined rows are never garbage-collected. Retention or compaction applies only after terminal evidence and the applicable diagnostic, audit, and recovery obligations are satisfied.
+Only `APPLIED` and evidence-qualified `ABANDONED` are terminal ledger statuses; `DEAD_LETTER` and quarantine remain operational dispositions over unresolved `SCHEDULED` work.
+
+Active, unresolved, dead-lettered, or quarantined rows are never garbage-collected or treated as terminal ledger states. Retention or compaction applies only after terminal evidence and the applicable diagnostic, audit, and recovery obligations are satisfied.
 
 ## Consequences
 
