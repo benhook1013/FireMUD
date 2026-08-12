@@ -1,11 +1,13 @@
 # FireMUD System Architecture: Database Migrations
 
-This document explains how FireMUD manages PostgreSQL schema changes across its microservices. Each service owns its tables and applies migrations independently.
+This document is the current target authority for SQL persistence, schema ownership, migration compatibility, and cross-service identifier migration. Each service owns its logical PostgreSQL schema and applies its own Flyway history; reusable migration artifacts are adopter-local, not a central schema authority.
 
 ## Implementation Notes
 
 - FireMUD’s SQL target state is `jOOQ + Flyway`, with Flyway as the canonical schema authority and `jOOQ` generation/execution as the intended runtime access model for SQL-backed services.
 - The `02.19` convergence family is now closed at the platform boundary: SQL-backed services use `jOOQ + Flyway`, and repo-wide Hibernate/JPA runtime support has been removed rather than preserved as a second persistence path.
+- Plain or dynamic SQL is permitted only as a narrow, proven escape hatch for a PostgreSQL feature that the applicable generated jOOQ/DSL surface cannot express; it is not a second repository or schema model.
+- The target contract below is authoritative even where implementation notes identify incomplete migration wiring, generated-code adoption, or focused proof.
 
 ---
 
@@ -36,42 +38,32 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
   Schema names match the owning service (for example `account_service`). See
   [Multi-Tenancy](./system-architecture-multi-tenancy.md) for details.
 - Shared schema components such as the Saga tables are defined in the
-  `common-saga` module with their own migrations, but are still applied
-  **per service database**:
+  `common-saga` module with reusable migration artifacts, but are still applied
+  **inside each adopting service schema**:
   - The `common-saga` module contains the shared saga table migrations described in
     [System Architecture – Transactions](./system-architecture-transactions.md).
-  - Services that need these shared tables include `common-saga` as a dependency and expose both `classpath:db/migration` and `classpath:db/migration/saga` to Flyway at startup.
+  - Only services that adopt these shared tables include `common-saga` as a dependency and expose both `classpath:db/migration` and `classpath:db/migration/saga` to Flyway at startup.
   - Saga tables are created inside the owning service schema via the shared `${serviceSchema}.saga_*` migrations rather than a separate dedicated `saga` schema.
 - New migrations are committed alongside service code so history stays with the owning service.
 
-### Version-Aware Migration Guidelines
+Shared migration artifacts use a collision-free versioning convention relative to adopter-local migrations. An applied shared migration is never renumbered, rewritten, or silently replaced; a shared change is a new compatible migration under that convention. A physical PostgreSQL cluster or database may host multiple service schemas, but that does not permit cross-service DDL, foreign keys, direct table reads, or one service to advance or repair another service's Flyway history.
 
-Because game data is versioned and previously published `version_id` values may be reactivated for rollback, migrations in live or retention-bearing environments must be written to preserve the ability to load existing versioned graphs. This guidance is scoped to environments/services that already need to preserve non-Retired versions or mixed live deployment history. During initial development bootstrap, prefer direct replacement and avoid unnecessary dual-read/dual-write or phased migration scaffolding until a service actually has live-version preservation requirements. Expand/migrate/contract is not the default first-slice stance for every service change; it becomes mandatory only once a service has crossed into real live-version preservation obligations.
+### Objective Compatibility Gates
 
-- Prefer **additive** changes (adding tables/columns, widening types) while any
-  published versions still depend on the existing schema shape.
-- When a column or table needs to be removed or repurposed:
-  - First introduce replacement fields and write data-migration steps that
-    copy or transform data for all active and published versions.
-  - Mark the old fields as deprecated in service documentation and avoid using
-    them for new versions.
-  - Drop or repurpose the deprecated fields only after all affected versions
-    have been retired according to the lifecycle in
-    [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md).
-- Avoid destructive operations (`DROP COLUMN`, `DROP TABLE`, type narrowing)
-  that would make it impossible to reconstruct historical versions that are
-  still eligible for rollback.
+Every shape-changing migration evaluates two independent questions:
 
-These rules apply both to service-local schemas and to shared saga tables so
-that rollback and historical analysis remain viable across deployments.
+1. Can an older and newer application binary read or write the database during deployment, rollback, recovery, or another supported compatibility window?
+2. Does retained durable data, including any non-Retired game version, still require the old representation to remain readable or reconstructable?
+
+If either answer is yes, use expand/migrate/contract. Expand introduces a representation compatible with supported readers and writers; migrate backfills and verifies retained data; contract removes the old representation only after binary compatibility, rollback, and every retained-data or game-version dependency has ended under its owning lifecycle and retention policy.
+
+Direct replacement is allowed only when both answers are no and all call sites, tests, migrations, generated SQL access, deployment configuration, and documentation can converge atomically. Pre-v1 or “initial development” status alone does not grant this exception. The qualifying evidence is service- and environment-specific and must be recorded with the change. Retired or unsupported representations need not remain executable forever, but contraction must not outrun a declared obligation.
+
+These gates apply equally to service-local schemas and adopter-local shared migrations. A fixed time window cannot override an actively retained game version or durable-data obligation.
 
 ### Version-Aware Migration Checklist
 
-Before applying destructive or shape-changing migrations in a service that owns
-versioned/template data (for example templates keyed by `(tenantId, versionId)`),
-engineers should follow this checklist once that service has crossed out of the
-initial-bootstrap phase and must preserve existing non-Retired/live data across
-deployments:
+Before applying a destructive or shape-changing migration, the owning service must record the following evidence whenever either compatibility gate may be true:
 
 1. **Enumerate non-Retired versions**
    - Query the Game Design Service’s version metadata (or the service-local
@@ -116,32 +108,18 @@ Services that own versioned templates (such as Game Design, World Management,
 Entity Management, and Asset Storage) should reference this checklist in their
 local docs and treat it as part of their migration review process.
 
-Initial-development exception:
-
-- If a service is still in initial bootstrap and has no preservation requirement
-  for old readers/writers or non-Retired historical versions, it may replace
-  schema and contracts directly in one change, provided all call sites, tests,
-  and docs are updated together.
-- Once a service begins carrying live/version-retention obligations, this
-  document's version-aware rules become authoritative for subsequent
-  destructive migrations.
+Once a service has no active compatibility obligation, it may converge directly only when the objective evidence and atomic-convergence conditions above are recorded; project phase labels do not substitute for that evidence.
 
 ### Cross-Service Identifier Migration
 
-Some schema changes affect identifiers or records that are referenced across multiple services (for example, item templates referenced from world templates, game templates, or procedural generation bindings). These changes must be handled as **design-time workflows**, not as ad-hoc SQL rewrites:
+Classify each identifier migration before changing storage or wire shape:
 
-- Do not repurpose or rename identifiers in-place (`item_template_id`, `room_template_id`, loot-table IDs, script IDs, etc.) while any non-Retired version still references them from another service.
-- Instead, introduce new template rows (with new identifiers) in the owning service and mark the old templates as deprecated at the design layer. Use Game Design Service workflows to migrate references in:
-  - World templates and population bindings (World Management),
-  - Entity templates and loot tables (Entity Management),
-  - Game templates and configuration payloads (Game Design Service),
-  - Script or automation bindings (Automation & Scripting).
-- Coordinate these reference updates under a dedicated migration or Saga that:
-  - Updates all affected cross-service mappings to point at the new identifiers for Draft or upcoming versions; and
-  - Ensures that no non-Retired version or live `gameInstanceId` relies on the old identifiers before they are removed.
-- Only once all versions that reference the old identifiers have been retired, and all cross-service mappings have been updated, may destructive DDL (for example dropping deprecated columns or tables) be applied.
+- Preserve the existing logical identifier when referent, ownership scope, cardinality, and domain meaning are unchanged and only database representation, column name, wire representation, or storage encoding changes. Apply the relevant reader/writer compatibility gates.
+- Allocate a new identifier and create an explicit durable, typed old-to-new mapping when logical identity changes, including material semantic replacement, ownership/scope change, split, or merge. Mappings are idempotent, record type and lineage, and remain while retained versions, durable records, retries, reconciliation, audit, or rollback may reference the old identity. Splits and merges cannot use one ambiguous alias.
+- The authoritative owner of the affected relationship or version graph coordinates the migration. Game Design owns published template and release graphs and validates World, Entity, configuration, asset, and automation references; other identifier families use their own domain authority. Services do not rewrite another owner's records or infer mappings from identifier shape.
+- Published and Active release attestations are immutable. Replacements or explicitly authorized re-attestations create new records and lineage. Launch-critical consumers fail closed on unknown manifest `schemaVersion`; representation-compatible additive evolution may remain within a supported version.
 
-The Game Design Service remains the source of truth for which versions and revisions reference which domain templates; cross-service identifier migrations should be orchestrated from there so migration steps can be validated against version metadata before rollout.
+Cross-service identifier migrations are design-time workflows, not ad-hoc SQL rewrites. The current implementation and proof of a complete durable migration workflow remain incomplete; target conformance must not be inferred from partial remap records or launch gates.
 
 Release-attestation records are part of the same migration surface:
 

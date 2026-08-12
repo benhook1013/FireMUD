@@ -9,11 +9,13 @@ For the full design and invariants, see:
 
 ## Implementation Notes
 
-The incident flows below describe the target operator model. In the current implementation:
+The incident flows below describe the accepted target operator model. In the current implementation:
 
 - Game Session already exposes durable command-status lookup and current-boundary runtime ownership inspection through the control-plane gRPC surface.
 - `ackLevel` = `ACCEPTED_VOLATILE` command records in `RECEIVED`/`ENQUEUED` with no surviving batch/binding already converge to `LOST_BEFORE_STAGING` during startup recovery; `ACCEPTED_DURABLE` records follow their feature-specific durable replay or post-abandon re-drive contract, and inconclusive batch-bound work remains non-terminal/reconciliation-required. See the [canonical command outcome convergence](./system-architecture-tick-execution-flows.md#command-outcome-convergence-required).
 - The full `coordination-maintenance` replay/reset orchestration referenced below is not yet shipped as a complete repo-local CLI/control-plane surface. Every command example naming that tooling is target-state contract text only, not an instruction for current operators, runbooks, Helm hooks, Jobs, or dashboards to invoke it; current operators must not run those commands until the surface is implemented and end-to-end proven. In the target state, `recover` issues the server-side maintenance lock and every subsequent control presents that lock through `--maintenance-lock-token-file <permissioned-token-file>` (or the documented protected FD form), never as a command-line token value.
+
+The accepted recovery decision is [ADR 0085](./decisions/adr-0085-evidence-gated-coordination-replay-and-fenced-reset.md). This runbook owns incident triage and evidence collection only: the recovery controller automatically selects `replay_first` only from coherent durable epoch and batch evidence, selects `reset_first` when evidence is missing or contradictory or replay loses bounded progress, and permits accept-loss only for disposable hints after durable reconciliation. Reset ordering, maintenance operation fencing, and scope escalation remain owned by the reset and operations documents; this runbook must not restate or invent an alternate recovery lifecycle.
 
 Region-scoped coordination key examples use `{tenantRegionTag}`, the canonical opaque tag for `<tenantId, gameInstanceId, regionId>`; instance-scoped automation examples use `{tenantInstanceTag}`, the canonical opaque tag for `<tenantId, gameInstanceId>`. The tag carries the game-instance identity even when the raw identifier is not repeated in the key.
 

@@ -174,6 +174,15 @@ Validation precedence is fixed: first parse every checked queue row and validate
 | [ADR 0076](./adr-0076-failure-class-specific-durable-tick-retries.md) | Accepted | `GR-1.2` | `PO-2.4`, `PO-4.2`, `SF-2.3` | Failure-class-specific durable tick retries |
 | [ADR 0077](./adr-0077-durable-global-effect-fanout-and-lightweight-idle-ticks.md) | Accepted | `GR-1.2` | `GR-2.1`, `AS-1.4`, `SF-1.4`, `PO-4.2` | Durable global-effect fan-out and lightweight idle ticks |
 | [ADR 0078](./adr-0078-digest-bound-workflow-and-step-retry-identities.md) | Accepted | `SF-2.3` | `SF-2.4`, `SF-1.2` | Digest-bound workflow and step retry identities |
+| [ADR 0079](./adr-0079-jooq-and-flyway-as-the-single-sql-persistence-stack.md) | Accepted | `SF-2.1` | `SF-1.5`, `PO-3.1` | jOOQ and Flyway as the single SQL persistence stack |
+| [ADR 0080](./adr-0080-service-owned-schemas-with-adopter-local-shared-migrations.md) | Accepted | `SF-2.1` | `SF-2.4`, `PO-3.1` | Service-owned schemas with adopter-local shared migrations |
+| [ADR 0081](./adr-0081-objective-compatibility-gates-for-database-evolution.md) | Accepted | `SF-2.1` | `AR-3.2`, `PO-3.1` | Objective compatibility gates for database evolution |
+| [ADR 0082](./adr-0082-semantic-boundary-for-cross-service-identifier-migration.md) | Accepted | `SF-2.3` | `SF-2.1`, `AR-1.5`, `AR-3.2` | Semantic boundary for cross-service identifier migration |
+| [ADR 0083](./adr-0083-no-general-event-broker-until-measured-adoption-gates.md) | Accepted | `SF-2.2` | `SF-1.1`, `PO-4.1`, `AS-1.5`, `GR-1.4` | No general event broker until measured adoption gates |
+| [ADR 0084](./adr-0084-evidence-scoped-redis-lua-compatibility.md) | Accepted | `SF-2.2` | `SF-1.5`, `GR-1.3`, `PO-4.4` | Evidence-scoped Redis Lua compatibility |
+| [ADR 0085](./adr-0085-evidence-gated-coordination-replay-and-fenced-reset.md) | Accepted | `SF-2.2` | `PO-4.4`, `PO-3.4`, `GR-1.4` | Evidence-gated coordination replay and fenced reset |
+| [ADR 0086](./adr-0086-owner-validated-class-a-caches-and-presentation-only-class-b.md) | Accepted | `SF-2.2` | `GR-2.3`, `GR-3.2`, `EA-1.2`, `PO-4.1` | Owner-validated Class A caches and presentation-only Class B |
+| [ADR 0087](./adr-0087-isolated-subject-rate-limits-with-explicit-loss-semantics.md) | Accepted | `SF-2.2` | `PO-2.4`, `AA-1.5`, `PO-4.2` | Isolated-subject rate limits with explicit loss semantics |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../../product/capability-taxonomy.md).
 

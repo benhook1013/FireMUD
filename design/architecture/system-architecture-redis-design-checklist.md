@@ -38,6 +38,7 @@ Before applying the detailed checklists below, follow this high‑level workflow
 5. **Align reset and incident runbooks**
    - Confirm that `system-architecture-redis-reset-and-recovery.md` describes safe reset scopes for any affected prefixes.
    - Update or validate the corresponding runbooks in `system-architecture-redis-operations.md` and the Redis incident runbook so operators have a clear path for resets and “accept loss” decisions.
+   - Apply the evidence gate from [ADR 0085](./decisions/adr-0085-evidence-gated-coordination-replay-and-fenced-reset.md): replay-first requires coherent durable epoch/batch evidence and bounded convergence; otherwise choose reset-first, reconcile before accept-loss, and escalate when scope completeness is unproven.
 6. **Wire observability and metrics**
    - Ensure required metrics and alerts for AOF size/growth, the measured unreplicated-write window, prefix key counts, and script outcomes are covered or updated in the [Redis metrics catalog](./system-architecture-redis-metrics-catalog.md).
    - When the change introduces new state-machine fields or outcome codes, ensure the operations docs and metrics catalog name them explicitly (for example `current_tick_state`, `STALE_SESSION_GENERATION`, and stale automation-dispatch outcomes) rather than relying on generic script-failure buckets.
@@ -178,7 +179,8 @@ Use this when adding or changing Lua scripts that operate on coordination or cac
 - [ ] Structured payloads include an explicit `schemaVersion`.
 - [ ] Script:
   - [ ] Treats missing `schemaVersion` as a defined default.
-  - [ ] Supports at least the current and previous schema versions during rollout.
+  - [ ] Supports every caller and stored-payload version evidenced to coexist during the rollout, rollback, recovery, or retained-data window.
+  - [ ] Treats missing `schemaVersion` as legacy only when one unambiguous versionless shape is registered and proved; otherwise it fails without mutation.
   - [ ] Returns an explicit non‑mutating outcome for unknown versions.
 
 ### Testing and Registry

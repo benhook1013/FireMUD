@@ -8,6 +8,8 @@ The canonical cache policy in this file and the reference catalog in the compani
 >
 > - Spring Cloud Gateway’s rate limiting is wired to Cache/Rate-Limit Redis today using the patterns in this document.
 > - Other services reference these cache and aggregate patterns (for example, Entity Management character caches and World Management room caches) as target-state behavior; concrete cache adoption may evolve over time while continuing to follow these rules.
+> - The current `room:*` implementation is still an unversioned TTL-only payload and does not prove the target owner-local Class A scope/version validation or invalidation path. Current readers must use authoritative reads when that proof is unavailable.
+> - Spring Cloud Gateway currently derives rate-limit keys from raw client IP without an evidenced tenant/cardinality profile. Game Session currently has Redis-backed per-session limiting; the target ordinary gameplay limiter remains in-process under ADR 0034.
 >
 > 🔗 Tick locks, session coordination, and Lua-based execution are covered in
 > [System Architecture: Redis](./system-architecture-redis.md). Usage patterns,
@@ -92,12 +94,14 @@ Some derived caches are better understood as a small built-in gameplay view cach
 Some dynamic aggregates will be easier to cache if the authoritative store exposes a version or `lastModified` field per aggregate root. Others are naturally best-effort and can tolerate occasional stale reads under simple TTL-based eviction. To keep designs consistent and reviewable, caches are grouped into two classes:
 
 - **Strongly validated caches (versioned)** – payloads that are validated against a version or `lastModified` value stored in the authoritative system:
+  - Only the service that owns the authoritative aggregate may consume the entry for a correctness-sensitive read. It must prove during that operation that the complete cached scope and payload version or fence match the current authoritative requirement.
+  - The owner may obtain that proof from the authoritative store, an owner-controlled version index with equivalent consistency, or an exact expected version/fence already required by the operation. A version embedded only in the cache payload is not proof of currentness.
   - The owning service (for example Entity Management or World Management) maintains a version counter or timestamp on the aggregate root (such as a container, character effective stats, or a room’s dynamic state row) and increments or updates it whenever the aggregate changes.
   - Redis entries for that aggregate store both version and payload together, typically inside a single serialized object.
   - When fetching, callers can:
-    - Read the current version from the authoritative store or a lighter-weight index.
-    - Compare it with the version in Redis.
-    - Reuse the cached payload if versions match, or recompute and overwrite the cache if they differ.
+    - Read the current version or fence from the authoritative store or an equivalently consistent owner-controlled index.
+    - Compare it with the version/scope in Redis during the same operation.
+    - Reuse the cached payload only when the complete scope and proof match; otherwise recompute from authoritative state or fail closed.
 - Versioning is applied per aggregate root (for example `inventory:<tenantId>:<containerId>`), not per field, and is treated as part of the aggregate’s API contract.
 
 - **Best-effort caches (TTL-only)** – payloads that are inexpensive to recompute or where occasional staleness is acceptable:
@@ -127,11 +131,11 @@ To keep cache behavior predictable across services, each cached aggregate design
     - TTLs act as a safety valve, not the primary correctness mechanism.
 - **Dynamic but correctness-critical aggregates** (Class A caches such as inventories, room occupants, or per-entity effective stats that drive gameplay decisions)
   - **Invalidator of record:** the owning service that persists the authoritative aggregate (for example Entity Management or World Management).
-  - Preferred strategy: **event-driven and/or version-based validation**; TTLs are only a backup.
+  - Preferred strategy: **owner-local authoritative version/fence validation, with event-driven invalidation as a load optimization; TTLs are only a backup.**
     - On writes, the owning service emits change events or updates a version/`lastModified` field.
     - Callers either:
-      - Listen for events and invalidate affected keys, or
-      - Use version-based reads as described above to refresh or reuse cache entries.
+      - Listen for events and invalidate affected keys, and
+      - Use owner-local version/fence proof as described above before reusing cache entries.
     - TTLs may still be set on keys, but **TTL alone is never considered sufficient** for correctness; Class A caches must stay correct even if TTLs were very large.
   - Aggregates that cannot provide events or versions should either:
     - Treat Redis as a pure performance optimization with per-request in-memory caches, or
@@ -170,7 +174,7 @@ This pattern keeps cache correctness bounded to clearly defined aggregates and a
 From a correctness perspective, cache usage falls into two broad classes:
 
 - **Class A – correctness-critical caches** (for example, inventories shown to players, room occupants that drive combat/visibility decisions):
-  - Must use **event-based invalidation and/or version checks** as described above.
+  - Must be consumed only by the owning service with current authoritative version/fence proof as described above. Event invalidation and TTL are supporting mechanisms, not proof.
   - May add TTLs, but **TTL alone is never considered sufficient** for correctness; a Class A cache must remain correct even if TTLs are set very large.
   - Aggregates that cannot provide events or versions should treat Redis as a pure performance optimization (for example, per-request in-memory caching) or avoid caching that aggregate entirely.
 - **Class B – best-effort/performance caches** (for example, analytics-style aggregates, debug views, or non-player-facing summaries):
@@ -179,7 +183,7 @@ From a correctness perspective, cache usage falls into two broad classes:
 
 To avoid noisy-neighbor effects on coordination workloads, cache writers must also enforce **per-value size limits** and avoid unbounded lists or blobs in Redis:
 
-- Cap serialized values to a practical ceiling (for example, roughly 32 KB or two protobuf pages) before writing them to Redis. If an aggregate such as a “current room view” would exceed that size, split it into a set of chunked entries (for example `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>:chunk:<n>`) instead of storing a multi-megabyte blob.
+- Cap serialized values to a practical ceiling (for example, roughly 32 KB or two protobuf pages) before writing them to Redis. If an aggregate such as a current room view would exceed that size, split it into chunked entries under the same exact viewer/session and policy-context binding rather than storing a multi-megabyte blob.
 - CI or static checks should exercise representative payloads to keep them within these limits, and reviewers must explicitly justify any intentional exception.
 - Large or streaming-style responses stay in PostgreSQL/object storage or behind dedicated APIs rather than being replicated wholesale into Redis, even on the Cache/Rate-Limit cluster.
 
@@ -244,11 +248,12 @@ Cache Redis is allowed to be noisy and eviction-driven, but it should still resp
 
 This approach keeps configuration minimal—a single notion of “cache under pressure” plus relative noisy-tenant hints—while giving operators concrete signals to act on when Cache Redis becomes a bottleneck.
 
-Rate limiting keys (for example those used by Spring Cloud Gateway’s `RequestRateLimiter`) should be designed to avoid **hot keys** under heavy load:
+Rate limiting keys (for example those used by Spring Cloud Gateway’s `RequestRateLimiter`) should preserve subject isolation while avoiding **hot keys** under heavy load:
 
-- Per-client or per-token prefixes are preferred over global counters so that no single key receives a disproportionate share of traffic.
-- Define a canonical pattern such as `ratelimit:<tenantId>:<bucket>:<timeWindow>` (for example, `bucket` may be a hash of the client/token plus an optional slice) and publish helper builders so services reuse the same bucketing logic instead of inventing divergent, hotspot-prone schemes.
-- Support more granular sub-bucketing where heads-on credentials are unavoidable (for example `ratelimit:<tenantId>:<bucket>:<timeWindow>:<shard>`) to spread aggregates across multiple keys within the rate-limit Redis cluster.
+- Per-subject prefixes are preferred over global counters. An individual client, credential, token, connection, or account candidate maps to one normalized opaque stable subject hash for the active window; it must not be reduced modulo a common bucket count or split by request-derived shards.
+- Use the canonical pattern `ratelimit:<tenantId>:<subjectHash>:<timeWindow>` and publish helper builders so services reuse the same privacy-preserving one-to-one subject mapping.
+- Deliberately shared coarse signals use a separately named policy scope (for example `ratelimit:global-pressure:<timeWindow>` or a declared source-class bucket). Such buckets are heuristics and cannot alone impose an individual security consequence.
+- The current Game Session `ratelimit:<sessionId>` shape is a legacy implementation, not a member of the target family. Before target shared helpers consume unversioned `ratelimit:*` keys, legacy writers must stop and the maximum legacy TTL must elapse with an empty-key readback; an adopter that cannot prove that drain uses a distinct versioned prefix. Target parsers and scripts reject the legacy arity rather than inferring tenant, subject, or window fields.
 
 Helpers for rate limiting must distinguish between:
 
@@ -264,17 +269,12 @@ Shared helper APIs should make this explicit by providing separate entrypoints (
 To keep rate limiting robust under high cardinality and load, `bucket` values should follow a simple, predictable scheme:
 
 - **Small/self-hosted deployments**
-  - Per-client or per-token buckets (for example `bucket = clientId` or a normalized token ID) are acceptable when the number of active clients is small and overall throughput is modest.
-  - Even in this mode, services should reuse shared helper builders so bucket shapes stay consistent across codebases.
+  - Per-client or per-token buckets use one normalized opaque subject hash per live window. Shared helper builders keep privacy and key shape consistent.
 - **Higher-cardinality or multi-tenant deployments**
-  - Use a **stable hash** of the client/token into a bounded number of buckets per tenant:
-    - Example: `bucket = H(clientId) mod N`, where `N` is a small fixed number (for example 64 or 256) chosen per deployment, not per tenant.
-    - This caps the number of keys per the `(tenantId, timeWindow)` pair while avoiding single-key hotspots.
-  - Introduce `<shard>` only when profiling shows that individual buckets are still too hot:
-    - For example, split each logical bucket into a small number of shards (`0..S-1`) using `ratelimit:<tenantId>:<bucket>:<timeWindow>:<shard>` where `shard = H(requestId) mod S`.
-    - Keep `S` small and fixed so the total key count remains predictable.
+  - Bound isolated subject cardinality with TTLs, active-subject admission limits, per-tenant/deployment memory budgets, and explicit overload behavior. Do not obtain boundedness by mapping unrelated subjects into collision pools.
+  - If a subject key is too hot, scale the Cache/Rate-Limit deployment or use an explicitly declared coarse heuristic alongside the subject bucket; request-derived shards must not multiply allowance or change the subject's identity.
 - **Key count and rotation**
-  - Choose `N` (and optional `S`) so the total number of active `ratelimit:*` keys per tenant across all live `timeWindow` values stays within a comfortable range for the deployment.
+- Choose active-subject and admission limits so the total number of isolated `ratelimit:*` keys per tenant across all live `timeWindow` values stays within a measured range for the deployment.
   - Allow old `timeWindow` keys to expire naturally via TTL; do not attempt to retain historical rate-limit keys in Redis for analytics or debugging.
 
 This approach gives small games straightforward per-client buckets by default while providing a clear, hash-based pattern for larger or noisier workloads without introducing many configuration knobs.
@@ -293,14 +293,15 @@ Cached aggregates in Redis should follow structured, namespaced key patterns to 
 - `character-cache:<tenantId>:<characterId>` – cached character graphs for hot reads.
 - `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>` – cached room-level dynamic state used in correctness-critical world decisions.
 - `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` – cached room snapshots/topology slices used for LOOK/navigation, scoped to a running instance.
-- `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>` – cached rendered or pre-assembled room “view” data serving LOOK or similar commands.
+- `view:room-look:<tenantId>:<gameInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>` – cached rendered or pre-assembled room view data bound to the exact viewer/session and policy context.
 - `chat:city:<tenantId>:<cityId>` – cached short-lived windows of city chat history.
 
 #### Usage Restrictions for `view:room-look:*`
 
-`view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>` is always treated as a **Class B, TTL-only cache** for rendered LOOK-style room views:
+`view:room-look:<tenantId>:<gameInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>` is always treated as a **Class B, TTL-only cache** for rendered LOOK-style room views:
 
 - It is never a correctness source for combat, pathfinding/movement, or visibility/line-of-sight decisions.
+- The key must be bound to the exact viewer/session and policy context. It must not be reused across viewers, sessions, authorization/presentation-policy contexts, or incompatible read-fence contexts.
 - Correctness-critical flows must call World Management and Entity Management APIs (and any Class A caches they own), or use separate, explicitly versioned Class A prefixes registered in this catalog.
 - Helper APIs that expose `view:room-look:*` should be scoped to Game Session’s view pipeline and other presentation-only consumers; Game Logic and similar subsystems should continue to consume authoritative LOOK results via gRPC, not by reading this prefix directly.
 

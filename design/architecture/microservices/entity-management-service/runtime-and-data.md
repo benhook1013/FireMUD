@@ -10,7 +10,7 @@ This document defines Entity Management’s runtime model, persistence ownership
 
 ## Architecture and Design Notes
 
-- Uses JPA for persistence of entity data.
+- Uses the service-owned PostgreSQL schema and the platform `jOOQ + Flyway` persistence direction. Flyway owns schema evolution and generated jOOQ types are the default SQL access path; the narrow PostgreSQL-specific plain-SQL escape hatch requires focused proof and does not create a parallel ORM authority. Current adoption and proof remain implementation work.
 - Exposes gRPC endpoints for other microservices.
 - Caches frequently accessed character data in Redis for quick lookups.
 - Applies optimistic locking to avoid conflicting updates on the same entity.

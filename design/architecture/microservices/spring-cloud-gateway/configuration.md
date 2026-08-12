@@ -36,7 +36,7 @@ For the TCP Proxy -> Gateway WebSocket mTLS hop, the TCP Proxy client identity a
 
 - Spring Cloud Gateway uses Cache/Rate-Limit Redis exclusively for rate limiting and any future gateway-local caches.
 - It connects via `FIREMUD_REDIS_CACHE_HOST` and `FIREMUD_REDIS_CACHE_PORT` as documented in [Redis Connection](../../infrastructure/environment-and-secrets.md#redis-connection) and [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md).
-- Rate-limit buckets and related keys follow the `ratelimit:<tenantId>:<bucket>:<timeWindow>` patterns and hash-based bucketing strategies described in [Rate-Limit Bucket Design](../../system-architecture-redis-cache.md#rate-limit-bucket-design).
+- Target rate-limit buckets and related keys follow the isolated `ratelimit:<tenantId>:<subjectHash>:<timeWindow>` pattern and explicit loss semantics described in [Rate-Limit Bucket Design](../../system-architecture-redis-cache.md#rate-limit-bucket-design). The current raw-IP key derivation remains implementation and privacy/cardinality proof debt.
 - Tenant markers in keys are for isolation and observability only. Limit values and policy decisions remain global and are not derived at Spring Cloud Gateway from tenant identity.
 - These rate-limit structures are best-effort TTL-only counters, not durable correctness state.
 - Spring Cloud Gateway does not read or write gameplay chat caches (`chat:*`) or other service-owned cache prefixes.

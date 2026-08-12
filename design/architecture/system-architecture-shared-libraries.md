@@ -137,14 +137,14 @@ Flyway migrations packaged with `common-saga` are exposed as `classpath:db/migra
 
 ## SQL Persistence Direction
 
-FireMUD’s SQL-backed services are converging on `jOOQ + Flyway` as the canonical persistence stack. Shared-library work in this area should optimize for:
+The complete SQL persistence, schema-ownership, compatibility-gate, and identifier-migration contract is owned by [Database Migrations](./system-architecture-database-migrations.md). This library records only the reusable/adopter-local consequences. FireMUD’s SQL-backed services use `jOOQ + Flyway` as the canonical persistence stack, and shared-library work in this area should optimize for:
 
 - explicit SQL generation and execution;
 - shared transaction and error-translation helpers where the value is truly cross-service;
 - common pagination, filtering, and mapping conventions for control-plane and runtime SQL reads;
 - one schema authority through Flyway rather than service-local ORM interpretations.
 
-Shared libraries should not reintroduce Hibernate/JPA runtime assumptions; the canonical SQL helper surface now targets `jOOQ + Flyway` only.
+Shared libraries should not reintroduce Hibernate/JPA runtime assumptions or a second schema authority; the canonical SQL helper surface now targets `jOOQ + Flyway` only. A PostgreSQL-specific plain-SQL exception remains service-local, narrow, and proof-bearing under the central contract.
 
 The first shared substrate is the `net.firedevops.firemud.jooq-conventions` build path, which generates service-local DSL code directly from Flyway-owned SQL and adds only the minimal shared runtime wiring needed to compile and adopt `DSLContext`. Broader runtime helpers should be added only when multiple migrated services prove the same paging/filter/sort, transaction, or error-translation concern is truly repeated.
 
