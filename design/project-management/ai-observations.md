@@ -42,3 +42,8 @@ Entry format:
   - Context: bounded delegation can fail before work starts when the selected Luna model/tier has no available capacity.
   - Observation: immediately upgrading or silently falling back loses the diagnostic distinction between a transient capacity failure and a genuine fallback.
   - Expected pattern: when capacity blocks the selected Luna model/tier, wait 30–60 seconds and retry that same model/tier once; upgrade only if it remains unavailable. Report the failed model/tier, wait duration or retry count, and selected fallback immediately when fallback starts, and repeat the capacity failure, delayed retry, and fallback in the round handoff.
+
+- `2026-08-13`: Reuse subagent threads narrowly and use sentinels only for single external waits
+  - Context: autonomous orchestration needed both direct continuation of a completed bounded edit and a way to await one external transition without a native watcher.
+  - Observation: reusing a completed subagent thread is appropriate only for direct same-domain continuation; unrelated work needs a fresh descriptive thread. When progress blocks on one external transition, no native watcher exists, and a concurrency slot would otherwise sit idle, a cheap read-only Luna sentinel can wait or poll while the main thread yields; a native wait remains preferred.
+  - Expected pattern: keep continuation scope explicit, start a fresh thread when the domain changes, and use a read-only sentinel only as the fallback for one blocked external transition.

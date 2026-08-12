@@ -81,7 +81,7 @@ Audit records must include at least:
   - A query-composed `commandHandoffDispositions[]` collection whenever emitted command child records exist, including initial handoff-only records before a later execution-time result is known. These target-state child records are not part of the Automation-owned `finalStage` progression and are keyed by the complete Command-Handoff Identity, with the parent Trigger Identity retained for correlation. `outboxWorkItemId` is correlation metadata, not a substitute for the child key.
   - `policyViolations` (optional array, plugin policy rollouts only; see schema below)
 
-Outcome fields must be sufficient to distinguish “DSL evaluated successfully” from “commands were accepted into the tick system”. Do not collapse these into a single `success` signal.
+Outcome fields must be sufficient to distinguish “DSL evaluated successfully” from “commands were durably accepted into the tick system”. Do not collapse these into a single undifferentiated outcome signal.
 
 For output-budget failures, writers must use bounded canonical `finalReason` values rather than free-form strings. Minimum required reasons:
 
@@ -102,7 +102,7 @@ Stages:
 - `ADMISSION` – the resolved handler was accepted/rejected before any DSL evaluation (quotas, reload backpressure, disabled scripts, invalid version, policy enforcement). For event ingress, pre-handler rollback pause remains an ingress-audit decision; timer candidates use the `scheduleCandidateId` candidate-audit rule in the normative timer table.
 - `DSL_EVAL` – the DSL graph was evaluated in the sandbox (validation, loop safety, runtime guards).
 - `WORK_ITEM_PERSIST` – the resulting script work item was persisted durably (for example, into a Postgres outbox) before being indexed into the rebuildable automation queue projection.
-- `TICK_HANDOFF` – the work item was handed off to Game Session and accepted into tick queues (the point at which live `finalOutcome=success` is allowed).
+- `TICK_HANDOFF` – every required child dispatch was durably accepted by Game Session (the point at which `finalOutcome=handoff_accepted` is allowed).
 - `DRY_RUN_RESULT` – a non-committing dry-run/test execution completed after DSL evaluation and returned the would-be commands to the authorized caller without persisting a work item or handing off to tick queues.
 
 Required fields:
@@ -121,8 +121,9 @@ If a structured `stages` array is not used, equivalent per-stage fields must exi
 
 Stage semantics:
 
-- `finalOutcome=success` must imply `finalStage=TICK_HANDOFF` (commands were accepted into tick queues). “DSL evaluated successfully but handoff failed” is not success.
-- Tenant-readiness `onLoad` completion must use `finalStage=DSL_EVAL` and `finalOutcome=readiness_success`; it is not a live gameplay success signal.
+- `finalOutcome=handoff_accepted` must imply `finalStage=TICK_HANDOFF` and durable acceptance of every required child dispatch. It does not imply gameplay application.
+- A valid live handler that intentionally emits no commands uses `finalStage=DSL_EVAL`, `finalOutcome=completed_no_commands`.
+- Tenant-readiness `onLoad` completion must use `finalStage=DSL_EVAL` and `finalOutcome=readiness_success`; a valid live handler emitting no commands uses `finalOutcome=completed_no_commands`; neither is a live gameplay handoff signal.
 - `finalOutcome=dry_run_success` must imply `finalStage=DRY_RUN_RESULT` and `isDryRun=true`. It means only that the non-committing test evaluation completed and returned inspectable would-be commands.
 - Backpressure outcomes like `skipped_reloading` must use `finalStage=ADMISSION`.
 - Post-resolution handler rollback pause backpressure `rollback_paused` must use `finalStage=ADMISSION`; for event ingress, pre-handler rollback pause is recorded only as the event-scope ingress outcome in `script_event_ingress_audit`, while timer candidates use the `scheduleCandidateId` candidate-audit outcome. Evaluated descriptors canceled from `PENDING` or `INDEXED` use `finalStage=WORK_ITEM_PERSIST`, `finalOutcome=canceled`, and the bounded cancellation reason.
@@ -131,32 +132,40 @@ Stage semantics:
 
 ### Per-Command Handoff and Post-Handoff Outcomes (Required When Present)
 
-`script_event_audit` is the canonical Automation-owned lifecycle record through `TICK_HANDOFF`, but it is not the sole post-handoff surface and it must not contain a single disposition for a fan-out trigger. In the target state, `ListScriptHandoffEvents` is the canonical durable query for per-command records: an initial handoff-only child is recorded for every attempted emitted command, and later Game Session acceptance, rejection, or execution-time version-fence results update or extend that command's disposition. A combined trigger read must expose those records as `commandHandoffDispositions[]`, with one element per emitted command keyed by the complete Command-Handoff Identity. Each child retains the parent Trigger Identity, including plugin `bindingId` when applicable; tooling must not rely on metrics alone to correlate the records back to the original trigger.
+`script_event_audit` is authoritative only for the Automation-owned handler pipeline through `TICK_HANDOFF`; it is not the sole post-handoff surface and it must not contain a single disposition for a fan-out trigger. Every emitted command has one durable child dispatch record. In the target state, `ListScriptHandoffEvents` is the canonical durable query for those per-command records: an initial handoff record is retained for every emitted command, and later Game Session acceptance, rejection, or execution results update or extend that command's disposition. A combined trigger read exposes those records as `commandHandoffDispositions[]`, with one element per emitted command keyed by the complete Command-Handoff Identity. Each child retains the parent Trigger Identity, including plugin `bindingId` when applicable; tooling must not rely on metrics alone to correlate the records back to the original trigger.
 
 When a downstream service reports a later handoff or execution result, the target-state command-handoff surface must expose or update a child disposition keyed to the affected complete Command-Handoff Identity, including its `(automationDispatchId, commandOrdinal)` dispatch-group fields, with:
 
 - `automationDispatchId` – the stable dispatch-group identifier shared by the emitted gameplay commands; `commandOrdinal` distinguishes each command under it within the complete command-handoff scope.
 - `commandOrdinal` – the deterministic ordinal of that emitted command within the handler handoff.
-- `outcome` – bounded enum. Minimum required value: `version_fence_dropped`.
+- `gameSessionCommandId` – the Game Session command identity when assigned; it is `null`/absent while the child has not been accepted into Game Session.
+- `handoffOutcome` – the durable handoff result for this child, present after a handoff attempt and independent of later gameplay execution.
+- `executionOutcome` – the authoritative Game Session execution lifecycle result when available; it remains `null`/absent until execution reaches a result or terminal disposition.
+- `gameplayResult` – the terminal gameplay result when available, using the canonical uppercase vocabulary `SUCCESS`, `PARTIAL`, `FAILED`, `TIMEOUT`, or `NOT_APPLIED`; it remains `null`/absent while execution is unresolved.
+- `commandStatusLink` – a link or stable reference to the authoritative Game Session command-status record when `gameSessionCommandId` is assigned; it is `null`/absent before that point.
+- `outcome` – closed target enum: `accepted`, `rejected`, `execution_updated`, or `version_fence_dropped`. `accepted` and `rejected` are handoff dispositions; `execution_updated` points to the separate authoritative `executionOutcome` and `gameplayResult` fields; `version_fence_dropped` records execution-time fencing. Terminality is established only by those separate authoritative fields, not by `outcome` alone.
 - `reason` – bounded reason such as `script_patch_mismatch` or `plugin_version_mismatch`.
 - `recordedAt` – timestamp.
 - `sourceService` – producer of the disposition (for example `game-session`).
+
+`outcome` and `reason` describe the child handoff disposition and remain separate from effect status, `executionOutcome`, and `gameplayResult`. In particular, `outcome=version_fence_dropped` (and its reason) does not by itself prove that gameplay was not applied: leave `executionOutcome` and `gameplayResult` `null` while authoritative application evidence is unresolved. Proven no-mutation maps to `executionOutcome=ABANDONED` and `gameplayResult=NOT_APPLIED`; proven commit maps to `executionOutcome=APPLIED` and the canonical command-result rules. A fence disposition must never fabricate terminalization.
 
 Each returned child retains the parent `outboxWorkItemId` only for correlation and retains the complete applicable Trigger Identity needed for diagnosis, including plugin `bindingId` when applicable; the target-state `(automationDispatchId, commandOrdinal)` fields complete that child identity and must not be treated as globally unique or replaced with the parent `scriptEventId`. A pair shown without the Trigger Identity and scope is only a display suffix, never an identity, uniqueness, or deduplication key.
 
 Rules:
 
-- A command-handoff disposition does **not** replace `finalStage` / `finalOutcome`; those fields remain the Automation-owned handler pipeline result.
-- A handler may therefore show `finalStage=TICK_HANDOFF`, `finalOutcome=success`, while one child command disposition has `outcome=version_fence_dropped` and sibling command dispositions remain successful.
-- When present, UI/query surfaces must return both views together so operators can distinguish “accepted into tick queues” from “later fenced before execution.”
+- Per-dispatch outcomes do **not** replace `finalStage` / `finalOutcome`; those fields remain the Automation-owned handler pipeline result.
+- A handler may therefore show `finalStage=TICK_HANDOFF`, `finalOutcome=handoff_accepted` while one child command is applied and another is abandoned or fenced.
+- A handler-level post-handoff summary is a rebuildable projection containing counts and links. It may report all applied, none applied, partial, or abandoned, but never becomes command-outcome authority.
+- UI/query surfaces must return the pipeline record, derived summary, and dispatch links together so operators can distinguish durable handoff from later gameplay results.
 
-During rollback, operator views must show the handler's `finalStage`/`finalOutcome` beside the `commandHandoffDispositions[]` returned from `ListScriptHandoffEvents`. A successful `TICK_HANDOFF` therefore remains visible even when one or more individual commands later receive `version_fence_dropped`; a child result must never overwrite the handler result or collapse sibling command records.
+During rollback, operator views must show the handler's `finalStage`/`finalOutcome` beside the `commandHandoffDispositions[]` returned from `ListScriptHandoffEvents`. A `TICK_HANDOFF` with `finalOutcome=handoff_accepted` therefore remains visible even when one or more individual commands later receive `version_fence_dropped`; a child result must never overwrite the handler result or collapse sibling command records.
 
-Concrete example. Both child records below use the complete `T123` Trigger Identity (`tenantId=11111111-1111-4111-8111-111111111111`, `gameInstanceId=44444444-4444-4444-8444-444444444444`, `playableStateScope=isolated`, `regionId=R2`, `regionEpoch=14`, `entityId=npc-guard-9`, `scriptId=guard-on-enter`, `eventType=onEnterRegion`, `eventSchemaVersion=1`, `scriptPatchVersion=P22`, `scriptEventId=evt-7f4c`, `isDryRun=false`) plus the command discriminator. `outboxWorkItemId=work-9` is parent correlation only. The `(automationDispatchId, commandOrdinal)` notation in the bullets is a display suffix, not a standalone key.
+Concrete example. Both child records below use the complete `T123` Trigger Identity (`tenantId=11111111-1111-4111-8111-111111111111`, `gameInstanceId=44444444-4444-4444-8444-444444444444`, `playableStateScope=isolated`, `regionId=R2`, `regionEpoch=14`, `entityId=npc-guard-9`, `scriptId=guard-on-enter`, `eventType=onEnterRegion`, `eventSchemaVersion=1`, `scriptPatchVersion=P22`, `scriptEventId=evt-7f4c`, `isDryRun=false`) plus the command discriminator. `automationDispatchId=dispatch-9` identifies the dispatch group, while `outboxWorkItemId=work-9` is parent correlation only. The `(automationDispatchId, commandOrdinal)` notation in the bullets is a display suffix, not a standalone key.
 
-- `script_event_audit` row for Trigger Identity `T123` ends with `finalStage=TICK_HANDOFF`, `finalOutcome=success`.
-- The handler emitted two commands. Later, Game Session rejects only the child ending in `(automationDispatchId=work-9, commandOrdinal=1)` under the same complete command-handoff scope during rollback convergence and appends a child disposition with `outcome=version_fence_dropped`, `reason=script_patch_mismatch`, `sourceService=game-session`, and `recordedAt=...`; the child ending in `(automationDispatchId=work-9, commandOrdinal=0)` remains a separate sibling record.
-- Queries for `T123` must surface the handler row plus both command-handoff records so operators can tell that Automation succeeded and which gameplay command was later fenced.
+- `script_event_audit` row for Trigger Identity `T123` ends with `finalStage=TICK_HANDOFF`, `finalOutcome=handoff_accepted`.
+- The handler emitted two commands. Later, Game Session rejects only the child ending in `(automationDispatchId=dispatch-9, commandOrdinal=1)` under the same complete command-handoff scope during rollback convergence and appends a child disposition with `outcome=version_fence_dropped`, `reason=script_patch_mismatch`, `sourceService=game-session`, and `recordedAt=...`; the child ending in `(automationDispatchId=dispatch-9, commandOrdinal=0)` remains a separate sibling record.
+- Queries for `T123` must surface the handler row, derived summary, and both authoritative command-handoff records so operators can distinguish durable handoff from the gameplay command that was later fenced.
 
 Illustrative record shape:
 
@@ -175,7 +184,7 @@ Illustrative record shape:
   "scriptEventId": "evt-7f4c",
   "isDryRun": false,
   "finalStage": "TICK_HANDOFF",
-  "finalOutcome": "success",
+  "finalOutcome": "handoff_accepted",
   "finalReason": "accepted_into_tick_queue",
   "stages": [
     {
@@ -198,7 +207,7 @@ Illustrative record shape:
     },
     {
       "stage": "TICK_HANDOFF",
-      "outcome": "success",
+      "outcome": "handoff_accepted",
       "reason": "accepted_into_tick_queue",
       "at": "2026-03-19T08:10:01Z"
     }
@@ -217,9 +226,14 @@ Illustrative record shape:
       "scriptEventId": "evt-7f4c",
       "isDryRun": false,
       "commandOrdinal": 0,
-      "automationDispatchId": "work-9",
+      "automationDispatchId": "dispatch-9",
       "outboxWorkItemId": "work-9",
       "playableStateScope": "isolated",
+      "gameSessionCommandId": "gs-cmd-0",
+      "handoffOutcome": "accepted",
+      "executionOutcome": null,
+      "gameplayResult": null,
+      "commandStatusLink": "/commands/gs-cmd-0",
       "outcome": "accepted",
       "reason": "game_session_accepted",
       "sourceService": "game-session",
@@ -238,9 +252,14 @@ Illustrative record shape:
       "scriptEventId": "evt-7f4c",
       "isDryRun": false,
       "commandOrdinal": 1,
-      "automationDispatchId": "work-9",
+      "automationDispatchId": "dispatch-9",
       "outboxWorkItemId": "work-9",
       "playableStateScope": "isolated",
+      "gameSessionCommandId": "gs-cmd-1",
+      "handoffOutcome": "accepted",
+      "executionOutcome": null,
+      "gameplayResult": null,
+      "commandStatusLink": "/commands/gs-cmd-1",
       "outcome": "version_fence_dropped",
       "reason": "script_patch_mismatch",
       "sourceService": "game-session",
@@ -286,7 +305,7 @@ If limits are exceeded, writers must truncate deterministically and set `finalRe
 
 When `policyViolations` is present, `decision` values and final outcomes must align with policy mode:
 
-- If all entries have `decision=REPORT_ONLY`, execution may continue and `finalOutcome` must still represent pipeline result (`success`, `sandbox_error`, `infrastructure_error`, and so on). `finalOutcome=plugin_component_blocked` is not valid in this case.
+- If all entries have `decision=REPORT_ONLY`, execution may continue and `finalOutcome` must still represent the stage-qualified pipeline result (`handoff_accepted`, `completed_no_commands`, `sandbox_error`, `infrastructure_error`, and so on). `finalOutcome=plugin_component_blocked` is not valid in this case.
 - If any entry has `decision=BLOCKED`, admission must stop with `finalStage=ADMISSION` and `finalOutcome=plugin_component_blocked`.
 - The Table 4 plugin-policy metric consequence is emitted in both report-only and enforcing modes so operators can compare rollout behavior before and after enforcement.
 

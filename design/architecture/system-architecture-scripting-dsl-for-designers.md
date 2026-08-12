@@ -19,6 +19,7 @@ For the scripting editor UX and how graphs are created and managed, see:
 ## Table of Contents
 
 - [Audience](#audience)
+- [Implementation Status](#implementation-status)
 - [What the Scripting DSL Is](#what-the-scripting-dsl-is)
 - [Core Concepts for Designers](#core-concepts-for-designers)
 - [Building Scripts in the Visual Editor](#building-scripts-in-the-visual-editor)
@@ -26,6 +27,12 @@ For the scripting editor UX and how graphs are created and managed, see:
 - [Validation, Loop Safety, and Errors](#validation-loop-safety-and-errors)
 - [How Scripts Run Over Time](#how-scripts-run-over-time)
 - [Where to Go for More Detail](#where-to-go-for-more-detail)
+
+---
+
+## Implementation Status
+
+The current runtime provides only bounded per-observation timer catch-up and does not yet prove one durable `resumeWindowId` across repeated observations, leader takeovers, or region-epoch transitions. Unresolved `EVALUATING` work remains fail-closed and active, and the live runtime lacks an `EVALUATED_COMMITTED` descriptor-replay layer. Retry-before-`EVALUATED_COMMITTED` and descriptor recovery without DSL re-entry remain target-state behavior. See [ADR 0072](./decisions/adr-0072-class-specific-timer-durability-and-recovery.md), the [automation and scheduler runtime tracker](../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status), and the [normative timer semantics matrix](./system-architecture-scripting-normative-contract-tables.md#table-3-timer-semantics-matrix).
 
 ---
 
@@ -188,14 +195,17 @@ Key properties:
 - The combination of tick-based scheduling and validation rules ensures that scripts **cannot hot-loop or starve other work**.
 - Determinism and replay semantics are defined in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` and `design/architecture/system-architecture-ticks.md`; as a designer you can assume that given the same configuration and events, your script behaves predictably.
 
-### Timers and Reliability
+### Timers and Reliability (Target State)
 
-Timer-driven handlers such as `onInterval` and `onTimerExpire` are **best-effort, at-most-once** from the engine’s point of view:
+This section is target-state only; current timer and recovery limitations are summarized in [Implementation Status](#implementation-status).
 
-- When a timer becomes due, the scheduler tries to fire it subject to per-script quotas, per-tenant budgets, and cluster ceilings. Under heavy load or when limits are reached, individual firings may be **skipped** and are not automatically replayed later, even if the timer continues to run at its configured cadence.
-- After downtime or leader failover, the scheduler may emit a bounded “catch-up” trigger (at most one synthetic firing per cadence boundary crossed) before resuming normal cadence; this catch-up does not change the at-most-once guarantee for any already-admitted full Trigger Identity.
-- Infrastructure hiccups (for example, Redis or gRPC outages) do not cause the same timer firing to be re-executed; the engine may retry idempotent downstream effects, but it does not re-run the DSL graph for a given full Trigger Identity.
-- As a result, timers should be treated as **hints**, not guaranteed ledgers. Design timer handlers so they can tolerate missed or delayed firings and recompute from current world state instead of assuming that every interval has executed exactly once.
+Recurring and advisory timer handlers such as `onInterval` (or an advisory `onTimerExpire`) are **best-effort** and produce at most one logical durable firing per Trigger Identity. A physical evaluation attempt may retry before its descriptor commit boundary, but it reuses that identity and converges on the same work item rather than creating another logical firing. A correctness-bearing one-shot timer is not best-effort: its intent is durably recorded outside Redis before acknowledgement; physical execution may be at least once and replay-safe, while recovery under the same identity converges to one logical terminal outcome under [ADR 0072](./decisions/adr-0072-class-specific-timer-durability-and-recovery.md).
+
+- Each authored recurring timer declares one recovery policy: `SKIP_MISSED` advances to the next valid future occurrence without firing missed occurrences, while `COALESCE_ONE` permits one bounded synthetic firing for missed time. See the [canonical timer semantics matrix](./system-architecture-scripting-normative-contract-tables.md#table-3-timer-semantics-matrix) for the recovery-class contract.
+- When a recurring or advisory timer becomes due, the scheduler tries to fire it subject to per-script quotas, per-tenant budgets, and cluster ceilings. Under heavy load or when limits are reached, individual firings may be **skipped** and are not automatically replayed later, even if the timer continues to run at its configured cadence.
+- After downtime or leader failover, a recurring `COALESCE_ONE` timer may emit at most one coalesced firing for each complete stable schedule-instance identity in one Automation-owned durable `resumeWindowId` identified by `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, resumeGeneration>`; it never replays one firing per cadence boundary. Same-window retries and takeovers reuse that ID, while a later recovery episode receives a new generation only after the prior window's admitted and cap-excluded outcomes are durable. The global `SCRIPT_TIMER_CATCH_UP_MAX_FIRINGS_PER_RESUME` cap applies across independent schedule instances within that ID, and candidates excluded by that cap are dropped and audited rather than deferred as an unbounded backlog. Recurring `SKIP_MISSED` timers emit no catch-up firing.
+- Infrastructure hiccups (for example, Redis or gRPC outages) do not promise that a recurring or advisory cadence firing will eventually run. Before the `EVALUATED_COMMITTED` descriptor-commit boundary, an admitted evaluation may rerun only under the same full Trigger Identity and must converge on the same durable work-item and child identities. After `EVALUATED_COMMITTED`, recovery replays durable descriptors and never re-enters the DSL; the audit `finalStage` and outcome remain tied to the last confirmed durable stage. Correctness-bearing one-shot timers instead retry or terminalize under their durable intent identity and must not duplicate the effect.
+- As a result, recurring timer callbacks should be treated as **bounded scheduling signals**, not per-cadence ledgers. Design timer handlers so they can tolerate missed or delayed firings and recompute from current world state instead of assuming that every interval has executed exactly once.
 
 Example pattern:
 

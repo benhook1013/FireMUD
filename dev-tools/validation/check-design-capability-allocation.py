@@ -306,6 +306,78 @@ ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/adr-0054-split-spatial-authority-with-causal-read-composition.md": adr_allocation(
         "SF-2", "Accepted", "GR-1", "GR-2", "GR-3", "GR-4", "SF-1"
     ),
+    "design/architecture/decisions/adr-0055-durable-cross-region-effects-with-static-live-topology.md": adr_allocation(
+        "GR-2", "Accepted", "GR-1", "SF-2", "AA-3", "PO-4"
+    ),
+    "design/architecture/decisions/adr-0056-one-hot-path-fan-out-owner.md": adr_allocation(
+        "GR-1", "Accepted", "GR-2", "GR-3", "SF-2", "PO-4"
+    ),
+    "design/architecture/decisions/adr-0057-game-session-owned-reconciliation-with-isolated-workers.md": adr_allocation(
+        "GR-1", "Accepted", "SF-2", "GR-2", "GR-3", "PO-4"
+    ),
+    "design/architecture/decisions/adr-0058-class-specific-redis-loss-outcomes.md": adr_allocation(
+        "SF-2", "Accepted", "PO-3", "GR-1", "PO-4"
+    ),
+    "design/architecture/decisions/adr-0059-causal-floor-cross-service-presentation-reads.md": adr_allocation(
+        "SF-1", "Accepted", "SF-2", "GR-2", "GR-3"
+    ),
+    "design/architecture/decisions/adr-0060-world-owned-ambient-facts-and-logic-owned-consequences.md": adr_allocation(
+        "GR-2", "Accepted", "GR-4", "GR-1", "SF-2", "PO-1"
+    ),
+    "design/architecture/decisions/adr-0061-single-owner-spatial-mutations-across-split-authority.md": adr_allocation(
+        "GR-2", "Accepted", "GR-3", "GR-4", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0062-layered-gameplay-command-delivery-semantics.md": adr_allocation(
+        "SF-1", "Accepted", "SF-2", "GR-1", "AA-2", "PO-2"
+    ),
+    "design/architecture/decisions/adr-0063-durable-per-dispatch-script-handoff.md": adr_allocation(
+        "AS-1", "Accepted", "SF-2", "GR-1", "PO-4"
+    ),
+    "design/architecture/decisions/adr-0064-stage-qualified-script-outcomes.md": adr_allocation(
+        "AS-1", "Accepted", "PO-4", "SF-2", "SF-1"
+    ),
+    "design/architecture/decisions/adr-0065-deterministic-fair-entity-tick-scheduling.md": adr_allocation(
+        "GR-1", "Accepted", "SF-2", "GR-4", "PO-4"
+    ),
+    "design/architecture/decisions/adr-0066-durable-asynchronous-cross-region-result-arbitration.md": adr_allocation(
+        "GR-1", "Accepted", "SF-2", "GR-2", "PO-4"
+    ),
+    "design/architecture/decisions/adr-0067-abandon-old-epoch-work-and-reschedule-with-new-lineage.md": adr_allocation(
+        "GR-1", "Accepted", "SF-2", "GR-2", "AS-1", "PO-4"
+    ),
+    "design/architecture/decisions/adr-0068-evidence-derived-bounded-tick-ledger-recovery.md": adr_allocation(
+        "PO-4", "Accepted", "GR-1", "SF-2", "PO-1", "SF-1"
+    ),
+    "design/architecture/decisions/adr-0069-at-least-once-effect-execution-with-one-logical-terminal-outcome.md": adr_allocation(
+        "GR-1", "Accepted", "SF-2", "PO-4"
+    ),
+    "design/architecture/decisions/adr-0070-bounded-within-tick-visibility-by-semantic-phase.md": adr_allocation(
+        "GR-1", "Accepted", "GR-2", "GR-4", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0071-durable-tick-commit-before-fenced-coordination-cleanup.md": adr_allocation(
+        "GR-1", "Accepted", "SF-2", "PO-4"
+    ),
+    "design/architecture/decisions/adr-0072-class-specific-timer-durability-and-recovery.md": adr_allocation(
+        "AS-1", "Accepted", "GR-1", "GR-2", "SF-1"
+    ),
+    "design/architecture/decisions/adr-0073-evidence-calibrated-tick-budgets-and-lock-ttls.md": adr_allocation(
+        "SF-1", "Accepted", "GR-1", "PO-4", "AR-2"
+    ),
+    "design/architecture/decisions/adr-0074-one-entity-lock-per-redis-script.md": adr_allocation(
+        "GR-1", "Accepted", "SF-2", "GR-4", "PO-4"
+    ),
+    "design/architecture/decisions/adr-0075-depth-cost-and-count-bounds-for-generated-effect-chains.md": adr_allocation(
+        "GR-4", "Accepted", "GR-1", "AS-1", "PO-4"
+    ),
+    "design/architecture/decisions/adr-0076-failure-class-specific-durable-tick-retries.md": adr_allocation(
+        "GR-1", "Accepted", "PO-2", "PO-4", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0077-durable-global-effect-fanout-and-lightweight-idle-ticks.md": adr_allocation(
+        "GR-1", "Accepted", "GR-2", "AS-1", "SF-1", "PO-4"
+    ),
+    "design/architecture/decisions/adr-0078-digest-bound-workflow-and-step-retry-identities.md": adr_allocation(
+        "SF-2", "Accepted", "SF-1"
+    ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
     "README.md": "Service overview",

@@ -54,15 +54,15 @@ Game Session assigns one stable root `EffectId` to the logical effect and persis
 - Participant acknowledgement means the guard and effect-visible domain rows committed together.
 - Player success waits for all declared required participants under ADR 0053.
 
-### Read Composition
+### Read Composition (Superseded by ADR 0059)
 
-FireMUD does not claim a globally atomic historical snapshot across World and Entity databases for presentation reads.
+The presentation-read contract recorded in this subsection is superseded by [ADR 0059](./adr-0059-causal-floor-cross-service-presentation-reads.md), which is canonical for causal-floor requests, served-through proof, component versions, and presentation-read acceptance. This ADR retains the split spatial/effect identity, mutation precondition, and durable targeting/barrier decisions; those mutation rules do not use the presentation causal floor as a mutation precondition.
+
+Presentation reads follow ADR 0059 exclusively; this ADR retains no independent causal-floor, served-through, component-version, or acceptance rules.
+
+### Mutation Preconditions
 
 Correctness-sensitive mutations carry exact expected scope, epoch, location, and relevant aggregate versions or attestations. The owner fails closed when those preconditions are stale.
-
-For presentation composition such as `LOOK`, Game Session allocates a `CausalReadFence` from durable region commit authority before invoking `ResolveLook`; Game Logic propagates that fence unchanged to World and Entity. The fence contains at least `(tenantId, gameInstanceId, regionId, roomInstanceId, regionEpoch, committedTickId)`, with `regionId` sourced from the operational region authority rather than inferred from a World row identifier. Each participant returns the same complete scope, including region and epoch, a scoped comparable `servedThroughTickId`, and an opaque local component version governed by the [Identifier Glossary causal-read contract](../system-architecture-identifier-glossary.md#cross-service-causal-read-fence-identity). Game Logic accepts a response only when the returned scope and epoch match and `servedThroughTickId >= requested committedTickId`; it never compares opaque component versions. The composite snapshot identity remains the requested floor plus the World and Entity opaque component versions; `servedThroughTickId` is validation proof, not a component-version ordering value. It never treats equality of scope strings as temporal equality.
-
-Mixing tenant, game instance, region, room, or epoch, or a response whose `servedThroughTickId` is behind the requested floor, is rejected or retried. A feature requiring exact cross-database read-as-of semantics needs a separate historical snapshot design rather than overloading LOOK. The current proto and proof gaps remain explicit; current scope-marker responses do not establish this target contract.
 
 ## Consequences
 

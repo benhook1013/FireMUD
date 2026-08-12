@@ -7,9 +7,12 @@ This document summarizes the canonical Redis-related metrics, alerting surfaces,
 - `redis_aof_current_size_bytes`
 - `redis_coordination_aof_growth_bytes_total`
 - `redis_coordinator_restart_duration_seconds`
-- `redis_coordination_tail_loss_ms{scope}`
-- `redis_replication_lag_ms{redis_role,nodeId,upstreamNodeId}`
-- `redis_replication_offset_lag_bytes{redis_role,nodeId,upstreamNodeId}`
+- `redis_coordination_tail_loss_ms{scope}` (current compatibility exposure series)
+- `redis_unreplicated_write_window_ms{scope}` (target measured exposure, pre-aggregated as the worst eligible candidate within the bounded deployment/environment/ruleset scope)
+- `redis_unreplicated_write_window_slo_breached{scope}` (target measured-SLO breach series)
+- `redis_coordination_tail_loss_slo_breached{scope}` (current compatibility alias/rule derived from the tick-based exposure budget, not the target measured-SLO breach)
+- `redis_replication_lag_ms{redis_role,scope}`
+- `redis_replication_offset_lag_bytes{redis_role,scope}`
 - `coordination_maintenance_active{scope_type,scope_bucket,operation}`
 - error and outcome metrics for stale lease, stale lock, unsupported epoch, and similar replay/coordination failures
 - size and count metrics for coordination prefixes such as `tick:*`, `timer:*`, `retry:*`, `session:*`, and `tick-executor-lease:*`
@@ -19,6 +22,8 @@ This document summarizes the canonical Redis-related metrics, alerting surfaces,
   - `redis_tick_command_queue_overflow_total`
   - `redis_tick_timers_over_budget_total`
   - `redis_session_payload_oversized_total`
+
+For measured exposure, replication-lag, replication-offset, and dashboard-comparison metrics, bounded `scope` consistently identifies one Coordination Redis deployment together with its canonical environment class and active configuration/ruleset. `redis_unreplicated_write_window_ms{scope}` and the exported replication metrics are pre-aggregated worst-eligible-candidate values within that scope. Because no replica identity label is exported, these metrics do not identify individual candidates or replicas; exact candidate and node IDs remain control-plane and structured-log evidence. The target measured-SLO breach series is distinct from the current `redis_coordination_tail_loss_slo_breached{scope}` compatibility alias/rule, which derives from the tick-based exposure budget.
 
 ## Session Schema and Cleanup Metrics
 
@@ -159,8 +164,8 @@ These are conservative heuristics used to spot unintended coordination misuse ea
 
 Alerts and dashboards should reference the explicit SLOs and budgets defined in [`system-architecture-redis-operations.md`](./system-architecture-redis-operations.md), using clear labels and scope-aware wording so incidents tie back to agreed envelopes rather than vague “Redis is bad” signals.
 
-Replica-promotion dashboards should use `redis_replication_lag_ms` as the canonical decision metric and compare it directly against `tail_loss_budget_ms` for the affected deployment:
+Replica-promotion dashboards should use the pre-aggregated `redis_replication_lag_ms` as the canonical decision metric and compare it directly against the measured `redis_unreplicated_write_window_slo_ms` for the same Coordination Redis deployment, canonical environment class, and active configuration/ruleset. The metric already represents the worst candidate replica in that scope. `scope` is the bounded deployment/environment/ruleset mapping defined above; exact candidate, node, and upstream identities belong in structured logs or control-plane evidence, never in Prometheus labels:
 
-- acceptable band: `redis_replication_lag_ms <= 0.5 * tail_loss_budget_ms`
-- warning band: `0.5 * tail_loss_budget_ms < redis_replication_lag_ms < tail_loss_budget_ms`
-- red line: `redis_replication_lag_ms >= tail_loss_budget_ms`
+- acceptable band: `redis_replication_lag_ms <= 0.5 * redis_unreplicated_write_window_slo_ms`
+- warning band: `0.5 * redis_unreplicated_write_window_slo_ms < redis_replication_lag_ms < redis_unreplicated_write_window_slo_ms`
+- red line: `redis_replication_lag_ms >= redis_unreplicated_write_window_slo_ms`

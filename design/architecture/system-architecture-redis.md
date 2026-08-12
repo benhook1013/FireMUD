@@ -82,10 +82,10 @@ FireMUD uses Redis as a **transient, high‑performance coordination layer**, no
 
 ### Log of Record vs Coordination Buffer
 
-Redis coordination keys form a long-running, tail-loss-bounded **coordination buffer**, not the durable log of record for gameplay effects:
+Redis coordination keys form a long-running, measured-exposure **coordination buffer**, not the durable log of record for gameplay effects:
 
 - Durable history for tick-driven outcomes (for example, “which effects were applied or abandoned for a given `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, tickId, effectKey, targetAggregateType, targetAggregateId)`”) lives in PostgreSQL via the tick effect ledger and domain idempotency tables described in `system-architecture-tick-failures-and-operations.md` and `system-architecture-transactions.md`; `APPLIED`/`ABANDONED` are recorded only when that existing evidence policy permits terminalization, while inconclusive old-epoch work remains reconciliation-required under its original root `EffectId`.
-- Coordination Redis holds volatile structures such as tick queues, `pending` sets, timers, region leases, tick event streams, and scheduler offsets; these structures are expected to be subject to bounded tail-loss and scoped resets as defined in this document and the Redis reset/runbook docs.
+- Coordination Redis holds volatile structures such as tick queues, `pending` sets, timers, region leases, tick event streams, and scheduler offsets; these structures are subject to measured unreplicated-write exposure and scoped resets as defined in this document and the Redis reset/runbook docs.
 - Application and ops designs must not treat AOF contents or Redis key history as the primary log for audits, analytics, or long-term effect replay; those concerns belong in PostgreSQL-backed ledgers and domain stores.
 - Target-state invariant, not a current runtime guarantee: `session:auth:token:<tokenHash>` is a narrow security exception whose exact-token registry record is authoritative for runtime protected admission and per-token revocation. A cryptographically valid JWT is denied and requires fresh authentication when its exact active, permitted registry record is reachable but absent, deleted, expired, or revoked; an unavailable registry is retryable `AUTH_UNAVAILABLE` and never permits reconstruction from the JWT or a local cache. This target runtime authority is distinct from Account's durable issuer, account, tenant, and membership generations; those generations remain Account-owned. Redis and non-Account consumers cannot advance or recreate them. Account may physically delete a record before its natural expiry only after the durable Account `PENDING_LOGOUT`/revocation fence or equivalent tombstone intent has committed; deletion is cleanup and never the revocation proof. For a destructive wipe, Account must durably invalidate old token authority before the wipe; cleanup may delete only old or stale projections, and replacement registry records are registered afterward and remain after registration. During reset recovery, Account alone may rebuild or re-project only its Account-owned `session:auth:token:<tokenHash>` and `session:auth:generation:*` values from durable authority under the documented scope, cutover, and verification gates.
 - Target-state invariant, not a current runtime guarantee: Account issuer, account, tenant, and membership generation projections are an approved global/account exception to ordinary Coordination Redis reset handling. Account durable authority remains the sole writer and source of truth; Redis is only a required projection. Region- and tenant-scoped resets preserve these projections and re-project/verify exact generations, while a cluster reset may discard them only after the Account repair/reset cutover, then must rebuild and verify them before protected admission reopens. The implementation limitations near the top of this document remain controlling until the projection and reset workflows are implemented and proved end to end.
@@ -102,7 +102,7 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
 - **Bootstrap vs stream**
   - The authoritative **baseline** for `(region_epoch, tickId)` comes from the active Game Session owner surface described in [Tick System: Region Authority and Tick Executor](./system-architecture-ticks.md#region-authority-and-tick-executor): target state uses `GetRegionTickStatus` backed by a PostgreSQL `RegionStatus`-style table, while current live uses its instance-scoped ownership/status surface. A reset durably establishes the new epoch baseline before Redis `tick:{tenantRegionTag}:meta` is initialized for normal progress. New consumers and operational tooling must obtain their initial view from the owner surface rather than inferring it from Redis keys.
   - Long‑lived consumers then follow `StreamTickHeartbeats` as the authoritative progression of the timeline after that baseline; if a heartbeat disconnects or an epoch bump is observed, they reconcile using the control API plus durable domain state before resuming.
-  - Redis coordination structures (including `tick:{tenantRegionTag}:*`, timers, retries, tick event streams, and scheduler offsets) are treated purely as volatile buffers; they may be partially lost or reset within the documented tail-loss envelope (`tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)` in `system-architecture-redis-operations.md`) and are never considered the primary source of truth for epoch or tick counters.
+  - Redis coordination structures (including `tick:{tenantRegionTag}:*`, timers, retries, tick event streams, and scheduler offsets) are treated purely as volatile buffers; their measured unreplicated-write exposure is documented as `redis_unreplicated_write_window_slo_ms` in `system-architecture-redis-operations.md` and they are never considered the primary source of truth for epoch or tick counters. Class-specific outcomes remain governed by [ADR 0058](./decisions/adr-0058-class-specific-redis-loss-outcomes.md), including when that SLO is breached.
   - Tick-scoped Redis staging state (for example `tick:{tenantRegionTag}:pending`, effect batches, and other data created for one in-flight tick) and all corresponding PostgreSQL tick ledger rows conceptually belong to exactly one `(region_epoch, tickId)` on this timeline.
   - Region-scoped source structures such as `tick:{tenantRegionTag}:queue:*`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`, `tick-executor-lease:{tenantRegionTag}`, tick event streams, and scheduler offsets are primarily epoch-scoped coordination state:
     - They belong to the current `region_epoch`.
@@ -160,7 +160,7 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
       - On a normal cold start with empty Coordination Redis and no active recovery, the next winning tick executor initializes `tick:{tenantRegionTag}:meta` during hot-path staging from PostgreSQL `RegionStatus` only when `requestedTickId` is the durable first-eligible tick, the caller explicitly proves that the exact environment and deployment are a documented non-reset profile, and the caller presents durable proof that all prior batches, effects, and commands are evidence-qualified terminal or that no unresolved work exists; without any of those guards or that proof, the region remains fenced. Schedulers and operators do not treat missing `meta` as a manual pre‑seeding task. While reset recovery is active, missing metadata keeps the scope fenced and hot-path staging must not create or recreate it until the canonical recovery release in [Redis Reset & Recovery](./system-architecture-redis-reset-and-recovery.md).
       - During reset recovery, the reset owner first establishes the durable new epoch, then initializes and verifies `tick:{tenantRegionTag}:meta` from that same authoritative baseline while the scope remains fenced. Only after that readback and the owner-defined recovery gates complete may the scope be released. The reset lifecycle and release prerequisites remain canonical in [Redis Reset & Recovery](./system-architecture-redis-reset-and-recovery.md#canonical-reset-sequence-boundary); this hub records only the local metadata and stale-key consequences.
       - Treat Redis `pending` contents as an implementation detail of the hot path, not as proof of durable convergence. The durable proof that a tick is safe to move past is explicit terminal `APPLIED` or `ABANDONED` evidence for every required participant in the PostgreSQL ledger or equivalent durable terminal records; reconciliation-backlog presence and `replay_ok` attempt outcomes are insufficient by themselves. An inconclusive old-epoch row remains non-terminal under its original root `EffectId`; it cannot mutate current `tick:{tenantRegionTag}:meta` or block an otherwise evidence-permitted current-epoch terminalization, though it may still block unsafe next-tick progression, reset-scope convergence, or reopening. A terminal outcome for older or historical work remains in the durable ledger/reconciliation records under its original epoch and root effect identity; it must never overwrite or regress the current `tick:{tenantRegionTag}:meta`. Tick metadata updates remain limited to the current epoch's scheduler timeline; only a terminal outcome for that timeline may set `APPLIED` or `ABANDONED`.
-      - Recovery after tail loss or reset does **not** reconstruct old ticks by silently restaging them through normal hot-path scripts. Recovery completes or abandons older work from durable manifests, ledger rows, and reconciliation backlog state only where the evidence policy permits; those historical terminal outcomes remain durable reconciliation state and do not update the current Redis tick metadata. Inconclusive old-epoch work remains non-terminal reconciliation work under its original root `EffectId`; it may prevent newer ticks from staging when that progression is unsafe, but it is not a reason to mutate or regress the current metadata or to withhold an otherwise permitted current-epoch terminalization.
+      - Recovery after coordination loss or reset does **not** reconstruct old ticks by silently restaging them through normal hot-path scripts. Recovery completes or abandons older work from durable manifests, ledger rows, and reconciliation backlog state only where the evidence policy permits; those historical terminal outcomes remain durable reconciliation state and do not update the current Redis tick metadata. Inconclusive old-epoch work remains non-terminal reconciliation work under its original root `EffectId`; it may prevent newer ticks from staging when that progression is unsafe, but it is not a reason to mutate or regress the current metadata or to withhold an otherwise permitted current-epoch terminalization.
 - Redis-local split-brain and reset consequences:
   - `tick-executor-lease:{tenantRegionTag}` stores only the opaque lease token; `region_epoch` is read from the separate `tick:{tenantRegionTag}:meta` view and/or the durable reset contract. Region lease and coordination Lua receives both values separately, compares them before mutation, and follows the canonical result mapping in [Redis Lua Patterns](./system-architecture-redis-lua-patterns.md#canonical-region-lease-and-tick-staging-result-mapping).
   - After a reset, keys carrying an older `region_epoch` are ignored or explicitly cleaned up by reset tooling; Redis does not choose the durable epoch or authorize a new owner.
@@ -170,16 +170,11 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
   - Redis holds **volatile coordination state**: tick queues and locks, timers, session bindings, automation hints, retry metadata, and similar.
   - Losing coordination state within a bounded window must not create irreversible financial effects, cross‑tenant data leaks, or unfixable domain inconsistencies.
 
-- **Tail‑loss envelope**
-  - Coordination Redis is configured with AOF and sized so that **only a small tail** of recent coordination state per `<tenantId, gameInstanceId, regionId>` may be lost during failover or restart. In production‑like environments, the canonical envelope is:
-    - `tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)` (see `system-architecture-redis-operations.md`).
-  - Designs must tolerate the loss of a few ticks’ worth of:
-    - Commands, staged effects, timers, and retry markers, and
-    - Session liveness hints and other advisory metadata.
-  - In terms of the coordination timeline:
-    - A normal failover or bounded tail‑loss event may drop or replay the last `N` ticks on the timeline for a `<tenantId, gameInstanceId, regionId>`, where `N` corresponds to the configured tail‑loss SLOs in `system-architecture-redis-operations.md` (computed from `tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)`).
-    - Tick effect ledger behavior and domain idempotency rules (see `system-architecture-tick-failures-and-operations.md`) must guarantee that those dropped/replayed ticks converge to a final state where each `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, tickId, effectKey, targetAggregateType, targetAggregateId)` is either durably `APPLIED` or durably `ABANDONED` when the evidence policy permits terminalization. Inconclusive old-epoch work remains reconciliation-required under its original root `EffectId` rather than being hidden by bulk terminalization.
-  - Flows that **cannot** tolerate this tail‑loss (for example, real‑money purchases, cross‑tenant transfers, or unique external side effects) must use durable domain mechanisms and may only use Redis for optional coordination.
+- **Measured coordination-write exposure and class-specific outcomes**
+  - In production-like and other non-ephemeral profiles, Coordination Redis is configured with AOF and measured replication/failover evidence. An explicitly ephemeral single-node coordination stack may omit AOF and opts out of the measured exposure/replay guarantees; it must remain reset-tolerant and must not be used to claim those SLOs. `redis_unreplicated_write_window_slo_ms` is an environment exposure target, not a product RPO or permission to lose every write made during that window; `ticks_exposed = ceil(window_ms / tick_interval_ms)` is diagnostic only.
+  - Accepted commands, staged effects/retries, correctness-bearing timers, sessions/leases/hints, and premium/financial/external operations follow the distinct durable outcomes in ADR 0058. Tick ledgers and domain guards drive correctness-bearing effects to `APPLIED` (with `REPLAY_NOOP` only as an outcome/reason) or evidence-qualified `ABANDONED`; inconclusive work remains nonterminal and reconciliation-required rather than being silently lost or duplicated.
+  - A breach increases durable reconstruction, explicit terminalization, or operator-reconciliation scope and reports affected backlog counts. It never weakens financial, security, isolation, or no-resurrection invariants.
+  - Flows that cannot tolerate Redis loss (for example, real-money purchases, cross-tenant transfers, or unique external side effects) use durable domain mechanisms and may use Redis only for optional coordination.
 
 - **Idempotent replay and monotonic guards**
   - Tick and session scripts are designed so that:
@@ -193,7 +188,7 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
 
 - **Session binding**
   - Session keys in Redis bind player connections and tick participation to authenticated platform identities. They do not own actor cooldown state.
-  - Session binding is monotonic: once a session is rebound or terminated, old bindings are not resurrected, even under replay or tail‑loss.
+  - Session binding is monotonic: once a session is rebound or terminated, old bindings are not resurrected, even under replay or measured coordination loss.
 - Session keys are **not** the authoritative runtime record for region-local gameplay participation. To preserve shard locality in Redis Cluster:
   - `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` remains the authoritative record for connection identity, reconnect eligibility, auth/session CAS fields, and desired gameplay attachment generation.
   - Region-local gameplay attachment is authoritative under the region-scoped key family `tick:{tenantRegionTag}:session-binding:<entityId>`, owned by Game Session and mutated only by region-lease scripts.
@@ -207,13 +202,13 @@ The **Redis Design Checklist** (`system-architecture-redis-design-checklist.md`)
 From an application perspective:
 
 - Coordination Redis is expected to be **highly available** within the limits of the chosen profile (for example, `production_clustered`).
-- Tail-loss is bounded to a **small window** per `<tenantId, gameInstanceId, regionId>`; losing more than this window is treated as an incident and investigated using the metrics and alerts defined in `system-architecture-redis-operations.md`.
+- `redis_unreplicated_write_window_slo_ms` is defined at the Coordination Redis deployment, environment, and active configuration/ruleset scope. Tenant, game, and region are diagnostic dimensions in control-plane and structured-log evidence for affected work, not independent SLO values.
 - Lua scripts and domain idempotency guarantees ensure that replay and partial loss of coordination keys do not:
   - Double-apply critical effects.
   - Violate cross-tenant isolation.
   - Break financial or security invariants.
 
-Operational details (failover behavior, AOF expectations, and tail-loss observability) are expanded in `system-architecture-redis-operations.md`. Reset scope, session policy, derived-index behavior, Account authority handling, metadata gating, and recovery release consequences are canonical in [Redis Reset & Recovery](./system-architecture-redis-reset-and-recovery.md); this hub retains only the local Redis key and authority consequences.
+Operational details (failover behavior, AOF expectations, and unreplicated-write-window observability) are expanded in `system-architecture-redis-operations.md`. Reset scope, session policy, derived-index behavior, Account authority handling, metadata gating, and recovery release consequences are canonical in [Redis Reset & Recovery](./system-architecture-redis-reset-and-recovery.md); this hub retains only the local Redis key and authority consequences.
 
 ---
 
@@ -484,22 +479,22 @@ Gateway connect-token replay state is a narrow security-critical exception to th
 
 ## Redis Profiles
 
-Redis deployments approximate one of a small set of **profiles**. These profiles describe the expected persistence, restart behavior, and SLO assumptions for Coordination Redis:
+Redis deployments approximate one of a small set of **profiles**. These named profiles are non-ephemeral and describe the expected persistence, restart behavior, and SLO assumptions for Coordination Redis; only an explicitly labelled ephemeral single-node stack may omit AOF.
 
 - **`dev_local`**
   - Used for individual developers and lightweight local stacks.
   - AOF enabled on Coordination Redis, primarily for debugging and replay during development.
-  - Tail‑loss SLOs are relaxed, but invariants and key naming rules still apply.
+  - Measured coordination-write SLOs are relaxed, but invariants and key naming rules still apply.
 
 - **`hobby_self_hosted`**
   - For small/self‑hosted player‑facing deployments.
   - Coordination Redis runs with AOF enabled and memory sizing tuned so restarts typically complete within **30–60 seconds**.
-  - Tail‑loss envelopes and replay guarantees are expected to match production‑like behavior for a single tenant.
+  - Measured exposure and replay guarantees are expected to match production‑like behavior for a single tenant.
 
 - **`production_clustered`**
   - For multi‑tenant or higher scale environments.
   - Coordination Redis runs as a cluster or carefully sized single‑node deployment with AOF, predictable restart times, and shard sizing aligned with tick workloads.
-  - Tail‑loss SLOs, availability SLOs, and incident playbooks are evaluated against this profile.
+  - Measured coordination-write SLOs, availability SLOs, and incident playbooks are evaluated against this profile.
 
 Environments (local, CI, staging, production) are mapped to these profiles and their concrete settings in **Redis Usage & Profiles** (`system-architecture-redis-usage-and-profiles.md`).
 
@@ -519,12 +514,12 @@ Redis is used primarily for non‑authoritative, transient data. The target-stat
 
 Implications:
 
-- Losing ordinary coordination keys within the tail‑loss envelope must behave like lost/reordered messages or delayed timers, not permanent data corruption. In the target state, losing an exact-token registry record fails closed for that token's protected runtime admission; it does not advance or replace Account's durable generations.
+- Losing ordinary coordination keys within the measured exposure must behave like lost/reordered messages or delayed timers, not permanent data corruption. In the target state, losing an exact-token registry record fails closed for that token's protected runtime admission; it does not advance or replace Account's durable generations.
 - Designs must **never** put the only record of a critical effect (for example, a currency transfer) exclusively in Redis.
 - Every new use of Redis must explicitly state:
   - Which role it targets (Coordination vs Cache/Rate‑Limit).
   - Whether it is reset‑tolerant, reset‑sensitive, or reset‑forbidden.
-  - How it behaves under tail‑loss and during coordination resets.
+  - How it behaves under measured coordination-write exposure and during coordination resets.
 
 The **Redis Usage & Profiles** and **Redis Cache & Rate Limiting** docs expand on role‑specific expectations, eviction behavior, and cache correctness classes.
 
@@ -589,7 +584,7 @@ Key principles:
     - Cache/rate-limit prefixes belong in the Cache/Rate-Limit Key Catalog in `system-architecture-redis-cache.md`, including their correctness class and reset tolerance.
   - For each new or changed prefix, designs must record:
     - Role (Coordination vs Cache/Rate‑Limit).
-    - Tail‑loss and reset behavior (reset‑tolerant, reset‑sensitive, or reset‑forbidden).
+    - Measured coordination-write exposure and reset behavior (reset‑tolerant, reset‑sensitive, or reset‑forbidden).
     - Expected owners and usage patterns, and links to the relevant service README sections.
 
 The **Redis Cheat Sheet** maintains a representative prefix → role/owner mapping. The **Redis Design Checklist** includes concrete checks to run before adding or changing any prefix.
@@ -603,7 +598,7 @@ When designing or reviewing coordination flows, use this shard-local checklist:
 - Callers always construct keys via shared key helpers (for example, builders in `firemud-common`) so `{tenantRegionTag}`, `{tenantInstanceTag}`, `{tenantGameplayTag}`, `{issuerIndexLayoutTag}`, prefixes, and slots remain consistent; scripts and callers must not hand-roll key strings with embedded hostnames, region names, or ad-hoc hash tags.
 - CI and the Lua Script Registry:
   - Reject registry entries that claim shard-local multi-key semantics but declare keys that cannot share a hash tag.
-  - Reject coordination scripts that reference cache/rate-limit prefixes or omit required reset/tail-loss metadata.
+  - Reject coordination scripts that reference cache/rate-limit prefixes or omit required reset and work-class loss-outcome metadata.
 
 If a proposed coordination pattern cannot satisfy this checklist, it should be treated as an architectural change and captured first in design docs (Redis + tick) before any implementation work proceeds.
 
@@ -644,8 +639,8 @@ Redis features and assumptions in FireMUD must work across both single‑instanc
 
 | Topology | Coordination Usage | Cache/Rate‑Limit Usage | Notes |
 | --- | --- | --- | --- |
-| Single‑node with AOF (coordination) | **Supported.** All coordination prefixes (`tick:*`, `timer:*`, `retry:*`, `session:game:*`, `session:auth:token:*`, `session:auth:generation:*`, `tick-executor-lease:*`, etc.) and shard‑local Lua patterns apply. Tail‑loss envelopes and AOF replay guarantees assume this profile or better. | **Supported** on a separate Cache/Rate‑Limit deployment (distinct process or container). | Recommended baseline for `dev_local` and `hobby_self_hosted` profiles. |
-| Single‑node without AOF (ephemeral coordination) | **Supported only for explicitly ephemeral stacks** (preview/CI) that opt out of tail‑loss SLOs and replay guarantees. Coordination keys are disposable and must be reset‑tolerant. | **Supported** on a separate Cache/Rate‑Limit deployment; cache behavior is unchanged. | Not appropriate for environments where tick replay, tail‑loss SLOs, or long‑lived coordination logs are required. |
+| Single‑node with AOF (coordination) | **Supported.** All coordination prefixes (`tick:*`, `timer:*`, `retry:*`, `session:game:*`, `session:auth:token:*`, `session:auth:generation:*`, `tick-executor-lease:*`, etc.) and shard‑local Lua patterns apply. Measured unreplicated-write exposure and AOF replay guarantees assume this profile or better. | **Supported** on a separate Cache/Rate‑Limit deployment (distinct process or container). | Recommended baseline for `dev_local` and `hobby_self_hosted` profiles. |
+| Single‑node without AOF (ephemeral coordination) | **Supported only for explicitly ephemeral stacks** (preview/CI) that opt out of measured unreplicated-write SLOs and replay guarantees. Coordination keys are disposable and must be reset‑tolerant. | **Supported** on a separate Cache/Rate‑Limit deployment; cache behavior is unchanged. | Not appropriate for environments where tick replay, measured loss-window SLOs, or long‑lived coordination logs are required. |
 | Redis Cluster (coordination) | **Supported** provided all coordination Lua scripts obey shard‑local rules using `{tenantRegionTag}` for region/tick flows and `{tenantGameplayTag}` for session-only gameplay flows. Multi‑key coordination scripts must only touch keys that share one hash tag and slot. | **Supported** for cache/rate‑limit workloads; rate‑limit prefixes (`ratelimit:*`) are treated as single‑key operations without cross‑slot atomicity. | Cluster deployment requires strict adherence to hash‑tag and slotting rules described in [Key Naming and Shard Discipline](#key-naming-and-shard-discipline). |
 
 In all topologies:
@@ -667,7 +662,7 @@ Redis designs in FireMUD assume several invariants that are defined and enforced
   - Ordinary handoff retains the epoch while replacing the durable fence; for a reset, the reset owner establishes the durable new epoch, initializes and verifies local metadata while recovery remains fenced, and releases the scope only after the owner-defined gates complete, while old-epoch keys remain stale and are ignored or cleaned according to [Redis Reset & Recovery](./system-architecture-redis-reset-and-recovery.md#canonical-reset-sequence-boundary).
 - **Idempotent domain effects**
   - Domain-level effects (damage application, currency transfers, quest progress, etc.) are recorded via idempotent identifiers or transaction rows in PostgreSQL (see `system-architecture-transactions.md`).
-  - Coordination keys such as `pending` entries and retries rely on these idempotency guards: re-running ticks or retries must not double-apply domain effects even if Redis state is replayed or partially lost within the tail-loss envelope (`tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)` in `system-architecture-redis-operations.md`).
+  - Coordination keys such as `pending` entries and retries rely on these idempotency guards: re-running ticks or retries must not double-apply or silently lose logical effects even if Redis state is replayed, partially lost, or exceeds the measured unreplicated-write-window SLO.
 - **Transactional boundaries**
   - Services that participate in ticks and coordination flows encapsulate their durable writes in transactions with clear boundaries and conflict detection (for example, optimistic locking or explicit version checks).
   - Redis designs may assume that “commit vs abandon/cleanup” is visible in domain state and must not introduce coordination patterns that require peeking into in-flight, uncommitted work.

@@ -57,35 +57,37 @@ The canonical `tenantRegionTag` used in coordination keys is an opaque encoding 
 
 The main tick document contains the detailed rules and Redis key shapes behind each of these points.
 
-### Fairness Under Tail-Loss and Resets
+### Fairness Under Coordination Exposure and Resets
 
-Lane fairness and the “one root actor action per eligible entity per tick” rule apply to steady-state execution within a stable `region_epoch`. Around the coordination tail-loss window and explicit resets:
+Lane fairness and the “one root actor action per eligible entity per tick” rule apply to steady-state execution within a stable `region_epoch`. Around measured coordination exposure and explicit resets:
 
-- Redis tail-loss and scoped coordination resets may cause some actions near the tail of the timeline to be dropped, replayed, or slightly re-ordered.
+- Redis coordination loss and scoped resets may cause some actions near the end of the coordination timeline to be delayed, dropped, replayed, or slightly re-ordered; `ticks_exposed` is diagnostic only.
 - In these cases, the system prioritizes convergence of each concrete ledger/guard/storage projection `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, tickId, effectKey, targetAggregateType, targetAggregateId)` to durably `APPLIED` or `ABANDONED` when the evidence policy permits terminalization, while retaining its root `EffectId` and participant guard contract, over strict per-entity fairness across the reset boundary. Inconclusive old-epoch work remains reconciliation-required under the [Inconclusive Old-Epoch Reconciliation Policy](./system-architecture-tick-failures-and-operations.md#inconclusive-old-epoch-reconciliation-policy).
-- Designers should treat fairness guarantees as strong within a healthy epoch and best-effort across failures and resets; if a feature requires stronger guarantees around resets, that requirement must be called out explicitly in its design and validated against the Redis tail-loss SLOs.
+- Designers should treat fairness guarantees as strong within a healthy epoch and best-effort across failures and resets; if a feature requires stronger guarantees around resets, that requirement must be called out explicitly and validated against the measured unreplicated-write-window SLO and ADR 0058 outcome class.
 
 Conceptually, domain services treat Redis locks and leases as **opaque tick-engine concerns**: handlers receive the root `EffectId`, typed operation, target aggregate, immutable request digest, and their own idempotency state. Ledger/guard/storage adapters may additionally expose the concrete tick projection `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, tickId, effectKey, targetAggregateType, targetAggregateId)` for scope and ordering. Handlers never read `tick:{tenantRegionTag}:lock:<entityId>` or `tick-executor-lease:{tenantRegionTag}` to make application-level decisions, nor do they depend on Cache/Rate-Limit Redis keys (for example `inventory:*`, `view:*`, `ratelimit:*`) for correctness or ordering. Cache usage, when present, is encapsulated inside domain services and affects only latency, not the tick engine’s notion of “what happened” or “in which order”.
 
-- **Target-state automation identity:** For script-generated commands, `effectKey` must incorporate the command-level `(automationDispatchId, commandOrdinal)`; `scriptEventId` alone cannot distinguish fan-out commands.
+- **Target-state automation identity:** Script-generated child dispatch persists the complete Command-Handoff Identity separately from the effect ledger/storage projection. The child identity is the complete source/target runtime scope plus `(automationDispatchId, commandOrdinal)`, as defined by the [normative Command-Handoff Identity table](./system-architecture-scripting-normative-contract-tables.md#command-handoff-identity-target-state). The complete applicable parent Trigger Identity, including `bindingId` when applicable, and `outboxWorkItemId` are retained for correlation only and are excluded from child uniqueness, deduplication, and replay selection. `scriptEventId` alone cannot distinguish fan-out commands. `effectKey` may encode the child pair only as deterministic descriptor/correlation metadata and scheduler tie-break metadata. It never replaces the root `EffectId`, typed operation, exact target aggregate, immutable request digest, sealed participant/manifest context, or digest-conflict enforcement.
 - **Current-live fallback:** The Game Session handoff does not yet carry `commandOrdinal` or the full Trigger Identity. `TickStagingService` currently derives `effectKey` from `commandId`, falling back to a hash of command text plus the staging slot when no command id is available. This fallback is not the target-state automation identity and must not be documented as though `(automationDispatchId, commandOrdinal)` were enforced live.
 
-### Tail-Loss and Tick Replay Window
+### Coordination Exposure and Tick Replay Window
 
-Redis coordination state is subject to a bounded tail-loss envelope (see `system-architecture-redis.md` and `system-architecture-redis-operations.md`). From the tick system’s perspective:
+Redis coordination state has an environment-measured unreplicated-write exposure (see `system-architecture-redis.md` and `system-architecture-redis-operations.md`). The exposure is infrastructure evidence, not a product RPO and not permission to silently lose a number of ticks:
 
-- A normal failover or restart may drop or replay the last `N` ticks for a `<tenantId, gameInstanceId, regionId>`, where the loss window is bounded by the canonical Redis SLO formula:
-  - `tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)` (see `system-architecture-redis-operations.md`).
-- Tick-driven designs must tolerate:
-  - Some commands and timers near the tail of the timeline being lost, re-ordered slightly, or replayed.
-  - Region leases being briefly lost and re-acquired under the same or a new `region_epoch`.
+- `redis_unreplicated_write_window_slo_ms` is established from measured AOF, replication, promotion, and failover evidence. `ticks_exposed = ceil(window_ms / tick_interval_ms)` is diagnostic only.
+- Tick-driven designs must tolerate coordination loss, delay, duplication, and replay while applying the ADR 0058 class-specific outcome matrix:
+  - accepted commands retain durable command truth or explicitly terminalize as not applied;
+  - staged effects, retries, and correctness-bearing timers use durable intent and evidence-backed replay or terminalization;
+  - session, lease, cache, and wake-up loss may affect latency or require reauthentication but cannot erase canonical state; and
+  - premium, financial, cross-tenant, and unique external effects use durable owner/outbox boundaries.
+- Region leases may be briefly lost and re-acquired under the same or a new `region_epoch`; a breached SLO expands reconstruction, terminalization, and operator-reconciliation scope rather than weakening those outcomes.
 
-## Tick Tail-Loss Contract
+## Tick Coordination Exposure Contract
 
-The tick system and Redis tail-loss SLOs combine into a simple contract:
+The tick system and the Redis-measured exposure SLO combine into a simple contract:
 
 - For the complete expected concrete participant-projection set for each root effect, including each `(tenantId, gameInstanceId, playableStateScope, regionId, region_epoch, tickId, effectKey, targetAggregateType, targetAggregateId)` projection linked to its root `EffectId` and guard contract, every expected projection must eventually have exactly one **terminal** outcome in PostgreSQL (`APPLIED` or `ABANDONED`) when the existing evidence policy permits terminalization. Reconciliation must reject missing, extra, partial, or conflicting projections rather than treating one root row as sufficient, even if:
-  - The last few ticks for that region are dropped or replayed within the tail-loss envelope, or
+  - Coordination writes near the measured exposure window are dropped, delayed, or replayed, or
   - Executors crash and re-acquire leases under the same `region_epoch`.
 - Any work that cannot be safely replayed after Redis loss or tick re-execution must be:
   - Guarded with idempotency checks that detect and short-circuit replays, or
@@ -93,7 +95,7 @@ The tick system and Redis tail-loss SLOs combine into a simple contract:
 
 Players may observe brief rollbacks or duplicated feedback around failover boundaries, but they must never experience permanent double-application of critical effects or silent corruption of authoritative state.
 
-Redis tail-loss thresholds are defined in `system-architecture-redis-operations.md` under Redis availability and safety guarantees. This section captures only the conceptual relationship between those budgets and the tick invariants they are meant to uphold.
+Redis exposure thresholds are defined in `system-architecture-redis-operations.md` under Redis availability and safety guarantees. This section captures only the conceptual relationship between that infrastructure evidence and the tick invariants it is meant to uphold.
 
 ### Isolation Within a Tick
 
@@ -101,32 +103,20 @@ Per-tick isolation is defined explicitly so replay and fairness remain determini
 
 - Actions may only see staged state from the **current** tick for their `<tenantId, gameInstanceId, regionId>`.
 - Changes from other tick regions or from **future** ticks in the same region are invisible while a tick is in progress.
-- Changes staged earlier in the same tick are composable: later actions in that tick may observe them when computing their own outcomes.
+- Changes staged earlier in the same tick are composable only where the semantic phase permits it: confirmed start-passive and inbound outcomes may feed root actor resolution, and a generated effect may observe its own parent's confirmed result and deterministic child ordinals. Root actor resolution does not observe mutations from other root actor actions, or their generated effects, in the same tick; those cross-actor consequences become visible in the next tick under [ADR 0070](./decisions/adr-0070-bounded-within-tick-visibility-by-semantic-phase.md).
 - When required state is missing or inconsistent, the action must fail and retry under the normal retry/backoff rules rather than speculatively mixing cross-tick or cross-region reads.
 
 These rules ensure clean, replayable ticks and keep visual or scripting shortcuts from leaking inconsistent state across ticks.
 
 ## Locking and Multi-Entity Commands (Conceptual)
 
-Distributed locking in the tick system is designed to avoid deadlocks and keep Lua scripts small and predictable:
+Every Redis tick Lua invocation acquires at most one `tick:{tenantRegionTag}:lock:<entityId>`. Piecemeal acquisition across invocations and any multi-entity-lock whitelist are prohibited. A script fails closed when its declared key set or operation would require more than one entity lock. This is the hard initial rule from [ADR 0074](./decisions/adr-0074-one-entity-lock-per-redis-script.md).
 
-- **Default: one entity lock per script**
-  - Tick Lua scripts are written, by default, to acquire at most one `tick:{tenantRegionTag}:lock:<entityId>` per invocation.
-  - Multi-entity commands decompose into per-entity legs keyed by the same region-scoped timeline `(region_epoch, tickId)` plus effect identifiers; cross-entity consistency is enforced at the PostgreSQL layer via idempotency guards and coordinator records rather than by holding multiple Redis locks at once.
-- **Registry-backed lock and lease management only**
-  - Tick and lease keys such as `tick:{tenantRegionTag}:lock:<entityId>` and `tick-executor-lease:{tenantRegionTag}` are created, renewed, and released exclusively via Lua scripts registered in the shared Lua Script Registry.
-  - Ad-hoc Redis commands (for example `SET NX PX` or direct deletes) must not be used to manipulate these coordination keys; all flows go through the registry helpers so lock tokens and lease epochs are validated and updated consistently across services.
-- **Strict limits on multi-lock scripts**
-  - Commands that truly cannot be decomposed and must lock multiple entities inside a single script must:
-    - Acquire locks in a global, deterministic order (for example, sort all `entityId` values and acquire in ascending order).
-    - Operate entirely within a single `<tenantId, gameInstanceId, regionId>`; cross-region multi-lock scripts are not allowed.
-  - If any required lock cannot be acquired, the script immediately releases all previously acquired locks and returns a contention result; no partial logical effects are applied for that command.
-- **Registry and CI enforcement (see Redis docs)**
-  - The Lua Script Registry records, per script, a declared `max_entity_locks` value (default `1`) and enforces a small hard cap for multi-lock scripts.
-  - Only an explicit whitelist of scripts may set `max_entity_locks > 1`; adding a new multi-lock script is treated as an architectural change and must update the whitelist and documentation.
-  - CI fails builds when a script attempts to use more entity-lock keys than declared or sets `max_entity_locks > 1` without being on the whitelist.
+Tick and lease keys are created, renewed, and released only through registered Lua helpers. Redis locks are coordination optimizations, not gameplay transactions: they do not replace the region lease, durable executor fence, exact owner preconditions, durable idempotency guards, or command outcome reconciliation.
 
-These rules keep deadlock scenarios rare, move complex coordination into transactional domain services, and make it clear when a feature is relying on exceptional multi-lock behavior.
+Multi-entity commands use one owning PostgreSQL transaction when the invariant is co-located. Split-authority commands use exact aggregate/scope/epoch/version/holder/location preconditions, stable effect guards, decomposed durable effect legs, bounded reconciliation, or a reservation/saga workflow. Trade, grapple, group movement, and multi-target combat therefore remain supported without multi-lock Lua.
+
+The registry and focused proof must reject scripts declaring or receiving more than one entity-lock key and prove stale lease/lock rejection, expiry cleanup, fence rejection, and absence of multi-lock call sequences. A future bounded multi-lock facility requires a new ADR with a dependency/wave model and atomicity, TTL, failure, replay, and observability proof.
 
 ## Timers and Time Scaling (Conceptual)
 
@@ -150,25 +140,19 @@ Durations may be scaled dynamically:
 
 ## Bounded Effect Chaining
 
-Tick-driven effects may enqueue follow-up actions (for example, explosions spawning secondary hits, traps triggering additional effects, or scripted chains). To avoid unbounded recursion and re-entrancy:
+Generated effects are bounded by a shared bootstrap depth ceiling (`8`), deterministic root-chain count and cost budgets, and a deterministic per-target cap. Platform hard ceilings bound every setting; operators and authored features may lower them but may not raise them. Each child records immutable parent/root identity, `depth = parent.depth + 1`, and a digest-covered deterministic child ordinal.
 
-- Each action carries a `tickChainDepth` that increments whenever the action spawns follow-up work.
-- A configuration value such as `MAX_TICK_CHAIN_DEPTH` (default 8) defines the maximum allowed chain depth.
-- When the chain depth limit is exceeded, the new action is not enqueued; prior committed effects remain in place, and a warning is logged so designers can tune or fix the offending behavior.
-
-This invariant ensures that even highly scripted encounters remain bounded and observable under the tick model.
+Admission evaluates all limits deterministically. Only the child that would exceed a limit is suppressed; committed parents and earlier children are not rolled back. Every authored child is classified as required or optional so suppression derives truthful `SUCCESS`, `PARTIAL`, or `FAILED` outcomes. Durable suppression evidence records root/parent identity, feature/script/version, child ordinal, limit reason and actual/configured values, classification, and resulting player outcome. Metrics use bounded reason/depth/cost/classification dimensions; raw identities remain audit data. See [ADR 0075](./decisions/adr-0075-depth-cost-and-count-bounds-for-generated-effect-chains.md).
 
 ## Tick Budget, TTLs, and Region Health (Conceptual)
 
 Two related configuration concepts control how long tick work is allowed to run and how long leases/locks are held:
 
 - `tick_interval_ms` – the configured target interval between ticks for a region.
-- `tick_budget_ms` – the soft execution budget for a tick (how long the tick engine is allowed to hold locks and perform work). FireMUD uses a shared, canonical derivation:
-  - `tick_budget_ms = tick_interval_ms * 0.8`
-- `lock_ttl_ms` – the TTL used for per-entity locks (for example `tick:{tenantRegionTag}:lock:<entityId>`), derived from the budget using a bounded multiplier:
-  - `lock_ttl_ms = clamp(tick_budget_ms * 8, 500, 5_000)`
+- `tick_budget_ms` – the soft execution budget for a tick. The shared bootstrap default starts from `tick_interval_ms * 0.8`; the canonical resolver rounds to the nearest integer millisecond with exact halves rounded upward and validates a positive integer before deriving lock TTL.
+- `lock_ttl_ms` – the TTL used for per-entity locks. The shared bootstrap derivation starts from the resolved `tick_budget_ms * 8` and applies the same deterministic positive-integer rounding rule. `tick_lock_ttl_ms` is the effective regional `lock_ttl_ms` health metric. Numeric minimum and maximum bounds remain pending an owning settings decision.
 
-These formulas are implemented once in shared tick/Redis helpers and consumed by Game Session and participating services; individual services must not define their own alternative lock/budget formulas. The defaults are chosen to give generous headroom for GC pauses and hiccups without requiring per-environment tuning; in most deployments, operators primarily adjust `tick_interval_ms`.
+These formulas are shared bootstrap defaults only. Production values remain explicitly pending evidence from p95/p99 execution, RPC latency/errors, runtime pauses, cleanup lag, takeover/recovery objectives, representative load, and fault injection. One resolver owns the defaults, operator safety settings, validation, and provenance; numeric minimum and maximum bounds remain pending the owning settings decision, and services may not define private derivations. Cadence, execution budget, and lock lifetime are separate health dimensions. See [ADR 0073](./decisions/adr-0073-evidence-calibrated-tick-budgets-and-lock-ttls.md).
 
 The only allowed exception is an explicit **solo-tick budget mode** for commands marked `requiresSoloTick: true`:
 
@@ -222,12 +206,12 @@ Downstream behavior for stalled regions (rejecting new commands, marking instanc
 
 ## Retry and Backoff Invariants
 
-Lock contention and transient failures are handled by a bounded retry and backoff policy that preserves fairness:
+Retry behavior is bounded and failure-class-specific while preserving fairness:
 
-- Each rescheduled item carries its lane, stable action/effect identity, bounded retry counter, and a `next_eligible_tick_id` value; these are eligibility/attempt metadata separate from the original participant ledger projection and guard identity. Retries are delayed using an exponential backoff in ticks, for example `nextTick = currentTick + min(2^retryCount, MAX_BACKOFF_TICKS)`.
+- Each rescheduled item carries its lane, stable action/effect identity, bounded retry counter, and a `next_eligible_tick_id` value; these are eligibility/attempt metadata separate from the original participant ledger projection and guard identity. `next_eligible_tick_id` gates eligibility only and never replaces the original `due_tick_id`; once eligible, a retry preserves `due_tick_id` and re-enters the ADR 0065 ordering tuple. Lock-contention retries use capped exponential backoff in ticks, for example `nextTick = currentTick + min(2^retryCount, MAX_BACKOFF_TICKS)`. Dependency outages, ambiguous dispatch, stale preconditions, and persistent or unclassified failures use their distinct shedding, reconciliation, re-resolution, or escalation/quarantine policy under [ADR 0076](./decisions/adr-0076-failure-class-specific-durable-tick-retries.md), not that contention formula.
 - Actor-action retries compete in the actor-action lane and preserve the original action identity; passive/effect retries remain passive and never create a new same-tick root actor action. Retries are scheduled **no earlier than a future tick**; the executor never spins inside a single tick waiting for locks. A fresh root is not created for these ordinary retries. Only a post-abandon re-drive, after terminal `ABANDONED` and source-claim terminalization, may allocate a later coordinate and fresh root with durable lineage.
 - After a bounded number of failed attempts (for example `MAX_RETRIES`), the command is surfaced as retry-budget exhausted and escalated, with player-visible diagnostics and metrics/logs capturing the contention; retry exhaustion alone never authorizes `ABANDONED` or another permanent terminal failure. Terminalization still requires applicable durable evidence, while inconclusive work remains reconciliation-required until that evidence exists.
-- Accepted TICK-12 fairness remains per entity within the same contention-retry/source queue: items retain FIFO order across retries and tick boundaries. Cross-source precedence, including whether that queue-local FIFO is applied before or after priority/due ordering, remains pending TICK-09. Passive/effect ordering and cross-entity fairness are bounded by their lane budgets and normal tick scheduling plus the backoff rules.
+- Retries retain their original lane, priority, `entity_enqueue_seq`, source kind, and stable command/effect identity. When eligible, they re-enter the persisted fair scheduler; they do not enter a retry-private FIFO or gain priority by failing. Within an entity, the canonical ordering is `(priority, due_tick_id, entity_enqueue_seq, source_kind, commandId_or_effectKey)`. Across entities, persisted rotating/deficit scheduling advances only with the durable selected batch and provides eventual capacity to permanently eligible non-best-effort work within a healthy epoch. See [ADR 0065](./decisions/adr-0065-deterministic-fair-entity-tick-scheduling.md) and [ADR 0076](./decisions/adr-0076-failure-class-specific-durable-tick-retries.md).
 - Metrics such as `tick_conflict_hotspot_detected_total` and `tick_retry_queue_depth` surface regions where contention is persistent so operators can adjust region layout, tick budgets, or feature design.
 
 These invariants ensure that contention is handled predictably: retries remain bounded, hot entities cannot monopolize the loop indefinitely, and operators have clear signals when configuration or design changes are required.
@@ -237,7 +221,7 @@ At the configuration level:
 - Lua staging scripts enforce hard per-tick caps on how many commands or events move from queues into `pending`, using keys such as:
   - `game.tick-max-commands`
   - `automation.tick-max-events`
-- These caps exist so no single player or script can monopolize either lane, even if it enqueues many actions or effects; excess work spills into subsequent ticks according to the lane budgets, backoff, and persisted ordering inputs, with exact relative ordering pending TICK-09.
+  - These caps exist so no single player or script can monopolize either lane, even if it enqueues many actions or effects; excess work spills into subsequent ticks according to the lane budgets, backoff, and the persisted ordering tuple.
 
 Runtime health is also expressed via ratios such as `tick_execution_time_ms_p95` or `tick_execution_time_ms_p99` over `tick_lock_ttl_ms`:
 
@@ -257,11 +241,13 @@ Tick work is scoped to **regions** so that:
 Two additional behaviors complete the mental model:
 
 - **Global or multi-region effects use fan-out**:
-  - World-wide or multi-region events are implemented by Game Session injecting commands into each affected region and forcing a tick there.
-  - This ensures the effect is applied even if a region would otherwise be idle; the work still runs under that region’s normal lease, locks, and fairness rules.
+  - Game Session creates one durable parent identity, freezes the affected region set and topology generation at acceptance, and creates idempotent durable child/injection rows for every selected region before publishing wake hints.
+  - A bounded global outstanding-work cap and deterministic fair per-region admission provide backpressure. Child work enters the ordinary target-region inbound-effect path and remains subject to lease, fence, epoch, lane, budget, and idempotency rules; a wake hint never creates gameplay authority.
+  - A paused or stalled region is not bypassed by a force-tick hint. Parent reconciliation records waiting, partial injection, and feature-declared terminal outcomes.
 - **Idle regions still advance time via lightweight ticks**:
   - Idle/background behavior does not create a second slower canonical tick cadence inside the same live `region_epoch`.
-  - Regions continue to use the configured `tick_interval_ms` timeline for timer ordering and `tickId` advancement; “background” means reduced work and wake-up pressure when there are no due commands or timers, not a different epoch-local clock.
+  - A truly empty cadence boundary commits one lightweight durable fenced watermark/heartbeat and advances exactly one canonical `tickId` without domain RPCs, entity locks, Redis `pending`, or effect-batch creation. Tick/game time continues while the region is healthy and freezes only in canonical `PAUSED` or `STALLED` state.
+  - Physical empty-boundary advancement remains the initial model. Sleep or fast-forward ranges require a separate decision proving due-work completeness, pause accounting, deterministic materialization/replay, wake-loss safety, and consumer migration.
   - Any true cadence change for an idle region still requires the same explicit epoch bump and timer re-derivation rules described above.
 
 The underlying Redis key layout and shard-locality rules for these behaviors are documented in the Redis architecture; this section captures the conceptual guarantees for designers and implementers.

@@ -9,7 +9,7 @@ TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
 | `GAME_TICK_DURATION_MS` | Tick cadence (`tick_interval_ms`): target interval between ticks for a region | `1000` |
-| `GAME_TICK_BUDGET_MS` | Tick work budget (`tick_budget_ms`): soft max work/lock-hold time per tick; must be <= about `0.8 x GAME_TICK_DURATION_MS` | Derived |
+| `GAME_TICK_BUDGET_MS` | Tick work budget (`tick_budget_ms`): soft execution budget for one tick, not the lock TTL; the shared bootstrap derives about `0.8 x GAME_TICK_DURATION_MS`, while `lock_ttl_ms` is resolved and calibrated separately under [ADR 0073](../../decisions/adr-0073-evidence-calibrated-tick-budgets-and-lock-ttls.md) | Derived |
 | `GAME_SOLO_TICK_BUDGET_MS` | Execution budget for isolated solo ticks | `500` |
 | `GAME_TICK_MAX_COMMANDS` | Max commands staged from the queue each tick | `50` |
 | `FIREMUD_SERVICES_GAME_LOGIC_SERVICE` | gRPC endpoint (`host:port`) for Game Logic Service | *(none)* |
