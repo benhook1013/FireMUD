@@ -90,8 +90,8 @@ When deciding **what** to scale, prefer signals tied to the tick model and Redis
   - Treat any `tick_interval_ms` change as a topology-level/runtime-contract change for the affected live `regionEpoch`, not as a harmless tuning knob. If cadence changes would alter timer ordering normalization, perform them with an epoch bump and timer re-derivation as required by the tick invariants.
   - Example: moving a live region from `100ms` cadence to `200ms` cadence requires pause, epoch bump, timer `due_tick_id` re-derivation, and resume on the new epoch; it is not an in-place tuning-only change.
 - Tail-loss envelopes:
-  - Monitor tail-loss metrics such as `redis_coordination_tail_loss_ms{scope}` and related Redis tail-loss SLO metrics from `system-architecture-redis-operations.md`.
-  - If coordination tail-loss regularly exceeds the measured `redis_unreplicated_write_window_slo_ms`, prioritize scaling or tuning **Coordination Redis** (hardware, AOF configuration, or shard layout) before adding more tick producers.
+  - Monitor measured Coordination Redis unreplicated-write exposure against `redis_unreplicated_write_window_slo_ms`; use the [Redis metrics catalog](./system-architecture-redis-metrics-catalog.md) for metric definitions and [Redis operations](./system-architecture-redis-operations.md) for operational response/SLO procedures.
+  - If measured unreplicated-write exposure regularly exceeds `redis_unreplicated_write_window_slo_ms`, prioritize scaling or tuning **Coordination Redis** (hardware, AOF configuration, or shard layout) before adding more tick producers.
 - Cross-region backlog:
   - Use `remote_followups_due_total`, `remote_followups_drain_lag_ms`, and `remote_followups_backlog_over_budget_total` from `system-architecture-tick-execution-flows.md` to decide whether target regions are draining remote work fast enough.
   - Use Game Session runtime ownership/control-plane reads for region-specific backlog diagnosis; these Prometheus series are aggregate process signals and must not regain raw tenant/game-instance/region labels.
@@ -113,8 +113,8 @@ The exact safe limits for a deployment depend on hardware and tuning, but the fo
   - Aim for `tick:{tenantRegionTag}:pending` to represent at most **one in-flight tick** plus a small buffer of staged work; thousands of uncommitted effects for a single region should be treated as an anomaly and investigated.
   - Keep `timer:{tenantRegionTag}` and `retry:{tenantRegionTag}` counts per region within the “tens of thousands” envelope from the Redis operations doc; sustained higher values usually indicate that timers or retries are being used as data stores rather than scheduling hints.
 - **Redis tail-loss envelope**
-  - Size Coordination Redis so that measured `redis_coordination_tail_loss_ms` remains within `redis_unreplicated_write_window_slo_ms` under expected peak load.
-  - If tail-loss regularly exceeds that envelope after scaling application services, prioritize Coordination Redis capacity (CPU, memory, AOF layout) or region density before adding more tick producers.
+  - Size Coordination Redis so that measured unreplicated-write exposure remains within `redis_unreplicated_write_window_slo_ms` under expected peak load.
+  - If measured unreplicated-write exposure regularly exceeds that envelope after scaling application services, prioritize Coordination Redis capacity (CPU, memory, AOF layout) or region density before adding more tick producers.
 
 ## Capacity Model (Required Inputs)
 

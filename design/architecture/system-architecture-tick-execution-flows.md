@@ -155,10 +155,11 @@ operations docs should link here instead of restating partial mappings in prose.
 | Pure local success with all required effects durably applied or replay-confirmed | `APPLIED` | `SUCCESS` | none |
 | Batch-bound local or same-region failure proven to have no required mutation | `ABANDONED` | `FAILED` | failure code/message when applicable |
 | Cross-region command family with a predeclared permitted partial terminal subset, and all required work resolved | `APPLIED` | `PARTIAL` | failure code/message for the permitted failed leg when applicable |
-| Cross-region origin-coordinator timeout selected by serialized arbitration before any durably admitted remote terminal result, success or failure, with unresolved target uncertainty retained durably | `ABANDONED` | `TIMEOUT` | operational timeout reason plus retained uncertainty evidence |
 | `ACCEPTED_VOLATILE` `RECEIVED`/`ENQUEUED` command lost before staging during reset/coordination-loss reconcile, with no surviving batch | `LOST_BEFORE_STAGING` | `NOT_APPLIED` | failure code/message for the reconcile cause |
 | `ACCEPTED_VOLATILE` `RECEIVED`/`ENQUEUED` command purged before `BOUND_TO_BATCH`, with no surviving batch | `LOST_BEFORE_STAGING` | `NOT_APPLIED` | `failureCode=ROLLBACK_PURGED`, required `failureMessage` from ingress `reason` |
 | Operator rollback purge after `BOUND_TO_BATCH`, only where purge is permitted and evidence proves no required mutation | `ABANDONED` | `NOT_APPLIED` | `failureCode=ROLLBACK_PURGED`, required `failureMessage` from ingress `reason` |
+
+Serialized coordinator `REMOTE_TIMEOUT_ABANDONED` is terminal only for the coordinator lifecycle/arbitration. If target application remains uncertain, the command remains `executionOutcome = PENDING`/reconciliation-required, `gameplayResult` remains null, and required effects and source claims remain nonterminal until authoritative evidence resolves them. `TIMEOUT` or `ABANDONED` may be a command terminal only where evidence proves that no required mutation succeeded and the command family permits that terminal combination under ADR 0053/0066.
 
 For operator rollback purge, the ingress request `reason` is required and non-blank. The durable command projection and `GetGameplayCommandStatus` response must retain and return the same structured terminal reason as `failureCode=ROLLBACK_PURGED` and `failureMessage=<the required ingress reason>`. `PURGED` is the operator action/legacy label, not a competing `executionOutcome` value. The pre-bind `LOST_BEFORE_STAGING` mapping applies only to an `ACCEPTED_VOLATILE` `RECEIVED`/`ENQUEUED` command with no surviving batch; an `ACCEPTED_DURABLE` command follows its feature-specific replay/re-drive contract. Purge may terminalize source-queued work and an explicitly purgeable batch-bound retry only when the existing evidence policy permits it; it must not rewrite work that a concurrent drain has claimed, work whose application is inconclusive, or work that has reached an applied terminal state.
 
@@ -263,7 +264,7 @@ The lane is explicit metadata, not an inferred property of the source kind: acto
 - `source_kind`:
   - Fixed, low-cardinality source classification (`command`, `retry`, `timer`, `remote_followup`, `generated_effect`) and the fourth tuple component.
 - `source_item_id`:
-  - Stable source item id before effect generation, or the stable root `EffectId` for `generated_effect`; it is preserved by replay and failover. For the final tuple, the owner-provided `commandId_or_effectKey` is the final tie-break component.
+  - Stable source item id before effect generation, or the recorded deterministic child `EffectId` for `generated_effect`; it is preserved by replay and failover. For the final tuple, the owner-provided `commandId_or_effectKey` is the final tie-break component.
 - `entityId`:
   - Stable entity identity used to select the per-entity queue and fair cross-entity scheduler; it is not a private within-entity tie-breaker.
 - `commandId` / `effectKey`:
@@ -313,9 +314,9 @@ Conceptually, tick commit proceeds through these phases:
      - explicit semantic `phase`; ordering and comparisons are phase-local or phase-aware
      - bounded `cost_class` declared by the work source and consumed by the applicable lane budget
      - `source_kind` (`command`, `timer`, `retry`, `remote_followup`, `generated_effect`)
-     - `source_item_id` (or the stable root `EffectId` for `generated_effect`)
+     - `source_item_id` (or the recorded deterministic child `EffectId` for `generated_effect`)
      - `entityId`
-     - explicitly named persisted ordering inputs for the selected item: phase, lane, bounded cost class, policy-defined `priority`, normalized `due_tick_id`, entity-local `entity_enqueue_seq`, `source_kind`, stable source identity, and owning-contract `commandId`/`effectKey` where required. Within an entity, the canonical tuple is `(priority, due_tick_id, entity_enqueue_seq, source_kind, commandId_or_effectKey)`; across entities, persisted rotating/deficit scheduler state and cost accounting are part of the manifest-bound selection.
+     - explicitly named persisted ordering inputs for the selected item: phase, lane, bounded cost class, policy-defined `priority`, normalized `due_tick_id`, entity-local `entity_enqueue_seq`, `source_kind`, stable source identity, and owning-contract `commandId`/`effectKey` where required. Within an entity, the canonical tuple is `(priority, due_tick_id, entity_enqueue_seq, source_kind, commandId_or_effectKey)`; across entities, persisted rotating/deficit scheduler state and cost accounting are part of the manifest-bound selection. The historical final tuple label `commandId_or_effectKey` is one normalized, persisted, source-specific stable identity slot: `command` uses `commandId`, `timer` uses the timer member ID, `retry` uses the persisted retry member/effect identity required by its owning contract, `remote_followup` uses the durable follow-up row ID, and `generated_effect` uses its recorded deterministic child `EffectId` under the immutable parent/root identity and child ordinal contract; the selected manifest retains this exact mapping.
      - source-claim/removal state indicating whether the source entry still resides in Redis/PostgreSQL source structures or has been durably claimed elsewhere
    - Source-specific minimum manifest fields:
      - `command`:
@@ -465,7 +466,7 @@ To avoid ambiguity around timeouts and late replies, every cross-region command 
 1. `PENDING_REMOTE` – origin leg has created durable follow-up(s) and is waiting for target outcome until a defined deadline.
 2. `REMOTE_APPLIED` – target reported terminal success for the leg.
 3. `REMOTE_ABANDONED` – target reported terminal failure (`ABANDONED`) for the leg.
-4. `REMOTE_TIMEOUT_ABANDONED` – the origin coordinator's serialized arbitration chose timeout as the terminal origin outcome. The coordinator records the operational reason and any unresolved remote uncertainty; timeout does not claim that the target never mutated.
+4. `REMOTE_TIMEOUT_ABANDONED` – the origin coordinator's serialized arbitration chose timeout as the terminal origin outcome. This is terminal only for coordinator lifecycle/arbitration; if target application remains uncertain, the command remains `executionOutcome = PENDING`/reconciliation-required, `gameplayResult` remains null, and required effects and source claims remain nonterminal until authoritative evidence resolves them. The coordinator records the operational reason and any unresolved remote uncertainty; timeout does not claim that the target never mutated.
 5. `LATE_RESULT_IGNORED` or `LATE_RESULT_RECONCILED` – a separately recorded late-result classification when a remote success/failure arrives after immutable origin terminalization; it never reopens or rewrites that outcome.
 
 Required policy defaults:

@@ -73,6 +73,8 @@ else:
                   else resumeTick + intervalTicks - remainder
 ```
 
+During a version transition, due state may be carried forward only when `scheduleDefinitionId`, resolved `playableStateScope`, and `scheduleSemanticsHash` match. The replacement version-owned schedule row must be created or confirmed before the prior row is retired, as one atomic durable reconciliation or a resumable idempotent operation keyed by `controlPlaneRequestId`.
+
 This preserved-schedule calculation maintains cadence and permits an occurrence exactly on the resume boundary. Reload or rollback preservation is distinct from downtime catch-up: preservation chooses the next valid due point for the retained schedule, while downtime recovery separately applies the declared `SKIP_MISSED` or `COALESCE_ONE` policy under a durable resume-window identity.
 
 ## Consequences

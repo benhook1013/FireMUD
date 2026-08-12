@@ -121,11 +121,11 @@ The following Redis-focused incident flows build on the general recovery steps a
 ### Coordination AOF Tail-Loss SLO Breach
 
 1. **Detect**
-   - Tail-loss indicators such as `redis_coordination_tail_loss_ms` regularly exceed the measured `redis_unreplicated_write_window_slo_ms` from [Redis Operations & Migrations](./system-architecture-redis-operations.md#redis-slos--budgets) for one or more `<tenantId, gameInstanceId, regionId>` shards.
-   - Region health shows sustained `DEGRADED` or `STALLED` state for those shards.
+   - Measured-exposure indicators such as `redis_coordination_tail_loss_ms{scope}` regularly exceed `redis_unreplicated_write_window_slo_ms` for the same Coordination Redis deployment, environment, and active configuration/ruleset scope defined by [Redis Operations & Migrations](./system-architecture-redis-operations.md#redis-slos--budgets).
+   - Control-plane and structured-log evidence identifies the affected `<tenantId, gameInstanceId, regionId>` shards, whose region health may show sustained `DEGRADED` or `STALLED` state; those shard identities are diagnostic dimensions, not independent SLO values.
 2. **Decide**
    - For short-lived degradations where gameplay impact is minimal, investigate disk/replication performance, but keep serving traffic.
-   - For sustained violations or `STALLED` regions, treat this as a **tick SLO breach** for the affected `<tenantId, gameInstanceId, regionId>` shards and choose exactly one recovery mode first:
+   - For sustained violations or `STALLED` regions, treat this as a **coordination SLO breach** for the deployment/environment/ruleset scope, identify the affected `<tenantId, gameInstanceId, regionId>` shards from control-plane and structured-log evidence, and choose exactly one recovery mode first:
      - `replay-first`
        - Use when the region is still on one coherent `regionEpoch`, there is no evidence of mixed-epoch state, no duplicate durable batches, and surviving coordination residue can still be correlated to the durable batch/ledger timeline.
        - Goal: preserve as much in-epoch work as possible by driving lingering `SCHEDULED` rows to `APPLIED` or `ABANDONED` without bumping `regionEpoch`, only where durable evidence permits; inconclusive old-epoch rows remain reconciliation-required.
@@ -150,7 +150,7 @@ The following Redis-focused incident flows build on the general recovery steps a
    2. If the chosen mode is `reset_first`:
       - Execute the [Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence) for the same scope.
       - Keep only the incident-specific choices local to this runbook: scope selection, whether replay-first was exhausted first, whether gameplay sessions are preserved, and what evidence justified escalation.
-   3. Verify region health returns to `RUNNING` or bounded `DEGRADED` and `redis_coordination_tail_loss_ms` drops back into the SLO envelope after the chosen recovery mode completes. If replay cannot complete before `RESUME_AUTHORIZED`, the operation remains paused and quarantined until reset escalation or audited `release-lock`. A failure after `RESUME_AUTHORIZED` is reconciled only through the same operation's internal release worker; `release-lock` is prohibited.
+   3. Verify region health returns to `RUNNING` or bounded `DEGRADED` and measured exposure, including `redis_coordination_tail_loss_ms{scope}`, returns within `redis_unreplicated_write_window_slo_ms` for the same deployment/environment/ruleset scope after the chosen recovery mode completes. If replay cannot complete before `RESUME_AUTHORIZED`, the operation remains paused and quarantined until reset escalation or audited `release-lock`. A failure after `RESUME_AUTHORIZED` is reconciled only through the same operation's internal release worker; `release-lock` is prohibited.
 
 Alerts based on `redis_coordination_tail_loss_ms` should follow the conventions in `design/observability/grafana/redis-alerts-snippets.md` so they carry `owner` and `runbook` annotations that point back to this section.
 

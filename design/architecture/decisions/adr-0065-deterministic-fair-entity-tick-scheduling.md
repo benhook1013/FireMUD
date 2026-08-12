@@ -49,6 +49,8 @@ Within one entity's eligible queue, work uses persisted deterministic ordering:
 
 `entity_enqueue_seq` is monotonic within the entity's current region epoch and assigned by the owning Game Session admission/scheduling path. Same-tick derived children use the persisted parent order plus deterministic child ordinals rather than completion timing. New sources map into this tuple and do not introduce private tie-breakers.
 
+The historical final tuple label `commandId_or_effectKey` is one normalized, persisted, source-specific stable identity slot: `command` uses `commandId`; `timer` uses the timer member ID; `retry` uses the persisted retry member/effect identity required by its owning contract; `remote_followup` uses the durable follow-up row ID; and `generated_effect` uses its recorded deterministic child `EffectId`, derived under the immutable parent/root identity and child ordinal contract. The selected manifest retains this exact source-to-slot mapping for each item; this does not introduce a second tuple or schema field.
+
 Across eligible entities, each lane uses persisted deterministic rotating/deficit scheduling. The scheduler accounts for declared work cost, advances only with the durable selected batch, and ensures a permanently eligible entity eventually receives capacity within a healthy epoch. Non-best-effort priority classes declare bounded aging or `maxDeferralTicks`; work explicitly classified as best effort follows its declared delay/drop policy.
 
 Source-specific quotas may bound intake inside a lane, but source kind does not create a competing scheduler or allow timer, retry, automation, or remote work to bypass the lane rules.

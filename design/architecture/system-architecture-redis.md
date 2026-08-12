@@ -202,7 +202,7 @@ The **Redis Design Checklist** (`system-architecture-redis-design-checklist.md`)
 From an application perspective:
 
 - Coordination Redis is expected to be **highly available** within the limits of the chosen profile (for example, `production_clustered`).
-- The measured unreplicated-write window is tracked per `<tenantId, gameInstanceId, regionId>`; breaching its environment SLO is an incident investigated using Redis metrics plus affected durable command/effect/timer counts.
+- `redis_unreplicated_write_window_slo_ms` is defined at the Coordination Redis deployment, environment, and active configuration/ruleset scope. Tenant, game, and region are diagnostic dimensions in control-plane and structured-log evidence for affected work, not independent SLO values.
 - Lua scripts and domain idempotency guarantees ensure that replay and partial loss of coordination keys do not:
   - Double-apply critical effects.
   - Violate cross-tenant isolation.

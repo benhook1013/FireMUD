@@ -39,7 +39,7 @@ Before applying the detailed checklists below, follow this high‑level workflow
    - Confirm that `system-architecture-redis-reset-and-recovery.md` describes safe reset scopes for any affected prefixes.
    - Update or validate the corresponding runbooks in `system-architecture-redis-operations.md` and the Redis incident runbook so operators have a clear path for resets and “accept loss” decisions.
 6. **Wire observability and metrics**
-   - Ensure required metrics and alerts for AOF size/growth, the measured unreplicated-write window, prefix key counts, and script outcomes are covered or updated in the Redis metrics catalog in `system-architecture-redis-operations.md`.
+   - Ensure required metrics and alerts for AOF size/growth, the measured unreplicated-write window, prefix key counts, and script outcomes are covered or updated in the [Redis metrics catalog](./system-architecture-redis-metrics-catalog.md).
    - When the change introduces new state-machine fields or outcome codes, ensure the operations docs and metrics catalog name them explicitly (for example `current_tick_state`, `STALE_SESSION_GENERATION`, and stale automation-dispatch outcomes) rather than relying on generic script-failure buckets.
    - Verify that dashboards and alerts referenced in service docs and the incident runbook line up with the new or changed prefixes/scripts.
 

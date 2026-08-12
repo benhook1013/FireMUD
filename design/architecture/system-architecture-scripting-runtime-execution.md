@@ -135,7 +135,7 @@ When a work item is handed to Game Session, the local wire boundary is:
 - `PENDING` - persisted, eligible for indexing and draining.
 - `INDEXED` - a pointer/index has been published into `automation:queue:*` (best-effort; may be rederived).
 - `HANDOFF_IN_FLIGHT` - being handed off to Game Session (idempotent retries allowed).
-- `HANDED_OFF` - This evaluated descriptor/child was durably accepted by Game Session. The parent aggregate may become `HANDED_OFF`, making `script_event_audit.finalStage=TICK_HANDOFF` eligible for `finalOutcome=handoff_accepted`, only after every required child is durably accepted. A parent with accepted and unfinished children remains `HANDOFF_IN_FLIGHT`; a permanent required-child failure produces an explicit non-success/dead-letter aggregate rather than `HANDED_OFF`.
+- `HANDED_OFF` - This evaluated descriptor/child was durably accepted by Game Session. The parent aggregate may become `HANDED_OFF`, making `script_event_audit.finalStage=TICK_HANDOFF` eligible for `finalOutcome=handoff_accepted`, once every required child is durably accepted. The parent aggregate remains `HANDOFF_IN_FLIGHT` only while an unfinished required child exists; once required children reach the accepted terminal condition, optional children may continue bounded post-handoff retry and do not block parent convergence to `HANDED_OFF` or `handoff_accepted`. A permanent required-child failure produces an explicit non-success/dead-letter aggregate rather than `HANDED_OFF`.
 - `CANCELED` - permanently canceled by control plane (for example rollback, disable, or operator purge).
 - `DEAD_LETTERED` - permanently non-progressing after a fenced terminal decision; bounded retention and operator visibility are required.
 
