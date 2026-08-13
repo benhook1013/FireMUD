@@ -24,6 +24,7 @@ Current live bindings in the service are narrower than the full target-state scr
 
 - the live runtime binds live per-script quota, priority-tagged live tenant-budget, dry-run quota/capacity, output-budget, pin-projection freshness, outbox retention, queue rebuild, and dead-letter size/age knobs listed below;
 - the target output knobs below are runtime-cap inputs only. Publish-time analysis and runtime revalidation additionally require the versioned component-cost metadata schema/registry digest and artifact-cap digest owned by [Scripting Runtime Execution](../../system-architecture-scripting-runtime-execution.md#static-output-cost-contract); a local cap change must not reinterpret an already-pinned artifact.
+- target-state scheduler admission uses the immutable artifact-pinned estimated millisecond cost and defers the remainder after the admitted ordered prefix; the current runtime does not implement this reservation, and actual runtime is calibration telemetry only.
 - signer/component-policy reconciliation cadence and ingress stale-threshold enforcement are now live bindings, while separate dead-letter alert thresholds and any split dead-letter cleanup cadence remain target-state follow-through in the `10.3` / `10.5` scripting slices.
 
 ## Service-Specific Variables
@@ -37,7 +38,7 @@ Current live bindings in the service are narrower than the full target-state scr
 | `SCRIPT_TENANT_BUDGET_BACKGROUND_RUNS_PER_MINUTE` | Live execution reservations allowed per tenant per minute for background automation work | `30` | Stable operator knob |
 | `AUTOMATION_TICK_DURATION_MS` | Duration of a processing tick in milliseconds | `1000` | Stable operator knob |
 | `AUTOMATION_TICK_MAX_EVENTS` | Max events staged from the automation queue each tick | `50` | Stable operator knob |
-| `AUTOMATION_TICK_BUDGET_MS` | Soft execution budget for a script tick in milliseconds | `100` | Advanced/experimental |
+| `AUTOMATION_TICK_BUDGET_MS` | Target-state cumulative estimated-millisecond reservation budget for deterministic ordered-prefix admission in one automation tick; current runtime does not implement this admission | `100` | Advanced/experimental |
 | `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` | Number of days to retain script audit records before cleanup | `30` | Stable operator knob |
 | `SCRIPT_EVENT_AUDIT_MAX_ROWS` | Maximum number of rows to keep in the script audit store before truncation | `1000000` | Stable operator knob |
 | `SCRIPT_READINESS_MAX_CONCURRENCY` | Maximum concurrent live publish-readiness (`PUBLISH_READINESS`) executions per tenant | `4` | Stable operator knob |

@@ -38,13 +38,15 @@ Game Design and Automation & Scripting must also agree on component output cost.
 
 Script output uses both static publish-time analysis and incremental runtime metering.
 
-Game Design and Automation & Scripting consume one shared component-cost metadata contract. The metadata is versioned and digested, and every compiled script artifact records the exact metadata version and digest used for its analysis. Component entries declare their bounded command-count, per-entity distribution, and serialized-size contributions and whether the cost is static or data-dependent.
+Game Design and Automation & Scripting consume one shared component-cost metadata contract. The metadata is versioned and digested, and every compiled script artifact records the exact metadata version and digest used for its analysis. Component entries declare their bounded command-count, per-entity distribution, serialized-size contributions, and estimated millisecond cost, and whether each cost is static or data-dependent.
 
 Game Design performs conservative worst-case output analysis before publication. It evaluates every reachable branch, bounded loop, bulk action, and output-producing component using the recorded component-cost metadata. A graph is not publishable when its worst-case command count, per-entity count, or serialized size exceeds the platform/runtime ceiling, when the metadata version or digest is unavailable, or when a reachable output cannot be bounded.
 
 A data-dependent component is eligible only when it declares a finite input or fan-out cap that is enforced at runtime. The compiled artifact records that cap and its cost contribution. Runtime-discovered collection size, payload size, or loop count cannot exceed the declared cap or substitute an unbounded value.
 
 Automation & Scripting verifies the artifact's component-cost metadata version and digest against its local shared registry before executing the handler. Missing, displaced, or mismatched metadata fails closed rather than being interpreted under a newer private cost table.
+
+The artifact also pins the estimated millisecond cost used for deterministic scheduler admission. For an automation tick, eligible handlers are considered in canonical order and the scheduler admits the ordered prefix whose cumulative pinned estimate fits `AUTOMATION_TICK_BUDGET_MS`; the remainder is deferred. Actual runtime is recorded for calibration only and does not refund a same-tick reservation.
 
 Runtime meters output incrementally. Before constructing, allocating, or serializing each next output element beyond its bounded contribution, the meter charges the prospective command count, target entity, serialized bytes, and declared component cost. If that charge would exceed any ceiling or data-dependent cap, evaluation stops before the oversized element or collection is constructed.
 
@@ -84,6 +86,10 @@ Implement one shared versioned and digested component-cost registry; artifact pi
 Prove matching and mismatched metadata versions and digests; missing metadata; static and data-dependent components; mutually exclusive and co-executing branches; nested bounded loops; bulk actions; exact-limit acceptance and one-over-limit rejection for command count, per-entity count, bytes, and declared caps; rejection before oversized allocation or serialization; complete persistence after success; zero generated-command persistence after any budget or persistence failure; crash and retry around atomic persistence; pre-handler envelope failure as an ingress outcome; generated-output failure as a handler `DSL_EVAL` outcome; and independence of other resolved handlers.
 
 The current Automation implementation provides partial evidence through configurable command-count, per-entity, and ingress-payload byte limits plus bounded outcomes. It currently constructs the generated command collection before total and per-entity checks, does not enforce a complete generated-output serialized-byte budget, and hands commands off sequentially rather than atomically as one handler output set. The shared versioned and digested component-cost metadata, Game Design worst-case analyzer, artifact cost pinning, Automation metadata revalidation, incremental pre-construction meter, data-dependent cap enforcement, atomic output persistence, and focused proof are not implemented or claimed by this decision.
+
+### Supplemental clarification (2026-08-13)
+
+Estimated millisecond cost is part of the versioned artifact contract and is admission input, not post-run billing. Deterministic ordered-prefix admission and deferral use the pinned estimate; actual runtime remains calibration telemetry and cannot produce a same-tick refund.
 
 ## Reversibility and Revisit Triggers
 

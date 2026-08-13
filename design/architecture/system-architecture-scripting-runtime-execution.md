@@ -234,13 +234,14 @@ Admission and sandboxing must bound not only how often a handler runs, but also 
 
 Every compiled script artifact must carry enough normalized output-cost metadata for Game Design and Automation & Scripting to reach the same accept/reject decision before runtime. The metadata is a versioned, digested contract, not an implementation-local estimate:
 
-- The shared component-cost registry publishes a `costMetadataSchemaVersion` and `componentCostRegistryDigest`. Each action/component definition must declare `maxCommandsEmitted`, optional per-entity command distribution rules, `maxSerializedBytesPerCommand`, data-dependent input bounds, and whether its output cost is `STATIC`, `BOUNDED_BY_INPUT`, or `UNSUPPORTED_FOR_STATIC_BOUND`.
+- The shared component-cost registry publishes a `costMetadataSchemaVersion` and `componentCostRegistryDigest`. Each action/component definition must declare `maxCommandsEmitted`, optional per-entity command distribution rules, `maxSerializedBytesPerCommand`, an estimated millisecond cost, data-dependent input bounds, and whether its output cost is `STATIC`, `BOUNDED_BY_INPUT`, or `UNSUPPORTED_FOR_STATIC_BOUND`.
 - `STATIC` components contribute a fixed cost. `BOUNDED_BY_INPUT` components must name the validated input bound that caps their fan-out, such as a maximum selected-entity count, bounded loop counter, or configured list length. `UNSUPPORTED_FOR_STATIC_BOUND` components are not eligible for publish in live scripts until they are redesigned or given a bounded contract.
 - Branches are analyzed conservatively by taking the maximum cost of mutually exclusive branches and the sum of costs for paths that can both execute in one run.
 - Bounded loops multiply the loop body cost by the validated finite iteration bound. Loops without a finite bound are rejected by loop-safety validation before output-cost analysis.
 - Timer edges that create future triggers do not add same-run command cost beyond the timer-registration command itself, if any; the future trigger is analyzed as its own run.
 - Bulk action nodes must expose an explicit validated maximum fan-out. Runtime-discovered collection sizes without a publish-time upper bound are treated as `UNSUPPORTED_FOR_STATIC_BOUND`.
 - Game Design writes the normalized cost summary, the `costMetadataSchemaVersion`, the component-registry digest, and the artifact's runtime-cap digest into the immutable compiled artifact. Automation & Scripting verifies those digests against the locally published registry/cap contract and rejects ingress or readiness when metadata is missing, stale, contradictory, or exceeds the artifact-pinned runtime ceilings. It must not silently substitute newer registry metadata for an already-pinned artifact.
+- The immutable artifact also pins the estimated millisecond cost used for target-state automation scheduler admission. Eligible handlers are considered in canonical order; the scheduler admits the ordered prefix whose cumulative pinned estimate fits `AUTOMATION_TICK_BUDGET_MS` and defers the remainder. Actual runtime is calibration telemetry only and does not create a same-tick refund.
 - Runtime output budgeting remains mandatory even when static validation passes; the static contract prevents obviously oversized graphs from publishing, while runtime guards protect against registry bugs, corrupted artifacts, or future component changes.
 
 ### Incremental Runtime Metering and Atomic Persistence
@@ -257,6 +258,7 @@ The canonical charge lifecycle is owned by [Scripting Quotas & Operations](./sys
 - A queued handler holds no sandbox capacity. Runtime acquires a separately fenced, reclaimable capacity lease only when execution is about to start, and the lease's fence is checked before DSL evaluation.
 - A failed run does not refund an already committed admission charge or execution-start charge. Lease reclamation is capacity recovery, not a quota refund, and cannot create a second charge record or execution-start marker.
 - Runtime persists the resolved `quotaClass` on durable work so execution follows the admission decision. `PUBLISH_READINESS` remains isolated from ordinary live quota and capacity; its readiness lease and outcome are local runtime consequences, not a new live charge path.
+- Target-state scheduler reservations are separate from the durable admission/execution charges and fenced occupancy lease described here; the current runtime does not implement that reservation.
 
 ## Ordering Between Player and Script Commands
 
