@@ -10,6 +10,8 @@ World creation is a long-running process that prepares the initial world state f
 - `gameInstanceId` – identifies the specific running world instance recorded in
   the Game Session Service.
 
+The cross-platform workflow placement and adopter-proof requirements are owned by [Transaction Strategies](../../system-architecture-transactions.md#mandatory-workflow-adopter-classification) and [Temporal Control-Plane Workflows](../../system-architecture-temporal-workflows.md). This document records the World Management consequences: `world-lifecycle` owns the local lifecycle commands and read surface, retries use its durable launch/workflow identity, and gameplay ticks and live in-world mutations remain outside this workflow. Current lifecycle proof covers the extracted command path and Temporal-backed status surface, while full durable step-guard and restart/failure proof remains an implementation gap noted below.
+
 World creation consumes a previously resolved immutable launch descriptor for the attempt. At minimum this descriptor carries:
 
 - `launchDescriptorId`

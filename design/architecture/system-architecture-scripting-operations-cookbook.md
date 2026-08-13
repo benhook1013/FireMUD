@@ -101,7 +101,7 @@ This section summarizes common failure and rollback scenarios and how operators 
     - Pre-handler triggers referencing that patch produce event-scope ingress records and drop metrics such as `automation_script_triggers_dropped_total{reason="version_unavailable"}`; handler-scoped denials are diagnosed separately through `script_event_audit`.
   - Behavior:
     - The Automation & Scripting Service marks the patch `FAILED` for that tenant; running instances remain on their previously pinned patch.
-    - No automatic rollback beyond "keep the last known good patch active" occurs.
+    - The prior patch remains the active recorded version for existing instances, but the affected runtime stays `FAILED`/paused and no new trigger or timer scheduling is admitted until explicit fenced reconciliation or an operator-authorized rollback establishes an admissible current pin and schedule state. The prior version is not an automatic last-known-good execution fallback.
   - Operator actions:
     - Use Game Design tooling to inspect and fix the script configuration, then publish a new patch.
     - Optionally disable the faulty script entirely (`runtimeStatus=DISABLED`) to stop further admission attempts while iterating.

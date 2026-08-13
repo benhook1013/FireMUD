@@ -88,7 +88,7 @@ When designing scripts, it helps to think in terms of a few core ideas:
   - Complex logic is built by chaining condition and action nodes rather than embedding code.
 
 - **Timers and intervals**
-  - **Timer nodes** schedule work to happen later or on a cadence expressed in **game ticks** (for example, every N ticks). Designer-facing UIs may offer seconds as an input helper, but the persisted/runtime contract is tick-based.
+  - **Timer nodes** schedule work using a declared scheduler clock. Tick/game time is the default (for example, every N ticks), while an explicit wall-clock timer is also allowed. Wall-clock eligibility enters the next canonical tick and remains hidden from DSL evaluation; see the [scripting scheduler and timer lifecycle](./system-architecture-scripting-scheduler-and-timers.md#script-timers-vs-tick-timers).
   - Timers create **new triggers** when they fire; from your perspective, they “wake up” parts of your graph at the right times.
 
 - **Counters and bounded loops**
@@ -134,7 +134,7 @@ Common patterns:
 
 - **Timers and recurring behavior**
   - Timer nodes reschedule parts of your graph to run later, allowing you to express behaviors like “every N ticks, check if the player is still nearby” without writing loops.
-  - Timers are aligned to the game’s tick model; see `design/architecture/system-architecture-ticks.md` for how ticks work overall.
+  - Tick/game time is the default clock. Explicit wall-clock timers become eligible through the scheduler and enter the next canonical tick; wall-clock values remain hidden from the DSL. See the [scripting scheduler and timer lifecycle](./system-architecture-scripting-scheduler-and-timers.md#script-timers-vs-tick-timers) for the clock boundary.
 
 - **Bounded loops with counters**
   - Loops are supported only as **bounded, explicit cycles** in the graph.
