@@ -29,7 +29,7 @@ Use `common-saga` instead when the orchestration is:
 - easy to retry from the caller;
 - not dependent on durable timers or external-event waiting.
 
-Workflow placement and the minimum adopter classification/proof obligation are owned by [Transaction Strategies](./system-architecture-transactions.md#mandatory-workflow-adopter-classification). A Temporal adopter must name its owning service, workflow family and stable identity, local idempotency/reconciliation boundary, and the focused restart, duplicate-activity, wait/timer or signal, and operator-read proof appropriate to that family. The service document retains only its local API, lifecycle, implementation drift, and proof status; it must not restate the cross-platform placement matrix.
+Workflow placement and the minimum adopter classification/proof obligation are owned by [Transaction Strategies](./system-architecture-transactions.md#mandatory-workflow-adopter-classification). A Temporal adopter must name its owning service, workflow family and stable identity, local idempotency/reconciliation boundary, and the focused restart, duplicate-activity, wait/timer or signal, and operator-read proof appropriate to that family. A service document retains its local API and lifecycle plus only a non-authoritative summary of implementation drift and proof; the owning implementation tracker remains authoritative for current status, gaps, and evidence. Service documents must not restate the cross-platform placement matrix.
 
 Do not use Temporal for:
 
