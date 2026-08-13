@@ -193,7 +193,7 @@ Activation and termination share one lifecycle fence per `(tenantId, gameInstanc
 A `gameInstanceId` is always tied to a single `runtime_version` and the
 instance data derived from that version:
 
-- Initial `*_instance` rows for a given `gameInstanceId` may be constructed from the templates for that instance’s `runtime_version` and the frozen published generation inputs. After generation finalizes, the committed instance topology or retained immutable topology artifact is authoritative; recovery restores that stored result, a finalized release, or backup rather than re-executing a historical generator from seed and metadata. There is no cross-version mixing of instance data and no reuse of instance layouts across different `gameInstanceId` values.
+- Initial `*_instance` rows for a given `gameInstanceId` may be constructed from the templates for that instance’s `runtime_version` and the frozen published generation inputs. After generation finalizes, the committed instance topology or retained immutable topology artifact is authoritative; recovery restores that stored result, a retained finalized instance-topology artifact bound to `(tenantId, versionId, gameInstanceId)`, or backup rather than re-executing a historical generator from seed and metadata. There is no cross-version mixing of instance data and no reuse of instance layouts across different `gameInstanceId` values.
 - Moving a game to a different version is modeled as starting a **new** game
   instance with a fresh `gameInstanceId` and running the world-lifecycle workflow
   again for the new `(tenantId, versionId)`. Existing instances continue to use

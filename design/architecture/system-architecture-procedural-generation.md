@@ -2,7 +2,9 @@
 
 This document outlines how FireMUD supports procedural generation of both dungeon-style and overworld-style layouts. These generators can be invoked during world creation or dynamically at runtime to produce rooms, exits, biomes, and terrain features. For long-lived overworld or static areas, generated layouts are typically treated as structural scaffolding that designers or LLM-assisted tools can refine with names, descriptions, and quests. For short-lived dungeon instances generated at runtime, the layouts are usually consumed as-is without additional authoring.
 
-The target design includes `SimpleDungeonGenerator` and `OverworldMapGenerator`. The current implementation has a `SimpleDungeonGenerator` and registry in Automation & Scripting, contrary to the target ownership; it does not yet implement the World-owned engine, typed generation ingress, or `OverworldMapGenerator` described here.
+## Implementation Status
+
+The target design includes a World-owned `SimpleDungeonGenerator` and `OverworldMapGenerator` engine with typed generation ingress. Current `SimpleDungeonGenerator` and registry implementations remain in Automation & Scripting, and World Management lacks typed APIs that invoke a World-owned engine.
 
 Procedural generation allows games to quickly bootstrap playable areas, spawn instanced content, or fully generate open worlds without requiring hand-authored maps.
 
@@ -83,6 +85,7 @@ Design-time generation is part of publish safety and reconciliation, so retries 
 At admission, World Management persists a durable generation record that includes:
 
 - `generationRunId` and stable `generationRequestId`
+- an immutable admitted-generation revision or approval identity, or an explicit regeneration sequence, as part of `generationRequestId`
 - `tenantId`, `versionId`, `generationMode`
 - `generatorType` and `generatorImplementationVersion` (or equivalent immutable build identifier)
 - canonicalized `configSnapshot` including explicit `schemaVersion`
@@ -99,7 +102,8 @@ Reconciliation behavior:
 
 - Retrying the same in-flight request reuses its recorded or staged output. If that output cannot be reused and the admitted implementation is unavailable, the request fails closed or is explicitly abandoned; it never substitutes a newer implementation under the same identity.
 - Once finalized, committed template topology is authoritative and recovery restores committed rows, immutable releases, retained finalized artifacts, or backups rather than re-executing the generator.
-- Intentional regeneration is a new request and authored revision. It may select the newest generator or model permitted by explicit game or operator policy and must obey the declared scope, epoch, and replacement rules.
+- Replaying a historical generation revision restores that revision's recorded or committed output, then reapplies later persisted manual revisions in their original order. It does not rerun an obsolete generator or reinterpret the historical revision as permission to delete later edits.
+- Intentional regeneration or generation of previously unfixed topology later is a new request and, where authored content is affected, a new authored revision. Chunks generated or staged under the same admitted request retain that request's `generationRequestId` through finalization and are not new generation requests. A new request may select the newest generator or model permitted by explicit game or operator policy and must obey the declared scope, epoch, and replacement rules.
 - The digest for publish gating must cover the finalized template rows produced by this artifact, so replay and publish checks converge on the same canonical state.
 
 Generation revisions are explicit and scope-bound:
@@ -236,7 +240,7 @@ Physical topology representation is opaque behind World Management:
 - Before large full-grid scale is claimed, generation must produce an immutable digest-attested chunk topology or equivalent bounded representation. A validated root manifest identifies the complete lattice and immutable chunks, and one short finalize selects that root atomically so readers never observe a partial grid.
 - Runtime reads compose the immutable base cell with durable instance-scoped deltas for visited, occupied, changed, timed, or otherwise mutable locations. Caches and lazy materialization remain derived projections rather than authority.
 
-Loading or materializing an already committed cell is not regeneration. Recovery restores the stored topology artifact and durable runtime deltas instead of re-running the historical generator from seed. A world that intentionally creates previously unfixed chunks later is an unbounded or expanding generation mode and requires a separate contract; it is not the bounded fixed `FULL_GRID` mode.
+Loading or materializing an already committed cell is not regeneration. Recovery restores the stored topology artifact and durable runtime deltas instead of re-running an obsolete generator from seed. A world that intentionally creates previously unfixed chunks later is an unbounded or expanding generation mode and requires a separate contract; it is not the bounded fixed `FULL_GRID` mode.
 
 ---
 
@@ -267,7 +271,7 @@ The following rules align generators with the core runtime and tooling:
 
    - Each generation run is assigned a `generationRunId` (scoped to the caller’s target, for example `(tenantId, versionId)` or `(tenantId, gameInstanceId)`).
    - Callers must supply (or World Management must derive deterministically) a stable `generationRequestId` so retries of “the same request” map to the same `generationRunId` and become replay-safe.
-   - `generationRequestId` must be derived from business identity rather than transient execution identity (for example hash of `tenantId`, target scope key, generation step name, and canonicalized generator config). Retries through a new Temporal run or synchronous retry must reuse the same `generationRequestId`.
+   - `generationRequestId` must be derived from business identity rather than transient execution identity (for example a hash of `tenantId`, target scope key, generation step name, canonicalized generator config, and the immutable admitted-generation revision or approval identity, or explicit regeneration sequence). Retries through a new Temporal run or synchronous retry must reuse the same `generationRequestId`; an intentional regeneration with the same inputs must use a distinct sequence and request ID.
    - World Management must enforce a uniqueness constraint on `(tenantId, targetScopeKey, generationRequestId)` so duplicate requests converge to one run.
    - World Management must enforce single-writer semantics per target scope through the scope epoch/fence or equivalent storage-level compare-and-set, together with request uniqueness, so concurrent runs cannot both commit.
    - Generation and all graph, scope, count, byte-size, and digest validation complete before the visibility transaction. That transaction performs no generator execution or network calls.
@@ -275,6 +279,7 @@ The following rules align generators with the core runtime and tooling:
    - Output above those limits, or output requiring chunked persistence, uses private staging keyed by `(tenantId, generationRunId)`. A short finalize transaction validates the request identity, scope fence, expected counts, and canonical digest before atomically installing or selecting the graph or immutable root chunk manifest.
    - The initial implementation may reject oversized output deterministically until the staged path exists. Callers may not bypass the bounded-transaction limits.
    - On failure World Management returns a `GenerationErrorDetail` and guarantees the target scope remains unchanged. When staging is used, World Management must define bounded diagnostic retention and garbage collection for abandoned rows.
+   - Focused proof must show that retrying one admitted request reuses its request identity and recorded output, while an intentional same-input regeneration receives a distinct sequence and identity; recovery must restore the committed revision output and reapply later persisted manual revisions without invoking an obsolete generator.
 8. **Editor Overlays** – Generators emit coordinates and optional map layers so the Game Editor can display a preview or dry-run JSON output.
 9. **Pluggable Interface** – Generators implement the `Generator` interface and are discovered via the `GeneratorRegistry` in the World Management Service. Discovery uses Spring bean scanning, and additional generators may be provided by shared libraries or service-local modules.
 

@@ -98,7 +98,7 @@ External-only attestation storage is not allowed for production promotions becau
   - `secretComplianceEvidenceRef`
   - `smokeEvidence` list
 - Producer contract:
-  - Tooling emits the candidate deployment evidence from observed staging state, and operators review/update it as part of staging apply in the deployment runbook flow.
+  - Target-state tooling emits the candidate deployment evidence from observed staging state. The current repository flow remains operator-authored: operators review and update the evidence as part of staging apply in the deployment runbook flow.
   - CI promotion validation must fail if the referenced deployment record is missing, malformed, or digest-mismatched.
 - Retain attestation artifacts for at least as long as release/rollback audit history is retained.
 - Rollback PRs should reference the original attestation used for the digest set being restored.

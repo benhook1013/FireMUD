@@ -24,7 +24,7 @@ Platform Operations is a cross-cutting operational authority rather than a micro
 | Room topology and static metadata (descriptions, flags, ambient properties) | | ✔ | | | | | | | | | |
 | Room dynamic world state (persistent environment flags, doors, hazards) | | ✔ | | | | | | | | | |
 | Room occupancy (entity locations in rooms) | | ✔ | | | | | | | | | |
-| Navmesh and pathfinding metadata (storage/publishing) | | ✔ | | | | | | | | | |
+| Navmesh and pathfinding metadata derivation, validation, and semantic versioning | | ✔ | | | | | | | | | |
 | Pathfinding and movement route computation (algorithms) | | | | | | ✔ | | | | | |
 | Account authentication, credential verification, and JWT issuance (JWKS) | | | ✔ | | | | | | | | |
 | Account-related email (verification, password reset, security alerts, subscription/billing notifications) | | | ✔ | | | | | | | | |

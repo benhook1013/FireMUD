@@ -13,6 +13,10 @@ creators can quickly spin up new projects without starting from scratch.
   template.
 - **Admin Accounts** – initial administrators configured at template creation.
 
+## Implementation Status
+
+- Launch-descriptor persistence and compatibility proof for the complete enabled-plugin version set remain target-state; the current implementation does not yet expose or prove that set for deterministic retry and rollback.
+
 ## Starter Experience Profiles
 
 Game Design provides curated starter experience profiles so a creator can begin with a coherent playable ruleset without hand-authoring every stat, condition, action, floor-disposition, observation/targeting/target-selection-policy/default-path binding, and feedback declaration. Examples may include a classic text-MUD baseline, a solo-RPG baseline, and a minimal sandbox baseline.
@@ -193,13 +197,15 @@ These are application-level launch-preflight outcomes, not transport failures. R
 Illustrative control-plane schema:
 
 - Request: `ResolveLaunchDescriptorRequest { tenantId, gameTemplateId, controlPlaneRequestId, requestedRuntimeFlags?, requestedScriptPatchVersion?, sourceVersionId?, targetVersionId? }`
-- Response: `ResolveLaunchDescriptorResponse { launchDescriptorId, tenantId, gameTemplateId, versionId, scriptPatchVersion, runtimeFlags, generationConfigRevision, versionStateEpoch, remapSetId?, publishedReleaseBundleRef }`
+- Response: `ResolveLaunchDescriptorResponse { launchDescriptorId, tenantId, gameTemplateId, versionId, scriptPatchVersion, enabledPluginVersions[] { pluginId, pluginVersionId }, runtimeFlags, generationConfigRevision, versionStateEpoch, remapSetId?, publishedReleaseBundleRef }`
 
 The exact transport schema may evolve, but every implementation must preserve the same contract shape:
 
 - request fields identify the template, the launch attempt identity, and any caller-supplied runtime overrides that are allowed to participate in deterministic resolution;
 - response fields are the immutable resolved values consumed by launch-time workflows;
-- `publishedReleaseBundleRef` is the exact attestation identity emitted by the current implementation in the form `prb:<tenantId>:<versionId>:<bundleId>`. Because `GetPublishedReleaseBundle` currently returns the bundle `id` and `generationConfigRevision` rather than a separate reference field, downstream workflows must reconstruct that identity from the request scope, resolved `versionId`, and returned `bundle.id`, compare it byte-for-byte with the descriptor reference, and separately compare the attested `generationConfigRevision`; callers must not compare only `bundle.id`, treat the reference as a raw UUID, or invent a different release alias.
+- Target contract: `enabledPluginVersions[] { pluginId, pluginVersionId }` is the complete deterministically ordered set of enabled plugin identities and versions. Every tuple must prove compatibility and readiness against the resolved base `versionId`, and the set is persisted and returned unchanged for retries with the same `controlPlaneRequestId`; rollback selects the recorded set rather than re-resolving a mutable alias.
+- Current implementation behavior: `GetPublishedReleaseBundle` returns the bundle `id` and `generationConfigRevision` rather than a separate reference field, so the compatibility path reconstructs `prb:<tenantId>:<versionId>:<bundleId>` from request scope and the returned `bundle.id`. It must compare that value byte-for-byte with the descriptor reference and separately compare the attested `generationConfigRevision`; this format is not the target API contract.
+- Target convergence: `GetPublishedReleaseBundle` returns an owner-generated opaque `publishedReleaseBundleRef`. Consumers preserve and compare that value byte-for-byte without parsing its format, reconstructing it from identifiers, treating it as a raw UUID, or inventing another release alias.
 - A request with the same `(tenantId, gameTemplateId, controlPlaneRequestId)` and the same input fields must return the same descriptor values; a request with a different `controlPlaneRequestId` is a new launch attempt and may resolve against newer valid state.
 - Idempotent retries that previously produced a deterministic business failure must return the same failure code and resolved context (where applicable) rather than re-evaluating against newer publish, patch, or template state.
 - If callers change any semantically relevant input field while reusing the same `controlPlaneRequestId`, the request must fail deterministically as an idempotency-key misuse rather than silently creating a second descriptor record.

@@ -4,6 +4,10 @@ This document describes the tools provided by the **Game Design Service** for ed
 
 Game creators use these interfaces to craft rooms, items and NPCs without modifying FireMUD's source code. All edits are versioned and tied to a tenant so multiple projects can coexist. The Game Design Service owns **history and metadata** (versions, branches, revisions) but does not store a separate, authoritative copy of full world or entity graphs; those remain in the owning domain services.
 
+## Implementation Status
+
+The current editor contract preserves revision ordering, approval, and local conflict reporting, but complete destructive-preview UI, plan-digest and reference-analysis proof, and identity-mapping proof remain incomplete.
+
 ## Capabilities
 
 - **Room & Region Editor** – create regions, zones and rooms with exits and environmental settings. The editor saves data through the Game Design Service, which calls the World Management Service’s design APIs to update versioned world records for the target `tenantId` and draft `version_id`.
@@ -88,9 +92,7 @@ The canonical replay, replacement, preview, reference, identity, and no-merge co
 - `SEED_APPEND_ONLY` remains the editor’s non-destructive path, but World Management must reject it as `OUT_OF_SYNC` or a more specific generation conflict if deterministic replay would rewrite or delete authored rows.
 - Historical replay preserves later manual revisions. A destructive regeneration is a new approved revision; the old revision does not authorize fresh deletion.
 - Game Design forwards the approved typed `WORLD_GENERATION_SUBTREE` payload through `ApplyWorldDesignMutation`; generated subtree content is not stored only as opaque revision JSON. World Management performs owner-local CAS and persistence and leaves prior topology unchanged on a stale digest or epoch, while Game Design surfaces the conflict and records the apply outcome.
-- A generation revision targeting a newly empty container initializes its scope epoch with the generated topology. Later edits and generation revisions use that epoch.
-
-The current editor contract preserves revision ordering, approval, and local conflict reporting, but complete destructive-preview UI, plan-digest and reference-analysis proof, and identity-mapping proof remain incomplete.
+- A generation revision targeting a newly created empty container with no prior scope epoch initializes its scope epoch with the generated topology. An existing scope emptied by deletion or replacement preserves its monotonic epoch; later edits and generation revisions use that epoch.
 
 Illustrative request/response shapes:
 

@@ -4,7 +4,8 @@ This brief document summarizes optional ways a hosted game can change its look a
 
 ## Implementation Status
 
-Bulk JSON import/export remains deferred. Current creator workflows use service-owned design APIs and world-editing tools.
+- Bulk JSON import/export remains deferred. Current creator workflows use service-owned design APIs and world-editing tools.
+- Current publication exports ordinary bytes from the first-slice Game Design database source into version-scoped object storage. Target publication builds and verifies a private candidate before exposing immutable content-addressed objects; the target content-addressed lifecycle is not yet the live publication path.
 
 ## Theme and Branding
 
@@ -18,12 +19,12 @@ Bulk JSON import/export remains deferred. Current creator workflows use service-
 - Missing or unavailable assets may use a versioned platform branding default only for explicitly optional presentation roles. Required runtime assets fail publication or launch closed; an empty or malformed manifest is not a blanket fallback authorization.
 - The manifest binds stable usage roles to immutable content-addressed locations and actual-byte digests. URLs, object names, and byte lengths alone do not attest the bytes delivered to the client.
 - The manifest can be extended with optional assets such as tutorial images, UI overlays, or CSS snippets.
-- Realm admission is the runtime resolution point for branding. `PLAY` success, reconnect resume, and any realm switch must return the resolved bundle identity for the selected realm (`versionId`, optional `scriptPatchVersion`, and manifest location/hash or equivalent) so first-party clients can swap theme assets deterministically when production and playtest realms run different builds.
+- Realm admission is the runtime resolution point for branding. `PLAY` success, reconnect resume, and any realm switch must return the resolved bundle identity for the selected realm (`versionId`, optional `scriptPatchVersion`, and attested `manifestHash` plus its delivery location) so first-party clients can swap theme assets deterministically when production and playtest realms run different builds. Clients must verify the fetched manifest against `manifestHash` before applying assets; a missing or mismatched hash fails closed.
 
 Concrete realm-swap example:
 
-- Production realm admission resolves `{ versionId: "22222222-2222-4222-8222-222222222222", scriptPatchVersion: "v42-script.1", manifestUrl: ".../11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/manifest.json" }`, so the client uses the first bundle's manifest.
-- A tester then switches to `playtest-docks`, and `PLAY` resolves `{ versionId: "33333333-3333-4333-8333-333333333333", scriptPatchVersion: "v43-script.2", manifestUrl: ".../11111111-1111-4111-8111-111111111111/33333333-3333-4333-8333-333333333333/manifest.json" }`.
+- Production realm admission resolves `{ versionId: "22222222-2222-4222-8222-222222222222", scriptPatchVersion: "v42-script.1", manifestHash: "sha256:prod-manifest...", manifestUrl: ".../11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/manifest.json" }`, so the client verifies the fetched manifest against the attested hash before applying the first bundle's assets.
+- A tester then switches to `playtest-docks`, and `PLAY` resolves `{ versionId: "33333333-3333-4333-8333-333333333333", scriptPatchVersion: "v43-script.2", manifestHash: "sha256:playtest-manifest...", manifestUrl: ".../11111111-1111-4111-8111-111111111111/33333333-3333-4333-8333-333333333333/manifest.json" }`; a hash mismatch fails closed before applying the second bundle.
 - The client must treat the changed canonical `versionId` as a hard theme boundary: load the second bundle's manifest, swap logos/theme overrides, and render the fork with that bundle's look without mutating the production realm's active theme state.
 - If the player returns to production, the next `PLAY` or reconnect resume re-resolves `versionId: "22222222-2222-4222-8222-222222222222"` and the client switches back to the first bundle's manifest.
 

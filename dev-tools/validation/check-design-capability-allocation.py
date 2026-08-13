@@ -421,13 +421,13 @@ ADR_ALLOCATION_EXPECTATIONS = {
         "SF-1", "Accepted", "GR-1", "PO-4"
     ),
     "design/architecture/decisions/adr-0093-game-design-coordinated-digest-attested-content-publication.md": adr_allocation(
-        "AR-1", "Accepted", "AR-1", "AR-3", "PO-3", "GR-2", "AA-3"
+        "AR-1", "Accepted", "AR-3", "PO-3", "GR-2", "AA-3"
     ),
     "design/architecture/decisions/adr-0094-explicit-cohesive-runtime-release-tuples.md": adr_allocation(
-        "AR-3", "Accepted", "AR-1", "AR-3", "AA-3", "GR-1", "PO-3"
+        "AR-3", "Accepted", "AR-1", "AA-3", "GR-1", "PO-3"
     ),
     "design/architecture/decisions/adr-0095-content-addressed-published-assets-with-cas-lifecycle-authority.md": adr_allocation(
-        "AR-1", "Accepted", "AR-1", "AR-3", "PO-3", "SF-2"
+        "AR-1", "Accepted", "AR-3", "PO-3", "SF-2"
     ),
     "design/architecture/decisions/adr-0096-attested-publication-gate-and-quarantined-failed-assets.md": adr_allocation(
         "AR-3", "Accepted", "AR-1", "PO-3", "SF-2"
@@ -442,13 +442,13 @@ ADR_ALLOCATION_EXPECTATIONS = {
         "GR-2", "Accepted", "GR-1", "SF-2", "AS-1"
     ),
     "design/architecture/decisions/adr-0100-separate-generation-ingress-with-one-world-owned-engine.md": adr_allocation(
-        "AR-1", "Accepted", "AR-1", "AR-3", "GR-2", "AS-1"
+        "AR-1", "Accepted", "AR-3", "GR-2", "AS-1"
     ),
     "design/architecture/decisions/adr-0101-explicit-destructive-regeneration-with-previewed-scope.md": adr_allocation(
-        "AR-1", "Accepted", "AR-1", "AR-2", "GR-2"
+        "AR-1", "Accepted", "AR-2", "GR-2"
     ),
     "design/architecture/decisions/adr-0102-first-class-sparse-and-full-grid-world-topologies.md": adr_allocation(
-        "GR-2", "Accepted", "GR-2", "AR-1", "SF-2"
+        "GR-2", "Accepted", "AR-1", "SF-2"
     ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
@@ -1185,6 +1185,11 @@ def validate_top_allocation_ledger(
                     f"must be '—', got {row[secondary_index]!r}"
                 )
             secondary = None
+        if secondary is not None and primary in secondary:
+            fail(
+                f"{document.relative_to(root)}:{source_path}: primary capability "
+                f"{primary!r} must not be repeated in secondary handoffs"
+            )
         validate_expected_allocation(
             root,
             document,

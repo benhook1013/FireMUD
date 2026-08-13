@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-Git-reviewed, CI-validated promotion evidence is target state. Current enforcement still has gaps around absent-attestation failure, complete field/schema validation, staging commit existence, and release-manifest cross-reference checks. See the [CI/CD promotion contract](../system-architecture-cicd.md#promotion--rollback-model) and [promotion attestation contract](../system-architecture-promotion-attestation.md#artifact-format).
+Git-reviewed, CI-validated promotion evidence is target state. Current enforcement still has gaps around absent-attestation failure, complete field/schema validation, staging commit existence, and release-manifest cross-reference checks. Non-official production promotions require the applicable overlay, staging, and promotion-attestation evidence; official releases additionally require the release digest manifest and its cross-references. See the [CI/CD promotion contract](../system-architecture-cicd.md#promotion--rollback-model) and [promotion attestation contract](../system-architecture-promotion-attestation.md#artifact-format).
 
 ## Canonical Design
 

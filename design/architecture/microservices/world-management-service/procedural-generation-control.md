@@ -1,5 +1,9 @@
 # World Management Service Procedural Generation Control
 
+## Implementation Status
+
+The target design places the generation engine and typed design-time/runtime ingress in World Management. Current `SimpleDungeonGenerator` and registry implementations remain in Automation & Scripting, and World Management lacks typed APIs that invoke a World-owned engine; its current typed Draft mutation path for generated subtrees is not such an invocation API.
+
 ## Derived World Artifact Publication
 
 Derived world artifacts such as navmesh/path graph bundles follow one canonical publication path:
@@ -57,7 +61,7 @@ Attestation rule for derived world artifacts:
 - the publish workflow instead persists explicit per-artifact digests in `artifactDigests[]` plus any required `requiredManifestAssetKeys[]`; and
 - each artifact entry must be bound to the same `(tenantId, versionId, commitId, publishWorkflowId)` release identity as the World participant digest.
 
-## Procedural Generation Control APIs
+## Target Procedural Generation Control APIs
 
 The cross-service generation ownership and ingress contract is canonical in [Procedural Generation](../../system-architecture-procedural-generation.md), including its service-responsibility and generation-pipeline sections. This document records World Management’s local endpoint and persistence consequences.
 
@@ -76,20 +80,15 @@ Operational runtime-default API:
 
 These endpoints are limited to live operational tuning for future runtime-only generation runs. They must not mutate `generation_rule_template`, any other version-scoped design rows, or any input that contributes to `generationConfigRevision`.
 
-Current implementation note:
-
-- The current generator implementations and registry are located in Automation & Scripting, which contradicts the target ownership above.
-- World Management accepts typed generated Draft mutation payloads but does not yet expose either a design-generation or runtime-generation API that invokes a World-owned engine.
-
 ## Destructive Regeneration Plans
 
 The canonical replay, replacement, preview, reference, identity, and no-merge contract is [Explicit Destructive Regeneration with Previewed Scope](../../decisions/adr-0101-explicit-destructive-regeneration-with-previewed-scope.md) and the [Procedural Generation](../../system-architecture-procedural-generation.md#request-bounded-replay-and-explicit-regeneration) system contract.
 
 World Management local consequences:
 
-- Apply accepts only a new approved `REPLACE_SCOPE` revision carrying the exact target scope, expected Draft scope epoch, exact generation inputs, canonical plan digest, and required mappings and reference facts.
-- World Management checks the digest, epoch, and reference facts in the same storage-level CAS and persistence transaction as the scoped topology mutation. Any mismatch fails closed with `DRAFT_WRITE_CONFLICT` or a stale-plan error and leaves prior topology unchanged.
-- `SEED_APPEND_ONLY` remains the local safe path when no rewrite or deletion is required. Generated topology and its ledger must be idempotent; duplicate accepted identities no-op.
+- Apply accepts either a new approved `REPLACE_SCOPE` revision or a `SEED_APPEND_ONLY` revision. A `REPLACE_SCOPE` revision carries the exact target scope, expected Draft scope epoch, exact generation inputs, canonical plan digest, and required mappings and reference facts.
+- For `REPLACE_SCOPE`, World Management checks the digest, epoch, and reference facts in the same storage-level CAS and persistence transaction as the scoped topology mutation. Any mismatch fails closed with `DRAFT_WRITE_CONFLICT` or a stale-plan error and leaves prior topology unchanged.
+- `SEED_APPEND_ONLY` remains the local safe path when no rewrite or deletion is required. Apply validates its target scope, expected Draft scope epoch, exact generation inputs, and accepted idempotency identity; generated topology and its ledger must be idempotent, and it fails closed if deterministic replay would rewrite or delete existing authored rows.
 - Multi-row generated topology continues through the typed `WORLD_GENERATION_SUBTREE` payload and World-owned mutation path, not opaque JSON. World Management persists the graph and applies target-specific replacement semantics.
 
 Current implementation proves scoped Draft epochs and applies `REPLACE_SCOPE` and `SEED_APPEND_ONLY` mutations, but it does not yet implement or prove destructive preview, plan-digest binding, complete cross-boundary reference analysis, identity mappings, or owner-atomic CAS of all plan facts.

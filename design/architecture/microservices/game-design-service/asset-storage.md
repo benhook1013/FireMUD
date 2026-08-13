@@ -1,14 +1,14 @@
 # Asset Storage Setup
 
-Game assets such as icons or sound files are uploaded through the Game Design Service at design time. In the current first implementation slice, ordinary uploaded asset bytes are persisted in the Game Design database as `game_assets.data`; that row is the immutable repair source for ordinary binary assets referenced by a Published/Active release. Published asset bytes live in object storage alongside the version manifest. A future metadata-only draft asset model may move draft bytes out of PostgreSQL, but it must first introduce an equivalent immutable repair source, such as a retained object version plus content digest, before removing `game_assets.data` as the exact-bytes repair source. When a version is published, the service currently exports to version-scoped object storage, while target convergence builds and verifies a private candidate and publishes immutable content-addressed manifest entries that bind stable asset roles to mandatory actual-byte digests, content type/schema, and delivery locations. A manifest is produced for every published version, even if no assets are present. The manifest is stored alongside the assets and its delivery location is recorded in the published version metadata so runtime clients can retrieve it; delivery URLs are not release authority. Each manifest includes an explicit `schemaVersion` field so clients and tooling can distinguish between manifest formats over time. The Game Design Service is not queried during gameplay. Each record remains tied to a `tenantId` so icons, UI images, and audio files are isolated per game.
+Game assets are published through a Game Design-owned lifecycle. The target contract builds and verifies a private candidate, then publishes immutable content-addressed manifest entries that bind stable asset roles to mandatory actual-byte digests, content type/schema, and delivery locations. A manifest is produced for every published version, even if no assets are present, and its recorded delivery location is only a runtime retrieval surface, not release authority. The Game Design Service remains the control-plane authority and is not queried during gameplay; each record is scoped to its `tenantId`.
 
 The CDN is the runtime branding/theme byte data plane, including delivery of the published manifest and asset bytes. Game Design is the control-plane and attestation authority: `GetPublishedReleaseBundle(tenantId, versionId)` and its attested `manifestHash` establish which release the CDN bytes belong to. Runtime clients fetch bytes from the CDN using that attested release data and must not treat CDN availability or object paths as release authority.
 
-## Identifier Implementation Status
+## Implementation Status
 
-- **Target (ADR 0020):** `tenantId` is the canonical opaque UUID logical identity. `game_assets.tenant_id` and the version-asset mappings use that tenant scope; numeric database keys remain private implementation details and do not replace it.
-- **Current first slice:** `game_assets.tenant_id` is a `VARCHAR(36)` accepted through the REST `tenantId` string field without UUID-shape enforcement, while Account Service still exposes numeric `Long` tenant identifiers across current REST, gRPC, and persistence seams. No authoritative numeric-to-UUID tenant mapping exists. The asset row is separately keyed by `BIGSERIAL`, and the public `GameAssetDto.id` currently exposes that numeric asset-row key. That exposure is pre-v1 implementation drift; neither numeric value is a canonical logical identity.
-- **Canonical target migration:** Account and downstream public/cross-service tenant contracts converge together on the UUID tenant identity, after which Game Design validates and stores that value. The public asset OpenAPI contract and `GameAssetDto.id` converge directly on an opaque UUID logical asset identifier in the same pre-v1 migration, while the existing numeric row key may remain private. The numeric public field is removed rather than retained through dual identifiers, translators, or compatibility scaffolding. Until migration completes, caller-supplied tenant strings and the exposed numeric asset ID remain implementation drift, not alternate canonical identities, and implementations must not invent a reversible numeric-to-UUID encoding.
+- **Current first slice:** Ordinary uploaded bytes are persisted in `game_assets.data`, which is the immutable repair source for Published/Active binary assets. Publication currently exports them to version-scoped object storage and exposes the numeric `GameAssetDto.id`; the target private-candidate/content-addressed publication and opaque logical asset identifier are not live.
+- **Identifier drift:** `game_assets.tenant_id` accepts a REST `tenantId` string without UUID-shape enforcement while Account Service still exposes numeric `Long` tenant identifiers. No authoritative numeric-to-UUID mapping exists, and the public asset row key is a `BIGSERIAL`; none of these numeric values is a canonical logical identity.
+- **Target convergence:** Account and downstream contracts migrate together to the opaque UUID tenant identity, and the public asset contract and `GameAssetDto.id` converge directly on an opaque UUID logical asset identifier while any numeric database key remains private. The numeric public field is removed rather than retained through compatibility translation; implementations must not invent a reversible numeric-to-UUID encoding. Draft bytes may move out of PostgreSQL only after an equivalent immutable repair source exists.
 
 Logical world and entity templates (regions, rooms, items, NPCs, loot tables, scripts, etc.) remain stored in PostgreSQL schemas owned by the corresponding domain services and are not persisted as blobs in the asset store. The asset store is strictly for binary design assets plus version-scoped manifests exported by the Game Design Service.
 
@@ -20,9 +20,10 @@ Derived runtime-consumed artifacts produced by domain services follow the same w
 
 Canonical producer-to-publisher handoff for derived artifacts:
 
-- For the first implementation slice, a producer service that owns a derived runtime artifact must persist a version-scoped artifact record in its own database keyed by `(tenantId, versionId, artifactKind)`.
+- For the target producer handoff, a producer service that owns a derived runtime artifact must persist a version-scoped artifact record in its own database keyed by `(tenantId, versionId, usageKey)`. `usageKey` is stable and unique within that release scope; a collision or two records claiming the same usage key must fail closed rather than produce ambiguous manifest entries. `artifactKind` remains required metadata and does not replace the usage key.
 - That producer-owned record is the canonical pre-publish handoff surface to Game Design and must include at minimum:
   - a stable fetch handle or byte source controlled by the producer service;
+  - `usageKey` identifying the manifest and release-attestation entry;
   - `contentDigest` computed from the actual artifact bytes;
   - `contentType`;
   - `artifactKind`;
@@ -34,7 +35,7 @@ Canonical producer-to-publisher handoff for derived artifacts:
 
 Illustrative producer API for derived artifacts:
 
-- Producer services should expose a typed API such as `GetPublishableDerivedArtifact(tenantId, versionId, artifactKind)`.
+- Producer services should expose a typed API such as `GetPublishableDerivedArtifact(tenantId, versionId, usageKey)`.
 - Minimum response contract:
   - `status` (`READY`, `NOT_READY`, `FAILED`);
   - immutable fetch handle or byte-stream reference controlled by the producer;
@@ -165,7 +166,7 @@ Illustrative `manifest.json` fragment:
       "artifactSchemaVersion": 1,
       "producerService": "world-management-service",
       "versionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
-      "url": "https://cdn.example.invalid/7b3b074e-d597-4e9b-b96f-4f5946d26120/4f035f76-4b87-4a5e-8b9f-ea6c9e66e620/world/navmesh.bin"
+      "url": "https://cdn.example.invalid/artifacts/sha256/8fd0c4..."
     },
     "world.pathGraph": {
       "usageKey": "world.pathGraph",
@@ -176,7 +177,7 @@ Illustrative `manifest.json` fragment:
       "artifactSchemaVersion": 1,
       "producerService": "world-management-service",
       "versionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
-      "url": "https://cdn.example.invalid/7b3b074e-d597-4e9b-b96f-4f5946d26120/4f035f76-4b87-4a5e-8b9f-ea6c9e66e620/world/path-graph.json"
+      "url": "https://cdn.example.invalid/artifacts/sha256/91baf2..."
     }
   }
 }
@@ -452,6 +453,7 @@ Race-safe purge workflow:
   - transition `version_asset_artifact` from `TOMBSTONED` to `PURGE_IN_PROGRESS` (or equivalent) using `state_epoch` CAS, and
   - return a `purgeWorkflowId` for the object-store deletion phase.
 - If CAS fails or eligibility no longer holds, the API must fail without deleting objects.
+- Before deleting any frozen object key, finalization must hold the publication/purge fence and revalidate global object reachability or transactionally maintained reference counts. If a key became referenced by another published release, purge must retain the bytes and lifecycle evidence, fail or defer finalization, and must not mark the artifact `PURGED`; only a successful fenced deletion may finalize `PURGED`.
 - Finalization deletes object-store bytes using the frozen `exported_version_number` and exported manifest asset-key proof from `version_asset_artifact`, not by re-reading current draft assets or mutable version state. It transitions `PURGE_IN_PROGRESS -> PURGED` only after object deletion succeeds and must retain the lifecycle metadata row for audit. Object deletion is reached only through these Game Design reachability and CAS-guarded APIs; direct bucket commands are outside the supported lifecycle.
 - On deletion/finalization failure, workflow must transition to `PURGE_FAILED` with structured `last_error_code`/`last_error_message`; operators then use retry/resume APIs instead of manual object-store surgery.
 
