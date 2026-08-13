@@ -86,7 +86,8 @@ At admission, World Management persists a durable generation record that include
 
 - `generationRunId` and stable `generationRequestId`
 - an immutable admitted-generation revision or approval identity, or an explicit regeneration sequence, as part of `generationRequestId`
-- `tenantId`, `versionId`, `generationMode`
+- a typed `target`: exactly one of `{kind: "DESIGN", tenantId, versionId}` or `{kind: "RUNTIME", tenantId, gameInstanceId}`; this complete target identity is part of the durable record
+- `generationMode` as derived metadata from the authenticated ingress and typed target, never as a selector or inference mechanism for the persistence namespace
 - `generatorType` and `generatorImplementationVersion` (or equivalent immutable build identifier)
 - canonicalized `configSnapshot` including explicit `schemaVersion`
 - seed and any derived deterministic inputs
@@ -269,11 +270,11 @@ The following rules align generators with the core runtime and tooling:
 
    Persistence guarantees atomic reader visibility and replay-safe convergence through one of two bounded mechanisms:
 
-   - Each generation run is assigned a `generationRunId` (scoped to the caller’s target, for example `(tenantId, versionId)` or `(tenantId, gameInstanceId)`).
+   - Each generation run is assigned a `generationRunId` scoped to the complete typed target identity and target scope; a design target and a runtime target are never interchangeable.
    - Callers must supply (or World Management must derive deterministically) a stable `generationRequestId` so retries of “the same request” map to the same `generationRunId` and become replay-safe.
    - `generationRequestId` must be derived from business identity rather than transient execution identity (for example a hash of `tenantId`, target scope key, generation step name, canonicalized generator config, and the immutable admitted-generation revision or approval identity, or explicit regeneration sequence). Retries through a new Temporal run or synchronous retry must reuse the same `generationRequestId`; an intentional regeneration with the same inputs must use a distinct sequence and request ID.
-   - World Management must enforce a uniqueness constraint on `(tenantId, targetScopeKey, generationRequestId)` so duplicate requests converge to one run.
-   - World Management must enforce single-writer semantics per target scope through the scope epoch/fence or equivalent storage-level compare-and-set, together with request uniqueness, so concurrent runs cannot both commit.
+   - World Management must enforce a uniqueness constraint on `(typedTarget, targetScopeKey, generationRequestId)`, where `typedTarget` contains exactly one complete design or runtime target identity, so duplicate requests converge to one run without crossing namespaces.
+   - World Management must enforce single-writer semantics per typed target and target scope through the scope epoch/fence or equivalent storage-level compare-and-set, together with request uniqueness, so concurrent runs, retries, and recovery cannot cross targets or both commit.
    - Generation and all graph, scope, count, byte-size, and digest validation complete before the visibility transaction. That transaction performs no generator execution or network calls.
    - An output within enforced and proved row and serialized-byte limits may write the complete result and idempotency outcome in one owner-local transaction. Readers see either the prior scope or the complete new scope.
    - Output above those limits, or output requiring chunked persistence, uses private staging keyed by `(tenantId, generationRunId)`. A short finalize transaction validates the request identity, scope fence, expected counts, and canonical digest before atomically installing or selecting the graph or immutable root chunk manifest.

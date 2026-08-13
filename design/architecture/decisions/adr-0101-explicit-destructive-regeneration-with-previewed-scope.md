@@ -37,7 +37,7 @@ The current mutation path implements scope epochs, `REPLACE_SCOPE`, and `SEED_AP
 
 ## Decision
 
-Replaying one historical generation revision reproduces that revision and then reapplies all later manual revisions in their original order. The replay does not reinterpret that historical revision as permission to delete later edits.
+Historical replay restores the committed revision data or a retained finalized artifact, then reapplies all later persisted manual revisions in their original order. It never reruns the historical generator or reinterprets that historical revision as permission to delete later edits.
 
 A new generation revision may deliberately replace content through `REPLACE_SCOPE`. This is a new destructive operation, not reconciliation of the old revision. Where generation can safely add without rewriting or deleting existing authored content, `SEED_APPEND_ONLY` is the default.
 
