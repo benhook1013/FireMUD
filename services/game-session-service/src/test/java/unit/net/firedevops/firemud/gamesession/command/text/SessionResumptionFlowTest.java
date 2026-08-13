@@ -63,7 +63,7 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
 import net.firedevops.firemud.gamesession.service.impl.DefaultGameplayPresenceLifecycleService;
-import net.firedevops.firemud.gamesession.service.impl.InMemoryGameplayPresenceService;
+import net.firedevops.firemud.gamesession.service.impl.FakeGameplayPresenceService;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
@@ -123,8 +123,7 @@ class SessionResumptionFlowTest {
   private final CommunicationCommandHandler communicationHandler =
       Mockito.mock(CommunicationCommandHandler.class);
   private final GameplayPresenceService gameplayPresenceService =
-      new InMemoryGameplayPresenceService(
-          new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L));
+      new FakeGameplayPresenceService(new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L));
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
       new DefaultGameplayPresenceLifecycleService(
           gameplayPresenceService,

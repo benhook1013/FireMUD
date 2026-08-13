@@ -74,26 +74,6 @@ public class EquipmentServiceImpl implements EquipmentService {
       CharacterRepository characterRepository,
       ItemRepository itemRepository,
       ItemTransferSupport itemTransferSupport,
-      ContainerHolderSyncSupport containerHolderSyncSupport,
-      EquipmentSlotDefinitionRepository equipmentSlotDefinitionRepository,
-      BodyLayoutSlotDefinitionRepository bodyLayoutSlotDefinitionRepository) {
-    this(
-        itemInstanceRepository,
-        containerInstanceRepository,
-        new ScopedCharacterResolver(characterRepository, new PlayableStateKeyResolver()),
-        itemRepository,
-        itemTransferSupport,
-        containerHolderSyncSupport,
-        equipmentSlotDefinitionRepository,
-        bodyLayoutSlotDefinitionRepository);
-  }
-
-  EquipmentServiceImpl(
-      ItemInstanceRepository itemInstanceRepository,
-      ContainerInstanceRepository containerInstanceRepository,
-      CharacterRepository characterRepository,
-      ItemRepository itemRepository,
-      ItemTransferSupport itemTransferSupport,
       ItemTransferAuditWriter itemTransferAuditWriter,
       ContainerHolderSyncSupport containerHolderSyncSupport,
       EquipmentSlotDefinitionRepository equipmentSlotDefinitionRepository,
@@ -105,27 +85,6 @@ public class EquipmentServiceImpl implements EquipmentService {
         itemRepository,
         itemTransferSupport,
         itemTransferAuditWriter,
-        containerHolderSyncSupport,
-        equipmentSlotDefinitionRepository,
-        bodyLayoutSlotDefinitionRepository);
-  }
-
-  EquipmentServiceImpl(
-      ItemInstanceRepository itemInstanceRepository,
-      ContainerInstanceRepository containerInstanceRepository,
-      ScopedCharacterResolver scopedCharacterResolver,
-      ItemRepository itemRepository,
-      ItemTransferSupport itemTransferSupport,
-      ContainerHolderSyncSupport containerHolderSyncSupport,
-      EquipmentSlotDefinitionRepository equipmentSlotDefinitionRepository,
-      BodyLayoutSlotDefinitionRepository bodyLayoutSlotDefinitionRepository) {
-    this(
-        itemInstanceRepository,
-        containerInstanceRepository,
-        scopedCharacterResolver,
-        itemRepository,
-        itemTransferSupport,
-        new NoOpItemTransferAuditWriter(),
         containerHolderSyncSupport,
         equipmentSlotDefinitionRepository,
         bodyLayoutSlotDefinitionRepository);

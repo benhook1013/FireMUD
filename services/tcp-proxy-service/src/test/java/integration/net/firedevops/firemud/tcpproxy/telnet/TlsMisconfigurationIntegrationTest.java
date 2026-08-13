@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.tcpproxy.health.GatewayGameplayReadinessProbe;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import org.junit.jupiter.api.Test;
@@ -51,11 +50,6 @@ class TlsMisconfigurationIntegrationTest {
     }
 
     @Bean
-    LookCacheService lookCacheService() {
-      return Mockito.mock(LookCacheService.class);
-    }
-
-    @Bean
     GatewayGameplayReadinessProbe gatewayGameplayReadinessProbe() {
       GatewayGameplayReadinessProbe probe = Mockito.mock(GatewayGameplayReadinessProbe.class);
       Mockito.when(probe.isReady()).thenReturn(true);
@@ -72,8 +66,7 @@ class TlsMisconfigurationIntegrationTest {
         @Value("${TCP_PROXY_MCP_ENABLED:false}") boolean advertiseMcp,
         MeterRegistry meterRegistry,
         TcpProxyEventService tcpProxyEventService,
-        GatewayGameplayReadinessProbe gatewayGameplayReadinessProbe,
-        LookCacheService lookCacheService) {
+        GatewayGameplayReadinessProbe gatewayGameplayReadinessProbe) {
       return new TelnetServer(
           port,
           gatewayWsUrl,
@@ -86,8 +79,7 @@ class TlsMisconfigurationIntegrationTest {
           4096,
           meterRegistry,
           tcpProxyEventService,
-          gatewayGameplayReadinessProbe,
-          lookCacheService);
+          gatewayGameplayReadinessProbe);
     }
   }
 }

@@ -28,7 +28,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 import javax.net.ssl.SSLException;
-import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.tcpproxy.health.GatewayGameplayReadinessProbe;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
@@ -36,7 +35,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -44,21 +42,6 @@ import org.springframework.util.StringUtils;
 @Component
 public final class TelnetServer {
   private static final Logger logger = LoggerFactory.getLogger(TelnetServer.class);
-  private static final LookCacheService NOOP_LOOK_CACHE_SERVICE =
-      new LookCacheService() {
-        @Override
-        public void cache(
-            long tenantId,
-            long sessionId,
-            String roomId,
-            String renderedText,
-            String protocolText) {}
-
-        @Override
-        public java.util.Optional<CachedLook> get(long tenantId, long sessionId) {
-          return java.util.Optional.empty();
-        }
-      };
 
   private final int port;
   private final String gatewayWsUrl;
@@ -89,8 +72,6 @@ public final class TelnetServer {
   private final Map<String, java.util.concurrent.atomic.AtomicInteger> connectionsByIp =
       new ConcurrentHashMap<>();
   private volatile int boundPort;
-  private final LookCacheService lookCacheService;
-
   private final EventLoopGroup bossGroup =
       new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
   private final EventLoopGroup workerGroup =
@@ -121,8 +102,7 @@ public final class TelnetServer {
       MeterRegistry meterRegistry,
       TcpProxyEventService eventService,
       GatewayGameplayReadinessProbe gatewayGameplayReadinessProbe,
-      RuntimeIdentity runtimeIdentity,
-      @Nullable LookCacheService lookCacheService) {
+      RuntimeIdentity runtimeIdentity) {
     this.port = port;
     this.boundPort = port;
     this.gatewayWsUrl = gatewayWsUrl;
@@ -147,7 +127,6 @@ public final class TelnetServer {
     this.eventService = eventService;
     this.gameplayTrafficReady = gatewayGameplayReadinessProbe::isReady;
     this.runtimeIdentity = runtimeIdentity;
-    this.lookCacheService = lookCacheService != null ? lookCacheService : NOOP_LOOK_CACHE_SERVICE;
     Gauge.builder(
             "tcpproxy.connections.active",
             activeConnections,
@@ -182,8 +161,7 @@ public final class TelnetServer {
       int maxLineBytes,
       MeterRegistry meterRegistry,
       TcpProxyEventService eventService,
-      GatewayGameplayReadinessProbe gatewayGameplayReadinessProbe,
-      @Nullable LookCacheService lookCacheService) {
+      GatewayGameplayReadinessProbe gatewayGameplayReadinessProbe) {
     this(
         port,
         gatewayWsUrl,
@@ -203,8 +181,13 @@ public final class TelnetServer {
         eventService,
         gatewayGameplayReadinessProbe,
         new RuntimeIdentity(
-            "tcp-proxy-service", "tcp-proxy-test", null, java.time.Instant.EPOCH, null, null, null),
-        lookCacheService);
+            "tcp-proxy-service",
+            "tcp-proxy-test",
+            null,
+            java.time.Instant.EPOCH,
+            null,
+            null,
+            null));
   }
 
   private SslContext buildServerSslContext() throws SSLException {
@@ -292,7 +275,6 @@ public final class TelnetServer {
                               defaultWorldSlug,
                               defaultRealmSlug,
                               defaultPointerVersion,
-                              lookCacheService,
                               runtimeIdentity));
                 }
               });

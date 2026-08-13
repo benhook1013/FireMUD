@@ -11,7 +11,7 @@ import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityResolv
 import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityState;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
-import net.firedevops.firemud.gamesession.service.impl.InMemoryGameplayPresenceService;
+import net.firedevops.firemud.gamesession.service.impl.FakeGameplayPresenceService;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -26,8 +26,7 @@ class WhoCommandHandlerTest {
 
   @Test
   void whoShowsBoundedEmptyStateWhenNobodyIsConnected() {
-    InMemoryGameplayPresenceService gameplayPresenceService =
-        new InMemoryGameplayPresenceService(jwtUtil);
+    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService(jwtUtil);
     WhoCommandHandler handler =
         new WhoCommandHandler(gameplayPresenceService, activityResolver, scriptEventPublisher);
 
@@ -51,8 +50,7 @@ class WhoCommandHandlerTest {
 
   @Test
   void whoGroupsElevatedPlayersFirstAndPlayersAfterward() {
-    InMemoryGameplayPresenceService gameplayPresenceService =
-        new InMemoryGameplayPresenceService(jwtUtil);
+    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService(jwtUtil);
     WhoCommandHandler handler =
         new WhoCommandHandler(gameplayPresenceService, activityResolver, scriptEventPublisher);
     String godJwt =
@@ -95,8 +93,7 @@ class WhoCommandHandlerTest {
 
   @Test
   void whoOmitsRemovedPresenceAfterLogoutLikeCleanup() {
-    InMemoryGameplayPresenceService gameplayPresenceService =
-        new InMemoryGameplayPresenceService(jwtUtil);
+    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService(jwtUtil);
     WhoCommandHandler handler =
         new WhoCommandHandler(gameplayPresenceService, activityResolver, scriptEventPublisher);
 
@@ -117,8 +114,7 @@ class WhoCommandHandlerTest {
 
   @Test
   void whoAnnotatesExplicitAndAutoAfkPlayers() {
-    InMemoryGameplayPresenceService gameplayPresenceService =
-        new InMemoryGameplayPresenceService(jwtUtil);
+    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService(jwtUtil);
     GameplayPresenceActivityResolver resolver =
         Mockito.mock(GameplayPresenceActivityResolver.class);
     WhoCommandHandler handler =

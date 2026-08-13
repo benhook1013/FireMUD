@@ -46,6 +46,7 @@ class ContainerServiceImplTest {
             itemRepo,
             itemStackRepo,
             new ItemTransferSupport(),
+            Mockito.mock(ItemTransferAuditWriter.class),
             new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(7L, 1L);
@@ -97,6 +98,7 @@ class ContainerServiceImplTest {
             itemRepo,
             itemStackRepo,
             new ItemTransferSupport(),
+            Mockito.mock(ItemTransferAuditWriter.class),
             new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(7L, 1L);
@@ -205,6 +207,7 @@ class ContainerServiceImplTest {
     CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
     ItemStackRepository itemStackRepo = Mockito.mock(ItemStackRepository.class);
+    ItemTransferAuditWriter itemTransferAuditWriter = Mockito.mock(ItemTransferAuditWriter.class);
     ContainerServiceImpl service =
         new ContainerServiceImpl(
             containerInstanceRepo,
@@ -213,6 +216,7 @@ class ContainerServiceImplTest {
             itemRepo,
             itemStackRepo,
             new ItemTransferSupport(),
+            itemTransferAuditWriter,
             new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);
@@ -262,6 +266,16 @@ class ContainerServiceImplTest {
     ItemStack destination = saved.getAllValues().get(saved.getAllValues().size() - 1);
     assertEquals("ammo/iron", destination.getStackFamilyKey());
     assertEquals("item-definition:3:family:ammo/iron", destination.getCompatibilityFingerprint());
+    ItemTransferSupport transferSupport = new ItemTransferSupport();
+    verify(itemTransferAuditWriter)
+        .recordStackTransfer(
+            1L,
+            arrows,
+            2,
+            "ammo/iron",
+            transferSupport.inventoryHolder(1L, 1L),
+            transferSupport.containerHolder(1L, 500L),
+            transferSupport.audit("PUT", 1L));
   }
 
   @Test
@@ -272,6 +286,7 @@ class ContainerServiceImplTest {
     CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
     ItemStackRepository itemStackRepo = Mockito.mock(ItemStackRepository.class);
+    ItemTransferAuditWriter itemTransferAuditWriter = Mockito.mock(ItemTransferAuditWriter.class);
     ContainerServiceImpl service =
         new ContainerServiceImpl(
             containerInstanceRepo,
@@ -280,6 +295,7 @@ class ContainerServiceImplTest {
             itemRepo,
             itemStackRepo,
             new ItemTransferSupport(),
+            itemTransferAuditWriter,
             new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);
@@ -312,6 +328,13 @@ class ContainerServiceImplTest {
     assertEquals("Torch", taken.itemName());
     assertEquals(character, second.getCharacter());
     assertNull(first.getCharacter());
+    ItemTransferSupport transferSupport = new ItemTransferSupport();
+    verify(itemTransferAuditWriter)
+        .recordInstanceTransfer(
+            second,
+            transferSupport.container(1L, 500L),
+            transferSupport.inventory(character),
+            transferSupport.audit("TAKE", 1L));
   }
 
   @Test
@@ -330,6 +353,7 @@ class ContainerServiceImplTest {
             itemRepo,
             itemStackRepo,
             new ItemTransferSupport(),
+            Mockito.mock(ItemTransferAuditWriter.class),
             new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);
@@ -365,6 +389,7 @@ class ContainerServiceImplTest {
     CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
     ItemStackRepository itemStackRepo = Mockito.mock(ItemStackRepository.class);
+    ItemTransferAuditWriter itemTransferAuditWriter = Mockito.mock(ItemTransferAuditWriter.class);
     ContainerServiceImpl service =
         new ContainerServiceImpl(
             containerInstanceRepo,
@@ -373,6 +398,7 @@ class ContainerServiceImplTest {
             itemRepo,
             itemStackRepo,
             new ItemTransferSupport(),
+            itemTransferAuditWriter,
             new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);
@@ -423,6 +449,16 @@ class ContainerServiceImplTest {
     assertEquals("ammo/steel", stored.visibleRef());
     assertEquals(2, second.getQuantity());
     assertEquals(5, first.getQuantity());
+    ItemTransferSupport transferSupport = new ItemTransferSupport();
+    verify(itemTransferAuditWriter)
+        .recordStackTransfer(
+            1L,
+            arrows,
+            2,
+            "ammo/steel",
+            transferSupport.inventoryHolder(1L, 1L),
+            transferSupport.containerHolder(1L, 500L),
+            transferSupport.audit("PUT", 1L));
   }
 
   private static Character character(Long id, Long tenantId) {
