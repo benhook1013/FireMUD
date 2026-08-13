@@ -149,7 +149,7 @@ Plugins are executed by the same runtime engine as scripts and must not rely on 
 ### 13) Output Budget Safety
 
 - A successfully admitted trigger must still be prevented from emitting unbounded work. The canonical versioned/digested component-cost metadata, conservative publish analysis, artifact-pinned caps, and incremental metering contract are owned by [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#static-output-cost-contract).
-- At this cross-service boundary, Automation must reject a missing/stale/contradictory artifact-cost digest at the correct ingress or readiness stage, and must enforce `maxCommandsPerRun`, `maxCommandsPerEntityPerTrigger`, `maxSerializedWorkItemBytes`, serialized-byte/data-dependent caps before constructing each output descriptor.
+- At this cross-service boundary, Automation must reject a missing/stale/contradictory artifact-cost digest at the correct ingress or readiness stage, enforce the owner-defined conservative prospective serialized-byte and data-dependent bounds before constructing each output descriptor, and check exact bounded serialized size before atomic persistence.
 - Output-budget violations are non-success stage-aware outcomes. Generated output is atomic per resolved handler: no partial descriptor set may be persisted or handed off, and Game Session must never receive a partial handoff presented as successful work.
 - Publish-time validation in Game Design must conservatively reject graphs whose bounded worst-case fan-out exceeds the artifact-pinned runtime ceilings. The owner document defines metadata shape and exact failure mapping; this contract only protects the persistence/handoff boundary.
 
