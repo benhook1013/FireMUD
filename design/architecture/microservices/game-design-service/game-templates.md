@@ -229,13 +229,14 @@ The examples below intentionally use numeric `versionId` values because the curr
     "gameTemplateId": "gt-default",
     "versionId": 42,
     "scriptPatchVersion": null,
+    "enabledPluginVersions": [],
     "runtimeFlags": {
       "pvpEnabled": false
     },
     "generationConfigRevision": "genrev-42a1",
     "versionStateEpoch": 17,
     "remapSetId": null,
-    "publishedReleaseBundleRef": "prb:11111111-1111-4111-8111-111111111111:42:7"
+    "publishedReleaseBundleRef": "opaque-release-ref-7f3c9a2b..."
   }
 }
 ```
@@ -257,13 +258,19 @@ The examples below intentionally use numeric `versionId` values because the curr
     "gameTemplateId": "gt-default",
     "versionId": 43,
     "scriptPatchVersion": "v43-script.1",
+    "enabledPluginVersions": [
+      {
+        "pluginId": "combat-ui",
+        "pluginVersionId": "plugin-version-43-1"
+      }
+    ],
     "runtimeFlags": {
       "pvpEnabled": false
     },
     "generationConfigRevision": "genrev-43b7",
     "versionStateEpoch": 3,
     "remapSetId": "remap-v42-v43-r1",
-    "publishedReleaseBundleRef": "prb:11111111-1111-4111-8111-111111111111:43:8"
+    "publishedReleaseBundleRef": "opaque-release-ref-a19d4e6c..."
   }
 }
 ```
@@ -294,16 +301,18 @@ The examples below intentionally use numeric `versionId` values because the curr
     "gameTemplateId": "gt-default"
   },
   "resolvedDescriptor": {
-    "launchDescriptorId": "ld-3001",
+    "launchDescriptorId": "ld-4001",
     "versionId": 42,
+    "enabledPluginVersions": [],
     "generationConfigRevision": "genrev-42a1",
-    "publishedReleaseBundleRef": "prb:11111111-1111-4111-8111-111111111111:42:7"
+    "publishedReleaseBundleRef": "opaque-release-ref-7f3c9a2b..."
   },
   "releaseBundle": {
     "id": 7,
     "tenantId": "11111111-1111-4111-8111-111111111111",
     "versionId": 42,
-    "generationConfigRevision": "genrev-42b9"
+    "generationConfigRevision": "genrev-42b9",
+    "publishedReleaseBundleRef": "opaque-release-ref-2d8e6b91..."
   },
   "error": {
     "code": "RELEASE_ATTESTATION_MISMATCH",
@@ -317,7 +326,7 @@ This failure occurs before any persistent `gameInstanceId` row or World `PREPARI
 Illustrative startup sequence:
 
 1. The instance-creation orchestrator calls `GetTemplateReferencePhase(tenantId)` and fails fast unless the result is `ENFORCED`.
-2. The orchestrator calls `ResolveLaunchDescriptor(...)` for the selected `gameTemplateId` and receives immutable resolved values including `versionId`, `scriptPatchVersion`, `generationConfigRevision`, `versionStateEpoch`, and `publishedReleaseBundleRef`.
+2. The orchestrator calls `ResolveLaunchDescriptor(...)` for the selected `gameTemplateId` and receives immutable resolved values including `versionId`, `scriptPatchVersion`, the complete `enabledPluginVersions[]` set, `generationConfigRevision`, `versionStateEpoch`, and `publishedReleaseBundleRef`.
 3. The orchestrator verifies `publishedReleaseBundleRef` by reading `GetPublishedReleaseBundle(tenantId, versionId)` and confirms the attested `generationConfigRevision` matches the resolved descriptor.
 4. World creation starts using only the resolved descriptor fields and persists instance rows under `(tenantId, gameInstanceId)` without re-reading mutable template defaults.
 5. Game Session opens admission only after World reports successful activation for that same resolved descriptor.

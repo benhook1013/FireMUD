@@ -8,6 +8,10 @@ This document defines the canonical attestation artifact used to promote image d
 - Prevent production overlay PRs from promoting unverified or drifted image digests.
 - Keep promotion and rollback evidence auditable and stable across tooling changes.
 
+## Implementation Status
+
+The current repository validates checked-in, operator-authored promotion evidence and does not yet prove the target machine-generated evidence producer. The target contract below still requires operator review of evidence grounded in immutable artifacts and observed live state.
+
 ## Artifact Format
 
 The attestation is a JSON document committed in-repo with the production overlay change so overlay PR validation is deterministic.
@@ -20,7 +24,7 @@ Current trust model:
 
 - For the current single-admin/operator phase, the Git-reviewed in-repo evidence chain is the promotion trust root. CI validates the attestation, referenced staging deployment record, live-state evidence shape, immutable secret-compliance evidence references, and digest equality deterministically from repository state plus registry image availability.
 - The attestation record is not a detached cryptographic signature. If FireMUD later requires multi-party release approval or stronger provenance, add signed/SLSA-style attestations as a new evidence layer without replacing the canonical in-repo promotion index.
-- Target promotion tooling should machine-generate the candidate attestation and routine lineage fields from the successful staging deployment and observed live state. The current repository implementation validates checked-in/operator-authored evidence and does not yet prove that generator; operators must review evidence against immutable artifacts and observed live-state values.
+- Target promotion tooling should machine-generate the candidate attestation and routine lineage fields from the successful staging deployment and observed live state.
 - Operator-authored evidence is acceptable only when it points to immutable artifacts or observed live-state values. Free-form notes can provide context, but they must not be the only proof for digest, smoke, live-state, or secret-compliance decisions.
 
 Required fields:
@@ -98,7 +102,7 @@ External-only attestation storage is not allowed for production promotions becau
   - `secretComplianceEvidenceRef`
   - `smokeEvidence` list
 - Producer contract:
-  - Target-state tooling emits the candidate deployment evidence from observed staging state. The current repository flow remains operator-authored: operators review and update the evidence as part of staging apply in the deployment runbook flow.
+  - Target-state tooling emits the candidate deployment evidence from observed staging state for operator review.
   - CI promotion validation must fail if the referenced deployment record is missing, malformed, or digest-mismatched.
 - Retain attestation artifacts for at least as long as release/rollback audit history is retained.
 - Rollback PRs should reference the original attestation used for the digest set being restored.
