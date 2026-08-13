@@ -139,8 +139,7 @@ class TextCommandInterpreterTest {
               false,
               new PresentationProperties.Prompt(true, true, 150L)));
   private final GameplayPresenceService gameplayPresenceService =
-      new FakeGameplayPresenceService(
-          new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L));
+      new FakeGameplayPresenceService(new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L));
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
       new DefaultGameplayPresenceLifecycleService(
           gameplayPresenceService,
