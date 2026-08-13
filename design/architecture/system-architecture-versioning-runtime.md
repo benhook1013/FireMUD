@@ -326,7 +326,7 @@ Required preflight failure outcomes:
 - `VERSION_STATE_EPOCH_STALE`
 - `LAUNCH_REMAP_REQUIRED`
 
-These are deterministic expected application outcomes. Launch preflight returns them as typed domain outcomes over a successful `OK` response. RPC envelope and input-shape validation failures use canonical non-`OK` gRPC status, as do authorization, missing preconditions, dependency/resource failures, deadlines/cancellation, and internal failures when preflight cannot produce a domain result. The shared [gRPC outcome and transport classification](./system-architecture-grpc.md#outcome-and-transport-classification) owns that split; this document does not assign an individual transport mapping to each listed code.
+These are deterministic application outcomes. Launch preflight must return them in normal responses and must not encode them as transport errors.
 
 Normalized-template dependency checks require explicit phase enforcement:
 

@@ -59,10 +59,6 @@ Callers must reuse the same full applicable Trigger Identity on retries for live
 
 Ingress ownership is endpoint-specific and must follow the matrix in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1a-event-ingress-scripteventid-ownership-matrix`.
 
-### 4a) Handler Input Manifest Boundary
-
-The [DSL lifecycle](./system-architecture-scripting-dsl-reference-and-lifecycle.md#read-consistency-contract) owns deterministic evaluation/read consistency. Automation seals one bounded input manifest per resolved handler, including `onLoad`, with trigger facts, pinned artifacts, owner-versioned values, causal floor, and seed version. A `readSnapshotToken` is retained only when an individual owner contract uses it, as one manifest input or correlation value. Runtime retries, downstream handoff, and tick replay must carry the manifest digest/reference and reuse the sealed inputs; they must not fetch newer state or re-enter the DSL. The current cross-service payloads may still carry the narrower token field, which remains an implementation gap rather than universal read authority.
-
 ### 5) Metrics Cardinality Guardrails
 
 - `scriptEventId` is for logs, traces, and `script_event_audit` queries.
@@ -148,18 +144,10 @@ Plugins are executed by the same runtime engine as scripts and must not rely on 
 
 ### 13) Output Budget Safety
 
-- A successfully admitted trigger must still be prevented from emitting unbounded work. The canonical versioned/digested component-cost metadata, conservative publish analysis, artifact-pinned caps, and incremental metering contract are owned by [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#static-output-cost-contract).
-- At this cross-service boundary, Automation must reject a missing/stale/contradictory artifact-cost digest at the correct ingress or readiness stage, enforce the owner-defined conservative prospective serialized-byte and data-dependent bounds before constructing each output descriptor, and check exact bounded serialized size before atomic persistence.
-- Output-budget violations are non-success stage-aware outcomes. Generated output is atomic per resolved handler: no partial descriptor set may be persisted or handed off, and Game Session must never receive a partial handoff presented as successful work.
-- Publish-time validation in Game Design must conservatively reject graphs whose bounded worst-case fan-out exceeds the artifact-pinned runtime ceilings. The owner document defines metadata shape and exact failure mapping; this contract only protects the persistence/handoff boundary.
-
-### 14) Handler Charge and Capacity Boundary
-
-The durable charge lifecycle is owned by [Scripting Quotas & Operations](./system-architecture-scripting-quotas-and-operations.md#budget-accounting-rules). Cross-service consumers must preserve its consequences:
-
-- One full-Trigger-Identity handler charge record, with separate exactly-once admission and execution-start markers, is the sole charge authority. Duplicate and recovery attempts reuse it.
-- Queued work holds no execution capacity. The capacity lease is separately fenced/reclaimable, and reclaiming an expired lease is not a refund or a new charge.
-- `PUBLISH_READINESS`/`onLoad` uses isolated readiness capacity and must not consume ordinary live quota or capacity. Game Session handoff occurs only after Automation's handler charge and capacity checks succeed; Game Session must not charge the handler again.
+- A successfully admitted trigger must still be prevented from emitting unbounded work.
+- The Automation & Scripting Service must enforce explicit ceilings including `maxCommandsPerRun`, `maxCommandsPerEntityPerTrigger`, and `maxSerializedWorkItemBytes` before durable persistence/handoff.
+- Output-budget violations must be recorded as non-success stage-aware outcomes and must not partially persist oversized work items.
+- Publish-time validation in Game Design must conservatively reject graphs whose bounded worst-case fan-out exceeds runtime ceilings, using the shared static output cost contract in `design/architecture/system-architecture-scripting-runtime-execution.md#static-output-cost-contract`.
 
 ## Related Documents
 

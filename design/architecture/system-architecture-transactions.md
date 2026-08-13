@@ -204,7 +204,7 @@ Instead, the recommended pattern is:
   - Performs the external call(s), with its own idempotency and retry strategy.
   - Updates saga and/or outbox state independently of tick replay.
 
-This keeps tick execution fast, bounded, and safely replayable. A simple owner-local asynchronous continuation uses the owning service's outbox worker; a bounded caller- or worker-owned multi-service continuation may use `common-saga`; restart-independent continuation, durable waits/timers/signals, or operator-managed in-flight state uses Temporal. New designs that mix tick-driven state changes with external side effects must explicitly document this boundary and reference both this section and the tick idempotency rules in `system-architecture-tick-failures-and-operations.md`.
+This keeps tick execution fast, bounded, and safely replayable, while synchronous saga steps, Temporal workflows, and outbox processors own longer-running cross-service or external side effects. New designs that mix tick-driven state changes with external side effects must explicitly document this boundary and reference both this section and the tick idempotency rules in `system-architecture-tick-failures-and-operations.md`.
 
 ---
 
@@ -225,19 +225,6 @@ These workflows:
 - Require compensation and persisted step status, but not durable workflow execution
 
 If a workflow needs restart-safe continuation, durable waits/timers, or operator-visible in-flight state that survives one service lifetime, it should use the shared Temporal substrate described in [Temporal Control-Plane Workflows](./system-architecture-temporal-workflows.md) instead of extending `SagaRunner` toward durable workflow behavior.
-
-### Mandatory Workflow Adopter Classification
-
-Before implementation, every new workflow or tick-adjacent continuation must record its classification and owner in the adopting service document or tracker. The adopter must state the selected substrate, the local idempotency/reconciliation boundary, the negative cases that keep the work out of the other substrates, and focused proof for the relevant failure and retry behavior:
-
-| Work shape | Canonical placement | Minimum adopter proof |
-| --- | --- | --- |
-| Gameplay ticks and tick-owned effects | Deterministic effect identity, idempotency guards, and reconciliation | Replay/duplicate, lease or restart, and reconciliation evidence for the owner boundary |
-| Simple owner-local asynchronous work | Owning-service transactional outbox and background worker | Atomic enqueue, duplicate delivery, worker restart, and terminal/retry evidence |
-| Bounded short caller/worker-owned orchestration | `common-saga` | Compensation or convergence, retry identity, and failure-path evidence within one caller/worker-owned execution path |
-| Restart-independent continuation, durable waits/timers/signals, or operator-managed in-flight lifecycle | `common-temporal` / Temporal | Workflow identity, restart, wait/signal or timer, duplicate activity, and operator-read evidence |
-
-This classification reinforces the existing boundary; it does not create a new workflow family or require an ADR. Gameplay execution remains outside both workflow substrates, and a service must not use a saga or outbox worker as a substitute for the durable Temporal guarantees listed in the final row.
 
 ### Rollback Boundaries by Operation Class
 

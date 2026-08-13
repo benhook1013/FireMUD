@@ -70,8 +70,7 @@ This document is the short catalog of the testing areas that most often deserve 
 
 ## 8. Error Contracts, Logging, and Observability
 
-- For each changed gRPC RPC, verify the [canonical outcome and transport classification](../architecture/system-architecture-grpc.md#outcome-and-transport-classification): expected domain outcomes use the typed result contract, while failures that prevent producing that result use canonical non-OK status with bounded details. Include mutation ambiguity/reconciliation and batch/stream item-versus-stream failure cases where applicable.
-- Treat existing blanket `ErrorDetail`/transport-`OK` coverage as current implementation coverage only; it does not prove the target classification matrix or exact per-RPC mappings.
+- Verify that application-level gRPC failures stay in normal responses with `ErrorDetail` instead of surfacing as transport errors.
 - Check that player-visible failures remain specific and safe when downstream services are unavailable or return app-level denials.
 - Re-prove important command metrics, warning logs, and trace context when changing hot gameplay or admission paths.
 - Favor tests that prove the exact canonical failure code or metric increment rather than only asserting that some generic error occurred.

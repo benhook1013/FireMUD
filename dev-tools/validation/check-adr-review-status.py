@@ -12,7 +12,6 @@ from typing import NoReturn
 
 ROOT = Path(__file__).resolve().parents[2]
 ADR_DIR = Path("design/architecture/decisions")
-ARCHITECTURE_DIR = Path("design/architecture")
 REVIEW_PROVENANCE = Path(
     "design/project-management/design-alignment/consequential-decision-inventory.md"
 )
@@ -74,8 +73,6 @@ RETIRED_REVIEW_QUEUE_HEADING_RE = re.compile(
 )
 SUPERSEDED_SCAN_ALIAS_KEY_RE = re.compile(r"^MS-[A-Z0-9]+(?:-[A-Z0-9]+)+$")
 SUPERSEDED_SCAN_ALIAS_SUFFIX = "; retained as a historical service-scan alias."
-NO_ADR_OUTCOME_SUFFIX = "; no ADR required"
-NO_ADR_LINK_LABEL = "canonical contract"
 
 
 @dataclass(frozen=True)
@@ -372,59 +369,6 @@ def validate_superseded_scan_alias_outcome(
             repository_root,
             line_number,
             target,
-        )
-
-
-def validate_no_adr_outcome(
-    path: Path,
-    repository_root: Path,
-    adr_dir: Path,
-    line_number: int,
-    outcome: str,
-) -> None:
-    if not outcome.endswith(NO_ADR_OUTCOME_SUFFIX):
-        fail(
-            f"{path}: checked no-ADR row at line {line_number} must end "
-            f"exactly with {NO_ADR_OUTCOME_SUFFIX!r}"
-        )
-
-    links = list(MARKDOWN_LINK_RE.finditer(outcome))
-    if len(links) != 1 or links[0].group("label") != NO_ADR_LINK_LABEL:
-        fail(
-            f"{path}: checked no-ADR row at line {line_number} must contain "
-            "exactly one Markdown link labeled [canonical contract]"
-        )
-
-    link = links[0]
-    target_ref, target_path, resolved_target, _ = parse_adr_target(
-        path,
-        link.group("target"),
-    )
-    architecture_dir = (repository_root / ARCHITECTURE_DIR).resolve()
-    try:
-        resolved_target.relative_to(architecture_dir)
-    except ValueError:
-        inside_architecture = False
-    else:
-        inside_architecture = True
-    try:
-        resolved_target.relative_to(adr_dir.resolve())
-    except ValueError:
-        inside_adr_directory = False
-    else:
-        inside_adr_directory = True
-    if (
-        target_path.is_absolute()
-        or target_path.suffix.lower() != ".md"
-        or not inside_architecture
-        or inside_adr_directory
-        or not resolved_target.is_file()
-    ):
-        fail(
-            f"{path}: checked no-ADR row at line {line_number} canonical "
-            "contract target must be an existing Markdown file inside "
-            f"{ARCHITECTURE_DIR.as_posix()} outside the canonical ADR "
-            f"directory: {target_ref!r}"
         )
 
 
@@ -817,10 +761,9 @@ def checked_reviews(
             date=match.group("date"),
             disposition=match.group("disposition").capitalize(),
         )
-        outcome = match.group("outcome")
         is_scan_alias = is_superseded_scan_alias(
             review.key,
-            outcome,
+            match.group("outcome"),
             review.disposition,
         )
         if is_scan_alias:
@@ -829,14 +772,14 @@ def checked_reviews(
                 repository_root,
                 adr_dir,
                 line_number,
-                outcome,
+                match.group("outcome"),
             )
         outcome_adr_numbers: list[int] = []
-        for adr_match in ADR_LINK_RE.finditer(outcome):
+        for adr_match in ADR_LINK_RE.finditer(match.group("outcome")):
             outcome_adr_numbers.append(
                 provenance_adr_number(path, adr_dir, line_number, adr_match)
             )
-        if not OUTCOME_LINK_RE.search(outcome):
+        if not OUTCOME_LINK_RE.search(match.group("outcome")):
             fail(
                 f"{path}: checked review provenance row at line {line_number} "
                 "must contain at least one Markdown outcome link"
@@ -847,21 +790,6 @@ def checked_reviews(
                 "contains duplicate ADR outcome links"
             )
 
-        is_no_adr = False
-        if (
-            review.disposition in {"Accepted", "Revised"}
-            and not is_scan_alias
-            and outcome.endswith(NO_ADR_OUTCOME_SUFFIX)
-        ):
-            validate_no_adr_outcome(
-                path,
-                repository_root,
-                adr_dir,
-                line_number,
-                outcome,
-            )
-            is_no_adr = True
-
         if review.disposition == "Deferred" and outcome_adr_numbers:
             fail(
                 f"{path}: checked deferred review row at line {line_number} "
@@ -871,7 +799,6 @@ def checked_reviews(
             review.disposition in {"Accepted", "Revised", "Superseded", "Withdrawn"}
             and not outcome_adr_numbers
             and not is_scan_alias
-            and not is_no_adr
         ):
             fail(
                 f"{path}: checked review provenance row at line {line_number} "
@@ -886,9 +813,7 @@ def checked_reviews(
 
         # A superseded scan alias points to replacement decisions; those ADRs
         # are not provenance for the historical alias row itself.
-        review_adr_numbers = (
-            [] if is_scan_alias or is_no_adr else outcome_adr_numbers
-        )
+        review_adr_numbers = [] if is_scan_alias else outcome_adr_numbers
         for number in review_adr_numbers:
             existing = reviews.setdefault(number, [])
             if existing and any(
