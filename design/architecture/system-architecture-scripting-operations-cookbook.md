@@ -95,16 +95,23 @@ All disable/enable and throttle actions are idempotent and recorded with the act
 
 This section summarizes common failure and rollback scenarios and how operators should respond. It complements the per-feature lifecycle details in the DSL reference and modding framework documents.
 
-- **Script patch `onLoad` failures or patch status `FAILED`**
+- **Tenant script-patch readiness `FAILED` before instance pinning**
   - Symptoms:
     - For a given `<tenantId, scriptPatchVersion>`, audit entries with `eventType=onLoad` and `finalStage=DSL_EVAL`, `finalOutcome=sandbox_error` (or other logical failures) so you can distinguish `onLoad` evaluation failures from downstream persistence/handoff problems.
     - Pre-handler triggers referencing that patch produce event-scope ingress records and drop metrics such as `automation_script_triggers_dropped_total{reason="version_unavailable"}`; handler-scoped denials are diagnosed separately through `script_event_audit`.
   - Behavior:
-    - The Automation & Scripting Service marks the patch `FAILED` for that tenant; running instances remain on their previously pinned patch.
-    - No automatic rollback beyond "keep the last known good patch active" occurs.
+    - The Automation & Scripting Service marks the patch `FAILED` for that tenant; it is not eligible for pinning, and running instances continue on their current previously pinned patch. Tenant readiness failure does not itself change an existing instance pin or mean that an instance reload failed.
   - Operator actions:
     - Use Game Design tooling to inspect and fix the script configuration, then publish a new patch.
     - Optionally disable the faulty script entirely (`runtimeStatus=DISABLED`) to stop further admission attempts while iterating.
+
+- **Instance reload or reconciliation failure after pinning**
+  - Symptoms:
+    - An instance that observed a tenant-`READY` pin reports runtime-scope `reloadState=FAILED`; inspect `GetScriptPatchInstanceRolloutStatus(...)` or `ScriptPatchInstanceRolloutChanged`, and retain the previously observed patch version as diagnostic state.
+  - Behavior:
+    - Automation & Scripting discards partially loaded derived state, pauses the affected instance, and admits no new trigger or timer work until the current pin, schedule ownership, scope, epoch, and due state are durably reconciled. The previously observed patch is diagnostic state only, not an active last-known-good execution fallback.
+  - Operator actions:
+    - Follow the fenced reconciliation or operator-authorized rollback procedure to establish an admissible current pin and schedule state before resuming work.
 
 - **Stale `onLoad` execution**
   - **Target state only:** A stale `ONLOAD_RUNNING` readiness execution is terminalized by the Automation recovery owner as an audited `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and `finalReason=stale_execution_fenced` result and blocks `READY` for that publication/generation. The affected unresolved work and any rollback admission/tick fences remain in force until that fencing and audit result are durable.
@@ -130,7 +137,7 @@ This section summarizes common failure and rollback scenarios and how operators 
   - Operator actions:
     - Reduce cadence (increase `intervalTicks`) or lower priority for noisy timers.
     - Adjust per-tenant budgets or cluster ceilings if drops reflect legitimate load rather than misbehaving scripts.
-    - For persistent version-related drops, investigate patch status and either fix and republish or explicitly disable the affected scripts.
+    - For persistent version-related drops, inspect tenant readiness with `GetScriptPatchStatus`/`ScriptPatchTenantStatusChanged` and, when an instance has already observed a new pin, inspect rollout/reload state with `GetScriptPatchInstanceRolloutStatus`/`ScriptPatchInstanceRolloutChanged` before fixing and republishing or explicitly disabling the affected scripts.
 
 In all of these cases, `script_event_audit` remains the primary source of truth for Automation-owned handler lifecycle. For the current live diagnostic boundary and target per-command identity contract, use [Command Identity and Live Handoff Boundary](./system-architecture-scripting-rollout-and-rollback.md#command-identity-and-live-handoff-boundary). Metrics defined by [normative Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix), together with audit and handoff diagnostics from the [Scripting & Automation Observability Contract](./system-architecture-scripting-observability-contract.md), indicate whether the problem is localized to a script/plugin, a tenant budget, or cluster capacity.
 

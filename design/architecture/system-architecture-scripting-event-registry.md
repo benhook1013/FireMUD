@@ -12,7 +12,7 @@ The event registry answers four canonical questions for every scripting event:
 
 - What does this `eventType` mean, and which payload schema/version is valid?
 - Which service or principal is allowed to emit it?
-- What trigger identity and snapshot fields are required at ingress?
+- Which event-scope ingress identity fields are required before handler resolution, and which additional full Trigger Identity fields are required after each handler resolves?
 - Which binding scopes and runtime behaviors are legal for handlers of that event?
 
 No service may invent a private `eventType` contract outside this registry and still expect Automation & Scripting or Game Design to accept it.
@@ -39,6 +39,7 @@ Each entry must define at least:
 - `payloadSchemaRef`
 - `requiredTriggerIdentityFields`
 - `snapshotAuthority`
+- `handlerInputManifestRequirements`
 - `consistencyClass`
 - `quotaClass`
 - `replaySemantics`
@@ -55,14 +56,21 @@ Required semantics for those fields:
 - `payloadSchemaRef`
   - The authoritative schema or proto reference for the payload shape.
 - `requiredTriggerIdentityFields`
-  - The exact Trigger Identity fields that must be present, such as `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `entityId`, or `scriptEventId`.
+  - The exact identity fields applicable to this event at each stage: the event-scope ingress subset before handler resolution and the full handler Trigger Identity after each handler resolves, as defined by the [normative identity tables](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields).
+  - Ordinary producer event-scope ingress must not require, fabricate, or use synthetic values for handler-only fields. In particular, `scriptId`, `pluginId`, `pluginVersionId`, and `bindingId` are unavailable before handler resolution; they become required only when the resolved handler's scope requires them.
+  - Tenant-readiness `onLoad` is the deliberate exception for `scriptId`: its event-scope identity targets one script and includes that `scriptId` so Automation can derive the deterministic `scriptEventId` before handler resolution. This does not authorize fabricated runtime-ingress script IDs; `pluginId`, `pluginVersionId`, and `bindingId` remain post-resolution fields.
+  - Scheduler/timer due candidates are another deliberate pre-handler exception: because Automation already materialized a durable schedule with its owner identity, the scheduler firing identity and deterministic event-scope `scriptEventId` include the schedule-owned `scriptId` and any schedule-owned `pluginId`, `pluginVersionId`, and `bindingId`. The scheduler must not fabricate a field absent from that schedule. This scheduler-owned exception does not authorize ordinary producer ingress to supply handler-only identity.
   - For gameplay-originated events whose producer already resolved shared-versus-isolated realm state, this set must also include `playableStateScope` so durable ingress/work-item identity, timer follow-up work, and operator read models do not collapse distinct playable-state namespaces that happen to share the same tenant and instance identifiers.
 - `snapshotAuthority`
-  - One of:
+  - Declares the owner-specific input source used to seed the handler-scoped input manifest. Its values remain:
     - `PRODUCER_SUPPLIED_TOKEN`
     - `AUTOMATION_CAPTURED_AT_ADMISSION`
     - `NON_AUTHORITATIVE_NO_SNAPSHOT`
-  - If a token is required, the entry must name the required token fields and timeline.
+  - The value does not make one universal `readSnapshotToken` authoritative for every input. If an owner-specific token/selector is required, the entry must name its owner, schema/version, scope, causal-floor fields, and how the bounded value is recorded in the manifest.
+- `handlerInputManifestRequirements`
+  - A versioned descriptor of the handler-scoped manifest requirements consumed for this entry. Each owner-specific requirement names its owning service, schema/version, scope, selector-or-token kind when applicable, causal-floor fields, and bounded value and capture requirements.
+  - Ingress and handler-manifest construction consume this field from the same canonical registry entry; they must not infer a parallel manifest contract from `snapshotAuthority`, payload fields, or local defaults.
+  - The exact consistency matrix for this descriptor and `snapshotAuthority` is normative in [ADR 0090: Snapshot authority and handler-input-manifest consistency](./decisions/adr-0090-recorded-script-input-manifests-for-reproducible-evaluation.md#snapshot-authority-and-handler-input-manifest-consistency). Registry schema validation applies that matrix: disagreement between the enum and descriptor makes the registry definition invalid; neither field silently overrides the other.
 - `consistencyClass`
   - The required read consistency for authoritative evaluation, such as `AUTHORITATIVE_REGION_TIMELINE`, `AUTHORITATIVE_INSTANCE_SNAPSHOT`, or `BEST_EFFORT`.
 - `quotaClass`
@@ -108,6 +116,7 @@ Minimum read payload:
 - allowed producers
 - required trigger identity fields
 - snapshot authority and consistency class
+- versioned handler input manifest requirements, including owner, schema/version, scope, selector-or-token, causal-floor, and bounded-value requirements
 - quota class
 - replay semantics
 - allowed binding scopes
@@ -131,6 +140,8 @@ Minimum payload contract:
 - `scriptPatchVersion`
 - `scriptEventId`
 - `isDryRun`
+
+The tenant-readiness event-scope identity also requires the targeted `scriptId`; Automation uses it with the other applicable readiness fields to derive the deterministic `scriptEventId`. This readiness exception does not make `scriptId` a required or fabricated field for ordinary runtime ingress, and plugin/binding identity remains post-resolution.
 
 No authoritative gameplay snapshot token is required. This payload exists for readiness-only initialization and must not imply mutable shared runtime ownership.
 
@@ -163,7 +174,7 @@ Current live binding-scope consumers on `onCommand` still support the baseline b
 
 When a resolved handler is plugin-owned, Automation ingress must only admit that handler when the same plugin version is currently active for the runtime scope identified by the event trigger (`gameInstanceId`, `regionId`, `regionEpoch`). Plugin ownership on resolved handler audit/work-item rows must come from that script owner truth rather than from optional producer-supplied plugin identity on the ingress request.
 
-Required Trigger Identity and snapshot fields remain defined by the registry entry itself (`tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `entityId`, `scriptPatchVersion`, `scriptEventId`, and `readSnapshotToken` where required). Payload contents are intentionally narrower than full Trigger Identity.
+Required Trigger Identity fields remain defined by the registry entry and the [normative identity tables](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields). Handler input-manifest requirements (owner versions, bounded values, causal floor, and any owner-specific `readSnapshotToken`) are separate from Trigger Identity. Payload contents are intentionally narrower than both contracts.
 
 ### `onSpawn` payload `v1`
 
@@ -229,9 +240,11 @@ Automation & Scripting ingress must enforce the registry before handler resoluti
 
 - reject unknown `(eventType, eventSchemaVersion)`
 - reject unauthorized producer identity
-- reject missing or malformed registry-required snapshot fields
+- reject missing or forbidden registry-required owner input selectors/manifest seed fields according to the [ADR 0090 consistency matrix](./decisions/adr-0090-recorded-script-input-manifests-for-reproducible-evaluation.md#snapshot-authority-and-handler-input-manifest-consistency)
 - reject bindings that target scopes the registry does not allow
 - reject dry-run requests for events that do not support dry-run mode
+
+The ingress validator and handler-manifest builder must consume the same normalized rule from the canonical registry entry. Each rejects missing or forbidden seed material at the earliest applicable stage and supplies no local default; a handler manifest that does not satisfy the selected matrix row cannot proceed to evaluation.
 
 These are event-scope admission decisions, not handler-scope outcomes.
 
@@ -251,7 +264,7 @@ Publish validation must fail closed if it cannot read the canonical registry for
 Registry-driven admission must be observable:
 
 - `script_event_ingress_audit` records the `eventType`, `eventSchemaVersion`, and producing service identity for every admitted or rejected custom/service-specific event before handler resolution
-- ingress rejection metrics must tag bounded reasons such as `unknown_event_type`, `unauthorized_producer`, `missing_snapshot_token`, or `illegal_binding_scope`
+- ingress rejection metrics must tag bounded reasons such as `unknown_event_type`, `unauthorized_producer`, `missing_owner_input`, or `illegal_binding_scope`; an owner-specific missing token may use a more specific bounded reason when that owner contract requires one
 - registry change events must be replayable so operator read models can explain why an event became valid, deprecated, or rejected
 
 ## Related Documents

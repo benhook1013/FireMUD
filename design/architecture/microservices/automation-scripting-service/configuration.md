@@ -23,6 +23,8 @@ For day-to-day operations, environment variables fall into three broad categorie
 Current live bindings in the service are narrower than the full target-state scripting design:
 
 - the live runtime binds live per-script quota, priority-tagged live tenant-budget, dry-run quota/capacity, output-budget, pin-projection freshness, outbox retention, queue rebuild, and dead-letter size/age knobs listed below;
+- the target output knobs below are runtime-cap inputs only. Publication resolves the cap values and pins the normalized cap payload together with its versioned `artifactRuntimeCapDigest`; publish-time analysis and runtime validation/enforcement use that artifact-pinned pair, owned by [Scripting Runtime Execution](../../system-architecture-scripting-runtime-execution.md#static-output-cost-contract), and never substitute newer local cap values. A later local/configuration reduction requires compatibility preflight or rejection for already-`READY`/pinned artifacts rather than silently changing their contract.
+- target-state scheduler admission uses the immutable artifact-pinned estimated millisecond cost and defers the remainder after the admitted ordered prefix; the current runtime does not implement this reservation, and actual runtime is calibration telemetry only.
 - signer/component-policy reconciliation cadence and ingress stale-threshold enforcement are now live bindings, while separate dead-letter alert thresholds and any split dead-letter cleanup cadence remain target-state follow-through in the `10.3` / `10.5` scripting slices.
 
 ## Service-Specific Variables
@@ -36,7 +38,7 @@ Current live bindings in the service are narrower than the full target-state scr
 | `SCRIPT_TENANT_BUDGET_BACKGROUND_RUNS_PER_MINUTE` | Live execution reservations allowed per tenant per minute for background automation work | `30` | Stable operator knob |
 | `AUTOMATION_TICK_DURATION_MS` | Duration of a processing tick in milliseconds | `1000` | Stable operator knob |
 | `AUTOMATION_TICK_MAX_EVENTS` | Max events staged from the automation queue each tick | `50` | Stable operator knob |
-| `AUTOMATION_TICK_BUDGET_MS` | Soft execution budget for a script tick in milliseconds | `100` | Advanced/experimental |
+| `AUTOMATION_TICK_BUDGET_MS` | Target-state cumulative estimated-millisecond reservation budget for deterministic ordered-prefix admission in one automation tick; current runtime does not implement this admission | `100` | Advanced/experimental |
 | `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` | Number of days to retain script audit records before cleanup | `30` | Stable operator knob |
 | `SCRIPT_EVENT_AUDIT_MAX_ROWS` | Maximum number of rows to keep in the script audit store before truncation | `1000000` | Stable operator knob |
 | `SCRIPT_READINESS_MAX_CONCURRENCY` | Maximum concurrent live publish-readiness (`PUBLISH_READINESS`) executions per tenant | `4` | Stable operator knob |
@@ -67,8 +69,8 @@ Any additional, less common tuning variables should be documented alongside thei
 
 These knobs are the authoritative defaults referenced by the scripting architecture docs:
 
-- publish-time validation and runtime enforcement share `SCRIPT_OUTPUT_MAX_COMMANDS_PER_RUN`, `SCRIPT_OUTPUT_MAX_COMMANDS_PER_ENTITY_PER_TRIGGER`, and `SCRIPT_OUTPUT_MAX_SERIALIZED_WORK_ITEM_BYTES` as the canonical output-budget ceilings;
-- live per-script quota is charged at handler admission with `SCRIPT_QUOTA_LIMIT` / `SCRIPT_QUOTA_WINDOW_SECONDS`, while live tenant budget is reserved at durable work-item execution with `SCRIPT_TENANT_BUDGET_HIGH_RUNS_PER_MINUTE`, `SCRIPT_TENANT_BUDGET_NORMAL_RUNS_PER_MINUTE`, and `SCRIPT_TENANT_BUDGET_BACKGROUND_RUNS_PER_MINUTE`; Automation persists registry `quotaClass` onto durable work items so `STANDARD_RUNTIME` work consumes those live quotas/budgets while `PUBLISH_READINESS` `onLoad` work does not;
+- publish-time validation and runtime enforcement share `SCRIPT_OUTPUT_MAX_COMMANDS_PER_RUN`, `SCRIPT_OUTPUT_MAX_COMMANDS_PER_ENTITY_PER_TRIGGER`, and `SCRIPT_OUTPUT_MAX_SERIALIZED_WORK_ITEM_BYTES` as the runtime-cap ceilings, while the artifact-pinned cost metadata/digests determine whether a component graph may publish or run;
+- the durable quota owner records one full-Trigger-Identity handler admission charge and a separate execution-start marker; `SCRIPT_QUOTA_LIMIT` / `SCRIPT_QUOTA_WINDOW_SECONDS` and the live tenant-tier settings are inputs to those decisions. Queued work holds no capacity; execution uses a separately fenced/reclaimable lease, and `PUBLISH_READINESS` `onLoad` work is isolated;
 - live `PUBLISH_READINESS` `onLoad` work uses dedicated `SCRIPT_READINESS_MAX_CONCURRENCY` and `SCRIPT_READINESS_MAX_CLUSTER_CONCURRENCY` capacity instead of an unbounded live-budget bypass, and exhausted readiness work is canceled as `onload_budget_exceeded`;
 - dry-run/test traffic uses `SCRIPT_TEST_MAX_RUNS_PER_MINUTE`, `SCRIPT_TEST_MAX_RUNS_PER_MINUTE_PER_PRINCIPAL`, `SCRIPT_TEST_MAX_CONCURRENCY`, and `SCRIPT_TEST_MAX_CLUSTER_CONCURRENCY` rather than consuming live per-script quota or tenant runtime budget;
 - pin and rollout convergence reads use `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS` to set `isProjectionStale` / `projectionStale` rather than relying on hardcoded local thresholds;

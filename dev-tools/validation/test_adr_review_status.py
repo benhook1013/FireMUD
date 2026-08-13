@@ -1140,6 +1140,115 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "must contain at least one exact [ADR NNNN] outcome link",
             )
 
+    def test_checked_accepted_row_accepts_strict_no_adr_contract(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            write(
+                root / "design/architecture/system-architecture-transactions.md",
+                "# Transactions\n",
+            )
+            append_provenance_row(
+                root,
+                "- [x] `TEST-NO-ADR` — `accepted` on 2026-07-27; "
+                "[canonical contract](../../architecture/"
+                "system-architecture-transactions.md#saga-vs-temporal-boundary); "
+                "no ADR required",
+            )
+            reviews = checked_reviews(self.validator, root)
+            self.assertEqual({"TEST-01"}, {review.key for review in reviews[12]})
+
+    def test_checked_revised_row_accepts_strict_no_adr_contract(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            write(
+                root / "design/architecture/system-architecture-transactions.md",
+                "# Transactions\n",
+            )
+            append_provenance_row(
+                root,
+                "- [x] `TEST-NO-ADR-REVISED` — `revised` on 2026-07-27; "
+                "[canonical contract](../../architecture/"
+                "system-architecture-transactions.md#saga-vs-temporal-boundary); "
+                "no ADR required",
+            )
+            reviews = checked_reviews(self.validator, root)
+            self.assertEqual({"TEST-01"}, {review.key for review in reviews[12]})
+
+    def test_checked_no_adr_row_requires_canonical_contract_label(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            write(root / "design/architecture/system-architecture-transactions.md", "# Transactions\n")
+            append_provenance_row(
+                root,
+                "- [x] `TEST-NO-ADR-LABEL` — `accepted` on 2026-07-27; "
+                "[canonical workflow](../../architecture/"
+                "system-architecture-transactions.md); no ADR required",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "labeled [canonical contract]",
+            )
+
+    def test_checked_no_adr_row_requires_exact_suffix(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            write(root / "design/architecture/system-architecture-transactions.md", "# Transactions\n")
+            append_provenance_row(
+                root,
+                "- [x] `TEST-NO-ADR-SUFFIX` — `accepted` on 2026-07-27; "
+                "[canonical contract](../../architecture/"
+                "system-architecture-transactions.md)",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "must contain at least one exact [ADR NNNN] outcome link",
+            )
+
+    def test_checked_no_adr_row_rejects_missing_or_outside_contract_target(self) -> None:
+        cases = (
+            (
+                "../../architecture/missing-contract.md",
+                "missing-contract",
+            ),
+            (
+                "../../../outside-contract.md",
+                "outside-contract",
+            ),
+        )
+        for target, key in cases:
+            with self.subTest(target=target), fixture_root() as fixture:
+                root = Path(fixture)
+                if key == "outside-contract":
+                    write(root / "outside-contract.md", "# Outside\n")
+                append_provenance_row(
+                    root,
+                    f"- [x] `TEST-NO-ADR-{key.upper()}` — `accepted` on "
+                    "2026-07-27; [canonical contract]("
+                    f"{target}); no ADR required",
+                )
+                expect_failure(
+                    self,
+                    lambda root=root: checked_reviews(self.validator, root),
+                    "must be an existing Markdown file inside design/architecture",
+                )
+
+    def test_checked_no_adr_row_rejects_adr_directory_target(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_provenance_row(
+                root,
+                "- [x] `TEST-NO-ADR-ADR-TARGET` — `accepted` on 2026-07-27; "
+                "[canonical contract](../../architecture/decisions/"
+                "adr-0012-reviewed.md); no ADR required",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "outside the canonical ADR directory",
+            )
+
     def test_checked_superseded_row_requires_exact_adr_provenance(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)

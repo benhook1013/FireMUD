@@ -2,6 +2,22 @@
 
 This document defines the Game Logic Service REST and gRPC surfaces, exposure class, and command-specific contracts for the current gameplay slice.
 
+## Implementation Status
+
+- The current Game Logic adapters still return `shared.v1.ErrorDetail` for many failures and record `grpc.app_error`; that is implementation drift and a migration/proof gap, not a second contract.
+
+### LOOK Slice
+
+- Live: `ResolveLook` is wired into the command pipeline, orchestrates World Management snapshots and Entity Management listings, hands the structured `LookResult` to `LookResultRenderer`, and publishes the telemetry captured in [`look-instrumentation.md`](../../../project-management/slice-support/look-instrumentation.md).
+- Stubbed: room and entity context still comes from the deterministic LOOK fixtures so the canonical transcript remains deterministic; scripted descriptions, complex lighting, and dynamic hazard cues are not yet integrated.
+- Deferred: future slices will enrich prose, annotate `LookResult` with combat and effect metadata, and surface additional visibility hints once the core text shape proves stable.
+
+### Chat Slice
+
+- Live: `SendCommunication` accepts authenticated `SAY`, `WHISPER`, and `TELL` payloads, validates length, resolves room-scoped or direct-target delivery metadata, and forwards the normalized message to the Social & Groups stub with explicit type and recipient information. The current API returns speaker/target delivery metadata, structured per-recipient view metadata, and `shared.v1.ErrorDetail` codes so Game Session can render the canonical transcript and later recipient-delivery slices can consume the same authoritative recipient-view model. This response-level error shape is current implementation drift against the owner classification above; focused migration proof is not yet complete.
+- Stubbed: downstream delivery still uses the Social & Groups regression stub that records `SendMessage` calls and echoes success while cross-service WebSocket and Telnet tests assert the canonical actor transcript and explicit recipient metadata.
+- Deferred: first-party/MCP-aware recipient presentation, richer NPC replies, area/map/region propagation rules, channel filters, and profanity-escalation behavior will land in later slices once the foundational communication flow proves stable.
+
 ## Exposure Class
 
 - gRPC gameplay APIs are internal-only service-to-service contracts invoked from Game Session and other trusted backend services.
@@ -35,7 +51,7 @@ Expected response:
 - `SendCommunication` accepts `tenant_id`, `session_id`, `character_id`, speaker metadata, normalized `text`, and explicit target/scope metadata. It is the shared gameplay communication contract for the current built-in modes and should evolve toward richer communication-intent handling rather than splintering into one bespoke API per verb.
 - `PickupVisibleRoomItem` and `DropCarriedItem` are the player-facing item selector RPCs for the current `GET` and `DROP` command path. Game Session sends the current session/game/room context, raw item reference, and quantity; Game Logic resolves names, visible refs, container identities, and stack-family refs against the appropriate visible holder before delegating the concrete mutation to Entity Management.
 - `ApplyActorCondition` is the current self-scoped gameplay orchestration path for the first actor-state mutation. It is not the target-state generic cross-actor effect API.
-- All application-level failures are returned via `shared.v1.ErrorDetail` while the gRPC status remains `OK`; `grpc.app_error` must be recorded with the error code.
+- gRPC outcome selection follows the [canonical outcome and transport classification](../../system-architecture-grpc.md#outcome-and-transport-classification): successfully produced gameplay/domain outcomes use the typed response contract, while a failure that prevents producing that result uses canonical non-OK status with bounded details. Exact RPC mappings remain implementation work.
 
 ```bash
 grpcurl -plaintext localhost:6565 game_logic.v1.GameLogicService/Ping
@@ -122,7 +138,7 @@ grpcurl -plaintext -d '{"tenant_id":"demo","session_id":"demo","command":"look"}
   - the communication type defines the baseline observability contract and what kinds of recipient views are even possible,
   - the target/scope determines which ordinary listeners and observer/interceptor candidates qualify in this location or social scope,
   - and recipient capabilities or effects determine whether that qualifying recipient receives full content, partial content, or only metadata such as “someone whispered here.”
-- The resulting delivery metadata (recipient list, NPC echoes, speaker/target metadata, recipient roles, and perception classification) is returned to Game Session, while failures populate `shared.v1.ErrorDetail` so the text protocol can emit `ERROR COMMUNICATION_NOT_DELIVERED` or equivalent stable responses.
+- The resulting delivery metadata (recipient list, NPC echoes, speaker/target metadata, recipient roles, and perception classification) is returned to Game Session. The current adapter populates `shared.v1.ErrorDetail` for delivery failures so the text protocol can emit `ERROR COMMUNICATION_NOT_DELIVERED` or equivalent stable responses; target transport/result classification follows the gRPC owner contract, with exact mappings still an implementation/proof gap.
 - For current room-local `say`, that returned metadata includes the actor plus each live player listener in the resolved room audience so Game Session can render canonical sender and listener prose from one shared communication result instead of treating `say` as actor-only success text.
 - This pathway mirrors the `LOOK` guard: unauthenticated requests never reach `SendCommunication`, and Social & Groups outages surface as structured `PERMISSION_DENIED` or `UNAVAILABLE` errors so Game Session can keep stage-aware gating predictable.
 
@@ -136,17 +152,3 @@ grpcurl -plaintext -d '{"tenant_id":"demo","session_id":"demo","command":"look"}
   - and presentation/rendering style (for example, `Alice whispers to Bob...` versus a generic room broadcast).
 - In particular, `whisper` and `tell` preserve target-directed delivery semantics rather than collapsing into generic room chat, and future `shout` behavior may depend on world-topology concepts such as area, map, or region propagation.
 - When later slices land, prefer evolving this pathway with richer target/scope resolution and presentation metadata rather than adding one bespoke pipeline per verb.
-
-## Implementation Status
-
-### LOOK Slice
-
-- Live: `ResolveLook` is wired into the command pipeline, orchestrates World Management snapshots and Entity Management listings, hands the structured `LookResult` to `LookResultRenderer`, and publishes the telemetry captured in [`look-instrumentation.md`](../../../project-management/slice-support/look-instrumentation.md).
-- Stubbed: room and entity context still comes from the deterministic LOOK fixtures so the canonical transcript remains deterministic; scripted descriptions, complex lighting, and dynamic hazard cues are not yet integrated.
-- Deferred: future slices will enrich prose, annotate `LookResult` with combat and effect metadata, and surface additional visibility hints once the core text shape proves stable.
-
-### Chat Slice
-
-- Live: `SendCommunication` accepts authenticated `SAY`, `WHISPER`, and `TELL` payloads, validates length, resolves room-scoped or direct-target delivery metadata, and forwards the normalized message to the Social & Groups stub with explicit type and recipient information. The API returns speaker/target delivery metadata, structured per-recipient view metadata, and `shared.v1.ErrorDetail` codes so Game Session can render the canonical transcript and later recipient-delivery slices can consume the same authoritative recipient-view model.
-- Stubbed: downstream delivery still uses the Social & Groups regression stub that records `SendMessage` calls and echoes success while cross-service WebSocket and Telnet tests assert the canonical actor transcript and explicit recipient metadata.
-- Deferred: first-party/MCP-aware recipient presentation, richer NPC replies, area/map/region propagation rules, channel filters, and profanity-escalation behavior will land in later slices once the foundational communication flow proves stable.

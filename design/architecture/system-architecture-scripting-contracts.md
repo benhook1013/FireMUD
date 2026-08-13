@@ -59,6 +59,10 @@ Callers must reuse the same full applicable Trigger Identity on retries for live
 
 Ingress ownership is endpoint-specific and must follow the matrix in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1a-event-ingress-scripteventid-ownership-matrix`.
 
+### 4a) Handler Input Manifest Boundary
+
+The [DSL lifecycle](./system-architecture-scripting-dsl-reference-and-lifecycle.md#read-consistency-contract) owns deterministic evaluation/read consistency. Automation seals one bounded input manifest per resolved handler, including `onLoad`, with trigger facts, pinned artifacts, owner-versioned values, causal floor, and seed version. A `readSnapshotToken` is retained only when an individual owner contract uses it, as one manifest input or correlation value. Runtime retries, downstream handoff, and tick replay must carry the manifest digest/reference and reuse the sealed inputs; they must not fetch newer state or re-enter the DSL. The current cross-service payloads may still carry the narrower token field, which remains an implementation gap rather than universal read authority.
+
 ### 5) Metrics Cardinality Guardrails
 
 - `scriptEventId` is for logs, traces, and `script_event_audit` queries.
@@ -93,6 +97,12 @@ Dry-run executions are privileged and must not destabilize production:
 - Tenant-scoped patch readiness (`READY` / `FAILED`) is an eligibility signal, not a runtime execution scope.
 - Admission pause, reload backpressure, timer ownership, rollback convergence, and plugin lifecycle actions must preserve instance isolation at minimum scope `(tenantId, gameInstanceId)`.
 - A deployment may intentionally couple all instances in a tenant only if that invariant is explicitly documented and enforced end-to-end; otherwise one instance's patch transition must not stall unrelated instances.
+
+### 7b) Reload Failure Contract
+
+- When a runtime scope is `reloadState=FAILED`, event ingress is rejected with `admitted=false`, `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE`, and bounded `admissionReason=reload_failed`.
+- `reload_failed` is not automatic-retry backpressure: the response has no `retryAfterMs`, the event-scope decision is recorded in `script_event_ingress_audit`, and no handler row, firing claim, or handler Trigger Identity is created. Timer due candidates use their event-scope `scheduleCandidateId` audit instead and create no `scriptEventId`.
+- Recovery must durably reconcile the current pin, schedule ownership, runtime scope/epoch, and due-point evidence, then transition `FAILED -> RELOADING` under one idempotent recovery identity. Only a successful atomic reconciliation may transition `RELOADING -> IDLE`; the prior observed patch is diagnostic evidence only and is never a last-known-good execution fallback.
 
 ### 8) Plugin Version Fencing and Control-Plane Scope
 
@@ -144,10 +154,18 @@ Plugins are executed by the same runtime engine as scripts and must not rely on 
 
 ### 13) Output Budget Safety
 
-- A successfully admitted trigger must still be prevented from emitting unbounded work.
-- The Automation & Scripting Service must enforce explicit ceilings including `maxCommandsPerRun`, `maxCommandsPerEntityPerTrigger`, and `maxSerializedWorkItemBytes` before durable persistence/handoff.
-- Output-budget violations must be recorded as non-success stage-aware outcomes and must not partially persist oversized work items.
-- Publish-time validation in Game Design must conservatively reject graphs whose bounded worst-case fan-out exceeds runtime ceilings, using the shared static output cost contract in `design/architecture/system-architecture-scripting-runtime-execution.md#static-output-cost-contract`.
+- A successfully admitted trigger must still be prevented from emitting unbounded work. The canonical versioned/digested component-cost metadata, conservative publish analysis, artifact-pinned caps, and incremental metering contract are owned by [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#static-output-cost-contract).
+- At this cross-service boundary, Automation must reject a missing/stale/contradictory artifact-cost digest at the correct ingress or readiness stage, enforce the owner-defined conservative prospective serialized-byte and data-dependent bounds before constructing each output descriptor, and check exact bounded serialized size before atomic persistence.
+- Output-budget violations are non-success stage-aware outcomes. Generated output is atomic per resolved handler: no partial descriptor set may be persisted or handed off, and Game Session must never receive a partial handoff presented as successful work.
+- Publish-time validation in Game Design must conservatively reject graphs whose bounded worst-case fan-out exceeds the artifact-pinned runtime ceilings. The owner document defines metadata shape and exact failure mapping; this contract only protects the persistence/handoff boundary.
+
+### 14) Handler Charge and Capacity Boundary
+
+The durable charge lifecycle is owned by [Scripting Quotas & Operations](./system-architecture-scripting-quotas-and-operations.md#budget-accounting-rules). Cross-service consumers must preserve its consequences:
+
+- One full-Trigger-Identity handler charge record, with separate exactly-once admission and execution-start markers, is the sole charge authority. Immediately before evaluation, Automation acquires the fenced lease and atomically revalidates its fence, durably accepts/claims the run for the executor, persists the execution-start marker, and transitions the work item to `EXECUTING` in one executor-acceptance transaction; evaluation begins only after commit. If executor acceptance fails, the transition does not commit and no execution charge is recorded. Duplicate and recovery attempts reuse the durable executor claim, and recovery may reacquire a lease without creating another marker.
+- Queued work holds no execution capacity. The capacity lease is separately fenced/reclaimable, and reclaiming an expired lease is not a refund or a new charge.
+- `PUBLISH_READINESS`/`onLoad` uses isolated readiness capacity and must not consume ordinary live quota or capacity. Game Session handoff occurs only after Automation's handler charge and capacity checks succeed; Game Session must not charge the handler again.
 
 ## Related Documents
 

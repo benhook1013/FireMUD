@@ -698,6 +698,7 @@ Required enum values:
 - `TRIGGER_ADMISSION_OUTCOME_PIN_STATE_UNAVAILABLE`
 - `TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED`
 - `TRIGGER_ADMISSION_OUTCOME_OUTPUT_BUDGET_EXCEEDED`
+- `TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED`
 - `TRIGGER_ADMISSION_OUTCOME_SIGNER_POLICY_UNAVAILABLE`
 
 Contract rules:
@@ -706,8 +707,10 @@ Contract rules:
 - `admissionOutcome` and `admissionReason` describe the **event-scope ingress decision** only. They must not be interpreted as a summary of all handler-scoped outcomes created after binding resolution.
 - Event-scope `admissionOutcome` and `admissionReason` must map directly to the ingress-time admission result recorded in ingress audit/logging surfaces for that request; they are not the same thing as later handler-scoped `finalOutcome` values recorded in `script_event_audit`.
 - Handler-scoped denials such as `quota_denied`, `script_disabled`, `plugin_disabled`, and `plugin_component_blocked` remain handler/audit outcomes after binding resolution. They are not valid event-scope ingress `admissionOutcome` values in the general fan-out contract.
-- Admission failures are application-level outcomes and must not be surfaced as transport errors.
-- Current ingress enforces `SCRIPT_OUTPUT_MAX_SERIALIZED_WORK_ITEM_BYTES` before durable work-item persistence and rejects oversized payloads with `TRIGGER_ADMISSION_OUTCOME_OUTPUT_BUDGET_EXCEEDED` / `work_item_size_exceeded`.
+- `TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED` is reserved for deterministic dry-run/test budget or policy decisions made before handler binding. After binding, a handler capacity denial uses `finalStage=ADMISSION`, `finalOutcome=quota_denied` with its bounded reason.
+- If route/lease, worker, dependency, or capacity-policy infrastructure is unavailable and prevents producing an admission result, return canonical non-OK gRPC `RESOURCE_EXHAUSTED` or `UNAVAILABLE`, as applicable; do not encode infrastructure unavailability as `TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED`.
+- Expected event-scope admission decisions use the typed `admitted`/`admissionOutcome`/`admissionReason` fields. This does not suppress canonical non-OK gRPC status for transport/pre-domain validation or authentication failure, missing preconditions, resource exhaustion, dependency unavailability, deadlines/cancellation, or internal failure; the [gRPC outcome classification](./system-architecture-grpc.md#outcome-and-transport-classification) owns that split.
+- Current ingress enforces `SCRIPT_OUTPUT_MAX_SERIALIZED_WORK_ITEM_BYTES` on the request `payloadJson` input envelope before durable work-item persistence and rejects an oversized envelope with `TRIGGER_ADMISSION_OUTCOME_OUTPUT_BUDGET_EXCEEDED` / `work_item_size_exceeded`. This event-scope input-envelope check is distinct from target generated-output serialized-size violations: runtime evaluation additionally verifies the artifact-pinned cost metadata/cap digests and incrementally meters command count, per-entity count, serialized bytes, and data-dependent bounds before constructing output; a handler-local generated-output violation is `DSL_EVAL` / `work_item_size_exceeded`, and the atomic output contract leaves no generated output or handoff.
 - Current plugin-trigger ingress requires the request `(pluginId, pluginVersionId)` to match Automation's enabled runtime registry state for `(tenantId, gameInstanceId, pluginId)` before handler work is materialized. Missing, disabled, or displaced plugin versions are rejected at ingress with `TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE` and a bounded reason such as `plugin_not_active`, `plugin_disabled`, or `plugin_version_unavailable`.
 - For events that fan out to multiple handlers:
   - `admitted=true` means the request passed ingress-time fences and was accepted for handler resolution.
