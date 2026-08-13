@@ -1213,7 +1213,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 )
                 expect_failure(
                     self,
-                    lambda: checked_reviews(self.validator, root),
+                    lambda root=root: checked_reviews(self.validator, root),
                     "must be an existing Markdown file inside design/architecture",
                 )
 

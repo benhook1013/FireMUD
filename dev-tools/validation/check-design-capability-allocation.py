@@ -418,7 +418,7 @@ ADR_ALLOCATION_EXPECTATIONS = {
         "AS-1", "Accepted", "GR-1", "SF-2", "SF-1", "AR-3"
     ),
     "design/architecture/decisions/adr-0092-grpc-status-and-typed-domain-outcome-boundary.md": adr_allocation(
-        "SF-1", "Accepted", "SF-1", "GR-1", "PO-4"
+        "SF-1", "Accepted", "GR-1", "PO-4"
     ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
