@@ -39,6 +39,7 @@ Each entry must define at least:
 - `payloadSchemaRef`
 - `requiredTriggerIdentityFields`
 - `snapshotAuthority`
+- `handlerInputManifestRequirements`
 - `consistencyClass`
 - `quotaClass`
 - `replaySemantics`
@@ -63,6 +64,9 @@ Required semantics for those fields:
     - `AUTOMATION_CAPTURED_AT_ADMISSION`
     - `NON_AUTHORITATIVE_NO_SNAPSHOT`
   - The value does not make one universal `readSnapshotToken` authoritative for every input. If an owner-specific token/selector is required, the entry must name its owner, schema/version, scope, causal-floor fields, and how the bounded value is recorded in the manifest.
+- `handlerInputManifestRequirements`
+  - A versioned descriptor of the handler-scoped manifest requirements consumed for this entry. Each owner-specific requirement names its owning service, schema/version, scope, selector-or-token kind when applicable, causal-floor fields, and bounded value and capture requirements.
+  - Ingress and handler-manifest construction consume this field from the same canonical registry entry; they must not infer a parallel manifest contract from `snapshotAuthority`, payload fields, or local defaults.
 - `consistencyClass`
   - The required read consistency for authoritative evaluation, such as `AUTHORITATIVE_REGION_TIMELINE`, `AUTHORITATIVE_INSTANCE_SNAPSHOT`, or `BEST_EFFORT`.
 - `quotaClass`
@@ -108,6 +112,7 @@ Minimum read payload:
 - allowed producers
 - required trigger identity fields
 - snapshot authority and consistency class
+- versioned handler input manifest requirements, including owner, schema/version, scope, selector-or-token, causal-floor, and bounded-value requirements
 - quota class
 - replay semantics
 - allowed binding scopes

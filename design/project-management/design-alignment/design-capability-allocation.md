@@ -137,7 +137,7 @@ This ledger maps canonical product and architecture sources to the stable capabi
 | `design/architecture/decisions/adr-0089-durable-script-usage-charges-and-fenced-capacity-leases.md` | `AS-1` | `AR-2`, `PO-4` | Accepted |
 | `design/architecture/decisions/adr-0090-recorded-script-input-manifests-for-reproducible-evaluation.md` | `AS-1` | `SF-2`, `GR-1`, `SF-1`, `AR-1` | Accepted |
 | `design/architecture/decisions/adr-0091-class-specific-script-timer-clocks-and-recovery.md` | `AS-1` | `GR-1`, `SF-2`, `SF-1`, `AR-3` | Accepted |
-| `design/architecture/decisions/adr-0092-grpc-status-and-typed-domain-outcome-boundary.md` | `SF-1` | `SF-1`, `GR-1`, `PO-4` | Accepted |
+| `design/architecture/decisions/adr-0092-grpc-status-and-typed-domain-outcome-boundary.md` | `SF-1` | `GR-1`, `PO-4` | Accepted |
 
 ## Product Documentation Allocation
 
