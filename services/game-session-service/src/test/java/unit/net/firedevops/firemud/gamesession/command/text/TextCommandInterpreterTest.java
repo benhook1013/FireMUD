@@ -78,7 +78,7 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
 import net.firedevops.firemud.gamesession.service.impl.DefaultGameplayPresenceLifecycleService;
-import net.firedevops.firemud.gamesession.service.impl.TestGameplayPresenceService;
+import net.firedevops.firemud.gamesession.service.impl.FakeGameplayPresenceService;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.junit.jupiter.api.BeforeEach;
@@ -139,7 +139,7 @@ class TextCommandInterpreterTest {
               false,
               new PresentationProperties.Prompt(true, true, 150L)));
   private final GameplayPresenceService gameplayPresenceService =
-      new TestGameplayPresenceService(
+      new FakeGameplayPresenceService(
           new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L));
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
       new DefaultGameplayPresenceLifecycleService(

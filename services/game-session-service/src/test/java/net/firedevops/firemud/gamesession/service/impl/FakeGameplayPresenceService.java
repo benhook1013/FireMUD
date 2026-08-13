@@ -1,6 +1,5 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -19,12 +18,12 @@ import org.slf4j.Logger;
 import org.springframework.util.StringUtils;
 
 /** Small process-local fake for command tests; production presence is Redis-backed. */
-public final class TestGameplayPresenceService implements GameplayPresenceService {
-  private static final Logger logger = LoggingUtil.getLogger(TestGameplayPresenceService.class);
+public final class FakeGameplayPresenceService implements GameplayPresenceService {
+  private static final Logger logger = LoggingUtil.getLogger(FakeGameplayPresenceService.class);
   private final ConcurrentMap<Long, GameplayPresence> presences = new ConcurrentHashMap<>();
   private final JwtUtil jwtUtil;
 
-  public TestGameplayPresenceService(JwtUtil jwtUtil) {
+  public FakeGameplayPresenceService(JwtUtil jwtUtil) {
     this.jwtUtil = jwtUtil;
   }
 
