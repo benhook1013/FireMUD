@@ -420,6 +420,36 @@ ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/adr-0092-grpc-status-and-typed-domain-outcome-boundary.md": adr_allocation(
         "SF-1", "Accepted", "GR-1", "PO-4"
     ),
+    "design/architecture/decisions/adr-0093-game-design-coordinated-digest-attested-content-publication.md": adr_allocation(
+        "AR-1", "Accepted", "AR-1", "AR-3", "PO-3", "GR-2", "AA-3"
+    ),
+    "design/architecture/decisions/adr-0094-explicit-cohesive-runtime-release-tuples.md": adr_allocation(
+        "AR-3", "Accepted", "AR-1", "AR-3", "AA-3", "GR-1", "PO-3"
+    ),
+    "design/architecture/decisions/adr-0095-content-addressed-published-assets-with-cas-lifecycle-authority.md": adr_allocation(
+        "AR-1", "Accepted", "AR-1", "AR-3", "PO-3", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0096-attested-publication-gate-and-quarantined-failed-assets.md": adr_allocation(
+        "AR-3", "Accepted", "AR-1", "PO-3", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0097-git-and-ci-validated-single-operator-promotion-evidence.md": adr_allocation(
+        "PO-3", "Accepted", "PO-4", "SF-1"
+    ),
+    "design/architecture/decisions/adr-0098-request-bounded-generation-replay-and-explicit-regeneration.md": adr_allocation(
+        "AR-1", "Accepted", "AR-3", "GR-2", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0099-bounded-atomic-generation-with-staging-for-large-outputs.md": adr_allocation(
+        "GR-2", "Accepted", "GR-1", "SF-2", "AS-1"
+    ),
+    "design/architecture/decisions/adr-0100-separate-generation-ingress-with-one-world-owned-engine.md": adr_allocation(
+        "AR-1", "Accepted", "AR-1", "AR-3", "GR-2", "AS-1"
+    ),
+    "design/architecture/decisions/adr-0101-explicit-destructive-regeneration-with-previewed-scope.md": adr_allocation(
+        "AR-1", "Accepted", "AR-1", "AR-2", "GR-2"
+    ),
+    "design/architecture/decisions/adr-0102-first-class-sparse-and-full-grid-world-topologies.md": adr_allocation(
+        "GR-2", "Accepted", "GR-2", "AR-1", "SF-2"
+    ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
     "README.md": "Service overview",

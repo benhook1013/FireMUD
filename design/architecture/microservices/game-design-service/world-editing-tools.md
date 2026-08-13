@@ -81,11 +81,16 @@ Initial-slice concurrency contract:
 
 Generation-specific conflict rules:
 
-- `REPLACE_SCOPE` requires the request to carry the current `expectedDraftScopeRevisionEpoch` for the declared target scope. If the scope advanced since the editor preview or generation planning read, World Management must reject the revision as `DRAFT_WRITE_CONFLICT` rather than replacing newer manual edits.
-- `SEED_APPEND_ONLY` also checks the same scope epoch. If deterministic replay would require rewriting or deleting rows already present in the scope, World Management must reject the revision as `OUT_OF_SYNC` or a more specific generation conflict instead of erasing authored content.
-- Multi-row generated topology uses the typed `WORLD_GENERATION_SUBTREE` `worldDesignMutation` payload on `SaveRevision`. Game Design keeps the revision history and forwards the concrete generated rooms, exits, generation rules, and spawn bindings to World Management through `ApplyWorldDesignMutation`; it must not save generated subtree content only as opaque revision JSON.
-- A generation revision that targets a newly created empty container initializes that container's scope epoch in the same transaction that records the generated topology. Later manual edits and later generation revisions for that scope must use that epoch.
-- A future multi-branch merge workflow may introduce richer scope reconciliation, but the initial-slice rule is one optimistic scope epoch, deterministic replay order, and fail-closed conflicts.
+The canonical replay, replacement, preview, reference, identity, and no-merge contract is [Explicit Destructive Regeneration with Previewed Scope](../../decisions/adr-0101-explicit-destructive-regeneration-with-previewed-scope.md) and the [Procedural Generation](../../system-architecture-procedural-generation.md#request-bounded-replay-and-explicit-regeneration) system contract.
+
+- The editor presents the exact `REPLACE_SCOPE` preview, including creates, retained objects, replacements, deletions, affected references, identity mappings, and blockers, and obtains creator approval before recording the generation revision.
+- The revision payload records the canonical plan digest, exact generation inputs, expected `draftScopeRevisionEpoch`, required mappings, and reference facts. Any epoch, input, or relevant reference change requires a fresh preview and approval rather than replacing newer manual edits.
+- `SEED_APPEND_ONLY` remains the editor’s non-destructive path, but World Management must reject it as `OUT_OF_SYNC` or a more specific generation conflict if deterministic replay would rewrite or delete authored rows.
+- Historical replay preserves later manual revisions. A destructive regeneration is a new approved revision; the old revision does not authorize fresh deletion.
+- Game Design forwards the approved typed `WORLD_GENERATION_SUBTREE` payload through `ApplyWorldDesignMutation`; generated subtree content is not stored only as opaque revision JSON. World Management performs owner-local CAS and persistence and leaves prior topology unchanged on a stale digest or epoch, while Game Design surfaces the conflict and records the apply outcome.
+- A generation revision targeting a newly empty container initializes its scope epoch with the generated topology. Later edits and generation revisions use that epoch.
+
+The current editor contract preserves revision ordering, approval, and local conflict reporting, but complete destructive-preview UI, plan-digest and reference-analysis proof, and identity-mapping proof remain incomplete.
 
 Illustrative request/response shapes:
 

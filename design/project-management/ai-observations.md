@@ -47,3 +47,8 @@ Entry format:
   - Context: autonomous orchestration needed both direct continuation of a completed bounded edit and a way to await one external transition without a native watcher.
   - Observation: reusing a completed subagent thread is appropriate only for direct same-domain continuation; unrelated work needs a fresh descriptive thread. When progress blocks on one external transition, no native watcher exists, and a concurrency slot would otherwise sit idle, a cheap read-only Luna sentinel can wait or poll while the main thread yields; a native wait remains preferred.
   - Expected pattern: keep continuation scope explicit, start a fresh thread when the domain changes, and use a read-only sentinel only as the fallback for one blocked external transition.
+
+- `2026-08-14`: Stale Gradle formatting state can miss renamed Java files
+  - Context: a Java file was renamed or newly introduced while Gradle Spotless task state remained cached.
+  - Observation: cached Spotless task state can report success without formatting the renamed/new file.
+  - Expected pattern: explicitly run the formatter/apply task, inspect the resulting diff, and only then trust formatting checks rather than relying on stale cache state.

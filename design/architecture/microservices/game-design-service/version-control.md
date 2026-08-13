@@ -46,6 +46,8 @@ revisions with the versioned templates stored in domain services.
 
 ### Design-Time Synchronization
 
+Game Design is the canonical owner of publication coordination, release descriptors, and the final release attestation. Domain services remain the canonical owners of their versioned participant data and participant digests. This owner split implements [ADR 0093](../../decisions/adr-0093-game-design-coordinated-digest-attested-content-publication.md); service-local documents link here for their participant and persistence consequences instead of copying the publication contract.
+
 Because design changes often span multiple domain services (for example World
 Management and Entity Management), the system treats the Game Design Service as
 the source of truth for which revisions belong to a version, and the domain
@@ -93,11 +95,11 @@ In addition to domain-service digests, publish safety requires a Game Design con
 - Control-plane digest mismatch is treated exactly like a domain digest mismatch (`OUT_OF_SYNC`, publish blocked).
 - The control-plane digest surface should be exposed through a read-only API (for example `GetDesignControlPlaneDigest`) so publish tooling uses a uniform participant contract.
 - `GetDesignControlPlaneDigest` should return at minimum `{tenantId, versionId or scriptPatchVersion scope, appliedCommitId, contentDigest, digestSchemaVersion}` so publish gates compare like-for-like payloads across all participants.
-- After all digest gates and asset export succeed, Game Design must persist a single immutable `published_release_bundle` attestation for `(tenantId, versionId)` that captures the final participant digests plus `manifestHash` and `generationConfigRevision`.
+- After all digest gates and verified private-candidate asset export succeed, Game Design must persist a single immutable `published_release_bundle` attestation for `(tenantId, versionId)` that captures the final participant digests, the manifest digest, the complete required artifact set, and `generationConfigRevision`.
 - Game Design must expose the attestation through `GetPublishedReleaseBundle(tenantId, versionId)` with deterministic response fields at minimum:
   - `tenantId`, `versionId`, `commitId`, `publishWorkflowId`, `publishedAt`
   - `participantDigests[] { serviceName, appliedCommitId, contentDigest, digestSchemaVersion }`
-  - `artifactDigests[] { artifactType, artifactPath, artifactDigest, artifactSchemaVersion }` for any exported derived artifacts; these entries are mandatory in the initial slice for world navmesh/path graph bundles
+  - `artifactDigests[] { usageKey, artifactType, immutableObjectKey, contentDigest, contentType, artifactSchemaVersion }` for every exported binary or derived artifact; these entries are mandatory in the initial slice for world navmesh/path graph bundles
   - `manifestHash`, `manifestSchemaVersion`
   - `generationConfigRevision`
   - attestation schema/version fields for future evolution
@@ -123,6 +125,8 @@ Publish workflows must use an explicit participant matrix so digest gating is de
 | --- | --- | --- | --- |
 | `PublishVersion` (full version) | World Management, Entity Management, Game Logic, Automation & Scripting (for version-scoped script/binding templates) | Required for normalized references and publish-critical metadata (for example `game_template_*_ref`, `version_asset`) | Asset export/object-store bytes (validated by `manifestHash` in the durable publish workflow), Game Design internal history/audit tables that do not affect launchability |
 | `PublishScriptPatchVersion` (script-only) | Automation & Scripting (for the target `<tenantId, scriptPatchVersion>` design graph) | Required for patch metadata/wiring for the same base version scope | World Management, Entity Management, Game Logic template digests (must remain unchanged for base version) |
+
+Asset bytes are intentionally outside participant design digests, but they remain mandatory publication gates through private candidate verification, the attested manifest digest, and every actual-byte artifact digest in the release bundle.
 
 ### Change Vehicle Selection Matrix
 

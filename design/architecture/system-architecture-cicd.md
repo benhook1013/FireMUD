@@ -123,16 +123,12 @@ After tests pass, each service is packaged into a Docker image:
 
 Images are tagged with the commit SHA. Pull-request images are first built and smoke-tested locally without registry credentials; only the resulting successful artifact crosses into the trusted publisher that pushes those fixed SHA tags to **GitHub Container Registry (GHCR)**. Trusted `develop` and `main` publication runs push directly and may update shared build-cache tags.
 
-Deployable artifact lineage rule:
-
-- The digest first produced for a reviewed source commit is the canonical deployable artifact for that commit.
-- Promotion between staging and production must reuse that exact digest; release tags, branch tags, or `latest` tags may be added later as aliases, but they must not point at a rebuilt image if the image is intended to remain promotable.
-- Any workflow that rebuilds from a release tag or branch tip produces a new artifact lineage. Those rebuilt digests are non-promotable until they independently pass staging and produce new deployment evidence plus a new production attestation chain.
+Deployable artifact lineage, including the OCI index and platform-to-child mapping, is canonical in the [Promotion Attestation Contract](./system-architecture-promotion-attestation.md#artifact-format). This document retains the build and publication consequence: promotable artifacts come from the canonical reviewed build path, staging and production reuse exact digests, and any rebuild requires new staging evidence and a new attestation lineage. Runtime/service image lineage remains separate from tenant/game published-release-bundle attestation.
 
 Production release digest manifest:
 
 - Each production release must have one canonical release digest manifest under `design/operations/deployments/production/release-manifests/<release-tag-or-deployment-ref>.json`.
-- The manifest binds the release tag, source commit, production deployment reference, production promotion attestation, staging deployment record, release-note/compliance asset refs, and the exact service image digest set.
+- The manifest binds the release tag, source commit, production deployment reference, production promotion attestation, staging deployment record, release-note/compliance asset refs, and exact service image digest set required by the [Promotion Attestation Contract](./system-architecture-promotion-attestation.md#artifact-format).
 - Release-note workflows may publish metadata and compliance assets for a tag, but they do not select promotable runtime artifacts. The production overlay PR and release digest manifest are the authority for which staged digests belong to the release.
 - If a release tag is created before production promotion completes, the release digest manifest may use a deployment-ref filename first, but it must be updated to include the final tag before the release is treated as official.
 
@@ -236,7 +232,8 @@ FireMUD uses a simple promotion flow from pull requests through staging to produ
 - Production release PRs must include a release digest manifest that binds the release tag or deployment reference to the production attestation and exact staged digest set.
 - Overlay PRs are validated by [`.github/workflows/validate-kustomize-overlays.yml`](../../.github/workflows/validate-kustomize-overlays.yml), which checks that referenced images exist in GHCR, enforces digest pinning for staging/production overlays, and blocks staging backup schedules unless the explicit marker `k8s/overlays/stage/STAGING_BACKUPS_ENABLED` is present.
 - Overlay PRs run the canonical preflight entrypoint (`dev-tools/deploy/preflight.py`) in `ci-static` context so policy IDs and report shape match operator pre-apply validation. CI-static mode may mark production attestation policy as `not_applicable` when no production promotion is being executed.
-- Production overlay PRs must include exactly one in-repo staging promotion attestation under `design/operations/deployments/production/attestations/<deployment-ref>.json` that follows `system-architecture-promotion-attestation.md`. Production PRs are rejected if they reference digests that cannot be tied to that attestation, a successful staging deployment record with live-state verification, and a staging deployment record whose `secretComplianceStatus` is `pass`.
+- Production overlay PRs must include exactly one in-repo staging promotion attestation under `design/operations/deployments/production/attestations/<deployment-ref>.json` following the [Promotion Attestation Contract](./system-architecture-promotion-attestation.md#validation-rules). Production PRs are rejected if they reference digests that cannot be tied to that attestation, a successful staging deployment record with live-state verification, and a staging deployment record whose `secretComplianceStatus` is `pass`.
+- A production overlay change without its required attestation fails validation; preflight must never be skipped because evidence is absent. Target promotion tooling should machine-generate routine lineage fields from observed staging state for operator review, but the current repository implementation validates checked-in/operator-authored evidence and does not yet prove that generator.
 - Production overlay PR CI must evaluate the attestation and compact recovery-compatibility result for every promotion. `compatibilityStatus=incompatible` is unconditionally non-promotable. `compatibilityStatus=drill_required` remains non-promotable until the fresh drill is complete and the compatibility result is regenerated as `compatible`; attached backup-readiness evidence cannot make the stale result promotable. A `roll-forward-only` release requires matching full backup-readiness evidence in addition to a regenerated compatible result. Deferring those checks to operator-only preflight is non-compliant.
 - Staging apply evidence must include the immutable in-repo deployment record `design/operations/deployments/staging/deployments/<stagingOverlayCommitSha>/<stagingDeploymentEventId>.json`; production promotion validation fails when the attestation does not select the exact event record or that record is missing, digest-mismatched, lacks live-state verification, or lacks passing secret-compliance evidence.
 - Player-facing preflight and operator validation must also verify environment bootstrap completeness and external integration isolation before apply; these checks are not limited to restore events.
@@ -281,7 +278,7 @@ Lifecycle rules:
 
 - The environment's `deployments/current.json` index is the canonical answer to “what is currently deployed.” Promotion eligibility is a separate immutable claim: an attestation selects one exact successful deployment event and never performs a later “latest event” lookup.
 - Preflight artifacts, secret-compliance snapshots, smoke evidence, and live-state verification are supporting evidence linked from the deployment record rather than parallel sources of truth.
-- Current promotion trust is repository-reviewed evidence with immutable artifact references. CI treats the production attestation as the deterministic selector for its exact in-repo deployment record, then verifies digest equality, live-state evidence shape, and immutable secret-compliance references. Detached signatures are not required in the current single-admin/operator model.
+- Current promotion trust is repository-reviewed evidence with immutable artifact references. Promotion attestation field selection and validation follow the [Promotion Attestation Contract](./system-architecture-promotion-attestation.md#validation-rules); this lifecycle retains the deployment consequence that CI selects the exact in-repo deployment record and verifies its live-state and secret-compliance evidence. Detached signatures are not required in the current single-admin/operator model.
 - Re-applying the same overlay commit creates a new immutable event record and, after successful live-state verification, advances the current-state index. It never overwrites prior preflight, apply, or attestation evidence.
 - A promotion attestation is valid only if `stagingOverlayCommitSha` plus `stagingDeploymentEventId` selects the exact successful promotable apply event it attests. A later apply does not invalidate or retarget that historical attestation.
 - Rollback uses the deployment record and original attestation lineage for the digest set being restored.
@@ -330,7 +327,7 @@ Illustrative deployment record shape:
 }
 ```
 
-Exact field requirements for promotion remain the canonical contract defined in this section and in `system-architecture-promotion-attestation.md`; the example exists only to make producer implementations consistent.
+Exact field requirements for promotion are canonical in the [Promotion Attestation Contract](./system-architecture-promotion-attestation.md#artifact-format); the example here only shows the local deployment-evidence producer shape.
 
 ## Secret Compliance Gate
 

@@ -2,6 +2,8 @@
 
 Checkmarks in this table indicate **participation** in a workflow. Rows prefixed with `Authoritative owner:` identify the single service that owns invariant enforcement or policy-of-record for that function.
 
+Platform Operations is a cross-cutting operational authority rather than a microservice column in this matrix: it owns object-storage, CDN, registry, and promotion-evidence infrastructure and delivery. Game Design remains the authority for publication coordination, release descriptors, asset lifecycle, CAS state, and purge eligibility; domain services retain participant data and digest authority.
+
 ## Implementation Status
 
 - Live external operator availability includes the Gateway edge plus Logging & Admin domain ingress for reads, investigation, admission-pointer reads/audit, and prepared-upgrade proof reads. TCP Proxy does not participate in this HTTP operator read/proof-read path. `EvaluateModerationPolicy` is a separate live internal owner-boundary read consumed by Account, Game Session, and Social & Groups, not external operator availability. The target mutation rows below are normative contracts, not claims that every listed mutation is currently routable.
@@ -93,7 +95,7 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Instance termination orchestration (`PREPARING/ACTIVE/TERMINATING/TERMINATED`) and cross-service cleanup | | ✔ | | ✔ | ✔ | | | | ✔ | | |
 | Scoped per-instance tick pause/resume (implementation-participating but externally gated through Logging & Admin) | | | ✔ | ✔ | | | | | ✔ | | ✔ |
 | Guarded tick remediation (target-only/non-routable enumeration, regional mutation, and reset/remediate orchestration until owner contracts, action schemas, shared digest vectors, and Account authorization flow exist) | | | ✔ | ✔ | | | | | ✔ | | |
-| Game asset publishing & object storage | ✔ | | | | | | | | | | |
+| Game asset publication, release descriptors, and lifecycle/CAS authority | ✔ | | | | | | | | | | |
 | Asset deletion eligibility oracle (`CanDeleteVersionAssets`) | ✔ | | | | | | | | ✔ | | |
 | Asset purge control-plane workflow (`BeginPurgeVersionAssets` / `FinalizePurgeVersionAssets`) | ✔ | | | | | | | | ✔ | | |
 | Bypass-safe Game Design creator writes for tenant-scoped assets and templates | ✔ | | | | | | | | | | ✔ |

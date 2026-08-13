@@ -25,7 +25,7 @@ A game selects one optional base profile and zero or more optional extension pac
 - Profiles are not runtime settings and provide no hidden fallback behavior. Removing an imported definition removes it from that game's published design; runtime services must not substitute a platform default.
 - A profile may seed recommended ordinary tenant/game setting values, such as the default bounded-resource capacity-change policy, during creation. The seed is written as an editable scoped setting, is not inherited from the profile at runtime, and may be changed or removed independently of the imported DML.
 
-This model keeps templates convenient while retaining the single-base-version and immutable-release invariants below.
+This model keeps templates convenient while retaining the single-base-version and immutable-release invariants below. The canonical cohesive tuple and admission rules live in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md#launch-descriptor-version-resolution-rules) under [ADR 0094](../../decisions/adr-0094-explicit-cohesive-runtime-release-tuples.md); this document owns only template-local references, defaults, and validation consequences.
 
 `GameTemplateDto` includes `id`, `tenantId`, `name`, an optional `description`,
 the raw `config` JSON and a `createdAt` timestamp. The `id` is assigned by the
@@ -65,6 +65,8 @@ Administrative tooling and lifecycle checks (retirement eligibility, “list tem
 
 Launchable game templates must resolve to exactly one base design bundle version.
 
+The runtime architecture owns the complete resolved tuple and admission predicate. Game Design owns the normalized template-reference invariant that supplies the tuple's base-version input; this section does not define a second runtime release-selection policy.
+
 - `game_template_version_ref` is not advisory metadata; it identifies the single canonical `versionId` used to resolve the launch descriptor for that template.
 - Every normalized world/entity/script reference row for the template must use that same `versionId`.
 - Mixed-version template composition is not allowed for launchable templates. A template update that would produce reference rows spanning multiple base `versionId` values must fail validation rather than relying on runtime resolution heuristics.
@@ -103,7 +105,7 @@ Normalized reference storage is only safe if it is operationally enforced:
   - Fail fast if any referenced version is Retired, missing, or out of sync with its domain templates.
   - If the template pins a `scriptPatchVersion`, fail fast unless Automation & Scripting reports that patch is `READY` for the tenant.
   - Fail fast if `GetTemplateReferencePhase` is not `ENFORCED` for the target scope.
-  - Fail fast if the target version does not have a valid `published_release_bundle` attestation proving the digests, `manifestHash`, and `generationConfigRevision` used for launch.
+  - Defer release-attestation semantics to [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md#launch-descriptor-version-resolution-rules); locally, Game Design must reject a template launch when the resolved version has no supported attestation identity or the descriptor cannot bind to that version.
   - If the launch path depends on cross-version durable-state remaps, fail fast unless an approved `remapSetId` exists for the source/target version pair and all required owning domains attest it as usable.
   - Game Design now persists this control-plane state explicitly and returns the frozen `remapSetId` on the resolved launch descriptor rather than requiring downstream services to infer or rediscover remap identity.
 
@@ -132,7 +134,7 @@ Game templates may optionally carry default runtime configuration alongside thei
 
 ### Resolved Launch Descriptor
 
-Template-driven instance creation must materialize one immutable resolved launch descriptor before any `gameInstanceId` rows are created. Runtime services must not independently reinterpret `GameTemplateDto.config`, re-resolve defaults, or fetch moving-target control-plane state during launch.
+Template-driven instance creation must materialize one immutable resolved launch descriptor before any `gameInstanceId` rows are created. The complete tuple and admission contract is canonical in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md#launch-descriptor-version-resolution-rules); this document records the Game Design consequence that template references and defaults are resolved once, then passed through unchanged. Runtime services must not independently reinterpret `GameTemplateDto.config`, re-resolve defaults, or fetch moving-target control-plane state during launch.
 
 Canonical minimum fields:
 
@@ -169,10 +171,7 @@ Required ordering:
 
 1. Read `GetTemplateReferencePhase(tenantId)` and fail fast unless the phase is `ENFORCED`.
 2. Call `ResolveLaunchDescriptor(...)` in Game Design and receive immutable resolved values.
-3. Read `GetPublishedReleaseBundle(tenantId, versionId)` and verify the attested release matches the resolved descriptor before any instance row is created:
-   - First require the returned bundle's `tenantId` to equal the request `tenantId` and its `versionId` to equal the resolved descriptor `versionId`. Reject the response before reconstructing any reference if either returned scope field differs or is absent.
-   - Only after that scope validation, reconstruct the current implementation's attestation identity as `prb:<tenantId>:<versionId>:<bundleId>` from the validated scope and returned bundle `id`, then compare it byte-for-byte with the descriptor's `publishedReleaseBundleRef`. The returned bundle `id` is one attestation component, not a substitute for `publishedReleaseBundleRef`; comparing only that component, or merely checking that either value is present, is insufficient.
-   - Compare the descriptor's `generationConfigRevision` byte-for-byte with the returned bundle's `generationConfigRevision` and reject a missing or different value.
+3. Read `GetPublishedReleaseBundle(tenantId, versionId)` and verify the canonical release-attestation predicate in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md#launch-descriptor-version-resolution-rules) before any instance row is created. Game Design's local consequence is to validate the returned tenant/version scope and preserve the resolved descriptor's opaque release-attestation identity; it must not reconstruct release truth from template JSON or storage paths.
 4. Only after steps 1-3 succeed may the orchestrator create any persistent `gameInstanceId` row or request World Management to create `PREPARING` instance state.
 5. World creation then executes using only the resolved descriptor values and must not re-resolve template JSON, patch defaults, or release metadata mid-flight.
 

@@ -9,13 +9,14 @@ Bulk JSON import/export remains deferred. Current creator workflows use service-
 ## Theme and Branding
 
 - Designers upload logos, favicons, and theme JSON through the **Game Design Service** at design time. Assets are packaged when a version is published.
-- At publish time, assets are pushed to an object store (e.g., S3, MinIO, or a CDN) under a `tenantId`/`version` path. A `manifest.json` mapping asset keys to public URLs is stored alongside them.
-- Runtime clients fetch this manifest using the URL recorded in the published version metadata and load assets directly from the CDN or through the gateway's `/assets/**` route when a local MinIO instance is used. The Game Design Service is never queried during gameplay.
+- At publish time, Game Design builds and verifies a private candidate, then publishes immutable content-addressed objects. Each `manifest.json` entry binds a stable usage role to an `immutableObjectKey`, mandatory actual-byte `contentDigest`, `contentType`, and artifact schema; a delivery URL may be included but is not release authority.
+- Runtime clients fetch this manifest using its delivery URL or location recorded in the published version metadata and load assets directly from the CDN or through the gateway's `/assets/**` route when a local MinIO instance is used. The Game Design Service is never queried during gameplay, and URL availability or object paths do not replace the attested release metadata.
 - A playtest fork uses the branding/assets for the published bundle it is actually launched against. If a fork targets a new `versionId`, it loads that target version's manifest; if it reproduces the source realm's current build, it uses the source build's published manifest. Forks do not create a third independent asset-selection mode.
 - The UUID-shaped `versionId` values in the examples in this document are explicitly target-state identifiers. Current Game Design transport examples must use numeric `int64` `versionId` values until the related contracts are migrated together.
 - Example: if production is running the published bundle whose canonical `versionId` is `22222222-2222-4222-8222-222222222222` and a playtest fork is launched on the published bundle whose canonical `versionId` is `33333333-3333-4333-8333-333333333333`, testers in the fork see the second bundle's branding while public players in production continue to see the first bundle's branding. Human labels such as `v42` and `v43` are not `versionId` aliases.
 - A `manifest.json` is generated for every published version, even when no assets are supplied, so version metadata remains consistent.
-- If the manifest is empty or missing fields, the default platform branding is applied.
+- Missing or unavailable assets may use a versioned platform branding default only for explicitly optional presentation roles. Required runtime assets fail publication or launch closed; an empty or malformed manifest is not a blanket fallback authorization.
+- The manifest binds stable usage roles to immutable content-addressed locations and actual-byte digests. URLs, object names, and byte lengths alone do not attest the bytes delivered to the client.
 - The manifest can be extended with optional assets such as tutorial images, UI overlays, or CSS snippets.
 - Realm admission is the runtime resolution point for branding. `PLAY` success, reconnect resume, and any realm switch must return the resolved bundle identity for the selected realm (`versionId`, optional `scriptPatchVersion`, and manifest location/hash or equivalent) so first-party clients can swap theme assets deterministically when production and playtest realms run different builds.
 
@@ -30,9 +31,33 @@ Example `manifest.json` for the production `versionId` above:
 
 ```json
 {
-  "logo": "https://cdn.example.com/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/logo.png",
-  "favicon": "https://cdn.example.com/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/favicon.ico",
-  "theme": "https://cdn.example.com/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/theme.json"
+  "schemaVersion": 1,
+  "assets": {
+    "branding.logo": {
+      "usageKey": "branding.logo",
+      "immutableObjectKey": "artifacts/sha256/ab/ab12...",
+      "contentDigest": "sha256:ab12...",
+      "contentType": "image/png",
+      "artifactSchemaVersion": 1,
+      "url": "https://cdn.example.com/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/logo.png"
+    },
+    "branding.favicon": {
+      "usageKey": "branding.favicon",
+      "immutableObjectKey": "artifacts/sha256/cd/cd34...",
+      "contentDigest": "sha256:cd34...",
+      "contentType": "image/x-icon",
+      "artifactSchemaVersion": 1,
+      "url": "https://cdn.example.com/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/favicon.ico"
+    },
+    "branding.theme": {
+      "usageKey": "branding.theme",
+      "immutableObjectKey": "artifacts/sha256/ef/ef56...",
+      "contentDigest": "sha256:ef56...",
+      "contentType": "application/json",
+      "artifactSchemaVersion": 1,
+      "url": "https://cdn.example.com/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/theme.json"
+    }
+  }
 }
 ```
 
@@ -66,7 +91,7 @@ The platform deliberately does not execute arbitrary SQL/DML text, Java snippets
 
 - Custom scripts can drive dynamic events and NPC behaviour using the [Automation & Scripting Service](./microservices/automation-scripting-service/README.md).
 - The [modding framework](./microservices/game-design-service/modding-framework.md) allows runtime plugins for additional behavior.
-- Scripts are versioned alongside other game data and can be hot reloaded by the Automation & Scripting Service. Designers may publish a `scriptPatchVersion` like `v42-script.3` to update automation without republishing all assets.
+- Scripts are versioned alongside other game data. Designers may publish a `scriptPatchVersion` like `v42-script.3` to update automation without republishing all assets, but changing a patch or plugin member creates a new recorded immutable runtime tuple and requires explicit READY, compatibility, and pin rollout. Hot reload must not mutate a running descriptor or follow a latest patch/plugin alias.
 
 ---
 

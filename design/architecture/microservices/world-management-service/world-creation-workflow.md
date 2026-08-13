@@ -193,12 +193,7 @@ Activation and termination share one lifecycle fence per `(tenantId, gameInstanc
 A `gameInstanceId` is always tied to a single `runtime_version` and the
 instance data derived from that version:
 
-- All `*_instance` rows for a given `gameInstanceId` must be derivable from the
-  templates for that instance’s `runtime_version` plus any persisted procedural
-  generation metadata (for example `generatorType`, `seed`, and an immutable
-  `configSnapshot` with `schemaVersion`). There is no cross-version mixing of
-  instance data and no reuse of instance layouts across different
-  `gameInstanceId` values.
+- Initial `*_instance` rows for a given `gameInstanceId` may be constructed from the templates for that instance’s `runtime_version` and the frozen published generation inputs. After generation finalizes, the committed instance topology or retained immutable topology artifact is authoritative; recovery restores that stored result, a finalized release, or backup rather than re-executing a historical generator from seed and metadata. There is no cross-version mixing of instance data and no reuse of instance layouts across different `gameInstanceId` values.
 - Moving a game to a different version is modeled as starting a **new** game
   instance with a fresh `gameInstanceId` and running the world-lifecycle workflow
   again for the new `(tenantId, versionId)`. Existing instances continue to use
@@ -212,6 +207,6 @@ This policy keeps the world-creation workflow simple and ensures that every
 game instance has a self-consistent view of templates and instance data for its
 chosen version.
 
-Short-lived, runtime-generated dungeons or similar instanced content are treated as ephemeral and exist only for the lifetime of a specific `gameInstanceId`. Long-lived overworld-style instance layouts that must survive restarts remain bound to the original `(tenantId, runtime_version, gameInstanceId)` tuple; upgrading to a new `runtime_version` always uses a new `gameInstanceId` and reruns world creation rather than attempting to migrate or reuse prior instance layouts.
+Short-lived, runtime-generated dungeons or similar instanced content are treated as ephemeral and exist only for the lifetime of a specific `gameInstanceId`; their lifecycle may permit discarding the stored topology and starting a new generation request. Long-lived overworld-style instance layouts that must survive restarts retain their committed topology or finalized artifact and remain bound to the original `(tenantId, runtime_version, gameInstanceId)` tuple; upgrading to a new `runtime_version` always uses a new `gameInstanceId` and runs world creation for that instance rather than attempting to migrate or reuse prior instance layouts.
 
 For clarity, activation-time code paths must not use method or table names implying creation of new version-scoped rules, templates, or bindings. Any operation named `register*Rule`, `create*Binding`, or equivalent is design-time unless the target rows are explicitly instance-scoped.

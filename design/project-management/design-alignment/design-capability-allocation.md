@@ -8,7 +8,8 @@ This ledger maps canonical product and architecture sources to the stable capabi
 
 - Source-set allocation and the declared coverage summary are mechanically checked by [`check-design-capability-allocation.py`](../../../dev-tools/validation/check-design-capability-allocation.py); the complete gate contract is listed in the [design-alignment workstream](./README.md#automated-gates).
 - Historical focused validation run on 2026-07-30 is retained as historical evidence: `python3 dev-tools/validation/check-design-capability-allocation.py` returned `design capability allocation passed: 225 sources (222 allocated, 3 explicit exemptions)`.
-- Current canonical validator evidence dated 2026-08-13: `design capability allocation passed: 267 sources (264 allocated, 3 explicit exemptions)`.
+- Previous canonical validator evidence dated 2026-08-13: `design capability allocation passed: 267 sources (264 allocated, 3 explicit exemptions)`.
+- Current canonical validator evidence dated 2026-08-14: `design capability allocation passed: 277 sources (274 allocated, 3 explicit exemptions)`.
 - Markdown/link validation on 2026-08-13: `linkCheck` checked 4,461 links (4,423 OK, 0 errors, 38 excluded); `lintMarkdown` checked 444 files with 0 issues.
 - Runtime proof is not applicable to this documentation-only allocation change.
 - Implementation and verification evidence do not belong in this allocation ledger. The initial cross-capability baseline is preserved in the frozen [capability implementation reconciliation snapshot](./capability-implementation-reconciliation.md); live status and focused-proof anchors are maintained in the permanent implementation trackers.
@@ -28,16 +29,16 @@ This ledger maps canonical product and architecture sources to the stable capabi
 | Infrastructure | 6 | 6 | 0 | 100% classified |
 | Generated references | 2 | 2 | 0 | 100% classified |
 | Microservice architecture | 76 | 74 | 0; 2 explicit governance/template exemptions | 100% classified |
-| Architecture decisions | 93 | 92 | 0; 1 registry exemption | 100% classified |
+| Architecture decisions | 103 | 102 | 0; 1 registry exemption | 100% classified |
 | Product documentation | 7 | 7 | 0 | 100% classified |
-| **Total** | **267** | **264** | **0; 3 explicit exemptions** | **100% classified** |
+| **Total** | **277** | **274** | **0; 3 explicit exemptions** | **100% classified** |
 
 ## Allocation Ledger
 
 | Design source | Heading or scope | Primary capability | Secondary handoffs | Source class | Notes or gap |
 | --- | --- | --- | --- | --- | --- |
 | [Microservice architecture allocation](./design-capability-allocation-microservices.md) | All 76 files under `design/architecture/microservices/**` | Per-source allocation | Per-source handoffs | Service design, contract, runtime/data, configuration, operations, and reference sources | All 76 files are accounted for as 74 allocated sources plus 2 exempt governance/template files: `service-documentation-structure.md` and `service-template.md`; complete path-set coverage |
-| [Architecture decision registry](../../architecture/decisions/README.md) | Registry plus 92 ADRs | Per-record allocation | Per-record affected capabilities | Decision record | The registry is an index; accepted, superseded, and withdrawn records remain distinguishable |
+| [Architecture decision registry](../../architecture/decisions/README.md) | Registry plus 102 ADRs | Per-record allocation | Per-record affected capabilities | Decision record | The registry is an index; accepted, superseded, and withdrawn records remain distinguishable |
 | [System architecture allocation](./design-capability-allocation-system.md) | All 83 direct architecture, 6 infrastructure, and 2 generated sources | Per-source allocation | Per-source handoffs | Normative design, runbook, reference, index, and generated sources | Complete path-set coverage |
 | [Product documentation](../../product/README.md#canonical-sources) | All 7 files under `design/product/**` | Per-source allocation | Per-source product behavior scope | Requirements, taxonomy, index, and observable product behavior | Complete path-set coverage |
 
@@ -138,6 +139,16 @@ This ledger maps canonical product and architecture sources to the stable capabi
 | `design/architecture/decisions/adr-0090-recorded-script-input-manifests-for-reproducible-evaluation.md` | `AS-1` | `SF-2`, `GR-1`, `SF-1`, `AR-1` | Accepted |
 | `design/architecture/decisions/adr-0091-class-specific-script-timer-clocks-and-recovery.md` | `AS-1` | `GR-1`, `SF-2`, `SF-1`, `AR-3` | Accepted |
 | `design/architecture/decisions/adr-0092-grpc-status-and-typed-domain-outcome-boundary.md` | `SF-1` | `GR-1`, `PO-4` | Accepted |
+| `design/architecture/decisions/adr-0093-game-design-coordinated-digest-attested-content-publication.md` | `AR-1` | `AR-1`, `AR-3`, `PO-3`, `GR-2`, `AA-3` | Accepted |
+| `design/architecture/decisions/adr-0094-explicit-cohesive-runtime-release-tuples.md` | `AR-3` | `AR-1`, `AR-3`, `AA-3`, `GR-1`, `PO-3` | Accepted |
+| `design/architecture/decisions/adr-0095-content-addressed-published-assets-with-cas-lifecycle-authority.md` | `AR-1` | `AR-1`, `AR-3`, `PO-3`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0096-attested-publication-gate-and-quarantined-failed-assets.md` | `AR-3` | `AR-1`, `PO-3`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0097-git-and-ci-validated-single-operator-promotion-evidence.md` | `PO-3` | `PO-4`, `SF-1` | Accepted |
+| `design/architecture/decisions/adr-0098-request-bounded-generation-replay-and-explicit-regeneration.md` | `AR-1` | `AR-3`, `GR-2`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0099-bounded-atomic-generation-with-staging-for-large-outputs.md` | `GR-2` | `GR-1`, `SF-2`, `AS-1` | Accepted |
+| `design/architecture/decisions/adr-0100-separate-generation-ingress-with-one-world-owned-engine.md` | `AR-1` | `AR-1`, `AR-3`, `GR-2`, `AS-1` | Accepted |
+| `design/architecture/decisions/adr-0101-explicit-destructive-regeneration-with-previewed-scope.md` | `AR-1` | `AR-1`, `AR-2`, `GR-2` | Accepted |
+| `design/architecture/decisions/adr-0102-first-class-sparse-and-full-grid-world-topologies.md` | `GR-2` | `GR-2`, `AR-1`, `SF-2` | Accepted |
 
 ## Product Documentation Allocation
 

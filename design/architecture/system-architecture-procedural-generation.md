@@ -2,7 +2,7 @@
 
 This document outlines how FireMUD supports procedural generation of both dungeon-style and overworld-style layouts. These generators can be invoked during world creation or dynamically at runtime to produce rooms, exits, biomes, and terrain features. For long-lived overworld or static areas, generated layouts are typically treated as structural scaffolding that designers or LLM-assisted tools can refine with names, descriptions, and quests. For short-lived dungeon instances generated at runtime, the layouts are usually consumed as-is without additional authoring.
 
-Implemented generators include `SimpleDungeonGenerator` and `OverworldMapGenerator`.
+The target design includes `SimpleDungeonGenerator` and `OverworldMapGenerator`. The current implementation has a `SimpleDungeonGenerator` and registry in Automation & Scripting, contrary to the target ownership; it does not yet implement the World-owned engine, typed generation ingress, or `OverworldMapGenerator` described here.
 
 Procedural generation allows games to quickly bootstrap playable areas, spawn instanced content, or fully generate open worlds without requiring hand-authored maps.
 
@@ -13,23 +13,23 @@ Procedural generation allows games to quickly bootstrap playable areas, spawn in
 - 🏗️ **World Bootstrapping** – Initialize a new world map without manual design.
 - 🌀 **Dungeon Instances** – Generate instanced interiors on demand (e.g. for quests).
 - 🧱 **Design Templates** – Offer scaffolds for designers to expand on.
-- 🔁 **Replayable Zones** – Create consistent layouts from the same seed across sessions.
+- 🔁 **Replayable Zones** – Replay an admitted generation request from its recorded inputs; committed topology, not seed-only reconstruction, remains authoritative across sessions.
 
-Generation flows fall into two categories:
+Generation flows share one pure generator engine owned by World Management but use two separate typed ingress contracts:
 
-- **Design-time/template generation** – invoked from Game Design workflows to produce
+- **Design-time/template generation** – invoked only from Game Design workflows to produce
   versioned world scaffolding that is saved into template tables keyed by
   `(tenantId, versionId)` and later published like any other design asset.
 - **Runtime/instance generation** – invoked from the Temporal world-lifecycle workflow or tick-driven
   commands to create per-instance layouts keyed by `(tenantId, gameInstanceId)`; these
   flows never modify template tables for Published versions.
 
-All generator invocations are explicitly **mode-aware**. Callers must specify a `generationMode` value:
+The authenticated endpoint and its typed target union determine the namespace and persistence semantics:
 
-- `DESIGN_TEMPLATE` – used only by Game Design Service design-time workflows to populate or reshape template graphs keyed by `(tenantId, versionId)` on Draft versions.
-- `RUNTIME_INSTANCE` – used by World Management and Game Session for world creation and runtime instancing to create instance records keyed by `(tenantId, gameInstanceId)`; this mode is not permitted to write any template rows regardless of version state.
+- the design ingress accepts a Draft target keyed by `(tenantId, versionId, DraftScopeTarget)` and only Game Design may orchestrate it;
+- the runtime ingress accepts an instance target keyed by `(tenantId, gameInstanceId, InstanceScopeTarget)` and only approved world-lifecycle or gameplay command paths may invoke it.
 
-World Management enforces this boundary: any attempt to invoke a generator in `RUNTIME_INSTANCE` mode that would modify template tables, or to write template rows for a Published version in `DESIGN_TEMPLATE` mode, is rejected with a hard validation error. Template writes must always originate from Game Design Service design-time APIs targeting Draft versions.
+Callers do not supply a free `generationMode` as an authority selector. World Management derives the mode from the authenticated ingress and target, rejects cross-namespace combinations, validates generator output, and persists it. Design ingress may write only Draft template rows; Published rows are immutable. Runtime ingress may write only instance rows. See [ADR 0100](decisions/adr-0100-separate-generation-ingress-with-one-world-owned-engine.md).
 
 ---
 
@@ -60,7 +60,7 @@ Creates compact room graphs with bidirectional exits — ideal for dungeons, int
 
 > 🔗 Ideal for quest dungeons, temples, abandoned mines, etc.
 
-Procedural generators are invoked by the World Management Service, which calls pure `Generator` implementations as library functions using a seed, parameters, and world context. The generators return an abstract room/region graph that World Management validates and persists as either versioned **template** records or per-instance **runtime** records depending on the calling context. Automation & Scripting must not execute generators or return topology graphs for persistence.
+Procedural generators are invoked by the World Management Service, which calls its one pure generator engine using a seed, parameters, and world context. The generators return an abstract room/region graph that World Management validates and persists as either versioned **template** records or per-instance **runtime** records according to the typed ingress. Game Design owns Draft generation intent and revision orchestration but not topology persistence. Automation & Scripting must not execute generators, return topology graphs for persistence, or persist topology.
 
 - When invoked from Game Design workflows for **design templates**, results are
   persisted as template rows keyed by `(tenantId, versionId)` and become part of
@@ -70,40 +70,36 @@ Procedural generators are invoked by the World Management Service, which calls p
   `(tenantId, gameInstanceId)` and refer back to the chosen `versionId`; template
   rows remain unchanged.
 
-For persistent instance layouts, the invariant is that all `*_instance` rows must be **replayable** from:
+Persistent instance layouts are authoritative stored topology. Restarts and disaster recovery restore those rows, retained finalized artifacts, or backups; they do not depend on indefinite re-execution of the historical generator. Generator metadata remains provenance and request-retry evidence rather than a seed-only reconstruction guarantee.
 
-- the published templates for the associated `versionId`, plus
-- the stored generator metadata for each generation run, including `generationMode`, `seed`, `generatorType`, and an immutable `configSnapshot` with an explicit `schemaVersion`.
-
-Runtime-only dungeons or short-lived instances may be treated as ephemeral data that exists only for the lifetime of a specific `gameInstanceId` and is never shared across instances or versions. Long-lived overworld-style instance layouts that need to survive restarts must persist enough generator metadata to satisfy the replayable-from-templates invariant.
+Runtime-only dungeons or short-lived instances may be treated as ephemeral data that exists only for the lifetime of a specific `gameInstanceId` and is never shared across instances or versions. If ephemeral topology is lost, its lifecycle may permit discarding it and starting a new generation request under the current permitted generator policy. Long-lived overworld-style layouts must persist their actual topology.
 
 Optional post-generation population hooks can then run to seed NPCs, spawns, or environmental details appropriate to the template or instance context.
 
-### Deterministic Replay Contract for Design-Time Generation
+### Request-Bounded Replay and Explicit Regeneration
 
-Design-time generation is part of publish safety and reconciliation, so retries must not depend on mutable defaults or the currently deployed generator binary alone.
+Design-time generation is part of publish safety and reconciliation, so retries of one admitted request must not depend on mutable defaults or whichever generator binary happens to be current. This compatibility obligation is bounded to that request; FireMUD does not retain every historical generator implementation indefinitely.
 
-For each design-time generation run, World Management must persist a durable generation artifact that includes:
+At admission, World Management persists a durable generation record that includes:
 
 - `generationRunId` and stable `generationRequestId`
 - `tenantId`, `versionId`, `generationMode`
 - `generatorType` and `generatorImplementationVersion` (or equivalent immutable build identifier)
 - canonicalized `configSnapshot` including explicit `schemaVersion`
 - seed and any derived deterministic inputs
-- `outputDigest` computed from a canonical serialized topology output
+- the identity of recorded or staged output, including an `outputDigest` computed from its canonical serialized topology
 
-These design-time generation artifacts are replay/reconciliation provenance, not published topology rows themselves:
+The resolved implementation and inputs are immutable for that request, including across rolling nodes. These records and artifacts are retry/reconciliation evidence, not published topology rows themselves:
 
 - The canonical publish contract is still the finalized version-scoped template rows keyed by `(tenantId, versionId)`.
 - Design-time generation artifact tables are excluded from `GetDraftDesignDigest` unless a future doc revision explicitly promotes named semantic fields into the digest manifest.
-- Retention and migration rules for these artifact rows must preserve deterministic replay for non-Retired versions, but publish gating compares only the finalized template graph plus other documented semantic inputs.
+- Staged output must remain available for the active request's retry lifecycle. Provenance may outlive the executable implementation and does not promise seed-only reconstruction.
 
 Reconciliation behavior:
 
-- Replaying a previously applied design revision must either:
-  - reuse the persisted staged/finalized output artifact directly, or
-  - rerun generation and verify that the regenerated output matches the recorded `outputDigest`.
-- If regenerated output does not match the recorded digest, reconciliation must fail fast and mark the version `OUT_OF_SYNC` rather than silently accepting a drifted topology.
+- Retrying the same in-flight request reuses its recorded or staged output. If that output cannot be reused and the admitted implementation is unavailable, the request fails closed or is explicitly abandoned; it never substitutes a newer implementation under the same identity.
+- Once finalized, committed template topology is authoritative and recovery restores committed rows, immutable releases, retained finalized artifacts, or backups rather than re-executing the generator.
+- Intentional regeneration is a new request and authored revision. It may select the newest generator or model permitted by explicit game or operator policy and must obey the declared scope, epoch, and replacement rules.
 - The digest for publish gating must cover the finalized template rows produced by this artifact, so replay and publish checks converge on the same canonical state.
 
 Generation revisions are explicit and scope-bound:
@@ -116,18 +112,21 @@ Generation revisions are explicit and scope-bound:
 - The revision must also declare its replacement policy:
   - `REPLACE_SCOPE` means the generated output fully replaces the previously authored topology inside that declared target scope; rows outside the scope are untouched.
   - `SEED_APPEND_ONLY` means generation may add new rows inside the target scope but may not rewrite or delete previously existing manually authored rows.
-- `REPLACE_SCOPE` must carry `expectedDraftScopeRevisionEpoch` for the target scope and fail as `DRAFT_WRITE_CONFLICT` if the scope has advanced.
+- `SEED_APPEND_ONLY` is the safe default wherever the requested generation can be expressed without rewriting or deletion.
+- Before `REPLACE_SCOPE` can be accepted, Game Design presents an exact destructive plan identifying creates, retained objects, replacements, deletions, affected references, identifier mappings, and blockers. The approved request carries a canonical plan digest bound to the exact generation inputs and current `expectedDraftScopeRevisionEpoch`.
+- `REPLACE_SCOPE` fails as `DRAFT_WRITE_CONFLICT` and requires a new preview when the scope epoch, plan inputs, or relevant reference facts have changed.
 - `SEED_APPEND_ONLY` must carry the same expected scope epoch and fail as `OUT_OF_SYNC` or a more specific generation conflict if replay would require rewriting or deleting rows already present in the scope.
-- Reconciliation must replay `generate -> subsequent manual revisions` in original commit/revision order. It must never rerun generation over a scope that has later manual edits unless the recorded generation revision itself declared `REPLACE_SCOPE` for that same scope.
-- Manual edits applied after a generation revision are canonical authored state. A later replay that would erase those edits without an explicit replacement revision is invalid and must fail the Draft as `OUT_OF_SYNC`.
+- Reconciliation must replay `generate -> subsequent manual revisions` in original commit/revision order. Replaying the same historical generation revision never turns it into permission to erase later edits; destructive regeneration is a new, explicitly previewed `REPLACE_SCOPE` revision.
+- References crossing the replacement boundary must remain valid, map through an explicit typed mapping, or block replacement. Stable persisted identifiers remain only for the same logical objects; semantic replacements, splits, merges, and re-scopes require explicit durable mappings.
+- No generic old/local/new merge is implied. Ambiguous local changes or semantic replacements require explicit creator resolution.
 
 Illustrative revision examples:
 
 ```json
 {
   "revisionType": "GENERATE_WORLD_SUBTREE",
-  "tenantId": "11111111-1111-4111-8111-111111111111",
-  "versionId": "22222222-2222-4222-8222-222222222222",
+  "tenantId": "t1",
+  "versionId": "v42",
   "revisionId": "r-gen-001",
   "targetScope": {
     "scopeType": "ZONE_SUBTREE",
@@ -135,7 +134,7 @@ Illustrative revision examples:
   },
   "replacementPolicy": "REPLACE_SCOPE",
   "generatorType": "SimpleDungeonGenerator",
-  "generationRequestId": "7f4c2b8e-91d4-4a2f-8c10-2f6e4d9b8a31"
+  "generationRequestId": "genreq-t1-v42-starter-caves-r1"
 }
 ```
 
@@ -147,8 +146,8 @@ Resulting replay semantics:
 ```json
 {
   "revisionType": "GENERATE_WORLD_SUBTREE",
-  "tenantId": "11111111-1111-4111-8111-111111111111",
-  "versionId": "22222222-2222-4222-8222-222222222222",
+  "tenantId": "t1",
+  "versionId": "v42",
   "revisionId": "r-gen-002",
   "targetScope": {
     "scopeType": "NEW_EMPTY_REGION",
@@ -156,7 +155,7 @@ Resulting replay semantics:
   },
   "replacementPolicy": "SEED_APPEND_ONLY",
   "generatorType": "OverworldMapGenerator",
-  "generationRequestId": "b6a1e093-4c72-4f8d-9e15-63c0a7d2b849"
+  "generationRequestId": "genreq-t1-v42-northern-wilds-r1"
 }
 ```
 
@@ -179,7 +178,7 @@ Concrete replay example:
 
 ### 2. `OverworldMapGenerator`
 
-Generates biome-aware terrain maps with elevation, water features, forest density, and region partitioning. Room creation is configurable: either generate **sparse rooms** only at points of interest (POIs), or generate a **full grid of rooms** based on the terrain data.
+Generates biome-aware terrain maps with elevation, water features, forest density, and region partitioning. Topology creation is configurable: either generate a sparse graph containing selected points of interest and path nodes, or generate a bounded full grid in which every valid cell is an authoritative gameplay location.
 
 #### Generation Pipeline
 
@@ -193,19 +192,24 @@ Generates biome-aware terrain maps with elevation, water features, forest densit
 | **Forest/Cave Generation** | Place dense blobs of trees or underground | Cellular automata |
 | **Feature Placement** | Place towns, dungeons, landmarks | `Poisson Disk Sampling`, seeded rules |
 | **Connectivity Graph** | Generate roads, rivers, and path exits | A*, flow maps, elevation-aware routing |
-| **Room Graph Export** | Convert terrain grid into room data | Either sparse (POIs and path nodes only) or full (1:1 room per map cell) |
+| **Topology Export** | Convert terrain into authoritative location data | Either `SPARSE_GRAPH` nodes and edges or a bounded `FULL_GRID` eager/chunked topology |
 
-> The room generation mode (sparse vs full) is selectable per generation request, depending on the game’s desired level of detail and exploration density.
+The topology mode is a version-scoped semantic design input selected for the generation request:
+
+- `SPARSE_GRAPH` emits selected locations such as POIs and waypoints plus their declared connectivity.
+- `FULL_GRID` defines a bounded lattice in which every valid cell is a stable authoritative location. The design declares supported adjacency directions, bounds, impassable terrain, and other typed traversal rules.
+
+`FULL_GRID` does not require one database row or stored exit row per cell, nor does it require continuous simulation of inactive cells. World Management must expose the same authoritative cell facts, stable identity, adjacency, movement, targeting, occupancy, and snapshot behavior regardless of whether the physical representation is eager rows or an immutable chunked topology with durable runtime deltas.
 
 ---
 
 ## Output and Metadata (Common)
 
-All generators emit a normalized structure:
+Generators emit a normalized sparse graph or a bounded grid/chunk topology. Their logical locations expose the following common semantic fields even when a large grid stores them in immutable chunks rather than one row per cell:
 
 | Field | Description |
 | --- | --- |
-| `roomKey` | Unique identifier within the generator output graph (not a persisted template/instance id) |
+| `roomKey` / `cellKey` | Stable logical identifier within the generated topology; World Management resolves the canonical persisted or virtualized template/runtime identity |
 | `coordinates` | Grid location (used for spatial logic and editing) |
 | `exitMap` | Map of direction → `roomKey` |
 | `tags` | Optional labels like `"start"`, `"town"`, etc. |
@@ -213,17 +217,26 @@ All generators emit a normalized structure:
 | `elevation` | Numeric terrain height (used for visuals or logic) |
 | `regionKey` | Optional grouping key for partitioned maps (not a persisted template/instance id) |
 
-`spacingMultiplier` is stored on the containing region (World Management) and can globally scale movement speed across the map. In sparse layouts Game Logic uses room coordinates and this `spacingMultiplier` to derive movement/travel cost, so nearby rooms are quick to traverse while large gaps produce longer travel times.
+Topology density and movement policy are independent versioned choices. A sparse game may make every declared exit one uniform movement, while another may use geometric distance. A full grid may likewise use uniform steps, explicit costs, or terrain/elevation-sensitive movement. `spacingMultiplier` is stored on the containing region and participates only when the selected typed movement policy declares it. Sparse topology does not implicitly make travel slower, and full-grid topology does not implicitly make travel uniform.
 
-In **full-grid mode**, every terrain tile becomes a room.
-In **sparse mode**, only selected POIs and waypoints are emitted, and the distance between them determines travel cost.
+In `FULL_GRID`, every valid cell is logically addressable and traversable according to the declared adjacency and terrain rules. Walls, invalid cells, impassable terrain, and lattice bounds may still block a direction. In `SPARSE_GRAPH`, only selected nodes and their declared edges are locations. Neither choice dictates movement cost by itself.
 
-World Management assigns canonical persisted identifiers when saving generator outputs:
+World Management exclusively assigns or resolves canonical identifiers when finalizing and exposing generator output:
 
-- Design-time/template generation persists `roomTemplateId` values keyed by `(tenantId, versionId)`.
-- Runtime/instance generation persists `roomInstanceId` values keyed by `(tenantId, gameInstanceId)`.
+- Design-time/template locations resolve to stable `roomTemplateId` values keyed by `(tenantId, versionId)`.
+- Runtime locations exposed to gameplay resolve to stable `roomInstanceId` values keyed by `(tenantId, gameInstanceId)`.
 
-Generator outputs must not embed or assume these persisted identifiers; they are assigned at persistence time by World Management.
+Generator outputs must not assume database row identity. World Management may eagerly persist bounded graphs or resolve a cell from an immutable chunked base plus durable instance state, but the same logical cell must resolve to the same authoritative identity for its required lifetime.
+
+### Large Full-Grid Representation
+
+Physical topology representation is opaque behind World Management:
+
+- Sparse and bounded moderate graphs may use eager template, instance, and exit rows within enforced and tested limits.
+- Before large full-grid scale is claimed, generation must produce an immutable digest-attested chunk topology or equivalent bounded representation. A validated root manifest identifies the complete lattice and immutable chunks, and one short finalize selects that root atomically so readers never observe a partial grid.
+- Runtime reads compose the immutable base cell with durable instance-scoped deltas for visited, occupied, changed, timed, or otherwise mutable locations. Caches and lazy materialization remain derived projections rather than authority.
+
+Loading or materializing an already committed cell is not regeneration. Recovery restores the stored topology artifact and durable runtime deltas instead of re-running the historical generator from seed. A world that intentionally creates previously unfixed chunks later is an unbounded or expanding generation mode and requires a separate contract; it is not the bounded fixed `FULL_GRID` mode.
 
 ---
 
@@ -235,34 +248,33 @@ The following rules align generators with the core runtime and tooling:
 2. **Heavy Post‑Gen Population** – Population scripts may declare `requiresSoloTick: true`. The Game Session Service schedules these in dedicated ticks to avoid fairness regressions and may only exceed the normal budget when `solo_tick_budget_ms` is enabled for that deployment/profile.
 3. **Seed & Metadata Persistence** – All generation requests include a seed. **World Management Service** persists `seed`, `generatorType`, and raw params alongside region/room records. For design-time generation this metadata is stored on template rows keyed by `(tenantId, versionId)`; for runtime/instance generation it is stored on instance rows keyed by `(tenantId, gameInstanceId)`.
 4. **Tenant Scoping** – All generation inputs/outputs are tenant‑scoped. For publish-affecting or activation-time generation, the effective inputs must come from version-scoped design rows and the frozen `generationConfigRevision`, not mutable tenant feature flags or operational defaults. Runtime-only operational knobs may affect scheduling or non-semantic execution details, but they must not change persisted topology semantics.
-5. **Sparse Traversal Rules** – Exit costs between sparse rooms are derived from their coordinate distance. **Game Logic** uses region `spacingMultiplier` to scale the overall pace if needed.
+5. **Topology and Traversal Policy** – Density and movement policy are separate version-scoped inputs. World Management resolves authoritative locations, geometry, adjacency, and occupancy for both `SPARSE_GRAPH` and `FULL_GRID`; Game Logic applies the selected typed movement policy. Coordinate distance, terrain, elevation, explicit costs, and region `spacingMultiplier` affect cost only when that policy declares them.
 6. **Post-generation Population** – After rooms are created and persisted, population work follows different rules by mode. In design-time/template generation, post-generation population may create only declarative World-owned spawn/population binding rows under `(tenantId, versionId)`; Automation & Scripting must not persist template rows, spawn bindings, or live entities as a side effect of a design-time generation revision. In runtime/instance generation, Automation & Scripting may emit runtime commands through the canonical tick/workflow handoff after topology is visible. Those commands act on `RoomInstanceRef` and runtime entity state; they do not directly mutate world topology.
 
    Failure and retry semantics:
 
    - Population is treated as a **retryable, idempotent** follow-up phase, not as part of topology persistence.
    - Launch-time topology generation/persistence for instance creation is a pre-activation workflow owned by World Management (Class A rollback semantics in `system-architecture-transactions.md`) and is not routed through Game Session ticks. Post-activation population and subsequent dynamic generation follow Class B retry-until-convergence semantics, with runtime generation using the `requiresSoloTick` command path.
-   - Topology persistence (template or instance rows) must complete atomically in World Management before population is admitted.
+   - Authoritative topology persistence or digest-attested root installation must complete atomically in World Management before population is admitted.
    - Runtime population commands must carry the same canonical identity used for tick idempotency (`EffectId`) plus `RoomInstanceRef` so downstream services can safely no-op on replays.
    - Design-time binding materialization must instead carry `tenantId`, `versionId`, the target template identifiers, `commitId`, `revisionId`, and `expectedDraftScopeRevisionEpoch`; duplicate revision replay must no-op through the same Draft write idempotency rules as other design-time mutations.
-   - If population partially succeeds (for example some spawns created in Entity Management but later commands fail), the system retries until convergence using the original identities. It must not attempt to “undo” already-persisted topology or “roll back” created entities by issuing compensating deletes from within the tick loop.
-   - The only supported destructive rollback is deleting an entire **ephemeral** instance as a unit (for example a short-lived dungeon instance), after verifying it is no longer referenced by active sessions.
+   - If population partially succeeds (for example some spawns created in Entity Management but later commands fail), retryable items retry until convergence using the original identities. A permanently invalid item reaches an explicit terminal failure with durable diagnostics rather than retrying forever.
+   - Cleanup may remove only objects carrying explicit ownership by the failed generation run; it must never infer ownership from location or delete player-created, manually authored, or unrelated state. Whole-instance deletion is supported only for an explicitly **ephemeral** instance after verifying it is no longer referenced by active sessions.
    - Initial-slice scope is narrower: instance-scoped population schedules and follow-up population commands are required only for primary world creation of the launched `gameInstanceId`. Portal-driven or later dynamic instancing may adopt the same contract in future slices but is not required by this document for first delivery.
 7. **Validation and Errors** – World Management validates generation requests, validates generator outputs, and guarantees **no partial persistence** for the affected template or instance scope.
 
-   Persistence must use a staged/finalize model so large graphs can be written safely without relying on oversized single transactions:
+   Persistence guarantees atomic reader visibility and replay-safe convergence through one of two bounded mechanisms:
 
    - Each generation run is assigned a `generationRunId` (scoped to the caller’s target, for example `(tenantId, versionId)` or `(tenantId, gameInstanceId)`).
    - Callers must supply (or World Management must derive deterministically) a stable `generationRequestId` so retries of “the same request” map to the same `generationRunId` and become replay-safe.
    - `generationRequestId` must be derived from business identity rather than transient execution identity (for example hash of `tenantId`, target scope key, generation step name, and canonicalized generator config). Retries through a new Temporal run or synchronous retry must reuse the same `generationRequestId`.
    - World Management must enforce a uniqueness constraint on `(tenantId, targetScopeKey, generationRequestId)` so duplicate requests converge to one run.
-   - World Management must enforce single-writer semantics per target scope (for example via a lock keyed by `(tenantId, versionId)` for design-time, or `(tenantId, gameInstanceId)` for runtime) so two concurrent runs cannot race to finalize into the same template/instance scope.
-   - World Management writes all generated rooms/exits/metadata into staging rows keyed by `(tenantId, generationRunId)` and records an immutable config snapshot (`seed`, `generatorType`, `schemaVersion`, and serialized parameters).
-   - A single finalize transaction atomically:
-     - Marks the staged run as committed (or swaps it into the active template/instance scope), and
-     - Makes the generated topology visible to readers.
-   - On failure World Management returns a `GenerationErrorDetail` and guarantees the target scope remains unchanged (staged rows may be left for diagnostics or garbage-collected by `generationRunId`).
-   - World Management must document and implement a garbage-collection policy for abandoned staging rows keyed by `(tenantId, generationRunId)` (for example time-based cleanup for `FAILED`/`ABORTED` runs, while retaining a short diagnostic window).
+   - World Management must enforce single-writer semantics per target scope through the scope epoch/fence or equivalent storage-level compare-and-set, together with request uniqueness, so concurrent runs cannot both commit.
+   - Generation and all graph, scope, count, byte-size, and digest validation complete before the visibility transaction. That transaction performs no generator execution or network calls.
+   - An output within enforced and proved row and serialized-byte limits may write the complete result and idempotency outcome in one owner-local transaction. Readers see either the prior scope or the complete new scope.
+   - Output above those limits, or output requiring chunked persistence, uses private staging keyed by `(tenantId, generationRunId)`. A short finalize transaction validates the request identity, scope fence, expected counts, and canonical digest before atomically installing or selecting the graph or immutable root chunk manifest.
+   - The initial implementation may reject oversized output deterministically until the staged path exists. Callers may not bypass the bounded-transaction limits.
+   - On failure World Management returns a `GenerationErrorDetail` and guarantees the target scope remains unchanged. When staging is used, World Management must define bounded diagnostic retention and garbage collection for abandoned rows.
 8. **Editor Overlays** – Generators emit coordinates and optional map layers so the Game Editor can display a preview or dry-run JSON output.
 9. **Pluggable Interface** – Generators implement the `Generator` interface and are discovered via the `GeneratorRegistry` in the World Management Service. Discovery uses Spring bean scanning, and additional generators may be provided by shared libraries or service-local modules.
 
@@ -317,7 +329,7 @@ When the shape of generator configuration evolves, schema changes must follow th
 
 ### World Management Service
 
-- Owns invocation of generators as pure functions and persists generated rooms/biomes/regions; assigns canonical `roomTemplateId` / `roomInstanceId` values at persistence time
+- Owns invocation of generators as pure functions and persists or installs the authoritative generated topology; assigns or resolves canonical `roomTemplateId` / `roomInstanceId` values without exposing physical row or chunk identity
 - Persists generator metadata (`seed`, `generatorType`, and an immutable config
   snapshot with `schemaVersion`) and editor overlays, including a snapshot of
   the effective procedural rule configuration used for each generation run
@@ -336,7 +348,7 @@ When the shape of generator configuration evolves, schema changes must follow th
 
 ### Game Logic Service (Movement/Travel)
 
-- **Computes movement/travel costs** using World geometry (`coordinates`, region `spacingMultiplier`, biome/elevation rules)
+- **Computes movement/travel costs** from World-owned facts under the published typed movement policy; coordinates, explicit edge/cell cost, region `spacingMultiplier`, biome, and elevation participate only when that policy declares them
 
 ---
 

@@ -24,37 +24,19 @@ The live Account runtime does not yet produce the complete authority evidence re
 
 The **Game Design Service** manages version metadata and publish workflows for game configuration (world layouts, scripts, item templates, etc.). Domain services (World Management, Entity Management, Game Logic, and others) store the actual versioned domain data for each `tenantId`.
 
+Game Design owns publication coordination, release descriptors, final release attestation, and asset lifecycle decisions. Domain owners retain authority for their participant data and participant digests; Platform Operations owns storage infrastructure and delivery evidence. Runtime architecture owns the resolved tuple and admission predicate. These ownership links implement [ADR 0093](./decisions/adr-0093-game-design-coordinated-digest-attested-content-publication.md) and [ADR 0094](./decisions/adr-0094-explicit-cohesive-runtime-release-tuples.md) without duplicating their rationale in each participant document.
+
 1. When a version is ready, creators trigger a **Publish** action in the Game Design Service using the `PublishVersion` gRPC method.
 2. The service writes a new `version_id` and associated records to its database, linking the version to each tenant and recording notes and base versions.
 3. During authoring, the Game Design Service applies revisions incrementally to **Draft** template rows hosted by the owning domain services via idempotent design APIs keyed by `(tenantId, versionId)`. At publish time, the durable `publish` workflow coordinates all domain services so they validate and finalize their existing Draft data for the given `tenantId` and `version_id`, marking that data as Published and ready for runtime use. No separate design database is copied into the domain services; they already host the versioned graphs for their domains.
-   - Publish-time validation must be based on durable digests: every participating domain service must report `GetDraftDesignDigest` for the publish scope (`oneof {versionId, scriptPatchVersion}`) matching the commit being published (`appliedCommitId`, `contentDigest`, and `digestSchemaVersion`), and the Game Design Service must report a control-plane digest for normalized dependency tables (`game_template_*_ref`, `version_asset`, and related publish-critical metadata) for the same commit/version scope. If any required digest is missing or mismatched, publish must fail fast and the version must remain Draft/OUT_OF_SYNC until reconciliation succeeds. See `design/architecture/microservices/game-design-service/world-editing-tools.md`.
-   - Publish gating must compare like-for-like commit scope across every required participant. A full publish is invalid if required participants attest different `appliedCommitId` values for the target scope, even when each individual digest is otherwise well-formed.
-   - Participant selection is fixed by publish type (full publish vs script-only patch) using the matrix in `design/architecture/microservices/game-design-service/version-control.md#digest-participants-by-publish-type`; publish workflows must not change digest participants implicitly at runtime.
-   - For versions that use procedural generation, publish must also freeze and persist a `generationConfigRevision`/hash identity for `(tenantId, versionId)` derived from the version-scoped generation inputs committed through Game Design workflows. Mutable World Management operational defaults are not valid publish inputs. World creation for that version must use the frozen identity and fail closed if it cannot be resolved.
-4. As part of the durable `publish` workflow, the Game Design Service runs an **asset export** step for each `(tenantId, versionId)` that uploads design-time assets to object storage, generates a deterministic `manifest.json` for the version, and updates version metadata with the manifest location. This step is implemented as an idempotent workflow step with compensation-like failure handling as described in [Asset Storage Setup](./microservices/game-design-service/asset-storage.md). If this step or another publish step fails irrecoverably, the workflow marks the version as **Failed** and records the asset artifact as `FAILED` so it is not eligible for activation. Moving failed artifact bytes to `TOMBSTONED` remains a separate explicit abandonment/quarantine action rather than an automatic publish-failure transition.
-   - The asset export step must persist a `manifestHash` in version metadata and treat any mismatch between recorded hash and served bytes as drift/corruption, not a legitimate “update” to a Published/Active version.
-5. Before the version can transition to `Published`, the Game Design Service must persist a single immutable `published_release_bundle` attestation row for `(tenantId, versionId)` containing at minimum:
-   - publish identity (`publishWorkflowId`, target `commitId`, `versionId`, `publishedAt`);
-   - the digest attestation returned by each required publish participant (`serviceName`, `contentDigest`, `digestSchemaVersion`, `appliedCommitId`);
-   - the frozen `generationConfigRevision`/hash for the version;
-   - the exported asset `manifestHash` and manifest schema version;
-   - bundle status fields proving the attestation was written only after all publish gates passed.
-   Activation, rollback-preflight, repair, and audit workflows must treat this row as the canonical release attestation rather than reconstructing release state from multiple service-local tables.
-   - Game Design must expose this attestation through `GetPublishedReleaseBundle(tenantId, versionId)`; runtime/control-plane consumers must not read attestation tables directly.
-   - `GetPublishedReleaseBundle` must return deterministic fields at minimum:
-     - `tenantId`, `versionId`, `commitId`, `publishWorkflowId`, `publishedAt`
-     - `participantDigests[] { serviceName, appliedCommitId, contentDigest, digestSchemaVersion }`
-     - `artifactDigests[] { artifactType, artifactPath?, artifactDigest, artifactSchemaVersion }` for any exported derived world artifacts in the release
-     - `manifestHash`, `manifestSchemaVersion`
-     - `requiredManifestAssetKeys[]` for stable manifest usage keys that are mandatory for launch/cutover validation of that release
-     - `generationConfigRevision`
-     - `attestationSchemaVersion`
-   - Error/caching contract:
-     - `NOT_FOUND` means the version is not release-attested and must be treated as non-launchable.
-     - `SCHEMA_VERSION_UNSUPPORTED` means the caller cannot safely interpret the attestation and must fail closed.
-     - A publish workflow that has not yet written `published_release_bundle` is not partially launchable; callers must treat it the same as any other non-attested version.
-     - Activation, cutover preflight, and repair workflows must use a fresh attestation read; cached/stale attestation payloads are not sufficient for admission decisions.
-     - Ordinary repair tooling must not mutate the attestation payload for a Published/Active release. If exact-bytes repair cannot reproduce the attested bundle, recovery requires a new `versionId` or a separately defined re-attestation workflow with its own audit and approval contract.
+   - Publish-time participant selection, digest comparison, control-plane digest semantics, and procedural-generation identity are canonical in [Game Design version control](./microservices/game-design-service/version-control.md#design-time-synchronization). This document retains the consumer consequence: missing, mismatched, or unsupported participant proof fails publication and leaves the version non-launchable.
+4. Game Design’s asset candidate construction, actual-byte digesting, content-addressed exposure, and artifact lifecycle are canonical in [Asset Storage Setup](./microservices/game-design-service/asset-storage.md#asset-lifecycle-and-publish-workflow). This document retains the consumer consequence: failed, private, or unattested candidates cannot be activated or used as runtime fallback. An irrecoverable publish failure marks the version as **Failed** and records the asset artifact as `FAILED`. Moving failed artifact bytes to `TOMBSTONED` remains a separate explicit abandonment/quarantine action rather than an automatic publish-failure transition.
+5. Game Design owns the immutable `published_release_bundle` attestation and exposes it through `GetPublishedReleaseBundle(tenantId, versionId)`. The writer, persistence shape, and attestation schema are canonical in [Game Design version control](./microservices/game-design-service/version-control.md#design-time-synchronization) and [Asset Storage Setup](./microservices/game-design-service/asset-storage.md#asset-lifecycle-and-publish-workflow); runtime/control-plane consumers must not read attestation tables directly.
+   - `NOT_FOUND` means the version is not release-attested and must be treated as non-launchable.
+   - `SCHEMA_VERSION_UNSUPPORTED` means the caller cannot safely interpret the attestation and must fail closed.
+   - A publish workflow that has not yet written `published_release_bundle` is not partially launchable; callers must treat it the same as any other non-attested version.
+   - Activation, cutover preflight, and repair workflows must use a fresh attestation read; cached/stale attestation payloads are not sufficient for admission decisions.
+   - Ordinary repair tooling must not mutate the attestation payload for a Published/Active release. If exact-bytes repair cannot reproduce the attested bundle, recovery requires a new `versionId` or a separately defined re-attestation workflow with its own audit and approval contract.
 
    The current Game Design launch and published-release protobuf contracts expose `version_id` as `int64`, so the illustrative `versionId` values below are numeric. UUID-shaped version identifiers are target-state examples only and must not be substituted into current-contract payloads until the transport fields migrate together.
 
@@ -83,15 +65,19 @@ The **Game Design Service** manages version metadata and publish workflows for g
   ],
   "artifactDigests": [
     {
+      "usageKey": "world.navmesh",
       "artifactType": "WORLD_NAVMESH_BUNDLE",
-      "artifactPath": "versions/v42/world/navmesh.bundle",
-      "artifactDigest": "sha256:navmesh42",
+      "immutableObjectKey": "sha256/na/navmesh42",
+      "contentDigest": "sha256:navmesh42",
+      "contentType": "application/vnd.firemud.navmesh+binary",
       "artifactSchemaVersion": 1
     },
     {
+      "usageKey": "world.pathGraph",
       "artifactType": "WORLD_PATH_GRAPH_BUNDLE",
-      "artifactPath": "versions/v42/world/path-graph.bundle",
-      "artifactDigest": "sha256:pathgraph42",
+      "immutableObjectKey": "sha256/pa/pathgraph42",
+      "contentDigest": "sha256:pathgraph42",
+      "contentType": "application/vnd.firemud.path-graph+binary",
       "artifactSchemaVersion": 1
     }
   ],
@@ -157,7 +143,7 @@ Game versions go through a simple lifecycle:
 - **Published** – the durable `publish` workflow has completed successfully (including asset export) and the version is available for use by game instances.
 - **Active** – a specific Published version is recorded as the `runtime_version` for one or more entries in the `game_instances` table.
 - **Failed** – a version whose durable `publish` workflow has failed in a way that leaves data incomplete or unusable. Failed versions are never eligible for activation until a repair/retry step transitions them back to Draft or Published.
-- **Retired** (also referred to as “Archived” in some UIs) – the version is no longer eligible to be activated for new instances, and no `game_instances` reference it as `runtime_version`. Only **Retired** versions may have their object-store prefixes or other external assets deleted.
+- **Retired** (also referred to as “Archived” in some UIs) – the version is no longer eligible to be activated for new instances, and no `game_instances` reference it as `runtime_version`. Retirement is necessary but not sufficient for asset deletion: purge also requires Game Design reachability proof and CAS-guarded purge APIs.
 
 Administrative tooling (for example via the Game Design Service or Logging & Admin Service) should:
 
@@ -166,8 +152,7 @@ Administrative tooling (for example via the Game Design Service or Logging & Adm
 - Prevent retiring a version while any **game templates** still reference it as their underlying world/entity/script version; designers must migrate those templates to a successor version before retirement.
 - Ensure the `game_manifest` table and any launch manifests are updated when a version is retired so operators cannot accidentally start new instances against it.
 
-Runbooks that remove published assets from the object store must validate that the corresponding version has already reached the **retired** state.
-Asset purge must be initiated through CAS-guarded control-plane operations (`BeginPurgeVersionAssets` and `FinalizePurgeVersionAssets`) so eligibility re-check and artifact-state transitions are atomic; operators must not run purge as a separate check + manual delete sequence.
+Runbooks that remove published assets from the object store must validate that the corresponding version has already reached the **retired** state. Asset purge must be initiated through CAS-guarded control-plane operations (`CanDeleteVersionAssets`, `BeginPurgeVersionAssets`, and `FinalizePurgeVersionAssets`) so eligibility re-check and artifact-state transitions are atomic. These Game Design APIs re-check launch, template, history, mapping, and shared-object reachability and retain terminal lifecycle metadata; operators must not run purge as a separate check plus manual delete sequence.
 
 ### Version State Ownership and CAS Authority
 
@@ -230,13 +215,10 @@ and a `scriptPatchVersion` value such as `v42-script.3`:
 
 Script-only versions appear in version history and audit logs but do not trigger
 a data copy or world restart.
-Runtime services reload the affected scripts in
-memory and continue using the underlying `baseVersionId` for all other assets and templates. Script-only patches are **strictly limited to script definitions and related Automation & Scripting metadata**; any change that needs new or modified assets, world layouts, entity templates, or other non-script configuration must be delivered via a full `PublishVersion` flow that produces a new `versionId`.
+Runtime services may reload the affected scripts in memory only as part of the explicit READY, compatibility, and pin rollout for a newly recorded immutable runtime tuple; they continue using the underlying `baseVersionId` for all other assets and templates. Script-only patches are **strictly limited to script definitions and related Automation & Scripting metadata**; any change that needs new or modified assets, world layouts, entity templates, or other non-script configuration must be delivered via a full `PublishVersion` flow that produces a new `versionId`.
 When a patch is published the Game Design Service calls the
 [`NotifyScriptVersionUpdate`](./microservices/automation-scripting-service/README.md#notifyscriptversionupdate)
-gRPC endpoint in the Automation & Scripting Service so modified scripts are
-reloaded in memory. The Game Session Service records the active
-`script_patch_version` with each running game instance for recovery. See
+gRPC endpoint in the Automation & Scripting Service so modified scripts can be reloaded in memory only as part of an explicit READY, compatibility, and pin rollout that records a new immutable runtime tuple for each affected instance. The running descriptor is not mutated and no latest patch or plugin alias is followed. The Game Session Service records the active `script_patch_version` with each running game instance for recovery. See
 [Scripting & Automation](./system-architecture-scripting.md) for more details.
 
 Patch selection must be explicit and pinned:
@@ -262,7 +244,7 @@ The versioning model treats a published `version_id` as the **cohesive bundle** 
   - Scripts and plugins may evolve through **script-only and plugin-only patch versions**, expressed as `scriptPatchVersion` and `pluginVersionId` values, as long as they remain compatible with the underlying templates and ability schemas.
 - Script-only and plugin-only patches:
   - Are tied to a `baseVersionId` and do not change core world or ability data.
-  - May be hot-reloaded for running game instances without changing the `runtime_version`, following the semantics in the scripting architecture and Automation & Scripting Service docs.
+  - May be hot-reloaded for running game instances without changing the `runtime_version` only after the changed patch/plugin member is recorded in a new immutable runtime tuple and passes explicit READY, compatibility, and pin rollout gates. A running descriptor must not be mutated and runtime must not follow a latest patch or plugin alias.
   - Must not introduce dependencies on ability or template changes that require a new `version_id`; such changes should be delivered via a new game version publish.
 
 Rollback behavior follows the same cohesion rules:
@@ -277,12 +259,14 @@ Tooling in the Game Design and Logging & Admin services should surface these rel
   - These operations must be driven by normalized dependency tables (for example `game_template_version_ref` and related reference rows), not by best-effort parsing of arbitrary JSON blobs.
   - When templates pin defaults such as `scriptPatchVersion`, migration tooling must update both the JSON payload and the normalized `game_template_script_patch_ref` rows atomically so instance creation does not observe mixed dependencies.
 
-Launch descriptor version-resolution rules:
+### Launch Descriptor Version-Resolution Rules
 
 - A launchable game template resolves to exactly one base `versionId`.
+- The resolved descriptor pins one complete legal runtime tuple: the base version, immutable published release bundle and manifest, selected `scriptPatchVersion` (if any), and every enabled plugin version. A tuple is launchable only after each patch/plugin proves compatibility and readiness against that base and the release attestation, required artifact set, remap proof, and tenant readiness pass.
 - `game_template_version_ref` is the canonical source for that base version; other normalized template references must agree with it.
 - Mixed-version template bundles are invalid for launch and must be rejected during template validation and launch-descriptor resolution rather than interpreted heuristically at runtime.
 - `scriptPatchVersion` is the only supported per-launch patch override and must reference the same `baseVersionId` as the resolved `versionId`.
+- Friendly channels such as `production` and `preview` may resolve only at a new launch or rollout. The resolved concrete tuple is recorded before instance identity/admission; later alias movement cannot change an existing descriptor, restart, recovery, or rollback target. Changing any tuple member creates a new tuple.
 - `ResolveLaunchDescriptor` is idempotent per `controlPlaneRequestId`: a retry with the same `(tenantId, gameTemplateId, controlPlaneRequestId)` and the same input fields must return the same descriptor values, and it must not re-resolve to a newer attestation, patch, or runtime default.
 - A fresh launch attempt with a new `controlPlaneRequestId` may resolve against newer valid published state if the underlying template, attestation, or patch data has advanced.
 - A retry that already failed with a deterministic business outcome (for example invalid template wiring, missing attestation, stale version-state epoch, or patch override conflict) must return the same failure result for that `controlPlaneRequestId`; callers must not expect retries on the same launch-attempt identity to “pick up” newer control-plane state.
@@ -302,6 +286,7 @@ Launch and cutover preflight use one fail-closed predicate for a full-version re
 - `GetVersionState(tenantId, versionId)` must return `Published` or `Active`, and its `versionStateEpoch` must match the epoch frozen into the resolved launch descriptor or prepared cutover proof.
 - `GetPublishedReleaseBundle(tenantId, versionId)` must return a supported attestation for the same release identity, generation config revision, participant digests, and `manifestHash` used by the launch/cutover proof.
 - `GetVersionAssetArtifactState(tenantId, versionId)` must return `artifactState=PUBLISHED`, the frozen `exportedVersionNumber`, the same `manifestHash` attested by the release bundle, and exported manifest asset keys containing every `requiredManifestAssetKeys[]` entry.
+- Only `PUBLISHED` state with a supported attestation and matching release identity, state epoch, manifest/schema digest, mandatory object digests, and required keys is launchable. Private `STAGED`, `EXPORTED_UNATTESTED`, `FAILED`, quarantined, purge, stale, missing, or mismatched candidates never become fallback content and never advance admission.
 - If any proof is missing, unsupported, stale, or mismatched, launch/cutover fails before gameplay admission or admission-pointer swap. Callers must not fall back to reconstructing release truth from object-store paths, local template tables, cached descriptors, or partial publish workflow state.
 
 Illustrative launch-descriptor examples:
@@ -388,7 +373,7 @@ The `ValidateInstanceCutoverCompatibility` contract below is the orchestration s
 
 ### Schema Migrations vs Design Data
 
-Published game versions are **design-data bundles** (world templates, entity templates, abilities/actions, scripts/plugins, and asset manifests) keyed by `versionId` and scoped to a `tenantId`. Database schema changes remain the responsibility of each microservice and are applied via Flyway when a service container restarts during a platform deployment. Publishing a new design version therefore does not run Flyway migrations—it finalizes versioned data already stored in domain services, exports version-scoped manifests/assets, and makes the new `versionId` eligible for activation. Runtime instances load data by `runtime_version` and may hot-reload only script/plugin patch layers where explicitly supported. See
+Published game versions are **design-data bundles** (world templates, entity templates, abilities/actions, scripts/plugins, and asset manifests) keyed by `versionId` and scoped to a `tenantId`. Database schema changes remain the responsibility of each microservice and are applied via Flyway when a service container restarts during a platform deployment. Publishing a new design version therefore does not run Flyway migrations—it finalizes versioned data already stored in domain services, exports version-scoped manifests/assets, and makes the new `versionId` eligible for activation. Runtime instances load data by `runtime_version` and may hot-reload a script/plugin patch layer only after the changed member is recorded in a new immutable tuple and passes explicit READY, compatibility, and pin rollout gates; the running descriptor must not be mutated and runtime must not follow a latest alias. See
 [Database Migrations](./system-architecture-database-migrations.md) for the
 Flyway workflow.
 
