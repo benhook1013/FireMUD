@@ -55,9 +55,9 @@ Sandboxing for scripts is implemented as a **multi-layer model**:
 
 2. **Execution sandbox**
    - Scripts run inside a **dedicated executor** within the Automation & Scripting Service.
-   - In the target-state execution model, the scheduler must admit a run and acquire the separately fenced execution-capacity lease defined by the [quota lifecycle contract](../../system-architecture-scripting-quotas-and-operations.md#budget-accounting-rules) before submitting it to the executor. The lease decision is evaluated against the aggregate `AUTOMATION_TICK_BUDGET_MS` window, per-script quotas, per-tenant budgets, and cluster ceilings. Current live enforcement remains the aggregate per-tenant, priority-tier reservation described below.
+   - In the target-state execution model, the scheduler must apply the separate aggregate `AUTOMATION_TICK_BUDGET_MS` admission envelope and acquire the separately fenced execution-capacity lease defined by the [quota lifecycle contract](../../system-architecture-scripting-quotas-and-operations.md#budget-accounting-rules) before submitting a run to the executor. The lease is a bounded concurrency/occupancy fence, not the millisecond budget mechanism; the exact estimator or measurement mechanism is not defined by ADR 0089 and must not be inferred from lease acquisition. Current live enforcement remains the aggregate per-tenant, priority-tier reservation described below.
    - Charge points are fixed by the [quota lifecycle contract](../../system-architecture-scripting-quotas-and-operations.md#budget-accounting-rules): one durable full-Trigger-Identity handler charge record has separate exactly-once admission and execution-start markers. A queued handler holds no capacity; execution starts only under a separately fenced, reclaimable capacity lease. Duplicate/recovery attempts reuse the markers, lease reclamation is not a refund, and no post-marker failure reverses a charge.
-   - `AUTOMATION_TICK_BUDGET_MS` is a scheduler capacity envelope, not a per-run timeout. The separately fenced execution-capacity lease is a bounded concurrency/occupancy fence, not a millisecond debit; the scheduler envelope remains separate from that lease. The executor separately enforces each run's wall-clock deadline and iteration limit; a run timing out does not create another capacity lease, and a lease does not imply that one run may consume the whole window.
+   - `AUTOMATION_TICK_BUDGET_MS` is a scheduler capacity envelope, not a per-run timeout. The separately fenced execution-capacity lease is a bounded concurrency/occupancy fence, not a millisecond debit; the scheduler envelope remains separate from that lease, and ADR 0089 does not define how the envelope's milliseconds are estimated or measured. The executor separately enforces each run's wall-clock deadline and iteration limit; a run timing out does not create another capacity lease, and a lease does not imply that one run may consume the whole window.
 
 3. **Process / container isolation**
    - The service runs in containers with **Kubernetes CPU and memory limits**.
@@ -73,7 +73,7 @@ Each script run follows a consistent lifecycle:
 
 1. **Trigger admission**
    - A trigger arrives from the scheduler (event, timer, interval, or manual test run).
-   - The durable handler-charge record is checked for its admission marker, and the scheduler acquires a separately fenced execution-capacity lease before sandbox admission. If the charge or lease is unavailable, the trigger is rejected at admission (`finalStage=ADMISSION`, `finalOutcome=quota_denied` or `tenant_budget_exceeded`) and no sandbox work occurs. A queued trigger does not reserve capacity.
+   - The durable handler-charge record is checked for its admission marker, and the scheduler acquires a separately fenced execution-capacity lease before sandbox admission. An authoritative policy denial is recorded as the applicable typed handler outcome (`finalStage=ADMISSION`, `finalOutcome=quota_denied` or `tenant_budget_exceeded`). If authoritative resource/capacity exhaustion prevents producing that decision, return non-OK `RESOURCE_EXHAUSTED`; if route/charge/lease, worker, or dependency infrastructure is unavailable and cannot produce it, return non-OK `UNAVAILABLE`. No sandbox work occurs, and a queued trigger does not reserve capacity.
 
 2. **Sandbox setup**
    - The scheduler allocates a **sandbox context** containing:
@@ -92,7 +92,7 @@ Each script run follows a consistent lifecycle:
 
 4. **Command staging**
    - Successful runs emit bounded descriptors which are persisted as one atomic per-handler durable work item (outbox) and then indexed into the rebuildable `automation:queue:*` projection for later durable execution.
-   - Before constructing each generated command or data-dependent collection, the engine incrementally meters command count, per-entity count, serialized bytes, and all pinned data-dependent caps. Exceeding a ceiling is a non-success outcome; all staged output for that handler is discarded and no partial work item or handoff is committed. The evaluator accepts only the artifact-pinned cost metadata schema/registry digest and cap digest validated by the runtime owner; it does not estimate from a newer local registry.
+   - Before constructing each generated command or data-dependent collection, the engine applies the artifact-pinned conservative prospective serialized-byte bound together with command-count, per-entity, and data-dependent caps. Before atomic persistence, it checks the exact bounded serialized size of the staged descriptors against the pinned ceiling. Any cap exceed is a non-success outcome; all staged output for that handler is discarded and no partial work item or handoff is committed. The evaluator accepts only the artifact-pinned cost metadata schema/registry digest and cap digest validated by the runtime owner; it does not estimate from a newer local registry.
    - Target-state handoff is subject to automation execution limits (`AUTOMATION_TICK_MAX_EVENTS`, `AUTOMATION_TICK_BUDGET_MS`) and uses only documented `automation:*` Redis prefixes for projection and quotas. The Automation & Scripting Service never writes `tick:*` keys directly; it hands off commands to Game Session over internal gRPC so Game Session can enqueue tick commands under its own tick and locking model. Current live capacity enforcement is the aggregate per-tenant, priority-tier reservation described below.
 
 5. **Outcome recording**
@@ -118,8 +118,8 @@ CPU and time limits are derived from three layers:
 
 - **Target-state automation tick configuration**
   - `AUTOMATION_TICK_BUDGET_MS` defines the **aggregate soft execution budget** for all automation runs admitted during one target-state tick window. It is not a separate allowance for each script or trigger. Any allocation by runtime instance or region is target-state and must not be read as the current live enforcement model.
-  - The target-state scheduler uses the quota owner's separately fenced capacity leases when deciding how many runs to start against `AUTOMATION_TICK_BUDGET_MS`. Lease fencing and reclamation remain owned by the quota lifecycle; the sandbox only requires a valid lease before execution. A run cannot start merely because its per-run timeout is available, and a timeout cannot be used as a substitute for tick-window admission.
-  - The scheduler's lease decisions remain subject to the cluster-wide execution ceiling, so scope-level scheduling cannot expand total container or cluster capacity.
+  - The target-state scheduler applies the separate `AUTOMATION_TICK_BUDGET_MS` admission envelope and requires a valid quota-owner capacity lease before execution. Lease fencing and reclamation remain owned by the quota lifecycle; the lease is only a concurrency/occupancy fence, and ADR 0089 does not define the envelope's estimator or measurement mechanism. A run cannot start merely because its per-run timeout is available, and a timeout cannot be used as a substitute for tick-window admission.
+  - The separate scheduler envelope and occupancy leases remain subject to the cluster-wide execution ceiling, so scope-level scheduling cannot expand total container or cluster capacity.
   - `playableStateScope` is not a separate budget partition. Shared and isolated playable-state namespaces within the same runtime scope consume the same aggregate capacity budget, while per-script quotas, per-tenant tier budgets, priority ordering, and cluster ceilings provide fairness. The scope remains mandatory in Trigger Identity and fencing so capacity sharing cannot cause state or deduplication collisions.
 
 - **Cluster policies**
@@ -229,7 +229,7 @@ Sandbox limits do not replace existing quotas and scheduling policies; they **la
 
 - **Tick alignment**
   - Script runs are scheduled using the tick heartbeat stream as described in the tick architecture.
-  - In the target-state model, scheduler admission and the quota owner's fenced capacity leases keep total admitted work within `AUTOMATION_TICK_BUDGET_MS` per tick window. Sandbox-enforced per-run timeouts remain a separate runaway-execution guard and do not by themselves enforce the aggregate window budget.
+  - In the target-state model, scheduler admission applies the separate aggregate `AUTOMATION_TICK_BUDGET_MS` envelope, while the quota owner's fenced capacity leases bound concurrent occupancy. ADR 0089 does not define the envelope's estimator or measurement mechanism, and lease acquisition must not be inferred to measure or settle milliseconds. Sandbox-enforced per-run timeouts remain a separate runaway-execution guard and do not by themselves enforce the aggregate window budget.
 
 The combined effect is that noisy or buggy scripts are throttled or disabled quickly, while well-behaved scripts continue to run at their configured cadence.
 
@@ -241,7 +241,7 @@ Sandbox behavior is shaped by a combination of in-code defaults and environment 
 
 - `AUTOMATION_TICK_DURATION_MS` – bounds the wall-clock duration of an automation tick. This, together with the scheduler’s batching strategy, constrains how often sandboxed runs are admitted.
 - `AUTOMATION_TICK_MAX_EVENTS` – caps how many automation events (including script runs) are staged from `automation:queue` per automation tick.
-- `AUTOMATION_TICK_BUDGET_MS` – **target-state** aggregate soft execution budget for script work admitted inside a single automation tick; it informs the target-state fenced capacity leases acquired by scheduler admission for sandboxed evaluations. It is not a per-run timeout or the current live per-trigger or per-region enforcement bucket.
+- `AUTOMATION_TICK_BUDGET_MS` – **target-state** aggregate soft scheduler-admission envelope for script work selected inside a single automation tick. It is separate from the fenced occupancy lease required before execution, is not a per-run timeout, and is not the current live per-trigger or per-region enforcement bucket.
 - `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` / `SCRIPT_EVENT_AUDIT_MAX_ROWS` – control how long sandbox outcomes (for example, `sandbox_error` with `cpu_budget_exceeded` or `memory_budget_exceeded`) remain queryable in `script_event_audit`.
 
 Per-script and per-tenant quotas (for example, `SCRIPT_QUOTA_LIMIT`, `SCRIPT_QUOTA_WINDOW_SECONDS`, and `SCRIPT_TENANT_BUDGET_NORMAL_RUNS_PER_MINUTE`) are documented in the service configuration and operations docs and in `design/architecture/system-architecture-scripting-quotas-and-operations.md`; they determine current live admission, while the target-state sandbox budgets describe how future tick-window capacity and per-run limits may be layered on top.

@@ -4,7 +4,7 @@
 
 FireMUD uses Temporal as the canonical substrate for long-running, durable control-plane workflows that must survive service restarts, support durable waiting/timers, and expose operator-visible progress independently of one JVM lifetime.
 
-Current status:
+Current status (non-authoritative summary; [Shared Runtime, Service Contracts, and Persistence implementation tracking](../project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md) owns current implementation status, proof evidence, gaps, and handoffs):
 
 - the shared Temporal foundation is live in `services/common-temporal`;
 - services opt in through the shared Gradle plugin `net.firedevops.firemud.temporal-conventions`;
