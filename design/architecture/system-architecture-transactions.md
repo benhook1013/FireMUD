@@ -76,7 +76,7 @@ If a proposed gameplay feature truly requires stronger semantics than this model
 
 Tick execution is replayable: retries, failover, and Redis AOF replay can cause the same logical effect to be attempted more than once. For gameplay commands this is expected and safe only because tick-invoked domain mutations are required to be idempotent with respect to a canonical `EffectId`.
 
-- The Game Session Service computes and propagates a stable `EffectId` derived from the region-scoped tick context (`tenantId`, `regionId`, `regionEpoch`, `tickId`, `effectKey`) plus the target aggregate identity.
+- The Game Session Service computes and propagates a stable root `EffectId` retaining full region-scoped tick scope. For deterministic planned roots, the identity includes the stable admitted command identity and plan ordinal allocated at plan creation; both are persisted with the root effect and reused unchanged through retries and reconciliation. Typed operation and target aggregate belong to each participant guard projection, while participant tuples remain targeting/validation data only.
 - Owning services must implement durable idempotency guards (unique constraints, monotonic updates, transactional outbox) so duplicate `EffectId` attempts become OK/no-op outcomes rather than double-applying side effects.
 - For gameplay-visible mutations, `EffectId`-backed guard rows are the default idempotency boundary. Simpler `last_tick_id` watermark patterns are allowed only for aggregates explicitly documented as receiving at most one logical mutation per tick.
 - To keep this contract consistent across services, tick-driven handlers use a shared idempotency helper from `common-data-runtime` (for example an `IdempotentEffectExecutor`) instead of ad-hoc “check or insert” patterns. The helper:
@@ -104,7 +104,7 @@ To prevent cross-instance collisions and make retries safe, spatial tick effects
 Spatial reads use two distinct consistency contracts under [ADR 0054](./decisions/adr-0054-split-spatial-authority-with-causal-read-composition.md):
 
 - correctness-sensitive mutations carry exact expected room/epoch and relevant location or aggregate versions and fail closed when stale; and
-- presentation composition such as `LOOK` requests a common causal floor `(tenantId, gameInstanceId, roomInstanceId, regionEpoch, committedTickId)`, requires every component to serve that scope/epoch at or beyond the floor, and returns a composite identity containing the actual World and Entity component versions.
+- presentation composition such as `LOOK` requests a common causal floor `(tenantId, gameInstanceId, regionId, roomInstanceId, regionEpoch, committedTickId)`, with the operational `regionId` obtained by Game Session from durable region authority; every component must serve that complete scope/epoch at or beyond the floor, and the result contains the actual World and Entity component versions.
 
 Presentation may contain bounded component skew newer than the floor. It must never claim that equality of room-scope strings proves one exact cross-database historical snapshot.
 

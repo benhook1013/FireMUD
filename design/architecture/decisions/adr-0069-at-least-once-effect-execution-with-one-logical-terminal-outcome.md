@@ -30,6 +30,8 @@ No effect ledger row is invented for a command that never produced a durably cla
 
 Each durably claimed or staged effect is keyed by an immutable effect identity and request digest. Physical execution is at least once: retries may invoke the handler multiple times after crashes, lost acknowledgements, or replay.
 
+When a deterministic effect plan is created, each root effect receives a stable ordinal. The root effect identity combines the admitted command identity with that ordinal; the identity and ordinal are persisted with the root effect and propagated unchanged through staging, participant calls, retries, replay, and reconciliation. A trade or other multi-effect operation must not derive identity from a participant tuple alone.
+
 The owning domain's durable idempotency guard permits at most one logical authoritative state mutation for that identity and digest. Reuse of the identity with a conflicting digest fails closed.
 
 Every staged effect ledger row reaches exactly one terminal status:
@@ -77,6 +79,10 @@ Rejected as the normal contract because unresolved effects could remain ambiguou
 Proof must cover accepted-command loss before staging without an invented effect row; stable effect identity and digest-conflict rejection; crashes before and after domain commit; lost acknowledgements; duplicate physical invocation with one logical mutation; authoritative `REPLAY_NOOP` evidence terminalizing as `APPLIED`; explicit `ABANDONED` reasons; command-result derivation across zero, one, and multiple required effects; duplicate presentation feedback without duplicate state; replay and reset convergence; and absence of silent drop or permanently ambiguous staged rows.
 
 The current implementation and runtime proof are not claimed to satisfy this decision.
+
+### Supplemental clarification (2026-08-13)
+
+The command identity plus deterministic plan ordinal is the stable root-effect identity for planned multi-effect operations, including trade. Retries and reconciliation reuse that persisted identity; participant tuples remain validation and targeting data, not identity allocation.
 
 ## Reversibility and Revisit Triggers
 

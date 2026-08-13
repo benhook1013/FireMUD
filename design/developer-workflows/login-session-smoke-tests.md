@@ -10,6 +10,7 @@ These steps exercise the same `WORLDS` (optional) + `LOGIN` + `PLAY` + `LOOK` fl
    For the direct WebSocket path, that means Account Service, Game Logic Service, and Game Session Service must all report `UP` from `/actuator/health/readiness`.
 4. For the Compose-backed Telnet smoke, assert the pre-readiness admission behavior before waiting for readiness convergence: while TCP Proxy readiness is still false, new Telnet sockets must either be refused before the listener binds or receive the explicit `DISCONNECT startup_unavailable ...` response. Do not accept silent connection success during this window.
    Do not require an equivalent pre-readiness startup refusal assertion for direct Game Session WebSocket access in this slice: Telnet is the external player admission boundary, while direct WebSocket smoke is a parity and backend-path check for the currently exposed developer/test surface.
+5. Destructive reset or smoke runs must use a newly generated, isolated tenant/game-instance namespace and may mutate only that namespace. Do not reuse the fixed demo namespace or overlap another run. An environment-wide reset requires a dedicated disposable environment; the unique identifier alone does not make shared mutable data safe to reset. Retain failed-run transcripts, logs, metrics, and reset/smoke status evidence before cleanup.
 
 ## 1. Direct WebSocket Smoke Flow
 
@@ -41,7 +42,7 @@ You are in a candle-lit antechamber carved into basalt.
 
 ```
 
-Capture both responses so you can compare them to the Telnet flow.
+Capture both responses so you can compare them to the Telnet flow. For destructive proof, record the run-unique tenant/game-instance namespace with the transcript.
 
 Optional item/container/equipment extension, when the target environment has the demo item fixtures loaded:
 

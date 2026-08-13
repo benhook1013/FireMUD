@@ -382,12 +382,10 @@ Examples:
   - It reads the shadow tick state for `aggregateId` and applies the update only when `(last_region_epoch, last_tick_id) < (regionEpoch, tickId)`.
   - If `(last_region_epoch, last_tick_id) >= (regionEpoch, tickId)`, the handler treats the request as a replay/out-of-order and returns without changing state.
 - **Trade between two entities (operation-level effect guard)**
-  - `TradeItem` receives `(tenantId, regionId, regionEpoch, tickId, fromEntityId, toEntityId, itemId)`.
-  - It computes `effectKey = "trade:" + fromEntityId + ":" + toEntityId + ":" + itemId`.
-  - In one transaction it:
-    - Attempts to insert `(tenantId, regionId, regionEpoch, tickId, effectKey)` into `tick_effect_guard`.
-    - If the insert conflicts, it treats the call as a replay and returns success without modifying inventories.
-    - If the insert succeeds, it debits the item from `fromEntityId`, credits it to `toEntityId`, and commits both inventory changes and the guard-row insert together.
+  - `TradeItem` receives the full admitted command identity, deterministic plan ordinal, full region/tick scope, participant/item targets, and immutable request digest.
+  - It derives the root `EffectId` from the complete scope plus `(commandId, planOrdinal)`; participant/item fields remain targeting and validation inputs, not identity allocation.
+  - In one transaction it inserts the root-effect-derived guard and moves the inventories.
+  - A matching guard returns the stored result only when identity, digest, and result agree; conflicting reuse fails closed rather than treating every guard conflict as replay.
 
 Operationally:
 

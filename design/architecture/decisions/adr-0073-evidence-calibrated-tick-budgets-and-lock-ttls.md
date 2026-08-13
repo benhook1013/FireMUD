@@ -13,6 +13,10 @@ Accepted
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review with independent timing-contract validation and permanent-formula alternative analysis
 
+### Supplemental clarification (2026-08-13)
+
+Game Session owns one shared resolver for the tick budget and lock TTL (including any explicitly enabled solo-tick pair), and every consumer uses its resolved result. The resolver validates positive values and the declared relationships among settings. This decision does not prescribe universal numeric minimums or maximums: the `0.8` and `8x` relationships are bootstrap defaults, while deployment values and any operator constraints are selected and calibrated from deployment evidence.
+
 ## Context
 
 Tick cadence, execution budget, and lock lifetime are related but serve different purposes. Cadence is player-visible gameplay timing. The execution budget is an operational capacity target. Lock TTL bounds coordination liveness, duplicate attempts, and recovery delay. One permanent arithmetic relationship cannot prove that all three suit an environment's workload, runtime pauses, owner latency, and recovery objectives.
@@ -24,11 +28,11 @@ The existing formulas provide safe initial values, but their constants are not p
 The current shared formulas remain bootstrap defaults only:
 
 - `tick_budget_ms = tick_interval_ms * 0.8`
-- `lock_ttl_ms = clamp(tick_budget_ms * 8, 500, 5_000)`
+- `lock_ttl_ms = tick_budget_ms * 8`
 
-All consumers use the shared helper and canonical resolved settings. Services must not define private derivations, multipliers, clamps, or fallback formulas.
+All consumers use the shared helper and canonical resolved settings. Services must not define private derivations, alternate multipliers, or fallback formulas.
 
-`tick_interval_ms` is gameplay cadence. It is configurable only at the declared game and operator configuration levels, remains subject to operator and platform caps, and is fixed throughout one live `regionEpoch`.
+`tick_interval_ms` is gameplay cadence. It is configurable only at the declared game and operator configuration levels, remains subject to applicable operator/deployment policy, and is fixed throughout one live `regionEpoch`.
 
 A cadence change:
 
@@ -39,7 +43,7 @@ A cadence change:
 
 Old volatile timer entries are not reinterpreted under the new epoch. An absolute due instant remains the same unless the owning feature's explicit semantics require a new duration calculation.
 
-`tick_budget_ms` and `lock_ttl_ms` are operator safety settings within platform hard bounds. Production values are calibrated from measured evidence including:
+`tick_budget_ms` and `lock_ttl_ms` are operator safety settings subject to deployment/operator constraints selected from measured evidence. This decision defines no universal numeric limit. Production values are calibrated from measured evidence including:
 
 - p95 and p99 tick execution time;
 - participating RPC latency and error behavior;
@@ -48,7 +52,7 @@ Old volatile timer entries are not reinterpreted under the new epoch. An absolut
 - the declared takeover and recovery objective; and
 - representative load and fault-injection tests.
 
-Tenant or game configuration cannot override these safety values unless the individual setting is explicitly declared eligible at that level, and any eligible override remains constrained by operator caps and platform hard bounds.
+Tenant or game configuration cannot override these safety values unless the individual setting is explicitly declared eligible at that level, and any eligible override remains constrained by the applicable evidence-derived deployment/operator policy.
 
 Correctness does not depend on a lock living long enough for an attempt to finish. It comes from current Redis lease possession, the durable `executorFence`, exact owner preconditions, and durable idempotency guards. Lock TTL controls liveness, duplicate attempt frequency, contention duration, and recovery time.
 
@@ -75,7 +79,7 @@ One derived ratio must not conceal a failure in another dimension.
 
 ### Permanent Cadence-Derived Formulas
 
-Rejected as the production contract because fixed `0.8`, `8x`, and clamp constants are not evidence that a deployment can meet its execution, pause, downstream-latency, cleanup, or recovery objectives. They remain useful shared bootstrap defaults.
+Rejected as the production contract because fixed `0.8` and `8x` constants are not evidence that a deployment can meet its execution, pause, downstream-latency, cleanup, or recovery objectives. They remain useful shared bootstrap defaults.
 
 ### Service-Local Timing Formulas
 
@@ -87,12 +91,12 @@ Rejected because existing due-tick ordering and replay identity would be reinter
 
 ## Implementation and Proof Obligations
 
-Implement one canonical resolver with platform hard bounds, operator safety configuration, declared lower-level eligibility, provenance, and shared bootstrap defaults. Expose the separate health dimensions and the evidence used to accept production values.
+Implement one Game Session-owned canonical resolver with operator safety configuration, declared lower-level eligibility, provenance, and shared bootstrap defaults. Validate positive values and declared relationships without inventing universal numeric minimums or maximums; evidence-derived deployment/operator constraints and calibrated values are inputs. Expose the separate health dimensions and the evidence used to accept production values.
 
-Prove default and configured resolution; cap enforcement; rejection of ineligible tenant/game overrides; lease expiry during execution; durable-fence rejection of stale attempts; duplicate idempotent replay; GC/runtime pauses; slow and failed participant RPCs; cleanup lag; takeover timing; backlog pressure; cadence-change pause and epoch fencing; durable timer reconstruction; preserved absolute due intent; and derived new-epoch ordering.
+Prove default and configured resolution; deployment/operator constraint enforcement; rejection of ineligible tenant/game overrides; lease expiry during execution; durable-fence rejection of stale attempts; duplicate idempotent replay; GC/runtime pauses; slow and failed participant RPCs; cleanup lag; takeover timing; backlog pressure; cadence-change pause and epoch fencing; durable timer reconstruction; preserved absolute due intent; and derived new-epoch ordering.
 
 The current implementation, environment calibration, and focused proof are not claimed by this decision.
 
 ## Reversibility and Revisit Triggers
 
-Bootstrap constants, calibrated values, hard bounds, and declared eligibility may evolve from measured evidence without changing authority or fencing. Revisit the separation only if production evidence demonstrates that one shared derivation reliably satisfies cadence, execution, lock-liveness, and recovery requirements across every supported deployment class.
+Bootstrap constants, calibrated values, evidence-derived deployment/operator constraints, and declared eligibility may evolve from measured evidence without changing authority or fencing. Revisit the separation only if production evidence demonstrates that one shared derivation reliably satisfies cadence, execution, lock-liveness, and recovery requirements across every supported deployment class.

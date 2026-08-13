@@ -31,6 +31,8 @@ Tenant and cluster execution usage is charged exactly once when execution begins
 
 Sandbox concurrency is represented by a fenced capacity lease, not by a refundable charge. Execution may occupy capacity only while holding the matching live lease and fence. The lease is always released on terminal completion or cancellation and is reclaimed under the same fencing contract after worker crash or timeout. Release or reclamation makes capacity available again; it does not refund either admission or execution usage.
 
+The automation tick scheduler's estimated-cost reservation is a separate admission mechanism. It uses each immutable artifact-pinned estimated millisecond cost and admits a deterministic ordered prefix while cumulative reserved cost fits `AUTOMATION_TICK_BUDGET_MS`; unadmitted remainder is deferred. This reservation is neither a durable admission/execution usage charge nor a sandbox occupancy lease. Actual runtime is calibration telemetry only and does not refund or reopen the same tick; releasing a sandbox lease likewise does not alter scheduler reservations or durable usage history.
+
 Duplicate deliveries and recovery attempts look up and reuse the Trigger-keyed charge record. They may reacquire a new fenced capacity lease when execution must safely resume, but they do not create another admission or execution charge for the same logical handler trigger.
 
 `PUBLISH_READINESS` is an isolated quota class for readiness `onLoad` work. Its admission accounting, execution usage, and sandbox-capacity policy do not consume or compete with live gameplay script budgets, and live traffic does not consume the readiness allocation. The persisted charge record and work item retain this class rather than inferring it from event type during execution.
@@ -62,6 +64,10 @@ Implement a durable full-Trigger-Identity charge record with persisted `quotaCla
 Proof must cover duplicate ingress before and after admission charging; concurrent admission attempts; durable queue delay with no capacity held; cancellation before execution with no execution charge; cancellation, failure, and timeout after execution start without refund; duplicate workers racing to start; one execution charge under retry and recovery; stale lease-holder rejection; terminal release; crash and timeout reclamation; capacity reuse without charge reversal; reuse of the durable charge record after restart; and bidirectional isolation between `PUBLISH_READINESS` and live gameplay budgets.
 
 The current durable charge-record coverage, exact execution-start accounting boundary, duplicate and recovery reuse, fenced lease lifecycle, crash and timeout reclamation, readiness isolation, and focused proof are not claimed by this decision.
+
+### Supplemental clarification (2026-08-13)
+
+Estimated-cost tick reservations, durable usage charges, and fenced sandbox occupancy are three distinct states: scheduling admission, consumed usage, and temporary capacity. Only the latter is released for reuse, and no actual-runtime measurement creates a same-tick refund.
 
 ## Reversibility and Revisit Triggers
 

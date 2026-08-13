@@ -190,6 +190,8 @@ Under [ADR 0088](decisions/adr-0088-static-and-incremental-script-output-bounds.
 - Game Design writes the normalized cost summary plus component-cost metadata version/digest into the compiled artifact. Automation & Scripting revalidates that exact version/digest and rejects a missing, displaced, mismatched, stale, or over-ceiling artifact rather than interpreting it with a private newer table.
 - Runtime output budgeting remains mandatory and incremental even when static validation passes; it protects against registry defects, corrupt artifacts, and actual data-dependent values before oversized allocation, serialization, or persistence.
 
+The separate estimated-millisecond ordered-prefix automation admission contract is target-state and not implemented by the current runtime; its authority is the Automation service documentation and [ADR 0088](decisions/adr-0088-static-and-incremental-script-output-bounds.md), not this runtime output-budget contract.
+
 ## Budget Charge Points
 
 Quota and budget accounting must be deterministic so operators can reason about load and so retries do not double-charge:
@@ -199,6 +201,7 @@ Quota and budget accounting must be deterministic so operators can reason about 
 - Per-script quota is charged once and nonrefundably at handler admission. A handler accepted into `queue_until_free` consumes that admission quota but holds no sandbox capacity while waiting.
 - Per-tenant and cluster execution usage is charged once when sandbox execution actually begins. Cancellation before that point does not consume execution usage; failure, timeout, or cancellation after it begins does not refund the usage already consumed.
 - Sandbox concurrency is a fenced lease rather than a refundable charge. It is acquired for execution, released on terminal completion/cancellation, and reclaimed after crash or timeout; stale holders cannot execute. Release returns capacity without changing usage history.
+- Scheduler reservations, when implemented, remain separate from these durable charges and occupancy leases; actual runtime does not create a same-tick refund.
 - `onLoad` readiness work uses the separate `PUBLISH_READINESS` quota class and must never consume the ordinary live per-script quota window or tenant runtime execution budget.
 - Automation must persist the resolved registry `quotaClass` onto each durable `script_work_item` so execution-time budget behavior reads the same canonical policy that ingress used instead of re-inferring from `eventType`.
 - Current Automation execution also reserves dedicated readiness capacity for non-dry-run `PUBLISH_READINESS` work before DSL evaluation; if that bounded substrate is exhausted, the work item is canceled with `finalStage=ADMISSION`, `finalOutcome=quota_denied`, and `finalReason=onload_budget_exceeded`.

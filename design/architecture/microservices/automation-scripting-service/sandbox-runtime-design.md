@@ -55,12 +55,12 @@ Sandboxing for scripts is implemented as a **multi-layer model**:
 
 2. **Execution sandbox**
    - Scripts run inside a **dedicated executor** within the Automation & Scripting Service.
-   - Each script run receives a **budget token** derived from `AUTOMATION_TICK_BUDGET_MS`, per-script quotas, and per-tenant budgets.
+   - The target scheduler contract would assign each eligible handler an artifact-pinned estimated-millisecond cost and admit a deterministic ordered prefix against `AUTOMATION_TICK_BUDGET_MS`; this is target-state and not implemented by the current runtime. Current runs receive per-script quotas and per-tenant budgets.
    - Charge points are fixed by the lifecycle contract:
      - per-script quota is charged once per handler-scoped admission,
      - tenant and cluster execution budgets are charged when the run is reserved onto sandbox capacity,
      - no post-admission failure refunds already consumed execution budget.
-   - The executor enforces **wall-clock timeouts** and **iteration limits**; when a budget is exhausted, the run is terminated and recorded as a sandbox failure.
+   - The executor enforces **wall-clock timeouts** and **iteration limits**; actual runtime is recorded for calibration and does not create a same-tick refund when a run finishes early.
 
 3. **Process / container isolation**
    - The service runs in containers with **Kubernetes CPU and memory limits**.
@@ -116,9 +116,9 @@ CPU and time limits are derived from three layers:
   - Scripts define scheduling hints (`intervalTicks`, `maxConcurrent`, `priorityTag`).
   - These hints produce a **per-run budget** so that high-priority scripts can consume more time per run than background scripts, while still respecting global caps.
 
-- **Automation tick configuration**
-  - `AUTOMATION_TICK_BUDGET_MS` defines the **soft budget** for automation work per tick window.
-  - The scheduler divides this budget across eligible scripts for that tenant and region when deciding how many runs to start.
+- **Target automation tick admission**
+  - The target contract defines `AUTOMATION_TICK_BUDGET_MS` as the cumulative estimated-millisecond reservation budget for automation work per tick window.
+  - Target-state ordered-prefix admission considers eligible handlers in canonical order, admits the prefix whose pinned estimates fit the budget, and defers the remainder; the current runtime does not implement this contract.
 
 - **Cluster policies**
   - Cluster-level policies define absolute ceilings per container (for example, 100 ms per run, 500 ms per tick window) to protect overall latency and resource usage.
@@ -227,7 +227,7 @@ Sandbox limits do not replace existing quotas and scheduling policies; they **la
 
 - **Tick alignment**
   - Script runs are scheduled using the tick heartbeat stream as described in the tick architecture.
-  - Sandbox-enforced timeouts ensure that runaway scripts do not cause automation work to exceed the configured `AUTOMATION_TICK_BUDGET_MS` per tick window.
+  - Per-run sandbox timeouts are separate guards; they do not enforce an aggregate `AUTOMATION_TICK_BUDGET_MS`. The target estimated-ms ordered-prefix admission contract is not implemented by the current runtime.
 
 The combined effect is that noisy or buggy scripts are throttled or disabled quickly, while well-behaved scripts continue to run at their configured cadence.
 
@@ -241,7 +241,7 @@ Sandbox behavior is shaped by a combination of in-code defaults and environment 
 
 - `AUTOMATION_TICK_DURATION_MS` – bounds the wall-clock duration of an automation tick. This, together with the scheduler’s batching strategy, constrains how often sandboxed runs are admitted.
 - `AUTOMATION_TICK_MAX_EVENTS` – caps how many automation events (including script runs) are staged from `automation:queue` per automation tick.
-- `AUTOMATION_TICK_BUDGET_MS` – provides a soft execution budget for script work performed inside a single automation tick; it informs the per-run budget tokens allocated to sandboxed evaluations.
+- `AUTOMATION_TICK_BUDGET_MS` – target-state cumulative estimated-millisecond reservation budget for deterministic ordered-prefix admission; the current runtime does not implement that admission, and actual runtime is calibration telemetry only.
 - `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` / `SCRIPT_EVENT_AUDIT_MAX_ROWS` – control how long sandbox outcomes (for example, `sandbox_error` with `cpu_budget_exceeded` or `memory_budget_exceeded`) remain queryable in `script_event_audit`.
 
 Per-script and per-tenant quotas (for example, `SCRIPT_QUOTA_LIMIT`, `SCRIPT_QUOTA_WINDOW_SECONDS`, and `SCRIPT_TENANT_BUDGET_NORMAL_RUNS_PER_MINUTE`) are documented in the service configuration and operations docs and in `design/architecture/system-architecture-scripting-quotas-and-operations.md`; they work in tandem with the sandbox budgets to determine whether a run is admitted and how much CPU and memory it can consume.

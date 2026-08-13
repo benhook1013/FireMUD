@@ -96,8 +96,8 @@ When changing Redis usage or adding prefixes here, follow the [Redis Design Chec
   - As richer version-scoped generation-input tables land, they must either be covered by the World digest manifest below or by a dedicated generation-config hash that remains frozen into `published_release_bundle` before launch.
 - `generation_run`, or equivalent, persists the immutable generator selection, inputs, provenance, and recorded or staged output identity required to retry one admitted generation request safely. Committed topology is authoritative after finalize; the row does not require indefinite retention or executability of the historical generator.
 - Runtime-instance `generation_run` rows tied to instance creation are diagnostic/runtime provenance only and are not cutover payload rows.
-- `world_event` stores timed runtime changes such as weather updates and is keyed by `(tenantId, gameInstanceId)` with optional `region_instance` scope.
-- `region_instance.weather`, or equivalent, records current weather state for live regions.
+- `world_event` stores timed runtime changes such as weather updates and is keyed by `(tenantId, gameInstanceId)` with `region_instance` scope for region weather changes.
+- `region_instance.weather`, or equivalent, is the one World-owned region weather aggregate. Room-facing weather is derived through authoritative room-to-region membership and is never a competing room-owned fact.
 
 Redis caches hot rooms for active sessions to speed up lookups. Cached rooms use keys `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` and must never be keyed by template identifiers because runtime rows may diverge from template state.
 

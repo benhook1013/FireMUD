@@ -36,6 +36,12 @@ Player-significant or correctness-bearing runtime ambient changes use the durabl
 
 Region-wide ambient state has one declared World-owned runtime aggregate and may produce room projections. Those projections are not independent authorities.
 
+Weather is one World-owned region-scoped aggregate. Room weather is derived only through World Management's authoritative room-to-region membership; a room projection or cache is never an independent weather authority.
+
+### Supplemental clarification (2026-08-13)
+
+The region weather aggregate is the sole runtime weather fact. Room-facing weather is a World-derived projection based on current authoritative membership and must not be independently patched, persisted as competing truth, or used to route effects.
+
 ## Consequences
 
 - World remains the cohesive source of live room/environment facts without absorbing gameplay rules.

@@ -108,6 +108,8 @@ Each microservice has its own unit and integration tests. Cross‑service scenar
 
 Test data seeding strategies use the `dev-tools/seed/seed-test-data.sh` script to populate a minimal world for local testing, and an automated approach seeds data for integration tests.
 
+Destructive reset and smoke proof must use a unique isolated tenant/game-instance namespace for each run and may mutate only data owned by that namespace. An environment-wide reset requires a dedicated disposable environment; a unique tenant/game identifier alone never authorizes destructive work against shared mutable data. A failed run retains its transcripts, logs, metrics, and reset/smoke status evidence for diagnosis before cleanup. A green run may be cleaned up only after its evidence is retained.
+
 ### Redis in Tests
 
 Redis participates in several layers of the test strategy:

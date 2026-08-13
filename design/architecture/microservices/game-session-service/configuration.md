@@ -9,13 +9,15 @@ TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
 | `GAME_TICK_DURATION_MS` | Tick cadence (`tick_interval_ms`): target interval between ticks for a region | `1000` |
-| `GAME_TICK_BUDGET_MS` | Tick work budget (`tick_budget_ms`): soft max work/lock-hold time per tick; must be <= about `0.8 x GAME_TICK_DURATION_MS` | Derived |
+| `GAME_TICK_BUDGET_MS` | Tick work budget (`tick_budget_ms`): soft max work/lock-hold time per tick, resolved by Game Session's shared timing resolver | Derived |
 | `GAME_SOLO_TICK_BUDGET_MS` | Execution budget for isolated solo ticks | `500` |
 | `GAME_TICK_MAX_COMMANDS` | Max commands staged from the queue each tick | `50` |
 | `FIREMUD_SERVICES_GAME_LOGIC_SERVICE` | gRPC endpoint (`host:port`) for Game Logic Service | *(none)* |
 | `FIREMUD_SERVICES_WORLD_MANAGEMENT_SERVICE` | gRPC endpoint (`host:port`) for World Management Service | `world-management-service:6565` |
 | `FIREMUD_SERVICES_ENTITY_MANAGEMENT_SERVICE` | gRPC endpoint (`host:port`) for Entity Management Service | `entity-management-service:6565` |
 | `FIREMUD_CONFLICT_TTL_SECONDS` | TTL for conflict hotspot tracking in Redis | `300` |
+
+`GAME_TICK_DURATION_MS`, `GAME_TICK_BUDGET_MS`, and the lock-TTL settings feed one Game Session-owned resolver. The `0.8` budget and `8x` lock-TTL relationships are bootstrap defaults only; configured values must be positive and satisfy the declared relationships, while deployment calibration supplies applicable bounds and production values. No universal numeric minimum or maximum is defined here.
 
 ## FireMUD Settings Domains
 

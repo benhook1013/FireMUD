@@ -153,6 +153,8 @@ Quota and budget policy must be applied at fixed charge points so operators can 
 
 [ADR 0089](decisions/adr-0089-durable-script-usage-charges-and-fenced-capacity-leases.md) separates durable nonrefundable usage accounting from temporary sandbox concurrency. Every resolved handler has one durable Trigger-keyed charge record containing its persisted `quotaClass`, admission charge state, and execution-start charge state. Capacity is a separately fenced lease.
 
+The separate estimated-millisecond ordered-prefix automation admission contract is target-state and not implemented by the current runtime; see the Automation service owner documentation for that scheduler contract. It is not a durable usage charge or occupancy lease.
+
 - **Per-script quota windows**
   - Charged once per resolved handler-scoped Trigger Identity at handler admission time.
   - The charge transition and durable admission/charge evidence must be idempotent so concurrent duplicate ingress cannot charge before losing a materialization race.

@@ -6,7 +6,7 @@ Effects described here are **not** optional guidance: any new implementation tha
 
 ## Common Requirements (All Effects)
 
-- Every effect has a canonical `EffectId` computed by Game Session and propagated unchanged to all participating services. See `design/architecture/system-architecture-transactions.md`.
+- Every effect has a canonical `EffectId` computed by Game Session and propagated unchanged to all participating services. For a deterministic effect plan, its root identity combines the admitted command identity with the plan ordinal allocated when the plan is created; retries never allocate a new ordinal. See `design/architecture/system-architecture-transactions.md`.
 - Every effect must be scoped by instance identifiers. For room-scoped effects, this is `RoomInstanceRef = (tenantId, gameInstanceId, roomInstanceId)`. See `design/architecture/system-architecture-identifier-glossary.md`.
 - Every authoritative participant derives a durable guard identity from the root `EffectId`, typed operation, and target aggregate, and binds it to an immutable request digest and durable result. Same guard plus the same request replays that result; reuse with a different operation, target, or digest fails closed.
 - Correctness-sensitive mutations carry exact scope, epoch, and relevant owner-state preconditions such as current location, holder, and aggregate version. A presentation read fence is not a mutation precondition.
@@ -111,7 +111,7 @@ Reconciliation:
 Required inputs:
 
 - `EffectId`
-- region- or room-scoped instance identifiers (must never be version-scoped template identifiers)
+- the target runtime region identity (must never be a version-scoped template identifier); room weather is derived from World Management's authoritative room-to-region membership
 - new weather state (typed, schema-versioned)
 
 Required writes:

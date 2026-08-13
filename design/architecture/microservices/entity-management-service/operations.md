@@ -15,9 +15,9 @@ This document collects Entity Management’s readiness model, tick-lock/tick-ide
 This service participates in tick processing by acquiring Redis locks before mutating entity state. The `TickLockService` uses the `tick:{tenantRegionTag}:lock:<entityId>` key described in the [Redis Architecture](../../system-architecture-redis.md) document so that lock keys share a hash tag with tick queues and pending state. Lock TTLs come from the shared tick/Redis helpers that implement the canonical formulas defined in [Tick Concepts & Invariants](../../system-architecture-tick-concepts-and-invariants.md#tick-budget-ttls-and-region-health-conceptual):
 
 - The Game Session Service exposes `game.tick-interval-ms` as the primary pacing knob.
-- Internally it derives a soft budget and TTLs using the shared helpers (for example `tick_budget_ms = tick_interval_ms * 0.8`, `lock_ttl_ms = clamp(tick_budget_ms * 8, 500, 5_000)`).
+- It owns resolution of the effective tick budget and lock TTL through the shared resolver.
 
-Entity Management treats `lock_ttl_ms` as an opaque value supplied by shared helpers; it does not define its own lock TTL configuration. This keeps locks alive long enough for normal ticks to complete while still bounding the recovery window for stalled ticks.
+Entity Management consumes the resolved values supplied by Game Session/shared helpers and must not derive, override, or define private TTL/budget formulas. This keeps locks alive long enough for normal ticks to complete while still bounding the recovery window for stalled ticks.
 
 At runtime, the Game Session Service also compares observed tick execution time to `tick_lock_ttl_ms` (the effective lock TTL for the region, derived from `lock_ttl_ms`) as described in the [Tick System design](../../system-architecture-ticks.md#timeout-and-fairness-policy). Regions whose `p99` tick runtime begins to approach or exceed a configured fraction of that TTL are treated as degraded, and operators are expected to either increase the tick interval or simplify per-tick work. Entity Management does not adjust TTLs itself; it relies on the shared helpers and scheduler behavior to keep lock usage within safe bounds.
 
@@ -42,6 +42,6 @@ Examples:
   - skips the update if `(last_region_epoch, last_tick_id) >= (currentRegionEpoch, currentTickId)` (replay/out-of-order), or applies the HP change and sets `(last_region_epoch, last_tick_id) = (currentRegionEpoch, currentTickId)` in the same transaction if `(last_region_epoch, last_tick_id) < (currentRegionEpoch, currentTickId)`.
 
 - **Trade between two entities** – when a tick performs a trade between `fromEntityId` and `toEntityId`:
-  - the handler computes a deterministic `effectKey` such as `trade:<fromEntityId>:<toEntityId>:<itemId>`;
-  - it inserts `(tenantId, regionId, region_epoch, tickId, effectKey)` into the guard table before moving items between inventories; and
-  - on primary-key conflict, the trade is treated as an already-applied effect for that tick and becomes a no-op.
+  - the handler receives the root effect identity allocated from the admitted command identity plus deterministic effect-plan ordinal; participant and item fields are validation/targeting data, not identity allocation;
+  - it inserts the root-effect-derived guard identity into the guard table before moving items between inventories; and
+  - on guard conflict, it returns the stored result only when root identity, immutable request digest, and recorded trade result match; conflicting identity, digest, or result fails closed rather than becoming an arbitrary no-op.
