@@ -12,7 +12,7 @@ The event registry answers four canonical questions for every scripting event:
 
 - What does this `eventType` mean, and which payload schema/version is valid?
 - Which service or principal is allowed to emit it?
-- What Trigger Identity and handler-input-manifest fields are required at ingress and handler resolution?
+- Which event-scope ingress identity fields are required before handler resolution, and which additional full Trigger Identity fields are required after each handler resolves?
 - Which binding scopes and runtime behaviors are legal for handlers of that event?
 
 No service may invent a private `eventType` contract outside this registry and still expect Automation & Scripting or Game Design to accept it.
@@ -56,7 +56,8 @@ Required semantics for those fields:
 - `payloadSchemaRef`
   - The authoritative schema or proto reference for the payload shape.
 - `requiredTriggerIdentityFields`
-  - The exact Trigger Identity fields that must be present, such as `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `entityId`, or `scriptEventId`.
+  - The exact identity fields applicable to this event at each stage: the event-scope ingress subset before handler resolution and the full handler Trigger Identity after each handler resolves, as defined by the [normative identity tables](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields).
+  - Event-scope ingress must not require, fabricate, or use synthetic values for handler-only fields. In particular, `scriptId`, `pluginId`, `pluginVersionId`, and `bindingId` are unavailable before handler resolution; they become required only when the resolved handler's scope requires them.
   - For gameplay-originated events whose producer already resolved shared-versus-isolated realm state, this set must also include `playableStateScope` so durable ingress/work-item identity, timer follow-up work, and operator read models do not collapse distinct playable-state namespaces that happen to share the same tenant and instance identifiers.
 - `snapshotAuthority`
   - Declares the owner-specific input source used to seed the handler-scoped input manifest. Its values remain:

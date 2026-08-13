@@ -73,16 +73,17 @@ Each script run follows a consistent lifecycle:
 
 1. **Trigger admission**
    - A trigger arrives from the scheduler (event, timer, interval, or manual test run).
-   - The durable handler-charge record is checked for its admission marker, and the scheduler acquires a separately fenced execution-capacity lease before sandbox admission. An authoritative policy denial is recorded as the applicable typed handler outcome (`finalStage=ADMISSION`, `finalOutcome=quota_denied` or `tenant_budget_exceeded`). If authoritative resource/capacity exhaustion prevents producing that decision, return non-OK `RESOURCE_EXHAUSTED`; if route/charge/lease, worker, or dependency infrastructure is unavailable and cannot produce it, return non-OK `UNAVAILABLE`. No sandbox work occurs, and a queued trigger does not reserve capacity.
+   - At the scheduler's event/handler admission boundary, after raw event ingress, the service performs the registry and charge checks, then applies deterministic ordered-prefix selection or deferral for the target scheduler. It does not acquire a lease. An authoritative policy denial is recorded as the applicable typed handler outcome (`finalStage=ADMISSION`, `finalOutcome=quota_denied` or `tenant_budget_exceeded`). If authoritative resource/capacity exhaustion prevents producing that decision, return non-OK `RESOURCE_EXHAUSTED`; if route, charge, worker, or dependency infrastructure is unavailable and cannot produce it, return non-OK `UNAVAILABLE`.
+   - For each admitted handler, the service seals the handler input manifest and durably creates and queues `PENDING_EVALUATION` work. Queued work holds no capacity; any deferred remainder stays durably queued under the same identity, and no lease or execution marker is created at this step.
 
-2. **Sandbox setup**
+2. **Sandbox setup and executor acceptance**
    - The scheduler allocates a **sandbox context** containing:
      - Tenant and script identifiers
      - The pinned `scriptPatchVersion`
      - Per-run budgets (CPU/time, memory, and concurrency)
    - The run is submitted to a **bounded thread pool** dedicated to script execution.
    - Dry-run/test work must use isolated execution capacity (separate pool, reserved worker share, or equivalent partition) so live automation retains guaranteed worker availability under load.
-   - Before execution starts, the worker acquires the lease and in one Automation-owned durable executor-acceptance transaction revalidates its current fence, durably accepts/claims the run for the executor, persists the exactly-once execution-start marker, and advances the work item to `EXECUTING`. Only after that commit may evaluation begin. If executor acceptance fails, the transition does not commit, the lease is released or reclaimed, and no execution charge is recorded; a crash after commit recovers from the durable executor claim and may reacquire a lease but never admits a second marker.
+   - Immediately before evaluation, and only at this step, the worker acquires the lease and in one Automation-owned durable executor-acceptance transaction revalidates its current fence, durably accepts/claims the run for the executor, persists the exactly-once execution-start marker, and advances the work item to `EXECUTING`. Only after that commit may evaluation begin. If executor acceptance fails, the transition does not commit, the lease is released or reclaimed, and no execution charge is recorded; a crash after commit recovers from the durable executor claim and may reacquire a lease but never admits a second marker.
 
 3. **Graph evaluation**
    - The engine evaluates the script’s component graph:
@@ -91,7 +92,7 @@ Each script run follows a consistent lifecycle:
    - If a budget check fails or a runtime guard trips (for example, too-large payload), evaluation is interrupted with a sandbox error.
 
 4. **Command staging**
-   - Successful runs emit bounded descriptors which are persisted as one atomic per-handler durable work item (outbox) and then indexed into the rebuildable `automation:queue:*` projection for later durable execution.
+   - Successful runs emit bounded descriptors which are staged into the already admitted per-handler durable work item and persisted atomically, then follow the separate durable Game Session handoff path. The already admitted `automation:queue:*` projection remains the pre-evaluation discovery pointer and is not a handoff queue.
    - Before constructing each generated command or data-dependent collection, the engine applies the artifact-pinned conservative prospective serialized-byte bound together with command-count, per-entity, and data-dependent caps. Before atomic persistence, it checks the exact bounded serialized size of the staged descriptors against the pinned ceiling. Any cap exceed is a non-success outcome; all staged output for that handler is discarded and no partial work item or handoff is committed. The evaluator accepts only the artifact-pinned `componentCostRegistryDigest` and `artifactRuntimeCapDigest` plus their embedded payloads as validated by the runtime owner; it does not estimate from a newer local registry.
    - Target-state handoff is subject to the deterministic ordered-prefix reservation of artifact-pinned estimates (`AUTOMATION_TICK_BUDGET_MS`) and the event-count ceiling (`AUTOMATION_TICK_MAX_EVENTS`), and uses only documented `automation:*` Redis prefixes for projection and quotas. The Automation & Scripting Service never writes `tick:*` keys directly; it hands off commands to Game Session over internal gRPC so Game Session can enqueue tick commands under its own tick and locking model. Current live capacity enforcement is the aggregate per-tenant, priority-tier reservation described below.
 
