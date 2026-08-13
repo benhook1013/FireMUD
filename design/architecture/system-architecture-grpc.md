@@ -82,20 +82,24 @@ Every gRPC service registers the `LoggingInterceptor`, `MetricsInterceptor`, and
 - Use the `reserved` keyword to block deprecated field numbers or names.
 - Avoid changing the type of an existing field.
 
-## Error Handling
+## Outcome and Transport Classification
 
-- For internal FireMUD RPCs, return application-level failures in the response `ErrorDetail` field (for example `INVALID_ARGUMENT`, `NOT_FOUND` codes in the shared error catalog) while keeping the gRPC transport status `OK`.
-- Use a shared `ErrorDetail` message (e.g., `shared/errors.proto`) when returning rich error info.
-- Prefer returning structured errors over using gRPC metadata for application faults.
-- All RPCs that can fail should include an `ErrorDetail` field in the response instead of invoking `onError()`. Wrap response observers or use an interceptor to log warnings, increment a `grpc.app_error` metric, and tag tracing spans. `onError()` is reserved for transport-level or infrastructure failures only.
-- Metric contract:
-  - The Micrometer meter name is `grpc.app_error`; the Prometheus-exported name is `grpc_app_error_total`.
-  - Required labels: `service` (from `spring.application.name`) and a bounded `code` taken from the shared error catalog.
-    - The `service` label may be attached explicitly per counter increment, or injected globally via a Micrometer `commonTags("service", spring.application.name)` configuration from the shared `firemud-common` auto-configuration.
-  - Forbidden labels: per-request identifiers such as `traceId`, `spanId`, `characterId`, or `sessionId`; those identifiers belong only in logs and spans, not in metric label sets.
-  Shared logging, metrics, and tracing interceptors implement the observability requirements of this contract; RPC handlers or response-aware wrappers remain responsible for returning the typed `ErrorDetail`. Services must register the interceptors for every gRPC server.
+The RPC owner must classify the result before choosing a response shape. A successfully produced expected domain outcome (including a typed business rejection where the domain contract defines one) uses a typed result union or equivalent response fields. A canonical non-OK gRPC status, with bounded structured details, is used when the service cannot produce that domain result. This includes validation or authentication failure at the transport/pre-domain boundary, a missing precondition before domain execution, resource exhaustion, deadline or cancellation, dependency unavailability, and internal failure. The outer transport status remains authoritative for infrastructure failures.
 
-Example implementation:
+`ErrorDetail` remains a shared representation for existing response fields and bounded structured details where an adopting contract uses it; it is not a universal requirement that every application failure keep transport status `OK`. Existing handlers and `ErrorDetail`-in-response paths are implementation drift to be migrated and proved against this owner contract, not an alternate target.
+
+For mutations, a timeout, transport failure, or missing evidence after execution may be ambiguous. Callers retain the stable idempotency identity and reconcile the original request before replay; they must not turn an uncertain outcome into a new mutation. Batch and streaming RPCs distinguish item outcomes from stream failure: each produced item uses the typed item-result contract, while a failure that prevents the stream or batch from producing its domain result uses canonical non-OK status and bounded details. Already-produced item outcomes remain valid evidence for reconciliation.
+
+The observability contract is shared even when the outcome channel differs:
+
+- The Micrometer meter name is `grpc.app_error`; the Prometheus-exported name is `grpc_app_error_total`.
+- Required labels are `service` (from `spring.application.name`) and a bounded `code` from the shared catalog or transport classification.
+  - The `service` label may be attached explicitly per counter increment, or injected globally via a Micrometer `commonTags("service", spring.application.name)` configuration from the shared `firemud-common` auto-configuration.
+- Per-request identifiers such as `traceId`, `spanId`, `characterId`, or `sessionId` are forbidden metric labels; they belong only in logs and spans.
+
+Shared logging, metrics, and tracing interceptors implement observability for both typed outcomes and non-OK failures. RPC handlers or response-aware wrappers remain responsible for producing the contract-specific result union or bounded details, and services must register the interceptors for every gRPC server.
+
+Example implementation for a response-level typed detail (where the owner contract calls for one):
 
 ```java
 private ErrorDetail error(String code, String message) {

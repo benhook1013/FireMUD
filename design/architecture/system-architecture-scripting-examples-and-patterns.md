@@ -56,11 +56,11 @@ This example walks through how a typical `onEnterRegion` script executes end-to-
 
 3. **Bindings and quotas**
    - The Automation & Scripting Service looks up all scripts bound to `onEnterRegion` for the target entity and tenant, using the version metadata provided by the Game Session Service to resolve the correct script definitions.
-   - Per-script quotas, tenant budgets, and the aggregate target-state `AUTOMATION_TICK_BUDGET_MS` reservation are applied before execution (see `design/architecture/system-architecture-scripting-quotas-and-operations.md` for details). Handler-scoped quota is charged at handler admission; the tick-window and tenant runtime budgets are reserved and accounted for only when a handler is admitted to sandbox capacity. A per-run timeout is a separate execution guard, not the tick-window budget. Scripts that fail quota or reservation checks are skipped and logged; others proceed to sandboxed execution.
+   - Per-script quotas and tenant budgets are applied before execution under the [scripting quota lifecycle](./system-architecture-scripting-quotas-and-operations.md#budget-accounting-rules). The quota owner records one handler admission charge; queued work holds no capacity, and the execution-start marker is recorded only when a separately fenced, reclaimable capacity lease is acquired. A per-run timeout is a separate execution guard, not the aggregate tick-window capacity. Scripts that fail quota or lease checks are skipped and logged; others proceed to sandboxed execution.
 
 4. **Sandboxed DSL execution**
    - For each allowed script, the Automation & Scripting Service executes the `onEnterRegion` handler inside the sandboxed DSL runtime, walking the graph of condition, timer, and action nodes for the current event payload.
-   - All gameplay-affecting reads in that handler use the same run snapshot token captured at admission for the trigger's committed `(gameInstanceId, playableStateScope, regionId, regionEpoch, tick/read-version)` view; the handler must not silently mix fresher state mid-run.
+   - All gameplay-affecting reads in that handler use the durable handler-scoped input manifest owned by the [DSL lifecycle contract](./system-architecture-scripting-dsl-reference-and-lifecycle.md#read-consistency-contract): owner-versioned bounded inputs and their causal floor are reused on retry, and an owner-specific `readSnapshotToken`, when required, is only one manifest input or correlation value rather than universal authority. The current implementation remains narrower and does not yet seal the complete manifest.
    - Typical patterns include:
      - Checking player or NPC state (faction, health, quest flags).
      - Branching into dialogue, combat, or flavor events.
