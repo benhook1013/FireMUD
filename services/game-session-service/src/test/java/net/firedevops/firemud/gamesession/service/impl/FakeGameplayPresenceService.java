@@ -76,7 +76,9 @@ public final class FakeGameplayPresenceService implements GameplayPresenceServic
               existing,
               existing.explicitAfkSinceEpochMs(),
               now,
-              meaningfulGameplayActivity ? now : existing.lastMeaningfulActivityAtEpochMs());
+              meaningfulGameplayActivity
+                  ? Long.valueOf(now)
+                  : existing.lastMeaningfulActivityAtEpochMs());
         });
   }
 
