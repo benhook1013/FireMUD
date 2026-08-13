@@ -23,7 +23,7 @@ For day-to-day operations, environment variables fall into three broad categorie
 Current live bindings in the service are narrower than the full target-state scripting design:
 
 - the live runtime binds live per-script quota, priority-tagged live tenant-budget, dry-run quota/capacity, output-budget, pin-projection freshness, outbox retention, queue rebuild, and dead-letter size/age knobs listed below;
-- the target output knobs below are runtime-cap inputs only. Publish-time analysis and runtime revalidation additionally require the versioned component-cost metadata schema/registry digest and artifact-cap digest owned by [Scripting Runtime Execution](../../system-architecture-scripting-runtime-execution.md#static-output-cost-contract); a local cap change must not reinterpret an already-pinned artifact.
+- the target output knobs below are runtime-cap inputs only. Publish-time analysis and runtime revalidation additionally require the versioned `componentCostRegistryDigest` and `artifactRuntimeCapDigest` owned by [Scripting Runtime Execution](../../system-architecture-scripting-runtime-execution.md#static-output-cost-contract); a local cap change must not reinterpret an already-pinned artifact.
 - target-state scheduler admission uses the immutable artifact-pinned estimated millisecond cost and defers the remainder after the admitted ordered prefix; the current runtime does not implement this reservation, and actual runtime is calibration telemetry only.
 - signer/component-policy reconciliation cadence and ingress stale-threshold enforcement are now live bindings, while separate dead-letter alert thresholds and any split dead-letter cleanup cadence remain target-state follow-through in the `10.3` / `10.5` scripting slices.
 

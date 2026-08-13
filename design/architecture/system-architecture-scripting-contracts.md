@@ -98,6 +98,12 @@ Dry-run executions are privileged and must not destabilize production:
 - Admission pause, reload backpressure, timer ownership, rollback convergence, and plugin lifecycle actions must preserve instance isolation at minimum scope `(tenantId, gameInstanceId)`.
 - A deployment may intentionally couple all instances in a tenant only if that invariant is explicitly documented and enforced end-to-end; otherwise one instance's patch transition must not stall unrelated instances.
 
+### 7b) Reload Failure Contract
+
+- When a runtime scope is `reloadState=FAILED`, event ingress is rejected with `admitted=false`, `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE`, and bounded `admissionReason=reload_failed`.
+- `reload_failed` is not automatic-retry backpressure: the response has no `retryAfterMs`, the event-scope decision is recorded in `script_event_ingress_audit`, and no handler row, firing claim, or handler Trigger Identity is created. Timer due candidates use their event-scope `scheduleCandidateId` audit instead and create no `scriptEventId`.
+- Recovery must durably reconcile the current pin, schedule ownership, runtime scope/epoch, and due-point evidence, then transition `FAILED -> RELOADING` under one idempotent recovery identity. Only a successful atomic reconciliation may transition `RELOADING -> IDLE`; the prior observed patch is diagnostic evidence only and is never a last-known-good execution fallback.
+
 ### 8) Plugin Version Fencing and Control-Plane Scope
 
 Plugins are executed by the same runtime engine as scripts and must not rely on weaker rollback semantics:
@@ -157,7 +163,7 @@ Plugins are executed by the same runtime engine as scripts and must not rely on 
 
 The durable charge lifecycle is owned by [Scripting Quotas & Operations](./system-architecture-scripting-quotas-and-operations.md#budget-accounting-rules). Cross-service consumers must preserve its consequences:
 
-- One full-Trigger-Identity handler charge record, with separate exactly-once admission and execution-start markers, is the sole charge authority. Duplicate and recovery attempts reuse it.
+- One full-Trigger-Identity handler charge record, with separate exactly-once admission and execution-start markers, is the sole charge authority. Immediately before evaluation, Automation acquires the fenced lease and atomically revalidates its fence, durably accepts/claims the run for the executor, persists the execution-start marker, and transitions the work item to `EXECUTING` in one executor-acceptance transaction; evaluation begins only after commit. If executor acceptance fails, the transition does not commit and no execution charge is recorded. Duplicate and recovery attempts reuse the durable executor claim, and recovery may reacquire a lease without creating another marker.
 - Queued work holds no execution capacity. The capacity lease is separately fenced/reclaimable, and reclaiming an expired lease is not a refund or a new charge.
 - `PUBLISH_READINESS`/`onLoad` uses isolated readiness capacity and must not consume ordinary live quota or capacity. Game Session handoff occurs only after Automation's handler charge and capacity checks succeed; Game Session must not charge the handler again.
 

@@ -48,6 +48,15 @@ Automation & Scripting verifies the artifact's component-cost metadata version a
 
 The artifact also pins the estimated millisecond cost used for deterministic scheduler admission. For an automation tick, eligible handlers are considered in canonical order and the scheduler admits the ordered prefix whose cumulative pinned estimate fits `AUTOMATION_TICK_BUDGET_MS`; the remainder is deferred. Actual runtime is recorded for calibration only and does not refund a same-tick reservation.
 
+### Artifact Cost Digest Contract
+
+The compiled artifact carries exactly two subordinate cost/cap digests:
+
+- `componentCostRegistryDigest` is `sha256:` followed by lowercase SHA-256 over UTF-8 RFC 8785 canonical JSON, excluding the digest field itself. Its normalized payload contains the schema version and duplicate-free component entries sorted by stable component identifier and version, including every output-cost class, command-count/distribution, serialized-byte, estimated-millisecond, and data-bound field used by publication or runtime revalidation.
+- `artifactRuntimeCapDigest` uses the same `sha256:` plus lowercase SHA-256 of UTF-8 RFC 8785 canonical JSON, excluding its own digest field. Its normalized payload contains the cap schema version and duplicate-free cap entries sorted by canonical cap key, with typed value, unit, and scope for every resolved cap used at publication.
+
+Both normalized payloads and their exact digests are embedded in and covered by the outer immutable compiled-artifact digest. Game Design and Automation use one shared canonical encoder and golden vectors. Automation recomputes and validates both embedded payload/digest pairs and never resolves newer private registry or cap values for an already-pinned artifact.
+
 Runtime meters output incrementally. Before constructing, allocating, or serializing each next output element beyond its bounded contribution, the meter charges the prospective command count, target entity, serialized bytes, and declared component cost. If that charge would exceed any ceiling or data-dependent cap, evaluation stops before the oversized element or collection is constructed.
 
 For one handler run, generated output is persisted atomically: either the complete metered output set is durably accepted or none of its generated commands are persisted. An output-budget violation cannot leave earlier commands from that handler durably handed off while later commands are rejected. The handler audit and durable work-item outcome remain available as failure evidence.
@@ -81,7 +90,7 @@ Rejected because metadata drift, corrupt artifacts, implementation defects, and 
 
 ## Implementation and Proof Obligations
 
-Implement one shared versioned and digested component-cost registry; artifact pinning of the metadata version, digest, and declared finite caps; Game Design worst-case graph analysis; Automation metadata revalidation; incremental command-count, per-entity, byte, component-cost, and declared-cap metering; bounded output construction; and atomic complete-set persistence per handler.
+Implement one shared versioned and digested component-cost registry; the exact `componentCostRegistryDigest` and `artifactRuntimeCapDigest` contracts; artifact pinning of both subordinate payloads/digests and declared finite caps; Game Design worst-case graph analysis; Automation metadata revalidation; incremental command-count, per-entity, byte, component-cost, and declared-cap metering; bounded output construction; and atomic complete-set persistence per handler.
 
 Prove matching and mismatched metadata versions and digests; missing metadata; static and data-dependent components; mutually exclusive and co-executing branches; nested bounded loops; bulk actions; exact-limit acceptance and one-over-limit rejection for command count, per-entity count, bytes, and declared caps; rejection before oversized allocation or serialization; complete persistence after success; zero generated-command persistence after any budget or persistence failure; crash and retry around atomic persistence; pre-handler envelope failure as an ingress outcome; generated-output failure as a handler `DSL_EVAL` outcome; and independence of other resolved handlers.
 

@@ -398,7 +398,7 @@ For authoritative gameplay outputs and commands, the immutable deterministic inp
 Determinism depends on one immutable **handler input manifest**, not on a universal snapshot token. The manifest is a durable, bounded, digest-bound record created for each resolved handler at admission:
 
 - It records the full applicable Trigger Identity and bounded trigger facts, the event payload, pinned script/configuration and compiled-artifact references, and each authoritative input value together with its owning service, schema/version, and immutable read/version evidence.
-- It records the applicable causal floor (for example the source commit, tick, or owner sequence that the handler may observe) and a `seedVersion` plus the derived scoped seed. A component-cost metadata schema/registry digest and artifact-cap digest are included when output budgeting depends on them.
+- It records the applicable causal floor (for example the source commit, tick, or owner sequence that the handler may observe) and a `seedVersion` plus the derived scoped seed. `componentCostRegistryDigest` and `artifactRuntimeCapDigest` are included when output budgeting depends on them.
 - Every authoritative DSL read must resolve from a manifest entry at or above its declared causal floor. A handler must not fetch newer state during evaluation or mix fresh and old values because wall-clock time advanced between calls. An owner-specific `readSnapshotToken` may be retained as one manifest input or correlation value when that owner contract uses one; it is not universal authority for other owners.
 - The event registry declares which owner inputs and consistency class are required. A missing or contradictory owner-versioned input rejects the handler at the correct ingress or handler stage; `snapshotAuthority=NONE` means no authoritative gameplay-dependent input may be read for that event.
 - `onLoad` receives a tenant-readiness manifest containing only configuration/runtime metadata and recomputable-cache versions, never mutable gameplay state. Dry-run/test execution uses an explicit tooling selector or records the server-selected owner versions in its returned/audited manifest.
@@ -411,7 +411,7 @@ Illustrative manifest shape:
 ```text
 handlerInputManifest/v1 {
   triggerFacts: { complete Trigger Identity, bounded event payload },
-  artifacts: [{ artifactId, artifactVersion, artifactDigest, costMetadataDigest, capDigest }],
+  artifacts: [{ artifactId, artifactVersion, artifactDigest, componentCostRegistryDigest, artifactRuntimeCapDigest }],
   inputs: [{ ownerService, schemaVersion, boundedValue, ownerVersion, ownerReadToken? }],
   causalFloor: [{ ownerService, ownerVersion }],
   seedVersion: "seed/v1",

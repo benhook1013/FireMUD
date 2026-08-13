@@ -129,6 +129,15 @@ Reload admission and retry semantics follow the canonical [Scripting & Automatio
 
 The service must also record the event-scope ingress decision in the ingress audit/logging surface with `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_RELOADING` and bounded reason `reloading`. A handler-scoped `script_event_audit` row is written only if handler resolution has already produced a concrete Trigger Identity.
 
+When the runtime scope is `reloadState=FAILED`, ingress is fail-closed rather than backpressure:
+
+- `TriggerScriptEventResponse.admitted=false`
+- `TriggerScriptEventResponse.admissionOutcome=TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE`
+- `TriggerScriptEventResponse.admissionReason=reload_failed`
+- `retryAfterMs` is absent; recovery is not an automatic caller retry contract.
+
+The same event-scope decision is recorded in `script_event_ingress_audit`, with no handler row or handler Trigger Identity. Timer due candidates record their event-scope `scheduleCandidateId` audit instead and create no firing claim or `scriptEventId`. Recovery durably reconciles the current pin, schedule ownership, runtime scope/epoch, and due evidence, transitions `FAILED -> RELOADING` under one idempotent recovery identity, and reaches `IDLE` only through one successful atomic reconciliation; the previous patch remains diagnostic state only.
+
 During operator rollback pause (`PAUSED_FOR_ROLLBACK`), ingress must return an explicit rollback backpressure outcome and ingress audit record:
 
 - `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK`

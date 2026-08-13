@@ -47,7 +47,7 @@ Best-effort recurring schedules declare exactly one missed-firing policy:
 
 One durable resume-window identity covers the complete recovery attempt across repeated scans or progress observations. Repeated observations cannot remint another catch-up firing for the same schedule and window. A deterministic fair global cap orders and admits coalesced candidates across schedules; cap-excluded candidates are dropped with bounded audit and metrics rather than deferred into an unbounded backlog.
 
-Preserved schedules across reload, rollback, or an allowed owner-version transition use the canonical modulo resume formula. If the previous due point is at or after the resume point it is retained. If the resume point lands exactly on a cadence boundary, the schedule may fire there; otherwise it advances to the next future boundary. Version and runtime-scope fencing remains part of the due identity.
+Preserved schedules across reload, rollback, or an allowed owner-version transition use the canonical modulo resume formula. If the previous due point is at or after the resume point it is retained. If the resume point lands exactly on a later cadence boundary, the schedule fires at that boundary at most once under the durable schedule-instance plus resume-window identity; otherwise it advances to the first cadence boundary strictly after resume. Version and runtime-scope fencing remains part of the due identity.
 
 The lack of an eventual-execution guarantee applies to each best-effort recurring firing. It does not mean that the recurring schedule disappears: after recovery, future eligible boundaries continue under the preserved cadence unless the schedule is removed, disabled, fenced, or terminally invalid.
 
