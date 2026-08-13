@@ -58,6 +58,7 @@ Required semantics for those fields:
 - `requiredTriggerIdentityFields`
   - The exact identity fields applicable to this event at each stage: the event-scope ingress subset before handler resolution and the full handler Trigger Identity after each handler resolves, as defined by the [normative identity tables](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields).
   - Event-scope ingress must not require, fabricate, or use synthetic values for handler-only fields. In particular, `scriptId`, `pluginId`, `pluginVersionId`, and `bindingId` are unavailable before handler resolution; they become required only when the resolved handler's scope requires them.
+  - Tenant-readiness `onLoad` is the deliberate exception for `scriptId`: its event-scope identity targets one script and includes that `scriptId` so Automation can derive the deterministic `scriptEventId` before handler resolution. This does not authorize fabricated runtime-ingress script IDs; `pluginId`, `pluginVersionId`, and `bindingId` remain post-resolution fields.
   - For gameplay-originated events whose producer already resolved shared-versus-isolated realm state, this set must also include `playableStateScope` so durable ingress/work-item identity, timer follow-up work, and operator read models do not collapse distinct playable-state namespaces that happen to share the same tenant and instance identifiers.
 - `snapshotAuthority`
   - Declares the owner-specific input source used to seed the handler-scoped input manifest. Its values remain:
@@ -138,6 +139,8 @@ Minimum payload contract:
 - `scriptPatchVersion`
 - `scriptEventId`
 - `isDryRun`
+
+The tenant-readiness event-scope identity also requires the targeted `scriptId`; Automation uses it with the other applicable readiness fields to derive the deterministic `scriptEventId`. This readiness exception does not make `scriptId` a required or fabricated field for ordinary runtime ingress, and plugin/binding identity remains post-resolution.
 
 No authoritative gameplay snapshot token is required. This payload exists for readiness-only initialization and must not imply mutable shared runtime ownership.
 
