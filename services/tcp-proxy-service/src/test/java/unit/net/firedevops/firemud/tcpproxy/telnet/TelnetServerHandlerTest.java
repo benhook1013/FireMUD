@@ -35,7 +35,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import net.firedevops.firemud.test.TestAsyncAssertions;
 import org.junit.jupiter.api.Test;
@@ -43,8 +42,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 class TelnetServerHandlerTest {
-
-  private final LookCacheService lookCacheService = mock(LookCacheService.class);
 
   private TelnetServerHandler newHandler(SimpleMeterRegistry registry, boolean advertiseMcp) {
     return newHandler(registry, advertiseMcp, () -> true, TelnetServerHandler::createWebSocket);
@@ -78,8 +75,7 @@ class TelnetServerHandlerTest {
         "1",
         "demo",
         "production",
-        "1",
-        lookCacheService);
+        "1");
   }
 
   private WebSocket stubWebSocket() {
@@ -609,8 +605,7 @@ class TelnetServerHandlerTest {
             "1",
             "demo",
             "production",
-            "1",
-            lookCacheService);
+            "1");
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -649,8 +644,7 @@ class TelnetServerHandlerTest {
             null,
             null,
             null,
-            null,
-            lookCacheService);
+            null);
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -688,8 +682,7 @@ class TelnetServerHandlerTest {
             "1",
             "demo",
             "production",
-            "",
-            lookCacheService);
+            "");
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -728,8 +721,7 @@ class TelnetServerHandlerTest {
             "1",
             "demo",
             "production",
-            "0",
-            lookCacheService);
+            "0");
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -779,8 +771,7 @@ class TelnetServerHandlerTest {
             "1",
             "demo",
             "production",
-            "1",
-            lookCacheService);
+            "1");
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -831,8 +822,7 @@ class TelnetServerHandlerTest {
             "1",
             "demo",
             "production",
-            "1",
-            lookCacheService);
+            "1");
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     EventExecutor executor = mock(EventExecutor.class);
@@ -921,8 +911,7 @@ class TelnetServerHandlerTest {
             "1",
             "demo",
             "production",
-            "1",
-            lookCacheService);
+            "1");
 
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     ChannelFuture future = mock(ChannelFuture.class);
@@ -978,8 +967,7 @@ class TelnetServerHandlerTest {
             "1",
             "demo",
             "production",
-            "1",
-            lookCacheService);
+            "1");
 
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     ChannelFuture future = mock(ChannelFuture.class);
@@ -1039,8 +1027,7 @@ class TelnetServerHandlerTest {
             "1",
             "demo",
             "production",
-            "1",
-            lookCacheService);
+            "1");
 
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     ChannelFuture future = mock(ChannelFuture.class);
@@ -1100,8 +1087,7 @@ class TelnetServerHandlerTest {
             "1",
             "demo",
             "production",
-            "1",
-            lookCacheService);
+            "1");
 
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     ChannelFuture future = mock(ChannelFuture.class);
@@ -1161,8 +1147,7 @@ class TelnetServerHandlerTest {
             "1",
             "demo",
             "production",
-            "1",
-            lookCacheService);
+            "1");
 
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     ChannelFuture future = mock(ChannelFuture.class);
@@ -1223,8 +1208,7 @@ class TelnetServerHandlerTest {
             "1",
             "demo",
             "production",
-            "1",
-            lookCacheService);
+            "1");
 
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     ChannelFuture future = mock(ChannelFuture.class);
@@ -1271,8 +1255,7 @@ class TelnetServerHandlerTest {
             "1",
             "demo",
             "production",
-            "1",
-            lookCacheService);
+            "1");
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();

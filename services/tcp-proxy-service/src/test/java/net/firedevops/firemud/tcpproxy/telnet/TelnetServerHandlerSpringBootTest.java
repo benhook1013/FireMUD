@@ -8,7 +8,6 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.netty.channel.embedded.EmbeddedChannel;
 import java.net.InetSocketAddress;
 import java.util.concurrent.atomic.AtomicInteger;
-import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -40,8 +39,7 @@ class TelnetServerHandlerSpringBootTest {
             tenantId,
             "demo",
             "production",
-            "7",
-            Mockito.mock(LookCacheService.class));
+            "7");
 
     EmbeddedChannel channel =
         new EmbeddedChannel(handler) {

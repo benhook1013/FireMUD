@@ -871,7 +871,7 @@ class InventoryServiceImplTest {
         itemRepo,
         itemStackRepo,
         visibleRefAllocator,
-        new NoOpItemTransferAuditWriter());
+        Mockito.mock(ItemTransferAuditWriter.class));
   }
 
   private InventoryServiceImpl service(

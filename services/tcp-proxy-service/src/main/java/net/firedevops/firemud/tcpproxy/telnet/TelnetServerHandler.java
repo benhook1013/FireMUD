@@ -30,7 +30,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
-import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.runtime.RuntimeLoggingContext;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -105,7 +104,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private volatile CompletableFuture<WebSocket> inFlightSend;
   private String clientIp;
   private boolean connectEventRecorded;
-  private final LookCacheService lookCacheService;
 
   public TelnetServerHandler(
       String gatewayWsUrl,
@@ -135,7 +133,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         null,
         null,
         null,
-        null,
         DEFAULT_RUNTIME_IDENTITY);
   }
 
@@ -168,41 +165,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         null,
         null,
         null,
-        null,
-        DEFAULT_RUNTIME_IDENTITY);
-  }
-
-  TelnetServerHandler(
-      String gatewayWsUrl,
-      Runnable onConnect,
-      Runnable onDisconnect,
-      io.micrometer.core.instrument.Counter connectionCounter,
-      io.micrometer.core.instrument.Counter discardedCommandCounter,
-      boolean advertiseMcp,
-      MeterRegistry meterRegistry,
-      BooleanSupplier gameplayTrafficReady,
-      WebSocketConnector webSocketConnector,
-      TcpProxyEventService eventService,
-      AtomicInteger bufferDepth,
-      LookCacheService lookCacheService) {
-    this(
-        gatewayWsUrl,
-        onConnect,
-        onDisconnect,
-        connectionCounter,
-        discardedCommandCounter,
-        advertiseMcp,
-        meterRegistry,
-        gameplayTrafficReady,
-        webSocketConnector,
-        eventService,
-        bufferDepth,
-        null,
-        null,
-        null,
-        null,
-        null,
-        lookCacheService,
         DEFAULT_RUNTIME_IDENTITY);
   }
 
@@ -222,8 +184,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       String defaultTenantId,
       String defaultWorldSlug,
       String defaultRealmSlug,
-      String defaultPointerVersion,
-      LookCacheService lookCacheService) {
+      String defaultPointerVersion) {
     this(
         gatewayWsUrl,
         onConnect,
@@ -241,7 +202,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         defaultWorldSlug,
         defaultRealmSlug,
         defaultPointerVersion,
-        lookCacheService,
         DEFAULT_RUNTIME_IDENTITY);
   }
 
@@ -262,7 +222,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       String defaultWorldSlug,
       String defaultRealmSlug,
       String defaultPointerVersion,
-      LookCacheService lookCacheService,
       RuntimeIdentity runtimeIdentity) {
     this.gatewayWsUrl = gatewayWsUrl;
     this.onConnect = onConnect;
@@ -290,7 +249,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     this.reconnectCounter = meterRegistry.counter("tcpproxy.websocket.reconnects");
     this.reconnectCounter.increment(0.0);
     updateBufferDepthGauge();
-    this.lookCacheService = lookCacheService;
   }
 
   @FunctionalInterface

@@ -356,19 +356,6 @@ tasks.register<Exec>("validateObservabilityContract") {
     commandLine("python3", "dev-tools/observability/validate-observability-contract.py")
 }
 
-tasks.register<Exec>("generatePlatformSettingsDocs") {
-    group = "documentation"
-    description = "Generates the consolidated surfaced platform settings schema and Markdown reference."
-    inputs.files(platformSettingsMetadataFiles + listOf(platformSettingsPublicationSpec, platformSettingsGeneratorScript))
-    outputs.files(checkedInPlatformSettingsSchema, checkedInPlatformSettingsReference)
-    commandLine(
-        "python3",
-        "dev-tools/docs/generate-platform-settings-docs.py",
-        "--mode",
-        "write"
-    )
-}
-
 tasks.register<Exec>("updatePlatformSettingsDocs") {
     group = "documentation"
     description = "Regenerates and updates the checked-in surfaced platform settings schema and Markdown reference."
@@ -530,51 +517,7 @@ tasks.register<Exec>("devUp") {
     )
 }
 
-tasks.register<Exec>("devUpSmoke") {
-    dependsOn("generateDevCerts", "buildDockerImagesSmoke")
-    commandLine(
-        "docker",
-        "compose",
-        "-f",
-        "docker/docker-compose.yml",
-        "-f",
-        "docker/docker-compose.override.yml",
-        "-f",
-        "docker/docker-compose.local-images.override.yml",
-        "up",
-        "-d",
-        "--wait",
-        "--wait-timeout",
-        "180",
-        "--no-build",
-        "postgres",
-        "redis-coord",
-        "redis-cache",
-        "account-service",
-        "entity-management-service",
-        "gateway",
-        "game-logic-service",
-        "game-session-service",
-        "tcp-proxy-service",
-        "world-management-service"
-    )
-}
-
 tasks.register<Exec>("devDown") {
-    commandLine(
-        "docker",
-        "compose",
-        "-f",
-        "docker/docker-compose.yml",
-        "-f",
-        "docker/docker-compose.override.yml",
-        "-f",
-        "docker/docker-compose.local-images.override.yml",
-        "down"
-    )
-}
-
-tasks.register<Exec>("devDownSmoke") {
     commandLine(
         "docker",
         "compose",

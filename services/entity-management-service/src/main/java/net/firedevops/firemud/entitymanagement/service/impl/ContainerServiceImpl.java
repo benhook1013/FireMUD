@@ -84,24 +84,6 @@ public class ContainerServiceImpl implements ContainerService {
       ItemRepository itemRepository,
       ItemStackRepository itemStackRepository,
       ItemTransferSupport itemTransferSupport,
-      ContainerHolderSyncSupport containerHolderSyncSupport) {
-    this(
-        containerInstanceRepository,
-        itemInstanceRepository,
-        new ScopedCharacterResolver(characterRepository, new PlayableStateKeyResolver()),
-        itemRepository,
-        itemStackRepository,
-        itemTransferSupport,
-        containerHolderSyncSupport);
-  }
-
-  ContainerServiceImpl(
-      ContainerInstanceRepository containerInstanceRepository,
-      ItemInstanceRepository itemInstanceRepository,
-      CharacterRepository characterRepository,
-      ItemRepository itemRepository,
-      ItemStackRepository itemStackRepository,
-      ItemTransferSupport itemTransferSupport,
       ItemTransferAuditWriter itemTransferAuditWriter,
       ContainerHolderSyncSupport containerHolderSyncSupport) {
     this(
@@ -113,27 +95,6 @@ public class ContainerServiceImpl implements ContainerService {
         itemTransferSupport,
         itemTransferAuditWriter,
         containerHolderSyncSupport);
-  }
-
-  ContainerServiceImpl(
-      ContainerInstanceRepository containerInstanceRepository,
-      ItemInstanceRepository itemInstanceRepository,
-      ScopedCharacterResolver scopedCharacterResolver,
-      ItemRepository itemRepository,
-      ItemStackRepository itemStackRepository,
-      ItemTransferSupport itemTransferSupport,
-      ContainerHolderSyncSupport containerHolderSyncSupport) {
-    this(
-        containerInstanceRepository,
-        itemInstanceRepository,
-        scopedCharacterResolver,
-        itemRepository,
-        itemStackRepository,
-        itemTransferSupport,
-        new NoOpItemTransferAuditWriter(),
-        containerHolderSyncSupport,
-        new ContainerHolderPolicySupport(containerInstanceRepository),
-        new StackableItemSupport());
   }
 
   ContainerServiceImpl(

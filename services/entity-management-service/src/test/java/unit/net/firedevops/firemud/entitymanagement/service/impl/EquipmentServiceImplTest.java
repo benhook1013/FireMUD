@@ -50,6 +50,7 @@ class EquipmentServiceImplTest {
             charRepo,
             itemRepo,
             new ItemTransferSupport(),
+            Mockito.mock(ItemTransferAuditWriter.class),
             new ContainerHolderSyncSupport(containerInstanceRepo),
             slotRepo,
             bodyLayoutSlotRepo);
@@ -261,6 +262,7 @@ class EquipmentServiceImplTest {
             charRepo,
             itemRepo,
             new ItemTransferSupport(),
+            Mockito.mock(ItemTransferAuditWriter.class),
             new ContainerHolderSyncSupport(containerInstanceRepo),
             slotRepo,
             bodyLayoutSlotRepo);
@@ -299,6 +301,7 @@ class EquipmentServiceImplTest {
             charRepo,
             itemRepo,
             new ItemTransferSupport(),
+            Mockito.mock(ItemTransferAuditWriter.class),
             new ContainerHolderSyncSupport(containerInstanceRepo),
             slotRepo,
             bodyLayoutSlotRepo);
@@ -339,6 +342,7 @@ class EquipmentServiceImplTest {
             charRepo,
             itemRepo,
             new ItemTransferSupport(),
+            Mockito.mock(ItemTransferAuditWriter.class),
             new ContainerHolderSyncSupport(containerInstanceRepo),
             slotRepo,
             bodyLayoutSlotRepo);
@@ -386,6 +390,7 @@ class EquipmentServiceImplTest {
             charRepo,
             itemRepo,
             new ItemTransferSupport(),
+            Mockito.mock(ItemTransferAuditWriter.class),
             new ContainerHolderSyncSupport(containerInstanceRepo),
             slotRepo,
             bodyLayoutSlotRepo);

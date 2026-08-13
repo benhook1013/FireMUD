@@ -46,6 +46,7 @@ class ContainerServiceImplTest {
             itemRepo,
             itemStackRepo,
             new ItemTransferSupport(),
+            Mockito.mock(ItemTransferAuditWriter.class),
             new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(7L, 1L);
@@ -97,6 +98,7 @@ class ContainerServiceImplTest {
             itemRepo,
             itemStackRepo,
             new ItemTransferSupport(),
+            Mockito.mock(ItemTransferAuditWriter.class),
             new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(7L, 1L);
@@ -213,6 +215,7 @@ class ContainerServiceImplTest {
             itemRepo,
             itemStackRepo,
             new ItemTransferSupport(),
+            Mockito.mock(ItemTransferAuditWriter.class),
             new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);
@@ -280,6 +283,7 @@ class ContainerServiceImplTest {
             itemRepo,
             itemStackRepo,
             new ItemTransferSupport(),
+            Mockito.mock(ItemTransferAuditWriter.class),
             new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);
@@ -330,6 +334,7 @@ class ContainerServiceImplTest {
             itemRepo,
             itemStackRepo,
             new ItemTransferSupport(),
+            Mockito.mock(ItemTransferAuditWriter.class),
             new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);
@@ -373,6 +378,7 @@ class ContainerServiceImplTest {
             itemRepo,
             itemStackRepo,
             new ItemTransferSupport(),
+            Mockito.mock(ItemTransferAuditWriter.class),
             new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);

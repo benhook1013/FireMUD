@@ -12,14 +12,11 @@ import java.net.http.WebSocket;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
-import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class TelnetPipelineIntegrationTest {
-
-  private final LookCacheService lookCacheService = Mockito.mock(LookCacheService.class);
 
   private TelnetServerHandler.WebSocketConnector stubConnector(WebSocket ws) {
     return (gatewayWsUrl,
@@ -56,8 +53,7 @@ class TelnetPipelineIntegrationTest {
             "tenant-1",
             "demo",
             "production",
-            "1",
-            lookCacheService);
+            "1");
 
     EmbeddedChannel channel =
         new EmbeddedChannel(
@@ -110,8 +106,7 @@ class TelnetPipelineIntegrationTest {
             "tenant-1",
             "demo",
             "production",
-            "1",
-            lookCacheService);
+            "1");
 
     EmbeddedChannel channel =
         new EmbeddedChannel(
