@@ -340,7 +340,7 @@ The architecture also relies on explicit asynchronous contracts that are separat
 | Account/Domain services → Logging & Admin (audit/moderation/saga events) | Durable domain events/saga-step updates with at-least-once delivery | Event envelopes must carry a stable dedupe identity (for example `{tenantId, producerService, eventType, eventId}`), `occurredAt`, and a schema version; consumers must process idempotently. Logging & Admin is a control-plane consumer; runtime enforcement still occurs in owning domain services. |
 | Game Session Service → Logging & Admin (session lifecycle/coordination health signals) | Streaming metrics/events | Used for operator workflows and automation; does not transfer gameplay state authority away from Game Session. |
 
-Durable domain-event delivery in FireMUD follows the owner-classified boundaries in [Transaction Strategies](./system-architecture-transactions.md#mandatory-workflow-adopter-classification): gameplay/tick-adjacent events use transactional outbox/background workers, while bounded saga and restart-independent Temporal continuations use their respective substrates; no implicit shared event bus is assumed.
+Durable domain-event delivery in FireMUD follows the owner-classified boundaries in [Transaction Strategies](./system-architecture-transactions.md#mandatory-workflow-adopter-classification): gameplay/tick-adjacent events use their transactionally enqueued follow-through workers; simple owner-local durable continuations use the owning service's transactional outbox worker; bounded caller/worker-owned orchestration uses `common-saga`; and restart-independent continuation or durable waits/timers/signals use Temporal. No implicit shared event bus is assumed.
 
 ---
 
