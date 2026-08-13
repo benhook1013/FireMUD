@@ -10,7 +10,7 @@ These classes define FireMUD's basic shared request/response shapes:
 
 - **`ApiResponse<T>`** – Standard wrapper returned by controllers with `success()` and `error()` helpers.
 - **`ResultStatus`** – Enum used by `ApiResponse` (`SUCCESS` / `ERROR`).
-- **`ErrorDetail`** – Structured error information for validation problems or failed operations.
+- **`ErrorDetail`** – Shared structured information used by current response-level errors and by bounded details when an RPC owner selects that representation. The canonical choice between a typed domain result and non-OK gRPC status is defined by the [gRPC outcome and transport classification](./system-architecture-grpc.md#outcome-and-transport-classification), not by this DTO alone.
 - **`GlobalExceptionHandler`** – Captures exceptions and converts them into `ApiResponse<ErrorDetail>` objects.
 
 DTO records for common tasks (paging, IDs, basic metadata) live here so services share a consistent contract.
@@ -27,7 +27,7 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
 - **Database Connectors** – `DatabaseAutoConfiguration` with `PostgresProperties` and `RedisProperties` reduces boilerplate setup. Defaults suit Docker Compose but any field can be overridden with `FIREMUD_POSTGRES_*` or the Redis role‑specific environment variables. Redis‑backed services choose the appropriate prefix:
   - Coordination clients (ticks, locks, timers, sessions) bind `RedisProperties` to `FIREMUD_REDIS_COORD_HOST` / `FIREMUD_REDIS_COORD_PORT`.
   - Cache/rate‑limit clients (for example Spring Cloud Gateway) bind to `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`.
-- **gRPC Interceptors** – `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` provide consistent instrumentation and OpenTelemetry spans for every service. `LoggingInterceptor` automatically records the current `traceId` and `correlationId`, generating a new correlation ID when one is not present.
+- **gRPC Interceptors** – `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` provide consistent instrumentation and OpenTelemetry spans for every service. `LoggingInterceptor` automatically records the current `traceId` and `correlationId`, generating a new correlation ID when one is not present. They observe both typed domain outcomes and canonical non-OK failures; the [gRPC architecture](./system-architecture-grpc.md#outcome-and-transport-classification) owns the response-channel classification.
 - **Tracing Configuration** – `TracingConfig` exports spans to the collector using the `otel.endpoint` property and sets the `service.name` from `spring.application.name`.
 - **Temporal Workflow Foundation** – `common-temporal` owns the shared Temporal runtime substrate for durable control-plane workflows. It provides `TemporalProperties`, `WorkflowServiceStubs`, `WorkflowClient`, `WorkerFactory`, `TemporalTaskQueueResolver`, `TemporalWorkerHost`, and the shared identity helpers in `FiremudWorkflowIds`. Services opt in through the `net.firedevops.firemud.temporal-conventions` Gradle plugin and contribute `TemporalWorkerRegistrar` beans instead of inventing service-local worker startup loops.
 - **Metrics Common Tags** – `CommonAutoConfiguration` attaches a stable `service` tag to all Micrometer meters using `spring.application.name` so shared dashboards and alert rules can scope queries consistently without each call site manually tagging every counter/timer.
@@ -133,7 +133,7 @@ These tables live in each adopting service's own schema (for example `${serviceS
 Flyway migrations packaged with `common-saga` are exposed as `classpath:db/migration/saga` and run alongside the owning service's local `classpath:db/migration` chain.
 `SagaRunner` executes the orchestration inline, emitting metrics via `SagaMetrics` and adding a `correlationId` to logs for easier troubleshooting. `SagaMetrics` tracks the number of active synchronous saga executions so the Logging & Admin Service dashboard can display progress.
 
-`common-saga` is not FireMUD's durable workflow engine. Long-running control-plane workflows that need restart-safe continuation, durable waits, or operator-visible runtime state use `common-temporal` instead.
+`common-saga` is not FireMUD's durable workflow engine. Long-running control-plane workflows that need restart-safe continuation, durable waits, or operator-visible runtime state use `common-temporal` instead. The placement matrix and adopter proof requirement are owned by [Transaction Strategies](./system-architecture-transactions.md#mandatory-workflow-adopter-classification); this section records only the shared module and adopter-local runtime consequences.
 
 ## SQL Persistence Direction
 
