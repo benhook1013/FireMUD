@@ -23,7 +23,6 @@ For day-to-day operations, environment variables fall into three broad categorie
 Current live bindings in the service are narrower than the full target-state scripting design:
 
 - the live runtime binds live per-script quota, priority-tagged live tenant-budget, dry-run quota/capacity, output-budget, pin-projection freshness, outbox retention, queue rebuild, and dead-letter size/age knobs listed below;
-- the target output knobs below are runtime-cap inputs only. Publish-time analysis and runtime revalidation additionally require the versioned component-cost metadata schema/registry digest and artifact-cap digest owned by [Scripting Runtime Execution](../../system-architecture-scripting-runtime-execution.md#static-output-cost-contract); a local cap change must not reinterpret an already-pinned artifact.
 - signer/component-policy reconciliation cadence and ingress stale-threshold enforcement are now live bindings, while separate dead-letter alert thresholds and any split dead-letter cleanup cadence remain target-state follow-through in the `10.3` / `10.5` scripting slices.
 
 ## Service-Specific Variables
@@ -68,8 +67,8 @@ Any additional, less common tuning variables should be documented alongside thei
 
 These knobs are the authoritative defaults referenced by the scripting architecture docs:
 
-- publish-time validation and runtime enforcement share `SCRIPT_OUTPUT_MAX_COMMANDS_PER_RUN`, `SCRIPT_OUTPUT_MAX_COMMANDS_PER_ENTITY_PER_TRIGGER`, and `SCRIPT_OUTPUT_MAX_SERIALIZED_WORK_ITEM_BYTES` as the runtime-cap ceilings, while the artifact-pinned cost metadata/digests determine whether a component graph may publish or run;
-- the durable quota owner records one full-Trigger-Identity handler admission charge and a separate execution-start marker; `SCRIPT_QUOTA_LIMIT` / `SCRIPT_QUOTA_WINDOW_SECONDS` and the live tenant-tier settings are inputs to those decisions. Queued work holds no capacity; execution uses a separately fenced/reclaimable lease, and `PUBLISH_READINESS` `onLoad` work is isolated;
+- publish-time validation and runtime enforcement share `SCRIPT_OUTPUT_MAX_COMMANDS_PER_RUN`, `SCRIPT_OUTPUT_MAX_COMMANDS_PER_ENTITY_PER_TRIGGER`, and `SCRIPT_OUTPUT_MAX_SERIALIZED_WORK_ITEM_BYTES` as the canonical output-budget ceilings;
+- live per-script quota is charged at handler admission with `SCRIPT_QUOTA_LIMIT` / `SCRIPT_QUOTA_WINDOW_SECONDS`, while live tenant budget is reserved at durable work-item execution with `SCRIPT_TENANT_BUDGET_HIGH_RUNS_PER_MINUTE`, `SCRIPT_TENANT_BUDGET_NORMAL_RUNS_PER_MINUTE`, and `SCRIPT_TENANT_BUDGET_BACKGROUND_RUNS_PER_MINUTE`; Automation persists registry `quotaClass` onto durable work items so `STANDARD_RUNTIME` work consumes those live quotas/budgets while `PUBLISH_READINESS` `onLoad` work does not;
 - live `PUBLISH_READINESS` `onLoad` work uses dedicated `SCRIPT_READINESS_MAX_CONCURRENCY` and `SCRIPT_READINESS_MAX_CLUSTER_CONCURRENCY` capacity instead of an unbounded live-budget bypass, and exhausted readiness work is canceled as `onload_budget_exceeded`;
 - dry-run/test traffic uses `SCRIPT_TEST_MAX_RUNS_PER_MINUTE`, `SCRIPT_TEST_MAX_RUNS_PER_MINUTE_PER_PRINCIPAL`, `SCRIPT_TEST_MAX_CONCURRENCY`, and `SCRIPT_TEST_MAX_CLUSTER_CONCURRENCY` rather than consuming live per-script quota or tenant runtime budget;
 - pin and rollout convergence reads use `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS` to set `isProjectionStale` / `projectionStale` rather than relying on hardcoded local thresholds;

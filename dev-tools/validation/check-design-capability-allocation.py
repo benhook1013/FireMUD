@@ -405,21 +405,6 @@ ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/adr-0087-isolated-subject-rate-limits-with-explicit-loss-semantics.md": adr_allocation(
         "SF-2", "Accepted", "PO-2", "AA-1", "PO-4"
     ),
-    "design/architecture/decisions/adr-0088-static-and-incremental-script-output-bounds.md": adr_allocation(
-        "AR-1", "Accepted", "AS-1", "GR-4"
-    ),
-    "design/architecture/decisions/adr-0089-durable-script-usage-charges-and-fenced-capacity-leases.md": adr_allocation(
-        "AS-1", "Accepted", "AR-2", "PO-4"
-    ),
-    "design/architecture/decisions/adr-0090-recorded-script-input-manifests-for-reproducible-evaluation.md": adr_allocation(
-        "AS-1", "Accepted", "SF-2", "GR-1", "SF-1", "AR-1"
-    ),
-    "design/architecture/decisions/adr-0091-class-specific-script-timer-clocks-and-recovery.md": adr_allocation(
-        "AS-1", "Accepted", "GR-1", "SF-2", "SF-1", "AR-3"
-    ),
-    "design/architecture/decisions/adr-0092-grpc-status-and-typed-domain-outcome-boundary.md": adr_allocation(
-        "SF-1", "Accepted", "GR-1", "PO-4"
-    ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
     "README.md": "Service overview",

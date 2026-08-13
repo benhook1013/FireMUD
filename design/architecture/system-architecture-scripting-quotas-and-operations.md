@@ -14,9 +14,8 @@ Routing note:
 
 The target runtime applies deterministic, layered limits without allowing test traffic or one scope to consume another scope's live capacity:
 
-- Event-scope admission does not charge live per-script quota or execution capacity. After handler resolution, Automation creates one durable handler-charge record keyed by the full applicable Trigger Identity (including each `onLoad` handler) and records an exactly-once admission marker.
-- Execution capacity is a separate, fenced, reclaimable lease. A handler waiting in `queue_until_free` holds no capacity; the execution-start marker is recorded exactly once only when a valid lease is acquired. Duplicate deliveries and recovery attempts reuse the existing charge record and markers.
-- Admission and execution-start charges are not refunded after their markers commit. Lease reclamation returns capacity for reuse but never reverses a charge or creates a second execution-start marker.
+- Event-scope admission does not charge live per-script quota or tenant execution budget.
+- Each resolved handler consumes one per-script quota slot at handler admission; live tenant and cluster execution budgets charge when execution capacity is reserved, with no refund after charging.
 - `onLoad` readiness uses a separate bounded `PUBLISH_READINESS` capacity class and is excluded from ordinary live quota and budget windows.
 - Dry-run/test execution uses isolated budgets and capacity and is represented only by dry-run/test metric families, never live work-item outcome metrics.
 - Output ceilings bound emitted commands and serialized work before durable live work is persisted or handed off.
@@ -27,8 +26,8 @@ The detailed charge points, resource levels, and operator procedures below refin
 
 Current Automation quota and budget behavior is consolidated here. The policy sections below define the target contract and do not repeat these implementation details.
 
-- **Live per-script quota:** Current ingress acquires `ScriptQuotaService` for `STANDARD_RUNTIME` resolved handlers before durable `script_work_items` materialization. A denial writes a handler-scoped audit row with `finalStage=ADMISSION`, `finalOutcome=quota_denied`, and `finalReason=script_quota_denied`; no outbox work item is created. The target durable full-Trigger-Identity charge record and exactly-once admission marker are not yet implemented.
-- **Live tenant budget/capacity:** Current execution persists `priorityTag` and `quotaClass` on durable work items and applies `ScriptTenantBudgetService` to non-dry-run `STANDARD_RUNTIME` work before DSL evaluation. A denial terminally cancels the work item with `finalStage=ADMISSION`, `finalOutcome=tenant_budget_exceeded`, and `finalReason=tenant_budget_exceeded`. The target separately fenced/reclaimable execution-capacity lease and exactly-once execution-start marker remain implementation gaps.
+- **Live per-script quota:** Current ingress acquires `ScriptQuotaService` for `STANDARD_RUNTIME` resolved handlers before durable `script_work_items` materialization. A denial writes a handler-scoped audit row with `finalStage=ADMISSION`, `finalOutcome=quota_denied`, and `finalReason=script_quota_denied`; no outbox work item is created.
+- **Live tenant budget:** Current execution persists `priorityTag` and `quotaClass` on durable work items and applies `ScriptTenantBudgetService` to non-dry-run `STANDARD_RUNTIME` work before DSL evaluation. A denial terminally cancels the work item with `finalStage=ADMISSION`, `finalOutcome=tenant_budget_exceeded`, and `finalReason=tenant_budget_exceeded`.
 - **Dry-run/test limits:** Current ingress enforces per-minute tenant and principal dry-run ceilings before handler resolution, returning event-scope `TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED` with `admissionReason=dry_run_budget_exceeded` without creating handler work. Materialized dry-runs skip live per-script and tenant-budget acquisition, then reserve isolated tenant/cluster capacity through `ScriptDryRunCapacityService`. A capacity denial is handler-scoped with `finalStage=ADMISSION`, `finalOutcome=quota_denied`, and `finalReason=dry_run_capacity_exhausted`; it does not increment the live per-script quota family and is visible through the Table 4 test-capacity consequence plus the trigger outcome/audit.
 - **Publish/readiness capacity:** Current execution reserves dedicated tenant and cluster readiness capacity for non-dry-run `PUBLISH_READINESS` work before DSL evaluation. Exhaustion cancels the work item with `finalStage=ADMISSION`, `finalOutcome=quota_denied`, and `finalReason=onload_budget_exceeded`; it is not charged to live per-script quota or tenant runtime budget.
 
@@ -146,7 +145,7 @@ Per-script scheduling knobs control how often scripts are allowed to run and how
 - **`concurrencyPolicy` and `maxConcurrent`** – govern what happens when new triggers arrive while runs are already in progress:
   - `concurrencyPolicy=queue_until_free` keeps a short queue of pending triggers up to configured limits and runs them once existing executions complete.
   - `concurrencyPolicy=drop_new` skips new triggers while the script is already running, favoring bounded concurrency over backlog growth.
-  - Queued triggers retain their durable admission charge but hold no execution capacity. An event-scope limiter may reject an incoming trigger before handler resolution, but that is not a per-script quota charge and uses event-scope ingress audit and drop metrics. After handler resolution, `ScriptQuotaService` records one charge for each resolved handler and may deny it with `script_event_audit.finalStage=ADMISSION`, `finalOutcome=quota_denied`, and the handler outcome metric rather than the dropped-ingress metric.
+  - Queued triggers still count toward the resolved script's quota window; an event-scope limiter may reject an incoming trigger before handler resolution, but that is not a per-script quota charge and uses event-scope ingress audit and drop metrics. After handler resolution, `ScriptQuotaService` charges each resolved handler and may deny it with `script_event_audit.finalStage=ADMISSION`, `finalOutcome=quota_denied`, and the handler outcome metric rather than the dropped-ingress metric.
 - **`priorityTag`** – assigns a priority tier (`high`, `normal`, `background`) that interacts with per-tenant budgets and cluster ceilings. When capacity is tight, the scheduler continues to admit `high`-priority work preferentially and defers or drops lower-priority triggers according to budget and quota rules.
 
 Timer and interval limits are evaluated against the canonical runtime scope tuple `<tenantId, gameInstanceId, regionId>`. A per-tenant or per-game-instance timer limit must not substitute for that tuple and accidentally couple unrelated instances or regions; any broader aggregate ceiling is an additional explicitly named safety limit. `playableStateScope` remains part of trigger identity and handler/work fencing, but it does not replace the scheduler's runtime scope tuple for these timer-capacity limits.
@@ -174,20 +173,31 @@ This separation is required so patch publication remains predictable under load 
 
 ### Budget Accounting Rules
 
-Quota and budget policy must be applied at fixed durable charge points so operators can predict what a burst costs and retries cannot distort usage. This section owns the lifecycle; runtime and sandbox documents retain only their local consequences:
+Quota and budget policy must be applied at fixed charge points so operators can predict what a burst will cost and retries cannot distort usage:
 
-- **One handler charge record:** For every resolved handler, including `onLoad`, Automation creates or reuses one durable record keyed by the full applicable Trigger Identity. The record has separate exactly-once `admissionCharged` and `executionStarted` markers. A duplicate or recovery attempt with the same identity reads and reuses those markers rather than charging again.
-- **Admission marker:** The ordinary live per-script quota is charged once when handler admission is accepted. Event-scope ingress acceptance alone does not charge it. A handler may enter a bounded queue after this marker, but queued work holds no tenant or cluster execution capacity.
-- **Execution-start marker and lease:** Before DSL evaluation, the worker acquires a separately fenced, reclaimable tenant/cluster capacity lease and records the execution-start marker exactly once. An expired or fenced lease may be reclaimed and reacquired without changing the admission marker or creating another charge. A lease is not a quota refund.
-- **No refund:** Output-budget failures, sandbox errors, rollback fencing, and downstream infrastructure failures do not reverse committed markers. They remain visible as charged non-success outcomes.
-- **`PUBLISH_READINESS`:** `onLoad` uses an isolated readiness charge/lease class. It never consumes ordinary live per-script quota or live tenant/cluster execution capacity and must not be inferred from the event name at execution time; `quotaClass` is persisted on durable work.
+- **Per-script quota windows**
+  - Charged once per resolved handler-scoped Trigger Identity at handler admission time.
+  - Handlers admitted into a bounded `queue_until_free` backlog consume quota immediately and are not re-charged when they later start.
+  - Duplicate deliveries of the same handler-scoped Trigger Identity must not consume additional quota.
+- **Per-tenant tier budgets**
+  - Charged when a handler-scoped run is reserved onto live sandbox execution capacity.
+  - Event-scope ingress acceptance alone does not charge tenant runtime budget.
+  - Mixed fan-out therefore consumes tenant runtime budget only for handlers that actually leave admission and reserve execution capacity.
+- **Cluster-wide execution ceilings**
+  - Applied at the same execution-reservation point as tenant runtime budgets.
+  - Admission rejections due purely to cluster exhaustion must remain `ADMISSION` outcomes and must not burn sandbox CPU/memory budget.
+- **Output-budget and post-admission failures**
+  - Output-budget failures, sandbox errors, rollback-epoch cancellations after admission, and downstream infrastructure failures do not refund quota or execution budget that has already been charged.
+  - These runs still consumed or reserved scarce runtime capacity and must remain visible as charged non-success outcomes.
+- **`onLoad`**
+  - Uses its own publish-time capacity class and is excluded from the live per-script quota window and tenant runtime budget accounting above.
 
 Concrete mixed fan-out accounting example:
 
 - One inbound `TriggerScriptEvent` for `onEnterRegion` is admitted at event scope and resolves to three handler-scoped Trigger Identities: `S1`, `S2`, and `S3`.
 - `S1` is rejected immediately with `finalStage=ADMISSION`, `finalOutcome=quota_denied`. It consumes no tenant runtime execution budget and no sandbox CPU/memory budget.
-- `S2` is accepted under `concurrencyPolicy=queue_until_free`. Its handler charge record records the admission marker, but it holds no execution capacity until a fenced lease is acquired and the execution-start marker is committed.
-- `S3` is admitted directly to execution. Its handler charge record records the admission marker and then the exactly-once execution-start marker under a valid capacity lease.
+- `S2` is accepted under `concurrencyPolicy=queue_until_free`. It consumes one per-script quota slot immediately when queued, but it does not consume tenant runtime execution budget until it later reserves sandbox capacity and starts running.
+- `S3` is admitted directly to execution. It consumes one per-script quota slot at handler admission and consumes tenant runtime execution budget when it reserves sandbox capacity.
 - If `S2` later reaches execution and fails with `sandbox_error`, or `S3` later fails with `work_item_size_exceeded`, the already-charged quota/execution budget is not refunded.
 
 ---
