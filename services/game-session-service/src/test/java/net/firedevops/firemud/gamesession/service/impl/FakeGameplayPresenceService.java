@@ -111,8 +111,7 @@ public final class FakeGameplayPresenceService implements GameplayPresenceServic
       List<GameplayPresence> matches =
           presences.values().stream()
               .filter(
-                  presence ->
-                      presence.tenantId() == tenantId && presence.accountId() == accountId)
+                  presence -> presence.tenantId() == tenantId && presence.accountId() == accountId)
               .sorted(ordering())
               .toList();
       if (!matches.isEmpty()) {
