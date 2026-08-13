@@ -67,6 +67,7 @@ Required semantics for those fields:
 - `handlerInputManifestRequirements`
   - A versioned descriptor of the handler-scoped manifest requirements consumed for this entry. Each owner-specific requirement names its owning service, schema/version, scope, selector-or-token kind when applicable, causal-floor fields, and bounded value and capture requirements.
   - Ingress and handler-manifest construction consume this field from the same canonical registry entry; they must not infer a parallel manifest contract from `snapshotAuthority`, payload fields, or local defaults.
+  - The exact consistency matrix for this descriptor and `snapshotAuthority` is normative in [ADR 0090: Snapshot authority and handler-input-manifest consistency](./decisions/adr-0090-recorded-script-input-manifests-for-reproducible-evaluation.md#snapshot-authority-and-handler-input-manifest-consistency). Registry schema validation applies that matrix: disagreement between the enum and descriptor makes the registry definition invalid; neither field silently overrides the other.
 - `consistencyClass`
   - The required read consistency for authoritative evaluation, such as `AUTHORITATIVE_REGION_TIMELINE`, `AUTHORITATIVE_INSTANCE_SNAPSHOT`, or `BEST_EFFORT`.
 - `quotaClass`
@@ -234,9 +235,11 @@ Automation & Scripting ingress must enforce the registry before handler resoluti
 
 - reject unknown `(eventType, eventSchemaVersion)`
 - reject unauthorized producer identity
-- reject missing or malformed registry-required owner input selectors/manifest seed fields
+- reject missing or forbidden registry-required owner input selectors/manifest seed fields according to the [ADR 0090 consistency matrix](./decisions/adr-0090-recorded-script-input-manifests-for-reproducible-evaluation.md#snapshot-authority-and-handler-input-manifest-consistency)
 - reject bindings that target scopes the registry does not allow
 - reject dry-run requests for events that do not support dry-run mode
+
+The ingress validator and handler-manifest builder must consume the same normalized rule from the canonical registry entry. Each rejects missing or forbidden seed material at the earliest applicable stage and supplies no local default; a handler manifest that does not satisfy the selected matrix row cannot proceed to evaluation.
 
 These are event-scope admission decisions, not handler-scope outcomes.
 

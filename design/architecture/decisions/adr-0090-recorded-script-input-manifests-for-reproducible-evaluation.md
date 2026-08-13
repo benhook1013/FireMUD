@@ -45,6 +45,18 @@ Pseudo-random behavior uses the canonical versioned seed derivation over the rec
 
 The recorded causal floor and owner-versioned results provide reproducible inputs, not cross-owner atomicity. Any command whose correctness depends on an aggregate invariant is submitted as a typed runtime command to the owning runtime or domain authority. That owner applies its transaction, exact preconditions, fencing, and idempotency contract when executing the command. Cross-owner atomic invariants remain with the applicable typed-command owner or durable workflow and are not inferred from the script input manifest.
 
+### Snapshot authority and handler-input-manifest consistency
+
+The event registry's `snapshotAuthority` and `handlerInputManifestRequirements` are one normalized contract. Their relationship is validated by this matrix; a registry definition whose enum and descriptor disagree is invalid, and neither field silently overrides the other.
+
+| `snapshotAuthority` | Required handler-input-manifest seed material | Forbidden interpretation |
+| --- | --- | --- |
+| `PRODUCER_SUPPLIED_TOKEN` | Named producer-owned token or selector evidence, together with its owner, schema/version, scope, causal-floor fields, and bounded value and capture requirements. | Treating a missing or different producer token/selector as an Automation-captured snapshot or as a non-authoritative trigger fact. |
+| `AUTOMATION_CAPTURED_AT_ADMISSION` | The selector/capture descriptor and a durable, owner-versioned, bounded result captured at admission. | Treating a producer-supplied token as the authority; a producer token may not substitute for the admission capture and result. |
+| `NON_AUTHORITATIVE_NO_SNAPSHOT` | Non-authoritative bounded trigger facts plus the normal deterministic artifact and seed inputs. | Requiring or treating any authoritative gameplay snapshot/read, owner-versioned snapshot token, or equivalent snapshot evidence as part of this authority mode. |
+
+Ingress and handler-manifest construction consume the same normalized registry rule. They reject missing or forbidden seed material at the earliest applicable stage and never supply a local default. The registry therefore cannot admit an event whose enum and descriptor disagree, and a handler cannot proceed with a manifest that violates the selected row.
+
 ## Consequences
 
 - Evaluation retries cannot silently observe newer gameplay state or artifact definitions for the same Trigger Identity.

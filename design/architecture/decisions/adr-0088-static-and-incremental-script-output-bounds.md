@@ -57,6 +57,14 @@ The compiled artifact carries exactly two subordinate cost/cap digests:
 
 Both normalized payloads and their exact digests are embedded in and covered by the outer immutable compiled-artifact digest. Game Design and Automation use one shared canonical encoder and golden vectors. Automation recomputes and validates both embedded payload/digest pairs and never resolves newer private registry or cap values for an already-pinned artifact.
 
+### Publish and Readiness Admissibility
+
+The pinned cost contract is an admissibility gate, not an oversized-item bypass. For every live handler, the immutable pinned estimated-millisecond cost is a positive, finite, schema-bounded integer and is no greater than the scheduler budget ceiling pinned for that artifact. An artifact or handler that cannot fit one empty scheduler tick window is rejected before the patch reaches `READY` or the artifact is pinned; it must not be admitted and deferred indefinitely.
+
+Command counts, per-entity fan-out/data bounds, and serialized-byte bounds are finite, schema-bounded non-negative integers. Zero is valid independently for each of those fields when it truthfully represents no contribution in that field; a zero in one field does not require zero in the others. Missing, negative, non-integral, non-finite, or above-schema/platform-ceiling values are rejected before handler admission. Runtime revalidates the relation between each pinned estimate and the pinned scheduler ceiling before execution.
+
+Every accumulation, multiplication, sum of costs, and ordered-prefix cumulative estimate uses checked arithmetic. Overflow is invalid and fails closed; it never wraps around to make admission appear to fit. An operator or configuration reduction of the scheduler ceiling cannot be activated for a `READY` or already-pinned artifact whose handler estimate exceeds the reduced ceiling. The reduction must be rejected or preflighted until the artifact is republished or reconfigured under a compatible ceiling, avoiding silent indefinite deferral.
+
 Runtime meters output incrementally. Before constructing, allocating, or serializing each next output element beyond its bounded contribution, the meter charges the prospective command count, target entity, serialized bytes, and declared component cost. If that charge would exceed any ceiling or data-dependent cap, evaluation stops before the oversized element or collection is constructed.
 
 For one handler run, generated output is persisted atomically: either the complete metered output set is durably accepted or none of its generated commands are persisted. An output-budget violation cannot leave earlier commands from that handler durably handed off while later commands are rejected. The handler audit and durable work-item outcome remain available as failure evidence.

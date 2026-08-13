@@ -144,7 +144,7 @@ As with `onEnterRegion`, reload failures or version issues are surfaced via spec
 
 ### Timer Reliability Notes
 
-Recurring timer-driven handlers such as `onInterval` produce at most one logical durable firing plus zero or more handler work items per Trigger Identity:
+Recurring timer-driven handlers such as `onInterval` produce at most one event-scoped durable firing per due candidate; that firing may fan out to zero or more resolved handler work items, each keyed by its own full Trigger Identity:
 
 - If an `onInterval` candidate is skipped because of cadence, reload, version, or event-policy gates, that candidate is atomically consumed by due-point advancement or quarantine/tombstoning and is not automatically replayed later, although subsequent firings based on the cadence may still occur. A handler quota denial after firing admission is recorded under the handler Trigger Identity and does not create work, but it is not an event-scope candidate skip.
 - **Target-state recovery:** Before `EVALUATED_COMMITTED`, a failed physical evaluation attempt may retry under the same full applicable Trigger Identity and must converge on the same work-item and child identities. After that descriptor-commit boundary, recovery replays the durable descriptors and does not re-enter the DSL; independently idempotent downstream operations may still retry. See [Implementation Status](#implementation-status) for the current live descriptor-recovery boundary.

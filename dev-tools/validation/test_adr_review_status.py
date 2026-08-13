@@ -1157,6 +1157,23 @@ class AdrReviewStatusTests(unittest.TestCase):
             reviews = checked_reviews(self.validator, root)
             self.assertEqual({"TEST-01"}, {review.key for review in reviews[12]})
 
+    def test_checked_revised_row_accepts_strict_no_adr_contract(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            write(
+                root / "design/architecture/system-architecture-transactions.md",
+                "# Transactions\n",
+            )
+            append_provenance_row(
+                root,
+                "- [x] `TEST-NO-ADR-REVISED` — `revised` on 2026-07-27; "
+                "[canonical contract](../../architecture/"
+                "system-architecture-transactions.md#saga-vs-temporal-boundary); "
+                "no ADR required",
+            )
+            reviews = checked_reviews(self.validator, root)
+            self.assertEqual({"TEST-01"}, {review.key for review in reviews[12]})
+
     def test_checked_no_adr_row_requires_canonical_contract_label(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
