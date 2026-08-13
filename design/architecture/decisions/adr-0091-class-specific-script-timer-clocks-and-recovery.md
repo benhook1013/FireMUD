@@ -40,7 +40,9 @@ Every script timer declares both its clock and recovery class.
 
 `onInterval` and other gameplay-cadence schedules use tick/game time by default. Their cadence advances with the authoritative committed tick timeline and freezes or stretches when that timeline does. An explicitly real-time script timer may use a wall-clock deadline when its product semantics require elapsed real time, but reaching the deadline only makes work eligible; the resulting gameplay work enters at the next eligible canonical tick and never creates a parallel off-tick mutation path.
 
-Best-effort recurring schedules declare exactly one missed-firing policy:
+The three recovery classes are explicit in this decision. The `Correctness-bearing one-shot` class preserves durable intent and terminalization for a consequence that must occur once. The best-effort recurring policy below is the `Durable recurring` recovery class. `Advisory or cosmetic` is distinct: missed occurrences may be dropped, the schedule resumes only at a future cadence boundary, and it does not consume `COALESCE_ONE` recovery capacity; it still requires durable schedule/cadence identity and observable bounded skip/drop proof.
+
+Durable recurring schedules declare exactly one missed-firing policy:
 
 - `SKIP_MISSED` emits no synthetic firing for missed boundaries.
 - `COALESCE_ONE` may emit at most one synthetic firing for one logical schedule in a durable resume window.
@@ -51,7 +53,7 @@ Preserved schedules across reload, rollback, or an allowed owner-version transit
 
 The lack of an eventual-execution guarantee applies to each best-effort recurring firing. It does not mean that the recurring schedule disappears: after recovery, future eligible boundaries continue under the preserved cadence unless the schedule is removed, disabled, fenced, or terminally invalid.
 
-A gameplay consequence that must occur once cannot be modeled as a skippable generic script interval. It uses the durable correctness-bearing one-shot timer path, with stable identity, authoritative durable due state, idempotent dispatch, and an explicit applied, canceled, superseded, expired, or feature-defined terminal outcome under the class-specific timer contract in ADR 0072.
+A gameplay consequence that must occur once cannot be modeled as a skippable generic script interval. The `Correctness-bearing one-shot` class uses the durable timer path, with stable identity, authoritative durable due state, idempotent dispatch, and an explicit applied, canceled, superseded, expired, or feature-defined terminal outcome under the class-specific timer contract in ADR 0072.
 
 ## Consequences
 
@@ -77,7 +79,7 @@ Rejected because some one-shot consequences are correctness-bearing and require 
 
 ## Implementation and Proof Obligations
 
-Proof must cover explicit clock and recovery-class declaration; tick-time pause, cadence change, and resume; wall-clock eligibility entering only through a canonical tick; `SKIP_MISSED`; one `COALESCE_ONE` firing per schedule and durable resume window across repeated observations and failover; deterministic fair global capping; exact-boundary modulo resume; version and runtime-scope changes; future recurring firings after a skipped occurrence; and durable one-shot terminalization.
+Proof must cover explicit clock and recovery-class declaration; tick-time pause, cadence change, and resume; wall-clock eligibility entering only through a canonical tick; `SKIP_MISSED`; one `COALESCE_ONE` firing per schedule and durable resume window across repeated observations and failover; deterministic fair global capping; exact-boundary modulo resume; advisory/cosmetic future-boundary resume with observable bounded skip/drop evidence; version and runtime-scope changes; future recurring firings after a skipped occurrence; and durable one-shot terminalization.
 
 The current implementation does not expose the declared per-schedule missed-firing policy, can admit multiple catch-up firings for one schedule across its selection passes, and advances strictly beyond an exact observed boundary rather than proving the accepted resume rule. The complete leader-failover, reload/rollback, wall-clock, and correctness-one-shot proof is not claimed by this decision.
 
