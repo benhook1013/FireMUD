@@ -9,7 +9,7 @@ This ledger maps canonical product and architecture sources to the stable capabi
 - Source-set allocation and the declared coverage summary are mechanically checked by [`check-design-capability-allocation.py`](../../../dev-tools/validation/check-design-capability-allocation.py); the complete gate contract is listed in the [design-alignment workstream](./README.md#automated-gates).
 - Historical focused validation run on 2026-07-30 is retained as historical evidence: `python3 dev-tools/validation/check-design-capability-allocation.py` returned `design capability allocation passed: 225 sources (222 allocated, 3 explicit exemptions)`.
 - Previous canonical validator evidence dated 2026-08-13: `design capability allocation passed: 267 sources (264 allocated, 3 explicit exemptions)`.
-- Current canonical validator evidence dated 2026-08-14: `design capability allocation passed: 277 sources (274 allocated, 3 explicit exemptions)`.
+- Current canonical validator evidence dated 2026-08-14 Pacific/Auckland (2026-08-13 UTC): `design capability allocation passed: 277 sources (274 allocated, 3 explicit exemptions)`.
 - Markdown/link validation on 2026-08-13: `linkCheck` checked 4,461 links (4,423 OK, 0 errors, 38 excluded); `lintMarkdown` checked 444 files with 0 issues.
 - Runtime proof is not applicable to this documentation-only allocation change.
 - Implementation and verification evidence do not belong in this allocation ledger. The initial cross-capability baseline is preserved in the frozen [capability implementation reconciliation snapshot](./capability-implementation-reconciliation.md); live status and focused-proof anchors are maintained in the permanent implementation trackers.
