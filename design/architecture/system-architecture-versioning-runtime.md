@@ -53,13 +53,13 @@ Game Design owns publication coordination, release descriptors, final release at
     {
       "serviceName": "WORLD",
       "appliedCommitId": "c-9001",
-      "contentDigest": "sha256:worlddigest",
+      "contentDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
       "digestSchemaVersion": 3
     },
     {
       "serviceName": "ENTITY",
       "appliedCommitId": "c-9001",
-      "contentDigest": "sha256:entitydigest",
+      "contentDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
       "digestSchemaVersion": 2
     }
   ],
@@ -67,21 +67,21 @@ Game Design owns publication coordination, release descriptors, final release at
     {
       "usageKey": "world.navmesh",
       "artifactKind": "NAVMESH",
-      "immutableObjectKey": "sha256/na/navmesh42",
-      "contentDigest": "sha256:navmesh42",
+      "immutableObjectKey": "artifacts/sha256/33/3333333333333333333333333333333333333333333333333333333333333333",
+      "contentDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
       "contentType": "application/vnd.firemud.navmesh+binary",
       "artifactSchemaVersion": 1
     },
     {
       "usageKey": "world.pathGraph",
       "artifactKind": "PATH_GRAPH",
-      "immutableObjectKey": "sha256/pa/pathgraph42",
-      "contentDigest": "sha256:pathgraph42",
+      "immutableObjectKey": "artifacts/sha256/44/4444444444444444444444444444444444444444444444444444444444444444",
+      "contentDigest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
       "contentType": "application/vnd.firemud.path-graph+binary",
       "artifactSchemaVersion": 1
     }
   ],
-  "manifestHash": "sha256:manifest42",
+  "manifestHash": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
   "manifestSchemaVersion": 1,
   "requiredManifestAssetKeys": ["world.navmesh", "world.pathGraph"],
   "generationConfigRevision": "genrev-42a1",
@@ -104,12 +104,12 @@ Illustrative attestation payload for a release with no derived world artifacts:
     {
       "serviceName": "WORLD",
       "appliedCommitId": "c-9002",
-      "contentDigest": "sha256:worlddigest43",
+      "contentDigest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
       "digestSchemaVersion": 3
     }
   ],
   "artifactDigests": [],
-  "manifestHash": "sha256:manifest43",
+  "manifestHash": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
   "manifestSchemaVersion": 1,
   "requiredManifestAssetKeys": [],
   "generationConfigRevision": "genrev-43b2",
@@ -152,7 +152,7 @@ Administrative tooling (for example via the Game Design Service or Logging & Adm
 - Prevent retiring a version while any **game templates** still reference it as their underlying world/entity/script version; designers must migrate those templates to a successor version before retirement.
 - Ensure the `game_manifest` table and any launch manifests are updated when a version is retired so operators cannot accidentally start new instances against it.
 
-Runbooks that remove published assets from the object store must validate that the corresponding version has already reached the **retired** state. Asset purge must be initiated through CAS-guarded control-plane operations (`CanDeleteVersionAssets`, `BeginPurgeVersionAssets`, and `FinalizePurgeVersionAssets`) so eligibility re-check and artifact-state transitions are atomic. These Game Design APIs re-check launch, template, history, mapping, and shared-object reachability and retain terminal lifecycle metadata; operators must not run purge as a separate check plus manual delete sequence.
+Runbooks that remove published assets from the object store must validate that the corresponding version has already reached the **retired** state. Asset purge must be initiated through CAS-guarded control-plane operations: `CanDeleteVersionAssets(tenantId, versionId)` is a read-only eligibility oracle and does not tombstone an artifact. After eligibility is confirmed and retry is explicitly abandoned for a Failed artifact, the runbook must call `TombstoneVersionAssets(tenantId, versionId, expectedArtifactStateEpoch, tombstoneWorkflowId)` to perform the CAS-guarded `FAILED -> TOMBSTONED` transition, then reload the artifact epoch before calling `BeginPurgeVersionAssets(tenantId, versionId, expectedArtifactStateEpoch)`, which re-checks eligibility and transitions `TOMBSTONED -> PURGE_IN_PROGRESS`; `FinalizePurgeVersionAssets` records retained terminal metadata after deletion. `CanDeleteVersionAssets` and `BeginPurgeVersionAssets` re-check launch, template, history, mapping, and shared-object reachability; operators must not run purge as a separate check plus manual delete sequence.
 
 ### Version State Ownership and CAS Authority
 
@@ -284,16 +284,16 @@ Compact normative proof fixture:
 {
   "bundleArtifactDigest": {
     "usageKey": "world.navmesh",
-    "immutableObjectKey": "sha256/na/navmesh42",
-    "contentDigest": "sha256:navmesh42"
+    "immutableObjectKey": "artifacts/sha256/33/3333333333333333333333333333333333333333333333333333333333333333",
+    "contentDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
   },
   "manifestEntry": {
     "usageKey": "world.navmesh",
-    "immutableObjectKey": "sha256/na/navmesh42",
-    "contentDigest": "sha256:navmesh42"
+    "immutableObjectKey": "artifacts/sha256/33/3333333333333333333333333333333333333333333333333333333333333333",
+    "contentDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
   },
-  "deliveredBytesDigest": "sha256:navmesh42",
-  "manifestHash": "sha256:manifest42"
+  "deliveredBytesDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "manifestHash": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
 }
 ```
 

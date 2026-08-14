@@ -58,15 +58,10 @@ Creates compact room graphs with bidirectional exits — ideal for dungeons, int
 
 > 🔗 Ideal for quest dungeons, temples, abandoned mines, etc.
 
-Procedural generators are invoked by the World Management Service, which calls its one pure generator engine using a seed, parameters, and world context. The generators return an abstract room/region graph that World Management validates and persists as either versioned **template** records or per-instance **runtime** records according to the typed ingress. Game Design owns Draft generation intent and revision orchestration but not topology persistence. Automation & Scripting must not execute generators, return topology graphs for persistence, or persist topology.
+Procedural generators are invoked by the World Management Service, which calls its one pure generator engine using a seed, parameters, and world context. The engine returns an abstract generated topology. The authenticated typed ingress remains authoritative for its namespace and target; World Management validates the output and either persists bounded normalized rows or privately stages and atomically finalizes an immutable topology artifact. Private staging is never authoritative or launchable, and a version-scoped artifact becomes launchable only through canonical publication attestation. Game Design owns Draft generation intent and revision orchestration but not topology persistence. Automation & Scripting must not execute generators, return generated topology for persistence, or persist topology.
 
-- When invoked from Game Design workflows for **design templates**, results are
-  persisted as template rows keyed by `(tenantId, versionId)` and become part of
-  the published topology for that version.
-- When invoked from the world-lifecycle workflow or tick-driven commands for **runtime
-  instances**, results are persisted as instance rows keyed by
-  `(tenantId, gameInstanceId)` and refer back to the chosen `versionId`; template
-  rows remain unchanged.
+- When invoked from Game Design workflows for **design templates**, results are finalized as normalized template rows or an immutable topology artifact keyed by `(tenantId, versionId)` and become part of the published topology for that version only after canonical publication attestation.
+- When invoked from the world-lifecycle workflow or tick-driven commands for **runtime instances**, results are finalized as normalized instance rows or an immutable topology artifact keyed by `(tenantId, gameInstanceId)` and refer back to the chosen `versionId`; template rows remain unchanged.
 
 Persistent instance layouts are authoritative stored topology. Restarts and disaster recovery restore those rows, retained finalized artifacts, or backups; they do not depend on indefinite re-execution of the historical generator. Generator metadata remains provenance and request-retry evidence rather than a seed-only reconstruction guarantee.
 
@@ -235,7 +230,7 @@ Physical topology representation is opaque behind World Management:
 
 - Sparse and bounded moderate graphs may use eager template, instance, and exit rows within enforced and tested limits.
 - Before large full-grid scale is claimed, generation must produce an immutable digest-attested chunk topology or equivalent bounded representation. A validated root manifest identifies the complete lattice and immutable chunks, and one short finalize selects that root atomically so readers never observe a partial grid.
-- For a published bounded `FULL_GRID`, the committed root manifest and every immutable chunk are `artifactDigests[]` entries whose usage keys are required by the published release bundle; the root names the exact committed chunk set. Private staging is excluded. Publication, activation, rollback, backup, and recovery use this same attested committed root-and-chunk set.
+- For a published bounded `FULL_GRID`, the committed root manifest is the single `artifactDigests[]` entry for the topology, and its usage key is required by the published release bundle. The immutable root contains the exact ordered chunk identities and per-chunk digests, so the root's actual-byte digest transitively attests the complete chunk set; individual chunks are not separate release-bundle entries. Private staging is excluded. Publication, activation, rollback, backup, and recovery use this same attested root and validate every chunk's bytes against it.
 - Runtime reads compose the immutable base cell with durable instance-scoped deltas for visited, occupied, changed, timed, or otherwise mutable locations. Caches and lazy materialization remain derived projections rather than authority.
 
 Loading or materializing an already committed cell is not regeneration. Recovery restores the stored topology artifact and durable runtime deltas instead of re-running an obsolete generator from seed. A world that intentionally creates previously unfixed chunks later is an unbounded or expanding generation mode and requires a separate contract; it is not the bounded fixed `FULL_GRID` mode.

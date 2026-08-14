@@ -29,16 +29,16 @@ published game assets.
       sh -c "mc alias set local http://minio:9000 MINIOADMIN MINIOADMIN && mc mb local/firemud-assets"
     ```
 
-5. Allow public reads and CORS from the gateway domain:
+5. Keep the bucket private and configure CORS for the gateway domain:
 
     ```bash
     kubectl run mc --rm -it --image=minio/mc --command -- \
       sh -c "mc alias set local http://minio:9000 MINIOADMIN MINIOADMIN && \
-             mc anonymous set download local/firemud-assets && \
+             mc anonymous set private local/firemud-assets && \
              printf '[{\"AllowedMethods\":[\"GET\"],\"AllowedOrigins\":[\"https://your-gateway-domain\"],\"AllowedHeaders\":[\"*\"]}]' > /tmp/cors.json && \
              mc cors set local/firemud-assets /tmp/cors.json"
     ```
 
- Expose the service with an Ingress or Port-forward as needed. Configure
- application services using the `ASSET_STORE_*` environment variables to point to
- this endpoint.
+Configure Game Design's authenticated S3 access with `ASSET_STORE_ENDPOINT=http://minio:9000` inside the cluster plus the bucket credentials. Do not expose the MinIO bucket as an anonymous delivery surface.
+
+Target public delivery uses a separate gateway/CDN origin recorded through target-only `ASSET_STORE_PUBLIC_BASE_URL`; that setting is not implemented in the current single-endpoint first slice. The public origin must expose only attested immutable published objects. Private staging, quarantine, `FAILED`, and `EXPORTED_UNATTESTED` objects remain inaccessible.

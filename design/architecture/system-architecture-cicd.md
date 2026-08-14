@@ -291,6 +291,8 @@ Terminology note:
 - `promotion candidate` means a staging deployment record that is eligible to produce production promotion evidence; quarantined or detached staging drills can remain valid deployment evidence without becoming promotion candidates.
 - `deployment-ref` is the canonical environment-agnostic identity for the reviewed deployment input lineage and is used by preflight, attestation, and backup-readiness artifacts. For Git-managed staging/production overlays, it is the same Git SHA recorded as `overlayCommitSha`. `deploymentEventId` is the distinct UUID for one concrete preflight/apply event, including a retry or later re-apply of the same deployment ref.
 
+The following is non-promotable pseudodata showing deployment-record field shape only; its placeholder references and example values are not promotion evidence. In real promotion evidence, `secretComplianceEvidenceRef` must resolve to an existing immutable, digest-qualified secret-compliance evidence artifact under the canonical secret-compliance owner; `secretComplianceStatus: pass` alone is insufficient.
+
 Illustrative deployment record shape:
 
 ```json
@@ -320,7 +322,7 @@ Illustrative deployment record shape:
     ]
   },
   "secretComplianceStatus": "pass",
-  "secretComplianceEvidenceRef": "design/operations/secret-compliance/staging.yaml",
+  "secretComplianceEvidenceRef": "<immutable-digest-qualified-secret-compliance-evidence-ref>",
   "smokeEvidence": [
     "design/operations/deployments/staging/smoke/<git-sha>.json"
   ]

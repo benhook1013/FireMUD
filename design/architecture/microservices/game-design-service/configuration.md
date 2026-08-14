@@ -24,9 +24,11 @@ Published assets are uploaded to an S3-compatible bucket. Configure the client w
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
-| `ASSET_STORE_ENDPOINT` | URL of the S3-compatible service | *(none)* |
+| `ASSET_STORE_ENDPOINT` | Private authenticated S3-compatible API used by Game Design reads and writes | *(none)* |
 | `ASSET_STORE_BUCKET` | Bucket used for published assets | *(none)* |
 | `ASSET_STORE_REGION` | Region name for the S3 client | `ap-southeast-2` |
 | `ASSET_STORE_ACCESS_KEY` | Access key for the bucket | *(none)* |
 | `ASSET_STORE_SECRET_KEY` | Secret key for the bucket | *(none)* |
 | `ASSET_STORE_FROZEN_SNAPSHOT_CACHE_MAX_ENTRIES` | Maximum process-local frozen export snapshots retained; a new uncached scope fails closed at capacity rather than evicting retry evidence | `256` |
+
+Target public-delivery separation reserves `ASSET_STORE_PUBLIC_BASE_URL` for the gateway/CDN base used when generating published manifest links. This setting is not implemented or bound by the current service and is therefore not a live environment variable. The current first slice uses `ASSET_STORE_ENDPOINT` for both S3 operations and generated URLs; that single-endpoint behavior is an implementation gap, not authorization to expose the private bucket or candidate namespaces.
