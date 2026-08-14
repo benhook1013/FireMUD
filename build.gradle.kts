@@ -12,7 +12,7 @@ buildscript {
     dependencies {
         // The Flyway Gradle plugin resolves database support from the buildscript classpath,
         // not from each service's runtime dependencies.
-        classpath("org.flywaydb:flyway-database-postgresql:13.2.0")
+        classpath("org.flywaydb:flyway-database-postgresql:13.3.0")
         classpath("org.postgresql:postgresql:42.7.13")
     }
 }
