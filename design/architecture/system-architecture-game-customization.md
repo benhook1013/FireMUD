@@ -72,7 +72,7 @@ Target-state content-addressed `manifest.json` example for the production `versi
 
 - A default world is available, but creators can define custom worlds entirely through the **Game Design Service**. They add rooms, items, and NPCs through the [world editing tools](./microservices/game-design-service/world-editing-tools.md) and canonical service-owned design APIs. Any package transport must validate and apply through the same versioned authoring contracts rather than becoming a filesystem or second data authority.
 - Additional design-time utilities like the [ability & action tools](./microservices/game-design-service/ability-action-tools.md) and [item & equipment balancing](./microservices/game-design-service/item-equipment-balancing.md) help tune gameplay without code changes.
-- When multiple versions are published, they are stored per tenant so multiple games can coexist on the same infrastructure. Minor fixes can be rolled out as **script-only patch versions** linked to a `baseVersionId` so worlds do not need to restart. See [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md) for details.
+- When multiple versions are published, they are stored per tenant so multiple games can coexist on the same infrastructure. Target-state **script-only patch versions** may link to a `baseVersionId` without republishing unaffected non-script assets, but every patch or plugin change creates a new complete immutable runtime tuple and requires explicit READY, compatibility, and pin rollout. It must not hot-reload a running descriptor or follow a latest patch/plugin alias. See [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md) for details.
 
 ---
 

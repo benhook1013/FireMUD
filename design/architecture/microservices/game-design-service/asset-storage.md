@@ -172,7 +172,7 @@ Illustrative `manifest.json` fragment:
       "artifactSchemaVersion": 1,
       "producerService": "world-management-service",
       "versionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
-      "url": "https://cdn.example.invalid/artifacts/sha256/8fd0c4..."
+      "url": "https://cdn.example.invalid/assets/artifacts/sha256/8fd0c4..."
     },
     "world.pathGraph": {
       "usageKey": "world.pathGraph",
@@ -183,7 +183,7 @@ Illustrative `manifest.json` fragment:
       "artifactSchemaVersion": 1,
       "producerService": "world-management-service",
       "versionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
-      "url": "https://cdn.example.invalid/artifacts/sha256/91baf2..."
+      "url": "https://cdn.example.invalid/assets/artifacts/sha256/91baf2..."
     }
   }
 }

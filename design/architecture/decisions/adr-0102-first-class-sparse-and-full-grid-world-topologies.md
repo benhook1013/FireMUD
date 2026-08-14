@@ -49,7 +49,7 @@ Topology density and movement policy are independent versioned game-design choic
 Physical representation remains opaque behind World Management and may vary by proved scale:
 
 - Sparse and bounded moderate graphs may use eagerly persisted template, instance, and exit rows within enforced and tested limits.
-- Before FireMUD claims support for large full grids, the implementation must use an immutable digest-attested chunk topology or equivalent bounded representation. One atomically selected root manifest identifies the complete logical topology and its immutable chunks. Readers must never observe a partially finalized topology.
+- Before FireMUD claims support for large full grids, the implementation must use an immutable digest-attested chunk topology or an equivalent bounded representation that provides the same immutable digest-attested complete root identity, atomic root selection with no partially visible readers, durable runtime-delta composition, backup/recovery behavior, and tested boundedness guarantees. One atomically selected root manifest identifies the complete logical topology and its immutable chunks.
 - Runtime combines the immutable base topology with durable instance-scoped deltas for visited, occupied, changed, timed, or otherwise mutable cells. Caches and lazy materialization are derived projections, not authority.
 
 Loading or materializing a cell from an already committed immutable chunk is not a new generation request. The cell's semantic topology was fixed by the original admitted generation request and release. Recovery restores the stored authoritative topology artifact and durable runtime deltas; it does not re-run an obsolete generator from seed.

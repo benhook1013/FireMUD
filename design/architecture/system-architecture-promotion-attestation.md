@@ -42,7 +42,7 @@ Required fields:
   Example: switching a player-facing service from inline JWT secret consumption to file-mounted `FIREMUD_AUTH_JWT_SECRET_PATH`, or changing the expected external asset bucket binding, is `roll-forward-only` unless the previous release is proven compatible with the new mount/binding contract.
 - `recoveryCompatibility` – the compact result defined in `system-architecture-backup-recovery-evidence-and-compliance.md`. It references the current baseline recovery record, compares baseline and candidate recovery-contract fingerprints, records changed dimensions and evaluator identity, and states whether a new drill is required. It does not duplicate the full recovery record.
 - `productionOverlayRef` – target production overlay change identifier (for example the overlay PR deployment-ref or intended overlay commit token).
-- `releaseDigestManifestRef` – required for official production releases; path to the release digest manifest that binds the release tag or deployment reference to this attestation and digest set.
+- `releaseDigestManifestRef` – required for official production releases; path to the release digest manifest at the stable production deployment-ref path (`design/operations/deployments/production/release-manifests/<deployment-ref>.json`), whose `releaseTag` field (when a tag exists) and deployment reference bind this attestation and digest set.
 
 Artifact-lineage rule:
 

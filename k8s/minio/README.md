@@ -44,7 +44,9 @@ published game assets.
    kubectl apply -f k8s/minio/service.yaml
    ```
 
-4. Create the bucket and configure its private policy and gateway CORS. The `mc` pod receives credentials from the Kubernetes Secret as environment variables; the values are never supplied as command-line arguments:
+   These manifests deploy MinIO only; they do not provision the `firemud-assets-writer` identity or its bucket-scoped policy. No trusted identity/policy provisioner is included in this repository, so the shown deployment remains incomplete and Game Design is blocked until an approved trusted bootstrap provisions that identity and policy and materializes the writer Secret. Do not use `minio-credentials` as the Game Design writer credential.
+
+4. Create the bucket and configure its private policy and gateway CORS. This is bucket/CORS bootstrap only; it does not provision the `firemud-assets-writer` identity or policy. The `mc` pod receives credentials from the Kubernetes Secret as environment variables; the values are never supplied as command-line arguments:
 
    ```bash
    if [[ -z "${GATEWAY_ORIGIN:-}" || "$GATEWAY_ORIGIN" == *"*"* || "$GATEWAY_ORIGIN" == *"?"* || "$GATEWAY_ORIGIN" == *"["* || "$GATEWAY_ORIGIN" == *"]"* ]]; then

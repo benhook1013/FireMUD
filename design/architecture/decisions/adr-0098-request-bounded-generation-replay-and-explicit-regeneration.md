@@ -43,7 +43,7 @@ A retry of the same in-flight request reuses its recorded or staged output. It m
 
 After finalize, the committed template or instance topology is authoritative. FireMUD retains generator version, model identity where applicable, configuration snapshot, schema version, seed, and output identity as provenance for audit and diagnosis. That provenance is not a promise that the historical generator binary will remain stored, executable, or capable of reconstructing the output indefinitely.
 
-An intentional regeneration or generation of a new chunk is a new revision or request. It may select the newest generator or model permitted by an explicit game or operator policy. Regeneration that replaces existing authored or generated content must use the declared scope and replacement semantics of the authoring contract; a deployment alone never regenerates accepted content.
+An intentional regeneration or generation of previously unfixed topology is a new revision or request. Chunks generated or staged under one admitted request retain that request's `generationRequestId` through finalization and do not constitute new requests. A new request may select the newest generator or model permitted by an explicit game or operator policy. Regeneration that replaces existing authored or generated content must use the declared scope and replacement semantics of the authoring contract; a deployment alone never regenerates accepted content.
 
 Recovery of persistent content uses committed topology, immutable releases or retained finalized artifacts, and backups. It does not depend on re-executing an old generator from seed and configuration. Ephemeral content may be discarded and generated again as a new request when its lifecycle permits that loss.
 

@@ -37,6 +37,7 @@ When using a self-hosted MinIO cluster as the asset store:
    - Deploy the manifests under `k8s/minio/`.
    - Create a `minio-credentials` Secret with `accessKey` and `secretKey` keys.
    - Rotate these credentials via the MinIO credentials manifest (`k8s/minio/credentials.yaml`) and follow the [Environment & Secrets Management](./infrastructure/environment-and-secrets.md#minio-credentials) guidelines when updating keys.
+   - The MinIO deployment and the bucket/CORS bootstrap below do not provision the `firemud-assets-writer` identity or its bucket-scoped policy. No trusted identity/policy provisioner is included here; the shown deployment/bootstrap is incomplete and Game Design remains blocked until an approved trusted bootstrap provisions that identity and policy and materializes its Secret. Never use `minio-credentials` as the Game Design writer credential.
 2. **Create the `firemud-assets` bucket**
 
    ```bash
@@ -80,7 +81,7 @@ When using a self-hosted MinIO cluster as the asset store:
    ```
 
 4. **Service configuration**
-   - The Game Design Service is the **sole writer** to the asset bucket and uses `ASSET_STORE_*` environment variables to export assets and manifests during publish workflows. Runtime services and clients consume published assets via CDN or gateway URLs derived from the manifest; they do not write directly to the bucket.
+   - Once the trusted bootstrap has provisioned `firemud-assets-writer`, the Game Design Service is the **sole writer** to the asset bucket and uses `ASSET_STORE_*` environment variables to export assets and manifests during publish workflows. Runtime services and clients consume published assets via CDN or gateway URLs derived from the manifest; they do not write directly to the bucket.
    - Keep the bucket private. The gateway or CDN origin uses authenticated object-store credentials and exposes only attested immutable published objects; private staging, quarantine, `FAILED`, and `EXPORTED_UNATTESTED` objects must not be publicly readable.
    - `ASSET_STORE_ENDPOINT` is the private authenticated MinIO/S3 API used by Game Design reads and writes, for example `http://minio:9000` inside the cluster. It is never the public gateway delivery URL.
    - The target split uses `ASSET_STORE_PUBLIC_BASE_URL=https://<gateway-domain>/assets` only to generate public manifest links. That setting is not implemented in the current single-endpoint first slice; operators must not compensate by granting anonymous bucket-wide access. Any future public origin must expose only attested immutable published objects.
