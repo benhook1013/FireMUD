@@ -17,7 +17,7 @@ published game assets.
 
    For shared or production-like environments, generate unique credentials in the approved secret manager and materialize them as the `minio-credentials` Kubernetes Secret. Generate a separate bucket-scoped, least-privileged `firemud-assets-writer` Secret for Game Design. Do not put real values in manifests, shell history, or process arguments. The MinIO Deployment and Game Design configuration must consume these values through Secret-backed environment/configuration references.
 
-   A trusted bootstrap using `minio-credentials` must create the generated service identity and bucket-scoped policy required by Game Design. The policy may permit only `GetObject`, `PutObject`, `ListBucket`, and `DeleteObject` on `firemud-assets`; it must deny admin operations and access to other buckets. The bootstrap must materialize `firemud-assets-writer` through the approved secret mechanism without credentials in the repository or shell history. Repository automation for this provisioner is currently absent, so shared and production-like deployment is blocked until it exists.
+   A trusted bootstrap using `minio-credentials` must create the generated service identity and bucket-scoped policy required by Game Design. The policy may permit only `GetObject`, `PutObject`, `ListBucket`, and `DeleteObject` on `firemud-assets`; it must deny admin operations and access to other buckets. This is least-privileged at bucket/API scope, not lifecycle-state authority: `PutObject` supports publication and exact-bytes repair, while `DeleteObject` is usable only behind the approved Game Design purge workflow. These credentials are not for direct operator use. The bootstrap must materialize `firemud-assets-writer` through the approved secret mechanism without credentials in the repository or shell history. Repository automation for this provisioner is currently absent, so shared and production-like deployment is blocked until it exists.
 
    The MinIO Deployment already injects `minio-credentials` through `secretKeyRef`. A Game Design Deployment should use the writer Secret in the same way:
 
@@ -47,9 +47,18 @@ published game assets.
 4. Create the bucket and configure its private policy and gateway CORS. The `mc` pod receives credentials from the Kubernetes Secret as environment variables; the values are never supplied as command-line arguments:
 
    ```bash
+   if [[ -z "${GATEWAY_ORIGIN:-}" || "$GATEWAY_ORIGIN" == *"*"* || "$GATEWAY_ORIGIN" == *"?"* || "$GATEWAY_ORIGIN" == *"["* || "$GATEWAY_ORIGIN" == *"]"* ]]; then
+     echo "GATEWAY_ORIGIN must be set to a specific, non-wildcard origin" >&2
+     exit 1
+   fi
+   if [[ ! "$GATEWAY_ORIGIN" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ && ! "$GATEWAY_ORIGIN" =~ ^http://localhost:[0-9]+$ ]]; then
+     echo "GATEWAY_ORIGIN must use https, except for a local localhost origin" >&2
+     exit 1
+   fi
+
    kubectl run mc --rm -it --restart=Never \
      --image=minio/mc:RELEASE.2024-05-09T17-04-24Z \
-     --overrides='{"spec":{"containers":[{"name":"mc","env":[{"name":"MINIO_ACCESS_KEY","valueFrom":{"secretKeyRef":{"name":"minio-credentials","key":"accessKey"}}},{"name":"MINIO_SECRET_KEY","valueFrom":{"secretKeyRef":{"name":"minio-credentials","key":"secretKey"}}}]}]}}' \
+     --overrides="{\"spec\":{\"containers\":[{\"name\":\"mc\",\"env\":[{\"name\":\"MINIO_ACCESS_KEY\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"minio-credentials\",\"key\":\"accessKey\"}}},{\"name\":\"MINIO_SECRET_KEY\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"minio-credentials\",\"key\":\"secretKey\"}}},{\"name\":\"GATEWAY_ORIGIN\",\"value\":\"${GATEWAY_ORIGIN}\"}]}]}}" \
      --command -- sh -c '
        export MC_HOST_local="http://${MINIO_ACCESS_KEY}:${MINIO_SECRET_KEY}@minio:9000" &&
        mc mb --ignore-existing local/firemud-assets &&
@@ -57,7 +66,7 @@ published game assets.
        printf "%s\\n" \
          "<CORSConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">" \
          "  <CORSRule>" \
-         "    <AllowedOrigin>https://your-gateway-domain</AllowedOrigin>" \
+         "    <AllowedOrigin>${GATEWAY_ORIGIN}</AllowedOrigin>" \
          "    <AllowedMethod>GET</AllowedMethod>" \
          "    <AllowedHeader>*</AllowedHeader>" \
          "  </CORSRule>" \
