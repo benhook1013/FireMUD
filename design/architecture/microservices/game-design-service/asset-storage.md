@@ -2,13 +2,14 @@
 
 Game assets are published through a Game Design-owned lifecycle. The target contract builds and verifies a private candidate, then publishes immutable content-addressed manifest entries that bind stable asset roles to mandatory actual-byte digests, content type/schema, and delivery locations. A manifest is produced for every published version, even if no assets are present, and its recorded delivery location is only a runtime retrieval surface, not release authority. The Game Design Service remains the control-plane authority and is not queried during gameplay; each record is scoped to its `tenantId`.
 
-The CDN is the runtime branding/theme byte data plane, including delivery of the published manifest and asset bytes. Game Design is the control-plane and attestation authority: `GetPublishedReleaseBundle(tenantId, versionId)` and its attested `manifestHash` establish which release the CDN bytes belong to. Runtime clients fetch bytes from the CDN using that attested release data and must not treat CDN availability or object paths as release authority.
+Target runtime architecture uses the CDN as the branding/theme byte data plane, including delivery of the published manifest and asset bytes. Game Design is the control-plane and attestation authority: `GetPublishedReleaseBundle(tenantId, versionId)` and its attested `manifestHash` establish which release the CDN bytes belong to. Runtime clients fetch bytes from the CDN using that attested release data and must not treat CDN availability or object paths as release authority.
 
 ## Implementation Status
 
 - **Current first slice:** Ordinary uploaded bytes are persisted in `game_assets.data`, which is the immutable repair source for Published/Active binary assets. Publication currently exports them to version-scoped object storage and exposes the numeric `GameAssetDto.id`; the target private-candidate/content-addressed publication and opaque logical asset identifier are not live.
 - **Current lifecycle proof:** `version_asset_artifact` records the exported version-number prefix and manifest asset keys, but it does not yet freeze the target exact immutable object-key/digest set or implement the target global publication/purge fence.
 - **Current purge finalization:** Live `FinalizePurgeVersionAssets` selects and deletes the frozen version-scoped prefix from `exported_version_number`. This current-only behavior cannot be used as the target content-addressed/shared-object finalization path, which instead operates on frozen object-key/digest proofs under the publication/refcount fence below.
+- **Current delivery gap:** `AssetExportServiceImpl` currently constructs generated manifest URLs from the private `ASSET_STORE_ENDPOINT` plus bucket/key, while `AssetController` exposes only `POST /assets`. No client GET/download route, gateway rewrite, signed-fetch, or `ASSET_STORE_PUBLIC_BASE_URL` path is implemented; these generated URLs are private storage references and must not be exposed as usable client manifests. Canonical target `/assets/**` gateway/CDN delivery and client/runtime delivery remain an implementation gap.
 - **Identifier drift:** `game_assets.tenant_id` accepts a REST `tenantId` string without UUID-shape enforcement while Account Service still exposes numeric `Long` tenant identifiers. No authoritative numeric-to-UUID mapping exists, and the public asset row key is a `BIGSERIAL`; none of these numeric values is a canonical logical identity.
 - **Target convergence:** Account and downstream contracts migrate together to the opaque UUID tenant identity, and the public asset contract and `GameAssetDto.id` converge directly on an opaque UUID logical asset identifier while any numeric database key remains private. The numeric public field is removed rather than retained through compatibility translation; implementations must not invent a reversible numeric-to-UUID encoding. Draft bytes may move out of PostgreSQL only after an equivalent immutable repair source exists.
 
@@ -214,9 +215,9 @@ Fail-closed reader rule:
 - If a runtime consumer does not understand the manifest `schemaVersion`, or if a required derived-world-artifact key is missing for the release it is trying to start, launch must fail before gameplay admission rather than guessing fallback paths or object keys.
 - Requiredness is determined from the attested release bundle metadata for that release, not by heuristics over manifest contents.
 
-## External Delivery Classification
+## Target External Delivery Classification
 
-Published asset delivery uses the canonical external `/assets/**` family:
+Target published asset delivery uses the canonical external `/assets/**` family:
 
 - `/assets/**` is the read-only branding/theme byte data plane for published release artifacts, not a creator/control-plane write path.
 - The canonical object-store or CDN URL exported in `manifest.json` represents stable published bytes for that release, but the CDN is not the release authority.
@@ -289,9 +290,8 @@ published assets are served from object storage.
 
 ## API
 
-In the current first slice, assets are uploaded via `POST /assets` using a `multipart/form-data` request, persisted with bytes in `game_assets.data`, and returned as a `GameAssetDto` whose public `id` is the numeric asset-row key and whose data fields follow the current OpenAPI schema. Exposing that row key is pre-v1 drift. The canonical target replaces it directly with the opaque UUID logical asset identifier while retaining any numeric database key only as a private implementation detail; callers, OpenAPI, and DTOs migrate together without dual-field or translation compatibility scaffolding. The target storage contract also streams bytes to object storage and returns metadata plus stable download information; that storage and DTO convergence is not complete.
+In the current first slice, assets are uploaded via `POST /assets` using a `multipart/form-data` request, persisted with bytes in `game_assets.data`, and returned as a `GameAssetDto` whose public `id` is the numeric asset-row key and whose data fields follow the current OpenAPI schema. Exposing that row key is pre-v1 drift. The canonical target replaces it directly with the opaque UUID logical asset identifier while retaining any numeric database key only as a private implementation detail; callers, OpenAPI, and DTOs migrate together without dual-field or translation compatibility scaffolding. The target storage contract also streams bytes to object storage and returns metadata plus stable download information; that storage and DTO convergence is not complete. `AssetController` currently exposes only the upload route; REST download and delete endpoints are not implemented. Asset deletion remains a control-plane lifecycle operation through the APIs below.
 See the [OpenAPI specification](../../../../services/game-design-service/src/main/resources/openapi.yaml) for request details.
-Endpoints for downloading or deleting assets are available.
 gRPC endpoints support asset management operations.
 Listing assets for a tenant is supported.
 Control-plane purge APIs are required:

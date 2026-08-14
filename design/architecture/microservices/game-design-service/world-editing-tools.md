@@ -87,6 +87,8 @@ Generation-specific conflict rules:
 
 The canonical replay, replacement, preview, reference, identity, and no-merge contract is [Explicit Destructive Regeneration with Previewed Scope](../../decisions/adr-0101-explicit-destructive-regeneration-with-previewed-scope.md) and the [Procedural Generation](../../system-architecture-procedural-generation.md#request-bounded-replay-and-explicit-regeneration) system contract.
 
+The generation preview, revision, and CAS rules below are target-state requirements, not claims of live behavior. Current World-side generation status remains summarized in [World Management Procedural Generation Control](../world-management-service/procedural-generation-control.md#implementation-status).
+
 - The editor presents the exact `REPLACE_SCOPE` preview, including creates, retained objects, replacements, deletions, affected references, identity mappings, and blockers, and obtains creator approval before recording the generation revision.
 - The revision payload records the canonical plan digest, exact generation inputs, expected `draftScopeRevisionEpoch`, required mappings, and approved reference facts. Any scope-epoch, input, or relevant reference-fact drift makes the plan stale and requires a fresh preview and approval rather than replacing newer manual edits.
 - `SEED_APPEND_ONLY` remains the editor’s non-destructive path, but World Management must reject it as `OUT_OF_SYNC` or a more specific generation conflict if deterministic replay would rewrite or delete authored rows.

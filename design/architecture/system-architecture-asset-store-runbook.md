@@ -68,7 +68,7 @@ When using a self-hosted MinIO cluster as the asset store:
    lifecycle described in
    [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md):
 
-   - A **retired** version (no `game_instances` rows reference the `version_id` as `runtime_version`, and the version is no longer listed as launchable in `game_manifest`) is necessary but not sufficient for asset deletion.
+   - Complete the canonical `RetireVersion` workflow before calling `CanDeleteVersionAssets(tenantId, versionId)`. It must leave a **retired** version with no `game_instances` rows referencing the `version_id` as `runtime_version` and no launchable listing in `game_manifest`; retirement is necessary but not sufficient for asset deletion.
    - Retired eligibility must also account for **design-time dependencies**: the version must not be referenced by any game templates. Operators should validate that no normalized `game_template_*_ref` rows in the Game Design Service still reference `(tenantId, versionId)` before requesting the corresponding purge through Game Design.
    - Asset deletion eligibility must account for design-history reachability as well as version mappings. Use the Game Design control-plane check `CanDeleteVersionAssets(tenantId, versionId)` that validates no non-Retired `version_asset` references remain, no reachable `revision_asset` / branch references require retained bytes, and no template or launch metadata still points to the version prefix.
    - Before purge or repair, read `GetVersionAssetArtifactState(tenantId, versionId)` and treat its `artifactState`, `stateEpoch`, `manifestHash`, `exportedVersionNumber`, and exported manifest asset keys as the authoritative proof row. Do not infer lifecycle state from bucket listings.
