@@ -2,6 +2,8 @@
 
 Append-only notes for recurring friction, surprising behavior, environment issues, inefficient patterns, code smells, and "this should be shaped better" patterns discovered during AI work.
 
+Entry dates use Pacific/Auckland unless stated otherwise.
+
 Only keep entries whose lesson still matters after the immediate task is done. Do not use this file as a bug log for ordinary fixes that were completed in the same piece of work. Prefer logging reusable observations that suggest a better repo rule, CI guard, design refinement, or shared implementation pattern.
 
 During ordinary autonomous work, this file is append-only: add dated reusable observations, and do not silently rewrite or delete prior entries. A human-requested [repository health check](../developer-workflows/repository-health-check.md) authorizes the worker to remove an entry only after evidence shows that it is addressed, obsolete, or disproved. Retain an entry only when a genuine blocker or deliberate postponement remains, recording the reason and reconsideration trigger. A health-check pass should reduce this inbox toward zero.
@@ -47,3 +49,13 @@ Entry format:
   - Context: autonomous orchestration needed both direct continuation of a completed bounded edit and a way to await one external transition without a native watcher.
   - Observation: reusing a completed subagent thread is appropriate only for direct same-domain continuation; unrelated work needs a fresh descriptive thread. When progress blocks on one external transition, no native watcher exists, and a concurrency slot would otherwise sit idle, a cheap read-only Luna sentinel can wait or poll while the main thread yields; a native wait remains preferred.
   - Expected pattern: keep continuation scope explicit, start a fresh thread when the domain changes, and use a read-only sentinel only as the fallback for one blocked external transition.
+
+- `2026-08-14`: Stale Gradle formatting state can miss renamed Java files
+  - Context: a Java file was renamed or newly introduced while Gradle Spotless task state remained cached.
+  - Observation: cached Spotless task state can report success without formatting the renamed/new file.
+  - Expected pattern: explicitly run the formatter/apply task, inspect the resulting diff, and only then trust formatting checks rather than relying on stale cache state.
+
+- `2026-08-15`: CodeRabbit rate-limit replies require direct command-comment verification
+  - Context: `check-coderabbit-review.py` reported a new hosted request as unfinished and not rate-limited even though CodeRabbit had already replied to that command with `Action not completed` and a 58-minute rate-limit window.
+  - Observation: the current review checker does not recognize every top-level rate-limit reply shape, so an unfinished request can be mistaken for an active review and keep a watcher waiting indefinitely.
+  - Expected pattern: when a hosted request remains unfinished unexpectedly, inspect CodeRabbit's direct reply to the latest explicit command before treating the review as active; improve the checker in a dedicated tooling slice rather than adding ad hoc parsing during unrelated review work.

@@ -8,6 +8,10 @@ This document defines the canonical attestation artifact used to promote image d
 - Prevent production overlay PRs from promoting unverified or drifted image digests.
 - Keep promotion and rollback evidence auditable and stable across tooling changes.
 
+## Implementation Status
+
+The current repository validates checked-in, operator-authored promotion evidence and does not yet prove the target machine-generated evidence producer. The target contract below still requires operator review of evidence grounded in immutable artifacts and observed live state.
+
 ## Artifact Format
 
 The attestation is a JSON document committed in-repo with the production overlay change so overlay PR validation is deterministic.
@@ -20,6 +24,7 @@ Current trust model:
 
 - For the current single-admin/operator phase, the Git-reviewed in-repo evidence chain is the promotion trust root. CI validates the attestation, referenced staging deployment record, live-state evidence shape, immutable secret-compliance evidence references, and digest equality deterministically from repository state plus registry image availability.
 - The attestation record is not a detached cryptographic signature. If FireMUD later requires multi-party release approval or stronger provenance, add signed/SLSA-style attestations as a new evidence layer without replacing the canonical in-repo promotion index.
+- Target promotion tooling should machine-generate the candidate attestation and routine lineage fields from the successful staging deployment and observed live state.
 - Operator-authored evidence is acceptable only when it points to immutable artifacts or observed live-state values. Free-form notes can provide context, but they must not be the only proof for digest, smoke, live-state, or secret-compliance decisions.
 
 Required fields:
@@ -28,7 +33,8 @@ Required fields:
 - `environment` – must be `staging`.
 - `stagingOverlayCommitSha` – Git SHA of the staging overlay commit applied.
 - `stagingDeploymentEventId` – canonical UUID selecting the immutable staging apply event being promoted.
-- `serviceDigests` – map of service name to immutable digest (`image@sha256:...`).
+- `serviceDigests` – map of service name to immutable OCI manifest or index reference (`image@sha256:...`). A single-architecture service records its manifest reference here; a multi-architecture service records its OCI index reference here.
+- `servicePlatformDigests` – map of service name to a map of canonical lowercase OCI platform keys (`os/architecture` or `os/architecture/variant`, for example `linux/amd64` or `linux/arm64/v8`) to exact child-manifest references (`image@sha256:...`). A multi-architecture service's map keys must exactly equal the production-admitted platform set, with no missing or extra entries, and each index descriptor must prove the recorded platform-to-child binding. A single-architecture service has exactly one admitted-platform entry whose child digest equals its `serviceDigests` manifest digest.
 - `smokeEvidence` – list of URLs or artifact IDs for smoke-test results.
 - `generatedAt` – UTC timestamp in ISO-8601 format.
 - `approvedBy` – human approver identity (or approved automation identity plus change ticket).
@@ -36,12 +42,14 @@ Required fields:
   Example: switching a player-facing service from inline JWT secret consumption to file-mounted `FIREMUD_AUTH_JWT_SECRET_PATH`, or changing the expected external asset bucket binding, is `roll-forward-only` unless the previous release is proven compatible with the new mount/binding contract.
 - `recoveryCompatibility` – the compact result defined in `system-architecture-backup-recovery-evidence-and-compliance.md`. It references the current baseline recovery record, compares baseline and candidate recovery-contract fingerprints, records changed dimensions and evaluator identity, and states whether a new drill is required. It does not duplicate the full recovery record.
 - `productionOverlayRef` – target production overlay change identifier (for example the overlay PR deployment-ref or intended overlay commit token).
-- `releaseDigestManifestRef` – required for official production releases; path to the release digest manifest that binds the release tag or deployment reference to this attestation and digest set.
+- `releaseDigestManifestRef` – required for official production releases; path to the release digest manifest at the stable production deployment-ref path (`design/operations/deployments/production/release-manifests/<deployment-ref>.json`), whose `releaseTag` field (when a tag exists) and deployment reference bind this attestation and digest set.
 
 Artifact-lineage rule:
 
 - `serviceDigests` must identify the exact staged artifact lineage being promoted.
 - Production attestation must never bless a digest that was rebuilt after staging from the same source commit or release tag; rebuilt artifacts require a new staging deployment record and a new attestation lineage.
+- Same-registry aliases are acceptable only when they resolve to the recorded digest. A registry copy that changes manifest/index bytes or digest requires a verified source-to-destination mapping and a new destination staging record before promotion.
+- Service-image promotion evidence remains separate from tenant/game published-release-bundle evidence; either may reference an explicit compatibility contract, but neither replaces the other.
 
 Optional fields:
 
@@ -55,21 +63,22 @@ Optional fields:
 For `recoveryCompatibility.compatibilityStatus=compatible`, `baselineRecoveryRecordRef` must independently resolve to the canonical finalized projection of a `production-equivalent-drill` with `trafficExposure=isolated-drill` and `coordinationRecoveryMode=cold_start_restore`. Its recovery proof is fresh only when `finalizedAt <= evaluatedAt <= generatedAt`, both `evaluatedAt` and `generatedAt` are no later than promotion time, the referenced projection remains within the canonical 30-day window at promotion time, and the recovery controller reached `recoveryStatus=finalized`; a future or stale evaluation, `ready_to_reopen`, or partially observed controller is not a fresh drill. Freshness does not override the existing invalidation rules: any invalidating or unknown recovery-contract dimension requires `drill_required` or `incompatible`, and `roll-forward-only` still requires the matching full backup-readiness record.
 
 - Production overlay PRs must include exactly one in-repo attestation artifact.
-- Every production overlay digest must match the digest in `serviceDigests`.
+- Every production overlay digest must match the digest in `serviceDigests`, and its resolved platform-child map must match `servicePlatformDigests` exactly.
 - Official production release PRs must include exactly one release digest manifest whose `promotionAttestationRef` points to the attestation and whose `serviceDigests` match byte-for-byte.
 - `environment` must be `staging`.
 - `stagingOverlayCommitSha` must exist in Git history and, together with `stagingDeploymentEventId`, select a successful staging deployment record. That record's `overlayCommitSha` must equal `stagingOverlayCommitSha`, and its `deploymentEventId` must equal `stagingDeploymentEventId`.
 - The referenced staging deployment record must include live-state verification (`liveStateEvidence`) proving the running digests matched the reviewed overlay after apply.
-- `liveStateEvidence` must be machine-checkable: status `pass`, the observed overlay SHA, and observed running digests for the promoted services must match the referenced staging deployment record and attestation.
+- `liveStateEvidence` must be machine-checkable: status `pass`, the observed overlay SHA, observed running digests, and `observedPlatformDigests` for the promoted services must match the referenced staging deployment record and attestation. The exact `servicePlatformDigests` map is carried in the staging deployment record and candidate attestation, compared with the production overlay's resolved index and child descriptors, and represented by `liveStateEvidence.observedPlatformDigests`.
 - The referenced staging deployment record must include `deployStatus=pass` and `smokeStatus=pass`.
 - The staging record must reference `design/operations/deployments/staging/preflight/<stagingOverlayCommitSha>/<stagingDeploymentEventId>.json`; that operator report's `deploymentRef.overlayCommitSha` must equal `stagingOverlayCommitSha`, its `deploymentEventId` must equal `stagingDeploymentEventId`, and its `completedAt` must be no later than and no more than 30 minutes before the record's `appliedAt`.
 - The referenced staging deployment record must include `secretComplianceStatus` set to `pass` and a `secretComplianceEvidenceRef`.
 - The referenced secret-compliance evidence must include immutable artifact identifiers for all required credential classes; warning-only or note-only evidence is not promotable.
-- The referenced production overlay digests must be byte-identical to the staged digests recorded in the deployment record; retags are acceptable, rebuilds are not.
+- The referenced production overlay digests must be byte-identical to the staged digests recorded in the deployment record; same-digest aliases are acceptable, rebuilds are not. Multi-architecture validation compares both the index digest and the declared `servicePlatformDigests` map, including exact platform-key coverage and child-manifest bindings.
 - `secretComplianceEvidenceRef` may satisfy compliance through either immutable bootstrap provisioning evidence or immutable rotation evidence, as defined in `infrastructure/environment-and-secrets-overview.md`, but warning-only compliance records are never promotable.
 - Attestation schema must validate against the current `attestationVersion`.
 - `recoveryCompatibility.compatibilityStatus=compatible` may reuse a baseline only for a `rollback-compatible` release when the fresh finalized-drill requirements above pass, the candidate fingerprint is unchanged, and `changedDimensions[]` contains no invalidating or unknown recovery-contract change. `drill_required` blocks promotion until a fresh drill is complete and the result is regenerated as `compatible`; evidence attached to the stale result does not make it promotable. Every `roll-forward-only` release requires the regenerated compatible result and the matching full backup-readiness record. `incompatible` blocks promotion.
 - If any check fails, production promotion is blocked.
+- A missing attestation is a failed check; validation must never skip promotion preflight because evidence is absent.
 
 External-only attestation storage is not allowed for production promotions because it prevents deterministic PR validation.
 
@@ -87,6 +96,7 @@ External-only attestation storage is not allowed for production promotions becau
   - `deployStatus`
   - `smokeStatus`
   - `serviceDigests` map
+  - `servicePlatformDigests` map
   - `preflightReportPath`
   - `liveStateEvidence`
   - `secretComplianceSnapshotAt`
@@ -94,7 +104,7 @@ External-only attestation storage is not allowed for production promotions becau
   - `secretComplianceEvidenceRef`
   - `smokeEvidence` list
 - Producer contract:
-  - Operators create/update the deployment record as part of staging apply in the deployment runbook flow.
+  - Target-state tooling emits the candidate deployment evidence from observed staging state for operator review.
   - CI promotion validation must fail if the referenced deployment record is missing, malformed, or digest-mismatched.
 - Retain attestation artifacts for at least as long as release/rollback audit history is retained.
 - Rollback PRs should reference the original attestation used for the digest set being restored.
@@ -104,6 +114,7 @@ External-only attestation storage is not allowed for production promotions becau
 - CI owns schema validation.
 - Operators own staging evidence quality and approver identity.
 - Platform owners own schema versioning and compatibility policy.
+- Platform Operations owns storage and promotion-evidence infrastructure; Game Design owns tenant/game publication and release attestation, which this service must not duplicate.
 
 ## Related Documentation
 

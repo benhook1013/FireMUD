@@ -1,8 +1,8 @@
 # Production Release Digest Manifests
 
-Store one manifest per official production release or release-candidate deployment as:
+Store one manifest per official production release or release-candidate deployment at its stable production deployment ref:
 
-- `<release-tag-or-deployment-ref>.json`
+- `<deployment-ref>.json`
 
 Required fields:
 
