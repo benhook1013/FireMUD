@@ -19,12 +19,8 @@ Procedural generation allows games to quickly bootstrap playable areas, spawn in
 
 Generation flows share one pure generator engine owned by World Management but use two separate typed ingress contracts:
 
-- **Design-time/template generation** – invoked only from Game Design workflows to produce
-  versioned world scaffolding that is saved into template tables keyed by
-  `(tenantId, versionId)` and later published like any other design asset.
-- **Runtime/instance generation** – invoked from the Temporal world-lifecycle workflow or tick-driven
-  commands to create per-instance layouts keyed by `(tenantId, gameInstanceId)`; these
-  flows never modify template tables for Published versions.
+- **Design-time/template generation** – invoked only from Game Design workflows to produce versioned world scaffolding that is saved into template tables keyed by `(tenantId, versionId)` and later published like any other design asset.
+- **Runtime/instance generation** – invoked from the Temporal world-lifecycle workflow or tick-driven commands to create per-instance layouts keyed by `(tenantId, gameInstanceId)`; these flows never modify template tables for Published versions.
 
 The authenticated endpoint and its typed target union determine the namespace and persistence semantics:
 
@@ -216,7 +212,7 @@ Generators emit a normalized sparse graph or a bounded grid/chunk topology. Thei
 | --- | --- |
 | `roomKey` / `cellKey` | Stable logical identifier within the generated topology; World Management resolves the canonical persisted or virtualized template/runtime identity |
 | `coordinates` | Grid location (used for spatial logic and editing) |
-| `exitMap` | Map of direction → `roomKey` |
+| `exitMap` | Map of direction → target `roomKey` for `SPARSE_GRAPH`, or direction → target `cellKey` for `FULL_GRID` |
 | `tags` | Optional labels like `"start"`, `"town"`, etc. |
 | `biome` | Biome or terrain type (if applicable) |
 | `elevation` | Numeric terrain height (used for visuals or logic) |
@@ -283,7 +279,7 @@ The following rules align generators with the core runtime and tooling:
    - On failure World Management returns a `GenerationErrorDetail` and guarantees the target scope remains unchanged. When staging is used, World Management must define bounded diagnostic retention and garbage collection for abandoned rows.
    - Focused proof must show that retrying one admitted request reuses its request identity and recorded output, while an intentional same-input regeneration receives a distinct sequence and identity; recovery must restore the committed revision output and reapply later persisted manual revisions without invoking an obsolete generator.
 8. **Editor Overlays** – Generators emit coordinates and optional map layers so the Game Editor can display a preview or dry-run JSON output.
-9. **Pluggable Interface** – Generators implement the `Generator` interface and are discovered via the `GeneratorRegistry` in the World Management Service. Discovery uses Spring bean scanning, and additional generators may be provided by shared libraries or service-local modules.
+9. **Pluggable Interface** – In the target state, generators implement the `Generator` interface and are discovered via the `GeneratorRegistry` in the World Management Service. Discovery uses Spring bean scanning, and additional generators may be provided by shared libraries or service-local modules.
 
 Initial-slice delivery expectation:
 

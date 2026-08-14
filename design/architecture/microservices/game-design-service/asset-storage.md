@@ -117,7 +117,7 @@ This target-state attestation example uses a UUID-shaped `versionId`. Current Ga
   "artifactDigests": [
     {
       "usageKey": "world.navmesh",
-      "artifactType": "WORLD_NAVMESH_BUNDLE",
+      "artifactKind": "NAVMESH",
       "immutableObjectKey": "artifacts/sha256/8fd0c4...",
       "contentDigest": "sha256:8fd0c4...",
       "contentType": "application/octet-stream",
@@ -125,7 +125,7 @@ This target-state attestation example uses a UUID-shaped `versionId`. Current Ga
     },
     {
       "usageKey": "world.pathGraph",
-      "artifactType": "WORLD_PATH_GRAPH_BUNDLE",
+      "artifactKind": "PATH_GRAPH",
       "immutableObjectKey": "artifacts/sha256/91baf2...",
       "contentDigest": "sha256:91baf2...",
       "contentType": "application/json",

@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-Attested launch gating and private quarantine are target state. Current launch admission checks release-bundle and artifact state, manifest hash, schema, and required keys, but ordinary asset bytes are not completely attested; export can leave a partial final prefix; and the publish failure path does not consistently retain the designed terminal state. See [asset lifecycle and publish workflow](../microservices/game-design-service/asset-storage.md#asset-lifecycle-and-publish-workflow), [failed publish handling](../system-architecture-asset-store-runbook.md#handling-failed-publish-versions), and [launch preflight](../system-architecture-versioning-runtime.md#launch-descriptor-version-resolution-rules).
+Attested launch gating and private quarantine are target state. Current launch admission checks release-bundle and artifact state, supported `published_release_bundle.attestationSchemaVersion`, `manifestHash`, and required keys, but it does not yet fetch and validate the manifest's own `schemaVersion`. Ordinary asset bytes are not completely attested; export can leave a partial final prefix; and the publish failure path does not consistently retain the designed terminal state. See [asset lifecycle and publish workflow](../microservices/game-design-service/asset-storage.md#asset-lifecycle-and-publish-workflow), [failed publish handling](../system-architecture-asset-store-runbook.md#handling-failed-publish-versions), and [launch preflight](../system-architecture-versioning-runtime.md#launch-descriptor-version-resolution-rules).
 
 ## Canonical Design
 
@@ -35,7 +35,7 @@ The previous fail-closed choice is correct, but it needs a publication topology 
 
 ## Decision
 
-Only an artifact in authoritative `PUBLISHED` state with a supported immutable release attestation is launchable. Launch and cutover require matching release identity, version-state epoch, manifest digest and schema, mandatory per-object digests, and every declared required artifact key. `STAGED`, `EXPORTED_UNATTESTED`, `FAILED`, `TOMBSTONED`, `PURGE_IN_PROGRESS`, `PURGE_FAILED`, missing, unsupported, stale, or mismatched evidence fails before gameplay admission or admission-pointer change.
+Only an artifact in authoritative `PUBLISHED` state with a supported immutable release attestation is launchable. Launch and cutover require matching release identity and version-state epoch, a supported `published_release_bundle.attestationSchemaVersion`, a fetched manifest whose own `schemaVersion` is supported, matching `manifestHash`, mandatory per-object digests, and every declared required artifact key. `STAGED`, `EXPORTED_UNATTESTED`, `FAILED`, `TOMBSTONED`, `PURGE_IN_PROGRESS`, `PURGE_FAILED`, missing, unsupported, stale, or mismatched evidence fails before gameplay admission or admission-pointer change.
 
 Candidate export occurs in a private staging or quarantine namespace under ADR 0095. Runtime realm admission returns only the content-addressed manifest belonging to the completed attested release. A failed or unattested candidate is never used as fallback, never becomes the manifest for a running realm, and is not repaired in place while runtime admission continues.
 
@@ -71,7 +71,7 @@ Rejected because terminal metadata and a bounded diagnostic window preserve usef
 
 Proof must cover failure before any object, after one object, before and after manifest creation, before attestation, and between attestation and lifecycle finalization; private candidate access; missing and mismatched object digests; unsupported manifest or attestation schema; fresh launch reads; retry identity; configurable retention; abandonment; purge races; and an existing pinned instance during later storage degradation.
 
-Current launch admission substantively checks release-bundle and artifact state, manifest hash, schema, and required keys, but ordinary asset bytes are not completely attested. Export can leave a partial final prefix when it throws before returning a manifest, the current manifest omits the documented schema shape, and the publish failure path does not consistently retain the designed terminal state. These are implementation and proof gaps; this decision does not claim they are resolved.
+Current launch admission substantively checks release-bundle and artifact state, supported `published_release_bundle.attestationSchemaVersion`, `manifestHash`, and required keys, but it does not yet fetch and validate the manifest's own `schemaVersion`, and ordinary asset bytes are not completely attested. Export can leave a partial final prefix when it throws before returning a manifest, the current manifest omits the documented schema shape, and the publish failure path does not consistently retain the designed terminal state. These are implementation and proof gaps; this decision does not claim they are resolved.
 
 ## Reversibility and Revisit Triggers
 

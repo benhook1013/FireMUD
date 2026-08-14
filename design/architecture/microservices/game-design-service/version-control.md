@@ -99,7 +99,7 @@ In addition to domain-service digests, publish safety requires a Game Design con
 - Game Design must expose the attestation through `GetPublishedReleaseBundle(tenantId, versionId)` with deterministic response fields at minimum:
   - `tenantId`, `versionId`, `commitId`, `publishWorkflowId`, `publishedAt`
   - `participantDigests[] { serviceName, appliedCommitId, contentDigest, digestSchemaVersion }`
-  - `artifactDigests[] { usageKey, artifactType, immutableObjectKey, contentDigest, contentType, artifactSchemaVersion }` for every exported binary or derived artifact; these entries are mandatory in the initial slice for world navmesh/path graph bundles
+  - `artifactDigests[] { usageKey, artifactKind, immutableObjectKey, contentDigest, contentType, artifactSchemaVersion }` for every exported binary or derived artifact; these entries are mandatory in the initial slice for world navmesh/path graph bundles
   - `requiredManifestAssetKeys[]` listing the stable manifest usage keys required for launch or cutover validation of that release
   - `publishedReleaseBundleRef` — target-state owner-generated opaque identity for the immutable release bundle; the current implementation may expose only its internal bundle row identifier, so this field is not yet live
   - `manifestHash`, `manifestSchemaVersion`

@@ -66,7 +66,7 @@ Game Design owns publication coordination, release descriptors, final release at
   "artifactDigests": [
     {
       "usageKey": "world.navmesh",
-      "artifactType": "WORLD_NAVMESH_BUNDLE",
+      "artifactKind": "NAVMESH",
       "immutableObjectKey": "sha256/na/navmesh42",
       "contentDigest": "sha256:navmesh42",
       "contentType": "application/vnd.firemud.navmesh+binary",
@@ -74,7 +74,7 @@ Game Design owns publication coordination, release descriptors, final release at
     },
     {
       "usageKey": "world.pathGraph",
-      "artifactType": "WORLD_PATH_GRAPH_BUNDLE",
+      "artifactKind": "PATH_GRAPH",
       "immutableObjectKey": "sha256/pa/pathgraph42",
       "contentDigest": "sha256:pathgraph42",
       "contentType": "application/vnd.firemud.path-graph+binary",
@@ -213,13 +213,9 @@ and a `scriptPatchVersion` value such as `v42-script.3`:
 }
 ```
 
-Script-only versions appear in version history and audit logs but do not trigger
-a data copy or world restart.
+Script-only versions appear in version history and audit logs but do not trigger a data copy or world restart.
 Runtime services may reload the affected scripts in memory only as part of the explicit READY, compatibility, and pin rollout for a newly recorded immutable runtime tuple; they continue using the underlying `baseVersionId` for all other assets and templates. Script-only patches are **strictly limited to script definitions and related Automation & Scripting metadata**; any change that needs new or modified assets, world layouts, entity templates, or other non-script configuration must be delivered via a full `PublishVersion` flow that produces a new `versionId`.
-When a patch is published the Game Design Service calls the
-[`NotifyScriptVersionUpdate`](./microservices/automation-scripting-service/README.md#notifyscriptversionupdate)
-gRPC endpoint in the Automation & Scripting Service so modified scripts can be reloaded in memory only as part of an explicit READY, compatibility, and pin rollout that records a new immutable runtime tuple for each affected instance. The running descriptor is not mutated and no latest patch or plugin alias is followed. The Game Session Service records the active `script_patch_version` with each running game instance for recovery. See
-[Scripting & Automation](./system-architecture-scripting.md) for more details.
+When a patch is published the Game Design Service calls the [`NotifyScriptVersionUpdate`](./microservices/automation-scripting-service/README.md#notifyscriptversionupdate) gRPC endpoint in the Automation & Scripting Service so modified scripts can be reloaded in memory only as part of an explicit READY, compatibility, and pin rollout that records a new immutable runtime tuple for each affected instance. The running descriptor is not mutated and no latest patch or plugin alias is followed. The Game Session Service records the active `script_patch_version` with each running game instance for recovery. See [Scripting & Automation](./system-architecture-scripting.md) for more details.
 
 Patch selection must be explicit and pinned:
 

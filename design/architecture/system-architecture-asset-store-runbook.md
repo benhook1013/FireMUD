@@ -42,19 +42,20 @@ When using a self-hosted MinIO cluster as the asset store:
      sh -c "mc alias set local http://minio:9000 $ACCESS $SECRET && mc mb local/firemud-assets"
    ```
 
-3. **Allow public reads and CORS from the gateway domain**
+3. **Keep the bucket private and configure CORS for the gateway domain**
 
    ```bash
    kubectl run mc --rm -it --image=minio/mc --command -- \
      sh -c "mc alias set local http://minio:9000 $ACCESS $SECRET && \
-            mc anonymous set download local/firemud-assets && \
+            mc anonymous set private local/firemud-assets && \
             printf '[{\"AllowedMethods\":[\"GET\"],\"AllowedOrigins\":[\"https://your-gateway-domain\"],\"AllowedHeaders\":[\"*\"]}]' > /tmp/cors.json && \
             mc cors set local/firemud-assets /tmp/cors.json"
    ```
 
 4. **Service configuration**
    - The Game Design Service is the **sole writer** to the asset bucket and uses `ASSET_STORE_*` environment variables to export assets and manifests during publish workflows. Runtime services and clients consume published assets via CDN or gateway URLs derived from the manifest; they do not write directly to the bucket.
-   - Anonymous bucket reads are optional and apply only to direct/CDN-style delivery. When the gateway proxies `/assets/**` to MinIO, set `ASSET_STORE_ENDPOINT` to `https://<gateway-domain>/assets` so published manifests generate public URLs and do not assume anonymous object-store access.
+   - Keep the bucket private. The gateway or CDN origin uses authenticated object-store credentials and exposes only attested immutable published objects; private staging, quarantine, `FAILED`, and `EXPORTED_UNATTESTED` objects must not be publicly readable.
+   - When the gateway proxies `/assets/**` to MinIO, set `ASSET_STORE_ENDPOINT` to `https://<gateway-domain>/assets` so published manifests generate public URLs without anonymous object-store access. Any future anonymous delivery policy must be limited to an immutable published-only prefix or separate origin and must never grant bucket-wide download access.
 5. **Scope of stored data**
 
    The asset store holds only binary design-time assets and version-scoped `manifest.json` files managed by the Game Design Service. Logical world and entity templates remain in PostgreSQL schemas owned by World Management, Entity Management, and related domain services as described in their architecture documents; they are **not** stored in the object store.
