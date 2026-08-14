@@ -9,6 +9,8 @@ Target runtime architecture uses the CDN as the branding/theme byte data plane, 
 - **Current first slice:** Ordinary uploaded bytes are persisted in `game_assets.data`, which is the immutable repair source for Published/Active binary assets. Publication currently exports them to version-scoped object storage and exposes the numeric `GameAssetDto.id`; the target private-candidate/content-addressed publication and opaque logical asset identifier are not live.
 - **Current lifecycle proof:** `version_asset_artifact` records the exported version-number prefix and manifest asset keys, but it does not yet freeze the target exact immutable object-key/digest set or implement the target global publication/purge fence.
 - **Current purge finalization:** Live `FinalizePurgeVersionAssets` selects and deletes the frozen version-scoped prefix from `exported_version_number`. This current-only behavior cannot be used as the target content-addressed/shared-object finalization path, which instead operates on frozen object-key/digest proofs under the publication/refcount fence below.
+- **Version-level purge boundary:** Target `FinalizePurgeVersionAssets` deletes only the frozen version-artifact objects authorized by the purge proof; it never removes `game_assets` source rows or their `game_assets.data` bytes.
+- **Current tombstone gap:** Live `VersionAssetArtifactServiceImpl.tombstoneVersionAssets` accepts only `FAILED` and `PURGE_FAILED`; it does not yet support the target `PUBLISHED -> TOMBSTONED` transition for an eligible retired release. Current runbooks must expose that gap and fail closed rather than claim the retired-release path is live.
 - **Current delivery gap:** `AssetExportServiceImpl` currently constructs generated manifest URLs from the private `ASSET_STORE_ENDPOINT` plus bucket/key, while `AssetController` exposes only `POST /assets`. No client GET/download route, gateway rewrite, signed-fetch, or `ASSET_STORE_PUBLIC_BASE_URL` path is implemented; these generated URLs are private storage references and must not be exposed as usable client manifests. Canonical target `/assets/**` gateway/CDN delivery and client/runtime delivery remain an implementation gap.
 - **Identifier drift:** `game_assets.tenant_id` accepts a REST `tenantId` string without UUID-shape enforcement while Account Service still exposes numeric `Long` tenant identifiers. No authoritative numeric-to-UUID mapping exists, and the public asset row key is a `BIGSERIAL`; none of these numeric values is a canonical logical identity.
 - **Target convergence:** Account and downstream contracts migrate together to the opaque UUID tenant identity, and the public asset contract and `GameAssetDto.id` converge directly on an opaque UUID logical asset identifier while any numeric database key remains private. The numeric public field is removed rather than retained through compatibility translation; implementations must not invent a reversible numeric-to-UUID encoding. Draft bytes may move out of PostgreSQL only after an equivalent immutable repair source exists.
@@ -297,7 +299,7 @@ Listing assets for a tenant is supported.
 Control-plane purge APIs are required:
 
 - `CanDeleteVersionAssets(tenantId, versionId)` – read-only eligibility oracle.
-- `TombstoneVersionAssets(tenantId, versionId, expectedArtifactStateEpoch, tombstoneWorkflowId)` – explicit operator abandonment transition, CAS-guarded by the expected state epoch and valid only for `FAILED -> TOMBSTONED`; ordinary publish failure remains `FAILED` and retryable.
+- `TombstoneVersionAssets(tenantId, versionId, expectedArtifactStateEpoch, tombstoneWorkflowId)` – target explicit CAS-guarded transition to `TOMBSTONED` for an eligible retired `PUBLISHED` release or for a `FAILED` artifact only after retry abandonment; ordinary publish failure remains `FAILED` and retryable. The current implementation accepts only `FAILED` and `PURGE_FAILED`, so the retired-`PUBLISHED` target path is not live.
 - `BeginPurgeVersionAssets(tenantId, versionId, expectedArtifactStateEpoch)` – CAS-guarded purge start.
 - `FinalizePurgeVersionAssets(tenantId, versionId, purgeWorkflowId, expectedArtifactStateEpoch)` – CAS-guarded purge completion.
 - `GetVersionAssetArtifactState(tenantId, versionId)` – authoritative lifecycle/proof read for the persisted artifact row.
@@ -345,7 +347,7 @@ Artifact lifecycle states for a `(tenantId, versionId)` prefix are explicit:
 - `EXPORTED_UNATTESTED` – candidate bytes and `manifest.json` have been exported and `manifestHash` is known, but the immutable `published_release_bundle` attestation has not yet been committed.
 - `PUBLISHED` – publish succeeded, `manifestHash` is attested in `published_release_bundle`, and the immutable bytes for the version are launchable.
 - `FAILED` – publish workflow failed for this version.
-- `TOMBSTONED` – failed or abandoned artifact is quarantined for diagnostics and excluded from activation paths.
+- `TOMBSTONED` – an eligible retired `PUBLISHED` release or an abandoned `FAILED` artifact is quarantined for diagnostics and excluded from activation paths.
 - `PURGE_IN_PROGRESS` – purge workflow has atomically locked this prefix for deletion and is removing object-store bytes.
 - `PURGE_FAILED` – purge workflow encountered a deletion/finalization failure; bytes may be partially deleted and require explicit operator retry/resume workflow.
 
@@ -356,7 +358,8 @@ Allowed transitions:
 - `EXPORTED_UNATTESTED -> FAILED` when attestation or later publish completion fails after asset export.
 - `STAGED -> FAILED` when publish workflow fails before activation eligibility.
 - `FAILED -> STAGED` only through an explicit repair/retry workflow.
-- `FAILED -> TOMBSTONED` when operators abandon retry and quarantine bytes.
+- `PUBLISHED -> TOMBSTONED` only after retirement and `CanDeleteVersionAssets` eligibility proof, through the target CAS-guarded tombstone operation; this transition is not supported by the current implementation.
+- `FAILED -> TOMBSTONED` only after operators explicitly abandon retry and quarantine bytes.
 - `TOMBSTONED -> STAGED` only via explicit operator-approved restore workflow.
 - `TOMBSTONED -> PURGE_IN_PROGRESS` only through CAS-guarded `BeginPurgeVersionAssets`.
 - `PURGE_IN_PROGRESS -> PURGED` (physical deletion complete) only after deletion workflow success; purge is not an implicit publish compensation action.
@@ -450,6 +453,7 @@ Retirement is necessary but insufficient for purge. `CanDeleteVersionAssets` mus
 Race-safe purge workflow:
 
 - Eligibility checks and purge start must not run as a loose "check then delete" pair.
+- After `CanDeleteVersionAssets` proves eligibility, the target workflow calls `TombstoneVersionAssets` for an eligible retired `PUBLISHED` release, or for `FAILED` only after retry abandonment, then reloads the artifact `stateEpoch` before beginning purge. The current implementation gap for retired `PUBLISHED` tombstoning is fail-closed.
 - Purge must begin through a single CAS-guarded control-plane API, for example:
   - `BeginPurgeVersionAssets(tenantId, versionId, expectedArtifactStateEpoch)`
 - `BeginPurgeVersionAssets` must atomically:
@@ -474,23 +478,9 @@ To prevent persistence and performance failures in asset workflows:
 
 In the current first slice, `game_assets` is the canonical design-time store for asset metadata and bytes. Its immutable `data` values become a valid Published/Active repair source only after the frozen version-scoped export snapshot identifies the exact rows and hashes used by that release; until then, same-version repair fails with `REPAIR_VERSION_SCOPE_UNAVAILABLE`. A future metadata-only storage model may treat the table as metadata and use retained immutable object-store draft keys, but that is target-only.
 
-Published assets still retain their `game_assets` rows for design history and exact-bytes repair. Any later deletion must route through Game Design reachability and CAS-guarded purge APIs rather than direct object-store commands.
+Published assets still retain their `game_assets` rows for design history and exact-bytes repair. Version-level `FinalizePurgeVersionAssets` deletes only the frozen version-artifact objects and never removes those source rows or `game_assets.data` bytes; it routes through the Game Design reachability and CAS-guarded artifact-purge workflow rather than direct object-store commands.
 
-A background maintenance job (or admin workflow) may mark unused asset rows as
-`obsolete` once no open revisions, branches, or published versions reference
-them. In practice this means:
-
-- An asset metadata row is eligible for purge only if:
-  - it is not referenced by any `version_asset` row where the associated version
-    is in a non-Retired state (Draft, Published, Active, or Failed), and
-  - it is not reachable from any open revision, branch, or Draft version via
-    the normalized history reference tables (for example `revision_asset`)
-    described in
-    [Version Control for Design Assets](./version-control.md).
-- Assets referenced by non-Retired versions must never be deleted, and their
-  binary contents must not be modified in place.
-
-Once these conditions are met, a maintenance process may request purge through the Game Design reachability and CAS-guarded purge workflow, which can remove the asset row and its corresponding unreferenced `game_assets.data` bytes while retaining required audit metadata. A future metadata-only storage model may also purge unreferenced draft object bytes through that workflow. The exact retention policy (for example “keep assets referenced by the last N versions per tenant”) is configurable but should be documented alongside operational runbooks.
+A separate target maintenance workflow may mark an unreferenced `game_assets` row as `obsolete` and remove that row and its `game_assets.data` bytes. That workflow must independently prove global normalized `version_asset` reachability across every version state, global normalized `revision_asset` and branch reachability, and any other retained design-history dependency, then perform its own CAS-guarded maintenance transition. Assets referenced by any retained version or history path must never be deleted, and their binary contents must not be modified in place. The current version-artifact purge workflow is not this source-row maintenance workflow and must not delete `game_assets` rows or data. A future metadata-only storage model may apply the same separate reachability/CAS boundary to unreferenced draft objects. The exact retention policy (for example “keep assets referenced by the last N versions per tenant”) is configurable but should be documented alongside operational runbooks.
 
 The export location is configured with `ASSET_STORE_ENDPOINT`,
 `ASSET_STORE_BUCKET`, `ASSET_STORE_REGION`, `ASSET_STORE_ACCESS_KEY`, and

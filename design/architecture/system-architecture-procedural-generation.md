@@ -82,7 +82,9 @@ At admission, World Management persists a durable generation record that include
 - `generatorType` and `generatorImplementationVersion` (or equivalent immutable build identifier)
 - canonicalized `configSnapshot` including explicit `schemaVersion`
 - seed and any derived deterministic inputs
-- the identity of recorded or staged output, including an `outputDigest` computed from its canonical serialized topology
+- initial output state `PENDING`, with no output identity, `outputDigest`, output row count, or canonical serialized-byte count
+
+After canonical output is generated or private staging completes, exactly one compare-and-set transition from the expected `PENDING` state and output-state epoch binds `RECORDED` or `STAGED`, the output identity, canonical topology `outputDigest`, exact output row count, and canonical serialized-byte count. The expected prior state/epoch and resulting bound identity participate in the retry and finalize guard. An exact replay may return the already-bound identity, but a stale or conflicting concurrent/replayed transition fails closed.
 
 The resolved implementation and inputs are immutable for that request, including across rolling nodes. These records and artifacts are retry/reconciliation evidence, not published topology rows themselves:
 
@@ -269,7 +271,7 @@ The following rules align generators with the core runtime and tooling:
    - World Management must enforce single-writer semantics per typed target and target scope through the scope epoch/fence or equivalent storage-level compare-and-set, together with request uniqueness, so concurrent runs, retries, and recovery cannot cross targets or both commit.
    - Generation and all graph, scope, count, byte-size, and digest validation complete before the visibility transaction. That transaction performs no generator execution or network calls.
    - An output within enforced and proved row and serialized-byte limits may write the complete result and idempotency outcome in one owner-local transaction. Readers see either the prior scope or the complete new scope.
-   - Output above those limits, or output requiring chunked persistence, uses private staging keyed by `(tenantId, generationRunId)`. A short finalize transaction validates the request identity, scope fence, expected counts, and canonical digest before atomically installing or selecting the graph or immutable root chunk manifest.
+   - Output above those limits, or output requiring chunked persistence, uses private staging keyed by `(tenantId, generationRunId)`. A short finalize transaction validates the request identity, scope fence, bound output state/epoch and identity, expected counts, and canonical digest before atomically installing or selecting the graph or immutable root chunk manifest.
    - The initial implementation may reject oversized output deterministically until the staged path exists. Callers may not bypass the bounded-transaction limits.
    - On failure World Management returns a `GenerationErrorDetail` and guarantees the target scope remains unchanged. When staging is used, World Management must define bounded diagnostic retention and garbage collection for abandoned rows.
    - Focused proof must show that retrying one admitted request reuses its request identity and recorded output, while an intentional same-input regeneration receives a distinct sequence and identity; recovery must restore the committed revision output and reapply later persisted manual revisions without invoking an obsolete generator.
@@ -327,6 +329,7 @@ When the shape of generator configuration evolves, schema changes must follow th
 
 ### World Management Service
 
+- Owns launch-time topology generation and persistence as a pre-activation world-lifecycle workflow outside Game Session ticks
 - Owns invocation of generators as pure functions and persists or installs the authoritative generated topology; assigns or resolves canonical `roomTemplateId` / `roomInstanceId` values without exposing physical row or chunk identity
 - Persists generator metadata (`seed`, `generatorType`, and an immutable config
   snapshot with `schemaVersion`) and editor overlays, including a snapshot of
@@ -341,8 +344,9 @@ When the shape of generator configuration evolves, schema changes must follow th
 
 ### Game Session Service
 
-- Requests runtime instancing (portals/quests), schedules **solo ticks** for generation
-- Coordinates Redis tick isolation and invokes World Management to run generation within isolated ticks
+- Requests launch-time instance creation through the World-owned pre-activation workflow without scheduling topology generation as tick work
+- Schedules `requiresSoloTick` only for post-activation population and later dynamic generation, including portal- or quest-driven instancing commands
+- Coordinates Redis tick isolation and invokes World Management for those post-activation or later dynamic commands
 
 ### Game Logic Service (Movement/Travel)
 

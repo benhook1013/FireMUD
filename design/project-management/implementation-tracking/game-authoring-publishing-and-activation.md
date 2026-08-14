@@ -128,7 +128,7 @@ Game Design owns revision history, commits, version state, and publish orchestra
 - Authored-help proof covers canonical/alias resolution, published-only reads, admin error mapping, template bridging, tenant isolation, and platform override behavior. The recorded validation is `./gradlew spotlessApply`, `bash dev-tools/validation/run-locked-gradle.sh :game-design-service:check :game-session-service:check -PfullCheck`, and `./gradlew linkCheck lintMarkdown`; Docker-backed integration and cross-service tests were skipped locally because Docker was unavailable, while runnable service tests, formatting, Checkstyle, SpotBugs, and documentation checks passed.
 - Inventory/equipment was a documentation-only authority decision with no runtime behavior change; its recorded proof is `./gradlew linkCheck lintMarkdown`.
 - Settings schema/reference generation and verification are available through `./gradlew updatePlatformSettingsDocs` and `./gradlew verifyPlatformSettingsDocs`; persistence, resolution, cache/invalidation, generation, and surfaced-domain coverage are complete at their recorded boundaries.
-- The broader domain's aggregate documentation checkpoint completed on 2026-08-14 Pacific/Auckland (2026-08-13 UTC): `./gradlew linkCheck lintMarkdown` checked 4,574 links (4,536 OK, 0 errors, 38 excluded) and 454 Markdown files with 0 issues; the architecture contract suite also passed separately.
+- The broader domain's aggregate documentation checkpoint completed on 2026-08-14 Pacific/Auckland (2026-08-13 UTC): `./gradlew linkCheck lintMarkdown` checked 4,574 links (4,536 OK, 0 errors, 38 excluded) and 454 Markdown files with 0 issues; `bash dev-tools/tests/architecture-doc-contracts.sh` also passed separately (184 tests passed).
 
 ## Active Gaps
 

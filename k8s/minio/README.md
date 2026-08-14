@@ -15,17 +15,11 @@ published game assets.
      --from-literal=secretKey=LOCAL_ONLY_SECRET_KEY
    ```
 
-   For shared or production-like environments, generate unique credentials in
-   the approved secret manager and materialize them as the
-   `minio-credentials` Kubernetes Secret. Generate a separate
-   bucket-scoped, least-privileged `firemud-assets-writer` Secret for Game
-   Design. Do not put real values in manifests, shell history, or process
-   arguments. The MinIO Deployment and Game Design configuration must consume
-   these values through Secret-backed environment/configuration references.
+   For shared or production-like environments, generate unique credentials in the approved secret manager and materialize them as the `minio-credentials` Kubernetes Secret. Generate a separate bucket-scoped, least-privileged `firemud-assets-writer` Secret for Game Design. Do not put real values in manifests, shell history, or process arguments. The MinIO Deployment and Game Design configuration must consume these values through Secret-backed environment/configuration references.
 
-   The MinIO Deployment already injects `minio-credentials` through
-   `secretKeyRef`. A Game Design Deployment should use the writer Secret in the
-   same way:
+   A trusted bootstrap using `minio-credentials` must create the generated service identity and bucket-scoped policy required by Game Design. The policy may permit only `GetObject`, `PutObject`, `ListBucket`, and `DeleteObject` on `firemud-assets`; it must deny admin operations and access to other buckets. The bootstrap must materialize `firemud-assets-writer` through the approved secret mechanism without credentials in the repository or shell history. Repository automation for this provisioner is currently absent, so shared and production-like deployment is blocked until it exists.
+
+   The MinIO Deployment already injects `minio-credentials` through `secretKeyRef`. A Game Design Deployment should use the writer Secret in the same way:
 
    ```yaml
    env:
@@ -50,9 +44,7 @@ published game assets.
    kubectl apply -f k8s/minio/service.yaml
    ```
 
-4. Create the bucket and configure its private policy and gateway CORS. The
-   `mc` pod receives credentials from the Kubernetes Secret as environment
-   variables; the values are never supplied as command-line arguments:
+4. Create the bucket and configure its private policy and gateway CORS. The `mc` pod receives credentials from the Kubernetes Secret as environment variables; the values are never supplied as command-line arguments:
 
    ```bash
    kubectl run mc --rm -it --restart=Never \
@@ -74,16 +66,9 @@ published game assets.
      '
    ```
 
-Configure Game Design's authenticated S3 access with
-`ASSET_STORE_ENDPOINT=http://minio:9000` inside the cluster and the
-Secret-backed writer credentials. Do not expose the MinIO bucket as an
-anonymous delivery surface.
+Configure Game Design's authenticated S3 access with `ASSET_STORE_ENDPOINT=http://minio:9000` inside the cluster and the Secret-backed writer credentials. Do not expose the MinIO bucket as an anonymous delivery surface.
 
-Target public delivery uses a separate gateway/CDN origin recorded through
-target-only `ASSET_STORE_PUBLIC_BASE_URL`; that setting is not implemented in
-the current single-endpoint first slice. The public origin must expose only
-attested immutable published objects. Private staging, quarantine, `FAILED`,
-and `EXPORTED_UNATTESTED` objects remain inaccessible.
+Target public delivery uses a separate gateway/CDN origin recorded through target-only `ASSET_STORE_PUBLIC_BASE_URL`; that setting is not implemented in the current single-endpoint first slice. The public origin must expose only attested immutable published objects. Private staging, quarantine, `FAILED`, and `EXPORTED_UNATTESTED` objects remain inaccessible.
 
 ## Validation and Evidence Checklist
 
@@ -93,12 +78,10 @@ Documentation checks for this change:
 - `bash dev-tools/tests/architecture-doc-contracts.sh`
 - `./gradlew linkCheck lintMarkdown`
 
-Required runtime evidence remains unrun for this documentation-only change.
-Before the target public-delivery path may be considered implemented,
-operators must retain:
+Required runtime evidence remains unrun for this documentation-only change. Before the target public-delivery path may be considered implemented, operators must retain:
 
 - an anonymous GET attempt against a published object showing rejection;
-- an authenticated private-endpoint request showing access through the
-  Secret-backed writer configuration; and
-- a gateway response showing the configured CORS headers for an allowed GET
-  origin.
+- an authenticated private-endpoint request showing each allowed writer read, write, list, and delete operation through the Secret-backed writer configuration;
+- denied writer attempts for admin operations and other buckets;
+- denied public reads for private candidate, `FAILED`, and `EXPORTED_UNATTESTED` bytes; and
+- a gateway response showing the configured CORS headers for an allowed GET origin.
