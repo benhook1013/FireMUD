@@ -148,10 +148,12 @@ Canonical minimum fields:
 - `gameTemplateId`
 - resolved `versionId`
 - resolved `scriptPatchVersion` (or explicit null when none is pinned)
+- complete deterministically ordered `enabledPluginVersions[] { pluginId, pluginVersionId }`, persisted as an immutable descriptor input and reused unchanged by same-identity retries and rollback
 - resolved runtime feature flags/defaults
 - `generationConfigRevision` taken from the target version’s `published_release_bundle`
 - `versionStateEpoch` used for CAS-safe activation checks
 - any approved `remapSetId` required by the launch path
+- opaque `publishedReleaseBundleRef`, persisted as an immutable descriptor input and reused unchanged by same-identity retries and rollback
 
 Resolution invariants:
 

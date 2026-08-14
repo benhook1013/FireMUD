@@ -69,7 +69,7 @@ Procedural-generation control surfaces are split by authorization and persistenc
 
 - Design-time generation requests are accepted only through the authenticated Game Design workflow’s typed Draft target. World Management validates the target, version, and scope and persists only World-owned Draft topology.
 - Runtime generation requests are accepted only through approved world-lifecycle or gameplay command paths with a typed instance target. World Management validates instance lifecycle and identity and persists only instance topology; Published template rows remain immutable.
-- The typed target and authorized endpoint determine namespace and persistence behavior. Automation & Scripting may populate topology only after World Management has persisted it through canonical bindings or runtime commands; it cannot invoke World generation or persist topology.
+- The typed target and authorized endpoint determine namespace and persistence behavior. Automation & Scripting may populate runtime entities or bindings only after World Management has persisted topology, and only through canonical bindings or runtime commands. World Management remains the sole topology writer; Automation & Scripting cannot invoke World generation or persist or mutate topology.
 - Design-time generation-input APIs mutate version-scoped generation design rows in World Management only for Draft versions.
 - Operational runtime-default APIs are owned by World Management and mutate only tenant-scoped `generation_runtime_default` rows that are explicitly excluded from publish inputs and draft digests.
 

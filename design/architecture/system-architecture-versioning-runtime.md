@@ -286,12 +286,13 @@ Compact normative proof fixture:
 
 ```json
 {
-  "usageKey": "world.navmesh",
   "bundleArtifactDigest": {
+    "usageKey": "world.navmesh",
     "immutableObjectKey": "sha256/na/navmesh42",
     "contentDigest": "sha256:navmesh42"
   },
   "manifestEntry": {
+    "usageKey": "world.navmesh",
     "immutableObjectKey": "sha256/na/navmesh42",
     "contentDigest": "sha256:navmesh42"
   },

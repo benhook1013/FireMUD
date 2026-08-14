@@ -8,6 +8,7 @@ The CDN is the runtime branding/theme byte data plane, including delivery of the
 
 - **Current first slice:** Ordinary uploaded bytes are persisted in `game_assets.data`, which is the immutable repair source for Published/Active binary assets. Publication currently exports them to version-scoped object storage and exposes the numeric `GameAssetDto.id`; the target private-candidate/content-addressed publication and opaque logical asset identifier are not live.
 - **Current lifecycle proof:** `version_asset_artifact` records the exported version-number prefix and manifest asset keys, but it does not yet freeze the target exact immutable object-key/digest set or implement the target global publication/purge fence.
+- **Current purge finalization:** Live `FinalizePurgeVersionAssets` selects and deletes the frozen version-scoped prefix from `exported_version_number`. This current-only behavior cannot be used as the target content-addressed/shared-object finalization path, which instead operates on frozen object-key/digest proofs under the publication/refcount fence below.
 - **Identifier drift:** `game_assets.tenant_id` accepts a REST `tenantId` string without UUID-shape enforcement while Account Service still exposes numeric `Long` tenant identifiers. No authoritative numeric-to-UUID mapping exists, and the public asset row key is a `BIGSERIAL`; none of these numeric values is a canonical logical identity.
 - **Target convergence:** Account and downstream contracts migrate together to the opaque UUID tenant identity, and the public asset contract and `GameAssetDto.id` converge directly on an opaque UUID logical asset identifier while any numeric database key remains private. The numeric public field is removed rather than retained through compatibility translation; implementations must not invent a reversible numeric-to-UUID encoding. Draft bytes may move out of PostgreSQL only after an equivalent immutable repair source exists.
 
@@ -296,6 +297,7 @@ Listing assets for a tenant is supported.
 Control-plane purge APIs are required:
 
 - `CanDeleteVersionAssets(tenantId, versionId)` – read-only eligibility oracle.
+- `TombstoneVersionAssets(tenantId, versionId, expectedArtifactStateEpoch, tombstoneWorkflowId)` – explicit operator abandonment transition, CAS-guarded by the expected state epoch and valid only for `FAILED -> TOMBSTONED`; ordinary publish failure remains `FAILED` and retryable.
 - `BeginPurgeVersionAssets(tenantId, versionId, expectedArtifactStateEpoch)` – CAS-guarded purge start.
 - `FinalizePurgeVersionAssets(tenantId, versionId, purgeWorkflowId, expectedArtifactStateEpoch)` – CAS-guarded purge completion.
 - `GetVersionAssetArtifactState(tenantId, versionId)` – authoritative lifecycle/proof read for the persisted artifact row.

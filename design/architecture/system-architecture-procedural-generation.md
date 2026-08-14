@@ -239,6 +239,7 @@ Physical topology representation is opaque behind World Management:
 
 - Sparse and bounded moderate graphs may use eager template, instance, and exit rows within enforced and tested limits.
 - Before large full-grid scale is claimed, generation must produce an immutable digest-attested chunk topology or equivalent bounded representation. A validated root manifest identifies the complete lattice and immutable chunks, and one short finalize selects that root atomically so readers never observe a partial grid.
+- For a published bounded `FULL_GRID`, the committed root manifest and every immutable chunk are `artifactDigests[]` entries whose usage keys are required by the published release bundle; the root names the exact committed chunk set. Private staging is excluded. Publication, activation, rollback, backup, and recovery use this same attested committed root-and-chunk set.
 - Runtime reads compose the immutable base cell with durable instance-scoped deltas for visited, occupied, changed, timed, or otherwise mutable locations. Caches and lazy materialization remain derived projections rather than authority.
 
 Loading or materializing an already committed cell is not regeneration. Recovery restores the stored topology artifact and durable runtime deltas instead of re-running an obsolete generator from seed. A world that intentionally creates previously unfixed chunks later is an unbounded or expanding generation mode and requires a separate contract; it is not the bounded fixed `FULL_GRID` mode.

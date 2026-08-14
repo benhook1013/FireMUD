@@ -23,8 +23,8 @@ This brief document summarizes optional ways a hosted game can change its look a
 
 Concrete realm-swap example:
 
-- Production realm admission resolves `{ versionId: "22222222-2222-4222-8222-222222222222", scriptPatchVersion: "v42-script.1", manifestHash: "sha256:prod-manifest...", manifestUrl: ".../11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/manifest.json" }`, so the client verifies the manifest hash and each downloaded asset's `contentDigest` before applying the first bundle's assets.
-- A tester then switches to `playtest-docks`, and `PLAY` resolves `{ versionId: "33333333-3333-4333-8333-333333333333", scriptPatchVersion: "v43-script.2", manifestHash: "sha256:playtest-manifest...", manifestUrl: ".../11111111-1111-4111-8111-111111111111/33333333-3333-4333-8333-333333333333/manifest.json" }`; a manifest or required-asset digest mismatch fails closed before applying the second bundle.
+- Production realm admission resolves `{ versionId: "22222222-2222-4222-8222-222222222222", scriptPatchVersion: "v42-script.1", manifestHash: "sha256:prod-manifest...", manifestUrl: "https://cdn.example.com/manifests/sha256/prod-manifest..." }`, so the client verifies the content-addressed manifest hash and each downloaded asset's `contentDigest` before applying the first bundle's assets.
+- A tester then switches to `playtest-docks`, and `PLAY` resolves `{ versionId: "33333333-3333-4333-8333-333333333333", scriptPatchVersion: "v43-script.2", manifestHash: "sha256:playtest-manifest...", manifestUrl: "https://cdn.example.com/manifests/sha256/playtest-manifest..." }`; a manifest or required-asset digest mismatch fails closed before applying the second bundle.
 - The client must treat the changed canonical `versionId` as a hard theme boundary: load the second bundle's manifest, swap logos/theme overrides, and render the fork with that bundle's look without mutating the production realm's active theme state.
 - If the player returns to production, the next `PLAY` or reconnect resume re-resolves `versionId: "22222222-2222-4222-8222-222222222222"` and the client switches back to the first bundle's manifest.
 
@@ -40,7 +40,7 @@ Example `manifest.json` for the production `versionId` above:
       "contentDigest": "sha256:ab12...",
       "contentType": "image/png",
       "artifactSchemaVersion": 1,
-      "url": "https://cdn.example.com/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/logo.png"
+      "url": "https://cdn.example.com/artifacts/sha256/ab/ab12..."
     },
     "branding.favicon": {
       "usageKey": "branding.favicon",
@@ -48,7 +48,7 @@ Example `manifest.json` for the production `versionId` above:
       "contentDigest": "sha256:cd34...",
       "contentType": "image/x-icon",
       "artifactSchemaVersion": 1,
-      "url": "https://cdn.example.com/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/favicon.ico"
+      "url": "https://cdn.example.com/artifacts/sha256/cd/cd34..."
     },
     "branding.theme": {
       "usageKey": "branding.theme",
@@ -56,7 +56,7 @@ Example `manifest.json` for the production `versionId` above:
       "contentDigest": "sha256:ef56...",
       "contentType": "application/json",
       "artifactSchemaVersion": 1,
-      "url": "https://cdn.example.com/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/theme.json"
+      "url": "https://cdn.example.com/artifacts/sha256/ef/ef56..."
     }
   }
 }
