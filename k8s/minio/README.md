@@ -17,7 +17,7 @@ published game assets.
 
    For shared or production-like environments, generate unique credentials in the approved secret manager and materialize them as the `minio-credentials` Kubernetes Secret. Generate a separate bucket-scoped, least-privileged `firemud-assets-writer` Secret for Game Design. Do not put real values in manifests, shell history, or process arguments. The MinIO Deployment and Game Design configuration must consume these values through Secret-backed environment/configuration references.
 
-   A trusted bootstrap using `minio-credentials` must create the generated service identity and bucket-scoped policy required by Game Design. The policy may permit only `GetObject`, `PutObject`, `ListBucket`, and `DeleteObject` on `firemud-assets`; it must deny admin operations and access to other buckets. This is least-privileged at bucket/API scope, not lifecycle-state authority: `PutObject` supports publication and exact-bytes repair, while `DeleteObject` is usable only behind the approved Game Design purge workflow. These credentials are not for direct operator use. The bootstrap must materialize `firemud-assets-writer` through the approved secret mechanism without credentials in the repository or shell history. Repository automation for this provisioner is currently absent, so shared and production-like deployment is blocked until it exists.
+   A trusted bootstrap using `minio-credentials` must create the generated service identity and bucket-scoped policy required by Game Design. The policy may permit only `GetObject`, `PutObject`, `ListBucket`, and `DeleteObject` on `firemud-assets`; it must deny admin operations and access to other buckets. This policy is least-privileged at bucket/API scope and does not enforce lifecycle state: possession of the Game Design credential permits the listed operations, including `PutObject` for publication and exact-bytes repair. Distribution is restricted to Game Design, whose CAS-guarded workflow governs `DeleteObject`; the credentials are not for direct operator use. The bootstrap must materialize `firemud-assets-writer` through the approved secret mechanism without credentials in the repository or shell history. Repository automation for this provisioner is currently absent, so shared and production-like deployment is blocked until it exists.
 
    The MinIO Deployment already injects `minio-credentials` through `secretKeyRef`. A Game Design Deployment should use the writer Secret in the same way:
 
@@ -57,7 +57,7 @@ published game assets.
    fi
 
    kubectl run mc --rm -it --restart=Never \
-     --image=minio/mc:RELEASE.2024-05-09T17-04-24Z \
+     --image=minio/mc:RELEASE.2024-05-09T17-04-24Z@sha256:3e9666a093d0a8fcbbac606346c415ae9277a0ca96989a6bdddd3d03e90a21b4 \
      --overrides="{\"spec\":{\"containers\":[{\"name\":\"mc\",\"env\":[{\"name\":\"MINIO_ACCESS_KEY\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"minio-credentials\",\"key\":\"accessKey\"}}},{\"name\":\"MINIO_SECRET_KEY\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"minio-credentials\",\"key\":\"secretKey\"}}},{\"name\":\"GATEWAY_ORIGIN\",\"value\":\"${GATEWAY_ORIGIN}\"}]}]}}" \
      --command -- sh -c '
        export MC_HOST_local="http://${MINIO_ACCESS_KEY}:${MINIO_SECRET_KEY}@minio:9000" &&
@@ -77,6 +77,8 @@ published game assets.
 
 Configure Game Design's authenticated S3 access with `ASSET_STORE_ENDPOINT=http://minio:9000` inside the cluster and the Secret-backed writer credentials. Local Game Design setup is blocked until `firemud-assets-writer` has actually been provisioned through an approved local-only or trusted bootstrap path; the placeholder `minio-credentials` Secret alone is insufficient. Do not expose the MinIO bucket as an anonymous delivery surface.
 
+Validation must separate the private MinIO endpoint from public delivery: an unauthenticated GET to the private `ASSET_STORE_ENDPOINT` must be rejected, while a target public-origin request is tested only against an attested immutable published object.
+
 Target public delivery uses a separate gateway/CDN origin recorded through target-only `ASSET_STORE_PUBLIC_BASE_URL`; that setting is not implemented in the current single-endpoint first slice. The public origin must expose only attested immutable published objects. Private staging, quarantine, `FAILED`, and `EXPORTED_UNATTESTED` objects remain inaccessible.
 
 ## Validation and Evidence Checklist
@@ -89,8 +91,9 @@ Documentation checks for this change:
 
 Required runtime evidence remains unrun for this documentation-only change. Before the target public-delivery path may be considered implemented, operators must retain:
 
-- an anonymous GET attempt against a published object showing rejection;
+- an unauthenticated GET attempt against the private MinIO/S3 endpoint showing rejection;
 - an authenticated private-endpoint request showing each allowed writer read, write, list, and delete operation through the Secret-backed writer configuration;
 - denied writer attempts for admin operations and other buckets;
+- a public-origin gateway/CDN request for an attested immutable published object showing delivery;
 - denied public reads for private candidate, `FAILED`, and `EXPORTED_UNATTESTED` bytes; and
 - a gateway response showing the configured CORS headers for an allowed GET origin.

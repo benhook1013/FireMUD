@@ -40,18 +40,43 @@ When using a self-hosted MinIO cluster as the asset store:
 2. **Create the `firemud-assets` bucket**
 
    ```bash
-   kubectl run mc --rm -it --image=minio/mc --command -- \
-     sh -c "mc alias set local http://minio:9000 $ACCESS $SECRET && mc mb local/firemud-assets"
+   kubectl run mc --rm -it --restart=Never \
+     --image=minio/mc:RELEASE.2024-05-09T17-04-24Z@sha256:3e9666a093d0a8fcbbac606346c415ae9277a0ca96989a6bdddd3d03e90a21b4 \
+     --overrides='{"spec":{"containers":[{"name":"mc","env":[{"name":"MINIO_ACCESS_KEY","valueFrom":{"secretKeyRef":{"name":"minio-credentials","key":"accessKey"}}},{"name":"MINIO_SECRET_KEY","valueFrom":{"secretKeyRef":{"name":"minio-credentials","key":"secretKey"}}}]}]}}' \
+     --command -- sh -c '
+       export MC_HOST_local="http://${MINIO_ACCESS_KEY}:${MINIO_SECRET_KEY}@minio:9000" &&
+       mc mb --ignore-existing local/firemud-assets
+     '
    ```
 
 3. **Keep the bucket private and configure CORS for the gateway domain**
 
    ```bash
-   kubectl run mc --rm -it --image=minio/mc --command -- \
-     sh -c "mc alias set local http://minio:9000 $ACCESS $SECRET && \
-            mc anonymous set private local/firemud-assets && \
-            printf '[{\"AllowedMethods\":[\"GET\"],\"AllowedOrigins\":[\"https://your-gateway-domain\"],\"AllowedHeaders\":[\"*\"]}]' > /tmp/cors.json && \
-            mc cors set local/firemud-assets /tmp/cors.json"
+   if [[ -z "${GATEWAY_ORIGIN:-}" || "$GATEWAY_ORIGIN" == *"*"* || "$GATEWAY_ORIGIN" == *"?"* || "$GATEWAY_ORIGIN" == *"["* || "$GATEWAY_ORIGIN" == *"]"* ]]; then
+     echo "GATEWAY_ORIGIN must be set to a specific, non-wildcard origin" >&2
+     exit 1
+   fi
+   if [[ ! "$GATEWAY_ORIGIN" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ && ! "$GATEWAY_ORIGIN" =~ ^http://localhost:[0-9]+$ ]]; then
+     echo "GATEWAY_ORIGIN must use https, except for a local localhost origin" >&2
+     exit 1
+   fi
+
+   kubectl run mc --rm -it --restart=Never \
+     --image=minio/mc:RELEASE.2024-05-09T17-04-24Z@sha256:3e9666a093d0a8fcbbac606346c415ae9277a0ca96989a6bdddd3d03e90a21b4 \
+     --overrides="{\"spec\":{\"containers\":[{\"name\":\"mc\",\"env\":[{\"name\":\"MINIO_ACCESS_KEY\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"minio-credentials\",\"key\":\"accessKey\"}}},{\"name\":\"MINIO_SECRET_KEY\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"minio-credentials\",\"key\":\"secretKey\"}}},{\"name\":\"GATEWAY_ORIGIN\",\"value\":\"${GATEWAY_ORIGIN}\"}]}]}}" \
+     --command -- sh -c '
+       export MC_HOST_local="http://${MINIO_ACCESS_KEY}:${MINIO_SECRET_KEY}@minio:9000" &&
+       mc anonymous set private local/firemud-assets &&
+       printf "%s\\n" \
+         "<CORSConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">" \
+         "  <CORSRule>" \
+         "    <AllowedOrigin>${GATEWAY_ORIGIN}</AllowedOrigin>" \
+         "    <AllowedMethod>GET</AllowedMethod>" \
+         "    <AllowedHeader>*</AllowedHeader>" \
+         "  </CORSRule>" \
+         "</CORSConfiguration>" > /tmp/cors.xml &&
+       mc cors set local/firemud-assets /tmp/cors.xml
+     '
    ```
 
 4. **Service configuration**
@@ -59,6 +84,7 @@ When using a self-hosted MinIO cluster as the asset store:
    - Keep the bucket private. The gateway or CDN origin uses authenticated object-store credentials and exposes only attested immutable published objects; private staging, quarantine, `FAILED`, and `EXPORTED_UNATTESTED` objects must not be publicly readable.
    - `ASSET_STORE_ENDPOINT` is the private authenticated MinIO/S3 API used by Game Design reads and writes, for example `http://minio:9000` inside the cluster. It is never the public gateway delivery URL.
    - The target split uses `ASSET_STORE_PUBLIC_BASE_URL=https://<gateway-domain>/assets` only to generate public manifest links. That setting is not implemented in the current single-endpoint first slice; operators must not compensate by granting anonymous bucket-wide access. Any future public origin must expose only attested immutable published objects.
+   - Keep validation paths distinct: an unauthenticated GET to the private `ASSET_STORE_ENDPOINT` must be rejected, while a public-origin delivery test may request only an attested immutable published object.
 5. **Scope of stored data**
 
    The asset store holds only binary design-time assets and version-scoped `manifest.json` files managed by the Game Design Service. Logical world and entity templates remain in PostgreSQL schemas owned by World Management, Entity Management, and related domain services as described in their architecture documents; they are **not** stored in the object store.
