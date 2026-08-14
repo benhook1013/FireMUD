@@ -89,7 +89,7 @@ Game Design owns publication coordination, release descriptors, final release at
 }
 ```
 
-In the initial slice, exported derived world artifacts such as navmesh/path graph bundles are discovered through entries in the attested version `manifest.json`. `GetPublishedReleaseBundle` attests the same release through `manifestHash`, typed `artifactDigests[]`, and `requiredManifestAssetKeys[]`; callers should not expect a separate ad hoc top-level artifact-path field outside that canonical bundle shape.
+In the target contract, `published_release_bundle.artifactDigests[] { usageKey, immutableObjectKey, contentDigest, ... }` is authoritative for the mandatory actual-byte digest of every exported binary or derived artifact. `manifestHash` attests the canonical manifest bytes containing the same usage-key, immutable-object-key, and content-digest bindings. `requiredManifestAssetKeys[]` declares requiredness; each listed key must select exactly one matching `artifactDigests[]` entry and exactly one matching manifest entry. Callers should not expect a separate ad hoc top-level artifact-path field outside that canonical bundle shape.
 
 Illustrative attestation payload for a release with no derived world artifacts:
 
@@ -275,17 +275,39 @@ Tooling in the Game Design and Logging & Admin services should surface these rel
 - World Management and Game Session may cache launch-descriptor values only as execution inputs for the current `controlPlaneRequestId`; they must not persist or reuse a descriptor as a rolling "latest launch defaults" record for later requests.
 - `GetPublishedReleaseBundle(tenantId, versionId)` is the canonical release-attestation surface for launch, cutover, and repair. In the initial slice it must expose:
   - `participantDigests[]`
-  - `artifactDigests[]` for each exported derived world artifact
+  - `artifactDigests[] { usageKey, immutableObjectKey, contentDigest, ... }` for every exported binary or derived artifact
   - `manifestHash`
   - `requiredManifestAssetKeys[]` for stable manifest usage keys that are mandatory for launch/cutover validation of that release
-- `artifactDigests[]` and `requiredManifestAssetKeys[]` are complementary, not competing fields: typed artifact digests attest the exact exported bytes, while `requiredManifestAssetKeys[]` declares which manifest entries are required for a valid launch of that release.
+- `artifactDigests[]` is authoritative for mandatory actual-byte object digests. `requiredManifestAssetKeys[]` is complementary: every required usage key must select exactly one bundle artifact digest and exactly one manifest entry whose `usageKey`, `immutableObjectKey`, and `contentDigest` are byte-for-byte equal.
+- `manifestHash` attests the canonical manifest bytes containing those usage-key/object-key/digest bindings; it does not replace per-object byte verification.
 - The contract intentionally does not introduce a separate top-level artifact-path reference field outside this attested bundle shape. Runtime consumers still discover artifact locations through the attested `manifest.json`, not through ad hoc object-store path reconstruction.
+
+Compact normative proof fixture:
+
+```json
+{
+  "usageKey": "world.navmesh",
+  "bundleArtifactDigest": {
+    "immutableObjectKey": "sha256/na/navmesh42",
+    "contentDigest": "sha256:navmesh42"
+  },
+  "manifestEntry": {
+    "immutableObjectKey": "sha256/na/navmesh42",
+    "contentDigest": "sha256:navmesh42"
+  },
+  "deliveredBytesDigest": "sha256:navmesh42",
+  "manifestHash": "sha256:manifest42"
+}
+```
+
+Game Design accepts this tuple at publication only when the canonical manifest bytes hash to `manifestHash`, the bundle and manifest key/object/digest bindings are equal, and the delivered or staged bytes hash to `contentDigest`. Runtime launch validates the same tuple again from the attested bundle, fetched canonical manifest, and delivered bytes; this fixture is a normative documentation example, not implementation proof.
 
 Launch and cutover preflight use one fail-closed predicate for a full-version release:
 
 - `GetVersionState(tenantId, versionId)` must return `Published` or `Active`, and its `versionStateEpoch` must match the epoch frozen into the resolved launch descriptor or prepared cutover proof.
-- `GetPublishedReleaseBundle(tenantId, versionId)` must return a supported attestation for the same release identity, generation config revision, participant digests, and `manifestHash` used by the launch/cutover proof.
+- `GetPublishedReleaseBundle(tenantId, versionId)` must return a supported attestation for the same release identity, generation config revision, participant digests, `manifestHash`, and authoritative `artifactDigests[]` used by the launch/cutover proof.
 - `GetVersionAssetArtifactState(tenantId, versionId)` must return `artifactState=PUBLISHED`, the frozen `exportedVersionNumber`, the same `manifestHash` attested by the release bundle, and exported manifest asset keys containing every `requiredManifestAssetKeys[]` entry.
+- Preflight must verify the fetched canonical manifest bytes against `manifestHash`; for every required usage key, it must find exactly one bundle artifact digest and one manifest entry with equal `usageKey`, `immutableObjectKey`, and `contentDigest`, then hash the delivered object's actual bytes and require equality with that `contentDigest`.
 - A full-version release is launchable only when `GetVersionState` returns `versionState=Published` or `versionState=Active` and `GetVersionAssetArtifactState` returns `artifactState=PUBLISHED`, with a supported attestation and matching release identity, state epoch, manifest/schema digest, mandatory object digests, and required keys. Private `STAGED`, `EXPORTED_UNATTESTED`, `FAILED`, quarantined, purge, stale, missing, or mismatched candidates never become fallback content and never advance admission.
 - If any proof is missing, unsupported, stale, or mismatched, launch/cutover fails before gameplay admission or admission-pointer swap. Callers must not fall back to reconstructing release truth from object-store paths, local template tables, cached descriptors, or partial publish workflow state.
 

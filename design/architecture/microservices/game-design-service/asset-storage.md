@@ -7,6 +7,7 @@ The CDN is the runtime branding/theme byte data plane, including delivery of the
 ## Implementation Status
 
 - **Current first slice:** Ordinary uploaded bytes are persisted in `game_assets.data`, which is the immutable repair source for Published/Active binary assets. Publication currently exports them to version-scoped object storage and exposes the numeric `GameAssetDto.id`; the target private-candidate/content-addressed publication and opaque logical asset identifier are not live.
+- **Current lifecycle proof:** `version_asset_artifact` records the exported version-number prefix and manifest asset keys, but it does not yet freeze the target exact immutable object-key/digest set or implement the target global publication/purge fence.
 - **Identifier drift:** `game_assets.tenant_id` accepts a REST `tenantId` string without UUID-shape enforcement while Account Service still exposes numeric `Long` tenant identifiers. No authoritative numeric-to-UUID mapping exists, and the public asset row key is a `BIGSERIAL`; none of these numeric values is a canonical logical identity.
 - **Target convergence:** Account and downstream contracts migrate together to the opaque UUID tenant identity, and the public asset contract and `GameAssetDto.id` converge directly on an opaque UUID logical asset identifier while any numeric database key remains private. The numeric public field is removed rather than retained through compatibility translation; implementations must not invent a reversible numeric-to-UUID encoding. Draft bytes may move out of PostgreSQL only after an equivalent immutable repair source exists.
 
@@ -255,12 +256,13 @@ The same asset can be referenced by multiple versions without duplicating the bi
 row. Once the target authoring path exists and a mapping belongs to a version in the
 Published or Active state described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md), the referenced asset must be treated as immutable; replacing the binary requires creating a new `game_assets` row and a new `version_asset` mapping.
 
-Artifact lifecycle state for each exported prefix must be persisted in a dedicated state table:
+Artifact lifecycle state for each version must be persisted in a dedicated state table:
 
 - `version_asset_artifact`:
   - `tenant_id`
   - `version_id`
-  - `exported_version_number` (the frozen version-number prefix used for object-store export and purge finalization)
+  - `exported_version_number` (current first-slice prefix audit metadata; never target purge-selection authority)
+  - `published_object_proofs[] { immutable_object_key, content_digest }` (target frozen exact object set used for repair and purge)
   - `artifact_state` (`STAGED`, `EXPORTED_UNATTESTED`, `PUBLISHED`, `FAILED`, `TOMBSTONED`, `PURGE_IN_PROGRESS`, `PURGE_FAILED`, `PURGED`)
   - `state_epoch` (monotonic CAS token)
   - `manifest_hash`
@@ -453,8 +455,8 @@ Race-safe purge workflow:
   - transition `version_asset_artifact` from `TOMBSTONED` to `PURGE_IN_PROGRESS` (or equivalent) using `state_epoch` CAS, and
   - return a `purgeWorkflowId` for the object-store deletion phase.
 - If CAS fails or eligibility no longer holds, the API must fail without deleting objects.
-- Before deleting any frozen object key, finalization must hold the publication/purge fence and revalidate global object reachability or transactionally maintained reference counts. If a key became referenced by another published release, purge must retain the bytes and lifecycle evidence, fail or defer finalization, and must not mark the artifact `PURGED`; only a successful fenced deletion may finalize `PURGED`.
-- Finalization deletes object-store bytes using the frozen `exported_version_number` and exported manifest asset-key proof from `version_asset_artifact`, not by re-reading current draft assets or mutable version state. It transitions `PURGE_IN_PROGRESS -> PURGED` only after object deletion succeeds and must retain the lifecycle metadata row for audit. Object deletion is reached only through these Game Design reachability and CAS-guarded APIs; direct bucket commands are outside the supported lifecycle.
+- Target lifecycle proof freezes the exact `published_object_proofs[] { immutableObjectKey, contentDigest }` set before publication. Finalization must select candidates only from that frozen set; `exported_version_number`, version prefixes, bucket listings, current draft assets, and mutable version state are audit or delivery metadata and never purge-selection authority.
+- While holding the publication/purge fence, finalization removes this release's reference and revalidates global reachability or transactionally maintained reference counts for every frozen key/digest tuple. It deletes only frozen keys proven globally unreachable and retains shared keys that remain reachable from another release. It transitions `PURGE_IN_PROGRESS -> PURGED` only after every required object deletion succeeds and must retain the lifecycle metadata row for audit. Direct bucket commands are outside the supported lifecycle.
 - On deletion/finalization failure, workflow must transition to `PURGE_FAILED` with structured `last_error_code`/`last_error_message`; operators then use retry/resume APIs instead of manual object-store surgery.
 
 ## Asset Upload Guardrails
