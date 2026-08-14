@@ -8,7 +8,7 @@ This inventory contains 38 decision rows. Its assigned source set is the exact 3
 
 - **Scan completeness:** The product/operations documentation scan is complete for its disjoint 35-path assignment; the full 95-path allocation is accounted for by the 22 cross-cutting, 38 specialized runtime/support, and 35 assigned paths.
 - **Implementation and approval state:** The `Complete` status above describes scan coverage and fidelity. Human-led review and each row's archive decision/status classification are separate from whether that reviewed outcome has been applied to `develop`. This merged ledger retains pre-import evidence for reviewed outcomes not yet applied; only [Applied Review Provenance](./consequential-decision-inventory.md#applied-review-provenance) establishes merged application state. Row-level implementation and proof remain separate.
-- **Current validation:** `./gradlew linkCheck lintMarkdown` passed with 4,574 links checked (4,536 OK, 0 errors, 38 excluded) and 454 Markdown files checked with 0 issues; `git diff --check` and the architecture document contracts also passed. Runtime proof is not applicable because this ADR/alignment parcel is documentation-only and changes no runtime behavior.
+- **Current validation:** On 2026-08-14 Pacific/Auckland (2026-08-13 UTC), `./gradlew linkCheck lintMarkdown` passed with 4,574 links checked (4,536 OK, 0 errors, 38 excluded) and 454 Markdown files checked with 0 issues; `git diff --check` and the architecture document contracts also passed. Runtime proof is not applicable because this ADR/alignment parcel is documentation-only and changes no runtime behavior.
 
 ## Scope And Method
 

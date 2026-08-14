@@ -66,7 +66,7 @@ published game assets.
      '
    ```
 
-Configure Game Design's authenticated S3 access with `ASSET_STORE_ENDPOINT=http://minio:9000` inside the cluster and the Secret-backed writer credentials. Do not expose the MinIO bucket as an anonymous delivery surface.
+Configure Game Design's authenticated S3 access with `ASSET_STORE_ENDPOINT=http://minio:9000` inside the cluster and the Secret-backed writer credentials. Local Game Design setup is blocked until `firemud-assets-writer` has actually been provisioned through an approved local-only or trusted bootstrap path; the placeholder `minio-credentials` Secret alone is insufficient. Do not expose the MinIO bucket as an anonymous delivery surface.
 
 Target public delivery uses a separate gateway/CDN origin recorded through target-only `ASSET_STORE_PUBLIC_BASE_URL`; that setting is not implemented in the current single-endpoint first slice. The public origin must expose only attested immutable published objects. Private staging, quarantine, `FAILED`, and `EXPORTED_UNATTESTED` objects remain inaccessible.
 

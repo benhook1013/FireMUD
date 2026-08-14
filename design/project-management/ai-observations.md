@@ -54,3 +54,8 @@ Entry format:
   - Context: a Java file was renamed or newly introduced while Gradle Spotless task state remained cached.
   - Observation: cached Spotless task state can report success without formatting the renamed/new file.
   - Expected pattern: explicitly run the formatter/apply task, inspect the resulting diff, and only then trust formatting checks rather than relying on stale cache state.
+
+- `2026-08-15`: CodeRabbit rate-limit replies require direct command-comment verification
+  - Context: `check-coderabbit-review.py` reported a new hosted request as unfinished and not rate-limited even though CodeRabbit had already replied to that command with `Action not completed` and a 58-minute rate-limit window.
+  - Observation: the current review checker does not recognize every top-level rate-limit reply shape, so an unfinished request can be mistaken for an active review and keep a watcher waiting indefinitely.
+  - Expected pattern: when a hosted request remains unfinished unexpectedly, inspect CodeRabbit's direct reply to the latest explicit command before treating the review as active; improve the checker in a dedicated tooling slice rather than adding ad hoc parsing during unrelated review work.
