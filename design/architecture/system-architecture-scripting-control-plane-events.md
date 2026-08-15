@@ -173,8 +173,11 @@ Fields:
 - `tenantId`
 - `gameInstanceId`
 - `targetScriptPatchVersion`
+- `targetScriptPinEpoch`
 - `instanceSequence`
 - `controlPlaneRequestId`
 - `timeoutMs`
 - `reason` (bounded enum/code)
 - `occurredAt`
+
+Consumer correlation/action rule: a consumer may correlate or act on this event only when the event's exact `(targetScriptPatchVersion, targetScriptPinEpoch)` matches the local rollback workflow's target tuple; matching only one field, or a tuple from another workflow, is insufficient. Consumer action is limited to the local timeout consequence defined by the rollback workflow and must not create a competing timeout signal or a second rollout lifecycle.
