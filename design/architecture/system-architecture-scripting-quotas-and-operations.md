@@ -319,7 +319,7 @@ Script execution spans several services (Game Design, Game Session, Automation &
 - `tickId` – identifies the authoritative game tick in which commands execute (paired with `regionEpoch`).
 - `correlationId` – optional cross-service correlation token for Sagas and user-visible flows.
 
-These identifiers appear consistently in:
+These identifiers are intended to appear in the following observability surfaces. The per-command handoff surface follows the target/current distinction above: target records use the full identity, while current Game Session readback may remain narrower:
 
 - `script_event_audit` records in the Automation & Scripting Service.
 - Tick logs and effect ledgers in the Game Session and Game Logic services.

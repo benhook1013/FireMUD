@@ -213,10 +213,10 @@ Deployment semantics, publish-time ownership, and the canonical versioning model
 
 The canonical patch lifecycle and readiness states remain owned by [Scripting DSL Reference & Event Lifecycle](./system-architecture-scripting-dsl-reference-and-lifecycle.md#script-patch-lifecycle). Runtime execution consumes that lifecycle by enforcing the [canonical version-fence contract](./system-architecture-scripting-contracts.md#3-version-fencing-rollback-safety) at its local admission boundary for instance-bound gameplay/runtime triggers. Tenant-readiness `onLoad` is explicitly excluded from these instance-pin checks because it uses its pre-instance readiness identity without `gameInstanceId` or `scriptPinEpoch`:
 
-- If the supplied exact `(scriptPatchVersion, scriptPinEpoch)` is `READY` for the tenant, runtime must additionally compare both fields to the fresh authoritative Game Session tuple for `<tenantId, gameInstanceId>`; an Automation projection is only a convergence/readiness aid.
+- For an instance-bound gameplay/runtime trigger, the supplied `scriptPatchVersion` must be `READY` for the tenant. Runtime must then compare the supplied exact `(scriptPatchVersion, scriptPinEpoch)` to the fresh authoritative Game Session tuple for `<tenantId, gameInstanceId>`; an Automation projection is only a convergence/readiness aid.
 - If authoritative pin visibility is stale, missing, or unavailable beyond its configured freshness boundary, admission fails closed; no local or stale pin override is permitted.
-- If the supplied tuple is `READY` for the tenant but either field does not match the authoritative Game Session tuple, admission is rejected at the exact execution fence.
-- If the patch is unknown or in a non-ready state, the trigger is rejected at admission.
+- If the supplied patch version is tenant-`READY` but either field does not match the authoritative Game Session tuple, admission is rejected at the exact execution fence.
+- If the patch version is unknown or in a non-ready state, the trigger is rejected at admission.
 
 ## Runtime Execution Flow
 
