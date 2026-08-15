@@ -74,6 +74,8 @@ Consolidation names one canonical owner for a target contract and reduces compet
 
 Each pending decision-family import must consolidate all related normative duplication in the affected design area, including non-ADR contracts. After packets 3-7 are applied, perform one broad design-area authority review across the complete product and architecture corpus to identify residual owner conflicts and non-ADR duplication that family-local imports did not expose.
 
+The working rule is to continue selective ADR-family imports rather than pause for another standalone broad cleanup, applying owner-link and local-consequence deduplication within each parcel before the planned whole-corpus authority pass after packets 3-7. During PR review, follow the linked [PR lifecycle](../../developer-workflows/pr-lifecycle.md); stop additional review cycles when new findings have tapered to duplicates, stylistic polish, or immaterial restatement rather than requiring zero conceivable suggestions.
+
 ## Authority Boundaries
 
 - Product documents define product requirements and observable product behavior; the [product requirements overview](../../product/requirements.md) is the canonical product scope summary.
