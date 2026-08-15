@@ -73,7 +73,7 @@ Every mutating rollback or cleanup call in this document, including pause/resume
 
 ### Game Session: Tick Pause/Resume (Rollback Support)
 
-Rollback protocols require a coordination barrier so gameplay does not execute mixed-version work during the transition.
+Only a separately declared unfenced effect family, migration, or explicitly scoped remediation requires a coordination barrier so gameplay does not execute mixed-version work during that exceptional transition; routine script rollback uses epoch fencing while ordinary gameplay continues.
 
 #### `PauseTicks`
 

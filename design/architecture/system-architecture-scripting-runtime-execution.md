@@ -7,7 +7,7 @@ Routing note:
 - Use this document for runtime execution semantics, instance-aware admission, and execution-state behavior after a script patch or plugin version is already eligible to run.
 - Use the [DSL and lifecycle reference](./system-architecture-scripting-dsl-reference-and-lifecycle.md) for the DSL and authoring/publish lifecycle.
 
-The exact `(scriptPatchVersion, scriptPinEpoch)` execution identity and rollback fence are enforced here at runtime and cross-service boundaries; Game Session remains authoritative for that pin tuple and rollout history. The accepted no-routine-pause decision is [ADR 0106](./decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md). Stage-aware dead-letter recovery follows [ADR 0107](./decisions/adr-0107-stage-aware-script-dead-letter-recovery.md), and [ADR 0109](./decisions/adr-0109-game-session-owned-script-rollout-history.md) remains the rollout-history authority boundary.
+The target runtime and cross-service boundaries enforce the exact `(scriptPatchVersion, scriptPinEpoch)` execution identity and rollback fence; Game Session remains authoritative for that pin tuple and rollout history. The accepted no-routine-pause decision is [ADR 0106](./decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md). Stage-aware dead-letter recovery follows [ADR 0107](./decisions/adr-0107-stage-aware-script-dead-letter-recovery.md), and [ADR 0109](./decisions/adr-0109-game-session-owned-script-rollout-history.md) remains the rollout-history authority boundary.
 
 It is a companion to:
 
