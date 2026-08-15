@@ -8,6 +8,8 @@ Automation-generated tick work carries the exact Game Session-owned `(scriptPatc
 
 This document describes the target-state invariants. The target ownership model is a region-scoped Redis liveness lease paired with a durable executor fence and authority-fenced takeover/replay recovery for each `<tenantId, gameInstanceId, regionId>`. The live deployment has not yet converged on that region-scoped boundary: durable ownership is currently instance-scoped at `{tenantId, gameInstanceId}`, exposed through `RuntimeOwnershipStatus` with selected region fields and an opaque compare-and-match fence. True region-scoped lease/fence installation, `RegionStatus` authority, and takeover reconciliation remain target-state implementation and proof work. The invariants below therefore remain the canonical target contract and must not be read as a claim that the target recovery protocol is already live.
 
+The exact `scriptPinEpoch` propagation and final same-version old-epoch rejection described above are target-state only. The live `EnqueueAutomationCommandIfAbsentRequest` carries `scriptPatchVersion` but not `scriptPinEpoch`, so the current Game Session boundary cannot reject same-version work from an older script pin epoch; the target invariant remains required and unimplemented at that boundary.
+
 ## What This Covers
 
 - Hybrid tick model and player/AI fairness.

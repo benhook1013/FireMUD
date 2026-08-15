@@ -312,7 +312,7 @@ Contract rules:
 
 - This is a read-only operator surface for rollback/promotion drain checks; it must not mutate work-item state.
 - The live response is backed by durable Automation-owned admission mode/epoch state plus durable work-item truth already owned by Automation & Scripting.
-- Operators may use `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` as the current drain-empty condition for the active rollback epoch in that scope.
+- This read is diagnostic cleanup progress only. Its counts do not gate Automation resumption or ordinary gameplay ticks; exact target-artifact convergence and schedule reconciliation are the Automation admission gates. Cleanup remains asynchronous and may be bounded pending after the workflow reaches `COMPLETED`, subject to the displaced `(scriptPatchVersion, scriptPinEpoch)` fence.
 
 #### `ListScriptPatchInstanceRolloutEvents`
 
@@ -714,6 +714,7 @@ Required enum values:
 Contract rules:
 
 - Backpressure outcomes (`*_BACKPRESSURE_*`) must include bounded `retryAfterMs`.
+- A terminal rollback convergence timeout uses `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE` with `admissionReason=rollback_convergence_timeout` and no `retryAfterMs`; it is fail-closed until repair or repin, not retryable backpressure.
 - `admissionOutcome` and `admissionReason` describe the **event-scope ingress decision** only. They must not be interpreted as a summary of all handler-scoped outcomes created after binding resolution.
 - Event-scope `admissionOutcome` and `admissionReason` must map directly to the ingress-time admission result recorded in ingress audit/logging surfaces for that request; they are not the same thing as later handler-scoped `finalOutcome` values recorded in `script_event_audit`.
 - Handler-scoped denials such as `quota_denied`, `script_disabled`, `plugin_disabled`, and `plugin_component_blocked` remain handler/audit outcomes after binding resolution. They are not valid event-scope ingress `admissionOutcome` values in the general fan-out contract.

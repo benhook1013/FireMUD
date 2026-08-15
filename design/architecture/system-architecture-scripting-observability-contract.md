@@ -288,7 +288,7 @@ In particular:
 - Use `pin_state_unavailable` when a resolved handler's admission fails closed because bounded-staleness pin data cannot be refreshed; pre-resolution failures use the event-scope mapping in the normative contract tables.
 - Use `signer_policy_unavailable` for a resolved handler's admission failure after binding resolution when signer policy cannot be refreshed/verified from authoritative policy sources; pre-handler signer-policy unavailability uses the event-scope mapping in the normative contract tables and is not a handler `finalOutcome`.
 - Use `script_disabled` for operator disable/drain admission skips (never `skipped_disabled`).
-- A rollback convergence timeout is an event-scope ingress decision, not a handler `finalOutcome`: return `admitted=false` with `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK` and `admissionReason=rollback_convergence_timeout`, and record the same pair in `script_event_ingress_audit`.
+- A rollback convergence timeout is an event-scope ingress decision, not a handler `finalOutcome`: return `admitted=false` with `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE`, `admissionReason=rollback_convergence_timeout`, and no `retryAfterMs`, and record the same fields in `script_event_ingress_audit`. This terminal outcome is fail-closed until repair or repin, not retryable backpressure.
 - Output-budget failures may be represented by different `finalOutcome` values depending on the last attempted stage, but they must use one of the bounded canonical `finalReason` values above and must never be collapsed into an unstructured catch-all.
 
 ### `policyViolations` Schema (Required When Present)

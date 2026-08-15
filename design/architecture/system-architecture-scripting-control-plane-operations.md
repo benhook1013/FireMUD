@@ -14,7 +14,7 @@ Purge is evidence cleanup, not trigger recovery. It rejects `PENDING_EVALUATION`
 
 ## Implementation Status
 
-This section records current behavior only. The current Automation claim boundary is `PENDING_EVALUATION` -> `EVALUATING`; it has no recovery owner, evaluation lease expiry/fencing generation, or descriptor-commit marker/status, and its recovery behavior is unimplemented and unverified. `GetAutomationDrainStatus` currently counts `EVALUATING` and `HANDOFF_IN_FLIGHT` rows in `activeExecutionCount`, including unresolved stale `EVALUATING` rows, and counts every handoff-capable `PENDING_EVALUATION` row in `pendingCancelableWorkItemCount`. Current terminal-row cleanup is retention-based; the target terminal-evidence purge rule is not current trigger-state recovery and does not establish that the current cleanup preserves an `EVALUATED_COMMITTED` marker, audit, or replay causation. These implementation facts do not change the fail-closed zero-count rule in the normative API below.
+This section records current behavior only. The current Automation claim boundary is `PENDING_EVALUATION` -> `EVALUATING`; it has no recovery owner, evaluation lease expiry/fencing generation, or descriptor-commit marker/status, and its recovery behavior is unimplemented and unverified. `GetAutomationDrainStatus` currently counts `EVALUATING` and `HANDOFF_IN_FLIGHT` rows in `activeExecutionCount`, including unresolved stale `EVALUATING` rows, and counts every handoff-capable `PENDING_EVALUATION` row in `pendingCancelableWorkItemCount`. Current terminal-row cleanup is retention-based; the target terminal-evidence purge rule is not current trigger-state recovery and does not establish that the current cleanup preserves an `EVALUATED_COMMITTED` marker, audit, or replay causation. These implementation facts are a cleanup-projection gap; they do not relax the target exact-artifact convergence and schedule-reconciliation gates for Automation admission.
 
 ## Table of Contents
 
@@ -34,7 +34,7 @@ This section records current behavior only. The current Automation claim boundar
 This document covers:
 
 - Tick pause/resume and admission pause/resume for rollback-safe orchestration.
-- Rollback convergence reads and drain-status reads used to decide when it is safe to resume normal operation.
+- Rollback convergence reads used to decide when it is safe to resume normal operation, with drain-status reads retained as diagnostic cleanup progress.
 - Queue cleanup for script patch and plugin version changes.
 - Outbox, dead-letter, and stuck-workitem recovery.
 - Operator workflow APIs that orchestrate the above steps.
@@ -43,7 +43,7 @@ This document does not redefine the direct API request/response contracts or can
 
 ## Principles
 
-- **Fail closed.** If the workflow cannot prove the current pin, drain, or signer-policy state, admission stays blocked.
+- **Fail closed.** If the workflow cannot prove the current pin, convergence, or signer-policy state, admission stays blocked; cleanup and drain projections are diagnostic and do not substitute for those gates.
 - **Idempotent workflow steps.** Every orchestration action must be safe to retry with the same `controlPlaneRequestId`.
 - **Instance-first scope.** Workflow actions must preserve `(tenantId, gameInstanceId)` isolation, with narrower scopes only when explicitly allowed.
 - **Epoch fence before script resume.** Automation admission stays paused through exact-artifact preparation, serialized pin/epoch commit, and schedule reconciliation. Ordinary player commands and ticks continue; `PauseTicks`/`ResumeTicks` are exceptional controls for a specifically declared unfenced effect or migration, not routine script rollback.
@@ -104,7 +104,7 @@ Semantics:
 
 ### Automation & Scripting: Admission Pause/Resume (Rollback Support)
 
-Rollback requires an Automation-side admission barrier so new script triggers are not admitted while control-plane cleanup is in progress. Ordinary gameplay ticks continue; only a separately declared unfenced-effect workflow adds an exceptional tick pause. For mutating control-plane requests, `actor` identifies the authenticated requesting principal and is persisted in audit as `requestedBy`; it must not be reused for the worker that executes a system-owned step. Audit records for such steps use `executedBy=system:automation` as a separate field.
+Rollback requires an Automation-side admission barrier so new script triggers are not admitted while the exact pin is repinned and schedules are reconciled. Cancellation, purge, and drain cleanup continue asynchronously and do not gate Automation resumption. Ordinary gameplay ticks continue; only a separately declared unfenced-effect workflow adds an exceptional tick pause. For mutating control-plane requests, `actor` identifies the authenticated requesting principal and is persisted in audit as `requestedBy`; it must not be reused for the worker that executes a system-owned step. Audit records for such steps use `executedBy=system:automation` as a separate field.
 
 #### `SetAutomationAdmissionMode`
 
@@ -148,8 +148,7 @@ Semantics:
 
 - Read-only.
 - Reports whether any pre-pause executions or already-persisted work remain in the rollback scope after the current `admissionEpoch` took effect.
-- Rollback orchestration uses this API together with cancel/purge hooks to decide when it is safe to resume Automation admission. Drain is fail-closed: `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` are both required before Automation admission resumes; unresolved active or pending work keeps the Automation admission barrier closed. Ordinary gameplay ticks and player commands do not wait for this drain or cleanup, except within a separately declared unfenced-effect workflow that owns its own explicit tick gate.
-- A drain response may authorize resume only when it is a fresh authoritative read taken after the final reconciliation, cancellation, and purge step, and its `admissionEpoch` matches the current rollback-scope epoch. A cached, stale, or earlier-epoch response is unsatisfied evidence.
+- Rollback orchestration uses this API to expose asynchronous cleanup progress. Drain counts do not gate Automation resumption or ordinary gameplay ticks; exact target-artifact convergence and schedule reconciliation are the admission gates. A cached, stale, or earlier-epoch response remains diagnostic rather than convergence evidence, and bounded cleanup may remain pending after `COMPLETED` under the displaced exact epoch fence.
 
 ### Rollback Convergence Readiness (Required)
 
@@ -422,7 +421,7 @@ If implemented, these APIs must remain thin orchestration and must not become an
 
 ## Rollback and Recovery Workflow
 
-The canonical rollback ordering, durable state machine, convergence timeout, drain gate, schedule reconciliation, and degraded-operation policy remain owned by [Scripting & Automation: Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md#patch-rollback-operator-driven-required). Use that owner document for command ordering and state transitions. The [operations cookbook](./system-architecture-scripting-operations-cookbook.md#rollback-protocol-example-non-authoritative) is only a non-authoritative worked example and must not be treated as a source of command ordering.
+The canonical rollback ordering, durable state machine, convergence timeout, diagnostic cleanup progress, schedule reconciliation, and degraded-operation policy remain owned by [Scripting & Automation: Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md#patch-rollback-operator-driven-required). Use that owner document for command ordering and state transitions. The [operations cookbook](./system-architecture-scripting-operations-cookbook.md#rollback-protocol-example-non-authoritative) is only a non-authoritative worked example and must not be treated as a source of command ordering.
 
 This document retains only the participating API consequences:
 
