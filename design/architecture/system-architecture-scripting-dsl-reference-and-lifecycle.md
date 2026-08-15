@@ -370,7 +370,7 @@ Typical transitions are:
 3. `ONLOAD_RUNNING → FAILED` when any `onLoad` execution fails fatally or an independently idempotent external infrastructure step exhausts its bounded retries; the DSL evaluation itself is not retried, and running instances continue using their previously pinned patch.
 4. `PENDING_VALIDATION|ONLOAD_RUNNING → SUPERSEDED` when a newer publish is accepted for the same tenant before the older patch reaches a terminal readiness state. `SUPERSEDED` is terminal and must be emitted before the newer patch begins readiness work.
 
-Per-instance rollout state is tracked by Game Session's append-only history of committed exact pin/epoch mutations (for example `PINNED`, `ROLLED_BACK`, `REPINNED`) and is driven by `SetPinnedScriptPatchVersion`, `RollbackScriptPatchVersion`, and `ScriptPatchPinChanged`. An instance rollback does not imply tenant patch state transition away from `READY`.
+Per-instance rollout state is tracked by Game Session's append-only history of committed exact pin/epoch mutations with canonical operation kinds `SET`, `ROLLBACK`, and `REPIN` and outcome/status fields separate from tenant readiness; it is driven by `SetPinnedScriptPatchVersion`, `RollbackScriptPatchVersion`, and `ScriptPatchPinChanged`. An instance rollback does not imply tenant patch state transition away from `READY`.
 
 Automation & Scripting exposes this lifecycle to other services via:
 

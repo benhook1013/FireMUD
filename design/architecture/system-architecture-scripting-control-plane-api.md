@@ -231,8 +231,8 @@ Outputs:
 
 - `previousScriptPatchVersion` (nullable)
 - `previousScriptPinEpoch` (nullable; the two previous fields are all-present or all-absent)
-- `pinnedScriptPatchVersion` (the new value)
-- `scriptPinEpoch` (the resulting exact authority epoch)
+- `pinnedScriptPatchVersion` (nullable resulting tuple member; present together with `scriptPinEpoch` or absent together for semantic `UNPINNED`; on deterministic failure the resulting tuple equals the previous tuple)
+- `scriptPinEpoch` (nullable resulting exact authority epoch, paired with `pinnedScriptPatchVersion`; deterministic failure does not advance it)
 - `controlPlaneRequestId`
 - `errorCode` (optional on failure; required for deterministic business failures such as `SCRIPT_PATCH_NOT_READY`)
 
