@@ -42,7 +42,7 @@ The table below captures the required sandbox behavior contract (target-state se
 - Ensure **deterministic, auditable outcomes** for any sandbox failure.
 - Integrate cleanly with the existing **tick**, **quota**, and **multi-tenancy** models.
 
-The sandbox context retains the exact owner tuple and plugin provenance needed for local immutable-artifact loading and final handoff; missing or stale evidence fails closed without a fallback. Stage-aware recovery and distinct embedded/plugin lifecycle metrics are local observability consequences; detailed authority and recovery rules live in [Scripting Runtime Execution](../../system-architecture-scripting-runtime-execution.md), the [scripting control-plane API](../../system-architecture-scripting-control-plane-api.md), and [ADR 0111](../../decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md).
+The sandbox context is a projection of the canonical sealed handler manifest defined by the [DSL lifecycle read-consistency contract](../../system-architecture-scripting-dsl-reference-and-lifecycle.md#read-consistency-contract). It retains the complete applicable owner/runtime scope, tenant/script identity, exact `(scriptPatchVersion, scriptPinEpoch)` tuple, and plugin provenance when applicable through evaluation and final handoff; tenant-readiness `onLoad` retains its declared pre-instance-pin exception. Missing or stale required evidence fails closed without a fallback. Stage-aware recovery and distinct embedded/plugin lifecycle metrics are local observability consequences; detailed authority and recovery rules live in [Scripting Runtime Execution](../../system-architecture-scripting-runtime-execution.md), the [scripting control-plane API](../../system-architecture-scripting-control-plane-api.md), and [ADR 0111](../../decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md).
 
 ---
 
@@ -79,10 +79,14 @@ Each script run follows a consistent lifecycle:
    - For each admitted handler, the service seals the handler input manifest and durably creates and queues `PENDING_EVALUATION` work. Queued work holds no capacity or execution marker; the later execution scheduler considers queued work for its canonical estimate reservation and leaves unselected work durably queued under the same identity.
 
 2. **Sandbox setup and executor acceptance**
-   - The scheduler allocates a **sandbox context** containing:
-     - Tenant and script identifiers
-     - The pinned `scriptPatchVersion`
+   - The scheduler allocates a **sandbox context** from the sealed handler manifest containing:
+     - The complete applicable owner/runtime scope (`tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, and `entityId` when applicable)
+     - Tenant/script identity (`scriptId`, `eventType`, `eventSchemaVersion`, `scriptEventId`, and `isDryRun`)
+     - The exact pinned `(scriptPatchVersion, scriptPinEpoch)` tuple
+     - Plugin provenance (`pluginId`, `pluginVersionId`, and `bindingId`) when applicable
      - Per-run budgets (CPU/time, memory, and concurrency)
+     - For tenant-readiness `onLoad`, the declared readiness identity and configuration/runtime metadata only; no instance pin epoch or gameplay scope is fabricated
+   - Missing, stale, or contradictory manifest, tuple, scope, or plugin provenance evidence fails closed before evaluation or final handoff.
    - The run is submitted to a **bounded thread pool** dedicated to script execution.
    - Dry-run/test work must use isolated execution capacity (separate pool, reserved worker share, or equivalent partition) so live automation retains guaranteed worker availability under load.
    - Immediately before evaluation, and only at this step, the worker acquires the lease and in one Automation-owned durable executor-acceptance transaction revalidates its current fence, durably accepts/claims the run for the executor, persists the exactly-once execution-start marker, and advances the work item to `EXECUTING`. Only after that commit may evaluation begin. If executor acceptance fails, the transition does not commit, the lease is released or reclaimed, and no execution charge is recorded; a crash after commit recovers from the durable executor claim and may reacquire a lease but never admits a second marker.

@@ -220,6 +220,7 @@ Semantics:
 - The operation must validate that `targetScriptPatchVersion` is `READY` for the tenant before pinning.
 - If the target patch is not `READY`, the operation must fail deterministically with an application error (for example `errorCode=SCRIPT_PATCH_NOT_READY`) and must not mutate pin state.
 - The operation must also validate base-version cohesion: the target patch's `baseVersionId` must match the game instance's currently pinned `runtimeVersionId`. If they do not match, the operation must fail deterministically with `errorCode=SCRIPT_PATCH_BASE_VERSION_MISMATCH` and must not mutate pin state.
+- Once a syntactically valid request is accepted and its `controlPlaneRequestId` is bound to the normalized request digest, any deterministic validation or preparation failure returns and stores one unsuccessful immutable Game Session history result with identical previous/resulting exact tuples and no epoch advance. An exact retry of that request returns the stored result without another history entry; a different normalized digest under the same request ID is an idempotency conflict.
 - On success, Game Session persists the new pin for `(tenantId, gameInstanceId)` and emits `ScriptPatchPinChanged`.
 - On success, Game Session atomically persists `(pinnedScriptPatchVersion, scriptPinEpoch)` and the corresponding append-only rollout-history record. The resulting epoch is new even when the target version equals the previous version.
 
@@ -246,6 +247,7 @@ Inputs:
 Semantics:
 
 - Equivalent to `SetPinnedScriptPatchVersion` but semantically indicates rollback; tooling may treat it as higher urgency. It is an explicit repin to a previously published, tenant-`READY`, base-compatible immutable patch and advances `scriptPinEpoch`; operational sequencing and convergence checks live in [Control Plane Operations](./system-architecture-scripting-control-plane-operations.md).
+- The accepted-request failure-history rule from `SetPinnedScriptPatchVersion` applies equally here: after the normalized digest is bound, deterministic validation or preparation failure stores one unsuccessful immutable history result with identical previous/resulting exact tuples and no epoch advance; exact same-ID retries return it and a different digest conflicts.
 - Target patch readiness requirements are identical to `SetPinnedScriptPatchVersion`: rollback targets must be `READY` for the tenant or the request fails with a deterministic application error (`SCRIPT_PATCH_NOT_READY`).
 - Base-version cohesion requirements are identical to `SetPinnedScriptPatchVersion`: rollback targets must have `baseVersionId` equal to the instance `runtimeVersionId` or the request fails with `SCRIPT_PATCH_BASE_VERSION_MISMATCH`.
 - On success, emits only `ScriptPatchPinChanged` with `changeType=ROLLBACK`; the reserved `ScriptPatchRollbackRequested` family is neither emitted nor consumed.
@@ -491,7 +493,9 @@ Inputs:
 
 Outputs:
 
-- `results[]` (one deterministic result per requested `workItemId`, including `workItemId`, `outcome`, `recoveryStage`, and bounded `rejectionReason` when rejected)
+- `results[]` (one deterministic result per requested `workItemId`, including `workItemId`, `outcome`, `recoveryStage`, and `rejectionReason` only when rejected)
+  - `outcome` is exactly one of `retried_evaluation`, `resumed_dispatch`, `already_recovered`, or `rejected`.
+  - `rejectionReason` is present only with `outcome=rejected` and uses bounded values such as `not_found_or_not_owned`, `stage_evidence_unavailable`, `script_pin_epoch_mismatch`, `plugin_binding_mismatch`, or `runtime_scope_mismatch`.
 - `replayedCount` (bounded count of selected work items that progressed)
 - `rejectedCount`
 
@@ -499,8 +503,8 @@ Contract rules:
 
 - Replay is fail-closed per work item. Eligibility requires exact current `(scriptPatchVersion, scriptPinEpoch)`, applicable plugin identity/version/binding, region/`regionEpoch`, and routing-bundle match to the immutable admitted evidence.
 - Evaluation-stage recovery uses the frozen original trigger/input manifest and exact graph, preserving the original work-item and `scriptEventId` identity without a new dispatch identity or normal admission/DSL entry; post-evaluation recovery uses only the durable evaluated-output and child-dispatch ledger, preserving original child identities. It never resolves a latest/local graph or regenerates an output after a child was accepted.
-- Rows with missing/contradictory stage evidence or any fence mismatch remain `DEAD_LETTERED` and return a deterministic per-row result; a rejected row is not partially changed or counted as successful.
-- The request is bounded and idempotent by `controlPlaneRequestId`, actor, reason, and explicit work-item IDs. A repeated request returns the stored per-row result with the declared `outcome=already_recovered`; no new recovery identity is introduced. Purge is a separate operation and never masquerades as recovery.
+- Rows with missing/contradictory stage evidence or any fence mismatch remain `DEAD_LETTERED` and return a deterministic per-row `outcome=rejected` with the applicable bounded `rejectionReason`; a rejected row is not partially changed or counted as successful.
+- The request is bounded and idempotent by `controlPlaneRequestId`, actor, reason, and explicit work-item IDs. An exact retry of the same `controlPlaneRequestId` and canonical request fingerprint returns the identical stored per-row outcomes, including `rejected`, without evaluation, dispatch, or relabeling. A new request that finds a row already recovered by an earlier successful request returns `outcome=already_recovered`; no new recovery identity is introduced. Purge is a separate operation and never masquerades as recovery.
 
 #### `GetScriptPatchInstanceRolloutStatus`
 

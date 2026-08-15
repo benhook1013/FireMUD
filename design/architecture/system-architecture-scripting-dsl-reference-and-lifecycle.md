@@ -151,9 +151,9 @@ See the Automation & Scripting Service README and service protos for the full, u
 `onLoad` is a **script-level lifecycle event**, not an entity-level event. It runs without an entity context and executes once per script definition and script patch for a tenant, not once per NPC or player.
 
 - **When it fires**
-  - The scheduler emits an `onLoad` trigger exactly once per canonical readiness Trigger Identity while that patch is the **pending** patch for the tenant, before it becomes eligible for an explicit instance-scoped exact pin by Game Session. In practice this means:
-    - When a script first becomes part of the tenant’s pending script set under a given `scriptPatchVersion` (lifecycle `PENDING_VALIDATION` → `ONLOAD_RUNNING`), and
-    - After a successful hot reload that introduces a new pending patch for that tenant, `onLoad` fires once for each script in that pending patch.
+- The Automation readiness worker/workflow enqueues an `onLoad` trigger exactly once per canonical readiness Trigger Identity while that patch is the **pending** patch for the tenant, before it becomes eligible for an explicit instance-scoped exact pin by Game Session. The gameplay scheduler does not own readiness enqueue or recovery. In practice this means:
+  - When a script first becomes part of the tenant’s pending script set under a given `scriptPatchVersion` (lifecycle `PENDING_VALIDATION` → `ONLOAD_RUNNING`), and
+  - After a successful hot reload that introduces a new pending patch for that tenant, `onLoad` fires once for each script in that pending patch.
   - If reload or validation fails and the patch never reaches `READY`, no Game Session pin changes and no additional `onLoad` events are generated for that patch.
 
 - **Per-script vs per-entity**
@@ -161,7 +161,7 @@ See the Automation & Scripting Service README and service protos for the full, u
   - Scripts that need per-entity initialization (for example, setting up patrol state when an NPC enters the world) should use `onSpawn`, `onEnterRegion`, or other entity-scoped events instead of relying on `onLoad`.
 
 - **Interaction with reloads and recovery**
-  - The Automation & Scripting Service treats `onLoad` as **at-most-once per canonical readiness Trigger Identity**, even across process restarts and leader changes. Completed or terminalized load state is tracked in persistent metadata so that simply restarting a scheduler instance does not re-fire a completed execution.
+  - The Automation & Scripting Service treats `onLoad` as **at-most-once per canonical readiness Trigger Identity**, even across process restarts and readiness-worker leadership changes. Completed or terminalized load state is tracked in persistent metadata so that simply restarting a readiness worker instance does not re-fire a completed execution.
   - `onLoad` triggers are enqueued only while the patch is tracked as `pendingPatchVersion` with lifecycle `ONLOAD_RUNNING`; tenant readiness remains separate from any instance's exact Game Session pin. Scripts never run `onLoad` against a patch that is already pinned for the target instance.
   - `onLoad` may not emit gameplay or tick commands and may not create durable shared effects. It is limited to configuration/runtime metadata validation and ephemeral or trivially recomputable initialization.
   - A stale `ONLOAD_RUNNING` execution is fenced by its publication/readiness generation and terminalized by Automation's recovery owner as an audited `finalStage=DSL_EVAL`, `finalOutcome=canceled`, `finalReason=stale_execution_fenced` result. It blocks `READY`; the same canonical readiness identity is never re-entered. Publication/readiness generations are fencing metadata, not execution identity. After the stale terminalization and audit are durable, retry requires republishing as a new immutable `scriptPatchVersion`; it must not mint a replacement onLoad execution identity for the stale patch.

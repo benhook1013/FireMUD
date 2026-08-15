@@ -35,7 +35,7 @@ FireMUD can degrade more safely by stopping new scripted work while allowing ord
 
 ## Decision
 
-New Automation & Scripting admission requires a bounded-fresh authoritative projection of Game Session's exact `(tenantId, gameInstanceId, scriptPatchVersion, scriptPinEpoch)`. If the projection is absent or stale, Automation may attempt a bounded refresh from Game Session. If it cannot obtain authoritative state, admission fails closed with `pin_state_unavailable`. A mismatch fails with the version/pin-fence outcome; Automation never substitutes a last-known patch or epoch.
+New Automation & Scripting admission requires a bounded-fresh projection of Game Session's authoritative exact `(tenantId, gameInstanceId, scriptPatchVersion, scriptPinEpoch)` state. If the projection is absent or stale, Automation must attempt a bounded refresh from Game Session before admission. If it cannot obtain authoritative state, admission fails closed with `pin_state_unavailable`. A mismatch fails with the version/pin-fence outcome; Automation never substitutes a last-known patch or epoch.
 
 There is no operator stale-pin override. Actor identity, reason, audit, scope, and TTL remain necessary controls for authorized operations, but they do not make stale state correct. Operators recover by restoring authoritative Game Session reads or projection delivery, repairing the affected control-plane path, or explicitly repinning after authority is available. They do not edit the projection or authorize speculative admission.
 

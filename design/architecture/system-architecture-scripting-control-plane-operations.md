@@ -333,7 +333,7 @@ Inputs:
 Semantics:
 
 - Idempotent.
-- Repeating the same `controlPlaneRequestId` for the same `workItemId` returns the previously recorded recovery result rather than creating another recovery attempt or changing the original identity.
+- Repeating the same `controlPlaneRequestId` for the same `workItemId` and canonical request fingerprint returns the previously recorded recovery result rather than creating another recovery attempt or changing the original identity.
 - Must enforce bounded batch size per request.
 - Each selected work item is recovered under its stored stage evidence. Evaluation-stage retry invokes the DSL evaluator again using the original work-item and `scriptEventId` identity, frozen input/manifest evidence, and exact admitted immutable graph; it remains outside the normal admission path, creates no new `automationDispatchId`, and must converge on the original work item and child identities. Post-evaluation recovery resumes the stored child-dispatch ledger without invoking the DSL, preserving its original child identities, payload digests, ordinals, and acknowledgements; accepted or terminal children no-op and only unfinished children dispatch. Neither stage regenerates an uncorrelated logical trigger.
 - Reusing a `controlPlaneRequestId` with a different canonical request fingerprint returns an idempotency conflict and cannot alter the stored recovery result. An exact retry returns the same per-work-item result; it does not reopen the original audit row.
@@ -343,7 +343,7 @@ Semantics:
 - Must enforce recovery eligibility against current authoritative state before progressing:
   - Work items with `(scriptPatchVersion, scriptPinEpoch)` that is not currently pinned for the scoped instance must be rejected from recovery, including a repin to the same patch with a new epoch.
   - Plugin work items whose immutable `(pluginId, pluginVersionId, bindingId)` tuple does not match the currently active binding for the same scoped `<tenantId, gameInstanceId, pluginId>` must be rejected from replay.
-- Ineligible rows must return deterministic bounded application errors (for example `REPLAY_VERSION_FENCE_MISMATCH`), remain `DEAD_LETTERED`, and produce no recovery record.
+- Ineligible rows must return `outcome=rejected` with the specific bounded `rejectionReason` that explains the failed fence or evidence check, remain `DEAD_LETTERED`, and produce no recovery record.
 
 Outputs:
 
@@ -352,9 +352,9 @@ Outputs:
   - `workItemId`
   - `recoveryStage` (`EVALUATION` or `POST_EVALUATION_DISPATCH`)
   - `outcome` (`retried_evaluation`, `resumed_dispatch`, `already_recovered`, or `rejected`)
-  - `rejectionReason` when `outcome=rejected`, using a bounded application reason such as `STAGE_EVIDENCE_UNAVAILABLE` or `REPLAY_VERSION_FENCE_MISMATCH`
+  - `rejectionReason` only when `outcome=rejected`, using bounded values such as `not_found_or_not_owned`, `stage_evidence_unavailable`, `script_pin_epoch_mismatch`, `plugin_binding_mismatch`, or `runtime_scope_mismatch`
 
-For a repeated `controlPlaneRequestId` and `workItemId`, `results[]` returns the same stored result with `outcome=already_recovered` when recovery was already recorded; rejected work items remain without a recovery record. `replayedCount` and this stable-request idempotency behavior are retained.
+For an exact retry of the same `controlPlaneRequestId`, canonical request fingerprint, and selected IDs, `results[]` returns the identical stored per-work-item outcomes, including `rejected`, without new work or relabeling. A new request with a different `controlPlaneRequestId` that finds a row already recovered by an earlier successful request returns `outcome=already_recovered`; rejected work items remain without a recovery record. `replayedCount` and this stable-request idempotency behavior are retained.
 
 Ineligible rows remain `DEAD_LETTERED` and produce no recovery record. Their rejected result is not a success claim, so a later request may retry after authoritative evidence or the exact pin/epoch becomes eligible. Missing or contradictory stage evidence remains dead-lettered.
 
@@ -375,7 +375,7 @@ Semantics:
 
 - Idempotent.
 - Resolves each selected `workItemId` against durable trigger and descriptor/outbox state before mutating anything. For rollback-scoped cleanup, every selected row must match the request's exact displaced `(scriptPatchVersion, scriptPinEpoch)` tuple; a same-version repin with a newer epoch is rejected. A row in `PENDING_EVALUATION` or `EVALUATING`, or an evaluated descriptor in `PENDING`, `INDEXED`, or `HANDOFF_IN_FLIGHT`, is rejected with a bounded application reason; an `EVALUATED_COMMITTED` parent is resolved as retained trigger evidence rather than rejected wholesale. Purge does not cancel, reclaim, dead-letter, replay, or otherwise mutate active/nonterminal work.
-- May purge only evaluated descriptor/outbox evidence in terminal `HANDED_OFF`, `CANCELED`, or `DEAD_LETTERED` status after that status's configured retention horizon has elapsed, including terminal children under an `EVALUATED_COMMITTED` parent. Terminal evidence still inside its retention window is rejected with a bounded retention reason. The operation preserves the `EVALUATED_COMMITTED` marker, corresponding `script_event_audit`, replay causation claims or records, and any other evidence still inside its required retention window.
+- May purge only a coherent retained evidence bundle whose terminal evaluated descriptor/outbox evidence is in `HANDED_OFF`, `CANCELED`, or `DEAD_LETTERED` status after the configured age/capacity eligibility, including terminal children under an `EVALUATED_COMMITTED` parent. A row advertised as recoverable and all of its stage, manifest, evaluated-output, and child-dispatch evidence must remain one bundle; cleanup must not delete supporting evidence independently while leaving the row recoverable. Terminal evidence still inside its retention window is rejected with a bounded retention reason, and incoherent evidence fails closed. Explicit purge follows the same whole-bundle rule, while the `EVALUATED_COMMITTED` marker, corresponding `script_event_audit`, and replay-causation evidence remain preserved under their owning retention contracts after purge.
 - Must emit operator-auditable records for every purge request.
 
 Outputs:
