@@ -312,12 +312,12 @@ At a high level:
 
 - The **Game Design Service** owns the *authoring* view of versions and drives the durable `publish` workflow.
 - The **Automation & Scripting Service** owns the *runtime* view of script patch readiness per tenant (for example, whether a patch is `READY` or `FAILED`).
-- The **Game Session Service** owns the pinned `(scriptPatchVersion, scriptPinEpoch)` for each game and is responsible for including both exact fields in events sent to the Automation & Scripting Service.
+- The **Game Session Service** owns the pinned `(scriptPatchVersion, scriptPinEpoch)` for each game and is responsible for including both exact fields in gameplay/runtime and scheduler events sent to the Automation & Scripting Service; control-plane events follow their own contract and do not acquire an instance epoch requirement by implication.
 
 The intended invariants are:
 
 - A script patch may be pinned for a game only after Automation has loaded and validated that exact patch for the tenant and marked it `READY` as part of the readiness workflow.
-- When Game Session emits events, it includes the exact currently pinned version and epoch. Automation must **not** silently substitute a different version or epoch; unknown, failed, stale, or mismatched authority rejects the trigger.
+- When Game Session emits gameplay/runtime or scheduler events, it includes the exact currently pinned version and epoch. Automation must **not** silently substitute a different version or epoch; unknown, failed, stale, or mismatched authority rejects that trigger. Control-plane events lacking an epoch remain governed by their own control-plane contract rather than being rejected for that omission.
 
 From the Automation & Scripting Service’s point of view, each `<tenantId, scriptPatchVersion>` follows the readiness lifecycle described in [Script Patch Lifecycle](#script-patch-lifecycle). Runtime script-event audit entries include the effective exact `(scriptPatchVersion, scriptPinEpoch)` tuple at evaluation so operators can correlate failures with the authoritative instance pin; tenant `onLoad` readiness records have no instance pin epoch.
 

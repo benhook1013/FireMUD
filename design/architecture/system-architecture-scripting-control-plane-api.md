@@ -334,12 +334,12 @@ Inputs:
 
 Outputs:
 
-- ordered authoritative Game Session history rows containing `eventId`, `tenantId`, `gameInstanceId`, nullable previous tuple (`previousScriptPatchVersion`, `previousScriptPinEpoch`), nullable resulting tuple (`scriptPatchVersion`, `scriptPinEpoch`), nullable `rolloutStatus`, `controlPlaneRequestId`, `actor`, `reason`, `outcome`, `committedAt`, and bounded pagination metadata. Each tuple is all-present or all-absent; both absent is semantic `UNPINNED`, never a sentinel.
+- ordered authoritative Game Session history rows containing `eventId`, `tenantId`, `gameInstanceId`, `operationKind` (`SET` | `ROLLBACK` | `REPIN`), nullable previous tuple (`previousScriptPatchVersion`, `previousScriptPinEpoch`), nullable resulting tuple (`scriptPatchVersion`, `scriptPinEpoch`), nullable `rolloutStatus`, `controlPlaneRequestId`, `actor`, `reason`, `outcome`, `committedAt`, and bounded pagination metadata. Each tuple is all-present or all-absent; both absent is semantic `UNPINNED`, never a sentinel.
 
 Contract rules:
 
 - This is the bounded history read from the same Game Session owner that commits the current exact pin and epoch. A successful pin, rollback, or repin appends one immutable record atomically with the pin mutation; a successful first pin may record absent previous -> present resulting values. A deterministic first-pin failure records absent previous -> absent resulting values; an idempotent request retry returns the existing result without another logical history entry.
-- A deterministic failed request history row has nullable `rolloutStatus`; its failure is represented by `outcome` and `reason` and it is never classified as `PINNED`, `ROLLED_BACK`, or `REPINNED`.
+- A deterministic failed request history row has nullable `rolloutStatus`; its failure is represented by `outcome` and `reason` and it is never classified as `PINNED`, `ROLLED_BACK`, or `REPINNED`; the attempted `operationKind` remains retained on the immutable history row.
 - Automation's observed-pin and convergence projections are not rollout-history authority. Logging & Admin composes this read with readiness/freshness state and presents projection lag rather than selecting a competing history.
 
 #### `ListScriptHandoffEvents`
