@@ -1,5 +1,9 @@
 # Game Session Service Operations
 
+## Implementation Status
+
+Current script-transition observability is narrower: patch/request convergence reads, instance-scoped pause/resume, region-epoch fencing, and existing version-fence paths do not yet provide complete `scriptPinEpoch` coverage across logs, traces, and control-plane reads. See the [Game Session implementation status](./README.md#implementation-status) and [runtime and tick coordination tracker](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#active-gaps).
+
 ## Readiness and Liveness
 
 - `liveness` is local-only and indicates that the process is alive and not wedged.
@@ -18,7 +22,7 @@
 - Game Session runs as a Kubernetes Deployment, or Docker Compose for local development, with `/actuator/health/readiness` and `/actuator/health/liveness` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 - Prometheus scrapes metrics from `/actuator/prometheus`.
-- Target state: logs, traces, and control-plane reads expose the active exact `{scriptPatchVersion, scriptPinEpoch}` execution fence so operators can identify the hotfix revision and selection epoch during incident triage without adding either raw value as ordinary high-cardinality metric labels. The current implementation does not yet provide complete `scriptPinEpoch` coverage across those surfaces; see the [Game Session implementation status](./README.md#implementation-status).
+- Target state: logs, traces, and control-plane reads expose the active exact `{scriptPatchVersion, scriptPinEpoch}` execution fence so operators can identify the hotfix revision and selection epoch during incident triage without adding either raw value as ordinary high-cardinality metric labels. Current coverage is summarized in [Implementation Status](#implementation-status).
 
 ## Scaling and Region Rebalancing
 
@@ -31,8 +35,6 @@
 ### Script transition operations (target-state contract)
 
 Target state commits a successful exact script pin, its resulting monotonic epoch, and its immutable rollout-history entry in one transaction. Once a syntactically valid request is accepted, a deterministic validation or preparation failure atomically binds the normalized request digest, stores the failure result, and appends exactly one immutable unsuccessful history entry whose previous and resulting exact tuples are equal, without changing the pin or epoch; an equivalent uniqueness constraint must enforce the same single-identity guarantee if storage splits those records. An exact retry with the same request identity and digest returns the stored result without another history entry; a different digest under the same request identity is an idempotency conflict with no mutation. Operators and Logging & Admin compose this authoritative current/history read with Automation readiness and convergence; they must not select a winner from competing projections. An epoch-fenced rollback prepares and validates the exact target artifact, pauses only new Automation admission for the affected scope, then advances the script epoch at one serialized boundary. Ordinary player commands and gameplay ticks continue while Automation reconciles. Old script work is fenced at final effect application and may be canceled or purged asynchronously. A full routine tick pause is not part of the target contract and is exceptional only for an identified unfenced effect family.
-
-The live implementation and proof remain partial: current region-epoch fencing, instance-scoped pause/resume seams, and cleanup/purge reconciliation do not yet prove complete exact-tuple/history coverage or the target no-routine-tick-pause rollback contract.
 
 ## Local Development Path
 
