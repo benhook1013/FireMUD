@@ -223,6 +223,7 @@ Semantics:
 - Once a syntactically valid request is accepted and its `controlPlaneRequestId` is bound to the normalized request digest, any deterministic validation or preparation failure returns and stores one unsuccessful immutable Game Session history result with identical previous/resulting exact tuples and no epoch advance. An exact retry of that request returns the stored result without another history entry; a different normalized digest under the same request ID is an idempotency conflict.
 - On success, Game Session persists the new pin for `(tenantId, gameInstanceId)` and emits `ScriptPatchPinChanged`.
 - On success, Game Session atomically persists `(pinnedScriptPatchVersion, scriptPinEpoch)` and the corresponding append-only rollout-history record. The resulting epoch is new even when the target version equals the previous version.
+- When the target equals the currently pinned patch, this general pin mutation is the intentional same-version epoch-only repin and is classified as `REPIN` in the resulting history/event.
 
 Outputs:
 
@@ -247,6 +248,7 @@ Inputs:
 Semantics:
 
 - Equivalent to `SetPinnedScriptPatchVersion` but semantically indicates rollback; tooling may treat it as higher urgency. It is an explicit repin to a previously published, tenant-`READY`, base-compatible immutable patch and advances `scriptPinEpoch`; operational sequencing and convergence checks live in [Control Plane Operations](./system-architecture-scripting-control-plane-operations.md).
+- This operation must reject a target equal to the currently pinned script patch. An intentional same-version epoch-only repin uses `SetPinnedScriptPatchVersion` and is classified as `REPIN`.
 - The accepted-request failure-history rule from `SetPinnedScriptPatchVersion` applies equally here: after the normalized digest is bound, deterministic validation or preparation failure stores one unsuccessful immutable history result with identical previous/resulting exact tuples and no epoch advance; exact same-ID retries return it and a different digest conflicts.
 - Target patch readiness requirements are identical to `SetPinnedScriptPatchVersion`: rollback targets must be `READY` for the tenant or the request fails with a deterministic application error (`SCRIPT_PATCH_NOT_READY`).
 - Base-version cohesion requirements are identical to `SetPinnedScriptPatchVersion`: rollback targets must have `baseVersionId` equal to the instance `runtimeVersionId` or the request fails with `SCRIPT_PATCH_BASE_VERSION_MISMATCH`.

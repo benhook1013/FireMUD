@@ -2,7 +2,7 @@
 
 This document summarizes the **core concepts and invariants** of the FireMUD tick system. It is aimed at developers and reviewers who need to understand fairness, region authority, and idempotency without reading the full runtime design in `system-architecture-ticks.md`.
 
-Automation-generated tick work carries the exact Game Session-owned `(scriptPatchVersion, scriptPinEpoch)` tuple through admission and execution. This document owns only the tick-local consequence: the region executor rejects a stale tuple at the execution fence, while routine script rollback does not pause ordinary gameplay ticks. See [Scripting Contracts](./system-architecture-scripting-contracts.md) and [Runtime Execution](./system-architecture-scripting-runtime-execution.md) for the canonical script contract.
+**Target-state only:** Automation-generated tick work must carry the exact Game Session-owned `(scriptPatchVersion, scriptPinEpoch)` tuple through admission and execution. This document owns only the tick-local consequence: the region executor rejects a stale tuple at the execution fence, while routine script rollback does not pause ordinary gameplay ticks. See [Scripting Contracts](./system-architecture-scripting-contracts.md) and [Runtime Execution](./system-architecture-scripting-runtime-execution.md) for the canonical script contract.
 
 ## Implementation Status
 
