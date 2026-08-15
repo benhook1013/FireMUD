@@ -193,7 +193,7 @@ A command-handoff reference exists only for an emitted evaluated descriptor. Pre
 
 Supplementary post-handoff correlation rule:
 
-- **Target-state command-ordinal contract:** execution-time version/plugin fence drops that happen after tick handoff must not be left as metrics-only signals. They must be exposed on the affected per-command handoff disposition keyed by the complete Command-Handoff Identity, including `targetPlayableStateScope` when a distinct target runtime scope applies, with the parent Trigger Identity and its exact `scriptPatchVersion`/`scriptPinEpoch` pair retained for correlation, using bounded reasons such as `script_patch_mismatch` or `plugin_version_mismatch`.
+- **Target-state command-ordinal contract:** execution-time version/plugin fence drops that happen after tick handoff must not be left as metrics-only signals. They must be exposed on the affected per-command handoff disposition keyed by the complete Command-Handoff Identity, including `targetPlayableStateScope` when a distinct target runtime scope applies, with the parent Trigger Identity and its exact `scriptPatchVersion`/`scriptPinEpoch` pair retained for correlation, using bounded reasons such as `script_patch_mismatch` or `plugin_binding_mismatch`.
 - **Current live fallback:** the Game Session handoff currently carries `automationDispatchId`, command id/text, selected provenance fields, and parent work-item correlation, but not `commandOrdinal` or the complete Trigger Identity. Current diagnostics use those fields and must be labeled as the narrower fallback rather than as proof of the target-state contract.
 
 Per-command handoff correlation rule:
@@ -239,11 +239,11 @@ Deprecated aliases:
 
 ### Required Cleanup Rule for Version Fencing
 
-If Game Session rejects a queued command because its embedded `(scriptPatchVersion, scriptPinEpoch)` does not match the currently pinned exact tuple (or a plugin-produced command does not match the currently active `pluginVersionId` for its `pluginId`), it must:
+If Game Session rejects a queued command because its embedded `(scriptPatchVersion, scriptPinEpoch)` does not match the currently pinned exact tuple (or a plugin-produced command's embedded `(pluginId, pluginVersionId, bindingId)` does not match fresh current activation, binding, lifecycle, and policy evidence for its scoped instance), it must:
 
-- Record the drop on the affected command-handoff record keyed by the complete Command-Handoff Identity: required source scope (`tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`), the dispatch-group suffix (`automationDispatchId`, `commandOrdinal`), and the optional distinct target scope (`targetGameInstanceId`, `targetPlayableStateScope`, `targetRegionId`, `targetRegionEpoch`) when applicable. `automationDispatchId` is retained as dispatch-group correlation and is not a standalone child key; parent `outboxWorkItemId`, the parent Trigger Identity, and `scriptEventId` remain correlation-only. Retain `scriptId`, `scriptPatchVersion`, and `entityId` for diagnosis, plus `pluginId`, `pluginVersionId`, and `bindingId` for a plugin handler.
+- Record the drop on the affected command-handoff record keyed by the complete Command-Handoff Identity: required source scope (`tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`), the dispatch-group suffix (`automationDispatchId`, `commandOrdinal`), and the optional distinct target scope (`targetGameInstanceId`, `targetPlayableStateScope`, `targetRegionId`, `targetRegionEpoch`) when applicable. `automationDispatchId` is retained as dispatch-group correlation and is not a standalone child key; parent `outboxWorkItemId`, the parent Trigger Identity, and `scriptEventId` remain correlation-only. Retain `scriptId`, `scriptPatchVersion`, and `entityId` for diagnosis, plus `pluginId`, `pluginVersionId`, and `bindingId` for a plugin handler. For a plugin identity/evidence mismatch, this disposition uses bounded `reason=plugin_binding_mismatch`.
 - Remove the rejected queue entry (or move it to a bounded dead-letter store) so mismatched entries cannot accumulate unboundedly after a rollback.
-- Apply the corresponding Table 4 version-fence metric consequence for script-patch or plugin-version mismatches; Table 4 owns the exact family, labels, and increment unit.
+- Apply the corresponding Table 4 version-fence metric consequence for script-patch or plugin-version/binding mismatches; Table 4 owns the exact family, labels, and increment unit.
 - Dead-letter retention for rejected queue entries must be bounded and explicit:
   - `maxAge` and `maxRows` must be documented per environment.
   - Cleanup cadence must be documented and alert-backed.

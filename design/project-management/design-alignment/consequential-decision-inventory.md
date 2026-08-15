@@ -1,6 +1,6 @@
 # Consequential Design Decision Inventory
 
-Status: Inventory and human-led review are complete and independently coverage/fidelity-audited. On this parcel, reviewed outcomes for 100 of 182 distinct active decisions have applied provenance; 82 reviewed decisions remain pending selective import. The historical navigation alias is excluded from both counts. ADR numbering records how applied outcomes were materialized but does not define the application boundary.
+Status: Inventory and human-led review are complete and independently coverage/fidelity-audited. Cumulative reviewed outcomes with applied provenance now cover 100 of 182 distinct active decisions, up from 93 before this parcel; this parcel added seven outcomes. The historical navigation alias is excluded from both counts, and 82 reviewed decisions remain pending selective import. ADR numbering records how applied outcomes were materialized but does not define the application boundary.
 
 ## Implementation Status
 
@@ -60,7 +60,7 @@ The canonical design allocation covers all 284 discovered product and architectu
 | Microservice architecture | 76 sources | 23 rows = 22 active decisions + superseded historical `MS-AA-TOKEN-REVOCATION` alias; stronger evidence for 40 existing keys | Complete in the source archive | Complete and independently audited |
 | Specialized runtime architecture | 38 sources | 54 new; stronger evidence for 20 existing keys | Complete in the source archive | Complete and independently audited |
 | Product and operations architecture | 38 sources | 38 new; stronger evidence for 11 existing keys | Complete in the source archive | Complete and independently audited |
-| **Total active decisions / navigation rows** | **All 284 design sources: 281 allocated decision-bearing sources (172 allocated non-ADR documents and 109 ADR records), 1 exempt architecture decision registry/index, and 2 excluded governance/template exemptions; 281 allocated and 3 total exemptions** | **182 active decisions; 183 navigation/key rows including one historical alias** | **All 183 queue/navigation rows reviewed in the source archive** | **100 of 182 distinct decisions have reviewed outcomes applied by this parcel; 82 remain pending selective import** |
+| **Total active decisions / navigation rows** | **All 284 design sources: 281 allocated decision-bearing sources (172 allocated non-ADR documents and 109 ADR records), 1 exempt architecture decision registry/index, and 2 excluded governance/template exemptions; 281 allocated and 3 total exemptions** | **182 active decisions; 183 navigation/key rows including one historical alias** | **All 183 queue/navigation rows reviewed in the source archive** | **100 of 182 distinct decisions have reviewed outcomes applied cumulatively, up from 93 before this parcel; this parcel added seven outcomes; 82 remain pending selective import** |
 
 ## Legacy ADR Alias Navigation
 
@@ -124,7 +124,7 @@ Future imports preserve the archive's exact disposition and review date, materia
 | 7 | Existing ADR-backed and lower-risk remainder | 17 | 0 | `pending-import` |
 | **Total** | | **183** | **100** | `review-complete`; `import-in-progress` |
 
-The source-archive total counts 183 navigation rows. Packet 2 contains 31 distinct decision keys plus the `MS-AA-TOKEN-REVOCATION` historical alias, producing 32 archive rows but only 31 applicable decisions. The applied-provenance checklist excludes that alias and therefore has 182 rows: 100 reviewed outcomes applied by this parcel and 82 unchecked decisions pending selective import. The 100 applied decisions are Packet 1's nine decisions, Packet 2's 31 distinct decisions, Packet 3's 43 imported decisions, and this selective Packet 4 parcel's 17 decisions. The nine legacy ADR labels above are mappings to active checklist keys rather than additional rows.
+The source-archive total counts 183 navigation rows. Packet 2 contains 31 distinct decision keys plus the `MS-AA-TOKEN-REVOCATION` historical alias, producing 32 archive rows but only 31 applicable decisions. The applied-provenance checklist excludes that alias and therefore has 182 rows: 100 reviewed outcomes applied cumulatively, up from 93 before this parcel because this parcel added seven outcomes, and 82 unchecked decisions pending selective import. The 100 applied decisions are Packet 1's nine decisions, Packet 2's 31 distinct decisions, Packet 3's 43 imported decisions, Packet 4's 10 previously applied decisions, and this parcel's seven outcomes. The nine legacy ADR labels above are mappings to active checklist keys rather than additional rows.
 
 ### Priority Overrides
 

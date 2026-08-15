@@ -328,7 +328,7 @@ From the Automation & Scripting Service’s point of view, each `<tenantId, scri
 Script patches have two related but distinct lifecycle views:
 
 - A tenant patch lifecycle owned by the Automation & Scripting Service and tracked per `<tenantId, scriptPatchVersion>`.
-- A per-instance pin rollout lifecycle and append-only history owned by Game Session/control-plane orchestration and tracked per `<tenantId, gameInstanceId, scriptPatchVersion, scriptPinEpoch>`.
+- A per-instance committed pin state owned by Game Session, consisting of the exact `(scriptPatchVersion, scriptPinEpoch)` tuple for `<tenantId, gameInstanceId>`, plus a separate Game Session-owned append-only rollout history scoped to `<tenantId, gameInstanceId>` and keyed by `controlPlaneRequestId`. The history records successful and unsuccessful `SET`, `ROLLBACK`, and `REPIN` attempts.
 
 The tenant lifecycle governs patch readiness and eligibility. The instance lifecycle governs rollout/rollback for running games.
 
@@ -370,7 +370,7 @@ Typical transitions are:
 3. `ONLOAD_RUNNING → FAILED` when any `onLoad` execution fails fatally or an independently idempotent external infrastructure step exhausts its bounded retries; the DSL evaluation itself is not retried, and running instances continue using their previously pinned patch.
 4. `PENDING_VALIDATION|ONLOAD_RUNNING → SUPERSEDED` when a newer publish is accepted for the same tenant before the older patch reaches a terminal readiness state. `SUPERSEDED` is terminal and must be emitted before the newer patch begins readiness work.
 
-Per-instance rollout state is tracked by Game Session's append-only history of committed exact pin/epoch mutations with canonical operation kinds `SET`, `ROLLBACK`, and `REPIN` and outcome/status fields separate from tenant readiness; it is driven by `SetPinnedScriptPatchVersion`, `RollbackScriptPatchVersion`, and `ScriptPatchPinChanged`. An instance rollback does not imply tenant patch state transition away from `READY`.
+Per-instance rollout state consists of Game Session's committed exact pin tuple `(scriptPatchVersion, scriptPinEpoch)` and its append-only history of successful and unsuccessful `SET`, `ROLLBACK`, and `REPIN` attempts keyed by `controlPlaneRequestId`; an accepted deterministic validation/preparation failure records equal previous and resulting exact pin tuples without mutating the pin or advancing the epoch. The `SetPinnedScriptPatchVersion` and `RollbackScriptPatchVersion` APIs create the authoritative state/history attempts; `ScriptPatchPinChanged` is only a notification for successful committed tuple changes. An instance rollback does not imply tenant patch state transition away from `READY`.
 
 Automation & Scripting exposes this lifecycle to other services via:
 
