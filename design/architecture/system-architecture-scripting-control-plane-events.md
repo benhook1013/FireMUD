@@ -106,7 +106,7 @@ Operator consumption rule:
 
 ## `ScriptPatchInstanceRolloutChanged` (Reserved; do not publish)
 
-This duplicate rollout event family is deliberately not part of the canonical contract. Game Session's committed `ScriptPatchPinChanged` record carries the exact previous/resulting pin epochs and supplies the authoritative append-only history read. Consumers must not reconstruct rollout history from Automation work-item transitions or this reserved family.
+This duplicate rollout event family is deliberately not part of the canonical contract. `ScriptPatchPinChanged` notifies successful exact-tuple changes only; Game Session's bounded rollout-history read is authoritative for all attempts, including deterministic failures that do not change the tuple. Consumers must not reconstruct rollout history from Automation work-item transitions or this reserved family.
 
 No payload is adopted for this reserved family. Do not publish or consume it.
 
