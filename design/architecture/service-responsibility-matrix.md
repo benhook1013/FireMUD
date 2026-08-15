@@ -19,7 +19,7 @@ Platform Operations is a cross-cutting operational authority rather than a micro
 | Custom in-game scripting authoring | ✔ | | | | | | | | | | |
 | Game version publishing | ✔ | | | | | | | | | | |
 | Authoritative exact script pin and append-only rollout history (`scriptPatchVersion`, `scriptPinEpoch`) — Game Session only | | | | ✔ | | | | | | | |
-| Observed script-pin readiness/convergence projection — Automation & Scripting only; non-authoritative | | | | | | | ✔ | | | | |
+| Tenant-scoped patch readiness and instance-scoped observed pin/convergence projections — Automation & Scripting only; non-authoritative | | | | | | | ✔ | | | | |
 | Design-time feature flag definitions | ✔ | | | | | | | | | | |
 | Room and zone editing | ✔ | | | | | | | | | | |
 | World map region layout | | ✔ | | | | | | | | | |
@@ -80,7 +80,7 @@ Platform Operations is a cross-cutting operational authority rather than a micro
 | Economy logic (trading, shops, pricing) | | | | | | ✔ | | | | | |
 | AI-driven actions and behaviors | | | | | | | ✔ | | | | |
 | Triggered script execution | | | | | | | ✔ | | | | |
-| Exact script admission/execution fence (Game Session exact pin tuple and append-only rollout history; Automation instance-scoped admission, scheduling, execution/recovery, plugin runtime state, readiness, and convergence projections) | | | | ✔ | | | ✔ | | | | |
+| Exact script admission/execution fence (Game Session exact pin tuple and append-only rollout history; Automation tenant-scoped readiness plus instance-scoped admission, scheduling, execution/recovery, plugin runtime state, and convergence projections) | | | | ✔ | | | ✔ | | | | |
 | Redis-backed automation queue projection and timer coordination (`automation:queue:*`, `automation:timer:*`, `script-scheduler:*`) | | | | | | | ✔ | | | | |
 | Coordination Redis participation via shared helpers (locks and documented automation/tick prefix rules) | | | | ✔ | ✔ | | ✔ | | | | |
 | Cache/Rate-Limit Redis usage (caches, quotas, rate limiting) | | ✔ | | | ✔ | | ✔ | ✔ | | ✔ | ✔ |

@@ -4,6 +4,10 @@ This document defines the runtime scheduler, timer, and reload lifecycle for scr
 
 Schedule transition semantics are owned here under [ADR 0110](./decisions/adr-0110-explicit-opt-in-schedule-continuity-across-script-transitions.md). The exact Game Session pin/epoch fence and no-routine-gameplay-pause rollback boundary remain owned by [Scripting & Automation: Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md) and [ADR 0106](./decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md). Clocks and recovery remain linked to existing [ADR 0091](./decisions/adr-0091-class-specific-script-timer-clocks-and-recovery.md), not duplicated here.
 
+## Target-State Authority
+
+The scheduler target contract requires durable timer identity and due state, the exact applicable Game Session pin tuple, complete due-candidate and firing-claim identity, and deterministic recovery and fencing. The detailed target contract below is canonical; the implementation status that follows does not claim those target guarantees.
+
 ## Implementation Status
 
 The current implementation provides the following substrate:
@@ -15,11 +19,11 @@ The current implementation provides the following substrate:
 - A newer observation that proves the runtime scope changed fences the stale due point instead of reminting it under the new epoch. The service records `runtime_scope_changed` against the old Trigger Identity and increments `automation_script_timer_runtime_fence_dropped_total`.
 - Due candidates are selected in round-robin passes across complete stable schedule-instance identities and capped by `script.scheduler.max-catch-up-firings-per-observation`; this current per-observation behavior does not yet prove the accepted one-per-schedule-instance durable resume-window cap across repeated observations. `ObserveRuntimeTickProgress` reports updated rows, fired work items, and truncated candidates; timer-fired, catch-up-truncated, and runtime-fence metrics expose aggregate outcomes.
 - Control-plane timer audit reads expose scheduler-owned `script_event_audit` rows, including plugin ownership, admitted routing, due-point coordinates, and skipped-versus-persisted outcomes. Plugin-owned definitions retain `pluginId`/`pluginVersionId`/`bindingId`, and materialization admits only the enabled runtime plugin version and resolved signed-bundle binding.
-- The richer Redis leader/checkpoint model below remains target-state.
+- The richer Redis leader/checkpoint model remains target-state.
 
 ## Target-State Design
 
-The sections below define the target-state scheduler contract. Current behavior remains limited to the implementation facts listed above unless a bullet explicitly identifies a target-state requirement.
+The sections below define the target-state scheduler contract. Current behavior remains limited to the implementation facts listed in the dedicated status section above unless a bullet explicitly identifies a target-state requirement.
 
 ### Script Timers vs Tick Timers
 
@@ -127,7 +131,7 @@ An admitted firing must use one crash-safe durable transition. The transition at
   - reads the scheduler hint and canonical event-offset record for the current `regionEpoch`;
   - rejects either value when its stored `regionEpoch` does not match the current heartbeat/status epoch. It must not walk old-epoch ticks, reuse an old stream offset, or reuse old-epoch due points. The mismatch is recorded in scheduler audit with `reason=checkpoint_region_epoch_mismatch` and increments `automation_script_timer_runtime_fence_dropped_total{scope, script_category, eventType, reason="checkpoint_region_epoch_mismatch"}`;
   - discards each stale value, rebuilds the current-epoch scheduler hint and event-offset record from the authoritative durable status/heartbeat, and then reconciles durable due points under the bounded catch-up policy; and
-  - enumerates the authoritative PostgreSQL `script_schedule_instances` rows for the current runtime scope to determine which current-epoch "every N ticks" boundaries were crossed during the gap. The Redis region index `automation:timer:{tenantRegionTag}` may accelerate this scan, but it is rebuildable and must not be the source of truth; if it is missing or stale, rebuild it from the durable rows before admitting candidates. It obtains or creates the one `OPEN` durable resume-window record by CAS, freezes that record's recovery start and through observations, and admits each due candidate before claiming or inserting a durable firing claim keyed by the stable schedule-instance identity, current runtime scope, tagged due point, and `resumeWindowId`; only then may it enqueue an `onInterval` trigger.
+  - enumerates the authoritative PostgreSQL `script_schedule_instances` rows for the current runtime scope to determine which current-epoch "every N ticks" boundaries were crossed during the gap. The Redis region index `automation:timer:{tenantRegionTag}` may accelerate this scan, but it is rebuildable and must not be the source of truth; if it is missing or stale, rebuild it from the durable rows before admitting candidates. It obtains or creates the one `OPEN` durable resume-window record by CAS, freezes that record's recovery start and through observations, and admits each due candidate before claiming or inserting a durable firing claim. Every firing-claim insert, lookup, and conflict comparison uses the complete event-scope due-candidate identity defined above, including the exact pin tuple, event/schema, dry-run namespace, trigger mode, applicable target selector, schedule definition, tagged due point, and `resumeWindowId` for catch-up; only then may it enqueue an `onInterval` trigger.
   - Each `COALESCE_ONE` schedule instance may enqueue at most one missed `onInterval` trigger before normal scheduling resumes; `SKIP_MISSED` schedule instances enqueue none. `SCRIPT_TIMER_CATCH_UP_MAX_FIRINGS_PER_RESUME` is the global cap across complete stable schedule-instance identities for the one durable `resumeWindowId`. Candidates beyond this cap are dropped, not deferred, and surfaced through candidate audit and `automation_script_timer_catchup_truncated_total`. The window is marked `COMPLETE` only after admitted and cap-excluded candidate outcomes are durable; only a later recovery episode then allocates the next generation.
 - Leader changes and takeover reconciliation preserve each firing's declared lane and cost class and validate the current runtime epoch/fence before admitting it; stale or ambiguous claims are fenced and reconciled rather than reclassified or replayed as new work.
 - Catch-up truncation must use one stable fairness algorithm when due candidates exceed `SCRIPT_TIMER_CATCH_UP_MAX_FIRINGS_PER_RESUME`:
