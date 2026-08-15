@@ -153,7 +153,7 @@ The required rollback sequencing, state transitions, convergence deadline, and t
 
 For local diagnosis during a rollback:
 
-The current runtime does not prove target-state drain recovery from lease age: unresolved `EVALUATING` work remains active and handoff-capable `PENDING_EVALUATION` remains pending. These are pre-DSL states, not evaluated descriptor `PENDING` or `INDEXED` work. Keep the Automation admission barrier in place until exact pin convergence and schedule reconciliation succeed; do not wait for asynchronous cancel/purge cleanup. Cleanup remains bounded and non-blocking, while exact version/epoch fences remain authoritative. Ordinary gameplay ticks and player commands continue, except within a separately declared unfenced-effect workflow. Do not infer reclaim, terminalization, or safe resumption locally.
+The current runtime does not prove target-state drain recovery from lease age: unresolved `EVALUATING` work remains active and `PENDING_EVALUATION` remains pending; target cancellation treats `PENDING_EVALUATION` as cancelable pre-DSL work. These are pre-DSL states, not evaluated descriptor `PENDING` or `INDEXED` work. Keep the Automation admission barrier in place until exact pin convergence and schedule reconciliation succeed; do not wait for asynchronous cancel/purge cleanup. Cleanup remains bounded and non-blocking, while exact version/epoch fences remain authoritative. Ordinary gameplay ticks and player commands continue, except within a separately declared unfenced-effect workflow. Do not infer reclaim, terminalization, or safe resumption locally.
 
 For pending and dead-lettered work, use control-plane APIs rather than direct data-store edits:
 

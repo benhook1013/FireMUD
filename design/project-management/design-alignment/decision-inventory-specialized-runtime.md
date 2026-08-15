@@ -6,7 +6,7 @@ This inventory contains 54 decision rows: 48 retained rows and 6 distinct eviden
 
 ## Implementation Status
 
-`Complete` means the assigned corpus scan and independent coverage/fidelity audit are complete. Merged ADRs define the canonical target state; implementation and proof remain incomplete. Human-led review is complete in the source archive, but this merged ledger retains pre-import evidence for reviewed outcomes not yet applied to `develop`.
+`Complete` means the assigned corpus scan and independent coverage/fidelity audit are complete. Owning canonical architecture documents remain authoritative for technical target contracts; merged ADRs record accepted consequential choices and rationale within those boundaries. Implementation and proof remain incomplete. Human-led review is complete in the source archive, but this merged ledger retains pre-import evidence for reviewed outcomes not yet applied to `develop`.
 
 The required baseline documents were read before the assigned corpus: [product capability taxonomy](../../product/capability-taxonomy.md), [system allocation](./design-capability-allocation-system.md), [main consequential decision inventory](./consequential-decision-inventory.md), and [cross-cutting decision inventory](./decision-inventory-cross-cutting.md).
 
