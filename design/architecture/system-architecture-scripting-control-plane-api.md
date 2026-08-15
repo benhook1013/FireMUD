@@ -117,8 +117,6 @@ Inputs:
 - `tenantId`
 - `pluginId`
 - `pluginVersionId`
-- `scriptPatchVersion`
-- `scriptPinEpoch` (the displaced pin epoch; cancellation must match the stored exact tuple)
 
 Outputs:
 
@@ -138,6 +136,7 @@ Contract rules:
 - `designStatus=PUBLISHED` means the immutable plugin bundle is signed, validated, and eligible for runtime activation. It does not imply that any instance has activated it.
 - Runtime activation and drain/disable state remain the responsibility of Automation & Scripting via `GetPluginStatus`; callers must not infer `ENABLED` or `DISABLED` from Game Design publication state.
 - A plugin version that is not `PUBLISHED` must be rejected by runtime activation APIs with deterministic application errors rather than being partially loaded and then downgraded later.
+- A displaced exact `(scriptPatchVersion, scriptPinEpoch)` tuple belongs on instance-scoped plugin cancellation or purge APIs, not on this design-time publication read.
 - `distributionManifestHash` and `distributionManifestPath` describe the plugin-version-scoped asset distribution manifest owned by Game Design. They must not point into or mutate the base version's `published_release_bundle`.
 
 #### `ListPluginVersionStatuses`
