@@ -19,6 +19,10 @@ For details on how scripts are authored, how standard and custom events are mode
 
 An OpenAPI specification for the REST endpoints is available at `src/main/resources/openapi.yaml` in the service repository.
 
+## Implementation Status
+
+The current `ReplayDeadLetteredWorkItems` implementation still requeues eligible parent rows as `PENDING_EVALUATION` and returns aggregate counts; it does not prove stage-specific frozen-input retry or stored-output continuation.
+
 ## Key Features
 
 - Scriptable quests and event triggers.
@@ -37,7 +41,7 @@ Automation & Scripting owns tenant readiness, immutable compiled artifacts, and 
 
 The local admission consequence is exact-artifact loading against the observed owner tuple; missing, stale, or mismatched evidence fails closed without a local fallback. Scoped Automation admission and cleanup participate through the owner APIs while ordinary gameplay remains outside this service-local admission barrier.
 
-Automation's **target-state only** contract exposes stage-aware dead-letter recovery, schedule/timer, and plugin lifecycle consequences through its local APIs; the authority, recovery, continuity, and embedded-versus-plugin lifecycle rules remain in the canonical owners linked above. The current `ReplayDeadLetteredWorkItems` implementation still requeues eligible parent rows as `PENDING_EVALUATION` and returns aggregate counts; it does not prove stage-specific frozen-input retry or stored-output continuation.
+Automation's **target-state only** contract exposes stage-aware dead-letter recovery, schedule/timer, and plugin lifecycle consequences through its local APIs; the authority, recovery, continuity, and embedded-versus-plugin lifecycle rules remain in the canonical owners linked above.
 
 ## Document Map
 

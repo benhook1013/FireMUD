@@ -80,13 +80,13 @@ Each script run follows a consistent lifecycle:
 
 2. **Sandbox setup and executor acceptance**
    - The scheduler allocates a **sandbox context** from the sealed handler manifest. The following locally useful categories are not an exhaustive schema; the [canonical read-consistency contract](../../system-architecture-scripting-dsl-reference-and-lifecycle.md#read-consistency-contract) defines every required field and evidence:
-     - The complete applicable owner/runtime scope (`tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, and `entityId` when applicable)
+     - For instance-bound gameplay/runtime runs, the complete applicable owner/runtime scope (`tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, and `entityId` when applicable)
      - Tenant/script identity (`scriptId`, `eventType`, `eventSchemaVersion`, `scriptEventId`, and `isDryRun`)
-     - The exact pinned `(scriptPatchVersion, scriptPinEpoch)` tuple
+     - The exact pinned `(scriptPatchVersion, scriptPinEpoch)` tuple for instance-bound gameplay/runtime runs
      - Plugin provenance (`pluginId`, `pluginVersionId`, and `bindingId`) when applicable
      - Per-run budgets (CPU/time, memory, and concurrency)
-     - For tenant-readiness `onLoad`, the declared readiness identity and configuration/runtime metadata only; no instance pin epoch or gameplay scope is fabricated
-   - Missing, stale, or contradictory manifest, tuple, scope, or plugin provenance evidence fails closed before evaluation or final handoff.
+     - For tenant-readiness `onLoad`, the declared readiness identity and configuration/runtime metadata are the applicable context; it is pre-instance-pin and does not require or fabricate instance scope or epoch
+   - Missing, stale, or contradictory manifest, applicable runtime tuple/scope, or applicable plugin provenance evidence fails closed before evaluation or final handoff. The declared `onLoad` readiness context is the applicable exception and must not be rejected for absent instance tuple, scope, or epoch.
    - The run is submitted to a **bounded thread pool** dedicated to script execution.
    - Dry-run/test work must use isolated execution capacity (separate pool, reserved worker share, or equivalent partition) so live automation retains guaranteed worker availability under load.
    - Immediately before evaluation, and only at this step, the worker acquires the lease and in one Automation-owned durable executor-acceptance transaction revalidates its current fence, durably accepts/claims the run for the executor, persists the exactly-once execution-start marker, and advances the work item to `EXECUTING`. Only after that commit may evaluation begin. If executor acceptance fails, the transition does not commit, the lease is released or reclaimed, and no execution charge is recorded; a crash after commit recovers from the durable executor claim and may reacquire a lease but never admits a second marker.

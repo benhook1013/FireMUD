@@ -10,7 +10,7 @@ Routing note:
 
 Document conflict resolution order is defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md#document-precedence-normative`. This document provides DSL/runtime semantics and must align with higher-precedence contract documents.
 
-The unified DSL and embedded/plugin lifecycle boundary is the accepted contract in [ADR 0111](./decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md). Pin/epoch and transition behavior links to [ADR 0103](./decisions/adr-0103-single-authority-script-pins-with-exact-version-execution.md), [ADR 0106](./decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md), [ADR 0109](./decisions/adr-0109-game-session-owned-script-rollout-history.md), [ADR 0110](./decisions/adr-0110-explicit-opt-in-schedule-continuity-across-script-transitions.md), and [ADR 0107](./decisions/adr-0107-stage-aware-script-dead-letter-recovery.md); these links explain rationale while this document owns the current lifecycle contract.
+The unified DSL and embedded/plugin lifecycle boundary is the accepted contract in [ADR 0111](./decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md). Pin/epoch and transition behavior links to [ADR 0103](./decisions/adr-0103-single-authority-script-pins-with-exact-version-execution.md), [ADR 0106](./decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md), [ADR 0108](./decisions/adr-0108-no-degraded-script-admission-without-authoritative-pin.md), [ADR 0109](./decisions/adr-0109-game-session-owned-script-rollout-history.md), [ADR 0110](./decisions/adr-0110-explicit-opt-in-schedule-continuity-across-script-transitions.md), and [ADR 0107](./decisions/adr-0107-stage-aware-script-dead-letter-recovery.md); these links explain rationale while this document owns the current lifecycle contract.
 
 It is a companion to:
 
@@ -140,7 +140,7 @@ The DSL supports a variety of **built-in lifecycle events** and **custom events*
 
 - **Timer and interval events**
   - `onInterval` and `onTimerExpire` events are driven by the scheduler and tick heartbeat. They are used to express “every N ticks” or “after a delay” behaviors.
-  - These events always execute against the script configuration selected by the exact Game Session `(scriptPatchVersion, scriptPinEpoch)` tuple when they fire.
+  - These events are admitted under the exact Game Session `(scriptPatchVersion, scriptPinEpoch)` tuple captured in the durable schedule or firing claim; firing never refreshes the event to the latest script configuration.
 
 See the Automation & Scripting Service README and service protos for the full, up-to-date list of event types and schemas.
 

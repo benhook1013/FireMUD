@@ -251,7 +251,7 @@ The canonical `script_event_audit` schema includes:
   - `regionId` – region (where applicable) associated with the trigger.
   - `scriptId` – script definition that handled the trigger.
   - `eventType` – logical event key (for example, `onEnterRegion`, `onInterval`, `inventory.item_added`).
-  - `scriptPatchVersion` – logical script patch identifier supplied by Game Session and used to resolve the runtime script set.
+  - `scriptPatchVersion` – for instance-scoped gameplay/runtime rows, the logical script patch identifier supplied by Game Session and used to resolve the runtime script set; tenant-readiness `onLoad` uses the candidate patch from Automation's tenant-readiness lifecycle.
   - `scriptPinEpoch` – exact Game Session selection epoch paired with `scriptPatchVersion` for instance-scoped gameplay/runtime rows; version-only observations cannot authorize admission or execution. It is absent for tenant-readiness `onLoad`, whose identity remains tenant/script/event-schema/patch/event-type/`isDryRun`/`scriptEventId`.
   - `versionId` – optional internal compiled script version identifier used by the Automation & Scripting Service for engine-level debugging and migrations.
   - `sourceService` – producing service identity for custom/service-specific events so operators can diagnose routing and authorization problems.
