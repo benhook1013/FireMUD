@@ -80,7 +80,7 @@ Detailed request and response schemas are defined in the [OpenAPI specification]
 
 ### Script-patch and plugin transition consequences
 
-`PublishScriptPatchVersion` and `PublishPluginVersion` are design-time publication operations. They persist immutable authoring metadata and compatibility evidence but do not activate a running instance, allocate a script pin epoch, or write rollout history. A patch must pass the normal publication boundary before Automation can perform tenant readiness; readiness still does not imply an instance pin. Game Session owns the exact instance pin, epoch, and committed rollout/rollback history, while Automation owns readiness, artifact loading, and observed convergence.
+`PublishScriptPatchVersion` and `PublishPluginVersion` are design-time publication operations. They persist immutable authoring metadata and compatibility evidence but do not activate a running instance, allocate a script pin epoch, or write rollout history. A patch must pass the normal publication boundary before Automation can perform tenant readiness; readiness still does not imply an instance pin. **Target-state ownership:** Game Session owns the exact instance pin, epoch, and committed append-only rollout/rollback history, while Automation owns readiness, artifact loading, and observed convergence. The current Game Session implementation does not yet prove complete epoch propagation or Game-Session-owned append-only rollout history; see [Game Session API implementation notes](../game-session-service/api-contracts.md#implementation-notes). This document does not claim those target-state consequences are live.
 
 Creator/operator read models must therefore distinguish:
 

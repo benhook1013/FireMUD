@@ -373,7 +373,9 @@ Inputs:
 - `tenantId`
 - `pluginId`
 - `pluginVersionId`
-- Optional `gameInstanceId`
+- `scriptPatchVersion` (the displaced script patch version carried by the plugin-produced work)
+- `scriptPinEpoch` (the displaced pin epoch; cancellation must match the stored exact tuple, and a same-version repin with a newer epoch is not eligible)
+- `gameInstanceId` (required; plugin cancellation is instance-scoped)
 - Optional `regionId`
 - `controlPlaneRequestId`
 - `actor`
@@ -386,8 +388,7 @@ Outputs:
 Contract rules:
 
 - This is the plugin-version companion to `CancelPendingWorkItemsForPatch`.
-- It cancels only Automation-owned work items that have not started evaluation or handoff yet. Work already evaluating must converge through drain status, and work already handed to Game Session must be handled by Game Session queue purge or tick/effect remediation.
-- It selects only rows whose stored `(scriptPatchVersion, scriptPinEpoch)` exactly matches the displaced tuple; a same-version repin with a newer epoch is not eligible. Cancellation updates handler audit with `finalStage=ADMISSION`, `finalOutcome=canceled`, and the bounded reason used for the operation.
+- **Target-state cancellation semantics:** the request is scoped to the supplied `gameInstanceId`; `tenantId` authorizes and audits the request but does not apply one epoch tenant-wide. It selects only rows whose stored `(scriptPatchVersion, scriptPinEpoch)` exactly matches the request's displaced tuple; a same-version repin with a newer epoch is not eligible. `PENDING_EVALUATION` is compare-and-set to `CANCELED` without DSL evaluation. An `EXECUTING` row is fenced and its descriptor-commit marker inspected; if committed, cancellation never resumes or re-dispatches a committed child: `PENDING` and `INDEXED` children compare-and-set to `CANCELED` with durable `cancelReason`, `finalStage=WORK_ITEM_PERSIST`, and `finalOutcome=canceled`; `HANDOFF_IN_FLIGHT` fences further retry and reconciles the durable downstream outcome (remaining active/unresolved when ambiguous); and `HANDED_OFF`, `CANCELED`, or `DEAD_LETTERED` children retain their outcome and no-op. An uncommitted `EXECUTING` row is explicitly canceled with `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and bounded cancellation metadata, and is never replay-eligible. Only the distinct expired-stale recovery-owner path may use the `DEAD_LETTERED`/`stale_execution_fenced` mapping; this cancellation request does not dead-letter stale displaced rows. The current live surface remains limited to pre-evaluation/non-handoff rows until descriptor persistence and downstream reconciliation are implemented.
 
 #### `GetAutomationPinConvergence`
 
@@ -494,7 +495,7 @@ Inputs:
 
 Outputs:
 
-- `results[]` (one deterministic result per requested `workItemId`, including `workItemId`, `outcome`, `recoveryStage`, and `rejectionReason` only when rejected)
+- `results[]` (one deterministic result per requested `workItemId`, including `workItemId`, `outcome`, optional/nullable `recoveryStage`, and `rejectionReason` only when rejected; `recoveryStage` is `null` when the result is `not_found_or_not_owned` or `stage_evidence_unavailable` because no trustworthy stage is available)
   - `outcome` is exactly one of `retried_evaluation`, `resumed_dispatch`, `already_recovered`, or `rejected`.
   - `rejectionReason` is present only with `outcome=rejected` and uses bounded values such as `not_found_or_not_owned`, `stage_evidence_unavailable`, `work_item_not_dead_lettered`, `script_pin_epoch_mismatch`, `plugin_binding_mismatch`, or `runtime_scope_mismatch`.
 - `replayedCount` (bounded count of selected work items that progressed)
@@ -503,8 +504,8 @@ Outputs:
 Contract rules:
 
 - Replay is fail-closed per work item. Eligibility requires exact current `(scriptPatchVersion, scriptPinEpoch)`, applicable plugin identity/version/binding, region/`regionEpoch`, and routing-bundle match to the immutable admitted evidence.
-- Recovery requires a compare-and-set or equivalent claim of current `status=DEAD_LETTERED` before evaluation or dispatch. A selected row in any other status remains unchanged and returns `outcome=rejected` with `rejectionReason=work_item_not_dead_lettered`.
-- Evaluation-stage recovery uses the frozen original trigger/input manifest and exact graph, preserving the original work-item and `scriptEventId` identity without a new dispatch identity or normal admission/DSL entry; post-evaluation recovery uses only the durable evaluated-output and child-dispatch ledger, preserving original child identities. It never resolves a latest/local graph or regenerates an output after a child was accepted.
+- Recovery requires an atomic compare-and-set or equivalent claim of current `status=DEAD_LETTERED` together with a persisted recovery claim/attempt record containing the expected exact `(scriptPatchVersion, scriptPinEpoch)`, runtime scope, applicable plugin binding tuple, and `controlPlaneRequestId`, before evaluation or dispatch. A selected row in any other status remains unchanged and returns `outcome=rejected` with `rejectionReason=work_item_not_dead_lettered`. An expired claim is reclaimed under the same attempt record and identity (with a new owner fence when needed), never by inserting a duplicate recovery attempt or audit record.
+- Evaluation-stage recovery uses the frozen original trigger/input manifest and exact graph, preserving the original work-item and `scriptEventId` identity without a new dispatch identity or normal admission/DSL entry; post-evaluation recovery uses only the immutable evaluated output and complete child-dispatch ledger keyed by the full Command-Handoff Identity, preserving original child identities and per-child recovery state. It revalidates the recorded exact fence and binding immediately before evaluation and again before dispatch, never resolves a latest/local graph, and never regenerates an output after a child was accepted.
 - Rows with missing/contradictory stage evidence or any fence mismatch remain `DEAD_LETTERED` and return a deterministic per-row `outcome=rejected` with the applicable bounded `rejectionReason`; a rejected row is not partially changed or counted as successful.
 - The request is bounded and idempotent by `controlPlaneRequestId`, actor, reason, and explicit work-item IDs. An exact retry of the same `controlPlaneRequestId` and canonical request fingerprint returns the identical stored per-row outcomes, including `rejected`, without evaluation, dispatch, or relabeling. A new request that finds a row already recovered by an earlier successful request returns `outcome=already_recovered`; no new recovery identity is introduced. Purge is a separate operation and never masquerades as recovery.
 

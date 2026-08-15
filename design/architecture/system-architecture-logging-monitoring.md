@@ -2,7 +2,7 @@
 
 This document describes how FireMUD collects logs, metrics, and traces across all services, and how operators use those signals for debugging, moderation, and performance analysis.
 
-Scripting observability must retain the exact `(scriptPatchVersion, scriptPinEpoch)` in structured audit/log/trace records and must distinguish Game Session rollout-history authority from Automation readiness/convergence projections. Metric names, labels, and increment units remain owned by the [normative scripting tables](./system-architecture-scripting-normative-contract-tables.md); this document owns only bounded monitoring, dashboard, and alerting consequences. Routine script rollback is an epoch-fenced workflow, not a gameplay-tick outage signal.
+Scripting observability must retain the exact `(scriptPatchVersion, scriptPinEpoch)` in structured audit/log/trace records and must distinguish Game Session rollout-history authority from Automation readiness/convergence projections. Metric names, labels, and increment units remain owned by the [normative scripting tables](./system-architecture-scripting-normative-contract-tables.md); any later scripting metric lists here are non-authoritative operational mirrors for bounded dashboards and alerts, not duplicate definitions. This document owns only bounded monitoring, dashboard, and alerting consequences. Routine script rollback is an epoch-fenced workflow, not a gameplay-tick outage signal.
 
 For the canonical definition of environment classes and which ones are considered player-facing or prod-like, see [Deployment Environments](./infrastructure/deployment-environments.md#terms) and [Deployment Environments](./infrastructure/deployment-environments.md#canonical-environment-classes). In this document, “prod-like” means `hobby-self-hosted`, `staging`, and `production` unless a section explicitly narrows the requirement further.
 
@@ -541,6 +541,7 @@ Structured log emission is not sufficient by itself. Prod-like environments must
   - Those logs must become queryable in the Elasticsearch/Kibana path within a bounded delay suitable for incident response.
     - Default starting point for prod-like smoke: the records should be queryable within 2 minutes of emission unless an environment documents a stricter bound.
   - Operators must be able to retrieve the smoke records by `service` and `traceId`, and by `tenantId` / `gameInstanceId` / `regionId` / `characterId` when those fields are expected by the logging contract.
+  - A focused script-transition smoke/readback must emit and retrieve a structured audit/log/trace record retaining both exact `scriptPatchVersion` and `scriptPinEpoch`; when the smoke exercises a same-version repin, it must prove the epoch change while the patch value remains the same. These raw values remain structured fields and are not ordinary high-cardinality metric labels.
 - Failure semantics:
   - A pipeline that emits structured logs locally but fails Fluent Bit forwarding, Elasticsearch indexing, or Kibana/query entrypoint retrieval is non-compliant for prod-like readiness because incident drilldowns depend on end-to-end queryability, not only emitter correctness.
 

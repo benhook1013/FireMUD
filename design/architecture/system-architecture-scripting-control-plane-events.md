@@ -108,7 +108,7 @@ No payload is adopted for this reserved family. Do not publish or consume it.
 
 Operator consumption rule:
 
-- Use `ScriptPatchPinChanged` and the Game Session bounded rollout-history read for instance rollout history, rollback audit trails, and per-instance pin progression. A future derived notification requires a separate accepted contract and may not become a second authority.
+- Use `ScriptPatchPinChanged` and the Game Session bounded rollout-history read for instance rollout history, rollback audit trails, and per-instance pin progression. A future-derived notification requires a separate accepted contract and may not become a second authority.
 
 ## `PluginVersionRuntimeStateChanged` (Automation & Scripting -> Durable Event Flow)
 
