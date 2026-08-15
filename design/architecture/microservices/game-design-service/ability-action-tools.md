@@ -4,6 +4,10 @@ This document outlines the editors for defining abilities, actions, and combat m
 
 The publish workflow is part of the durable control-plane workflow described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
 
+## Implementation Status
+
+The ability/action design surface validates stable references against the exact published base version and ability schema. Exact `scriptPinEpoch` propagation and same-version old-epoch rejection at runtime handoff remain target/partial rather than proven by this design-time editor; see the [Automation and Scheduler Runtime tracker](../../../project-management/implementation-tracking/automation-and-scheduler-runtime.md#script-transition-reconciliation) and [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
+
 Data entered in these editors is stored as revisions using the `SaveRevision` gRPC call defined in [`game_design_service.proto`](../../../../protos/game-design/v1/game_design_service.proto).
 Finalized versions are published with `PublishVersion` so the Game Logic Service can load the rules as part of the cross-service publish workflow described in the [Game Design Service Architecture](README.md).
 

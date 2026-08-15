@@ -58,6 +58,8 @@ Fields:
 
 The `previousScriptPatchVersion` and `previousScriptPinEpoch` fields are an all-present/all-absent pair; both are absent on a first pin (semantic `UNPINNED`) and neither uses a sentinel. A successfully emitted pin-change event always has both `pinnedScriptPatchVersion` and `scriptPinEpoch` present as the resulting exact tuple.
 
+Only a successful mutation that changes the exact tuple emits this event. Deterministic failures, including attempts that leave the tuple unchanged, are retained in Game Session's bounded immutable history and do not emit this event.
+
 ## `ScriptPatchRollbackRequested` (Game Session -> Durable Event Flow)
 
 Reserved family name only; it has no adopted payload or durable-delivery profile and must not be published or consumed. Current rollback flows use `ScriptPatchPinChanged(changeType=ROLLBACK)`. A future dedicated family requires the complete family admission profile above and the pending `CP-01` decision import rather than inferring its contract from this heading.
