@@ -30,6 +30,10 @@ Logging & Admin owns target-state moderation policy persistence, evaluation, and
 - Automated alerts for suspicious activity via Alertmanager.
 - Real-time analytics on game performance.
 
+### Script-transition audit and observability boundary
+
+Logging & Admin presents script-transition evidence but is not a runtime authority. Its operator views compose Game Session's authoritative current `{scriptPatchVersion, scriptPinEpoch}` and paginated rollout history with Automation's tenant readiness, exact observed-pin convergence, plugin policy, dead-letter, and timer diagnostics. It must show projection lag or missing authority explicitly rather than selecting Automation's projection as a replacement history. It does not write pins, epochs, rollout history, Redis coordination keys, or dead-letter rows directly. See [ADR 0109](../../decisions/adr-0109-game-session-owned-script-rollout-history.md), the [scripting contracts](../../system-architecture-scripting-contracts.md), [scripting control-plane API](../../system-architecture-scripting-control-plane-api.md), and [scripting rollout and rollback](../../system-architecture-scripting-rollout-and-rollback.md).
+
 ## Document Map
 
 - [API Contracts](./api-contracts.md)

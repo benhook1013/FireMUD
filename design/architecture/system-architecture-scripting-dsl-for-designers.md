@@ -51,6 +51,8 @@ If you need the exact terms, data flows, and runtime guarantees used by services
 
 ## What the Scripting DSL Is
 
+FireMUD uses one component-based DSL for both ordinary embedded scripts and linked plugins. An embedded script is game-owned content released with a game version or script-only patch; a linked plugin is an independently versioned and instance-activated bundle that uses the same language, sandbox, quotas, and output limits. Plugin packaging or marketplace/source provenance does not create a separate language or automatic trust tier. Packages containing ordinary base-game DML are materialized into a Game Design Draft and republished rather than layered as a runtime plugin. See [DSL Reference & Lifecycle](./system-architecture-scripting-dsl-reference-and-lifecycle.md#one-dsl-distinct-artifact-and-lifecycle-roles).
+
 The scripting DSL lets you define behavior by **wiring together predefined components** rather than writing general-purpose code:
 
 - Scripts are authored as **structured graphs** of components in the visual editor.

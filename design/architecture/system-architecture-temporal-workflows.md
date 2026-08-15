@@ -1,5 +1,7 @@
 # FireMUD System Architecture: Temporal Control-Plane Workflows
 
+Script rollout/readiness workflows may use Temporal for restart-independent orchestration, waits, and operator progress, but Temporal does not become the pin authority. Game Session durably commits the exact `(scriptPatchVersion, scriptPinEpoch)` and append-only rollout history; Automation readiness and schedule work remain observed/projection state. Routine rollback uses an epoch fence and does not pause ordinary gameplay ticks. See [Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md) and [ADR 0109](./decisions/adr-0109-game-session-owned-script-rollout-history.md).
+
 ## Goal and Current Status
 
 FireMUD uses Temporal as the canonical substrate for long-running, durable control-plane workflows that must survive service restarts, support durable waiting/timers, and expose operator-visible progress independently of one JVM lifetime.

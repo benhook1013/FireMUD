@@ -199,6 +199,13 @@ Validation precedence is fixed: first parse every checked queue row and validate
 | [ADR 0100](./adr-0100-separate-generation-ingress-with-one-world-owned-engine.md) | Accepted | `AR-1.1` | `AR-1.5`, `AR-3.2`, `GR-2.1`, `AS-1.3` | Separate typed design and runtime generation ingress backed by one World-owned pure engine |
 | [ADR 0101](./adr-0101-explicit-destructive-regeneration-with-previewed-scope.md) | Accepted | `AR-1.1` | `AR-1.5`, `AR-2.3`, `GR-2.1` | Historical replay preserves later edits while new destructive regeneration requires an exact bound preview |
 | [ADR 0102](./adr-0102-first-class-sparse-and-full-grid-world-topologies.md) | Accepted | `GR-2.2` | `GR-2.1`, `AR-1.1`, `AR-1.5`, `SF-2.3` | First-class sparse and bounded full-grid topologies with independent movement policy and opaque scalable representation |
+| [ADR 0103](./adr-0103-single-authority-script-pins-with-exact-version-execution.md) | Accepted | `AS-1.6` | `AS-1.2`, `AS-1.5`, `AR-3.3`, `GR-1.1` | Game Session-authoritative script pins with exact-version execution, epoch fencing, and explicit rollback |
+| [ADR 0106](./adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md) | Accepted | `AR-3.3` | `AS-1.6`, `GR-1.4`, `SF-2.3`, `PO-1.4`, `AA-2.3` | Script-epoch-fenced rollback with scoped Automation pause and uninterrupted ordinary gameplay |
+| [ADR 0107](./adr-0107-stage-aware-script-dead-letter-recovery.md) | Accepted | `AS-1.5` | `PO-1.4`, `AR-3.3`, `SF-2.3`, `GR-1.4` | Stage-aware dead-letter recovery with frozen-input retry and stored-dispatch continuation |
+| [ADR 0108](./adr-0108-no-degraded-script-admission-without-authoritative-pin.md) | Accepted | `AR-3.3` | `AS-1.6`, `SF-1.3`, `PO-1.4` | Fail-closed Automation admission without a stale-pin operator override |
+| [ADR 0109](./adr-0109-game-session-owned-script-rollout-history.md) | Accepted | `AS-1.6` | `AR-3.2`, `SF-1.1`, `SF-2.3`, `PO-4.1` | Game Session-owned exact pin and append-only rollout history with Automation-only convergence projection |
+| [ADR 0110](./adr-0110-explicit-opt-in-schedule-continuity-across-script-transitions.md) | Accepted | `AR-3.3` | `AS-1.4`, `AR-1.5`, `GR-1.4`, `SF-2.3` | Default-reset interval transitions with explicit stable-owner schedule continuity |
+| [ADR 0111](./adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md) | Accepted | `AS-1.2` | `AR-1.3`, `AR-1.5`, `AS-1.5`, `AS-1.6`, `GR-4.1`, `SF-1.3` | One DSL runtime with distinct embedded-script and linked-plugin lifecycles, explicit acceptance, and typed-engine hot-path authority |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../../product/capability-taxonomy.md).
 

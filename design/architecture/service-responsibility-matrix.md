@@ -18,6 +18,8 @@ Platform Operations is a cross-cutting operational authority rather than a micro
 | Game configuration authoring | ✔ | | | | | | | | | | |
 | Custom in-game scripting authoring | ✔ | | | | | | | | | | |
 | Game version publishing | ✔ | | | | | | | | | | |
+| Authoritative exact script pin and append-only rollout history (`scriptPatchVersion`, `scriptPinEpoch`) — Game Session only | | | | ✔ | | | | | | | |
+| Observed script-pin readiness/convergence projection — Automation & Scripting only; non-authoritative | | | | | | | ✔ | | | | |
 | Design-time feature flag definitions | ✔ | | | | | | | | | | |
 | Room and zone editing | ✔ | | | | | | | | | | |
 | World map region layout | | ✔ | | | | | | | | | |
@@ -78,6 +80,7 @@ Platform Operations is a cross-cutting operational authority rather than a micro
 | Economy logic (trading, shops, pricing) | | | | | | ✔ | | | | | |
 | AI-driven actions and behaviors | | | | | | | ✔ | | | | |
 | Triggered script execution | | | | | | | ✔ | | | | |
+| Exact script admission/execution fence (Game Session pin authority; Automation readiness and execution projection) | | | | ✔ | | | ✔ | | | | |
 | Redis-backed automation queue projection and timer coordination (`automation:queue:*`, `automation:timer:*`, `script-scheduler:*`) | | | | | | | ✔ | | | | |
 | Coordination Redis participation via shared helpers (locks and documented automation/tick prefix rules) | | | | ✔ | ✔ | | ✔ | | | | |
 | Cache/Rate-Limit Redis usage (caches, quotas, rate limiting) | | ✔ | | | ✔ | | ✔ | ✔ | | ✔ | ✔ |

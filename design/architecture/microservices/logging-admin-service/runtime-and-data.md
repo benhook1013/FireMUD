@@ -82,6 +82,10 @@ Logging & Admin provides the operator-facing audit and coordination layer around
 
 Logging & Admin does not write to Redis directly and does not define a competing script/plugin state-mutation API. It coordinates operator UX and audit around the documented service-owned APIs so operators can explain why automation behavior changed.
 
+For script transitions, the durable operator read model composes two sources: Game Session supplies the authoritative current `{scriptPatchVersion, scriptPinEpoch}` and committed rollout history; Automation supplies tenant readiness, exact observed-pin freshness, plugin policy/runtime state, schedule reconciliation, and stage-aware work/dead-letter diagnostics. The service retains request, actor, reason, scope, owner result, and projection-freshness evidence for audit/query, but never resolves disagreement by writing a projection or by choosing Automation history over Game Session history.
+
+The observability plane must make these distinctions queryable without making search, metrics, or tracing a prerequisite for owner mutation success. A missing/stale pin projection is an explicit authority/convergence condition; it is not an operator permission to admit work. Rollback dashboards should show that ordinary gameplay continues while scoped Automation admission and asynchronous cleanup converge, except for an explicitly declared exceptional full-pause effect family. The composed evidence follows the [scripting contracts](../../system-architecture-scripting-contracts.md), [scripting control-plane API](../../system-architecture-scripting-control-plane-api.md), and [scripting rollout and rollback](../../system-architecture-scripting-rollout-and-rollback.md) owners.
+
 ## Data Model
 
 - `log_events` stores log data and is mirrored into Elasticsearch indexes for search.

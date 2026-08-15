@@ -8,6 +8,12 @@ This is a non-normative implementation tracker for automation and scheduler runt
 
 The bounded implementation slices recorded here are complete at their stated boundaries. This tracker is the permanent reader-facing implementation record for the live automation ingress, scheduling, execution, handoff, readiness, and runtime/operator projection contracts.
 
+### Script-transition reconciliation
+
+The accepted transition family does not promote the current implementation to complete. Game Session is the target sole authority for each exact `{scriptPatchVersion, scriptPinEpoch}` and its committed rollout history; Automation remains responsible for tenant readiness, immutable artifacts, and observed convergence. Current Automation pin projections, local rollout rows, and plugin state are projections/diagnostics only. Exact epoch propagation and final fencing remain gaps across admission, scheduling, replay, handoff, and execution.
+
+The target local consequences are tracked against [ADR 0103](../../architecture/decisions/adr-0103-single-authority-script-pins-with-exact-version-execution.md), [ADR 0106](../../architecture/decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md), [ADR 0109](../../architecture/decisions/adr-0109-game-session-owned-script-rollout-history.md), [ADR 0110](../../architecture/decisions/adr-0110-explicit-opt-in-schedule-continuity-across-script-transitions.md), and [ADR 0111](../../architecture/decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md). Stage-aware dead-letter recovery and no-degraded-admission behavior remain canonical system-contract obligations without a claim that the current aggregate replay or every admission boundary proves them.
+
 ## Capability Status
 
 | Capability | Implementation | Verification | Design | Implementation anchors | Proof anchors | Secondary handoffs | Gap or decision |

@@ -78,6 +78,18 @@ Detailed request and response schemas are defined in the [OpenAPI specification]
 - `BeginPurgeVersionAssets(BeginPurgeVersionAssetsRequest) returns (BeginPurgeVersionAssetsResponse)` – CAS-guarded purge start that atomically re-checks deletion eligibility and transitions `version_asset_artifact` into purge-in-progress state.
 - `FinalizePurgeVersionAssets(FinalizePurgeVersionAssetsRequest) returns (FinalizePurgeVersionAssetsResponse)` – CAS-guarded purge completion that transitions purge-in-progress artifacts to `PURGED` after byte-deletion confirmation.
 
+### Script-patch and plugin transition consequences
+
+`PublishScriptPatchVersion` and `PublishPluginVersion` are design-time publication operations. They persist immutable authoring metadata and compatibility evidence but do not activate a running instance, allocate a script pin epoch, or write rollout history. A patch must pass the normal publication boundary before Automation can perform tenant readiness; readiness still does not imply an instance pin. Game Session owns the exact instance pin, epoch, and committed rollout/rollback history, while Automation owns readiness, artifact loading, and observed convergence.
+
+Creator/operator read models must therefore distinguish:
+
+- design-time publication (`PUBLISHED`, or a design-time failure);
+- tenant runtime readiness (`READY`, `FAILED`, or an intermediate state) from Automation; and
+- the authoritative instance pin/epoch and rollout history from Game Session.
+
+Game Design must not infer a rollback or repin from event arrival, readiness rows, or plugin activation state. Plugin publication and instance activation remain separate API lifecycles, and plugin graphs use the same DSL/sandbox as embedded scripts while retaining independent immutable plugin identity.
+
 ```bash
 grpcurl -plaintext localhost:6565 game_design.v1.GameDesignService/Ping
 ```

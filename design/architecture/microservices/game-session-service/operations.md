@@ -28,6 +28,10 @@
 - Combined with region sizing, splitting hot regions and merging cold ones, this lease-based ownership model allows FireMUD to scale horizontally without global downtime.
 - The same externalized-state model supports ADR 0013's bounded ordinary restart recovery. A qualifying single-pod restart targets recovery within 10 seconds without client re-`LOGIN` or re-`PLAY`. If continuation authority cannot be established safely, hidden recovery must terminate immediately; otherwise 30 seconds is the hard maximum before falling back to `1013/backend_unavailable`. Operational proof must cover planned and abrupt real Game Session replacement, retained edge sockets, authority and presence convergence, input-buffer behavior, the early fail-closed authority cutoff, and the elapsed-time cutoff.
 
+### Script transition operations
+
+Game Session commits the exact script pin and monotonic epoch together with an idempotent rollout-history entry. Operators and Logging & Admin compose this authoritative current/history read with Automation readiness and convergence; they must not select a winner from competing projections. A rollback prepares and validates the exact target artifact, pauses only new Automation admission for the affected scope, then advances the script epoch at one serialized boundary. Ordinary player commands and gameplay ticks continue while Automation reconciles. Old script work is fenced at final effect application and may be canceled/purged asynchronously. A full tick pause is exceptional and must identify the unfenced effect family that requires it.
+
 ## Local Development Path
 
 - Use the normal runtime configuration with the real local Postgres, Redis, Gateway, Account, and downstream gameplay-service topology.

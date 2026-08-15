@@ -138,8 +138,8 @@ Use the smallest canonical change vehicle that matches the desired outcome:
 | --- | --- | --- |
 | Change world/entity/assets or any publish-attested runtime design graph | `PublishVersion` | Script-only edits, plugin activation, template-default tweaks that do not change a published release |
 | Change only script/runtime automation logic for one existing `baseVersionId` | `PublishScriptPatchVersion` | Asset changes, world/entity template changes, base-version changes |
-| Publish a signed plugin bundle into immutable design-time history | `PublishPluginVersion` | Full design publish, runtime activation by itself |
-| Activate/deactivate one already published plugin version for matching runtime instances | `SetPluginActiveVersion` / related plugin runtime controls | Publishing unsigned or non-`PUBLISHED` plugin versions |
+| Publish a plugin bundle into immutable design-time history (current implementation: signed; target may permit approved unsigned provenance) | `PublishPluginVersion` | Full design publish, runtime activation by itself, or bypassing intake validation/approval/attestation |
+| Activate/deactivate one already published plugin version for matching runtime instances | `SetPluginActiveVersion` / related plugin runtime controls | Publishing an unvalidated or non-`PUBLISHED` plugin version |
 | Change default launch wiring or operator defaults for future instance creation without changing an existing published release bundle | Game template update | Mutating already published release attestation or runtime state of existing launched instances |
 
 Rules:
@@ -211,16 +211,16 @@ opaque JSON blobs or service-specific payloads.
 
 Script-only fixes are tracked as `scriptPatchVersion` values attached to a `baseVersionId`. Together, `(versionId, scriptPatchVersion)` define the effective script bundle for a game:
 
-- The Game Session Service records the `scriptPatchVersion` that is currently pinned for each `gameInstanceId` and includes it in the context for every tick effect and script trigger.
-- The Automation & Scripting Service owns the tenant readiness lifecycle (`PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`) of each `<tenantId, scriptPatchVersion>` as described in `system-architecture-scripting-dsl-reference-and-lifecycle.md`. A patch may only be pinned for an instance once Automation & Scripting has marked it `READY` for that tenant.
-- Runtime services load and cache scripts based on the `(versionId, scriptPatchVersion)` that Game Session supplies for each effect; Automation & Scripting must not silently substitute a different patch if the supplied one is unknown or `FAILED`—such triggers are rejected and surfaced in audit logs and metrics.
+- The Game Session Service records the exact `{scriptPatchVersion, scriptPinEpoch}` currently pinned for each `gameInstanceId` and includes that tuple in every script-derived trigger, work item, schedule/timer firing, handoff, and tick effect. Game Session also owns the append-only history of committed pin, repin, and rollback attempts; Game Design does not reconstruct it from publication or readiness events.
+- The Automation & Scripting Service owns the tenant readiness lifecycle (`PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`) of each `<tenantId, scriptPatchVersion>` as described in `system-architecture-scripting-dsl-reference-and-lifecycle.md`. A patch may only be pinned for an instance once Automation & Scripting has marked it `READY` for that tenant, but readiness never changes an existing instance pin.
+- Runtime services load and cache scripts based on the exact tuple that Game Session supplies for each effect; Automation & Scripting must not silently substitute a different patch or epoch if the supplied artifact is unknown, unavailable, or `FAILED`. Such triggers fail closed and remain observable. Recovery to an earlier patch is an explicit Game Session repin, producing a new epoch and history entry.
 
 Rollouts and rollbacks:
 
-- Rolling out a new script patch for a game consists of publishing the patch in Game Design Service, allowing Automation & Scripting Service to validate and mark it `READY`, and then having Game Session update the pinned `scriptPatchVersion` for one or more `gameInstanceId` values. Existing effects remain tied to the `(versionId, scriptPatchVersion)` pair recorded when they were applied; future effects observe the new patch.
-- Rolling back a script patch means pinning an earlier `scriptPatchVersion` for the same `baseVersionId` on the affected instances. This is an instance rollout/control-plane action, not a tenant lifecycle state transition. Historical records for prior effects remain associated with the `(versionId, scriptPatchVersion)` values that were in effect at the time, even after instances start using a different patch level.
+- Rolling out a new script patch for a game consists of publishing the patch in Game Design Service, allowing Automation & Scripting Service to validate and mark it `READY`, and then having Game Session explicitly commit the exact patch plus a new pin epoch for one or more `gameInstanceId` values. Existing effects remain tied to their captured tuple; future effects observe the new tuple.
+- Rolling back a script patch means explicitly repinning an earlier compatible `scriptPatchVersion` for the same `baseVersionId` on the affected instances. This is an instance rollout/control-plane action, not a tenant lifecycle state transition. Routine rollback fences script work without pausing unrelated gameplay ticks; historical records for prior effects remain associated with the exact tuples that were in effect at the time.
 
-Game Design Service owns the history and metadata for script revisions and patch versions; Automation & Scripting Service owns runtime readiness and execution; Game Session Service owns which `scriptPatchVersion` is pinned per instance and must record that choice alongside each effect for determinism and auditability.
+Game Design Service owns the authoring history and metadata for script revisions and patch versions; Automation & Scripting Service owns runtime readiness and exact-artifact execution; Game Session Service owns which exact patch/epoch is pinned per instance and the committed rollout history, and must record that tuple alongside each effect for determinism and auditability. See [ADR 0109](../../decisions/adr-0109-game-session-owned-script-rollout-history.md), [ADR 0110](../../decisions/adr-0110-explicit-opt-in-schedule-continuity-across-script-transitions.md), and [ADR 0111](../../decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md).
 
 Scope constraints:
 

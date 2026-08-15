@@ -8,6 +8,12 @@ This is a non-normative implementation tracker for Game Session runtime and tick
 
 This tracker consolidates the live Game Session execution substrate by capability. The recorded boundaries describe current implementation status and bounded follow-up work.
 
+### Script pin, epoch, and rollout-history reconciliation
+
+Target state makes Game Session the sole durable authority for each instance's exact `{scriptPatchVersion, scriptPinEpoch}` and append-only committed rollout history. The current tracker status remains partial: pin persistence and convergence reads exist, but authoritative monotonic epoch coverage through all script-derived work, idempotent history append/readback, and final effect fencing are not fully implemented or proved. Automation's readiness and observed-pin projection cannot replace this authority.
+
+Routine rollback is intended to advance only the script epoch and keep ordinary gameplay ticks running; scoped Automation admission may pause while exact artifacts and schedules reconcile. Current pause/purge seams and region fences do not prove that target. See [ADR 0103](../../architecture/decisions/adr-0103-single-authority-script-pins-with-exact-version-execution.md), [ADR 0106](../../architecture/decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md), and [ADR 0109](../../architecture/decisions/adr-0109-game-session-owned-script-rollout-history.md) for target boundaries; proof remains deferred to the focused Game Session/Automation transition suites.
+
 ## Capability Status
 
 | Capability | Implementation | Verification | Design | Implementation anchors | Proof anchors | Secondary handoffs | Gap or decision |

@@ -4,6 +4,8 @@ This document defines the **non-negotiable contracts** that make the scripting D
 
 Document conflict resolution order is defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md#document-precedence-normative`. This document defines the cross-service invariants layer in that precedence model.
 
+The accepted script-transition decisions applied by this contract are [ADR 0103](./decisions/adr-0103-single-authority-script-pins-with-exact-version-execution.md), [ADR 0106](./decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md), [ADR 0107](./decisions/adr-0107-stage-aware-script-dead-letter-recovery.md), [ADR 0108](./decisions/adr-0108-no-degraded-script-admission-without-authoritative-pin.md), [ADR 0109](./decisions/adr-0109-game-session-owned-script-rollout-history.md), [ADR 0110](./decisions/adr-0110-explicit-opt-in-schedule-continuity-across-script-transitions.md), and [ADR 0111](./decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md). Their implementation and proof gaps remain explicit below.
+
 ## Implementation Status
 
 The current evaluator accepts exactly one emitted command per work item. A result with more than one command is rejected before persistence or handoff with `finalStage=DSL_EVAL`, `finalOutcome=sandbox_error`, and bounded `finalReason=command_count_exceeded`. Multi-command handoff using the complete Command-Handoff Identity remains target-only; `(automationDispatchId, commandOrdinal)` is only its final pair and is not a standalone identity. The contracts below remain the normative target boundary; this status does not narrow that target.
@@ -36,11 +38,14 @@ Live `script_event_audit.finalOutcome=handoff_accepted` means every required chi
 To make script patch rollback meaningful:
 
 - Every script work item and tick command must carry the effective `scriptPatchVersion` used to produce it.
+- Every script-derived trigger, durable work item, schedule/timer firing, emitted command, remote follow-up, staged tick effect, retry, replay, and audit record must also carry the exact `scriptPinEpoch` captured from Game Session for the instance. The authoritative selection is the tuple `(scriptPatchVersion, scriptPinEpoch)`, not the version string alone.
+- Game Session is the sole durable authority for `(scriptPatchVersion, scriptPinEpoch)` per `(tenantId, gameInstanceId)`. It advances `scriptPinEpoch` for every selection change, including rollback or repinning to a previously used version. Automation readiness, caches, projections, and local active-version observations are non-authoritative.
 - On execution, Game Session must enforce a **version fence**:
   - If a command’s `scriptPatchVersion` does not match the game instance’s currently pinned `scriptPatchVersion`, Game Session must not execute it.
+  - If a command’s `scriptPinEpoch` does not match the game instance’s current epoch, Game Session must not execute it, even when the patch version is identical.
   - **Target state:** rejection must retain the complete applicable Trigger Identity (`tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, `entityId`, `scriptId`, `eventType`, `eventSchemaVersion`, `scriptPatchVersion`, `scriptEventId`, `isDryRun`, plus plugin/binding and scheduler fields when applicable), together with the complete Command-Handoff Identity, including `outboxWorkItemId` as parent correlation and optional distinct target fields (`targetGameInstanceId`, `targetPlayableStateScope`, `targetRegionId`, `targetRegionEpoch`), so operators can diagnose exactly which fan-out command was dropped. A child rejection must not be reduced to one handler-level disposition. The live fallback records the narrower work-item, command, and available dispatch fields in the current handoff/audit surfaces until `AS-1.5` is complete.
   - Rejected entries must be removed or moved to a bounded dead-letter store with explicit `maxAge`/`maxRows` and alert-backed cleanup cadence.
-- Operational rollback must include a drain/purge step for any queued automation work items and staging entries that cannot satisfy the version fence.
+- Rollback may cancel or purge displaced work asynchronously for bounded resource use, but cleanup is not the correctness barrier. The epoch fence at each persistence, handoff, staging, replay, and final effect boundary is authoritative; ordinary player commands and ticks continue unless an explicitly declared unfenced effect requires an exceptional pause.
 
 ### 4) `scriptEventId` Identity and At-Most-Once Dedupe
 
@@ -119,38 +124,33 @@ Plugins are executed by the same runtime engine as scripts and must not rely on 
 
 - Rollback orchestration must enforce bounded convergence waiting across Automation and Game Session pin-convergence APIs.
 - If convergence is not observed before timeout, rollback enters terminal state `ROLLBACK_CONVERGENCE_TIMEOUT`.
-- In that state, admission and ticks remain paused until an explicit operator action resumes the rollback workflow.
+- In that state, new Automation admission remains fail-closed for the affected instance until explicit repair or another repin. Ordinary player-command admission and gameplay ticks continue when their own dependencies and fences are healthy; a full tick pause is exceptional and requires a named unfenced effect or migration boundary.
 - When rollback enters the terminal state, emit once:
   - Control-plane event `ScriptRollbackConvergenceTimedOut` produced by Game Session as producer-of-record.
   - Metric `automation_rollback_convergence_timeout_total{scope, operation, reason}`.
 - While that terminal state remains active, each rejected ingress must record event-scope outcome `admitted=false`, `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK`, and `admissionReason=rollback_convergence_timeout` in `script_event_ingress_audit` and increment the existing `automation_script_triggers_dropped_total{scope, script_category, reason="rollback_convergence_timeout"}` family. These rejected ingresses must not increment `automation_rollback_convergence_timeout_total` and must not create a handler-scoped `finalOutcome`.
-- Rollback-safe pause scope is instance-level: control-plane pause, admission pause, convergence checks, and resume operations must all target the same `(tenantId, gameInstanceId)` scope. Region-only pause operations are operational tools and must not be used as the only barrier for rollback orchestration.
+- Rollback-safe Automation pause scope is instance-level: admission pause, convergence checks, and resume operations target `(tenantId, gameInstanceId)`. Region-only pause operations are operational tools and must not substitute for the script epoch fence. `PauseTicks`/`ResumeTicks` are reserved for the exceptional unfenced boundary documented by the rollout owner, not the routine script rollback path.
 
 ### 10) Instance Rollout Read Model Ownership
 
-- The authoritative writer for `<tenantId, gameInstanceId, scriptPatchVersion>` rollout history is Game Session control-plane writes (`SetPinnedScriptPatchVersion`, `RollbackScriptPatchVersion`) and their committed events.
-- Automation & Scripting may project this history for query/read APIs, but projections must be idempotent and replayable from durable control-plane events.
-- Read-model records must be keyed by `(tenantId, gameInstanceId, scriptPatchVersion, controlPlaneRequestId)` so retries do not fork history.
-- The projection contract must define:
-  - Producer of record (`ScriptPatchPinChanged` events).
-  - Replay source and retention window.
-  - Eventual-consistency SLO for `GetScriptPatchInstanceRolloutStatus` / `ListScriptPatchInstanceRollouts`.
+- Game Session atomically owns the current `(scriptPatchVersion, scriptPinEpoch)` and append-only history of committed pin, rollback, and repin attempts for `(tenantId, gameInstanceId)`. Each history record includes `controlPlaneRequestId`, operation kind, previous/resulting exact tuples, actor/reason when operator-driven, outcome, and commit time. A same-request retry returns the stored result and appends no duplicate logical entry.
+- Game Session exposes bounded authoritative current-pin and paginated rollout-history reads. Automation & Scripting may retain only observed-pin, convergence, and freshness projections for local admission and diagnostics; it must not author `PINNED`, `ROLLED_BACK`, or `REPINNED` history from work-item presence or projection refresh.
+- Logging & Admin composes Game Session history with Automation readiness/convergence state and presents disagreement as projection or convergence lag. A transactional outbox notification may accelerate refresh, but loss or duplication of that notification cannot alter or erase Game Session history. A separate Automation rollout event family is not required for this contract.
 
 ### 11) Pin-State Degraded Override Governance
 
 - Admission decisions must fail closed with `pin_state_unavailable` when bounded-staleness pin refresh cannot reach an authoritative source.
-- Any degraded override that allows admission while authoritative pin state is unavailable must be:
-  - explicit and time-bounded,
-  - scoped at least to `(tenantId, gameInstanceId)`,
-  - authorized and audited with `controlPlaneRequestId`, `actor`, and `reason`,
-  - automatically reverted to fail-closed behavior at TTL expiry.
+- There is no operator stale-pin override. An observed local pin, TTL, audit record, or operator reason cannot authorize admission without a fresh authoritative Game Session tuple. Recovery restores Game Session reads/projection delivery or performs an explicit repin after authority returns; ordinary non-script gameplay may continue when healthy.
+- A future exception would require a new accepted contract for a short-lived Game Session-issued capability bound to the exact tenant, instance, version, and epoch; no generic flag or stale-cache grace path exists today.
 
 ### 12) Dead-Letter Replay Version-Fence Safety
 
-- `ReplayDeadLetteredWorkItems` must validate work-item versions against current control-plane state before transition from dead-letter to replayable:
-  - `scriptPatchVersion` must match currently pinned patch for the scoped instance.
-  - Plugin work items must use the immutable `(pluginId, pluginVersionId, bindingId)` tuple stored on the dead-lettered work item and match that tuple against the currently active binding for the same scoped `<tenantId, gameInstanceId, pluginId>`. The ingress audit may supplement diagnosis and provenance, but it is not the plugin/binding eligibility fence.
-- Ineligible work items must remain dead-lettered and return deterministic application-level mismatch errors; replay must not be best-effort for version-fenced mismatches.
+- Every recoverable dead letter records an immutable failure stage and the evidence required by that stage. Missing, contradictory, or unreadable stage evidence remains `DEAD_LETTERED`.
+- Evaluation-stage recovery may re-run the DSL only from the original persisted trigger identity and payload, frozen manifest/input evidence, and exact immutable compiled graph identified by the admitted `(scriptPatchVersion, scriptPinEpoch)`; it retains the original work-item and `scriptEventId` identity and never resolves `latest` or mutable defaults.
+- Post-evaluation recovery never invokes the DSL. It resumes the stored output and child-dispatch ledger, preserving child identities, payload digests, ordinals, and acknowledgements; accepted or terminal children no-op and only unfinished children dispatch.
+- Both paths require an exact current match for the admitted patch/epoch, applicable plugin identity/version/binding, runtime region/`regionEpoch`, and admitted routing bundle. Matching patch text under a different pin epoch is ineligible.
+- `ReplayDeadLetteredWorkItems` accepts bounded explicit work-item/command references and returns a deterministic per-row result (`retried_evaluation`, `resumed_dispatch`, `already_recovered`, `not_found_or_not_owned`, `stage_evidence_unavailable`, or a specific fence mismatch). Eligible rows progress independently; ineligible rows remain dead-lettered. A stable `controlPlaneRequestId`, actor, and reason make duplicate recovery requests idempotent.
+- Purge is a separate bounded, authorized, audited operation with its own request identity and per-row outcomes. Operators and automation never repair or delete dead-letter rows through direct SQL.
 
 ### 13) Output Budget Safety
 

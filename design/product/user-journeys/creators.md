@@ -108,6 +108,8 @@ Dynamic behavior is implemented via the [Automation & Scripting Service](../../a
 - See [Scripting & Automation Framework](../../architecture/system-architecture-scripting.md) for details on the component-based DSL and sandboxing model.
 - [Modding Framework](../../architecture/microservices/game-design-service/modding-framework.md) enables runtime plugins using the same scripting sandbox.
 
+Creators experience embedded scripts as part of their authored game version or script-only patch. A successful design publish is followed by a separate runtime-readiness phase; it does not silently change a running game. Linked plugins use the same behavior language and safety limits, but publication and instance activation remain separate creator-visible outcomes.
+
 ---
 
 ## 4. Publish and Start a Game Instance
@@ -134,10 +136,10 @@ Creator → Game Design Service (publish) → Control plane → Game Session Ser
 2. **Publish a New Version** – The updated design is published with patch notes so players can review changes.
 3. **Publish a Script Patch** – For quick fixes, the [Game Design Service](../../architecture/microservices/game-design-service/README.md) emits a `scriptPatchVersion` like `v42-script.3` linked to the current version.
 4. **Choose the Rollout Path**
-   - **Script-only patch** – A `tenantAdmin` pins the patch to the target realm. Script-only patches apply live without replacing the realm.
+   - **Script-only patch** – After the patch is published and runtime-ready, the control plane explicitly rolls it out to the target realm. The runtime records an exact transition and fences older script work; ordinary gameplay continues while the script transition converges.
    - **Non-script change** – A `tenantAdmin` creates a replacement-instance cutover to a new published version. The platform checks compatibility and prepares the replacement before changing the realm route. A successful cutover makes the new instance the target for new admissions; an incompatible or otherwise failed preparation leaves the replacement unavailable and reports the reason to the creator. See [Game Session Service API Contracts](../../architecture/microservices/game-session-service/api-contracts.md) and [Versioning & Runtime Configuration](../../architecture/system-architecture-versioning-runtime.md#replacement-instance-upgrade-contract).
 5. **Player Experience During Cutover** – After a successful cutover, new admissions and reconnects follow the new realm target. Already connected players receive a bounded drain and then normal lobby reconnection; if the cutover is rejected, the creator sees the failure and no unready replacement is exposed. See the canonical [realm routing contract](../../architecture/system-architecture-versioning-runtime.md#realm-routing-contract-for-player-addressable-realms) and [Game Session Service API Contracts](../../architecture/microservices/game-session-service/api-contracts.md).
-6. **Rollback** – A `tenantAdmin` may roll back to the previous version or script patch using the same control-plane contract. `platformAdmin` is break-glass override only.
+6. **Rollback** – A `tenantAdmin` may explicitly roll back to a previously published, compatible version or script patch using the same control-plane contract. The creator sees the transition and any scoped automation convergence issue; `platformAdmin` is break-glass override only.
 7. **Safe Activation** – Cross-service updates use the documented rollback and reconciliation boundaries: pre-activation failures are reported before the new version serves, while post-activation issues converge through retry and reconciliation. See [Transaction Strategies](../../architecture/system-architecture-transactions.md) and [Game Session Service API Contracts](../../architecture/microservices/game-session-service/api-contracts.md).
 8. **Verify Performance** – Check metrics, traces, and rollout signals after deployment; see [Logging & Monitoring](../../architecture/system-architecture-logging-monitoring.md) and [Testing Strategy](../../architecture/system-architecture-testing.md).
 

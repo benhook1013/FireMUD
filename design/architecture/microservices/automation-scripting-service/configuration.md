@@ -67,6 +67,8 @@ Current live bindings in the service are narrower than the full target-state scr
 
 Any additional, less common tuning variables should be documented alongside their introduction and clearly marked as advanced or internal. Operational runbooks should treat only stable operator knobs as supported surface for routine adjustments.
 
+Script-transition configuration is local policy, not pin authority. In particular, `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS` bounds when this service must reject new script/plugin admission and attempt an authoritative Game Session refresh; it must never be widened into a degraded stale-pin override. The outbox retention and cleanup settings must retain the stage, exact pin tuple, frozen manifest, evaluated-output ledger, and child acknowledgements for the advertised recovery window. Timer continuity declarations are authored artifact data, not a service-wide configuration switch, and one-shot timer correctness must not be changed by interval catch-up settings.
+
 These knobs are the authoritative defaults referenced by the scripting architecture docs:
 
 - publish-time validation and runtime enforcement share `SCRIPT_OUTPUT_MAX_COMMANDS_PER_RUN`, `SCRIPT_OUTPUT_MAX_COMMANDS_PER_ENTITY_PER_TRIGGER`, and `SCRIPT_OUTPUT_MAX_SERIALIZED_WORK_ITEM_BYTES` as the runtime-cap ceilings, while the artifact-pinned cost metadata/digests determine whether a component graph may publish or run;

@@ -30,12 +30,16 @@ This doc set is the authoritative source for:
 - Own the canonical live gameplay-presence and recent-presence substrate for active sessions, first `WHO`, AFK/activity resolution, and disconnect disposition handoff into later social surfaces.
 - Broadcast lifecycle events and world updates to other services.
 - Support reconnection and recovery of running games.
-- Own the authoritative, pinned `scriptPatchVersion` for each running game instance and enforce version fencing for script-generated work.
+- Own the durable exact `{scriptPatchVersion, scriptPinEpoch}` for each running game instance, atomically advance the epoch on every pin/repin/rollback, and retain the append-only committed rollout history. Automation readiness and observed-pin projections never replace this authority.
 - Publish coordination and tick-health metrics per `<tenantId, gameInstanceId, regionId>` and expose control APIs that allow authorized services to pause/resume tick execution and participate in scoped coordination resets. The shipped pause/resume path is currently instance-scoped at `{tenantId, gameInstanceId}`; the target-state `GetRegionTickStatus` and regional pause/status APIs remain the broader regional control surface and are not yet fully implemented.
 - Front gameplay login commands and session binding, calling Account Service to verify credentials and obtain JWTs/tokens while enforcing single-session control for each character.
 - Accept bootstrap-backed bare `LOGIN` for first-party `/ws/game/**` after Gateway connect-token validation and signed connect-context verification; this path is intentionally credentialless and must not prompt the browser to replay username/password/OTP.
 - Attach typed unsigned `PlayerExecutionContext` to player-delegated gameplay RPCs; expose a concrete mTLS workload identity and rely on exact method caller allowlists, context/domain validation, and mutation idempotency rather than per-action signing or a generic cross-service replay cache. Command, effect, and request idempotency records remain mandatory in their owning services.
 - Fail readiness for new gameplay traffic when the currently exposed `LOGIN` plus first-command path is not safe.
+
+### Script pin and rollout authority
+
+Game Session allocates and persists the per-instance script pin epoch and is the only service that may commit a new exact script tuple. Its bounded current-pin and rollout-history reads are the authority used by gameplay fencing and operator composition. Each script-derived trigger, durable work item, schedule or timer firing, command handoff, and final effect carries the captured patch and epoch; stale work is rejected at the applicable boundary. Rollback is an explicit repin to a prior tenant-`READY`, base-compatible artifact and does not ordinarily pause unrelated player commands or gameplay ticks. Automation may pause only new script admission for scoped reconciliation. See the canonical scripting rollout contracts and [ADR 0103](../../decisions/adr-0103-single-authority-script-pins-with-exact-version-execution.md), [ADR 0106](../../decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md), and [ADR 0109](../../decisions/adr-0109-game-session-owned-script-rollout-history.md).
 
 ## Architecture Summary
 

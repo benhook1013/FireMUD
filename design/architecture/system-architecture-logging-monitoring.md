@@ -2,6 +2,8 @@
 
 This document describes how FireMUD collects logs, metrics, and traces across all services, and how operators use those signals for debugging, moderation, and performance analysis.
 
+Scripting observability must retain the exact `(scriptPatchVersion, scriptPinEpoch)` in structured audit/log/trace records and must distinguish Game Session rollout-history authority from Automation readiness/convergence projections. Metric names, labels, and increment units remain owned by the [normative scripting tables](./system-architecture-scripting-normative-contract-tables.md); this document owns only bounded monitoring, dashboard, and alerting consequences. Routine script rollback is an epoch-fenced workflow, not a gameplay-tick outage signal.
+
 For the canonical definition of environment classes and which ones are considered player-facing or prod-like, see [Deployment Environments](./infrastructure/deployment-environments.md#terms) and [Deployment Environments](./infrastructure/deployment-environments.md#canonical-environment-classes). In this document, “prod-like” means `hobby-self-hosted`, `staging`, and `production` unless a section explicitly narrows the requirement further.
 
 ## Implementation Notes

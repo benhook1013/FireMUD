@@ -62,14 +62,14 @@ The Game Design Service owns the **authoring** view of script patches, while the
   - Notifies Automation & Scripting of the published patch so it can ingest the compiled definitions and bindings for the target `<tenantId, scriptPatchVersion>` and start or reuse the durable Temporal `script-patch-readiness` workflow.
   - Treats the publish as **asynchronous** from a runtime perspective: the version is recorded as published in design-time tables, but its readiness for execution is determined by the Automation & Scripting Service.
 - For each `<tenantId, scriptPatchVersion>`, the Automation & Scripting Service tracks a tenant readiness lifecycle (`PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`) as described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md#script-patch-lifecycle`.
-- The Game Design Service queries readiness via a read-only API such as `GetScriptPatchStatus(tenantId, scriptPatchVersion)` and subscribes to tenant + instance rollout events (`ScriptPatchTenantStatusChanged`, `ScriptPatchInstanceRolloutChanged`) so that UIs can show:
+- The Game Design Service queries readiness via a read-only API such as `GetScriptPatchStatus(tenantId, scriptPatchVersion)` and consumes the owner-provided rollout read for creator visibility so that UIs can show:
   - That a patch is published but still **pending runtime validation**.
   - The patch's `baseVersionId` and `abilitySchemaDigest` used for runtime compatibility gates and pinning checks.
   - Whether `onLoad` initialization has succeeded or failed for each tenant.
-  - When a patch has been rolled back or repinned for a specific game instance.
+  - When Game Session has committed a patch pin, rollback, or repin for a specific game instance. Game Session owns the exact pin epoch and append-only rollout history; Game Design does not reconstruct that history from readiness or notification arrival order.
   - Event-family responsibilities are explicit:
     - `ScriptPatchTenantStatusChanged` drives readiness gates and publish validation status.
-    - `ScriptPatchInstanceRolloutChanged` drives instance rollout history and rollback audit timeline.
+    - `ScriptPatchPinChanged` may update creator-facing observed convergence visibility; direct Game Session current-pin and history reads remain authoritative, and no consumer derives rollout history locally.
 
 In the design UI:
 
@@ -83,8 +83,12 @@ Compatibility contract requirement:
 
 - `PublishScriptPatchVersion` and plugin enable/publish paths must validate compatibility against the immutable `abilitySchemaDigest` bound to `baseVersionId`, not against mutable live lookups.
 - The validated digest must be propagated to runtime-facing metadata/audit surfaces so operators can prove which schema snapshot a patch/plugin was validated against.
-- Plugin publication must persist a canonical signed manifest contract that includes at least `pluginId`, `pluginVersionId`, exact `baseVersionId`, exact `abilitySchemaDigest`, declared entrypoints, and declared bindings. Runtime services must consume those signed fields as the activation source of truth.
+- Current plugin publication must persist a canonical signed manifest contract that includes at least `pluginId`, `pluginVersionId`, exact `baseVersionId`, exact `abilitySchemaDigest`, declared entrypoints, and declared bindings. Runtime services must consume those immutable fields as the activation source of truth; the ADR 0111 target unsigned-provenance variant still requires the exact manifest, digest, validation, approval, and platform-attestation evidence when author-signature evidence is absent.
 - Plugin versions use a separate Game Design lifecycle from runtime activation. Publication status answers whether a bundle is accepted into immutable authoring history; instance activation status answers whether a published plugin version is active for a given running game instance.
+
+### Script-transition ownership consequence
+
+Game Design owns authored script-patch revisions, immutable publication metadata, base-version compatibility, and plugin bundle publication. It does not select the active patch for a running instance, issue a script pin epoch, or author rollout/rollback history. A published patch is only a candidate for Automation tenant readiness; creators see runtime readiness separately from the Game Session-owned instance pin. Plugin publication similarly remains distinct from instance activation: linked plugins use the shared DSL and sandbox, but retain their independent `pluginId`/`pluginVersionId` publication and activation identity. See [ADR 0109](../../decisions/adr-0109-game-session-owned-script-rollout-history.md), [ADR 0110](../../decisions/adr-0110-explicit-opt-in-schedule-continuity-across-script-transitions.md), [ADR 0111](../../decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md), and the canonical scripting control-plane contracts.
 
 ### Canonical Authoring Boundary
 
@@ -92,7 +96,7 @@ The initial supported authoring package for first-party game content is the Game
 
 Implementations must not introduce ad hoc import/export, Git checkout, or local package semantics for first-party content. Any future external authoring package must be specified as a separate contract before it is exposed, including stable ID preservation, cross-service reference validation, asset inclusion, plugin inclusion, conflict handling, and mapping back into Game Design revisions and commits. Until that contract exists, "version control integration" means Game Design's database-backed branches, commits, provenance, and optional synchronization hooks described in [Version Control for Design Assets](version-control.md), not a second source of truth.
 
-Plugin bundles are the only supported file-based content package in the initial slice. They are independently signed, immutable artifacts governed by [modding-framework.md](./modding-framework.md), and they do not replace or extend the first-party revision package format.
+Plugin bundles are the only supported file-based content package in the initial slice. The current implementation and initial hosted policy require allowlisted Ed25519-signed immutable artifacts governed by [modding-framework.md](./modding-framework.md), and they do not replace or extend the first-party revision package format. [ADR 0111](../../decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md) records target provenance behavior that may permit operator-approved unsigned packages only after exact digest, complete validation, explicit scoped approval, and platform acceptance attestation; hosted policy may prohibit unsigned intake, and this target path is not implemented.
 
 ## Key Features
 
@@ -124,7 +128,7 @@ Plugin bundles are the only supported file-based content package in the initial 
 - [`runtime_flag` table](feature-flags.md) manages feature flag definitions and
   corresponding APIs expose these records.
 - `game_assets` table stores asset metadata for uploaded binary files such as icons or sound effects; canonical bytes live in object storage referenced by this metadata.
-- Plugin bundle metadata must be persisted as indexed design-time records keyed by `(tenantId, pluginId, pluginVersionId)` and include signed-manifest fields, signer verification status, publication status, validation outcomes, `bundleDigest`, and plugin asset distribution manifest fields when `assetRefs[]` are present. The bundle bytes remain in object storage, but plugin activation metadata must be queryable without unpacking archives on routine reads.
+- Plugin bundle metadata must be persisted as indexed design-time records keyed by `(tenantId, pluginId, pluginVersionId)` and include manifest fields, signer verification status when signature evidence is present, publication status, validation outcomes, `bundleDigest`, and plugin asset distribution manifest fields when `assetRefs[]` are present. The bundle bytes remain in object storage, but plugin activation metadata must be queryable without unpacking archives on routine reads.
 
 Design-time tables (such as `revision`, `version`, `game_templates`,
 `runtime_flag`, asset metadata tables, and release-attestation tables) are the

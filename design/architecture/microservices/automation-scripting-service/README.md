@@ -31,6 +31,14 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 - Procedural population hooks populate rooms with NPCs and loot based on biome and depth by emitting idempotent, tick-driven commands; scripts do not persist world topology and do not directly mutate World Management instance rows.
 - `ScriptQuotaService` enforces fairness quotas and per-script resource limits.
 
+### Script-transition boundary
+
+Automation & Scripting owns tenant readiness, immutable compiled artifacts, and an instance-scoped observed exact-pin projection for local admission and diagnostics. It validates against Game Session's authoritative `{scriptPatchVersion, scriptPinEpoch}` and fails closed when that authority is stale or unavailable; its projection never commits a pin or rollout history. Local consequences follow the [scripting contracts](../../system-architecture-scripting-contracts.md), [control-plane API](../../system-architecture-scripting-control-plane-api.md), and [rollout and rollback](../../system-architecture-scripting-rollout-and-rollback.md) owners, with lifecycle boundaries recorded in [ADR 0103](../../decisions/adr-0103-single-authority-script-pins-with-exact-version-execution.md), [ADR 0106](../../decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md), [ADR 0107](../../decisions/adr-0107-stage-aware-script-dead-letter-recovery.md), [ADR 0108](../../decisions/adr-0108-no-degraded-script-admission-without-authoritative-pin.md), [ADR 0109](../../decisions/adr-0109-game-session-owned-script-rollout-history.md), [ADR 0110](../../decisions/adr-0110-explicit-opt-in-schedule-continuity-across-script-transitions.md), and [ADR 0111](../../decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md).
+
+The local admission consequence is exact-artifact loading against the observed owner tuple; missing, stale, or mismatched evidence fails closed without a local fallback. Scoped Automation admission and cleanup participate through the owner APIs while ordinary gameplay remains outside this service-local admission barrier.
+
+Automation exposes stage-aware dead-letter, schedule/timer, and plugin lifecycle consequences through its local APIs; the authority, recovery, continuity, and embedded-versus-plugin lifecycle rules remain in the canonical owners linked above.
+
 ## Document Map
 
 - [API Contracts](./api-contracts.md)

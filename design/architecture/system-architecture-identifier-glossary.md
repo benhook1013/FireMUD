@@ -2,6 +2,8 @@
 
 This document defines canonical identifier names and scopes used across FireMUD service designs. When other documents use ambiguous terms like `roomId`, treat this glossary as the tie-breaker and update the doc to use the appropriate scoped identifier.
 
+Scripting identity terms are defined here only as identifiers: [Scripting Contracts](./system-architecture-scripting-contracts.md) owns their execution semantics, [Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md) owns transition semantics, and [DSL Reference and Lifecycle](./system-architecture-scripting-dsl-reference-and-lifecycle.md) owns artifact/lifecycle distinctions.
+
 ## Implementation Status
 
 The UUID target applies only to UUID-governed logical identifiers; it is not a blanket requirement that every runtime or operational identifier be a UUID. That target has not fully converged: several current REST DTOs, OpenAPI schemas, database-facing service contracts, and persisted rows still expose numeric account, tenant, version, game-instance, character, or template IDs. Existing gRPC strings and architecture examples must carry canonical UUID values for UUID-governed logical identifiers rather than decimal strings or mnemonic placeholders, but that does not make the remaining schema and persistence migration complete. Typed scoped-numeric runtime room, entity, and item-instance identifiers remain valid inside their complete scope.
@@ -12,6 +14,8 @@ The UUID target applies only to UUID-governed logical identifiers; it is not a b
 - `tenantId` – identifies the game/tenant. Present on all persistent domain tables and all cross-service APIs.
 - `versionId` – identifies a design bundle/version for a tenant. Domain service template data is scoped by `(tenantId, versionId)`.
 - `gameInstanceId` – identifies a running game instance for a tenant. Domain service runtime/instance data is scoped by `(tenantId, gameInstanceId)` and references the instance’s pinned `runtime_version`/`versionId`.
+- `scriptPatchVersion` – identifies the immutable embedded-script patch selected for a game instance. It is not authoritative by itself; pair it with the Game Session-owned `scriptPinEpoch`.
+- `scriptPinEpoch` – identifies the Game Session pin-selection epoch paired with `scriptPatchVersion`. It advances on every pin change, including repin/rollback to the same version; a version-only match is not an execution fence.
 - `regionId` – identifies an operational tick region within `(tenantId, gameInstanceId)`. It is an opaque runtime-coordination identity, not a World Management row ID, design-time region template ID, room ID, or slug. The complete region scope is `{tenantId, gameInstanceId, regionId}`.
 - `characterId` – identifies a character owned within a tenant. Gameplay session binding and any instance-local playable state use it together with `{tenantId, gameInstanceId}` scope.
 

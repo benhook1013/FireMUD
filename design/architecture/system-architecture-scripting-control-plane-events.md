@@ -2,6 +2,8 @@
 
 This document defines the durable event contracts emitted by the scripting control plane. It complements [Scripting & Automation: Control Plane API](./system-architecture-scripting-control-plane-api.md), which defines the API surface and authoritative mutating/read contracts used by operators and services.
 
+Pin selection and rollout-history authority remains in Game Session. The event catalogue carries committed notifications and must not create a second rollout lifecycle; see [Scripting & Automation: Cross-Service Contracts](./system-architecture-scripting-contracts.md#10-instance-rollout-read-model-ownership).
+
 ## Implementation Status
 
 The durable transport boundary is accepted, but the current catalogue does not yet specify or prove each family's concrete retention owner/window, reconstruction procedure, consumer-progress store, and backpressure behavior. `ScriptPatchRollbackRequested` and `SignerPolicyVersionObserved` likewise have no complete standalone delivery contract. Those family-level choices belong to the still-pending `CP-01` decision import; until that lands, no family may claim an implemented durable flow merely from the payload shape below, rollback consumers use the fully defined `ScriptPatchPinChanged(changeType=ROLLBACK)` form, and signer-policy observation remains authoritative through the current read contract.
@@ -24,7 +26,7 @@ This document owns the no-general-broker boundary, transactional-outbox and per-
 
 To keep control-plane behavior predictable, transport and ordering guarantees must be explicit:
 
-- **Partition key (instance-scoped events)**: events scoped to a running instance (for example `ScriptPatchPinChanged`, `ScriptPatchInstanceRolloutChanged`, and plugin lifecycle events) must use `tenantId` + `gameInstanceId` so ordering is stable for that instance.
+- **Partition key (instance-scoped events)**: events scoped to a running instance (for example `ScriptPatchPinChanged` and plugin lifecycle events) must use `tenantId` + `gameInstanceId` so ordering is stable for that instance. The reserved `ScriptPatchInstanceRolloutChanged` name is not published.
 - **Partition key (tenant-scoped patch lifecycle events)**: tenant patch readiness events (`ScriptPatchTenantStatusChanged`) must use `tenantId` only.
 - **Partition key (tenant-scoped design publication events)**: Game Design publication events for script patches and plugin versions must use `tenantId` only.
 - **Ordering**: consumers may assume per-partition order within each event family and scope, but must not assume global order across tenants or instances.
@@ -46,6 +48,8 @@ Fields:
 - `gameInstanceId`
 - `previousScriptPatchVersion`
 - `pinnedScriptPatchVersion`
+- `previousScriptPinEpoch`
+- `scriptPinEpoch`
 - `changeType` (`SET` | `ROLLBACK`)
 - `instanceSequence`
 - `controlPlaneRequestId`
@@ -96,26 +100,15 @@ Operator consumption rule:
 - Use this event family for creator/operator publication history and design-time eligibility changes only.
 - Do not infer runtime activation, drain, or disablement from this event family; those remain instance-scoped runtime events.
 
-## `ScriptPatchInstanceRolloutChanged` (Game Session -> Durable Event Flow)
+## `ScriptPatchInstanceRolloutChanged` (Reserved; do not publish)
 
-Emitted whenever instance rollout history changes for a patch.
+This duplicate rollout event family is deliberately not part of the canonical contract. Game Session's committed `ScriptPatchPinChanged` record carries the exact previous/resulting pin epochs and supplies the authoritative append-only history read. Consumers must not reconstruct rollout history from Automation work-item transitions or this reserved family.
 
-Fields:
-
-- `tenantId`
-- `gameInstanceId`
-- `scriptPatchVersion`
-- `previousRolloutStatus`
-- `newRolloutStatus` (`PINNED` | `ROLLED_BACK` | `REPINNED`)
-- `causedBy` (`OPERATOR` | `SYSTEM`)
-- `instanceSequence`
-- `controlPlaneRequestId` (required when `causedBy=OPERATOR`)
-- `statusReason` (optional)
-- `occurredAt`
+No payload is adopted for this reserved family. Do not publish or consume it.
 
 Operator consumption rule:
 
-- Use this event family for instance rollout history, rollback audit trails, and per-instance pin progression.
+- Use `ScriptPatchPinChanged` and the Game Session bounded rollout-history read for instance rollout history, rollback audit trails, and per-instance pin progression. A future derived notification requires a separate accepted contract and may not become a second authority.
 
 ## `PluginVersionRuntimeStateChanged` (Automation & Scripting -> Durable Event Flow)
 

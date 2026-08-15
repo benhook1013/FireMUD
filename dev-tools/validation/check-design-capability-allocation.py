@@ -450,6 +450,27 @@ ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/adr-0102-first-class-sparse-and-full-grid-world-topologies.md": adr_allocation(
         "GR-2", "Accepted", "AR-1", "SF-2"
     ),
+    "design/architecture/decisions/adr-0103-single-authority-script-pins-with-exact-version-execution.md": adr_allocation(
+        "AS-1", "Accepted", "AR-3", "GR-1"
+    ),
+    "design/architecture/decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md": adr_allocation(
+        "AR-3", "Accepted", "AS-1", "GR-1", "SF-2", "PO-1", "AA-2"
+    ),
+    "design/architecture/decisions/adr-0107-stage-aware-script-dead-letter-recovery.md": adr_allocation(
+        "AS-1", "Accepted", "PO-1", "AR-3", "SF-2", "GR-1"
+    ),
+    "design/architecture/decisions/adr-0108-no-degraded-script-admission-without-authoritative-pin.md": adr_allocation(
+        "AR-3", "Accepted", "AS-1", "SF-1", "PO-1"
+    ),
+    "design/architecture/decisions/adr-0109-game-session-owned-script-rollout-history.md": adr_allocation(
+        "AS-1", "Accepted", "AR-3", "SF-1", "SF-2", "PO-4"
+    ),
+    "design/architecture/decisions/adr-0110-explicit-opt-in-schedule-continuity-across-script-transitions.md": adr_allocation(
+        "AR-3", "Accepted", "AS-1", "AR-1", "GR-1", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md": adr_allocation(
+        "AS-1", "Accepted", "AR-1", "GR-4", "SF-1"
+    ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
     "README.md": "Service overview",

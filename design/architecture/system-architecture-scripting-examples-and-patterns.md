@@ -2,6 +2,8 @@
 
 This document provides **worked examples and design patterns** for common scripting scenarios. It shows how the concepts from the DSL and lifecycle reference apply to concrete behaviors.
 
+All examples use the single DSL. Embedded scripts are game-owned patch content; the plugin example below demonstrates the separate immutable artifact and instance activation lifecycle without introducing a second language or trust path. See [One DSL, Distinct Artifact and Lifecycle Roles](./system-architecture-scripting-dsl-reference-and-lifecycle.md#one-dsl-distinct-artifact-and-lifecycle-roles).
+
 Companion docs:
 
 - `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` – terminology, DSL semantics, event and timer lifecycle, determinism.
@@ -49,7 +51,7 @@ This example walks through how a typical `onEnterRegion` script executes end-to-
      - `tenantId`, `gameInstanceId`, `playableStateScope`, and `regionId`.
      - Target `entityId` (for example, an NPC guarding the room).
      - `eventType=onEnterRegion`.
-     - The currently pinned `scriptPatchVersion` for that game.
+     - The exact currently pinned `(scriptPatchVersion, scriptPinEpoch)` tuple for that game.
      - `regionEpoch` so the trigger is fenced across scoped coordination resets.
    - For low-rate lifecycle events such as `onEnterRegion`, `onSpawn`, and `onCommand`, simple unary gRPC calls are sufficient; high-volume time-based scheduling comes from the tick heartbeat stream described in the tick architecture.
    - The unary ingress result is **event-scope** only: it tells the caller whether the event was accepted for handler resolution. If multiple scripts/plugins are bound, handler-specific success or failure is recorded later per resolved Trigger Identity in `script_event_audit`.
@@ -69,7 +71,7 @@ This example walks through how a typical `onEnterRegion` script executes end-to-
 5. **Automation queue staging**
    - Actions produced by the handler are converted into domain commands and persisted as a durable script work item (outbox), then indexed into `automation:queue:{tenantInstanceTag}:<entityId>` for the affected entity.
    - The firing admission links the durable firing claim, handler audit row, work item, queue-pointer projection, and due-point advancement in one atomic durable transition or a resumable idempotent recovery operation. Recovery completes missing links from the existing claim rather than re-evaluating the handler.
-   - Each work item carries the originating `scriptEventId`, `scriptId`, `gameInstanceId`, `playableStateScope`, version metadata, and region context. In the target handoff contract, it receives one stable `automationDispatchId` when its emitted commands are first persisted, and every logical command receives a deterministic `commandOrdinal` under that shared dispatch. Both values are reused for every handoff, retry, and downstream disposition. The target `ListScriptHandoffEvents` child records are keyed by the complete Command-Handoff Identity, with `(automationDispatchId, commandOrdinal)` retained only as its dispatch-group suffix, and retain the full parent Trigger Identity while the handler audit remains one row. See [Implementation Status](#implementation-status) for the current live handoff boundary.
+   - Each work item carries the originating `scriptEventId`, `scriptId`, `gameInstanceId`, `playableStateScope`, exact `scriptPatchVersion`/`scriptPinEpoch`, and region context. In the target handoff contract, it receives one stable `automationDispatchId` when its emitted commands are first persisted, and every logical command receives a deterministic `commandOrdinal` under that shared dispatch. Both values are reused for every handoff, retry, and downstream disposition. The target `ListScriptHandoffEvents` child records are keyed by the complete Command-Handoff Identity, with `(automationDispatchId, commandOrdinal)` retained only as its dispatch-group suffix, and retain the full parent Trigger Identity while the handler audit remains one row. See [Implementation Status](#implementation-status) for the current live handoff boundary.
 
 6. **Automation ticks and tick command enqueue**
    - Automation's durable execution loop claims pending work items and hands emitted commands to Game Session.
@@ -119,7 +121,7 @@ This example shows how a script that runs on a fixed cadence (for example, an NP
    - When the script is published, its compiled DSL graph, `intervalTicks` (or equivalent cadence configuration), and version metadata are stored in the Automation & Scripting Service database and exposed under the current `scriptPatchVersion` for that game.
 
 2. **Scheduling the next interval**
-   - When the NPC spawns or when the script is first loaded, the Automation & Scripting Service's scheduler registers a stable interval row for `<tenantId, gameInstanceId, playableStateScope, scriptId, pluginId?, pluginVersionId?, bindingId?, eventType=onInterval, eventSchemaVersion, scriptPatchVersion, isDryRun=false, scheduleDefinitionId, scheduleSemanticsHash, targetScopeType, targetScopeId>`. Runtime `regionId`/`regionEpoch` and exactly one due point, `dueTickId` for tick cadence or `dueAt` for wall-clock cadence, are mutable schedule state rather than row identity. `nextTick` and `nextRunAt` are derived projections. Plugin-owned entries include all three plugin binding-owner fields. A reconciliation also records the explicit displaced and replacement owner identities; neither may be inferred from whichever row is read first.
+   - When the NPC spawns or when the script is first loaded, the Automation & Scripting Service's scheduler registers a version-owned interval row retaining patch/plugin provenance and exactly one due point. Its stable continuity key is `{stableOwnerKind, stableOwnerId, scheduleDefinitionId, targetScopeType, targetScopeId}`; `scriptPatchVersion`, `pluginVersionId`, and `scheduleSemanticsHash` remain provenance/diagnostic or execution-fence metadata. The default transition is cancel-and-recreate; continuity requires explicit compatible declarations on both sides and typed cadence/target checks. Runtime `regionId`/`regionEpoch` and due state remain mutable schedule state rather than continuity identity.
    - Leaders track these interval entries alongside other automation timers using bounded scans. Event gates, the durable firing claim, handler resolution, and quota decisions happen first; quota-allowed handlers become durable queued work. The later execution scheduler applies `AUTOMATION_TICK_BUDGET_MS` to the canonical ordered prefix of queued handler work. This reservation is not actual execution time, a per-run timeout, or a capacity lease.
 
 3. **Firing `onInterval` and enforcing budgets**
@@ -152,12 +154,12 @@ Recurring timer-driven handlers such as `onInterval` produce at most one event-s
 
 ### `scheduleDefinitionId` Example
 
-`scheduleDefinitionId` is the stable compiled identity used to decide whether a logical timer survives publish, reload, or rollback. It identifies the logical schedule definition; each patch/plugin owner materializes that definition as its own physical durable schedule row, so the logical identity must not be confused with a row or firing-claim identity:
+`scheduleDefinitionId` participates in the stable compiled continuity key but does not by itself decide whether a logical timer survives publish, reload, or rollback. Each patch/plugin owner materializes the logical schedule as its own physical durable row, so continuity declarations, typed compatibility, and exact pin/epoch fencing must be checked; the logical key must not be confused with a row or firing-claim identity:
 
 For carry-forward, the complete immutable schedule-owner identity is `<tenantId, gameInstanceId, playableStateScope, targetScopeType, targetScopeId, scriptId, eventType, eventSchemaVersion, isDryRun, scheduleDefinitionId, scheduleSemanticsHash, pluginId?, displacedScriptPatchVersion, replacementScriptPatchVersion?, displacedPluginVersionId?, replacementPluginVersionId?, bindingId?>`. The displaced and replacement owner identities are part of the mapping; matching only `scheduleDefinitionId` or semantic similarity is insufficient.
 
-- If patch `P11` and patch `P12` both define the NPC patrol timer as "run every 30 ticks while patrol is enabled" and Game Design emits the same schedule definition and semantics for the same tenant, game instance, playable-state scope, target scope, script/binding owner, and explicit `P11`-to-`P12` replacement mapping, Automation & Scripting creates or confirms the `P12` version-owned timer row, carries its due state forward through the canonical resume rule, and only then retires the `P11` row. Replacement and retirement are one atomic durable result or a resumable idempotent operation. The new row receives a firing claim and `scriptEventId` only after a due candidate passes admission; the old row and its trigger history are not reused.
-- If patch `P12` replaces that patrol timer with a different logical schedule such as "run every 5 ticks while alerted", or if any tenant, game instance, target scope, playable-state scope, script/plugin/binding owner, displaced/replacement owner, `scheduleDefinitionId`, or `scheduleSemanticsHash` component differs, the scheduler creates the new timer before retiring the old row under the same atomic-or-resumable rule and gives it fresh due state. Rollback to `P11` follows the same complete-identity and explicit reverse-mapping rule.
+- If patch `P11` and patch `P12` both define the NPC patrol timer as "run every 30 ticks while patrol is enabled" and both explicitly declare the same stable continuity key with compatible cadence, target, and playable scope, Automation creates or confirms the P12 row, applies the resume calculation, and only then tombstones P11. Replacement and retirement are atomic or resumable/idempotent. The new row receives a firing claim and `scriptEventId` only after a due candidate passes admission; the old row and trigger history are not reused.
+- If either side omits continuity, explicitly resets it, changes cadence/target/scope/key, or the target definition is absent, the scheduler tombstones P11 and gives P12 fresh due state. Rollback to P11 follows the same matrix; hash equality or historical similarity never grants continuity.
 
 ---
 

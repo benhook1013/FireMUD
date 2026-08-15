@@ -2,6 +2,8 @@
 
 This document summarizes the **core concepts and invariants** of the FireMUD tick system. It is aimed at developers and reviewers who need to understand fairness, region authority, and idempotency without reading the full runtime design in `system-architecture-ticks.md`.
 
+Automation-generated tick work carries the exact Game Session-owned `(scriptPatchVersion, scriptPinEpoch)` tuple through admission and execution. This document owns only the tick-local consequence: the region executor rejects a stale tuple at the execution fence, while routine script rollback does not pause ordinary gameplay ticks. See [Scripting Contracts](./system-architecture-scripting-contracts.md) and [Runtime Execution](./system-architecture-scripting-runtime-execution.md) for the canonical script contract.
+
 ## Implementation Status
 
 This document describes the target-state invariants. The target ownership model is a region-scoped Redis liveness lease paired with a durable executor fence and authority-fenced takeover/replay recovery for each `<tenantId, gameInstanceId, regionId>`. The live deployment has not yet converged on that region-scoped boundary: durable ownership is currently instance-scoped at `{tenantId, gameInstanceId}`, exposed through `RuntimeOwnershipStatus` with selected region fields and an opaque compare-and-match fence. True region-scoped lease/fence installation, `RegionStatus` authority, and takeover reconciliation remain target-state implementation and proof work. The invariants below therefore remain the canonical target contract and must not be read as a claim that the target recovery protocol is already live.

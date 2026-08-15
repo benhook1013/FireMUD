@@ -6,6 +6,8 @@ It exists to remove ambiguity from “conceptual APIs” referenced in service R
 
 Workflow sequencing for rollback, pause/resume, drain/purge, dead-letter recovery, and operator audit flows lives in [Scripting & Automation: Control Plane Operations](./system-architecture-scripting-control-plane-operations.md).
 
+The exact pin/epoch authority and stage-aware recovery rules used by these APIs are defined in [Scripting & Automation: Cross-Service Contracts](./system-architecture-scripting-contracts.md), with accepted transition rationale in [ADR 0103](./decisions/adr-0103-single-authority-script-pins-with-exact-version-execution.md), [ADR 0106](./decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md), [ADR 0107](./decisions/adr-0107-stage-aware-script-dead-letter-recovery.md), [ADR 0108](./decisions/adr-0108-no-degraded-script-admission-without-authoritative-pin.md), [ADR 0109](./decisions/adr-0109-game-session-owned-script-rollout-history.md), and [ADR 0111](./decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md).
+
 Routing note:
 
 - Use this document for control-plane API shape, authoritative ownership, and state-mutation contracts.
@@ -64,7 +66,7 @@ Compact publication-to-runtime sequence:
   - Evaluates triggers, persists script work items durably, and hands off to Game Session.
   - Tracks per-tenant patch lifecycle state (`READY`, `FAILED`, `SUPERSEDED`) and enforces admission rules (“only `READY` is runnable”).
   - Emits tenant patch readiness lifecycle events (`ScriptPatchTenantStatusChanged`) when readiness state changes.
-  - Consumes Game Session pin events to project rollout history read models.
+  - Consumes Game Session pin events to project non-authoritative readiness/convergence projections; it never owns or derives rollout history.
 
 - **Game Session Service (gameplay + tick control plane)**
   - Owns the pinned `scriptPatchVersion` for each `(tenantId, gameInstanceId)`.
@@ -115,6 +117,8 @@ Inputs:
 - `tenantId`
 - `pluginId`
 - `pluginVersionId`
+- `scriptPatchVersion`
+- `scriptPinEpoch` (the displaced pin epoch; cancellation must match the stored exact tuple)
 
 Outputs:
 
@@ -171,6 +175,7 @@ Outputs:
 
 - `tenantId`, `gameInstanceId`
 - `pinnedScriptPatchVersion`
+- `scriptPinEpoch` (monotonic Game Session authority epoch; advances on every pin selection change, including repin to the same version)
 - `pinnedAt` (timestamp)
 - `pinnedBy` (actor principal, optional)
 - `controlPlaneRequestId` (nullable; the idempotent request that last changed the pin)
@@ -188,7 +193,8 @@ Outputs:
 
 - `tenantId`, `gameInstanceId`
 - `observedPinnedScriptPatchVersion`
-- `lastObservedControlPlaneRequestId`
+- `scriptPinEpoch`
+- `controlPlaneRequestId` (the committed pin mutation request represented by this authoritative Game Session read)
 - `observedAt`
 
 Contract rules:
@@ -203,6 +209,7 @@ Inputs:
 - `tenantId`
 - `gameInstanceId`
 - `targetScriptPatchVersion`
+- `expectedScriptPinEpoch` (optional compare-and-set precondition; the committed result always returns the resulting epoch)
 - `controlPlaneRequestId` (idempotency key)
 - `actor` (operator identity metadata, required for audit)
 - `reason` (free-form, required)
@@ -214,11 +221,13 @@ Semantics:
 - If the target patch is not `READY`, the operation must fail deterministically with an application error (for example `errorCode=SCRIPT_PATCH_NOT_READY`) and must not mutate pin state.
 - The operation must also validate base-version cohesion: the target patch's `baseVersionId` must match the game instance's currently pinned `runtimeVersionId`. If they do not match, the operation must fail deterministically with `errorCode=SCRIPT_PATCH_BASE_VERSION_MISMATCH` and must not mutate pin state.
 - On success, Game Session persists the new pin for `(tenantId, gameInstanceId)` and emits `ScriptPatchPinChanged`.
+- On success, Game Session atomically persists `(pinnedScriptPatchVersion, scriptPinEpoch)` and the corresponding append-only rollout-history record. The resulting epoch is new even when the target version equals the previous version.
 
 Outputs:
 
 - `previousScriptPatchVersion`
 - `pinnedScriptPatchVersion` (the new value)
+- `scriptPinEpoch` (the resulting exact authority epoch)
 - `controlPlaneRequestId`
 - `errorCode` (optional on failure; required for deterministic business failures such as `SCRIPT_PATCH_NOT_READY`)
 
@@ -229,16 +238,17 @@ Inputs:
 - `tenantId`
 - `gameInstanceId`
 - `targetScriptPatchVersion` (previous known-good patch)
+- `expectedScriptPinEpoch` (optional compare-and-set precondition)
 - `controlPlaneRequestId`
 - `actor`
 - `reason`
 
 Semantics:
 
-- Equivalent to `SetPinnedScriptPatchVersion` but semantically indicates rollback; tooling may treat it as higher urgency. Operational sequencing and convergence checks live in [Control Plane Operations](./system-architecture-scripting-control-plane-operations.md).
+- Equivalent to `SetPinnedScriptPatchVersion` but semantically indicates rollback; tooling may treat it as higher urgency. It is an explicit repin to a previously published, tenant-`READY`, base-compatible immutable patch and advances `scriptPinEpoch`; operational sequencing and convergence checks live in [Control Plane Operations](./system-architecture-scripting-control-plane-operations.md).
 - Target patch readiness requirements are identical to `SetPinnedScriptPatchVersion`: rollback targets must be `READY` for the tenant or the request fails with a deterministic application error (`SCRIPT_PATCH_NOT_READY`).
 - Base-version cohesion requirements are identical to `SetPinnedScriptPatchVersion`: rollback targets must have `baseVersionId` equal to the instance `runtimeVersionId` or the request fails with `SCRIPT_PATCH_BASE_VERSION_MISMATCH`.
-- On success, emits `ScriptPatchRollbackRequested` (or `ScriptPatchPinChanged` with `changeType=ROLLBACK`).
+- On success, emits only `ScriptPatchPinChanged` with `changeType=ROLLBACK`; the reserved `ScriptPatchRollbackRequested` family is neither emitted nor consumed.
 
 Outputs: same as `SetPinnedScriptPatchVersion`.
 
@@ -317,13 +327,12 @@ Inputs:
 
 Outputs:
 
-- ordered event rows containing `eventId`, `tenantId`, `gameInstanceId`, `scriptPatchVersion`, `rolloutStatus`, `statusReason`, `observedAt`, and `projectionAsOf`
+- ordered authoritative Game Session history rows containing `eventId`, `tenantId`, `gameInstanceId`, `operationKind`, `previousScriptPatchVersion`, `previousScriptPinEpoch`, `scriptPatchVersion`, `scriptPinEpoch`, `rolloutStatus`, `controlPlaneRequestId`, `actor`, `reason`, `outcome`, `committedAt`, and bounded pagination metadata
 
 Contract rules:
 
-- This is the append-only history companion to the current-state `GetScriptPatchInstanceRolloutStatus` and `ListScriptPatchInstanceRollouts` reads.
-- Automation appends a new event only when the derived rollout status or reason changes for an instance/patch projection, so repeated freshness refreshes do not create noisy duplicate history.
-- Operators use this API to distinguish a first pin from a rollback and a later repin; current-state projection rows remain the canonical latest truth.
+- This is the bounded history read from the same Game Session owner that commits the current exact pin and epoch. A successful pin, rollback, or repin appends one immutable record atomically with the pin mutation; an idempotent request retry returns the existing result without another logical history entry.
+- Automation's observed-pin and convergence projections are not rollout-history authority. Logging & Admin composes this read with readiness/freshness state and presents projection lag rather than selecting a competing history.
 
 #### `ListScriptHandoffEvents`
 
@@ -375,7 +384,7 @@ Contract rules:
 
 - This is the plugin-version companion to `CancelPendingWorkItemsForPatch`.
 - It cancels only Automation-owned work items that have not started evaluation or handoff yet. Work already evaluating must converge through drain status, and work already handed to Game Session must be handled by Game Session queue purge or tick/effect remediation.
-- Cancellation updates handler audit with `finalStage=ADMISSION`, `finalOutcome=canceled`, and the bounded reason used for the operation.
+- It selects only rows whose stored `(scriptPatchVersion, scriptPinEpoch)` exactly matches the displaced tuple; a same-version repin with a newer epoch is not eligible. Cancellation updates handler audit with `finalStage=ADMISSION`, `finalOutcome=canceled`, and the bounded reason used for the operation.
 
 #### `GetAutomationPinConvergence`
 
@@ -390,6 +399,7 @@ Outputs:
 
 - `tenantId`, `gameInstanceId`
 - `observedPinnedScriptPatchVersion`
+- `observedScriptPinEpoch`
 - `lastObservedControlPlaneRequestId`
 - `observedAt`
 - `projectionAsOfMs`
@@ -400,6 +410,7 @@ Contract rules:
 
 - This is a read-only operator surface for the latest pin observation currently visible to Automation-side admission and replay logic.
 - The live implementation is a durable Automation-owned projection refreshed from authoritative Game Session runtime state, not a raw pass-through query.
+- This projection is explicitly non-authoritative and must not be used to admit work unless it is fresh enough and matches the exact Game Session `(scriptPatchVersion, scriptPinEpoch)` tuple. No stale/local pin override exists.
 - When Game Session runtime state reports multiple current admission pointers for one runtime target, Automation must treat the singular runtime-state routing bundle as unavailable and fail closed for any consumer that needs one unambiguous `{worldSlug, realmSlug, pointerVersion}` identity.
 - If refresh from Game Session fails but Automation still has a stored observation, the API must continue returning that stored observation with freshness flags set from the projection timestamp instead of failing closed for operator visibility.
 
@@ -411,12 +422,12 @@ Inputs:
 
 - `tenantId`
 - `gameInstanceId`
-- Optional filter: `scriptPatchVersion`
+- Optional filters: `scriptPatchVersion`, `scriptPinEpoch`
 - `limit` (bounded by the service)
 
 Outputs:
 
-- Instance-scoped schedule entries containing `scriptPatchVersion`, `scriptId`, plugin owner metadata, resolved `playableStateScope`, `scheduleDefinitionId`, event type, cadence, scheduler priority tag, target-scope identity (`targetScopeType`, `targetScopeId`), binding priority/exclusivity flags, materialization status, due-point fields, observed runtime version id, the pin operation's `controlPlaneRequestId`, pin observation time, row timestamps, and the current owned runtime scope (`currentRuntimeGameInstanceId`, `currentRuntimeRegionId`, `currentRuntimeRegionEpoch`) plus the current owned routing bundle (`currentRuntimePlayableStateScope`, `currentRuntimeWorldSlug`, `currentRuntimeRealmSlug`, `currentRuntimePointerVersion`) and stale-scope/routing signaling beside the persisted scheduler row scope.
+- Instance-scoped schedule entries containing the exact `scriptPatchVersion` and `scriptPinEpoch`, `scriptId`, plugin owner metadata, resolved `playableStateScope`, `scheduleDefinitionId`, event type, cadence, scheduler priority tag, target-scope identity (`targetScopeType`, `targetScopeId`), binding priority/exclusivity flags, materialization status, due-point fields, observed runtime version id, the pin operation's `controlPlaneRequestId`, pin observation time, row timestamps, and the current owned runtime scope (`currentRuntimeGameInstanceId`, `currentRuntimeRegionId`, `currentRuntimeRegionEpoch`) plus the current owned routing bundle (`currentRuntimePlayableStateScope`, `currentRuntimeWorldSlug`, `currentRuntimeRealmSlug`, `currentRuntimePointerVersion`) and stale-scope/routing signaling beside the persisted scheduler row scope.
 
 Contract rules:
 
@@ -432,13 +443,13 @@ Implementation note: the current Automation & Scripting implementation now expos
 Inputs:
 
 - `tenantId`
-- Optional filters: `gameInstanceId`, `scriptPatchVersion`, `scriptId`, `eventType`, `finalReason`
+- Optional filters: `gameInstanceId`, `scriptPatchVersion`, `scriptPinEpoch`, `scriptId`, `eventType`, `finalReason`
 - Optional `changedAfter` / `changedBefore`
 - `limit` (bounded by the service)
 
 Outputs:
 
-- newest-first timer audit rows containing Trigger Identity fields, resolved `playableStateScope`, admitted routing bundle, plugin owner metadata, trigger mode, scheduler source state/ordinal/due-point fields, optional `workItemId`, final stage/outcome/reason, row timestamps, and the current owned runtime scope (`currentRuntimeGameInstanceId`, `currentRuntimeRegionId`, `currentRuntimeRegionEpoch`) plus the current owned routing bundle (`currentRuntimePlayableStateScope`, `currentRuntimeWorldSlug`, `currentRuntimeRealmSlug`, `currentRuntimePointerVersion`) and stale-scope/routing signaling beside the persisted timer row scope
+- newest-first timer audit rows containing Trigger Identity fields including the exact `scriptPatchVersion` and `scriptPinEpoch`, resolved `playableStateScope`, admitted routing bundle, plugin owner metadata, trigger mode, scheduler source state/ordinal/due-point fields, optional `workItemId`, final stage/outcome/reason, row timestamps, and the current owned runtime scope (`currentRuntimeGameInstanceId`, `currentRuntimeRegionId`, `currentRuntimeRegionEpoch`) plus the current owned routing bundle (`currentRuntimePlayableStateScope`, `currentRuntimeWorldSlug`, `currentRuntimeRealmSlug`, `currentRuntimePointerVersion`) and stale-scope/routing signaling beside the persisted timer row scope
 
 Contract rules:
 
@@ -454,12 +465,12 @@ Implementation note: the current Automation & Scripting API exposes this read di
 Inputs:
 
 - `tenantId`
-- Optional filters: `gameInstanceId`, `scriptPatchVersion`
+- Optional filters: `gameInstanceId`, `scriptPatchVersion`, `scriptPinEpoch`
 - `limit` (bounded by the service)
 
 Outputs:
 
-- Newest-first dead-letter entries containing `workItemId`, Trigger Identity fields, resolved `playableStateScope`, script/event identity, `status`, bounded failure/cancel reason, `createdAt`, `updatedAt`, and the current owned runtime scope (`currentRuntimeGameInstanceId`, `currentRuntimeRegionId`, `currentRuntimeRegionEpoch`) plus the current owned routing bundle (`currentRuntimePlayableStateScope`, `currentRuntimeWorldSlug`, `currentRuntimeRealmSlug`, `currentRuntimePointerVersion`) and stale-scope/routing signaling beside the persisted dead-letter row scope.
+- Newest-first dead-letter entries containing `workItemId`, the exact stored `scriptPatchVersion` and `scriptPinEpoch`, Trigger Identity fields, resolved `playableStateScope`, script/event identity, `status`, bounded failure/cancel reason, `createdAt`, `updatedAt`, and the current owned runtime scope (`currentRuntimeGameInstanceId`, `currentRuntimeRegionId`, `currentRuntimeRegionEpoch`) plus the current owned routing bundle (`currentRuntimePlayableStateScope`, `currentRuntimeWorldSlug`, `currentRuntimeRealmSlug`, `currentRuntimePointerVersion`) and stale-scope/routing signaling beside the persisted dead-letter row scope.
 
 Boundary rule:
 
@@ -468,34 +479,32 @@ Boundary rule:
 
 #### `ReplayDeadLetteredWorkItems`
 
-Implementation note: the current Automation & Scripting implementation now exposes the first bounded replay mutation on top of durable `script_work_items`. Replay currently requeues eligible rows by setting `status=PENDING_EVALUATION`, clearing the terminal cancel reason, and recording `finalStage=REPLAY` plus `finalOutcome=requeued` on the handler-scoped audit row. Broader convergence and richer replay-policy signaling remain follow-up work.
+Implementation note: the current Automation & Scripting implementation exposes a bounded parent-row replay mutation, but that behavior does not yet prove the target stage-aware recovery contract. The target API resumes from immutable failure-stage evidence: evaluation-stage rows may retry with their frozen manifest/graph and original identity; post-evaluation rows resume the stored output/child ledger without DSL re-entry. Missing or contradictory evidence remains dead-lettered.
 
 Inputs:
 
 - `tenantId`
-- Optional filters: `gameInstanceId`, `regionId`, `scriptPatchVersion`, `createdAfterMs`, `createdBeforeMs`
-- Optional explicit `workItemIds` (current numeric durable parent-work-item identifiers; when present, replay selection is limited to these rows). Target state replaces this explicit selector with `references[]`, one complete Command-Handoff Identity per command descriptor, as defined by [Scripting Control-Plane Operations](./system-architecture-scripting-control-plane-operations.md#replaydeadletteredworkitems).
-- `limit` (bounded by the service)
+- Bounded explicit `workItemIds[]` only (durable parent work-item identifiers); descriptor references and filters are listing/preview inputs, not mutation selectors. Bulk filter replay remains deferred until preview plus stable per-row proof.
 - `controlPlaneRequestId`
 - `actor`
 - `reason`
 
 Outputs:
 
-- `replayedCount`
+- `results[]` (one deterministic result per requested `workItemId`, including `workItemId`, `outcome`, `recoveryStage`, and bounded `rejectionReason` when rejected)
+- `replayedCount` (bounded count of selected work items that progressed)
 - `rejectedCount`
 
 Contract rules:
 
-- Replay is fail-closed per work item. A candidate row may be requeued only if the current Game Session runtime state still reports the same pinned `scriptPatchVersion` recorded on the dead-lettered work item.
-- When the original ingress audit identifies a plugin-backed handler, replay is additionally allowed only if the currently active plugin version for `(tenantId, gameInstanceId, pluginId)` still matches the ingress-audited `pluginVersionId`.
-- Rows that fail these checks remain `DEAD_LETTERED` and count toward `rejectedCount`; the operation does not partially mutate them into an intermediate state.
-- Replay does not bypass later admission or runtime checks. Requeued rows re-enter the normal evaluation pipeline and may dead-letter again if the underlying failure condition still exists.
-- The current parent-row mutation does not establish the target per-command replay contract. Target replay claims and results are keyed by complete command references so one command may be selected without implicitly replaying its siblings.
+- Replay is fail-closed per work item. Eligibility requires exact current `(scriptPatchVersion, scriptPinEpoch)`, applicable plugin identity/version/binding, region/`regionEpoch`, and routing-bundle match to the immutable admitted evidence.
+- Evaluation-stage recovery uses the frozen original trigger/input manifest and exact graph, preserving the original work-item and `scriptEventId` identity without a new dispatch identity or normal admission/DSL entry; post-evaluation recovery uses only the durable evaluated-output and child-dispatch ledger, preserving original child identities. It never resolves a latest/local graph or regenerates an output after a child was accepted.
+- Rows with missing/contradictory stage evidence or any fence mismatch remain `DEAD_LETTERED` and return a deterministic per-row result; a rejected row is not partially changed or counted as successful.
+- The request is bounded and idempotent by `controlPlaneRequestId`, actor, reason, and explicit work-item IDs. A repeated request returns the stored per-row result with the declared `outcome=already_recovered`; no new recovery identity is introduced. Purge is a separate operation and never masquerades as recovery.
 
 #### `GetScriptPatchInstanceRolloutStatus`
 
-Implementation note: the current Automation & Scripting implementation now exposes these rollout reads from a durable local `script_patch_instance_rollout_projections` read model rather than a raw shared-runtime query. That projection is refreshed from the Automation-owned pin projection plus durable work-item transitions, sets freshness fields explicitly from the local projection timestamp, and currently emits the bounded rollout vocabulary provable from the current substrate (`PINNED`, `ROLLED_BACK`, and first `REPINNED` when a previously rolled-back patch becomes pinned again). Richer event-projected convergence history still remains later follow-through rather than already-live behavior.
+Implementation note: the current Automation & Scripting implementation exposes the latest non-authoritative pin/convergence projection from a durable local `script_patch_instance_rollout_projections` read model rather than a raw shared-runtime query. The projection is refreshed from observed Game Session pin state and explicit convergence evidence only; it does not derive rollout history from work-item transitions. Game Session's authoritative append-only history remains the owner for `PINNED`, `ROLLED_BACK`, and `REPINNED` transition history.
 
 Inputs:
 
@@ -506,6 +515,7 @@ Inputs:
 Outputs:
 
 - `tenantId`, `gameInstanceId`, `scriptPatchVersion`
+- `scriptPinEpoch`
 - `rolloutStatus` (for example `PINNED`, `ROLLED_BACK`, `REPINNED`)
 - `statusReason` (optional)
 - `lastChangedAt`
@@ -516,7 +526,7 @@ Outputs:
 Read-model ownership:
 
 - The authoritative source for rollout transitions is Game Session pin mutations and committed `ScriptPatchPinChanged` events.
-- The current Automation & Scripting implementation persists an Automation-owned rollout projection keyed by `(tenantId, gameInstanceId, scriptPatchVersion)`. Projection refresh is driven by observed pin state plus durable work-item transitions until fuller event-replay history lands.
+- The current Automation & Scripting implementation persists an Automation-owned observation keyed by `(tenantId, gameInstanceId, scriptPatchVersion, scriptPinEpoch)`. Projection refresh is driven by observed Game Session pin/convergence state only; it is not rollout-history authority and must not infer history from durable work-item transitions.
 
 #### `ListScriptPatchInstanceRollouts`
 

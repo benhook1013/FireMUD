@@ -2,6 +2,8 @@
 
 This brief document summarizes optional ways a hosted game can change its look and feel without modifying FireMUD source code. FireMUD runs out of the box with default settings, so none of these customizations are required.
 
+Customization scripts use one DSL and one sandbox, with two artifact/lifecycle roles: embedded game-owned patches follow the Game Design/Game Session pin workflow, while linked plugins remain separately versioned immutable bundles with independent activation metadata. The [DSL lifecycle reference](./system-architecture-scripting-dsl-reference-and-lifecycle.md) owns that distinction; this document retains only the local creator/customization consequence.
+
 ## Implementation Status
 
 - Bulk JSON import/export remains deferred. Current creator workflows use service-owned design APIs and world-editing tools.

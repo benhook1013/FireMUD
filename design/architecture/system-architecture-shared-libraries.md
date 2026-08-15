@@ -2,6 +2,8 @@
 
 FireMUD's microservices share a set of utility classes and data transfer objects so each service can stay lightweight and consistent. The common library is published as a Gradle artifact and reused by all modules. It is released under the **group ID** `net.firedevops.firemud` with the **artifact ID** `firemud-common`. The Gradle subproject lives under `services/common-library`.
 
+Shared DTOs and correlation helpers that carry scripting work must preserve the exact `scriptPatchVersion` plus `scriptPinEpoch` tuple and must not synthesize a local active/latest/fallback pin. The canonical owner is [Scripting Contracts](./system-architecture-scripting-contracts.md); this library document owns only transport/projection reuse and shared error-shape consequences. Linked plugins and embedded scripts use the same DSL/runtime security boundary but keep their distinct artifact and lifecycle metadata as defined by the [DSL lifecycle reference](./system-architecture-scripting-dsl-reference-and-lifecycle.md).
+
 ---
 
 ## Common DTOs & Error Handling

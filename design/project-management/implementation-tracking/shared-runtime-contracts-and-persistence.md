@@ -8,6 +8,10 @@ This is a non-normative implementation tracker for shared runtime, service contr
 
 The implementation record below summarizes the shared runtime, service-contract, orchestration, persistence, and workflow boundaries represented by this tracker. It distinguishes live implementation from bounded follow-up work; it does not claim that every future service, runtime consumer, or workflow family has already adopted these conventions.
 
+### Script-transition cross-service handoff
+
+The shared contract consequence is an exact tuple, not a generic version string: Game Session owns `{scriptPatchVersion, scriptPinEpoch}` and committed rollout history; Automation owns readiness, immutable artifact execution, and observed convergence; Game Design owns authored publication/plugin metadata; Logging & Admin owns audit/query composition. The current durable work, handoff, timer, replay, and final-effect seams do not yet prove tuple coverage at every boundary, stage-aware dead-letter recovery, or no-degraded admission. These remain implementation/proof gaps rather than a shared-runtime completion claim. See [ADR 0103](../../architecture/decisions/adr-0103-single-authority-script-pins-with-exact-version-execution.md), [ADR 0106](../../architecture/decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md), [ADR 0109](../../architecture/decisions/adr-0109-game-session-owned-script-rollout-history.md), [ADR 0110](../../architecture/decisions/adr-0110-explicit-opt-in-schedule-continuity-across-script-transitions.md), and [ADR 0111](../../architecture/decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md).
+
 ## Capability Status
 
 | Capability | Implementation | Verification | Design | Implementation anchors | Proof anchors | Secondary handoffs | Gap or decision |

@@ -2,6 +2,8 @@
 
 This document explains how FireMUD coordinates data consistency across its independent microservices. It distinguishes between **real-time gameplay commands** (executed within ticks using Redis), **short synchronous cross-service orchestration** (executed through the shared `common-saga` helper), and **long-running durable control-plane workflows** (executed through Temporal). It clarifies when each pattern is needed — and when it is not.
 
+Script evaluation and pin transitions are not a new transaction substrate. The scripting contracts own exact-pin admission, stage-aware recovery, and DSL lifecycle; this document owns the transaction consequence that script-emitted gameplay effects still use the ordinary tick effect identity, owner-local transaction, outbox, or durable intent boundary selected for that effect. A rollback epoch fence rejects stale effects without converting ordinary gameplay into a routine global transaction pause. See [Scripting Contracts](./system-architecture-scripting-contracts.md) and [Runtime Execution](./system-architecture-scripting-runtime-execution.md).
+
 ## Implementation Status
 
 The structured participant-guard request, shared `IdempotentEffectExecutor`, standardized tick-effect outcome metric, and replay-verification helper described below are target-state contracts. The current replay tables and helpers remain narrower and domain-local; complete propagation and validation of the root `EffectId`, typed operation, target aggregate, immutable request digest, complete participant set, and shared helper/metric behavior are not yet fully implemented or proven. The target contract remains authoritative: matching requests may replay safely, while an operation, target, or digest mismatch fails closed.

@@ -8,6 +8,8 @@ For control-plane API contracts, see `design/architecture/system-architecture-sc
 For workflow sequencing (pin/rollback orchestration, pause/resume, drain/purge, and convergence), see `design/architecture/system-architecture-scripting-control-plane-operations.md`.
 For canonical custom-event definitions and producer authorization, see `design/architecture/system-architecture-scripting-event-registry.md`.
 
+For the cross-service exact pin/epoch contract, use [Scripting & Automation: Cross-Service Contracts](./system-architecture-scripting-contracts.md). Rollout/rollback, schedule continuity, runtime admission/recovery, and DSL artifact/lifecycle distinctions are owned by [Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md), [Scripting Scheduler and Timer Lifecycle](./system-architecture-scripting-scheduler-and-timers.md), [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md), and [DSL Reference & Lifecycle](./system-architecture-scripting-dsl-reference-and-lifecycle.md), respectively. The hub does not define a competing active patch or fallback authority.
+
 It complements:
 
 - [Automation & Scripting Service README](./microservices/automation-scripting-service/README.md)
@@ -117,7 +119,7 @@ At a high level, a script (or plugin) must pass through several stages before it
    - The readiness wait itself is now durably hosted in the Temporal `script-patch-readiness` workflow family, which polls the canonical readiness projection until the patch reaches a terminal state and exposes workflow identity/status to operator control-plane reads.
 
 4. **Version pinning (Game Session Service)**
-   - Once a patch is `READY` for a tenant, the Game Session Service may pin it as the active `scriptPatchVersion` for a game. All script events emitted by Game Session include that pinned version and the upstream-generated `scriptEventId`.
+   - Once a patch is `READY` for a tenant, the Game Session Service may explicitly pin it as the instance's `(scriptPatchVersion, scriptPinEpoch)` tuple. All script events emitted by Game Session include both exact fields and the upstream-generated `scriptEventId`.
    - The Automation & Scripting Service never silently substitutes a different version; if it receives an unknown or `FAILED` patch for a tenant, it rejects the trigger rather than falling back.
 
 5. **Quota and budget admission (Automation & Scripting Service)**

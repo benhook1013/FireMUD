@@ -10,6 +10,8 @@ Routing note:
 - Use the [DSL and lifecycle reference](./system-architecture-scripting-dsl-reference-and-lifecycle.md) for DSL/lifecycle semantics.
 - Use [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md) for execution-state behavior.
 
+Exact script selection is the Game Session `(scriptPatchVersion, scriptPinEpoch)` tuple; this document owns only quota/capacity consequences when that tuple is unavailable or fenced. Routine rollback does not pause gameplay; see [Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md) and [ADR 0106](./decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md). Plugin artifact/lifecycle distinctions remain in [DSL Reference & Lifecycle](./system-architecture-scripting-dsl-reference-and-lifecycle.md#one-dsl-distinct-artifact-and-lifecycle-roles).
+
 ## Target-State Quota and Budget Contract
 
 The target runtime applies deterministic, layered limits without allowing test traffic or one scope to consume another scope's live capacity:
@@ -130,7 +132,7 @@ These controls work alongside the **failure-rate circuit breaker**, which can au
 
 Plugins executed via the modding framework share the same underlying quota and scheduling infrastructure as regular scripts:
 
-- Each plugin is represented in the Automation & Scripting Service as a script-like runtime object with a distinct identifier (for example, `scriptType=PLUGIN` plus `pluginId` and `pluginVersionId` metadata) and participates in the same per-script quota and concurrency model.
+- Each plugin uses the same DSL/runtime and quota model as an embedded script, while retaining an independently versioned bundle identity (`pluginId` plus exact `pluginVersionId`) and a separate instance-scoped enable/drain/disable/update lifecycle.
 - Plugin triggers (for example, `onEnterRoom` or `onItemUse` events wired through the plugin system) run under the same multi-level budgeting model:
   - Per-plugin quotas enforced by `ScriptQuotaService`.
   - Per-tenant budgets, including priority tiers (for example, `high`, `normal`, `background`).
@@ -249,7 +251,8 @@ The canonical `script_event_audit` schema includes:
   - `regionId` – region (where applicable) associated with the trigger.
   - `scriptId` – script definition that handled the trigger.
   - `eventType` – logical event key (for example, `onEnterRegion`, `onInterval`, `inventory.item_added`).
-  - `scriptPatchVersion` – logical script patch identifier supplied by Game Session and Game Design and used to resolve the runtime script set.
+  - `scriptPatchVersion` – logical script patch identifier supplied by Game Session and used to resolve the runtime script set.
+  - `scriptPinEpoch` – exact Game Session selection epoch paired with `scriptPatchVersion`; version-only observations cannot authorize admission or execution.
   - `versionId` – optional internal compiled script version identifier used by the Automation & Scripting Service for engine-level debugging and migrations.
   - `sourceService` – producing service identity for custom/service-specific events so operators can diagnose routing and authorization problems.
   - `tickId` – canonical tick identifier associated with the trigger when the trigger is tick-aligned or once commands are accepted into the tick system.
@@ -272,7 +275,7 @@ At the metric layer, these rows should contribute to the bounded rollback/drain 
 
 `script_event_audit` remains the authoritative record for Automation-owned stages through `TICK_HANDOFF`, but it is not the sole post-handoff surface. The complete per-command handoff diagnostics below are **target-state**: the live Game Session proto carries `automationDispatchId`, command id/text, and selected provenance fields, but not `commandOrdinal` or the full Trigger Identity. Current live status/readback therefore remains narrower. In the target state, per-command handoff and execution-time version-fence results are queried through `ListScriptHandoffEvents` and composed as `commandHandoffDispositions[]`, with one child keyed by the complete Command-Handoff Identity defined in the [normative contract tables](./system-architecture-scripting-normative-contract-tables.md#command-handoff-identity-target-state) and correlated to the complete parent Trigger Identity. `automationDispatchId` is a dispatch-group identifier, not a globally unique child key:
 
-- If Game Session later drops a handed-off command because its embedded `scriptPatchVersion` or plugin version no longer matches the instance's active pin, operator tooling must be able to locate that drop directly from the originating Trigger Identity.
+- If Game Session later drops a handed-off command because its embedded `(scriptPatchVersion, scriptPinEpoch)` or plugin version no longer matches the instance's exact active pin, operator tooling must be able to locate that drop directly from the originating Trigger Identity.
 - The target-state mechanism is the per-command handoff contract in the [Scripting & Automation Observability Contract](./system-architecture-scripting-observability-contract.md): Game Session reports a bounded child handoff result through `ListScriptHandoffEvents`, retaining the parent Trigger Identity and `outboxWorkItemId` while keying the command record by the complete Command-Handoff Identity. `outboxWorkItemId` is parent correlation only and is excluded from command identity, uniqueness, and deduplication keys.
 - Dashboards and incident tooling should therefore show both:
   - Automation pipeline completion (`finalStage`, `finalOutcome`) and
@@ -281,7 +284,7 @@ At the metric layer, these rows should contribute to the bounded rollback/drain 
 Concrete rollback-visibility example:
 
 - Trigger Identity `T123` reaches `finalStage=TICK_HANDOFF`, `finalOutcome=handoff_accepted` after every required child dispatch is durably accepted by Game Session.
-- Before the queued command executes, operators roll the instance back to an older `scriptPatchVersion`.
+- Before the queued command executes, operators roll the instance back to an older `scriptPatchVersion`, advancing the instance's `scriptPinEpoch`.
 - Game Session rejects only the command-handoff child selected by the complete Command-Handoff Identity (complete source/target runtime scope plus `(automationDispatchId=dispatch-9, commandOrdinal=1)`); see the [normative identity table](./system-architecture-scripting-normative-contract-tables.md#command-handoff-identity-target-state). The parent Trigger Identity, including `bindingId` when applicable, and `outboxWorkItemId=work-9` remain correlation-only and are excluded from child uniqueness and deduplication. `ListScriptHandoffEvents` returns that target-state child with `outcome=version_fence_dropped`, `reason=script_patch_mismatch`, and `sourceService=game-session`, while the sibling child with the same complete source/target scope and `(automationDispatchId=dispatch-9, commandOrdinal=0)` remains a separate result.
 - Operator tooling for `T123` must therefore show `finalStage=TICK_HANDOFF`/`finalOutcome=handoff_accepted` together with the complete per-dispatch outcome collection, rather than overwriting the handler result or collapsing the commands into one disposition.
 
@@ -311,7 +314,7 @@ Script execution spans several services (Game Design, Game Session, Automation &
 - `tenantId`, `gameInstanceId`, and `regionId` – identify the running game instance and region.
 - `regionEpoch` – fences triggers and tick effects across scoped coordination resets.
 - `entityId` – identifies the target entity for script-driven work.
-- `scriptId` and `scriptPatchVersion` – identify the script definition and patch.
+- `scriptId`, `scriptPatchVersion`, and `scriptPinEpoch` – identify the exact script definition and Game Session selection epoch.
 - `scriptEventId` – caller-scoped idempotency token within the full applicable Trigger Identity; it is not a standalone execution identity.
 - `tickId` – identifies the authoritative game tick in which commands execute (paired with `regionEpoch`).
 - `correlationId` – optional cross-service correlation token for Sagas and user-visible flows.

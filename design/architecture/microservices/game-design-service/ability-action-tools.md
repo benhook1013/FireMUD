@@ -19,6 +19,8 @@ Published ability and action references use stable design identifiers, not displ
 
 Any script or plugin field that references an ability must use a typed selector such as `{"abilityId":"abilityId:<stable-id>"}`; action sequence references must use `{"actionSequenceId":"actionSequenceId:<stable-id>"}`. Game Design validates these selectors against the exact `baseVersionId` and its recorded `abilitySchemaDigest` during `PublishVersion`, `PublishScriptPatchVersion`, and `PublishPluginVersion`. Runtime services must not reinterpret display names or aliases as ability identities.
 
+Script-patch and plugin publication record these validated stable references as immutable design-time evidence. They do not select a live instance's script pin or epoch. Runtime execution receives the exact Game Session-owned pin tuple and must reject stale references rather than resolving a newer ability schema or patch locally. Embedded scripts and linked plugins share this typed reference validation and DSL sandbox, while plugin publication/activation remains a separate lifecycle from game-owned script revisions.
+
 ## Authored Actor-State Catalog
 
 Every published game version includes a versioned actor-state catalog. It is DML-authored design data, not service configuration: the platform supplies a small typed grammar while each game supplies all named stats, resources, conditions, tags, presentation values, and effect declarations.

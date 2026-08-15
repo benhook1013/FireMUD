@@ -8,6 +8,10 @@ This is a non-normative implementation tracker for game authoring, publishing, a
 
 This tracker consolidates Game Design authoring, settings, publication, release admission, and activation by capability. The live implementation is strongest in control-plane publication, release attestation, launch preflight, and the first typed World authoring handoff; broader creator/editor UX and downstream ownership synchronization remain incomplete.
 
+### Script and plugin transition reconciliation
+
+Game Design implementation status remains partial for authored script-patch and plugin packaging. The service proves design-time publication metadata, compatibility, and signed plugin intake at its stated boundaries, but does not own runtime pin/epoch allocation, instance rollout history, or Automation execution recovery. A published patch is a readiness candidate, not an activation; plugin publication and instance activation remain separate lifecycles. The exact-pin/epoch, scoped rollback, explicit timer continuity, and unified-DSL/distinct-lifecycle contracts are linked for target state in [ADR 0103](../../architecture/decisions/adr-0103-single-authority-script-pins-with-exact-version-execution.md), [ADR 0106](../../architecture/decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md), [ADR 0109](../../architecture/decisions/adr-0109-game-session-owned-script-rollout-history.md), [ADR 0110](../../architecture/decisions/adr-0110-explicit-opt-in-schedule-continuity-across-script-transitions.md), and [ADR 0111](../../architecture/decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md). These links do not change current implementation or proof states.
+
 ## Capability Status
 
 | Capability | Implementation | Verification | Design | Implementation anchors | Proof anchors | Secondary handoffs | Gap or decision |

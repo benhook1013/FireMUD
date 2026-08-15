@@ -20,10 +20,12 @@ Plugin bundles are uploaded through the Game Design Service and stored in the sa
 Plugins run with the same core execution model as other scripts but are subject to additional trust and governance requirements:
 
 - Only appropriately privileged principals (for example, tenant administrators or platform operators, depending on environment configuration) may upload or enable plugins for a given `tenantId`.
-- Plugin bundles must be **signed** by a trusted key before the Game Design Service accepts them; key management and allowed signers are environment-specific and controlled by platform operators.
+- The current implementation and initial hosted policy accept plugin bundles only after allowlisted **Ed25519** signature verification; key management and allowed signers are environment-specific and controlled by platform operators.
 - Different environments (development, staging, production) may use distinct signing keys and role policies so that development plugins cannot be promoted directly into production without review.
 
 The Logging & Admin Service exposes management APIs for listing, enabling, disabling, and inspecting plugins; these APIs enforce the same role model and provide audit trails for all plugin state changes.
+
+[ADR 0111](../../decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md) records a broader target provenance contract: an operator-permitted unsigned package may be accepted only after exact digest, complete validation, explicit scoped approval, and platform acceptance attestation. Hosted policy may prohibit unsigned intake entirely, and this unsigned path is not implemented in the current signed-only upload and activation flow.
 
 ## Initial Authoring Mode
 
@@ -35,7 +37,7 @@ The initial plugin model is external signed bundles only:
 
 Stable `graphId`, `bindingId`, `pluginId`, and `pluginVersionId` values therefore originate in the signed bundle authored outside the product. Any future in-product draft/export workflow would require its own design update and must not be inferred from the initial external-bundle model.
 
-## Canonical Plugin Bundle Contract (Required)
+## Canonical Plugin Bundle Contract (Current signed intake)
 
 Plugin bundles are not opaque archives. Authoring, validation, audit, and activation all consume one canonical signed contract inside the bundle.
 
@@ -98,6 +100,8 @@ The distribution manifest must include:
 
 Plugin bundle signing must be specified precisely enough that operators can rotate keys and revoke signers without ambiguity.
 
+The requirements in this section describe the current signed-only implementation and initial hosted policy; the ADR 0111 unsigned provenance variant is target-only and does not relax the live verification and activation checks.
+
 Minimum requirements:
 
 - **Algorithm**: plugin bundles are signed using **Ed25519**.
@@ -158,6 +162,8 @@ At runtime, plugins use the same **component-based scripting DSL and sandbox** a
   - Cluster-level automation ceilings and the aggregate automation tick budget, as described in the [scripting quota lifecycle](../../system-architecture-scripting-quotas-and-operations.md#budget-accounting-rules). Event-scope candidate admission creates no handler charge. After binding resolution, each resolved handler creates or reuses the quota owner's durable full-Trigger-Identity handler usage-charge record; execution later acquires the separately fenced, reclaimable capacity lease. Plugin definitions inherit the resulting bounded admission/throttle outcomes; the lease is distinct from the sandbox's per-run wall-clock timeout.
 
 Plugin executions appear in `script_event_audit` with the same identifiers as regular scripts, plus plugin-specific metadata, and contribute to the same automation metrics, enabling operators to monitor plugin behavior without a separate observability pipeline.
+
+The shared DSL and sandbox apply to embedded scripts and linked plugins; this service's local consequence is separate immutable plugin publication/compatibility evidence and `pluginId`/`pluginVersionId` identity. Runtime activation and pin/history ownership remain in the [scripting contracts](../../system-architecture-scripting-contracts.md), [control-plane API](../../system-architecture-scripting-control-plane-api.md), and [rollout and rollback](../../system-architecture-scripting-rollout-and-rollback.md) owners; [ADR 0111](../../decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md) preserves the distinct lifecycle boundary. Interval continuity remains an explicit opt-in under [ADR 0110](../../decisions/adr-0110-explicit-opt-in-schedule-continuity-across-script-transitions.md).
 
 ### Timer & Event Guarantees
 
@@ -306,7 +312,7 @@ Plugins follow a lifecycle similar to script patches but scoped to `<tenantId, g
 
 Design-time publication and runtime activation are separate:
 
-- Publication in Game Design means the plugin bundle is immutable, signed, validated, and available for activation.
+- Publication in the current Game Design implementation means the plugin bundle is immutable, signed, validated, and available for activation; the ADR 0111 target unsigned-provenance path still requires exact package evidence and explicit approval/attestation.
 - Activation in Automation & Scripting means a `PUBLISHED` plugin version has been selected for one `(tenantId, gameInstanceId, pluginId)` and admitted into the runtime registry.
 - A plugin version that is `PUBLISHED` in Game Design may still be `DISABLED` or never activated for any instance.
 - Game Design publication visibility and Automation runtime state must remain separate read surfaces. Operator tooling should read immutable publication metadata (for example `GetPublishedPluginVersion`) alongside runtime activation state (`GetPluginStatus`) rather than relying on one synthetic plugin-state enum to encode both concerns.
@@ -332,9 +338,9 @@ This ensures that even trusted tenant administrators cannot inadvertently weaken
 
 ### Canonical Binding Model
 
-Plugin bindings are authored as signed design-time data, not as ad hoc instance-local toggles.
+Plugin bindings are authored as immutable design-time data, not as ad hoc instance-local toggles; current intake requires them in the signed bundle, while the ADR 0111 target unsigned provenance path still requires exact manifest, digest, validation, approval, and platform-attestation evidence before activation.
 
-- The authoritative `bindings[]` array lives in `plugin-manifest.json` and is part of the signed bundle.
+- The authoritative `bindings[]` array lives in `plugin-manifest.json` and is part of the current signed bundle.
 - Each binding must declare:
   - `bindingId` – stable identity within the plugin version.
   - `orderIndex` – integer ordering key used by the shared script/plugin handler ordering contract.
@@ -361,7 +367,7 @@ Typed selector contracts:
 - `REGION` uses `{"regionTemplateId": "regionTemplateId:<stable-id>"}` and resolves against World Management region templates for the exact `baseVersionId`.
 - `ENTITY_TEMPLATE` uses `{"entityTemplateId": "entityTemplateId:<stable-id>"}` and resolves against Entity Management entity templates for the exact `baseVersionId`.
 - `COMMAND_ALIAS` uses `{"commandAlias": "<normalized-command-alias>"}`. In the initial slice this scope is valid only for aliases backed by the canonical built-in command registry; authored command namespaces are not yet part of the plugin-binding contract. Game Design must normalize command aliases using the same built-in command registry rules used by the runtime command parser and must reject aliases that collide with reserved commands or another binding in the same target scope.
-- Future `targetScopeType` values must define their selector object, owner service, normalization rules, and exact validation API before they can appear in a signed manifest.
+- Future `targetScopeType` values must define their selector object, owner service, normalization rules, and exact validation API before they can appear in an accepted package manifest.
 
 Validation responsibilities:
 

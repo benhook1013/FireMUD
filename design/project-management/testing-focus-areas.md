@@ -88,3 +88,12 @@ This document is the short catalog of the testing areas that most often deserve 
 - Significant bugs should land with a durable test, smoke proof, or harness improvement in the same risk family.
 - When the real problem is missing shared test support, fix the harness or proof path rather than copying another local workaround.
 - Revisit this document periodically to remove obsolete focus areas and add new recurring seams as the platform changes.
+
+## 11. Script Transitions, Fences, and Recovery
+
+- Prove that Game Session atomically commits the exact per-instance `{scriptPatchVersion, scriptPinEpoch}` and rollout-history entry, returns the same result for a repeated request identity, and advances the epoch on a repin to the same patch.
+- Prove Automation admission, scheduler firings, retries, plugin triggers, durable work, handoff, and final gameplay effects reject missing, stale, or mismatched authoritative tuples without a local/last-known patch fallback or stale-pin operator override; ordinary non-script gameplay should continue during scoped Automation failure.
+- Exercise rollback preparation failure, concurrent/repeated repins, in-flight old-epoch evaluation, asynchronous cancellation/purge, and convergence timeout without routine gameplay pause. Reserve full tick-pause proof for an explicitly declared unfenced effect family.
+- Exercise stage-aware dead-letter recovery: evaluation-stage retry uses the original frozen manifest and graph; post-evaluation recovery replays stored output and unfinished child dispatches without DSL re-entry; missing or contradictory evidence remains dead-lettered; purge is separate and audited.
+- Verify timer transition behavior across patch/plugin changes: cancel and recreate by default, preserve only with explicit compatible continuity, and never transfer one-shot timers through the interval rule. Verify that plugin stable identity is distinct from replaceable plugin-version provenance.
+- Verify that embedded scripts and linked plugins use identical DSL/sandbox safety and output/fence proof while retaining their distinct publication and activation lifecycles.

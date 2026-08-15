@@ -8,6 +8,10 @@ This is a non-normative implementation tracker for platform operations and deliv
 
 The implementation record is consolidated by live capability. Runtime identity and logging, bounded metrics, player-experience smoke, hosted delivery, public-edge routing, deployment preflight, bounded component reset/recovery helpers, gameplay proof, and operator control surfaces exist at the bounded boundaries stated below. The `coordination-maintenance` CLI/control-plane, including public `recover` scope, is not currently implemented or proven; environment-wide player-facing recovery, immutable erasure high-water replay, and the durable recovery-controller continuation contract remain unimplemented. Remaining work also includes preview lifecycle/admission cleanup, the public Telnet TLS deployment boundary, richer live-environment proof, credential rotation, deferred observability context, and higher-scale gameplay evidence.
 
+### Script-transition operator evidence
+
+Platform operations records the operator-facing consequence of the script transition family without becoming a domain owner. Logging & Admin must compose Game Session's authoritative exact pin/epoch and rollout history with Automation readiness, projection freshness, plugin policy, timer, and dead-letter diagnostics. Missing or stale pin authority fails closed for new scripted admission; it is not a stale-pin emergency override. Routine rollback keeps ordinary gameplay available while scoped Automation work reconciles, with any full gameplay pause treated as an explicitly justified exceptional operation. Current platform proof does not establish these target guarantees; the linked service trackers retain the implementation gaps.
+
 ## Capability Status
 
 | Capability | Implementation | Verification | Design | Implementation anchors | Proof anchors | Secondary handoffs | Gap or decision |

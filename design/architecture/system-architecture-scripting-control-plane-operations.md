@@ -4,6 +4,8 @@ This document defines the service participation and API-usage layer for scriptin
 
 The direct API surface and request/response contracts for pinning, plugin activation, plugin drain, patch visibility, and admission outcomes live in [Scripting & Automation: Control Plane API](./system-architecture-scripting-control-plane-api.md).
 
+The accepted rollback boundary is epoch-fenced and does not routinely pause gameplay; see [ADR 0106](./decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md). Game Session owns the exact pin tuple and rollout history ([ADR 0109](./decisions/adr-0109-game-session-owned-script-rollout-history.md)); Automation owns only scoped admission, convergence, schedule, and recovery consequences. Stage-aware dead-letter recovery follows [ADR 0107](./decisions/adr-0107-stage-aware-script-dead-letter-recovery.md), and no degraded admission follows [ADR 0108](./decisions/adr-0108-no-degraded-script-admission-without-authoritative-pin.md).
+
 ## Normative Target Contract
 
 The workflow APIs below are target-state contracts. Automation's durable work model has two layers: pre-DSL trigger state and evaluated descriptor/outbox evidence. A target evaluation atomically commits all emitted descriptors, parent outbox evidence, and the terminal evaluation outcome by transitioning the trigger to `EVALUATED_COMMITTED`; recovery replays those descriptors without DSL re-entry. `EVALUATED_COMMITTED` is not an active evaluation and is excluded from `activeExecutionCount`; unresolved descriptor children remain represented by their `PENDING`/`INDEXED` or `HANDOFF_IN_FLIGHT` descriptor states. `PENDING_EVALUATION` and `EVALUATING` remain pre-DSL states, while the existing evaluated-descriptor statuses retain their meanings.
@@ -44,7 +46,7 @@ This document does not redefine the direct API request/response contracts or can
 - **Fail closed.** If the workflow cannot prove the current pin, drain, or signer-policy state, admission stays blocked.
 - **Idempotent workflow steps.** Every orchestration action must be safe to retry with the same `controlPlaneRequestId`.
 - **Instance-first scope.** Workflow actions must preserve `(tenantId, gameInstanceId)` isolation, with narrower scopes only when explicitly allowed.
-- **Drain before resume.** Admission stays paused through convergence and cleanup. `ResumeTicks` succeeds first; only then may Automation return to `NORMAL`.
+- **Epoch fence before script resume.** Automation admission stays paused through exact-artifact preparation, serialized pin/epoch commit, and schedule reconciliation. Ordinary player commands and ticks continue; `PauseTicks`/`ResumeTicks` are exceptional controls for a specifically declared unfenced effect or migration, not routine script rollback.
 - **Audit every operator step.** Workflow actions must be visible in durable audit/logging surfaces so operators can reconstruct what happened.
 
 ## Actors and Responsibilities
@@ -89,7 +91,7 @@ Inputs:
 Semantics:
 
 - Idempotent.
-- Prevents new tick scheduling and new command intake for the scope.
+- This is not part of routine script rollback. It prevents new tick scheduling and command intake only for a separately declared unfenced effect family, migration, or explicit operational remediation whose smallest complete scope is recorded in the workflow.
 
 #### `ResumeTicks`
 
@@ -98,11 +100,11 @@ Inputs: same scope model as `PauseTicks` + `controlPlaneRequestId` + `actor` + `
 Semantics:
 
 - Idempotent.
-- Resumes normal scheduling after rollback/drain steps complete.
+- Resumes the exceptional paused scope after its declared unfenced boundary and proof of tick/effect quiescence complete. It is not a prerequisite for ordinary script rollback completion.
 
 ### Automation & Scripting: Admission Pause/Resume (Rollback Support)
 
-Rollback requires an Automation-side admission barrier in addition to tick pause so new triggers are not admitted while control-plane cleanup is in progress. For mutating control-plane requests, `actor` identifies the authenticated requesting principal and is persisted in audit as `requestedBy`; it must not be reused for the worker that executes a system-owned step. Audit records for such steps use `executedBy=system:automation` as a separate field.
+Rollback requires an Automation-side admission barrier so new script triggers are not admitted while control-plane cleanup is in progress. Ordinary gameplay ticks continue; only a separately declared unfenced-effect workflow adds an exceptional tick pause. For mutating control-plane requests, `actor` identifies the authenticated requesting principal and is persisted in audit as `requestedBy`; it must not be reused for the worker that executes a system-owned step. Audit records for such steps use `executedBy=system:automation` as a separate field.
 
 #### `SetAutomationAdmissionMode`
 
@@ -146,12 +148,12 @@ Semantics:
 
 - Read-only.
 - Reports whether any pre-pause executions or already-persisted work remain in the rollback scope after the current `admissionEpoch` took effect.
-- Rollback orchestration uses this API together with cancel/purge hooks to decide when it is safe to resume normal admission. Drain is fail-closed: `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` are both required before normal admission or ticks resume; unresolved active or pending work keeps the workflow paused.
+- Rollback orchestration uses this API together with cancel/purge hooks to decide when it is safe to resume Automation admission. Drain is fail-closed: `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` are both required before Automation admission resumes; unresolved active or pending work keeps the Automation admission barrier closed. Ordinary gameplay ticks and player commands do not wait for this drain or cleanup, except within a separately declared unfenced-effect workflow that owns its own explicit tick gate.
 - A drain response may authorize resume only when it is a fresh authoritative read taken after the final reconciliation, cancellation, and purge step, and its `admissionEpoch` matches the current rollback-scope epoch. A cached, stale, or earlier-epoch response is unsatisfied evidence.
 
 ### Rollback Convergence Readiness (Required)
 
-Rollback orchestration must verify that runtime services have observed the new pin before admission/ticks resume.
+Rollback orchestration must verify that runtime services have observed the new pin before Automation admission resumes. Ordinary gameplay ticks do not wait for this convergence check.
 
 #### `GetAutomationPinConvergence`
 
@@ -164,6 +166,7 @@ Outputs:
 
 - `tenantId`, `gameInstanceId`
 - `observedPinnedScriptPatchVersion`
+- `observedScriptPinEpoch`
 - `lastObservedControlPlaneRequestId`
 - `observedAt`
 - `projectionAsOfMs`
@@ -173,7 +176,7 @@ Outputs:
 Semantics:
 
 - Read-only.
-- Reports the latest pin observation used by admission and scheduler logic. For rollback convergence, the observation is an acknowledgment only when the expected patch and `controlPlaneRequestId` are present, `isProjectionStale=false`, and `projectionLagMs` is inside the configured freshness bound; a stale stored observation remains diagnostic data, not convergence proof. The freshness bound is the configured `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS` value from [Automation & Scripting Service Configuration](./microservices/automation-scripting-service/configuration.md).
+- Reports the latest pin observation used by admission and scheduler logic. For rollback convergence, the observation is an acknowledgment only when the expected `(scriptPatchVersion, scriptPinEpoch, controlPlaneRequestId)` tuple is present, `isProjectionStale=false`, and `projectionLagMs` is inside the configured freshness bound; a stale stored observation remains diagnostic data, not convergence proof. The freshness bound is the configured `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS` value from [Automation & Scripting Service Configuration](./microservices/automation-scripting-service/configuration.md).
 - Reports only pin observation and projection freshness; it does not return an admission decision, `finalStage`, `finalOutcome`, `finalReason`, or a handler outcome.
 
 #### `GetGameSessionPinConvergence`
@@ -187,14 +190,15 @@ Outputs:
 
 - `tenantId`, `gameInstanceId`
 - `observedPinnedScriptPatchVersion`
-- `lastObservedControlPlaneRequestId`
+- `scriptPinEpoch`
+- `controlPlaneRequestId` (the committed pin mutation request represented by this authoritative Game Session read)
 - `observedAt`
 
 Semantics:
 
 - Read-only.
-- Reports the latest pin observation used by tick command intake and execution-time version fences through a direct authoritative read of the committed Game Session pin.
-- This is not a projection read; projection lag and stale-projection fields do not apply, and no projection fields are returned. For rollback/promotion convergence, the read is fresh only when it completes before the operation deadline, the observed patch and `lastObservedControlPlaneRequestId` match the expected patch and request, and `observedAt` is the timestamp from that committed pin.
+- Reports the exact pin used by tick command intake and execution-time version fences through a direct authoritative read of the committed Game Session pin.
+- This is not a projection read; projection lag and stale-projection fields do not apply, and no projection fields are returned. For rollback/promotion convergence, the read is fresh only when it completes before the operation deadline and the exact `(scriptPatchVersion, scriptPinEpoch, controlPlaneRequestId)` matches the expected tuple; `observedAt` is the timestamp from that committed pin.
 
 #### `GetSignerPolicyConvergence`
 
@@ -227,7 +231,8 @@ Inputs:
 - `tenantId`
 - `gameInstanceId`
 - Optional scope: `regionId`
-- `scriptPatchVersion` (the patch version to remove from queues)
+- `scriptPatchVersion` (the displaced patch version to remove from queues)
+- `scriptPinEpoch` (the displaced pin epoch; the operation must reject rows from any other epoch)
 - `controlPlaneRequestId`
 - `actor`
 - `reason`
@@ -253,6 +258,8 @@ Inputs:
 - Optional scope: `regionId`
 - `pluginId`
 - `pluginVersionId` (the plugin version to remove from queues)
+- `scriptPatchVersion` (the displaced script patch version carried by the command)
+- `scriptPinEpoch` (the displaced pin epoch; the operation must reject rows from any other epoch)
 - `controlPlaneRequestId`
 - `actor`
 - `reason`
@@ -271,6 +278,7 @@ Inputs:
 
 - `tenantId`
 - `scriptPatchVersion`
+- `scriptPinEpoch` (the displaced pin epoch; cancellation must match the stored exact tuple)
 - Optional scope: `gameInstanceId`, `regionId`
 - `controlPlaneRequestId`
 - `actor`
@@ -280,7 +288,7 @@ Semantics:
 
 - Idempotent.
 - Applies the canonical two-layer cancellation mapping: `PENDING_EVALUATION` transitions to terminal `CANCELED` without DSL evaluation with `finalStage=ADMISSION`, `finalOutcome=canceled`; `EVALUATING` is fenced and its descriptor-commit marker is inspected, with committed descriptors continuing through descriptor cancellation, explicit no-descriptor cancellation using `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and stale recovery using terminal `DEAD_LETTERED` with `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and `finalReason=stale_execution_fenced`; evaluated descriptors in `PENDING` or `INDEXED` transition to `CANCELED` with durable `cancelReason`, `finalStage=WORK_ITEM_PERSIST`, and `finalOutcome=canceled`. No path re-enters the DSL.
-- Emits an operator audit entry and applies the rollback-specific metric consequence defined by [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix).
+- Cancellation selects only rows whose stored `(scriptPatchVersion, scriptPinEpoch)` exactly matches the displaced tuple. A same-version repin with a newer epoch is not eligible for this request. Emits an operator audit entry and applies the rollback-specific metric consequence defined by [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix).
 
 Outputs:
 
@@ -290,14 +298,14 @@ Outputs:
 
 These APIs provide deterministic operator hooks for stuck/canceled work so control-plane rollback and recovery do not depend on ad-hoc database access.
 
-The persisted `outboxWorkItemId` and its public/current wire aliases (`workItemId` and `automationWorkItemId`) are parent correlation only, not command identity. The current replay mutation selects parent `workItemIds` and requeues eligible `script_work_items` rows; it does not select independent command descriptors. **Target-state only:** descriptor-level outbox and dead-letter operations use explicit `references[]`; each reference is the complete [Command-Handoff Identity](./system-architecture-scripting-normative-contract-tables.md#command-handoff-identity-target-state), including `commandOrdinal`, with `outboxWorkItemId` retained only for correlation. Operators may copy a reference from a returned `items[]` row into a target-state mutation request; a parent work-item identifier alone is insufficient, and pre-DSL rows must be rejected rather than assigned a synthetic command identity.
+The persisted `outboxWorkItemId` and its public/current wire aliases (`workItemId` and `automationWorkItemId`) are parent correlation and the bounded mutation selector for this API family, not command identity. Mutation requests accept bounded explicit `workItemIds[]` only; descriptor references and filter-based mutation/replay are deferred until preview plus stable per-row proof exists. The current replay mutation selects parent `workItemIds` and requeues eligible `script_work_items` rows; it does not select independent command descriptors or assign a synthetic command identity. Read-only listing may expose descriptor identity for diagnosis, but that reference is not a mutation selector.
 
 #### `ListOutboxWorkItems`
 
 Inputs:
 
 - `tenantId`
-- Optional filters: `gameInstanceId`, `regionId`, `scriptPatchVersion`, `pluginId`, `pluginVersionId`, `workItemStatus`, `createdAfter`, `createdBefore`
+- Optional filters: `gameInstanceId`, `regionId`, `scriptPatchVersion`, `scriptPinEpoch`, `pluginId`, `pluginVersionId`, `workItemStatus`, `createdAfter`, `createdBefore`
 - Pagination: `pageSize`, `pageToken`
 
 Semantics:
@@ -307,18 +315,18 @@ Semantics:
 
 Outputs:
 
-- `items[]` (including `workItemId`, the public alias for canonical `outboxWorkItemId`, `reference` containing the complete Command-Handoff Identity and Trigger Identity when the row is an evaluated descriptor, `workItemStatus`, `createdAt`, `updatedAt`, `cancelReason`). For pre-DSL `PENDING_EVALUATION` or `EVALUATING` rows, the target descriptor `reference` is omitted/null because no command identity exists.
+- `items[]` (including `workItemId`, the public alias for canonical `outboxWorkItemId`, the exact stored `scriptPatchVersion` and `scriptPinEpoch`, optional descriptor identity for diagnosis when the row is an evaluated descriptor, `workItemStatus`, `createdAt`, `updatedAt`, `cancelReason`). For pre-DSL `PENDING_EVALUATION` or `EVALUATING` rows, descriptor identity is omitted/null because no command identity exists.
 - `nextPageToken`
 
 #### `ReplayDeadLetteredWorkItems`
 
-The `references[]` selector and per-descriptor replay claims below are target-state only. Current replay selects parent `workItemIds` as documented by the live API contract and requeues the selected parent rows; it does not select or independently replay emitted command descriptors.
+Dead-letter recovery is stage-aware. The bounded explicit `workItemIds[]` selector and per-row outcomes below are the target contract; descriptor references and filter-based mutation remain deferred until preview plus stable per-row proof. The current parent-row requeue implementation is an explicit proof gap and must not be described as recovery of post-evaluation output.
 
 Inputs:
 
 - `tenantId`
 - Optional scope: `gameInstanceId`, `regionId`
-- Selector: explicit `references[]` (one complete Command-Handoff Identity per selected command) or bounded filter (`scriptPatchVersion`, `pluginVersionId`, `createdAfter`, `createdBefore`)
+- Selector: bounded explicit `workItemIds[]` only; filters and descriptor references are listing/preview inputs, not mutation selectors
 - `controlPlaneRequestId`
 - `actor`
 - `reason`
@@ -326,34 +334,30 @@ Inputs:
 Semantics:
 
 - Idempotent.
-- Creates one durable replay record with a new `replayExecutionIdentity` and a new `automationDispatchId` for each eligible selected `DEAD_LETTERED` command descriptor. The selected original complete Command-Handoff Identity, including its original `automationDispatchId` and `commandOrdinal`, is immutable causation evidence; the original identity remains terminal and its audit row is never reopened or appended with replay execution history. Control Plane Operations owns the canonical replay identity and idempotency rules.
-- Repeating the same `controlPlaneRequestId` for the same original execution identity returns the previously created replay record/result rather than creating another replay identity.
+- Repeating the same `controlPlaneRequestId` for the same `workItemId` returns the previously recorded recovery result rather than creating another recovery attempt or changing the original identity.
 - Must enforce bounded batch size per request.
-- Each selected command is replayed under the existing single-command replay contract: the new replay command uses its new `automationDispatchId` with `commandOrdinal=0`; the original command ordinal remains only in the immutable causation identity. The durable claim stores the replay identity, replay dispatch, outcome/result, winning `controlPlaneRequestId`, and canonical request fingerprint.
-- An exact retry with the same `controlPlaneRequestId` and original command reference returns that stored replay identity/result; selector-form retries of an already claimed original identity reuse the same result and cannot create a second replay identity.
-- Reusing a `controlPlaneRequestId` with a different canonical request fingerprint returns an idempotency conflict and cannot alter an existing claim; a distinct request or selector reuses the existing per-original result.
-- Resolves and normalizes each selected command reference, then validates and claims its original execution identity atomically. A durable unique replay claim keyed by the complete Command-Handoff Identity, independent of `controlPlaneRequestId` and selector form, prevents two requests or overlapping selectors from creating two replay identities for one command. Filter matches are expanded to individual command references; a parent with multiple descriptors is not implicitly replayed as one atomic unit.
-- A successful claim durably stores the original execution identity, new `replayExecutionIdentity`, outcome/result, winning `controlPlaneRequestId`, and canonical request fingerprint. An exact retry reuses that stored result; a request using an already claimed original identity through another selector also reuses the existing result and cannot replace its fingerprint or create another replay identity. Reuse does not reopen the original audit row.
-- Every selected command descriptor must match the request `tenantId` and any explicit `gameInstanceId` or `regionId` scope using its own stored identity. A tenant-wide selector must evaluate each instance independently and must not borrow another instance's current pin or binding.
-- Resolve the current patch pin from each row's own tenant and instance. For plugin-backed work, resolve the current binding for that same tenant, instance, and plugin, then compare the row's immutable `(pluginId, pluginVersionId, bindingId)` tuple to that binding.
-- Must enforce replay eligibility against current control-plane state before creating the replay:
-  - Work items with `scriptPatchVersion` that is not currently pinned for the scoped instance must be rejected from replay.
+- Each selected work item is recovered under its stored stage evidence. Evaluation-stage retry invokes the DSL evaluator again using the original work-item and `scriptEventId` identity, frozen input/manifest evidence, and exact admitted immutable graph; it remains outside the normal admission path, creates no new `automationDispatchId`, and must converge on the original work item and child identities. Post-evaluation recovery resumes the stored child-dispatch ledger without invoking the DSL, preserving its original child identities, payload digests, ordinals, and acknowledgements; accepted or terminal children no-op and only unfinished children dispatch. Neither stage regenerates an uncorrelated logical trigger.
+- Reusing a `controlPlaneRequestId` with a different canonical request fingerprint returns an idempotency conflict and cannot alter the stored recovery result. An exact retry returns the same per-work-item result; it does not reopen the original audit row.
+- Resolves each selected `workItemId` against its own stored trigger/work-item identity and stage evidence atomically. A parent with multiple committed descriptors is recovered from its stored child ledger; descriptor references are not accepted as selectors and filters are not expanded into a mutation batch.
+- Every selected work item must match the request `tenantId` and any explicit `gameInstanceId` or `regionId` scope using its own stored identity. The operation must resolve the authoritative current tuple for that instance and must not borrow another instance's pin or binding.
+- For plugin-backed work, resolve the current binding for that same tenant, instance, and plugin, then compare the stored immutable `(pluginId, pluginVersionId, bindingId)` tuple to that binding.
+- Must enforce recovery eligibility against current authoritative state before progressing:
+  - Work items with `(scriptPatchVersion, scriptPinEpoch)` that is not currently pinned for the scoped instance must be rejected from recovery, including a repin to the same patch with a new epoch.
   - Plugin work items whose immutable `(pluginId, pluginVersionId, bindingId)` tuple does not match the currently active binding for the same scoped `<tenantId, gameInstanceId, pluginId>` must be rejected from replay.
-  - Ineligible rows must return deterministic bounded application errors (for example `REPLAY_VERSION_FENCE_MISMATCH`), remain `DEAD_LETTERED`, and produce no replay identity.
+- Ineligible rows must return deterministic bounded application errors (for example `REPLAY_VERSION_FENCE_MISMATCH`), remain `DEAD_LETTERED`, and produce no recovery record.
 
 Outputs:
 
-- `replayedCount` (best-effort count of selected commands; may be approximate for large batches)
-- `results[]` (bounded to the selected input batch, with one result per selected reference):
-  - `reference` (the complete Command-Handoff Identity)
-  - `originalExecutionIdentity` (the immutable complete Command-Handoff Identity retained as causation evidence)
-  - `replayExecutionIdentity` when a replay identity was created or reused; replay identity semantics are owned by this control-plane operation, while the runtime document records local execution consequences
-  - `outcome` (`created`, `reused`, or `rejected`)
-  - `rejectionReason` when `outcome=rejected`, using a bounded application reason such as `REPLAY_VERSION_FENCE_MISMATCH`
+- `replayedCount` (bounded count of selected work items that progressed)
+- `results[]` (bounded to the selected input batch, with one result per selected `workItemId`):
+  - `workItemId`
+  - `recoveryStage` (`EVALUATION` or `POST_EVALUATION_DISPATCH`)
+  - `outcome` (`retried_evaluation`, `resumed_dispatch`, `already_recovered`, or `rejected`)
+  - `rejectionReason` when `outcome=rejected`, using a bounded application reason such as `STAGE_EVIDENCE_UNAVAILABLE` or `REPLAY_VERSION_FENCE_MISMATCH`
 
-For a repeated `controlPlaneRequestId` and command reference, `results[]` returns the same replay identity with `outcome=reused`; rejected references remain without a replay identity. `replayedCount` and this stable-request idempotency behavior are retained.
+For a repeated `controlPlaneRequestId` and `workItemId`, `results[]` returns the same stored result with `outcome=already_recovered` when recovery was already recorded; rejected work items remain without a recovery record. `replayedCount` and this stable-request idempotency behavior are retained.
 
-Ineligible rows remain `DEAD_LETTERED` and produce no replay identity. Their rejected result is not a unique replay claim, so a later request may retry after the row's current patch or plugin binding becomes eligible.
+Ineligible rows remain `DEAD_LETTERED` and produce no recovery record. Their rejected result is not a success claim, so a later request may retry after authoritative evidence or the exact pin/epoch becomes eligible. Missing or contradictory stage evidence remains dead-lettered.
 
 #### `PurgeOutboxWorkItems`
 
@@ -361,7 +365,9 @@ Inputs:
 
 - `tenantId`
 - Optional scope: `gameInstanceId`, `regionId`
-- Selector: explicit `references[]` (one complete Command-Handoff Identity per selected command) or bounded filter (`workItemStatus`, `scriptPatchVersion`, `pluginVersionId`, `createdBefore`)
+- `scriptPatchVersion` (the displaced patch version; required for rollback-scoped cleanup)
+- `scriptPinEpoch` (the displaced pin epoch; required for rollback-scoped cleanup and enforced against each selected row)
+- Selector: bounded explicit `workItemIds[]` only; descriptor references and filters are listing/preview inputs, not mutation selectors
 - `controlPlaneRequestId`
 - `actor`
 - `reason`
@@ -369,7 +375,7 @@ Inputs:
 Semantics:
 
 - Idempotent.
-- Resolves each selected command reference against durable trigger and descriptor/outbox state before mutating anything. A reference that resolves to `PENDING_EVALUATION` or `EVALUATING`, or to an evaluated descriptor in `PENDING`, `INDEXED`, or `HANDOFF_IN_FLIGHT`, is rejected with a bounded application reason; an `EVALUATED_COMMITTED` parent is resolved as retained trigger evidence rather than rejected wholesale. Purge does not cancel, reclaim, dead-letter, replay, or otherwise mutate active/nonterminal work.
+- Resolves each selected `workItemId` against durable trigger and descriptor/outbox state before mutating anything. For rollback-scoped cleanup, every selected row must match the request's exact displaced `(scriptPatchVersion, scriptPinEpoch)` tuple; a same-version repin with a newer epoch is rejected. A row in `PENDING_EVALUATION` or `EVALUATING`, or an evaluated descriptor in `PENDING`, `INDEXED`, or `HANDOFF_IN_FLIGHT`, is rejected with a bounded application reason; an `EVALUATED_COMMITTED` parent is resolved as retained trigger evidence rather than rejected wholesale. Purge does not cancel, reclaim, dead-letter, replay, or otherwise mutate active/nonterminal work.
 - May purge only evaluated descriptor/outbox evidence in terminal `HANDED_OFF`, `CANCELED`, or `DEAD_LETTERED` status after that status's configured retention horizon has elapsed, including terminal children under an `EVALUATED_COMMITTED` parent. Terminal evidence still inside its retention window is rejected with a bounded retention reason. The operation preserves the `EVALUATED_COMMITTED` marker, corresponding `script_event_audit`, replay causation claims or records, and any other evidence still inside its required retention window.
 - Must emit operator-auditable records for every purge request.
 
@@ -384,6 +390,8 @@ Inputs:
 - `tenantId`
 - `pluginId`
 - `pluginVersionId`
+- `scriptPatchVersion`
+- `scriptPinEpoch` (the displaced pin epoch; cancellation must match the stored exact tuple)
 - Optional scope: `gameInstanceId`, `regionId`
 - `controlPlaneRequestId`
 - `actor`
@@ -393,7 +401,7 @@ Semantics:
 
 - Idempotent.
 - **Target-state semantics:** cancellation is fencing-aware across both durable layers. `PENDING_EVALUATION` transitions by compare-and-set to `CANCELED` without entering the DSL. `EVALUATING` is fenced and its descriptor-commit marker is inspected first; a committed descriptor is resumed from durable descriptors without DSL re-entry, while an explicit cancellation with no committed descriptor transitions the trigger to `CANCELED` with `finalStage=DSL_EVAL` and stale recovery uses the canonical `DEAD_LETTERED` mapping. Evaluated descriptors in eligible `PENDING` or `INDEXED` status transition to `workItemStatus=CANCELED` with durable `cancelReason`, `finalStage=WORK_ITEM_PERSIST`, and `finalOutcome=canceled`. Each transition records the corresponding stage-aware `script_event_audit` cancellation outcome. The current implementation lacks the descriptor layer and recovery owner, so these are target-state semantics rather than current live proof.
-- Required for plugin disable/rollback/revocation workflows to avoid repeated execution-time plugin version fence drops and queue growth.
+- Cancellation selects only rows whose stored `(scriptPatchVersion, scriptPinEpoch)` exactly matches the displaced tuple. A same-version repin with a newer epoch is not eligible. Required for plugin disable/rollback/revocation workflows to avoid repeated execution-time plugin version fence drops and queue growth.
 
 Outputs:
 
@@ -419,7 +427,7 @@ The canonical rollback ordering, durable state machine, convergence timeout, dra
 This document retains only the participating API consequences:
 
 - Automation & Scripting implements the admission barrier, durable schedule reconciliation, work-item cancellation, drain-status reads, pin-convergence reads, and auditable cleanup APIs described above.
-- Game Session owns the durable rollback workflow and patch pin, exposes tick pause/resume, queued-command purge, and convergence APIs, and is the sole producer of the rollback-timeout signal. Automation consumes the durable timeout state/signal and must not create a competing timeout or recovery state machine. Logging & Admin may orchestrate those APIs but must not persist a competing workflow state machine.
+- Game Session owns the durable rollback workflow, exact patch/epoch pin, and rollout history, and is the sole producer of the rollback-timeout signal. Routine rollback advances the script epoch while ordinary ticks/player commands continue; Automation consumes the durable timeout state/signal and must not create a competing timeout or recovery state machine. Logging & Admin may orchestrate those APIs but must not persist a competing workflow state machine.
 - The same `controlPlaneRequestId`, authenticated operator `actor`/`requestedBy`, and `reason` flow through every mutating step. System-owned reconciliation records use a separate `executedBy=system:automation` rather than replacing the operator identity.
 - Patch- and plugin-scoped cancel/purge calls omit `regionId` for an instance-wide repin so every affected region is covered. API retries remain idempotent under the owning request/response contracts.
 

@@ -2,6 +2,8 @@
 
 This document defines the observability contract for scripting and automation: what is recorded in `script_event_audit`, what is returned by `ListScriptHandoffEvents`, what is emitted as metrics, and which identifiers may be used for correlation.
 
+For gameplay/runtime records, observability preserves the exact Game Session `(scriptPatchVersion, scriptPinEpoch)` tuple. The tuple is diagnostic identity as well as a final-fence input; a version-only audit row cannot prove execution authority.
+
 Document conflict resolution order is defined in the [normative document precedence](./system-architecture-scripting-normative-contract-tables.md#document-precedence-normative). The normative tables own metric-family names, labels, and increment units; this document is authoritative for observability details not fully enumerated there.
 
 ## Target-State Command Identity and Handoff Contract
@@ -64,6 +66,7 @@ Audit records must include at least:
   - `pluginId`, `pluginVersionId`, and `bindingId` (required for resolved plugin handlers)
   - `eventType`
   - `scriptPatchVersion`
+  - `scriptPinEpoch` (required for gameplay/runtime and scheduler triggers; absent for tenant-readiness `onLoad`)
   - `scriptEventId`
   - `isDryRun` (boolean)
   - `sourceService` (derived from authenticated producer/workload identity for custom/service-specific events; the same value used in ingress dedupe and persisted unchanged in ingress and handler audit; omitted for built-in events that originate entirely within Automation & Scripting)
@@ -161,7 +164,7 @@ Rules:
 
 During rollback, operator views must show the handler's `finalStage`/`finalOutcome` beside the `commandHandoffDispositions[]` returned from `ListScriptHandoffEvents`. A `TICK_HANDOFF` with `finalOutcome=handoff_accepted` therefore remains visible even when one or more individual commands later receive `version_fence_dropped`; a child result must never overwrite the handler result or collapse sibling command records.
 
-Concrete example. Both child records below use the complete `T123` Trigger Identity (`tenantId=11111111-1111-4111-8111-111111111111`, `gameInstanceId=44444444-4444-4444-8444-444444444444`, `playableStateScope=isolated`, `regionId=R2`, `regionEpoch=14`, `entityId=npc-guard-9`, `scriptId=guard-on-enter`, `eventType=onEnterRegion`, `eventSchemaVersion=1`, `scriptPatchVersion=P22`, `scriptEventId=evt-7f4c`, `isDryRun=false`) plus the command discriminator. `automationDispatchId=dispatch-9` identifies the dispatch group, while `outboxWorkItemId=work-9` is parent correlation only. The `(automationDispatchId, commandOrdinal)` notation in the bullets is a display suffix, not a standalone key.
+Concrete example. Both child records below use the complete `T123` Trigger Identity (`tenantId=11111111-1111-4111-8111-111111111111`, `gameInstanceId=44444444-4444-4444-8444-444444444444`, `playableStateScope=isolated`, `regionId=R2`, `regionEpoch=14`, `entityId=npc-guard-9`, `scriptId=guard-on-enter`, `eventType=onEnterRegion`, `eventSchemaVersion=1`, `scriptPatchVersion=P22`, `scriptPinEpoch=23`, `scriptEventId=evt-7f4c`, `isDryRun=false`) plus the command discriminator. `automationDispatchId=dispatch-9` identifies the dispatch group, while `outboxWorkItemId=work-9` is parent correlation only. The `(automationDispatchId, commandOrdinal)` notation in the bullets is a display suffix, not a standalone key.
 
 - `script_event_audit` row for Trigger Identity `T123` ends with `finalStage=TICK_HANDOFF`, `finalOutcome=handoff_accepted`.
 - The handler emitted two commands. Later, Game Session rejects only the child ending in `(automationDispatchId=dispatch-9, commandOrdinal=1)` under the same complete command-handoff scope during rollback convergence and appends a child disposition with `outcome=version_fence_dropped`, `reason=script_patch_mismatch`, `sourceService=game-session`, and `recordedAt=...`; the child ending in `(automationDispatchId=dispatch-9, commandOrdinal=0)` remains a separate sibling record.
@@ -181,6 +184,7 @@ Illustrative record shape:
   "eventType": "onEnterRegion",
   "eventSchemaVersion": 1,
   "scriptPatchVersion": "P22",
+  "scriptPinEpoch": 23,
   "scriptEventId": "evt-7f4c",
   "isDryRun": false,
   "finalStage": "TICK_HANDOFF",
@@ -223,6 +227,7 @@ Illustrative record shape:
       "eventType": "onEnterRegion",
       "eventSchemaVersion": 1,
       "scriptPatchVersion": "P22",
+      "scriptPinEpoch": 23,
       "scriptEventId": "evt-7f4c",
       "isDryRun": false,
       "commandOrdinal": 0,
@@ -249,6 +254,7 @@ Illustrative record shape:
       "eventType": "onEnterRegion",
       "eventSchemaVersion": 1,
       "scriptPatchVersion": "P22",
+      "scriptPinEpoch": 23,
       "scriptEventId": "evt-7f4c",
       "isDryRun": false,
       "commandOrdinal": 1,

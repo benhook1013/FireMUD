@@ -31,7 +31,7 @@ The table below captures the required sandbox behavior contract (target-state se
 | Outcome taxonomy | Use canonical stage-aware audit outcomes (`finalStage` + `finalOutcome` / `finalReason`) in `script_event_audit` consistent with the observability and normative contract docs. |
 | Failure-rate circuit breaker integration | Use live-traffic sandbox failures to transition scripts into `runtimeStatus=DISABLED_DUE_TO_ERRORS`, with dry-run/test isolation by default. |
 | Test / dry-run parity | Dry-run executions share the same sandbox limits as live runs while remaining isolated for quotas, budgets, and metrics. |
-| Plugin sandbox reuse | Plugins run in the same sandbox engine with component allowlists and stricter quotas where policy requires. |
+| Plugin sandbox reuse | Plugins run in the same sandbox engine with component allowlists and stricter quotas where policy requires; plugin activation/version lifecycle remains distinct from embedded script publication. |
 
 ---
 
@@ -41,6 +41,8 @@ The table below captures the required sandbox behavior contract (target-state se
 - Bound **CPU time** and **memory usage** per script and per tenant.
 - Ensure **deterministic, auditable outcomes** for any sandbox failure.
 - Integrate cleanly with the existing **tick**, **quota**, and **multi-tenancy** models.
+
+The sandbox context retains the exact owner tuple and plugin provenance needed for local immutable-artifact loading and final handoff; missing or stale evidence fails closed without a fallback. Stage-aware recovery and distinct embedded/plugin lifecycle metrics are local observability consequences; detailed authority and recovery rules live in [Scripting Runtime Execution](../../system-architecture-scripting-runtime-execution.md), the [scripting control-plane API](../../system-architecture-scripting-control-plane-api.md), and [ADR 0111](../../decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md).
 
 ---
 
