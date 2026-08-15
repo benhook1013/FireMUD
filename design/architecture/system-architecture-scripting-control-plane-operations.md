@@ -278,7 +278,8 @@ Inputs:
 - `tenantId`
 - `scriptPatchVersion`
 - `scriptPinEpoch` (the displaced pin epoch; cancellation must match the stored exact tuple)
-- Optional scope: `gameInstanceId`, `regionId`
+- `gameInstanceId` (required; patch cancellation is instance-scoped)
+- Optional scope: `regionId`
 - `controlPlaneRequestId`
 - `actor`
 - `reason`
@@ -287,7 +288,7 @@ Semantics:
 
 - Idempotent.
 - Applies the canonical two-layer cancellation mapping: `PENDING_EVALUATION` transitions to terminal `CANCELED` without DSL evaluation with `finalStage=ADMISSION`, `finalOutcome=canceled`; target `EXECUTING` is fenced and its descriptor-commit marker is inspected. If the descriptor commit is present, cancellation never resumes or re-dispatches a committed child: evaluated `PENDING` and `INDEXED` children compare-and-set to `CANCELED` with durable `cancelReason`, `finalStage=WORK_ITEM_PERSIST`, and `finalOutcome=canceled`; `HANDOFF_IN_FLIGHT` fences further retry and reconciles the durable downstream outcome (remaining active/unresolved when ambiguous); and `HANDED_OFF`, `CANCELED`, or `DEAD_LETTERED` children retain their outcome and no-op. Explicit cancellation of an uncommitted `EXECUTING` row transitions to terminal `CANCELED` with `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and bounded cancellation metadata, and is never replay-eligible. Only the distinct expired-stale recovery-owner path may transition an uncommitted `EXECUTING` row to terminal `DEAD_LETTERED` with `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and `finalReason=stale_execution_fenced`; this cancellation API does not dead-letter stale displaced rows. No path re-enters the DSL.
-- Cancellation selects only rows whose stored `(scriptPatchVersion, scriptPinEpoch)` exactly matches the displaced tuple. A same-version repin with a newer epoch is not eligible for this request. Emits an operator audit entry and applies the rollback-specific metric consequence defined by [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix).
+- Cancellation selects only rows belonging to the supplied `gameInstanceId` whose stored `(scriptPatchVersion, scriptPinEpoch)` exactly matches the displaced tuple. A same-version repin with a newer epoch is not eligible for this request. Emits an operator audit entry and applies the rollback-specific metric consequence defined by [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix).
 
 Outputs:
 

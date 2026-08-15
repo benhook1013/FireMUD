@@ -119,7 +119,7 @@ At a high level, a script (or plugin) must pass through several stages before it
    - The readiness wait itself is now durably hosted in the Temporal `script-patch-readiness` workflow family, which polls the canonical readiness projection until the patch reaches a terminal state and exposes workflow identity/status to operator control-plane reads.
 
 4. **Version pinning (Game Session Service)**
-   - Once a patch is `READY` for a tenant, the Game Session Service may explicitly pin it as the instance's `(scriptPatchVersion, scriptPinEpoch)` tuple. All script events emitted by Game Session include both exact fields and the upstream-generated `scriptEventId`.
+   - Once a patch is `READY` for a tenant, the Game Session Service may explicitly pin it as the instance's `(scriptPatchVersion, scriptPinEpoch)` tuple. Every instance-bound gameplay/runtime event producer, including Game Session and authorized custom/service producers, forwards that exact Game Session-owned tuple and the upstream-generated `scriptEventId` unchanged; custom/service producers obtain the tuple from Game Session rather than a local projection. Tenant-readiness `onLoad` remains the pre-instance-pin exception.
    - The Automation & Scripting Service never silently substitutes a different version; if it receives an unknown or `FAILED` patch for a tenant, it rejects the trigger rather than falling back.
 
 5. **Quota and budget admission (Automation & Scripting Service)**
