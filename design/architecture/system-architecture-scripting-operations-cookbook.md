@@ -181,7 +181,7 @@ Behavior:
 Operator actions:
 
 1. Identify the affected scripts and patch.
-   - Use `script_event_audit` filtered by `tenantId`, `scriptPatchVersion`, and `scriptId` to confirm which handlers are failing.
+   - Use `script_event_audit` filtered by the exact `{tenantId, gameInstanceId, scriptPatchVersion, scriptPinEpoch, scriptId}` tuple and, when plugin-owned, the applicable `(pluginId, pluginVersionId, bindingId)` tuple to confirm which handlers are failing.
    - Correlate with automation metrics such as `automation_script_sandbox_failures_total`, `automation_script_errors_total`, and `automation_script_triggers_dropped_total` to determine scope and severity.
    - Use `ScriptPatchTenantStatusChanged` for tenant readiness gates and Game Session's `ScriptPatchPinChanged` plus bounded rollout-history read for instance rollout history; do not infer one from the other.
 2. Contain impact at the script level.

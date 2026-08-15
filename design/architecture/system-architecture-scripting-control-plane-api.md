@@ -8,6 +8,10 @@ Workflow sequencing for rollback, pause/resume, drain/purge, dead-letter recover
 
 The exact pin/epoch authority and stage-aware recovery rules used by these APIs are defined in [Scripting & Automation: Cross-Service Contracts](./system-architecture-scripting-contracts.md), with accepted transition rationale in [ADR 0103](./decisions/adr-0103-single-authority-script-pins-with-exact-version-execution.md), [ADR 0106](./decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md), [ADR 0107](./decisions/adr-0107-stage-aware-script-dead-letter-recovery.md), [ADR 0108](./decisions/adr-0108-no-degraded-script-admission-without-authoritative-pin.md), [ADR 0109](./decisions/adr-0109-game-session-owned-script-rollout-history.md), and [ADR 0111](./decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md).
 
+## Implementation Status
+
+The API shapes below are target-state contracts. Current Automation exposes bounded readiness, convergence, rollout, schedule, plugin, dead-letter, and replay surfaces, but `GetAutomationPinConvergence` does not yet expose `observedScriptPinEpoch`, instance-rollout lookup remains patch-version-only rather than exact-epoch lookup, and replay remains aggregate parent-row requeue rather than stage-aware per-row recovery. These are implementation and proof gaps, not alternate API semantics; see the [Automation and Scheduler Runtime tracker](../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status) and [Game Session Runtime and Tick Coordination tracker](../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#capability-status).
+
 Routing note:
 
 - Use this document for control-plane API shape, authoritative ownership, and state-mutation contracts.
@@ -16,6 +20,7 @@ Routing note:
 
 ## Table of Contents
 
+- [Implementation Status](#implementation-status)
 - [Scope](#scope)
 - [Principles](#principles)
 - [Actors and Responsibilities](#actors-and-responsibilities)
