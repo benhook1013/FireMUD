@@ -44,7 +44,7 @@ Post-evaluation recovery does not invoke the DSL evaluator. It resumes the store
 
 Both paths require an exact current match for the admitted `scriptPatchVersion`, `scriptPinEpoch`, plugin identity and version when applicable, runtime region and `regionEpoch`, and admitted routing bundle including playable-state scope, world/realm identity, and pointer version. Matching patch text under a different pin epoch is ineligible. Unavailable or stale authoritative fence state fails closed rather than allowing recovery from a projection guess.
 
-The initial operator mutation accepts bounded explicit dead-letter work-item IDs only and returns a deterministic outcome for every requested ID, such as retried evaluation, resumed dispatch, already recovered, not found/not owned, stage evidence unavailable, or a specific fence mismatch. Eligible rows may progress independently, but an ineligible row remains `DEAD_LETTERED`; counts are not a substitute for per-row results.
+The initial operator mutation accepts bounded explicit dead-letter work-item IDs only and returns one exact per-row `outcome`: `retried_evaluation`, `resumed_dispatch`, `already_recovered`, or `rejected`. Only `outcome=rejected` carries a bounded `rejectionReason`, such as `not_found_or_not_owned`, `stage_evidence_unavailable`, `work_item_not_dead_lettered`, or a specific fence mismatch. Eligible rows may progress independently, but an ineligible row remains `DEAD_LETTERED`; counts are not a substitute for per-row results.
 
 Recovery requests carry a stable `controlPlaneRequestId`, actor, and reason. The service persists the request outcome and audit evidence so duplicate requests return the same result without repeating evaluation or dispatch.
 

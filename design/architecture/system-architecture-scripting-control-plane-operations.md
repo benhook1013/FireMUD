@@ -189,8 +189,8 @@ Outputs:
 
 - `tenantId`, `gameInstanceId`
 - `observedPinnedScriptPatchVersion`
-- `scriptPinEpoch`
-- `controlPlaneRequestId` (the committed pin mutation request represented by this authoritative Game Session read)
+- `observedScriptPinEpoch`
+- `lastObservedControlPlaneRequestId` (the committed pin mutation request represented by this authoritative Game Session read)
 - `observedAt`
 
 Semantics:
@@ -333,6 +333,7 @@ Inputs:
 Semantics:
 
 - Idempotent.
+- Only a work item whose current durable status is `DEAD_LETTERED` is eligible for recovery. The operation must compare-and-set or otherwise claim that status before evaluation or dispatch; a selected row in any other status remains unchanged and returns `outcome=rejected` with `rejectionReason=work_item_not_dead_lettered`, without a recovery record.
 - Repeating the same `controlPlaneRequestId` for the same `workItemId` and canonical request fingerprint returns the previously recorded recovery result rather than creating another recovery attempt or changing the original identity.
 - Must enforce bounded batch size per request.
 - Each selected work item is recovered under its stored stage evidence. Evaluation-stage retry invokes the DSL evaluator again using the original work-item and `scriptEventId` identity, frozen input/manifest evidence, and exact admitted immutable graph; it remains outside the normal admission path, creates no new `automationDispatchId`, and must converge on the original work item and child identities. Post-evaluation recovery resumes the stored child-dispatch ledger without invoking the DSL, preserving its original child identities, payload digests, ordinals, and acknowledgements; accepted or terminal children no-op and only unfinished children dispatch. Neither stage regenerates an uncorrelated logical trigger.
@@ -352,7 +353,7 @@ Outputs:
   - `workItemId`
   - `recoveryStage` (`EVALUATION` or `POST_EVALUATION_DISPATCH`)
   - `outcome` (`retried_evaluation`, `resumed_dispatch`, `already_recovered`, or `rejected`)
-  - `rejectionReason` only when `outcome=rejected`, using bounded values such as `not_found_or_not_owned`, `stage_evidence_unavailable`, `script_pin_epoch_mismatch`, `plugin_binding_mismatch`, or `runtime_scope_mismatch`
+  - `rejectionReason` only when `outcome=rejected`, using bounded values such as `not_found_or_not_owned`, `stage_evidence_unavailable`, `work_item_not_dead_lettered`, `script_pin_epoch_mismatch`, `plugin_binding_mismatch`, or `runtime_scope_mismatch`
 
 For an exact retry of the same `controlPlaneRequestId`, canonical request fingerprint, and selected IDs, `results[]` returns the identical stored per-work-item outcomes, including `rejected`, without new work or relabeling. A new request with a different `controlPlaneRequestId` that finds a row already recovered by an earlier successful request returns `outcome=already_recovered`; rejected work items remain without a recovery record. `replayedCount` and this stable-request idempotency behavior are retained.
 

@@ -4,6 +4,10 @@ This document centralizes the **normative tables** for scripting and automation 
 
 If another document conflicts with these tables on exact identity fields, audit stage/outcome fields, or metric label sets, treat this document as the tie-breaker. The detailed DSL read-manifest contract is owned by the [DSL reference](./system-architecture-scripting-dsl-reference-and-lifecycle.md#read-consistency-contract); clock, recovery, due-point, and resume behavior is owned by the [scheduler and timers contract](./system-architecture-scripting-scheduler-and-timers.md#target-state-design). Exact pin/epoch, rollback, dead-letter, rollout-history, schedule-continuity, and DSL-lifecycle decisions are recorded in [ADR 0103](./decisions/adr-0103-single-authority-script-pins-with-exact-version-execution.md), [ADR 0106](./decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md), [ADR 0107](./decisions/adr-0107-stage-aware-script-dead-letter-recovery.md), [ADR 0109](./decisions/adr-0109-game-session-owned-script-rollout-history.md), [ADR 0110](./decisions/adr-0110-explicit-opt-in-schedule-continuity-across-script-transitions.md), and [ADR 0111](./decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md). This document retains only exact identity projections and the local audit consequences needed to make those owner contracts queryable.
 
+## Implementation Status
+
+These tables define the canonical target-state scripting contracts. Current implementation and proof remain partial; see the [Automation and Scheduler Runtime tracker](../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status). Any explicitly labeled current live fallback in this document is implementation evidence and does not narrow or replace the target tables.
+
 ## Document Precedence (Normative)
 
 When documents disagree, resolve conflicts in this order:
@@ -16,6 +20,7 @@ When documents disagree, resolve conflicts in this order:
 
 ## Table of Contents
 
+- [Implementation Status](#implementation-status)
 - [Table 1: Trigger Identity (Required Fields)](#table-1-trigger-identity-required-fields)
 - [Table 1A: Event Ingress `scriptEventId` Ownership Matrix](#table-1a-event-ingress-scripteventid-ownership-matrix)
 - [Table 2: `script_event_audit` Stages and Outcomes](#table-2-script_event_audit-stages-and-outcomes)

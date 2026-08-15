@@ -182,7 +182,7 @@ Outputs:
 
 #### `GetGameSessionPinConvergence`
 
-Implementation note: the current Game Session implementation now exposes this convergence read directly from the persisted game-instance pin record. That means the live service returns the observed pinned patch, observed timestamp, and the actual persisted `controlPlaneRequestId` that last changed the pin instead of leaving convergence identity implicit in actor/reason text.
+Implementation note: the current Game Session implementation now exposes this convergence read directly from the persisted game-instance pin record. The live service returns the observed pinned patch, observational `lastObservedControlPlaneRequestId`, and observed timestamp instead of leaving convergence identity implicit in actor/reason text; the current proto/implementation does not yet expose `observedScriptPinEpoch`, which remains required by the target exact-tuple contract below.
 
 Inputs:
 
@@ -193,8 +193,8 @@ Outputs:
 
 - `tenantId`, `gameInstanceId`
 - `observedPinnedScriptPatchVersion`
-- `scriptPinEpoch`
-- `controlPlaneRequestId` (the committed pin mutation request represented by this authoritative Game Session read)
+- `observedScriptPinEpoch` (the observed exact Game Session epoch; required by the target contract)
+- `lastObservedControlPlaneRequestId` (the committed pin mutation request represented by this authoritative Game Session read)
 - `observedAt`
 
 Contract rules:
@@ -390,7 +390,7 @@ Contract rules:
 
 #### `GetAutomationPinConvergence`
 
-Implementation note: the current Automation & Scripting implementation now persists a durable `script_patch_pin_projections` view keyed by `(tenantId, gameInstanceId)`. Automation refreshes that projection opportunistically from the same shared Game Session runtime-state surface already used by admission and replay checks, then serves `GetAutomationPinConvergence` from the persisted projection so freshness and temporary Game Session read failures do not force operator reads to be raw pass-through calls. Projection stale flags use the `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS` runtime knob.
+Implementation note: the current Automation & Scripting implementation now persists a durable `script_patch_pin_projections` view keyed by `(tenantId, gameInstanceId)`. Automation refreshes that projection opportunistically from the same shared Game Session runtime-state surface already used by admission and replay checks, then serves `GetAutomationPinConvergence` from the persisted projection so freshness and temporary Game Session read failures do not force operator reads to be raw pass-through calls. The current proto/implementation does not yet expose `observedScriptPinEpoch`; the target output below requires it for exact-tuple convergence. Projection stale flags use the `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS` runtime knob.
 
 Inputs:
 
@@ -495,26 +495,28 @@ Outputs:
 
 - `results[]` (one deterministic result per requested `workItemId`, including `workItemId`, `outcome`, `recoveryStage`, and `rejectionReason` only when rejected)
   - `outcome` is exactly one of `retried_evaluation`, `resumed_dispatch`, `already_recovered`, or `rejected`.
-  - `rejectionReason` is present only with `outcome=rejected` and uses bounded values such as `not_found_or_not_owned`, `stage_evidence_unavailable`, `script_pin_epoch_mismatch`, `plugin_binding_mismatch`, or `runtime_scope_mismatch`.
+  - `rejectionReason` is present only with `outcome=rejected` and uses bounded values such as `not_found_or_not_owned`, `stage_evidence_unavailable`, `work_item_not_dead_lettered`, `script_pin_epoch_mismatch`, `plugin_binding_mismatch`, or `runtime_scope_mismatch`.
 - `replayedCount` (bounded count of selected work items that progressed)
 - `rejectedCount`
 
 Contract rules:
 
 - Replay is fail-closed per work item. Eligibility requires exact current `(scriptPatchVersion, scriptPinEpoch)`, applicable plugin identity/version/binding, region/`regionEpoch`, and routing-bundle match to the immutable admitted evidence.
+- Recovery requires a compare-and-set or equivalent claim of current `status=DEAD_LETTERED` before evaluation or dispatch. A selected row in any other status remains unchanged and returns `outcome=rejected` with `rejectionReason=work_item_not_dead_lettered`.
 - Evaluation-stage recovery uses the frozen original trigger/input manifest and exact graph, preserving the original work-item and `scriptEventId` identity without a new dispatch identity or normal admission/DSL entry; post-evaluation recovery uses only the durable evaluated-output and child-dispatch ledger, preserving original child identities. It never resolves a latest/local graph or regenerates an output after a child was accepted.
 - Rows with missing/contradictory stage evidence or any fence mismatch remain `DEAD_LETTERED` and return a deterministic per-row `outcome=rejected` with the applicable bounded `rejectionReason`; a rejected row is not partially changed or counted as successful.
 - The request is bounded and idempotent by `controlPlaneRequestId`, actor, reason, and explicit work-item IDs. An exact retry of the same `controlPlaneRequestId` and canonical request fingerprint returns the identical stored per-row outcomes, including `rejected`, without evaluation, dispatch, or relabeling. A new request that finds a row already recovered by an earlier successful request returns `outcome=already_recovered`; no new recovery identity is introduced. Purge is a separate operation and never masquerades as recovery.
 
 #### `GetScriptPatchInstanceRolloutStatus`
 
-Implementation note: the current Automation & Scripting implementation exposes the latest non-authoritative pin/convergence projection from a durable local `script_patch_instance_rollout_projections` read model rather than a raw shared-runtime query. The projection is refreshed from observed Game Session pin state and explicit convergence evidence only; it does not derive rollout history from work-item transitions. Game Session's authoritative append-only history remains the owner for `PINNED`, `ROLLED_BACK`, and `REPINNED` transition history.
+Implementation note: the current Automation & Scripting implementation exposes a non-authoritative pin/convergence projection from a durable local `script_patch_instance_rollout_projections` read model rather than a raw shared-runtime query. The current proto/implementation resolves this read by patch version only and does not yet provide exact epoch lookup; the target contract below requires the requested exact `(scriptPatchVersion, scriptPinEpoch)` tuple. The projection is refreshed from observed Game Session pin state and explicit convergence evidence only; it does not derive rollout history from work-item transitions. Game Session's authoritative append-only history remains the owner for `PINNED`, `ROLLED_BACK`, and `REPINNED` transition history.
 
 Inputs:
 
 - `tenantId`
 - `gameInstanceId`
 - `scriptPatchVersion`
+- `scriptPinEpoch` (required exact epoch for this status lookup)
 
 Outputs:
 
@@ -537,7 +539,7 @@ Read-model ownership:
 Inputs:
 
 - `tenantId`
-- Optional filters: `gameInstanceId`, `scriptPatchVersion`, `rolloutStatus`, `changedAfter`, `changedBefore`
+- Optional filters: `gameInstanceId`, `scriptPatchVersion`, `scriptPinEpoch`, `rolloutStatus`, `changedAfter`, `changedBefore`
 
 Outputs:
 

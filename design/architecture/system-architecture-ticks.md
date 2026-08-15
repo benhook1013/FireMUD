@@ -4,7 +4,7 @@
 
 Cross-service operations triggered by ticks rely on Redis scripts and gRPC; sagas are unnecessary for these gameplay actions as explained in [Transaction Strategies](./system-architecture-transactions.md).
 
-Automation/timer work is a tick input, not a second tick authority. The [Scripting Scheduler and Timers](./system-architecture-scripting-scheduler-and-timers.md) and [Scripting Contracts](./system-architecture-scripting-contracts.md) own schedule continuity and exact `(scriptPatchVersion, scriptPinEpoch)` identity; this document owns only region execution, fairness, and effect-fence consequences. Routine epoch-fenced script rollback keeps ordinary gameplay ticks running.
+Automation/timer work is a tick input, not a second tick authority. Game Session owns the authoritative exact `(scriptPatchVersion, scriptPinEpoch)` selection; the [Scripting Scheduler and Timers](./system-architecture-scripting-scheduler-and-timers.md) and [Scripting Contracts](./system-architecture-scripting-contracts.md) own schedule continuity and exact-tuple propagation/fence consequences. This document owns only region execution, fairness, and effect-fence consequences. Routine epoch-fenced script rollback keeps ordinary gameplay ticks running.
 
 > 🔗 For Redis keys, Lua-based atomicity, and operational guarantees, see the [Redis Architecture](./system-architecture-redis.md).
 

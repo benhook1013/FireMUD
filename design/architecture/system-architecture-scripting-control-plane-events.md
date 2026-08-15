@@ -40,7 +40,7 @@ To keep control-plane behavior predictable, transport and ordering guarantees mu
 
 ## `ScriptPatchPinChanged` (Game Session -> Durable Event Flow)
 
-Emitted whenever the pinned patch changes.
+Emitted whenever the exact `(pinnedScriptPatchVersion, scriptPinEpoch)` tuple changes, including an epoch-only repin to the same patch version.
 
 Fields:
 
@@ -50,7 +50,7 @@ Fields:
 - `pinnedScriptPatchVersion`
 - `previousScriptPinEpoch`
 - `scriptPinEpoch`
-- `changeType` (`SET` | `ROLLBACK`)
+- `changeType` (`SET` | `ROLLBACK` | `REPIN`; `REPIN` classifies an epoch-only repin to the same patch version)
 - `instanceSequence`
 - `controlPlaneRequestId`
 - `actor` and `reason`

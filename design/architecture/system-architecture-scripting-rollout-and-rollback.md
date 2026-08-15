@@ -33,8 +33,8 @@ The rollout and rollback state machine below is target-state canonical. The live
 Concrete example:
 
 - `tenantId=11111111-1111-4111-8111-111111111111`, `gameInstanceId=44444444-4444-4444-8444-444444444444`, current pin `P22`, rollback target `P21`, `controlPlaneRequestId=RB-42`.
-- Step 1: `SetAutomationAdmissionMode(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, mode=PAUSED_FOR_ROLLBACK, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")`.
-- Step 2: the Automation barrier remains active while the exact P21 artifact is prepared.
+- Step 1: Automation prepares the exact P21 artifact while the current P22 pin remains active; preparation failure leaves P22 and its epoch unchanged.
+- Step 2: `SetAutomationAdmissionMode(tenantId=11111111-1111-4111-8111-111111111111, gameInstanceId=44444444-4444-4444-8444-444444444444, mode=PAUSED_FOR_ROLLBACK, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")`.
 - Step 3: `RollbackScriptPatchVersion(... targetScriptPatchVersion=P21, controlPlaneRequestId=RB-42, actor=operator:alice, reason="rollback RB-42")` commits `(P21, scriptPinEpoch=N+1)` and Game Session history atomically.
 - Step 4: Automation reconciles schedules under RB-42; continuity is preserved only with explicit declarations and typed compatibility, otherwise rows are tombstoned and recreated with fresh due state.
 - Step 5: stale P22 work is canceled/purged asynchronously and every exact epoch fence remains active at final mutation boundaries.
