@@ -331,10 +331,13 @@ Inputs:
 - Optional `rolloutStatus`
 - Optional `changedAfter` / `changedBefore`
 - Optional bounded `limit`
+- Optional opaque `pageToken` bound to the tenant and normalized filters
 
 Outputs:
 
 - ordered authoritative Game Session history rows containing `eventId`, `tenantId`, `gameInstanceId`, `operationKind` (`SET` | `ROLLBACK` | `REPIN`), nullable previous tuple (`previousScriptPatchVersion`, `previousScriptPinEpoch`), nullable resulting tuple (`scriptPatchVersion`, `scriptPinEpoch`), nullable `rolloutStatus`, `controlPlaneRequestId`, `actor`, `reason`, `outcome`, `committedAt`, and bounded pagination metadata. Each tuple is all-present or all-absent; both absent is semantic `UNPINNED`, never a sentinel.
+- `nextPageToken` (opaque continuation token; absent when there are no more rows).
+- Rows are ordered deterministically by `committedAt` descending (newest first), then by unique `eventId` ascending. The page token resumes this order without requiring an unbounded history read.
 
 Contract rules:
 
