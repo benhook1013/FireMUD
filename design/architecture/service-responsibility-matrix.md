@@ -80,7 +80,7 @@ Platform Operations is a cross-cutting operational authority rather than a micro
 | Economy logic (trading, shops, pricing) | | | | | | ✔ | | | | | |
 | AI-driven actions and behaviors | | | | | | | ✔ | | | | |
 | Triggered script execution | | | | | | | ✔ | | | | |
-| Exact script admission/execution fence (Game Session pin authority; Automation readiness and execution projection) | | | | ✔ | | | ✔ | | | | |
+| Exact script admission/execution fence (Game Session exact pin tuple and append-only rollout history; Automation instance-scoped admission, scheduling, execution/recovery, plugin runtime state, readiness, and convergence projections) | | | | ✔ | | | ✔ | | | | |
 | Redis-backed automation queue projection and timer coordination (`automation:queue:*`, `automation:timer:*`, `script-scheduler:*`) | | | | | | | ✔ | | | | |
 | Coordination Redis participation via shared helpers (locks and documented automation/tick prefix rules) | | | | ✔ | ✔ | | ✔ | | | | |
 | Cache/Rate-Limit Redis usage (caches, quotas, rate limiting) | | ✔ | | | ✔ | | ✔ | ✔ | | ✔ | ✔ |

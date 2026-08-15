@@ -539,6 +539,7 @@ Read-model ownership:
 
 - The authoritative source for rollout transitions is Game Session pin mutations and committed `ScriptPatchPinChanged` events.
 - The current Automation & Scripting implementation persists an Automation-owned observation keyed by `(tenantId, gameInstanceId, scriptPatchVersion, scriptPinEpoch)`. Projection refresh is driven by observed Game Session pin/convergence state only; it is not rollout-history authority and must not infer history from durable work-item transitions.
+- These Automation reads are non-authoritative projection reads, not Game Session rollout-history reads: they return only observed projection rows for the requested exact tuple and must not synthesize historical `PINNED`, `ROLLED_BACK`, or `REPINNED` status from a current pin or local prior status. When an exact-tuple projection row is absent, the read returns a deterministic not-found result; use `ListScriptPatchInstanceRolloutEvents` for committed rollout history.
 
 #### `ListScriptPatchInstanceRollouts`
 

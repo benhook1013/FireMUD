@@ -340,7 +340,7 @@ This ensures that even trusted tenant administrators cannot inadvertently weaken
 
 Plugin bindings are authored as immutable design-time data, not as ad hoc instance-local toggles; current intake requires them in the signed bundle, while the ADR 0111 target unsigned provenance path still requires exact manifest, digest, validation, approval, and platform-attestation evidence before activation.
 
-- The authoritative `bindings[]` array lives in `plugin-manifest.json` and is part of the current signed bundle.
+- The authoritative `bindings[]` array lives in `plugin-manifest.json`. For current signed intake, it is part of the signed bundle; for the target unsigned path, it is part of the accepted package and attested evidence.
 - Each binding must declare:
   - `bindingId` – stable identity within the plugin version.
   - `orderIndex` – integer ordering key used by the shared script/plugin handler ordering contract.

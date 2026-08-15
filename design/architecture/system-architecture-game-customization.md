@@ -8,6 +8,7 @@ Customization scripts use one DSL and one sandbox, with two artifact/lifecycle r
 
 - Bulk JSON import/export remains deferred. Current creator workflows use service-owned design APIs and world-editing tools.
 - Current publication exports ordinary bytes from the first-slice Game Design database source into version-scoped object storage and emits a narrower manifest. Target publication builds and verifies a private candidate before exposing immutable content-addressed objects; all private-candidate/content-addressed bullets and examples below are target state and are not yet the live publication path.
+- Current live script handoff does not yet carry `scriptPinEpoch`, so exact same-version old-epoch rejection remains target-state behavior rather than implementation proof.
 
 ## Theme and Branding
 
@@ -94,7 +95,7 @@ The platform deliberately does not execute arbitrary SQL/DML text, Java snippets
 
 - Custom scripts can drive dynamic events and NPC behaviour using the [Automation & Scripting Service](./microservices/automation-scripting-service/README.md).
 - The [modding framework](./microservices/game-design-service/modding-framework.md) allows runtime plugins for additional behavior.
-- **Target-state script-patch lifecycle:** Scripts are versioned alongside other game data. Designers may publish a `scriptPatchVersion` like `v42-script.3` to update automation without republishing all assets; changing a script patch creates a new recorded immutable runtime tuple and requires explicit `READY`, compatibility, and Game Session pin rollout. A linked-plugin member change uses an independent plugin activation/update rollout, does not advance `scriptPinEpoch`, and requires the exact `PUBLISHED`, compatibility, and policy predicates. Hot reload must not mutate a running descriptor or follow a latest patch/plugin alias. Current live handoff lacks `scriptPinEpoch`, so exact same-version old-epoch rejection remains target-state rather than implementation proof.
+- **Target-state script-patch lifecycle:** Scripts are versioned alongside other game data. Designers may publish a `scriptPatchVersion` like `v42-script.3` to update automation without republishing all assets; changing a script patch creates a new recorded immutable runtime tuple and requires explicit `READY`, compatibility, and Game Session pin rollout. A linked-plugin member change uses an independent plugin activation/update rollout, does not advance `scriptPinEpoch`, and requires the exact `PUBLISHED`, compatibility, and policy predicates. Hot reload must not mutate a running descriptor or follow a latest patch/plugin alias.
 
 ---
 
