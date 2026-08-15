@@ -193,7 +193,7 @@ A command-handoff reference exists only for an emitted evaluated descriptor. Pre
 
 Supplementary post-handoff correlation rule:
 
-- **Target-state command-ordinal contract:** execution-time version/plugin fence drops that happen after tick handoff must not be left as metrics-only signals. They must be exposed on the affected per-command handoff disposition keyed by the complete Command-Handoff Identity, including `targetPlayableStateScope` when a distinct target runtime scope applies, with the parent Trigger Identity retained for correlation, using bounded reasons such as `script_patch_mismatch` or `plugin_version_mismatch`.
+- **Target-state command-ordinal contract:** execution-time version/plugin fence drops that happen after tick handoff must not be left as metrics-only signals. They must be exposed on the affected per-command handoff disposition keyed by the complete Command-Handoff Identity, including `targetPlayableStateScope` when a distinct target runtime scope applies, with the parent Trigger Identity and its exact `scriptPatchVersion`/`scriptPinEpoch` pair retained for correlation, using bounded reasons such as `script_patch_mismatch` or `plugin_version_mismatch`.
 - **Current live fallback:** the Game Session handoff currently carries `automationDispatchId`, command id/text, selected provenance fields, and parent work-item correlation, but not `commandOrdinal` or the complete Trigger Identity. Current diagnostics use those fields and must be labeled as the narrower fallback rather than as proof of the target-state contract.
 
 Per-command handoff correlation rule:

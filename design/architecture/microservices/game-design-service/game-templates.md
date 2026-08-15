@@ -15,7 +15,7 @@ creators can quickly spin up new projects without starting from scratch.
 
 ## Implementation Status
 
-- Launch-descriptor persistence and compatibility proof for the complete enabled-plugin version set remain target-state; the current implementation does not yet expose or prove that set for deterministic retry and rollback.
+- Launch-descriptor persistence and compatibility proof for the complete enabled-plugin version set remain target-state; the current implementation does not yet persist, expose, or prove that set for deterministic retry and rollback.
 
 ## Starter Experience Profiles
 
@@ -150,7 +150,7 @@ Canonical minimum fields:
 - `gameTemplateId`
 - resolved `versionId`
 - resolved `scriptPatchVersion` (or explicit null when none is pinned)
-- complete deterministically ordered `enabledPluginVersions[] { pluginId, pluginVersionId }`, persisted as an immutable requested plugin selection for launch/rollback and reused unchanged by same-identity retries; its presence is not proof of Automation runtime activation
+- **Target-state:** complete deterministically ordered `enabledPluginVersions[] { pluginId, pluginVersionId }`, persisted as an immutable requested plugin selection for launch/rollback and reused unchanged by same-identity retries; its presence is not proof of Automation runtime activation
 - resolved runtime feature flags/defaults
 - `generationConfigRevision` taken from the target version’s `published_release_bundle`
 - `versionStateEpoch` used for CAS-safe activation checks

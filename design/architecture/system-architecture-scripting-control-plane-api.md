@@ -229,7 +229,8 @@ Semantics:
 
 Outputs:
 
-- `previousScriptPatchVersion`
+- `previousScriptPatchVersion` (nullable)
+- `previousScriptPinEpoch` (nullable; the two previous fields are all-present or all-absent)
 - `pinnedScriptPatchVersion` (the new value)
 - `scriptPinEpoch` (the resulting exact authority epoch)
 - `controlPlaneRequestId`
