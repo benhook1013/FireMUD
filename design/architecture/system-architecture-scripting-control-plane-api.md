@@ -173,11 +173,10 @@ Inputs:
 Outputs:
 
 - `tenantId`, `gameInstanceId`
-- `pinnedScriptPatchVersion`
-- `scriptPinEpoch` (monotonic Game Session authority epoch; advances on every pin selection change, including repin to the same version)
-- `pinnedAt` (timestamp)
-- `pinnedBy` (actor principal, optional)
-- `controlPlaneRequestId` (nullable; the idempotent request that last changed the pin)
+- `pinnedScriptPatchVersion` and `scriptPinEpoch` as a nullable pair (both present for a pin; both absent for semantic `UNPINNED`, never a sentinel; the epoch advances on every pin selection change, including repin to the same version)
+- `pinnedAt` (timestamp; nullable/inapplicable when the instance has never been pinned and is semantically `UNPINNED`)
+- `pinnedBy` (actor principal, nullable/inapplicable when the instance has never been pinned and is semantically `UNPINNED`)
+- `controlPlaneRequestId` (nullable; the idempotent request that last changed the pin, absent before the first pin)
 
 #### `GetGameSessionPinConvergence`
 
@@ -191,9 +190,8 @@ Inputs:
 Outputs:
 
 - `tenantId`, `gameInstanceId`
-- `observedPinnedScriptPatchVersion`
-- `observedScriptPinEpoch` (the observed exact Game Session epoch; required by the target contract)
-- `lastObservedControlPlaneRequestId` (the committed pin mutation request represented by this authoritative Game Session read)
+- `observedPinnedScriptPatchVersion` and `observedScriptPinEpoch` as the observed nullable exact Game Session pair (both present for a pin; both absent for semantic `UNPINNED`, never a sentinel)
+- `lastObservedControlPlaneRequestId` (nullable; absent for a never-pinned `UNPINNED` observation; otherwise the committed pin mutation request represented by this authoritative Game Session read)
 - `observedAt`
 
 Contract rules:
@@ -330,11 +328,11 @@ Inputs:
 
 Outputs:
 
-- ordered authoritative Game Session history rows containing `eventId`, `tenantId`, `gameInstanceId`, `operationKind`, `previousScriptPatchVersion`, `previousScriptPinEpoch`, `scriptPatchVersion`, `scriptPinEpoch`, `rolloutStatus`, `controlPlaneRequestId`, `actor`, `reason`, `outcome`, `committedAt`, and bounded pagination metadata
+- ordered authoritative Game Session history rows containing `eventId`, `tenantId`, `gameInstanceId`, nullable previous tuple (`previousScriptPatchVersion`, `previousScriptPinEpoch`), nullable resulting tuple (`scriptPatchVersion`, `scriptPinEpoch`), `rolloutStatus`, `controlPlaneRequestId`, `actor`, `reason`, `outcome`, `committedAt`, and bounded pagination metadata. Each tuple is all-present or all-absent; both absent is semantic `UNPINNED`, never a sentinel.
 
 Contract rules:
 
-- This is the bounded history read from the same Game Session owner that commits the current exact pin and epoch. A successful pin, rollback, or repin appends one immutable record atomically with the pin mutation; an idempotent request retry returns the existing result without another logical history entry.
+- This is the bounded history read from the same Game Session owner that commits the current exact pin and epoch. A successful pin, rollback, or repin appends one immutable record atomically with the pin mutation; a successful first pin may record absent previous -> present resulting values. A deterministic first-pin failure records absent previous -> absent resulting values; an idempotent request retry returns the existing result without another logical history entry.
 - Automation's observed-pin and convergence projections are not rollout-history authority. Logging & Admin composes this read with readiness/freshness state and presents projection lag rather than selecting a competing history.
 
 #### `ListScriptHandoffEvents`
