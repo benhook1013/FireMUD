@@ -6,6 +6,10 @@ Use this document for event-registry ownership, entry shape, publication/update 
 Use `system-architecture-scripting-control-plane-api.md` for event-ingress request and response contracts.
 Use `system-architecture-scripting-dsl-reference-and-lifecycle.md` for DSL semantics and author-facing event behavior.
 
+## Implementation Status
+
+The target exact-fence requirement below is not fully implemented at the live handoff: the current request carries `scriptPatchVersion` but not `scriptPinEpoch`, so same-version work from an older epoch cannot be rejected there today. See the [runtime execution implementation status](./system-architecture-scripting-runtime-execution.md#current-implementation-status); this gap does not weaken the target registry contract.
+
 ## Purpose
 
 The event registry answers four canonical questions for every scripting event:
@@ -61,7 +65,7 @@ Required semantics for those fields:
   - Tenant-readiness `onLoad` is the deliberate exception for `scriptId`: its event-scope identity targets one script and includes that `scriptId` so Automation can derive the deterministic `scriptEventId` before handler resolution. This does not authorize fabricated runtime-ingress script IDs; `pluginId`, `pluginVersionId`, and `bindingId` remain post-resolution fields.
   - Scheduler/timer due candidates are another deliberate pre-handler exception: because Automation already materialized a durable schedule with its owner identity, the scheduler firing identity and deterministic event-scope `scriptEventId` include the schedule-owned `scriptId` and any schedule-owned `pluginId`, `pluginVersionId`, and `bindingId`. The scheduler must not fabricate a field absent from that schedule. This scheduler-owned exception does not authorize ordinary producer ingress to supply handler-only identity.
   - For gameplay-originated events whose producer already resolved shared-versus-isolated realm state, this set must also include `playableStateScope` so durable ingress/work-item identity, timer follow-up work, and operator read models do not collapse distinct playable-state namespaces that happen to share the same tenant and instance identifiers.
-  - **Target-state exact-fence requirement:** For gameplay/runtime and scheduler events, this set must include the exact Game Session `scriptPatchVersion` plus `scriptPinEpoch`; a version-only event is incomplete and cannot be admitted after a repin. The live handoff still lacks `scriptPinEpoch`, so it cannot reject same-version work from an older epoch today; see the [runtime execution implementation status](./system-architecture-scripting-runtime-execution.md#current-implementation-status).
+  - **Target-state exact-fence requirement:** For gameplay/runtime and scheduler events, this set must include the exact Game Session `scriptPatchVersion` plus `scriptPinEpoch`; a version-only event is incomplete and cannot be admitted after a repin.
 - `snapshotAuthority`
   - Declares the owner-specific input source used to seed the handler-scoped input manifest. Its values remain:
     - `PRODUCER_SUPPLIED_TOKEN`

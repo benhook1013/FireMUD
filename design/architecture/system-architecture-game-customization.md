@@ -94,7 +94,7 @@ The platform deliberately does not execute arbitrary SQL/DML text, Java snippets
 
 - Custom scripts can drive dynamic events and NPC behaviour using the [Automation & Scripting Service](./microservices/automation-scripting-service/README.md).
 - The [modding framework](./microservices/game-design-service/modding-framework.md) allows runtime plugins for additional behavior.
-- Scripts are versioned alongside other game data. Designers may publish a `scriptPatchVersion` like `v42-script.3` to update automation without republishing all assets; changing a script patch creates a new recorded immutable runtime tuple and requires explicit `READY`, compatibility, and Game Session pin rollout. A linked-plugin member change uses an independent plugin activation/update rollout, does not advance `scriptPinEpoch`, and requires the exact `PUBLISHED`, compatibility, and policy predicates. Hot reload must not mutate a running descriptor or follow a latest patch/plugin alias.
+- **Target-state script-patch lifecycle:** Scripts are versioned alongside other game data. Designers may publish a `scriptPatchVersion` like `v42-script.3` to update automation without republishing all assets; changing a script patch creates a new recorded immutable runtime tuple and requires explicit `READY`, compatibility, and Game Session pin rollout. A linked-plugin member change uses an independent plugin activation/update rollout, does not advance `scriptPinEpoch`, and requires the exact `PUBLISHED`, compatibility, and policy predicates. Hot reload must not mutate a running descriptor or follow a latest patch/plugin alias. Current live handoff lacks `scriptPinEpoch`, so exact same-version old-epoch rejection remains target-state rather than implementation proof.
 
 ---
 
