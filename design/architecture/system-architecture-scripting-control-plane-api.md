@@ -502,15 +502,15 @@ Outputs:
 
 - `results[]` (one deterministic result per requested `workItemId`, including `workItemId`, `outcome`, optional/nullable `recoveryStage`, and `rejectionReason` only when rejected; `recoveryStage` is `null` when the result is `not_found_or_not_owned` or `stage_evidence_unavailable` because no trustworthy stage is available)
   - `outcome` is exactly one of `retried_evaluation`, `resumed_dispatch`, `already_recovered`, or `rejected`.
-  - `rejectionReason` is present only with `outcome=rejected` and uses bounded values such as `not_found_or_not_owned`, `stage_evidence_unavailable`, `work_item_not_dead_lettered`, `script_pin_epoch_mismatch`, `plugin_binding_mismatch`, or `runtime_scope_mismatch`.
+  - `rejectionReason` is present only with `outcome=rejected` and uses established bounded values such as `not_found_or_not_owned`, `stage_evidence_unavailable`, `work_item_not_dead_lettered`, `script_pin_epoch_mismatch`, `plugin_binding_mismatch`, `runtime_scope_mismatch`, `plugin_disabled`, `plugin_version_not_published`, `plugin_component_policy_blocked`, `component_policy_unavailable`, `signer_policy_unavailable`, `signer_revoked`, or `authority_unavailable`.
 - `replayedCount` (bounded count of selected work items that progressed)
 - `rejectedCount`
 
 Contract rules:
 
-- Replay is fail-closed per work item. Eligibility requires exact current `(scriptPatchVersion, scriptPinEpoch)`, applicable plugin identity/version/binding, region/`regionEpoch`, and routing-bundle match to the immutable admitted evidence.
+- Replay is fail-closed per work item. Eligibility requires exact current `(scriptPatchVersion, scriptPinEpoch)`, applicable plugin identity/version/binding, region/`regionEpoch`, and routing-bundle match to the immutable admitted evidence. For plugin work, the current scoped plugin activation/lifecycle, component-policy decision, capability-grant evidence, and signer/publication evidence must also be fresh and valid.
 - Recovery requires an atomic compare-and-set or equivalent claim of current `status=DEAD_LETTERED` together with a persisted recovery claim/attempt record containing the expected exact `(scriptPatchVersion, scriptPinEpoch)`, runtime scope, applicable plugin binding tuple, and `controlPlaneRequestId`, before evaluation or dispatch. A selected row in any other status remains unchanged and returns `outcome=rejected` with `rejectionReason=work_item_not_dead_lettered`. An expired claim is reclaimed under the same attempt record and identity (with a new owner fence when needed), never by inserting a duplicate recovery attempt or audit record.
-- Evaluation-stage recovery uses the frozen original trigger/input manifest and exact graph, preserving the original work-item and `scriptEventId` identity without a new dispatch identity; it may invoke the DSL evaluator again for eligible gameplay/runtime work outside normal admission. Tenant-readiness `onLoad` remains at-most-once and is excluded from evaluation replay. Post-evaluation recovery uses only the immutable evaluated output and complete child-dispatch ledger keyed by the full Command-Handoff Identity, preserving original child identities and per-child recovery state without invoking the DSL. It revalidates the recorded exact fence and binding immediately before evaluation and again before dispatch, never resolves a latest/local graph, and never regenerates an output after a child was accepted.
+- Evaluation-stage recovery uses the frozen original trigger/input manifest and exact graph, preserving the original work-item and `scriptEventId` identity without a new dispatch identity; it may invoke the DSL evaluator again for eligible gameplay/runtime work outside normal admission. Tenant-readiness `onLoad` remains at-most-once and is excluded from evaluation replay. Post-evaluation recovery uses only the immutable evaluated output and complete child-dispatch ledger keyed by the full Command-Handoff Identity, preserving original child identities and per-child recovery state without invoking the DSL. Immediately before evaluation and again immediately before each dispatch, it revalidates the recorded exact fence and binding plus the current scoped plugin activation/lifecycle, component-policy, capability-grant, and signer/publication evidence. Missing, stale, or temporarily unavailable evidence fails closed with the applicable established bounded reason (`authority_unavailable`, `component_policy_unavailable`, or `signer_policy_unavailable`); proven lifecycle, publication, component/capability, signer, tuple, or scope mismatches use `plugin_disabled`, `plugin_version_not_published`, `plugin_component_policy_blocked`, `signer_revoked`, `plugin_binding_mismatch`, `script_pin_epoch_mismatch`, or `runtime_scope_mismatch` as applicable. It never resolves a latest/local graph, and never regenerates an output after a child was accepted.
 - Rows with missing/contradictory stage evidence or any fence mismatch remain `DEAD_LETTERED` and return a deterministic per-row `outcome=rejected` with the applicable bounded `rejectionReason`; a rejected row is not partially changed or counted as successful.
 - The request is bounded and idempotent by `controlPlaneRequestId`, actor, reason, and explicit work-item IDs. An exact retry of the same `controlPlaneRequestId` and canonical request fingerprint returns the identical stored per-row outcomes, including `rejected`, without evaluation, dispatch, or relabeling. A new request that finds a row already recovered by an earlier successful request returns `outcome=already_recovered`; no new recovery identity is introduced. Purge is a separate operation and never masquerades as recovery.
 
@@ -548,10 +548,14 @@ Inputs:
 
 - `tenantId`
 - Optional filters: `gameInstanceId`, `scriptPatchVersion`, `scriptPinEpoch`, `projectionStatus`, `changedAfter`, `changedBefore`
+- `limit` (service-bounded maximum number of rows)
+- `pageToken` (opaque continuation token bound to the tenant and normalized filters)
 
 Outputs:
 
 - A list of `GetScriptPatchInstanceRolloutStatus` records.
+- `nextPageToken` (opaque continuation token; absent when there are no more rows).
+- Rows are ordered deterministically by `lastChangedAt` descending (newest first), then by the exact identity tie-breakers `tenantId`, `gameInstanceId`, `scriptPatchVersion`, and `scriptPinEpoch` ascending. The page token resumes this order without requiring an unbounded tenant read.
 - The read model must publish and enforce explicit freshness SLOs:
   - P95 `projectionLagMs <= 5000`
   - P99 `projectionLagMs <= 30000`

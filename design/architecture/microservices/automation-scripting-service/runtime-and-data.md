@@ -4,7 +4,7 @@ This document defines the Automation & Scripting Service runtime model, persiste
 
 ## Implementation Status
 
-The current service still invokes the relevant sandboxed DSL handler synchronously after admission, carries only the narrower read-snapshot token field, and does not yet seal the complete handler input manifest or persist pre-DSL `PENDING_EVALUATION` work. These are implementation and proof gaps; the target lifecycle and manifest contracts below remain normative.
+The current service still invokes the relevant sandboxed DSL handler synchronously after admission, persists pre-DSL `PENDING_EVALUATION` work, and carries only the narrower read-snapshot token field; it does not yet seal the complete handler input manifest or persist the separate evaluated-descriptor layer. These are implementation and proof gaps; the target lifecycle and manifest contracts below remain normative.
 
 ## Architecture and Design Notes
 

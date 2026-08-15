@@ -70,7 +70,7 @@ Expected response:
 
 ### Work-Item Identifier Naming
 
-On the current public Automation & Scripting API, `workItemId` and `workItemIds` are aliases for the canonical persisted `outboxWorkItemId` parent identifiers. The aliases carry the same identifier values and do not define a second work-item identity. `automationWorkItemId` remains the current Game Session wire name for that same parent identifier at the handoff boundary. The initial replay and purge mutation remains bounded to explicit work-item IDs; descriptor references carrying the complete Command-Handoff Identity remain deferred until a separate accepted contract.
+On the current public Automation & Scripting API, `workItemId` and `workItemIds` are aliases for the canonical persisted `outboxWorkItemId` parent identifiers. The aliases carry the same identifier values and do not define a second work-item identity. `automationWorkItemId` remains the current Game Session wire name for that same parent identifier at the handoff boundary. **Target-state mutation contract:** Replay and purge mutations are bounded to explicit work-item IDs; descriptor references carrying the complete Command-Handoff Identity remain deferred until a separate accepted contract. **Current replay gap:** `ReplayDeadLetteredWorkItems` still exposes optional scope fields, permits an empty ID list, falls back to tenant-wide dead-letter selection, and applies filters both with and without explicit IDs, as detailed in the endpoint entry below.
 
 ## Event Ingress Contract
 
