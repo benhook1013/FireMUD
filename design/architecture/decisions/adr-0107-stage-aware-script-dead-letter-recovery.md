@@ -46,9 +46,9 @@ Both paths require an exact current match for the admitted `scriptPatchVersion`,
 
 The initial operator mutation accepts bounded explicit dead-letter work-item IDs only and returns one exact per-row `outcome`: `retried_evaluation`, `resumed_dispatch`, `already_recovered`, or `rejected`. Only `outcome=rejected` carries a bounded `rejectionReason`, such as `not_found_or_not_owned`, `stage_evidence_unavailable`, `work_item_not_dead_lettered`, or a specific fence mismatch. Eligible rows may progress independently, but an ineligible row remains `DEAD_LETTERED`; counts are not a substitute for per-row results.
 
-Recovery requests carry a stable `controlPlaneRequestId`, actor, and reason. The service persists the request outcome and audit evidence so duplicate requests return the same result without repeating evaluation or dispatch.
+Recovery requests carry a stable `controlPlaneRequestId` bound to the canonical normalized request digest, actor, and reason. The service persists the request outcome and audit evidence so duplicate requests return the same result without repeating evaluation or dispatch; reusing that request identity with a different normalized digest returns an idempotency conflict before evaluation or dispatch.
 
-Purge is a separate bounded, authorized, and audited operation with its own request identity, actor, reason, and per-row outcomes. Purge never masquerades as successful recovery. Operators and automation do not repair, requeue, rewrite, or delete dead-letter rows through direct SQL.
+Purge is a separate bounded, authorized, and audited operation with its own `controlPlaneRequestId` bound to the canonical normalized request digest, actor, reason, and per-row outcomes. Reusing that request identity with a different normalized digest returns an idempotency conflict and performs no purge. Purge never masquerades as successful recovery. Operators and automation do not repair, requeue, rewrite, or delete dead-letter rows through direct SQL.
 
 ## Consequences
 
@@ -79,9 +79,9 @@ Rejected because it bypasses ownership, version and runtime fences, request idem
 
 ## Implementation and Proof Obligations
 
-Persist the failure stage; original Trigger Identity and payload digest; frozen manifest/input references; exact graph identity and digest; patch and pin epoch; plugin identity/version; region identity/epoch; routing bundle; evaluated-output digest; deterministic child identities and payloads; child acknowledgement state; and recovery/purge request-result ledgers. Retention must keep this evidence coherent for the advertised recovery window.
+Persist the failure stage; original Trigger Identity and payload digest; frozen manifest/input references; exact graph identity and digest; patch and pin epoch; plugin identity/version; region identity/epoch; routing bundle; evaluated-output digest; deterministic child identities and payloads; child acknowledgement state; and recovery/purge request-result ledgers with each `controlPlaneRequestId` durably bound to its canonical normalized request digest. Retention must keep this evidence coherent for the advertised recovery window.
 
-Proof must cover evaluation retry with the exact frozen graph and inputs; refusal when either is missing or changed; post-evaluation recovery without invoking the evaluator; partial child acceptance and replay of unfinished children only; duplicate and concurrent recovery requests; lost responses after commit; explicit-ID batch bounds; tenant ownership; per-row outcomes; and separate audited purge.
+Proof must cover evaluation retry with the exact frozen graph and inputs; refusal when either is missing or changed; post-evaluation recovery without invoking the evaluator; partial child acceptance and replay of unfinished children only; duplicate and concurrent recovery requests; changed-digest recovery and purge requests returning conflict without evaluation, dispatch, or purge; lost responses after commit; explicit-ID batch bounds; tenant ownership; per-row outcomes; and separate audited purge.
 
 Fence proof must cover changed patch, same patch with a new `scriptPinEpoch`, changed or disabled plugin version, changed region or `regionEpoch`, changed playable-state scope or routing pointer, and unavailable/stale authoritative fence reads. Every mismatch must leave the row dead-lettered without evaluation or dispatch.
 

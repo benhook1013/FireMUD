@@ -62,7 +62,7 @@ The complete identity, target timeline/due point, request digest, deterministic 
 
 #### Timer Resume Rule (Normative)
 
-When an explicitly preserved interval keeps a logical timer alive across a version transition, the scheduler must recalculate its next due point using the explicit rule below. The default transition is cancel-and-recreate; the formula does not itself grant continuity.
+When an explicitly preserved tick-aligned interval keeps a logical timer alive across a version transition, the scheduler must recalculate its next due point using the explicit rule below. The default transition is cancel-and-recreate; the formula does not itself grant continuity.
 
 - Inputs:
   - `resumeTickId` = the latest committed tick known for the timer's region when scheduling resumes for the runtime scope.
@@ -79,7 +79,7 @@ When an explicitly preserved interval keeps a logical timer alive across a versi
   - the scheduler resumes on the next valid cadence boundary at or after resume, never by replaying every missed firing from the paused window;
   - a preserved schedule may fire immediately after resume only when its next valid cadence boundary is exactly `resumeTickId`;
   - reload and rollback preservation and downtime recovery remain distinct behaviors. The resume rule governs preserved timers after a version transition on the same runtime region, scope, and epoch; a scope or epoch migration fences the old due point and starts from the new timeline. The declared recovery class and durable resume-window policy govern missed firings after scheduler downtime within the same logical schedule instance and version.
-  - Wall-clock timers preserve their persisted absolute due time across cadence changes and do not adopt tick rescaling; each schedule uses only its declared clock unit.
+  - Reset, incompatible, or newly materialized replacement rows do not use this rule and start with fresh due state; a preserved wall-clock timer does not use the tick formula, and compatible continuity retains its persisted absolute `dueAt` and regenerates `nextRunAt`.
 
 ### End-to-End `onInterval` Timer Lifecycle
 
@@ -148,7 +148,7 @@ An admitted firing must use one crash-safe durable transition. The transition at
 - Once the exact Game Session `(scriptPatchVersion, scriptPinEpoch)` is committed and reconciliation succeeds, the leader:
   - re-reads its heartbeat checkpoint and the current `tickId`;
   - reconciles durable schedule definitions for the newly pinned exact `(scriptPatchVersion, scriptPinEpoch)` tuple before any timer is allowed to fire again, updating the instance-scoped `script_schedule_instances` rows first;
-  - updates each explicitly preserved interval entry's authoritative due point (`dueTickId` or `dueAt`) after typed continuity compatibility checks using the normative timer resume rule, then regenerates the `nextTick` or `nextRunAt` projections so the cadence resumes from the latest tick and time rather than replaying the paused window; reset, incompatible, or newly materialized replacement rows retain fresh due state; and
+  - updates each explicitly preserved interval entry's authoritative due point (`dueTickId` or `dueAt`) after typed continuity compatibility checks: it applies the normative tick resume formula only to preserved tick timers, while compatible wall-clock continuity retains persisted `dueAt` and regenerates `nextRunAt`; reset, incompatible, or newly materialized replacement rows retain fresh due state; and
   - resumes normal scheduling for `onInterval` using the exact committed patch and pin epoch. No interval runs against a partially loaded script definition or a local active/latest pointer.
 - If reload fails or durable reconciliation evidence is unavailable, `pendingPatchVersion` is marked failed/fenced and any partially loaded schedule state is discarded. The affected runtime scope admits no new timer firing until reconciliation confirms the current exact pin tuple, schedule owner, scope, epoch, and due state; timer due candidates encountered while fenced are recorded in their `scheduleCandidateId` candidate audit with the applicable fenced/version-unavailable outcome and reason, with no firing claim or `scriptEventId`. A prior observed tuple may remain observable for diagnosis, but the scheduler must not use a "last known good" fallback to mint or execute new timer work.
 

@@ -18,7 +18,7 @@ Platform Operations is a cross-cutting operational authority rather than a micro
 | Game configuration authoring | ✔ | | | | | | | | | | |
 | Custom in-game scripting authoring | ✔ | | | | | | | | | | |
 | Game version publishing | ✔ | | | | | | | | | | |
-| Authoritative exact script pin and append-only rollout history (`scriptPatchVersion`, `scriptPinEpoch`) — Game Session only | | | | ✔ | | | | | | | |
+| Authoritative exact script pin and append-only rollout history for each `(tenantId, gameInstanceId)` (`scriptPatchVersion`, `scriptPinEpoch`) — Game Session only | | | | ✔ | | | | | | | |
 | Tenant-scoped patch readiness and instance-scoped observed pin/convergence projections — Automation & Scripting only; non-authoritative | | | | | | | ✔ | | | | |
 | Design-time feature flag definitions | ✔ | | | | | | | | | | |
 | Room and zone editing | ✔ | | | | | | | | | | |

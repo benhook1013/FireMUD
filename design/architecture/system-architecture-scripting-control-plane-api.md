@@ -408,7 +408,7 @@ Outputs:
 
 - `tenantId`, `gameInstanceId`
 - `observedPinnedScriptPatchVersion` and `observedScriptPinEpoch` (nullable exact pair; both present or both absent for semantic `UNPINNED`, never a sentinel or partial projection)
-- `lastObservedControlPlaneRequestId`
+- `lastObservedControlPlaneRequestId` (nullable; absent when the observed pair is semantic `UNPINNED`; when present, atomically associated with that exact observed pair and retained when the projection is stale)
 - `observedAt`
 - `projectionAsOfMs`
 - `projectionLagMs`
@@ -419,9 +419,9 @@ Contract rules:
 - This is a read-only operator surface for the latest pin observation currently visible to Automation-side admission and replay logic.
 - The live implementation is a durable Automation-owned projection refreshed from authoritative Game Session runtime state, not a raw pass-through query.
 - `ScriptPatchPinChanged` delivery is a refresh/invalidation hint only; after missed, duplicate, or out-of-order delivery, Automation reconciles or rebuilds its projection from authoritative Game Session reads. Event payloads never become pin-state or rollout-history authority.
-- This projection is explicitly non-authoritative and must not be used to admit work unless it is fresh enough and matches the exact Game Session `(scriptPatchVersion, scriptPinEpoch)` tuple. No stale/local pin override exists.
+- This projection is explicitly non-authoritative and must not be used to admit work unless it is fresh enough and matches the exact Game Session `(scriptPatchVersion, scriptPinEpoch)` tuple together with its associated owner request identity. No stale/local pin override exists.
 - When Game Session runtime state reports multiple current admission pointers for one runtime target, Automation must treat the singular runtime-state routing bundle as unavailable and fail closed for any consumer that needs one unambiguous `{worldSlug, realmSlug, pointerVersion}` identity.
-- If refresh from Game Session fails but Automation still has a stored observation, the API must continue returning that stored observation with freshness flags set from the projection timestamp instead of failing closed for operator visibility.
+- If refresh from Game Session fails but Automation still has a stored observation, the API must continue returning that stored observation, including its associated pair and request identity, with freshness flags set from the projection timestamp instead of failing closed for operator visibility.
 
 #### `ListScriptScheduleInstances`
 
@@ -488,12 +488,11 @@ Boundary rule:
 
 #### `ReplayDeadLetteredWorkItems`
 
-Implementation note: the current Automation & Scripting implementation exposes a bounded parent-row replay mutation, but that behavior does not yet prove the target stage-aware recovery contract. The target API resumes from immutable failure-stage evidence: evaluation-stage rows may retry with their frozen manifest/graph and original identity; post-evaluation rows resume the stored output/child ledger without DSL re-entry. Missing or contradictory evidence remains dead-lettered.
+Implementation note: the current Automation & Scripting implementation exposes a bounded parent-row replay mutation, still accepts optional `gameInstanceId`/`regionId` scope fields and empty-ID selection, and does not yet prove the target stage-aware recovery contract. The target API resumes from immutable failure-stage evidence: evaluation-stage rows may retry with their frozen manifest/graph and original identity; post-evaluation rows resume the stored output/child ledger without DSL re-entry. Missing or contradictory evidence remains dead-lettered.
 
 Inputs:
 
 - `tenantId`
-- Optional scope: `gameInstanceId`, `regionId`
 - Bounded explicit `workItemIds[]` only (durable parent work-item identifiers); descriptor references and filters are listing/preview inputs, not mutation selectors. Bulk filter replay remains deferred until preview plus stable per-row proof.
 - `controlPlaneRequestId`
 - `actor`

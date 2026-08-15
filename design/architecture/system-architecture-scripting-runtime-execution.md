@@ -119,7 +119,7 @@ Each evaluated descriptor/outbox record must include:
 - The unique child identity for each evaluated command descriptor: the complete Command-Handoff Identity, including optional `targetPlayableStateScope` and the other target runtime fields when a distinct target scope applies. `outboxWorkItemId` is parent correlation only and is excluded from command identity, uniqueness, and deduplication keys.
 - `createdAt` and `updatedAt`.
 - `workItemStatus` (per evaluated descriptor/command; see below, not a pre-DSL trigger or parent aggregate status).
-- The immutable evaluated command descriptor (one descriptor per emitted command, stored durably).
+- The immutable evaluated command descriptor (one descriptor per emitted command, stored durably), including immutable `lane` and bounded `cost_class` metadata.
 - `commandCount` (the immutable total number of committed descriptors for the parent `outboxWorkItemId`, for budgeting/inspection; it is not per-descriptor progress).
 - `cancelReason` (nullable; required when canceled).
 
@@ -127,7 +127,9 @@ Each evaluated descriptor/outbox record must include:
 
 Target-state per-command progress follows the [cross-service command boundary](./system-architecture-scripting-contracts.md#2-script-work-item-vs-tick-command-boundary): descriptor identity is the complete Command-Handoff Identity and is linked to the parent `outboxWorkItemId`. Each emitted command has independent durable progress, so a retry resumes only unresolved commands and cannot drop an unattempted command or replay a command already accepted or terminally rejected. A queue pointer may be deduplicated by parent `outboxWorkItemId` for index hygiene, but that does not deduplicate commands. The current live handoff limitation above means this target behavior is not current end-to-end proof; multi-command work items remain rejected until the boundary is widened.
 
-Each emitted command is also represented by one durable child dispatch row under the work item. At minimum it stores `outboxWorkItemId`, the deterministic `automationDispatchId` and `commandOrdinal`, immutable command digest and target scope, handoff status/result, attempt metadata, and the returned Game Session `commandId` when accepted. The durable uniqueness key is the complete Command-Handoff Identity; duplicate evaluation or delivery reads or advances the same child rather than creating another logical command. Retries select only unfinished children.
+Each emitted command is also represented by one durable child dispatch row under the work item. At minimum it stores `outboxWorkItemId`, the deterministic `automationDispatchId` and `commandOrdinal`, immutable command digest, target scope, `lane`, and bounded `cost_class`, handoff status/result, attempt metadata, and the returned Game Session `commandId` when accepted. The durable uniqueness key is the complete Command-Handoff Identity; duplicate evaluation or delivery reads or advances the same child rather than creating another logical command. Retries select only unfinished children.
+
+**Target-state lane/cost contract:** The evaluated descriptor and each child dispatch retain the immutable `lane` and bounded `cost_class` unchanged through durable work, retry, readback, and recovery. Missing, changed, or contradictory values fail closed and cannot authorize handoff, replay, or application; recovery preserves the admitted values rather than inferring or reclassifying them.
 
 When a work item is handed to Game Session, the local wire boundary is:
 
