@@ -492,6 +492,7 @@ Implementation note: the current Automation & Scripting implementation exposes a
 Inputs:
 
 - `tenantId`
+- Optional scope: `gameInstanceId`, `regionId`
 - Bounded explicit `workItemIds[]` only (durable parent work-item identifiers); descriptor references and filters are listing/preview inputs, not mutation selectors. Bulk filter replay remains deferred until preview plus stable per-row proof.
 - `controlPlaneRequestId`
 - `actor`
