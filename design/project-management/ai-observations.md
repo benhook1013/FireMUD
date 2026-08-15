@@ -62,5 +62,5 @@ Entry format:
 
 - `2026-08-15`: ADR consolidation must preserve authority direction without creating secondary contract copies
   - Context: script-transition consolidation exposed secondary docs calling projections authoritative or presenting target contracts as live.
-  - Observation: repeated technical restatement creates drift; authority and status wording are the reusable issue.
-  - Expected pattern: the canonical ADR/system owner holds the normative contract; service docs, trackers, and journeys retain only local consequences/current proof and link to the owner; cross-file review checks authority labels and target/current status without copying the full rule into observations or secondary docs.
+  - Observation: architecture/owning system docs hold normative contracts; ADRs preserve decision rationale and human-review provenance. Repeated technical restatement creates drift.
+  - Expected pattern: service docs, trackers, and journeys retain concise local consequences/current proof and link to the owner, while ADR links provide rationale/provenance rather than replacing architecture authority.

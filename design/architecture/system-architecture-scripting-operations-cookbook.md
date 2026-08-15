@@ -153,7 +153,7 @@ The required rollback sequencing, state transitions, convergence deadline, and t
 
 For local diagnosis during a rollback:
 
-The current runtime does not prove target-state drain recovery from lease age: unresolved `EVALUATING` work remains active and handoff-capable `PENDING_EVALUATION` remains pending. These are pre-DSL states, not evaluated descriptor `PENDING` or `INDEXED` work. Keep the Automation admission barrier in place until the owner workflow reports the required state; ordinary gameplay ticks and player commands continue, except within a separately declared unfenced-effect workflow. Do not infer reclaim, terminalization, or safe resumption locally.
+The current runtime does not prove target-state drain recovery from lease age: unresolved `EVALUATING` work remains active and handoff-capable `PENDING_EVALUATION` remains pending. These are pre-DSL states, not evaluated descriptor `PENDING` or `INDEXED` work. Keep the Automation admission barrier in place until exact pin convergence and schedule reconciliation succeed; do not wait for asynchronous cancel/purge cleanup. Cleanup remains bounded and non-blocking, while exact version/epoch fences remain authoritative. Ordinary gameplay ticks and player commands continue, except within a separately declared unfenced-effect workflow. Do not infer reclaim, terminalization, or safe resumption locally.
 
 For pending and dead-lettered work, use control-plane APIs rather than direct data-store edits:
 
@@ -192,7 +192,7 @@ Operator actions:
      - Call the Game Session control-plane APIs to update the pin (for example `SetPinnedScriptPatchVersion` or `RollbackScriptPatchVersion`) following the request/response contracts in [Scripting & Automation: Control Plane API](./system-architecture-scripting-control-plane-api.md) and the sequencing rules in [Scripting & Automation: Control Plane Operations](./system-architecture-scripting-control-plane-operations.md).
    - Repinning does not backfill skipped logical firings or rewrite existing automation queues; Automation admission is fenced during the workflow while ordinary gameplay ticks and player commands continue. Every new execution uses the exact Game Session tuple, and the new epoch fences work carrying the prior tuple.
    - Repinning must also ensure rollback safety:
-     - Automation admission should remain paused for the affected scope while repin and cancel/purge steps run; this is not a routine gameplay-tick pause.
+     - Automation admission should remain paused for the affected scope through repin and schedule reconciliation; asynchronous cancel/purge cleanup is bounded and non-blocking and must not delay resumption. This is not a routine gameplay-tick pause.
      - Queued automation work items and staging entries that carry the displaced exact `(scriptPatchVersion, scriptPinEpoch)` tuple are drained/purged so they cannot enqueue or execute after repin.
      - If plugin versions are also being rolled back, disabled, or revoked, pending work for displaced `pluginVersionId` values is canceled before queue purge.
      - Game Session enforces an exact tuple fence at execution time and must reject any tick-queue entries whose embedded `(scriptPatchVersion, scriptPinEpoch)` does not match the currently pinned value.

@@ -14,6 +14,10 @@ This doc set is the authoritative source for:
 - the minimal text command protocol and world-selection flow used by the initial gameplay slice; and
 - the service's control-plane, runtime, configuration, and operator contracts.
 
+## Implementation Status
+
+Current seams are narrower: patch/request convergence reads, instance-scoped pause/resume, region-epoch fencing, and existing version-fence paths do not yet prove complete `scriptPinEpoch` propagation, final-effect enforcement, or Game-Session-owned append-only history. Track those implementation and proof gaps in the [Game Session runtime and tick coordination tracker](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#active-gaps).
+
 ## Terminology
 
 - **Tenant** – a hosted game world or project, identified by `tenantId`. All database rows and Redis keys include this prefix so data is isolated between games.
@@ -40,8 +44,6 @@ This doc set is the authoritative source for:
 ### Script pin and rollout authority (target-state contract)
 
 Target state: Game Session allocates and persists the per-instance exact script pin and `scriptPinEpoch`, atomically commits a successful pin plus its resulting epoch and immutable rollout-history record, exposes bounded authoritative current-pin and rollout-history reads, and is the only service that may commit a new exact script tuple. Once a syntactically valid request is accepted and bound to its normalized request digest, a deterministic validation or preparation failure appends one immutable unsuccessful history record whose previous and resulting exact tuples are equal, without changing the pin or advancing the epoch. An exact retry with the same request identity and digest returns that stored result without another history entry; reusing the request identity with a different digest is an idempotency conflict with no mutation. Each script-derived trigger, durable work item, schedule or timer firing, command handoff, and final effect carries the captured patch and epoch; stale work is rejected at the applicable final fence. Rollback is an explicit repin to a prior tenant-`READY`, base-compatible artifact and does not ordinarily pause unrelated player commands or gameplay ticks. Automation may pause only new script admission for scoped reconciliation. See the canonical scripting rollout contracts and [ADR 0103](../../decisions/adr-0103-single-authority-script-pins-with-exact-version-execution.md), [ADR 0106](../../decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md), and [ADR 0109](../../decisions/adr-0109-game-session-owned-script-rollout-history.md).
-
-Current seams are narrower: patch/request convergence reads, instance-scoped pause/resume, region-epoch fencing, and existing version-fence paths do not yet prove complete `scriptPinEpoch` propagation, final-effect enforcement, or Game-Session-owned append-only history. Track those implementation and proof gaps in the [Game Session runtime and tick coordination tracker](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#active-gaps).
 
 ## Architecture Summary
 
