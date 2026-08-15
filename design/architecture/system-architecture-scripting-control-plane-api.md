@@ -10,7 +10,7 @@ The exact pin/epoch authority and stage-aware recovery rules used by these APIs 
 
 ## Implementation Status
 
-The API shapes below are target-state contracts. Current Automation exposes bounded readiness, convergence, rollout, schedule, plugin, dead-letter, and replay surfaces, but `GetAutomationPinConvergence` does not yet expose `observedScriptPinEpoch`, instance-rollout lookup remains patch-version-only rather than exact-epoch lookup, and replay remains aggregate parent-row requeue rather than stage-aware per-row recovery. These are implementation and proof gaps, not alternate API semantics; see the [Automation and Scheduler Runtime tracker](../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status) and [Game Session Runtime and Tick Coordination tracker](../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#capability-status).
+The API shapes below are target-state contracts. Current Automation exposes bounded readiness, convergence, rollout, schedule, plugin, dead-letter, and replay surfaces, but `GetAutomationPinConvergence` does not yet expose `observedScriptPinEpoch`, instance-rollout lookup remains patch-version-only rather than exact-epoch lookup, and replay remains aggregate parent-row requeue rather than stage-aware per-row recovery. The current Game Session proto/runtime also lacks the tagged `expectedCurrentPin` field for pin CAS; that target precondition remains an implementation and proof gap. These are implementation and proof gaps, not alternate API semantics; see the [Automation and Scheduler Runtime tracker](../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status) and [Game Session Runtime and Tick Coordination tracker](../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#capability-status).
 
 Routing note:
 
@@ -185,7 +185,7 @@ Outputs:
 
 #### `GetGameSessionPinConvergence`
 
-Implementation note: the current Game Session implementation now exposes this convergence read directly from the persisted game-instance pin record. The live service returns the observed pinned patch, observational `lastObservedControlPlaneRequestId`, and observed timestamp instead of leaving convergence identity implicit in actor/reason text; the current proto/implementation does not yet expose `observedScriptPinEpoch`, which remains required by the target exact-tuple contract below.
+Implementation note: the current Game Session implementation now exposes this convergence read directly from the persisted game-instance pin record. The live service returns the observed pinned patch, observational `lastObservedControlPlaneRequestId`, and observed timestamp instead of leaving convergence identity implicit in actor/reason text; the current proto/implementation does not yet expose `observedScriptPinEpoch`, which remains required by the target exact-tuple contract below. Until that field exists, exact-tuple convergence is unavailable and a missing epoch never matches a target tuple.
 
 Inputs:
 
@@ -206,12 +206,14 @@ Contract rules:
 
 #### `SetPinnedScriptPatchVersion`
 
+Both `SetPinnedScriptPatchVersion` and `RollbackScriptPatchVersion` require an explicit tagged `expectedCurrentPin` precondition. The tag is exactly `UNCONDITIONAL`, `EXPECT_UNPINNED`, or `EXPECT_EPOCH(scriptPinEpoch)`; a missing or unknown tag, or a missing epoch value for `EXPECT_EPOCH`, fails validation. `UNCONDITIONAL` performs no current-pin comparison, `EXPECT_UNPINNED` atomically requires both current tuple fields to be absent, and `EXPECT_EPOCH(scriptPinEpoch)` requires the exact current epoch. The complete tag/value is included in the normalized request digest. A valid precondition mismatch is a deterministic, non-mutating validation/preparation failure and follows the existing unsuccessful history and idempotency rules; it does not introduce a new result family.
+
 Inputs:
 
 - `tenantId`
 - `gameInstanceId`
 - `targetScriptPatchVersion`
-- `expectedScriptPinEpoch` (optional compare-and-set precondition; the committed result always returns the resulting epoch)
+- `expectedCurrentPin` (required tagged compare-and-set precondition; the committed result always returns the resulting epoch)
 - `controlPlaneRequestId` (idempotency key)
 - `actor` (operator identity metadata, required for audit)
 - `reason` (free-form, required)
@@ -243,7 +245,7 @@ Inputs:
 - `tenantId`
 - `gameInstanceId`
 - `targetScriptPatchVersion` (previous known-good patch)
-- `expectedScriptPinEpoch` (optional compare-and-set precondition)
+- `expectedCurrentPin` (required tagged compare-and-set precondition)
 - `controlPlaneRequestId`
 - `actor`
 - `reason`
@@ -422,13 +424,13 @@ Contract rules:
 - This is a read-only operator surface for the latest pin observation currently visible to Automation-side admission and replay logic.
 - The live implementation is a durable Automation-owned projection refreshed from authoritative Game Session runtime state, not a raw pass-through query.
 - `ScriptPatchPinChanged` delivery is a refresh/invalidation hint only; after missed, duplicate, or out-of-order delivery, Automation reconciles or rebuilds its projection from authoritative Game Session reads. Event payloads never become pin-state or rollout-history authority.
-- This projection is explicitly non-authoritative and must not be used to admit work unless it is fresh enough and matches the exact Game Session `(scriptPatchVersion, scriptPinEpoch)` tuple together with its associated owner request identity. No stale/local pin override exists.
+- This projection is explicitly non-authoritative and must not be used to admit work unless it is fresh enough and matches the exact Game Session `(scriptPatchVersion, scriptPinEpoch)` tuple together with its associated owner request identity. No stale/local pin override exists; until the observed epoch field exists on the current surface, exact-tuple convergence is unavailable and a missing epoch never matches.
 - When Game Session runtime state reports multiple current admission pointers for one runtime target, Automation must treat the singular runtime-state routing bundle as unavailable and fail closed for any consumer that needs one unambiguous `{worldSlug, realmSlug, pointerVersion}` identity.
 - If refresh from Game Session fails but Automation still has a stored observation, the API must continue returning that stored observation, including its associated pair and request identity, with freshness flags set from the projection timestamp instead of failing closed for operator visibility.
 
 #### `ListScriptScheduleInstances`
 
-Implementation note: the current Automation & Scripting implementation now exposes the first durable instance-scoped timer materialization read from `script_schedule_instances`. Those rows are refreshed from the same observed Game Session pin state used by admission and rollout reads, and they project the currently pinned patch's durable schedule definitions into one `(tenantId, gameInstanceId)` scope. Materialization is now per matching event binding rather than per raw script definition only, so each row carries target-scope identity and binding priority alongside schedule definition identity. Wall-clock timers already compute `nextDueAt`; tick-aligned schedules are persisted explicitly as `PENDING_RUNTIME_PROGRESS` until heartbeat-driven `nextTick` materialization lands.
+Implementation note: the current Automation & Scripting implementation now exposes the first durable instance-scoped timer materialization read from `script_schedule_instances`. Those rows are refreshed from the same observed Game Session pin state used by admission and rollout reads, and they project the currently pinned patch's durable schedule definitions into one `(tenantId, gameInstanceId)` scope. Materialization is now per matching event binding rather than per raw script definition only, so each row carries target-scope identity and binding priority alongside schedule definition identity. Wall-clock timers currently compute `nextDueAt`, which maps to target durable `dueAt` plus projected `nextRunAt`, not to independent deadlines; tick-aligned schedules are persisted explicitly as `PENDING_RUNTIME_PROGRESS` until heartbeat-driven `nextTick` materialization lands.
 
 Inputs:
 

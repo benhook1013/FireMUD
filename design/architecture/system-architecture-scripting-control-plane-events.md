@@ -83,6 +83,7 @@ Fields:
 Operator consumption rule:
 
 - Use this event family for tenant patch readiness gates and publish validation UX (`READY`, `FAILED`, `SUPERSEDED`).
+- For this readiness family, `SUPERSEDED` applies only to a displaced, unpinned `PENDING_VALIDATION` or `ONLOAD_RUNNING` record; already-admitted work follows its captured Game Session `(scriptPatchVersion, scriptPinEpoch)` and normal persistence, handoff, and execution fences.
 
 ## `PluginVersionStatusChanged` (Game Design -> Durable Event Flow)
 
@@ -180,4 +181,4 @@ Fields:
 - `reason` (bounded enum/code)
 - `occurredAt`
 
-Consumer correlation/action rule: a consumer may correlate or act on this event only when the event's exact `(targetScriptPatchVersion, targetScriptPinEpoch)` matches the local rollback workflow's target tuple; matching only one field, or a tuple from another workflow, is insufficient. Consumer action is limited to the local timeout consequence defined by the rollback workflow and must not create a competing timeout signal or a second rollout lifecycle.
+Consumer correlation/action rule: a consumer may correlate or act on this event only when the event's `(tenantId, gameInstanceId)` matches the local rollback workflow scope, its exact `(targetScriptPatchVersion, targetScriptPinEpoch)` matches the local workflow's target tuple, and its `controlPlaneRequestId` matches that local workflow. Matching only one tuple field, the wrong event scope, or a tuple/request from another workflow is insufficient. Consumer action is limited to the local timeout consequence defined by the rollback workflow and must not create a competing timeout signal or a second rollout lifecycle.
