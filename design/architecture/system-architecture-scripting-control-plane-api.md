@@ -498,7 +498,7 @@ Implementation note: the current Automation & Scripting implementation exposes a
 Inputs:
 
 - `tenantId`
-- Bounded explicit `workItemIds[]` only (durable parent work-item identifiers); descriptor references and filters are listing/preview inputs, not mutation selectors. Bulk filter replay remains deferred until preview plus stable per-row proof.
+- Bounded, nonempty, unique `workItemIds[]` only (durable parent work-item identifiers); duplicate IDs fail deterministic request validation before request fingerprinting or claim acquisition. Descriptor references and filters are listing/preview inputs, not mutation selectors. Bulk filter replay remains deferred until preview plus stable per-row proof.
 - `controlPlaneRequestId`
 - `actor`
 - `reason`
