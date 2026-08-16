@@ -469,7 +469,7 @@ ADR_ALLOCATION_EXPECTATIONS = {
         "AR-3", "Accepted", "AS-1", "AR-1", "GR-1", "SF-2"
     ),
     "design/architecture/decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md": adr_allocation(
-        "AS-1", "Accepted", "AR-1", "GR-4", "SF-1"
+        "AS-1", "Accepted", "AR-1", "AR-3", "GR-4", "SF-1"
     ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
