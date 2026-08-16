@@ -26,6 +26,9 @@ The current evaluator accepts exactly one emitted command per work item. A resul
 
 Target-state handoff linkage uses the complete Command-Handoff Identity: complete source/target runtime scope, `automationDispatchId`, and `commandOrdinal`. The current implementation is narrower than this target: because Trigger Identity and `commandOrdinal` are not carried end to end, current live linkage and retry diagnostics use `outboxWorkItemId`, `gameSessionCommandId`, available `automationDispatchId`, and `script_event_audit`. This fallback is not complete command-level deduplication or replay evidence. The remaining gap is tracked under `AS-1.5` and its Game Session handoff dependency in the [automation and scheduler runtime tracker](../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status).
 
+- **Remote follow-up tuple binding:** For a distinct target game instance, the originating exact `(scriptPatchVersion, scriptPinEpoch)` is retained as immutable source provenance and rollback-fence evidence. Before target-side Automation admission, Game Session revalidates that source tuple, freezes the target instance's current exact tuple, and binds both to the target delivery/claim and immutable request/dedupe evidence. The target tuple populates the target event/handler Trigger Identity and target-side script admission/execution fences; the source tuple never substitutes for it. Retries reuse both frozen tuples, with source or target displacement/conflict failing closed, unavailable authority remaining retryable and non-admitted, and target `UNPINNED` producing no target script work. A same-instance cross-region follow-up uses one exact tuple for both roles.
+For semantic target `UNPINNED`, that no-script outcome is a durable/replayable delivery result with no Automation event or target script work; it is distinct from unavailable authority, which remains retryable and non-admitted.
+
 Audit and outcomes must distinguish between:
 
 - “DSL evaluated successfully” vs
@@ -39,6 +42,7 @@ To make script patch rollback meaningful:
 
 - Every script work item and tick command must carry the effective `scriptPatchVersion` used to produce it.
 - Every gameplay/runtime-derived trigger, durable work item, schedule/timer firing, emitted command, remote follow-up, staged tick effect, retry, replay, and audit record must also carry the exact `scriptPinEpoch` captured from Game Session for the instance. Tenant-readiness `onLoad` is the explicit exception because it runs before an instance pin exists. The authoritative selection is the tuple `(scriptPatchVersion, scriptPinEpoch)`, not the version string alone.
+- For a distinct-instance remote follow-up, the preceding rule defers to the dual source/target tuple binding: the source tuple remains immutable provenance/fence, while the target tuple governs target work; a same-instance cross-region follow-up retains one tuple for both roles.
 - Game Session is the sole durable authority for `(scriptPatchVersion, scriptPinEpoch)` per `(tenantId, gameInstanceId)`. It advances `scriptPinEpoch` for every selection change, including rollback or repinning to a previously used version. Automation readiness, caches, projections, and local active-version observations are non-authoritative.
 - On execution, Game Session must enforce a **version fence**:
   - If a command’s `scriptPatchVersion` does not match the game instance’s currently pinned `scriptPatchVersion`, Game Session must not execute it.

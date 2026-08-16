@@ -198,13 +198,13 @@ Each `(tenantId, pluginId, pluginVersionId)` must have one canonical design-time
 - `UPLOAD_REJECTED` – bundle ingestion failed before publication, for example due to archive safety limits, malformed manifest, or signature failure.
 - `SIGNATURE_VERIFIED` – the bundle passed canonicalization and signature verification and its signed metadata has been persisted. This is a durable operator-visible state, not merely an internal transient step; a version may remain here indefinitely until publication is requested or abandoned.
 - `VALIDATION_FAILED_DESIGN` – Game Design completed design-time validation and rejected the version due to deterministic authoring errors such as invalid bindings, disallowed components, `baseVersionId` mismatch, or `abilitySchemaDigest` mismatch.
-- `PUBLISHED` – the plugin version is accepted into immutable design-time history and is eligible for runtime activation against matching instances.
+- `PUBLISHED` – the plugin version is accepted into immutable design-time history after its signed and validated evidence is recorded, and is available as an input to a scoped runtime activation request; publication alone is not runtime eligibility.
 - `SUPERSEDED` – a later plugin version for the same `pluginId` exists; older versions remain immutable historical records and are not eligible for runtime activation.
 - `REVOKED_DESIGN` – the previously published design artifact remains historically readable, but signer revocation or a design-time trust decision has made the version ineligible for further runtime activation.
 
 Required lifecycle semantics:
 
-- Only `PUBLISHED` plugin versions are eligible inputs to runtime activation APIs such as `SetPluginActiveVersion`.
+- Only `PUBLISHED` plugin versions are eligible inputs to runtime activation APIs such as `SetPluginActiveVersion`; Automation still decides runtime eligibility through current scoped activation, readiness, component-policy, capability, publication, and exact-fence checks.
 - Transitioning a plugin version to `SUPERSEDED` removes it from the set of activatable versions. If operators need to return to equivalent plugin logic later, they must publish a new `pluginVersionId` rather than reactivating the superseded historical version.
 - `UPLOAD_REJECTED` and `VALIDATION_FAILED_DESIGN` are design-time terminal failures and must not create or mutate runtime registry rows.
 - Transition into `PUBLISHED` records the indexed manifest metadata, validation results, signer metadata, and publication timestamp in Game Design.
