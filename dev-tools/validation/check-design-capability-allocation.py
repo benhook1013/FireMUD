@@ -463,7 +463,7 @@ ADR_ALLOCATION_EXPECTATIONS = {
         "AR-3", "Accepted", "AS-1", "SF-1", "PO-1"
     ),
     "design/architecture/decisions/adr-0109-game-session-owned-script-rollout-history.md": adr_allocation(
-        "AS-1", "Accepted", "AR-3", "SF-1", "SF-2", "PO-4"
+        "GR-1", "Accepted", "AS-1", "AR-3", "SF-1", "SF-2", "PO-4"
     ),
     "design/architecture/decisions/adr-0110-explicit-opt-in-schedule-continuity-across-script-transitions.md": adr_allocation(
         "AR-3", "Accepted", "AS-1", "AR-1", "GR-1", "SF-2"

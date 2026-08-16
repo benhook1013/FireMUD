@@ -19,8 +19,8 @@ Game Session-owned exact pin and append-only rollout history with Automation-onl
 
 - Decision date: 2026-07-20
 - Decision key: `SCRIPT-16`
-- Primary capability: `AS-1.6` quotas, readiness, reload, and automation runtime operations
-- Affected capabilities: `AR-3.2`, `SF-1.1`, `SF-2.3`, `PO-4.1`
+- Primary capability: `GR-1.4` runtime recovery, replay, and reconciliation
+- Affected capabilities: `AR-3.2`, `AS-1.6`, `SF-1.1`, `SF-2.3`, `PO-4.1`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of pin authority, rollout history, projection correctness, event duplication, operator reads, and retention cost
 - Human review status: Completed

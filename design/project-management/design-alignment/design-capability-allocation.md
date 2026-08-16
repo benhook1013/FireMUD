@@ -154,7 +154,7 @@ This ledger maps canonical product and architecture sources to the stable capabi
 | `design/architecture/decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md` | `AR-3` | `AS-1`, `GR-1`, `SF-2`, `PO-1`, `AA-2` | Accepted |
 | `design/architecture/decisions/adr-0107-stage-aware-script-dead-letter-recovery.md` | `AS-1` | `PO-1`, `AR-3`, `SF-2`, `GR-1` | Accepted |
 | `design/architecture/decisions/adr-0108-no-degraded-script-admission-without-authoritative-pin.md` | `AR-3` | `AS-1`, `SF-1`, `PO-1` | Accepted |
-| `design/architecture/decisions/adr-0109-game-session-owned-script-rollout-history.md` | `AS-1` | `AR-3`, `SF-1`, `SF-2`, `PO-4` | Accepted |
+| `design/architecture/decisions/adr-0109-game-session-owned-script-rollout-history.md` | `GR-1` | `AS-1`, `AR-3`, `SF-1`, `SF-2`, `PO-4` | Accepted |
 | `design/architecture/decisions/adr-0110-explicit-opt-in-schedule-continuity-across-script-transitions.md` | `AR-3` | `AS-1`, `AR-1`, `GR-1`, `SF-2` | Accepted |
 | `design/architecture/decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md` | `AS-1` | `AR-1`, `AR-3`, `GR-4`, `SF-1` | Accepted |
 

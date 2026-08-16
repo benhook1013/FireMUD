@@ -26,7 +26,7 @@ This document owns the no-general-broker boundary, transactional-outbox and per-
 
 To keep control-plane behavior predictable, transport and ordering guarantees must be explicit:
 
-- **Partition key (instance-scoped events)**: events scoped to a running instance (for example `ScriptPatchPinChanged` and plugin lifecycle events) must use `tenantId` + `gameInstanceId` so ordering is stable for that instance. The reserved `ScriptPatchInstanceRolloutChanged` name is not published.
+- **Partition key (instance-scoped events)**: events scoped to a running instance (for example `ScriptPatchPinChanged` and instance-scoped plugin runtime lifecycle events) must use `tenantId` + `gameInstanceId` so ordering is stable for that instance. The reserved `ScriptPatchInstanceRolloutChanged` name is not published.
 - **Partition key (tenant-scoped patch lifecycle events)**: tenant patch readiness events (`ScriptPatchTenantStatusChanged`) must use `tenantId` only.
 - **Partition key (tenant-scoped design publication events)**: Game Design publication events for script patches and plugin versions must use `tenantId` only.
 - **Ordering**: consumers may assume per-partition order within each event family and scope, but must not assume global order across tenants or instances.
