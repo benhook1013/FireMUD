@@ -343,7 +343,7 @@ Outputs:
 
 Contract rules:
 
-- This is the bounded history read from the same Game Session owner that commits the current exact pin and epoch. A successful pin, rollback, or repin appends one immutable record atomically with the pin mutation; a successful first pin may record absent previous -> present resulting values. A deterministic first-pin failure records absent previous -> absent resulting values; an idempotent request retry returns the existing result without another logical history entry. Successful rows map `operationKind=SET` to `rolloutStatus=PINNED`, `ROLLBACK` to `ROLLED_BACK`, and `REPIN` to `REPINNED`.
+- This is the bounded history read from the same Game Session owner that commits the current exact pin and epoch. A successful pin, rollback, or repin appends one immutable record atomically with the pin mutation; a successful first pin records absent previous -> present resulting values. A deterministic first-pin failure records absent previous -> absent resulting values; an idempotent request retry returns the existing result without another logical history entry. Successful rows map `operationKind=SET` to `rolloutStatus=PINNED`, `ROLLBACK` to `ROLLED_BACK`, and `REPIN` to `REPINNED`.
 - A deterministic failed request history row has nullable `rolloutStatus`; its failure is represented by `outcome` and `reason` and it is never classified as `PINNED`, `ROLLED_BACK`, or `REPINNED`; the attempted `operationKind` remains retained on the immutable history row.
 - Automation's observed-pin and convergence projections are not rollout-history authority. Logging & Admin composes this read with readiness/freshness state and presents projection lag rather than selecting a competing history.
 
@@ -564,7 +564,7 @@ Outputs:
 - The read model must publish and enforce explicit freshness SLOs:
   - P95 `projectionLagMs <= 5000`
   - P99 `projectionLagMs <= 30000`
-- Responses that breach the published SLO, currently configured by `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS`, must set `isProjectionStale=true` and include a bounded stale reason code in `statusReason` (for example `projection_lag_exceeded`) so operators can distinguish stale read models from failed rollouts.
+- `isProjectionStale` is true when that row's `projectionLagMs` exceeds the per-row `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS`; P95 and P99 remain aggregate monitoring SLOs rather than response-level predicates. A stale row includes a bounded `statusReason` such as `projection_lag_exceeded` so operators can distinguish row-level staleness from a failed rollout.
 
 ### Automation & Scripting: Plugin Lifecycle Management
 
