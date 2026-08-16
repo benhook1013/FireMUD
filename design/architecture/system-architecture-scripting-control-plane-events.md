@@ -66,7 +66,7 @@ Reserved family name only; it has no adopted payload or durable-delivery profile
 
 ## `ScriptPatchTenantStatusChanged` (Automation & Scripting -> Durable Event Flow)
 
-Emitted whenever tenant-scoped readiness lifecycle changes.
+**Target contract:** emitted whenever tenant-scoped readiness lifecycle changes.
 
 Fields:
 
@@ -82,7 +82,7 @@ Fields:
 
 Operator consumption rule:
 
-- Use this event family for tenant patch readiness gates and publish validation UX (`READY`, `FAILED`, `SUPERSEDED`).
+- After this family passes the admission gate, use it for tenant patch readiness gates and publish validation UX (`READY`, `FAILED`, `SUPERSEDED`); until then, Automation's committed readiness state and read API remain authoritative.
 - For this readiness family, `SUPERSEDED` applies only to a displaced, unpinned `PENDING_VALIDATION` or `ONLOAD_RUNNING` record; already-admitted work follows its captured Game Session `(scriptPatchVersion, scriptPinEpoch)` and normal persistence, handoff, and execution fences.
 
 ## `PluginVersionStatusChanged` (Game Design -> Durable Event Flow)
