@@ -186,7 +186,7 @@ Outputs:
 
 #### `GetGameSessionPinConvergence`
 
-Implementation note: the current Game Session implementation now exposes this convergence read directly from the persisted game-instance pin record. The live service returns the observed pinned patch, observational `lastObservedControlPlaneRequestId`, and observed timestamp instead of leaving convergence identity implicit in actor/reason text; the current proto/implementation does not yet expose `observedScriptPinEpoch`, which remains required by the target exact-tuple contract below. Until that field exists, exact-tuple convergence is unavailable and a missing epoch never matches a target tuple.
+Implementation note: the current Game Session implementation now exposes this convergence read directly from the persisted game-instance pin record. The live service returns the observed pinned patch, observational `lastObservedControlPlaneRequestId`, and observed timestamp instead of leaving convergence identity implicit in actor/reason text; the current proto/implementation does not yet expose `observedScriptPinEpoch`, which remains required by the target exact-tuple contract below. Until that field exists, exact pinned-tuple convergence is unavailable and a missing epoch never matches a pinned target tuple; semantic `UNPINNED` is represented separately by both tuple fields being absent, while a partial tuple is invalid owner state, cannot satisfy `EXPECT_UNPINNED` or `EXPECT_EPOCH`, and is rejected/fails closed even for an `UNCONDITIONAL` request.
 
 Inputs:
 

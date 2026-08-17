@@ -66,7 +66,7 @@ The Game Design Service owns the **authoring** view of script patches, while the
   - That a patch is published but still **pending runtime validation**.
   - The patch's `baseVersionId` and `abilitySchemaDigest` used for runtime compatibility gates and pinning checks.
   - Whether `onLoad` initialization has succeeded or failed for each tenant.
-  - When Game Session has committed a patch pin, rollback, or repin for a specific game instance. Game Session owns the exact pin epoch and append-only rollout history; Game Design does not reconstruct that history from readiness or notification arrival order.
+  - **Target state / current gap:** When Game Session has committed a patch pin, rollback, or repin for a specific game instance, Game Session owns the exact pin epoch and append-only rollout history. Current pin persistence/convergence, exact epoch propagation, and authoritative history append/readback remain partial and unproved; see the [Game Session runtime and tick coordination tracker](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#capability-status). Game Design consumes the owner-provided read and does not reconstruct that history from readiness or notification arrival order.
   - Event-family responsibilities are explicit:
     - `ScriptPatchTenantStatusChanged` drives readiness gates and publish validation status.
     - `ScriptPatchPinChanged` may update creator-facing observed convergence visibility; direct Game Session current-pin and history reads remain authoritative, and no consumer derives rollout history locally.
