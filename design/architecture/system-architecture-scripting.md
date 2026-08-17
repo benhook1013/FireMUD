@@ -160,9 +160,9 @@ At a high level, scripting follows this pipeline:
 
 1. **Event fires** – Game Session or another service emits a standard or custom event for an entity.
 2. **Bindings & quotas** – The Automation & Scripting Service looks up bound handlers for that `<tenantId, eventType>` and applies per-script and per-tenant limits via `ScriptQuotaService`.
-3. **Sandboxed DSL execution** – Allowed handlers run in the sandboxed DSL runtime, reading world state via gRPC and producing domain commands rather than mutating state directly.
-4. **Automation queue staging** – After sandbox execution, the resulting **script work items** (domain commands plus metadata) are indexed into Redis-backed automation queues under keys such as `automation:queue:{tenantInstanceTag}:<entityId>`, along with `scriptEventId`, `scriptId`, `gameInstanceId`, and version metadata. These queues are best-effort derived coordination indexes whose loss/reset is acceptable, because admitted work items are persisted durably (outbox) and the indexes can be rebuilt; loss/reset must still be observable. Region-scoped tick keys remain the responsibility of the Game Session Service.
-5. **Durable execution & handoff** – Automation's execution loop claims persisted work items, enforces runtime quotas and output budgets, and hands the resulting **domain commands** to the Game Session Service over internal gRPC so Game Session can enqueue them into per-entity tick queues using its own Redis Lua registry and tick invariants. `automation:queue:{tenantInstanceTag}:<entityId>` remains a rebuildable pointer index, not a second source of work truth.
+3. **Durable parent work persistence and queue staging** – After binding and quota admission, Automation persists the admitted parent work item in the durable outbox with `PENDING_EVALUATION` and stages a rebuildable pre-DSL queue pointer keyed and deduplicated by `outboxWorkItemId`. Current queue semantics and the target post-DSL evaluated-descriptor/child boundary are owned by [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#current-implementation-status); the pointer is a best-effort derived coordination index whose loss/reset is acceptable because the parent work item is durable and the index can be rebuilt. Loss/reset must still be observable. Region-scoped tick keys remain the responsibility of the Game Session Service.
+4. **Sandboxed DSL execution** – Automation's durable executor picks up the persisted parent work item, runs the allowed handler in the sandboxed DSL runtime, reads world state via gRPC, and produces domain commands rather than mutating state directly. Those resulting commands proceed to durable execution and handoff below.
+5. **Post-evaluation validation & handoff** – Automation validates the evaluated output and applies the applicable output-budget checks, then hands the resulting **domain commands** to the Game Session Service over internal gRPC so Game Session can enqueue them into per-entity tick queues using its own Redis Lua registry and tick invariants. `automation:queue:{tenantInstanceTag}:<entityId>` remains a rebuildable pointer index, not a second source of work truth.
 6. **Game tick execution** – The Game Session Service selects at most one root actor action per eligible entity from the `actor_action` lane; the separately bounded `passive_effect` lane includes passive, inbound, and actor-generated effect sources without consuming that actor-action slot. Both lanes apply the canonical lock, fairness, ordering, and replay rules.
 
 ```mermaid
@@ -175,10 +175,10 @@ sequenceDiagram
 
     Player->>GameSession: Command / world event
     GameSession-->>Scripting: Script trigger (event + metadata)
-    Scripting->>Scripting: Run sandboxed DSL handler
-    Scripting->>Scripting: Persist work item (outbox)
-    Scripting->>Redis: Index work-item pointer to automation:queue:{tenantInstanceTag}:<entityId>
-    Scripting->>Scripting: Claim durable work item and evaluate emitted commands
+    Scripting->>Scripting: Persist parent work item (PENDING_EVALUATION)
+    Scripting->>Redis: Stage pre-DSL pointer to automation:queue:{tenantInstanceTag}:<entityId>
+    Scripting->>Scripting: Claim parent and run sandboxed DSL handler
+    Scripting->>Scripting: Validate evaluated domain commands
     Scripting->>GameSession: Enqueue automation commands (internal gRPC)
     GameSession->>Redis: Append into tick:{tenantRegionTag}:queue:<entityId> (Lua)
     GameSession->>Redis: Read per-entity tick queue on tick
