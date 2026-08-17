@@ -8,7 +8,7 @@ The accepted script-transition decisions applied by this contract are [ADR 0103]
 
 ## Implementation Status
 
-The current evaluator accepts exactly one emitted command per work item. A result with more than one command is rejected before persistence or handoff with `finalStage=DSL_EVAL`, `finalOutcome=sandbox_error`, and bounded `finalReason=command_count_exceeded`. Multi-command handoff using the complete Command-Handoff Identity remains target-only; `(automationDispatchId, commandOrdinal)` is only its final pair and is not a standalone identity. The contracts below remain the normative target boundary; this status does not narrow that target.
+The current evaluator supports a bounded emitted-command collection per work item, assigns each emitted command a local ordinal, and attempts handoff for each command independently. `command_count_exceeded` is reserved for an actual configured output-count limit and is recorded with `finalStage=DSL_EVAL` and `finalOutcome=sandbox_error`. The live Game Session handoff still omits `scriptPinEpoch`, `commandOrdinal`, and the complete Trigger/Command-Handoff Identity, so end-to-end per-command deduplication, fence proof, and independent progress remain unproved. The complete Command-Handoff Identity remains the target contract; `(automationDispatchId, commandOrdinal)` is only its final pair and is not a standalone identity.
 
 ## Contracts
 
