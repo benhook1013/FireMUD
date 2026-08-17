@@ -224,10 +224,10 @@ The canonical patch lifecycle and readiness states remain owned by [Scripting DS
 
 Exact-epoch admission in the following bullets is **target-state only**; the current live handoff carries the patch version but does not enforce same-version epoch rejection.
 
-- For an instance-bound gameplay/runtime trigger, the supplied `scriptPatchVersion` must be `READY` for the tenant. Runtime must then compare the supplied exact `(scriptPatchVersion, scriptPinEpoch)` to the fresh authoritative Game Session tuple for `<tenantId, gameInstanceId>`; an Automation projection is only a convergence/readiness aid.
-- If authoritative pin visibility is stale, missing, or unavailable beyond its configured freshness boundary, admission fails closed; no local or stale pin override is permitted.
-- If the supplied patch version is tenant-`READY` but either field does not match the authoritative Game Session tuple, admission is rejected at the exact execution fence.
-- If the patch version is unknown or in a non-ready state, the trigger is rejected at admission.
+- For an instance-bound gameplay/runtime trigger, Runtime compares the supplied exact `(scriptPatchVersion, scriptPinEpoch)` to Automation's bounded-fresh observation of the authoritative Game Session tuple for `<tenantId, gameInstanceId>`. When that projection is absent or stale, Automation must perform a bounded owner refresh before admission; neither path permits a patch-only or version-only fallback.
+- If the projection is absent or stale and authoritative refresh is unavailable beyond the configured freshness boundary, admission fails closed; no local, stale, or operator pin override is permitted.
+- If either supplied field differs from the bounded-fresh observed tuple, admission is rejected at the exact execution fence.
+- Tenant `READY` remains required for a new pin or pin progression. An already-pinned immutable patch that later becomes tenant-`SUPERSEDED` remains admissible only under its exact current instance tuple; an unknown patch, or a non-ready patch that is not that existing exact pin, is rejected at admission.
 
 ## Runtime Execution Flow
 

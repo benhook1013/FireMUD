@@ -149,7 +149,7 @@ Plugins are executed by the same runtime engine as scripts and must not rely on 
 ### 11) Pin-State Degraded Override Governance
 
 - Admission decisions must fail closed with `pin_state_unavailable` when bounded-staleness pin refresh cannot reach an authoritative source.
-- There is no operator stale-pin override. An observed local pin, TTL, audit record, or operator reason cannot authorize admission without a fresh authoritative Game Session tuple. Recovery restores Game Session reads/projection delivery or performs an explicit repin after authority returns; ordinary non-script gameplay may continue when healthy.
+- There is no operator stale-pin override. A stale or unbounded local pin, TTL, audit record, or operator reason cannot authorize admission without a bounded-fresh observation ultimately sourced from the authoritative Game Session tuple. Recovery restores Game Session reads/projection delivery or performs an explicit repin after authority returns; ordinary non-script gameplay may continue when healthy.
 - A future exception would require a new accepted contract for a short-lived Game Session-issued capability bound to the exact tenant, instance, version, and epoch; no generic flag or stale-cache grace path exists today.
 
 ### 12) Dead-Letter Replay Version-Fence Safety
