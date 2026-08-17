@@ -64,3 +64,8 @@ Entry format:
   - Context: script-transition consolidation exposed secondary docs calling projections authoritative or presenting target contracts as live.
   - Observation: canonical owner architecture docs define the detailed normative contracts; accepted ADRs retain binding accepted-decision constraints plus rationale and human-review provenance. Repeated technical restatement in secondary docs creates drift.
   - Expected pattern: service docs, trackers, and journeys link to the owner and retain only concise local consequences/current proof; they must not contradict or demote accepted ADR decisions, while ADR links must not be treated as co-equal self-contained contract copies or as replacing owner authority.
+
+- `2026-08-18`: A failed CodeRabbit command can leave its external check pending
+  - Context: a hosted full-review command replied `Action failed` within a minute, but the CodeRabbit status check remained pending and `check-coderabbit-review.py` continued to report the request as unfinished for more than an hour.
+  - Observation: a pending external check and an unfinished helper result do not prove that hosted review is still active when the direct command reply is already terminal.
+  - Expected pattern: when hosted review remains pending substantially longer than normal, inspect the direct CodeRabbit reply to the latest command. Treat an explicit failed reply as terminal for review-safety, preserve any prepared local fixes, and request a fresh review only after publishing the next validated head or after the applicable cooldown.
