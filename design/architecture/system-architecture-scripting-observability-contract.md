@@ -18,6 +18,9 @@ The complete per-command handoff diagnostic model is **target-state**. The live 
 
 - `scriptEventId` is for `script_event_audit`, logs, and traces.
 - `automationDispatchId` is for per-command handoff history, logs, and cross-service correlation with Game Session command admission, not for Prometheus labels.
+
+**Target-state dead-letter and recovery observability** retains Automation's `failureGeneration` beside `tenantId` and `outboxWorkItemId`. The current live proto/readback does not yet expose this field. In the target contract, the dead-letter row, per-item request result, recovery claim/attempt, successful-recovery evidence, and `already_recovered` readback bind `(tenantId, outboxWorkItemId, failureGeneration)`; this is recovery evidence only and is not part of Trigger Identity or Command-Handoff Identity. Older-generation evidence remains immutable and cannot satisfy or block a newer current-generation request.
+
 - `scriptEventId` must not be used as a Prometheus metric label (or any other high-cardinality metric dimension).
 - `automationDispatchId` must not be used as a Prometheus metric label (or any other high-cardinality metric dimension).
 - Metric schema is owned by [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix). The bounded dimensions used in the local diagnostic examples below, such as `eventType`, `outcome`, `reason`, `priorityTag`, and `scope`, must be interpreted and emitted only as Table 4 permits; raw `tenantId`, `scriptId`, `pluginId`, and `pluginVersionId` belong in audit rows, logs, traces, and control-plane queries.
@@ -149,7 +152,7 @@ When a downstream service reports a later handoff or execution result, the targe
 - `gameplayResult` – the terminal gameplay result when available, using the canonical uppercase vocabulary `SUCCESS`, `PARTIAL`, `FAILED`, `TIMEOUT`, or `NOT_APPLIED`; it remains `null`/absent while execution is unresolved.
 - `commandStatusLink` – a link or stable reference to the authoritative Game Session command-status record when `gameSessionCommandId` is assigned; it is `null`/absent before that point.
 - `outcome` – closed target enum: `accepted`, `rejected`, `execution_updated`, or `version_fence_dropped`. `accepted` and `rejected` are handoff dispositions; `execution_updated` points to the separate authoritative `executionOutcome` and `gameplayResult` fields; `version_fence_dropped` records execution-time fencing. Terminality is established only by those separate authoritative fields, not by `outcome` alone.
-- `reason` – bounded reason such as `script_patch_mismatch` or `plugin_binding_mismatch`.
+- `reason` – bounded reason such as `script_patch_mismatch` or `plugin_binding_mismatch`; use `plugin_activation_generation_mismatch` specifically when the captured plugin activation generation mismatches current authoritative generation evidence.
 - `recordedAt` – timestamp.
 - `sourceService` – producer of the disposition (for example `game-session`).
 
@@ -236,6 +239,7 @@ Illustrative record shape:
       "automationDispatchId": "dispatch-9",
       "outboxWorkItemId": "work-9",
       "playableStateScope": "isolated",
+      "handoffRequirement": "REQUIRED",
       "gameSessionCommandId": "gs-cmd-0",
       "handoffOutcome": "accepted",
       "executionOutcome": null,
@@ -263,6 +267,7 @@ Illustrative record shape:
       "automationDispatchId": "dispatch-9",
       "outboxWorkItemId": "work-9",
       "playableStateScope": "isolated",
+      "handoffRequirement": "OPTIONAL",
       "gameSessionCommandId": "gs-cmd-1",
       "handoffOutcome": "accepted",
       "executionOutcome": null,

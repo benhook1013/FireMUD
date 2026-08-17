@@ -1,16 +1,17 @@
 # Game Session Service API Contracts
 
-## Implementation Notes
+## Implementation Status
 
 This document mixes live and target-state control-plane surfaces. Current live behavior is narrower:
 
 - the shipped pause/resume control path is `PauseTicksForScope` / `ResumeTicksForScope` at the current `{tenantId, gameInstanceId}` runtime boundary;
 - the shipped owner/status read is `GetRuntimeOwnershipStatus`, not yet the fuller target-state `GetRegionTickStatus` surface described below;
 - canonical region pause/status remains incomplete for maintenance, reset, migration, and future scoped recovery. Any target region- or tenant-scoped reset must select exactly one explicit gameplay-session policy, `--preserve-sessions` or `--invalidate-sessions`; no preserve default is permitted. Cluster-scoped reset is invalidate-only, and pre-auth transport context is always invalidated or rebuilt. Routine online PostgreSQL backup does not depend on this control; player-facing restore remains blocked instead on the environment-wide cold-start quarantine, convergence, hardening, and proof gaps. See [Redis Reset & Recovery](../../system-architecture-redis-reset-and-recovery.md#coordination-reset-model) for the canonical reset policy.
+- the live script-transition proto/runtime lacks the target tagged `expectedCurrentPin` field and does not yet expose `observedScriptPinEpoch`; exact-tuple convergence is unavailable until the epoch field exists, and a missing epoch never matches. Patch/request convergence and epoch/history proof remain implementation gaps tracked in the [Game Session runtime and tick coordination tracker](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md);
 
 Read the pause/status/recovery APIs below as the target-state contract unless the [Game Session runtime and tick coordination tracker](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md) explicitly records them as live.
 
-For script transitions, the exact `scriptPinEpoch`, atomic pin/history commit, and bounded authoritative history read are target-state consequences. Target pin and rollback requests require the explicit tagged `expectedCurrentPin` precondition defined in the [Scripting Control Plane API](../../system-architecture-scripting-control-plane-api.md): exactly `UNCONDITIONAL`, `EXPECT_UNPINNED`, or `EXPECT_EPOCH(scriptPinEpoch)`, with the complete tag/value included in the normalized digest. Missing/unknown tags fail validation; a valid precondition mismatch is deterministic and non-mutating and follows the existing idempotency/history semantics. The current Game Session proto/runtime lacks this tagged field and does not yet expose `observedScriptPinEpoch`; exact-tuple convergence is unavailable until that field exists, and a missing epoch never matches. These remain implementation gaps alongside the current patch/request convergence and epoch/history proof gaps; the tracker retains those gaps.
+For script transitions, the exact `scriptPinEpoch`, atomic pin/history commit, and bounded authoritative history read are target-state consequences. Target pin and rollback requests require the explicit tagged `expectedCurrentPin` precondition defined in the [Scripting Control Plane API](../../system-architecture-scripting-control-plane-api.md): exactly `UNCONDITIONAL`, `EXPECT_UNPINNED`, or `EXPECT_EPOCH(scriptPinEpoch)`, with the complete tag/value included in the normalized digest. Missing/unknown tags fail validation; a valid precondition mismatch is deterministic and non-mutating and follows the existing idempotency/history semantics.
 
 ## Service Interactions
 

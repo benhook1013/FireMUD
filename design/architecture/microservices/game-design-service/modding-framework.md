@@ -221,7 +221,10 @@ Required write path:
   - It runs design-time validation over graphs, bindings, component policy, `baseVersionId`, and `abilitySchemaDigest`.
   - Validation failures move the version to `VALIDATION_FAILED_DESIGN`.
   - Success moves the version to `PUBLISHED` and emits `PluginVersionStatusChanged`.
-- Re-invoking either call with the same `(tenantId, pluginId, pluginVersionId)` must be idempotent: once a version is immutable, callers may observe the existing status but must not overwrite signed content in place.
+- `AppendPluginVersionSignatureEvidence` is the target append-only mutation for a signature-only approval on an existing `(tenantId, pluginId, pluginVersionId)`, as defined by the [Game Design Service API contract](api-contracts.md#appendpluginversionsignatureevidence-target-only). It appends to a separate Game Design-owned evidence ledger while leaving the immutable payload, stored bundle, `pluginVersionId`, `bundleDigest`, publication content, and status unchanged. It is allowed only for `SIGNATURE_VERIFIED` and `PUBLISHED`; a published append does not republish the version and emits one durable `PluginVersionSignatureEvidenceAppended` event. Target reads compose the canonical ordered complete signature set from immutable base evidence plus this ledger; the current proto/storage expose only one selected `signerKeyId` and no append RPC or ledger.
+  - An exact request retry returns the stored result without another append or event. A request carrying identical existing signer evidence is an idempotent no-op. Reusing a request identity with a changed normalized digest conflicts.
+  - An invalid signature, a same-signer entry with conflicting signature bytes or metadata, a digest mismatch, malformed or over-limit evidence, a resulting set with no allowlisted signer, or any revoked signer fails deterministically without mutation.
+- Each target plugin write operation that supports retries must use its documented stable request identity and normalized digest. No operation may overwrite signed payload content or immutable publication content in place; callers may observe existing status and evidence while retries converge on the stored result.
 
 ### Plugin Activation Failure Matrix
 
