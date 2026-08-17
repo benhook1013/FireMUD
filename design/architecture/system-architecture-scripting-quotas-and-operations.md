@@ -314,6 +314,7 @@ Plugin executions use the Table 4 bounded plugin classifications rather than raw
 Script execution spans several services (Game Design, Game Session, Automation & Scripting, Game Logic, Logging & Admin). To support end-to-end debugging and replay, the system relies on a shared set of identifiers:
 
 - `tenantId`, `gameInstanceId`, and `regionId` – identify the running game instance and region.
+- `playableStateScope` (gameplay/runtime only) – identifies the resolved admitted gameplay-state namespace; shared and isolated realm state must not collide. Retain it in applicable audit/log/trace correlation, not as a metric label. See the [normative Trigger Identity table](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields); tenant-readiness `onLoad` intentionally omits it.
 - `regionEpoch` – fences triggers and tick effects across scoped coordination resets.
 - `entityId` – identifies the target entity for script-driven work.
 - `scriptId`, `scriptPatchVersion`, and `scriptPinEpoch` – identify the exact script definition and Game Session selection epoch.
@@ -329,7 +330,7 @@ These identifiers are intended to appear in the following observability surfaces
 
 A typical troubleshooting flow for a problematic script or plugin is:
 
-1. Start from a player-visible issue or a game tick log that includes `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `entityId`, and `tickId`.
+1. Start from a player-visible issue or a game tick log that includes `tenantId`, `gameInstanceId`, `playableStateScope` when gameplay/runtime-scoped, `regionId`, `regionEpoch`, `entityId`, and `tickId`.
 2. Use the tick log’s `scriptEventId` (or a derived `correlationId`) to locate matching entries in `script_event_audit` and in logs/traces. Do not rely on `scriptEventId` as a metric label; use metrics to understand aggregate rates by bounded `scope` / `script_category` / `eventType` dimensions and use audit/log queries for per-event correlation.
 3. From those records, identify the responsible `scriptId`, `scriptPatchVersion`, and, where applicable, `pluginId`/`pluginVersionId`/`bindingId`.
 4. Cross-reference the associated publish or plugin enable/disable actions in Game Design and Logging & Admin using the same identifiers.
