@@ -14,7 +14,11 @@ Authoritative read surfaces worth wiring into creator/operator tooling:
 - plugin version publication status, signer-policy convergence, and status-change events defined in [modding-framework.md](./modding-framework.md)
 - template resolution and launch-default semantics defined in [game-templates.md](./game-templates.md)
 
-### Responsibilities
+## Implementation Status
+
+Current capability and proof gaps remain: Game Session's exact pin/epoch persistence and convergence, plus its append-only rollout-history append/readback, are partial and unproved; Game Design plugin publication currently uses the signed-only intake path and exposes one allowlisted `signerKeyId` rather than the target complete `verifiedSignatures[]` set. The ADR 0111 operator-permitted unsigned provenance path remains unimplemented. See the [Game Session runtime and tick coordination tracker](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#capability-status), [modding-framework.md](./modding-framework.md), and [ADR 0111](../../decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md).
+
+## Responsibilities
 
 - Provide REST/gRPC tools and a web UI for editing game assets.
 - Manage version metadata and publish immutable game configurations
@@ -66,7 +70,7 @@ The Game Design Service owns the **authoring** view of script patches, while the
   - That a patch is published but still **pending runtime validation**.
   - The patch's `baseVersionId` and `abilitySchemaDigest` used for runtime compatibility gates and pinning checks.
   - Whether `onLoad` initialization has succeeded or failed for each tenant.
-  - **Target state / current gap:** When Game Session has committed a patch pin, rollback, or repin for a specific game instance, Game Session owns the exact pin epoch and append-only rollout history. Current pin persistence/convergence, exact epoch propagation, and authoritative history append/readback remain partial and unproved; see the [Game Session runtime and tick coordination tracker](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#capability-status). Game Design consumes the owner-provided read and does not reconstruct that history from readiness or notification arrival order.
+  - **Target state:** When Game Session has committed a patch pin, rollback, or repin for a specific game instance, Game Session owns the exact pin epoch and append-only rollout history. Game Design consumes the owner-provided read and does not reconstruct that history from readiness or notification arrival order.
   - Event-family responsibilities are explicit:
     - `ScriptPatchTenantStatusChanged` drives readiness gates and publish validation status.
     - `ScriptPatchPinChanged` may update creator-facing observed convergence visibility; direct Game Session current-pin and history reads remain authoritative, and no consumer derives rollout history locally.
@@ -83,7 +87,7 @@ Compatibility contract requirement:
 
 - `PublishScriptPatchVersion` and plugin enable/publish paths must validate compatibility against the immutable `abilitySchemaDigest` bound to `baseVersionId`, not against mutable live lookups.
 - The validated digest must be propagated to runtime-facing metadata/audit surfaces so operators can prove which schema snapshot a patch/plugin was validated against.
-- Current plugin publication must persist a canonical signed manifest contract that includes at least `pluginId`, `pluginVersionId`, exact `baseVersionId`, exact `abilitySchemaDigest`, declared entrypoints, and declared bindings. Runtime services must consume those immutable fields as the activation source of truth; the ADR 0111 target unsigned-provenance variant still requires the exact manifest, digest, validation, approval, and platform-attestation evidence when author-signature evidence is absent.
+- **Target state:** Plugin publication persists a canonical manifest contract that includes at least `pluginId`, `pluginVersionId`, exact `baseVersionId`, exact `abilitySchemaDigest`, declared entrypoints, and declared bindings. Runtime services consume those immutable fields as the activation source of truth; provenance-specific publication requirements remain owned by [modding-framework.md](./modding-framework.md).
 - Plugin versions use a separate Game Design lifecycle from runtime activation. Publication status answers whether a bundle is accepted into immutable authoring history; instance activation status answers whether a published plugin version is active for a given running game instance.
 
 ### Script-transition ownership consequence
@@ -96,7 +100,7 @@ The initial supported authoring package for first-party game content is the Game
 
 Implementations must not introduce ad hoc import/export, Git checkout, or local package semantics for first-party content. Any future external authoring package must be specified as a separate contract before it is exposed, including stable ID preservation, cross-service reference validation, asset inclusion, plugin inclusion, conflict handling, and mapping back into Game Design revisions and commits. Until that contract exists, "version control integration" means Game Design's database-backed branches, commits, provenance, and optional synchronization hooks described in [Version Control for Design Assets](version-control.md), not a second source of truth.
 
-Plugin bundles are the only supported file-based content package in the initial slice. The current implementation and initial hosted policy require allowlisted Ed25519-signed immutable artifacts governed by [modding-framework.md](./modding-framework.md), and they do not replace or extend the first-party revision package format. [ADR 0111](../../decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md) records target provenance behavior that may permit operator-approved unsigned packages only after exact digest, complete validation, explicit scoped approval, and platform acceptance attestation; hosted policy may prohibit unsigned intake, and this target path is not implemented.
+Plugin bundles are the only supported file-based content package in the initial slice. They do not replace or extend the first-party revision package format; provenance and publication requirements are owned by [modding-framework.md](./modding-framework.md).
 
 ## Key Features
 
@@ -128,7 +132,7 @@ Plugin bundles are the only supported file-based content package in the initial 
 - [`runtime_flag` table](feature-flags.md) manages feature flag definitions and
   corresponding APIs expose these records.
 - `game_assets` table stores asset metadata for uploaded binary files such as icons or sound effects; canonical bytes live in object storage referenced by this metadata.
-- Plugin bundle metadata must be persisted as indexed design-time records keyed by `(tenantId, pluginId, pluginVersionId)` and include manifest fields, complete verified signature-set metadata as defined by [Signing and Key Lifecycle](modding-framework.md#signing-and-key-lifecycle-required), publication status, validation outcomes, `bundleDigest`, and plugin asset distribution manifest fields when `assetRefs[]` are present. The current signed-only intake still selects, persists, and exposes one allowlisted `signerKeyId`; complete target `verifiedSignatures[]` persistence and exposure are not live. Signer fields may be absent only for the accepted ADR 0111 target unsigned-provenance path, which remains unimplemented and requires explicit scoped approval, platform acceptance attestation, and hosted-policy permission. The bundle bytes remain in object storage, but plugin activation metadata must be queryable without unpacking archives on routine reads.
+- **Target state:** Plugin bundle metadata must be persisted as indexed design-time records keyed by `(tenantId, pluginId, pluginVersionId)` and include manifest fields, complete verified signature-set metadata as defined by [Signing and Key Lifecycle](modding-framework.md#signing-and-key-lifecycle-required), publication status, validation outcomes, `bundleDigest`, and plugin asset distribution manifest fields when `assetRefs[]` are present. The bundle bytes remain in object storage, but plugin activation metadata must be queryable without unpacking archives on routine reads.
 
 Design-time tables (such as `revision`, `version`, `game_templates`,
 `runtime_flag`, asset metadata tables, and release-attestation tables) are the

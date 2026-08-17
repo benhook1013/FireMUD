@@ -93,7 +93,7 @@ Quota and queue-related caches are best-effort TTL-only caches unless this servi
 
 To avoid “DSL evaluated successfully but effects were silently dropped”, the service must durably persist and queue each admitted handler's `PENDING_EVALUATION` work item before DSL evaluation or execution acceptance:
 
-- Admitted triggers seal the handler input manifest and produce `PENDING_EVALUATION` script work items written to a PostgreSQL-backed outbox table keyed by Trigger Identity plus sequencing fields as needed.
+- **Target state:** Admitted triggers seal the handler input manifest and produce `PENDING_EVALUATION` script work items written to a PostgreSQL-backed outbox table keyed by Trigger Identity plus sequencing fields as needed.
 - Materialized `script_schedule_instances`, timer-generated work items, handoff events, and dead-letter rows preserve the same gameplay `playableStateScope` so scheduler-driven follow-up work stays in the same shared-versus-isolated state namespace as the original admitted event.
 - `automation:queue:*` keys are derived coordination indexes that accelerate draining and batching, not the authoritative record of pending work.
 - On restart, failover, or Cache/Rate-Limit Redis resets, the service can rebuild `automation:queue:*` indexes by scanning the outbox for pending items and re-projecting them.

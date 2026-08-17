@@ -19,9 +19,19 @@ For details on how scripts are authored, how standard and custom events are mode
 
 An OpenAPI specification for the REST endpoints is available at `src/main/resources/openapi.yaml` in the service repository.
 
+## Script-transition boundary
+
+Automation & Scripting owns tenant readiness, immutable compiled artifacts, and an instance-scoped observed pin projection for local admission and diagnostics. **Target state:** during a temporary Game Session owner-read outage, a bounded-fresh observed projection may satisfy instance-scoped admission with exact `(scriptPatchVersion, scriptPinEpoch)` evidence. If the projection is absent or stale, a bounded owner refresh must succeed or admission fails closed. The service never uses stale state to admit work, commits a pin, or creates rollout history. Tenant-readiness `onLoad` remains pre-instance-pin work identified by the candidate `scriptPatchVersion` and readiness identity; it carries no `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, `scriptPinEpoch`, or `entityId`, and creates no gameplay work. Local consequences follow the [scripting contracts](../../system-architecture-scripting-contracts.md), [control-plane API](../../system-architecture-scripting-control-plane-api.md), and [rollout and rollback](../../system-architecture-scripting-rollout-and-rollback.md) owners, with lifecycle boundaries recorded in [ADR 0103](../../decisions/adr-0103-single-authority-script-pins-with-exact-version-execution.md), [ADR 0106](../../decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md), [ADR 0107](../../decisions/adr-0107-stage-aware-script-dead-letter-recovery.md), [ADR 0108](../../decisions/adr-0108-no-degraded-script-admission-without-authoritative-pin.md), [ADR 0109](../../decisions/adr-0109-game-session-owned-script-rollout-history.md), [ADR 0110](../../decisions/adr-0110-explicit-opt-in-schedule-continuity-across-script-transitions.md), and [ADR 0111](../../decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md).
+
+**Target state:** the local admission consequence is exact-artifact loading against the observed owner tuple; missing, stale, or mismatched evidence fails closed without a local fallback. Scoped Automation admission and cleanup participate through the owner APIs while ordinary gameplay remains outside this service-local admission barrier.
+
+Automation's **target-state only** contract exposes stage-aware dead-letter recovery, schedule/timer, and plugin lifecycle consequences through its local APIs; the authority, recovery, continuity, and embedded-versus-plugin lifecycle rules remain in the canonical owners linked above.
+
 ## Implementation Status
 
 The current `ReplayDeadLetteredWorkItems` implementation still requeues eligible parent rows as `PENDING_EVALUATION` and returns aggregate counts; it does not prove stage-specific frozen-input retry or stored-output continuation.
+
+The current Automation pin projection and wire contract remain patch-only, so exact-epoch admission, exact `scriptPinEpoch` propagation/lookup, same-version epoch-only `REPIN`, and proof at this boundary remain target-only/incomplete.
 
 ## Key Features
 
@@ -34,14 +44,6 @@ The current `ReplayDeadLetteredWorkItems` implementation still requeues eligible
 - Advanced AI modules support formations, squads, and complex behaviors.
 - Procedural population hooks populate rooms with NPCs and loot based on biome and depth by emitting idempotent, tick-driven commands; scripts do not persist world topology and do not directly mutate World Management instance rows.
 - `ScriptQuotaService` enforces fairness quotas and per-script resource limits.
-
-### Script-transition boundary
-
-Automation & Scripting owns tenant readiness, immutable compiled artifacts, and an instance-scoped observed pin projection for local admission and diagnostics. **Target state:** during a temporary Game Session owner-read outage, a bounded-fresh observed projection may satisfy instance-scoped admission with exact `(scriptPatchVersion, scriptPinEpoch)` evidence; **current:** the projection and wire contract remain patch-only, so exact-epoch admission, exact `scriptPinEpoch` propagation/lookup, same-version epoch-only `REPIN`, and proof at this boundary remain target-only/incomplete. If the projection is absent or stale, a bounded owner refresh must succeed or admission fails closed. The service never uses stale state to admit work, commits a pin, or creates rollout history. Tenant-readiness `onLoad` remains pre-instance-pin work identified by the candidate `scriptPatchVersion` and readiness identity; it carries no `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, `scriptPinEpoch`, or `entityId`, and creates no gameplay work. Local consequences follow the [scripting contracts](../../system-architecture-scripting-contracts.md), [control-plane API](../../system-architecture-scripting-control-plane-api.md), and [rollout and rollback](../../system-architecture-scripting-rollout-and-rollback.md) owners, with lifecycle boundaries recorded in [ADR 0103](../../decisions/adr-0103-single-authority-script-pins-with-exact-version-execution.md), [ADR 0106](../../decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md), [ADR 0107](../../decisions/adr-0107-stage-aware-script-dead-letter-recovery.md), [ADR 0108](../../decisions/adr-0108-no-degraded-script-admission-without-authoritative-pin.md), [ADR 0109](../../decisions/adr-0109-game-session-owned-script-rollout-history.md), [ADR 0110](../../decisions/adr-0110-explicit-opt-in-schedule-continuity-across-script-transitions.md), and [ADR 0111](../../decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md).
-
-**Target state:** the local admission consequence is exact-artifact loading against the observed owner tuple; missing, stale, or mismatched evidence fails closed without a local fallback. Scoped Automation admission and cleanup participate through the owner APIs while ordinary gameplay remains outside this service-local admission barrier.
-
-Automation's **target-state only** contract exposes stage-aware dead-letter recovery, schedule/timer, and plugin lifecycle consequences through its local APIs; the authority, recovery, continuity, and embedded-versus-plugin lifecycle rules remain in the canonical owners linked above.
 
 ## Document Map
 
