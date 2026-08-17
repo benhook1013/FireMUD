@@ -130,7 +130,8 @@ Outputs:
 - `baseVersionId`
 - `abilitySchemaDigest`
 - `bundleDigest`
-- `signerKeyId`
+- Target: `verifiedSignatures[]`, the complete canonically ordered verified signature set bound to `bundleDigest`; each entry carries `signerKeyId`, `ed25519Signature`, and optional `signatureCreatedAt`. The signature-set contract is owned by [In-Game Modding and Plugin Framework](microservices/game-design-service/modding-framework.md#signing-and-key-lifecycle-required).
+- Current live response: singular `signerKeyId` selected by the current allowlisted-signer intake; it is not proof of full-set target convergence.
 - `distributionManifestHash` (nullable; required when the signed plugin manifest declares runtime-consumable `assetRefs[]`)
 - `distributionManifestPath` (nullable; required when the signed plugin manifest declares runtime-consumable `assetRefs[]`)
 - `publishedAt` (nullable; required when `designStatus=PUBLISHED`)

@@ -76,7 +76,7 @@ Contract rules:
 - Signature-only approval changes do not require a new `pluginVersionId` when the signed payload bytes are identical. The same immutable plugin version may therefore carry multiple accepted signatures or environment approvals over time, but any manifest/graph/binding/asset-byte change still requires a new `pluginVersionId`.
 - `baseVersionId` compatibility is exact, not fuzzy. A plugin version targets one published game version only.
 - `abilitySchemaDigest` must match the immutable digest attested for that `baseVersionId`; it is recorded in Game Design metadata and re-checked at activation time.
-- Game Design must persist indexed metadata from the signed manifest (`pluginId`, `pluginVersionId`, `baseVersionId`, `abilitySchemaDigest`, signer identity, validation status) so UIs and control-plane APIs do not need to unpack bundles for routine reads.
+- Game Design must persist indexed metadata from the signed manifest (`pluginId`, `pluginVersionId`, `baseVersionId`, `abilitySchemaDigest`, the complete canonically ordered verified signature set, validation status) so UIs and control-plane APIs do not need to unpack bundles for routine reads.
 - When `assetRefs[]` is non-empty, Game Design must also persist `distributionManifestHash` and `distributionManifestPath` for the plugin-version distribution manifest it writes during `PublishPluginVersion`.
 - Automation & Scripting must treat the signed manifest as the source of truth for runtime activation metadata. It may cache extracted fields, but it must not trust mutable side-channel metadata over the signed manifest.
 - If `assetRefs[]` are runtime-consumable, runtime discovery must flow through the signed manifest metadata that Game Design publishes and, where instance/runtime consumers need object-store access, through the attested release/distribution metadata derived from that manifest rather than undocumented bucket key conventions.
@@ -91,7 +91,7 @@ The distribution manifest must include:
 
 - `tenantId`, `pluginId`, `pluginVersionId`, `baseVersionId`, and `abilitySchemaDigest`.
 - `manifestHash` and `manifestSchemaVersion`.
-- `bundleDigest` and `signerKeyId` from the verified signature envelope.
+- `bundleDigest` and the complete canonically ordered verified signature set bound to that digest.
 - `assets[]` entries keyed by signed `assetId`, with canonical object-store URL or opaque storage key, content hash, media type, byte size, and optional localization or usage metadata.
 
 `PublishPluginVersion` must fail before `PUBLISHED` if any signed `assetRefs[]` entry is missing from the bundle, cannot be exported, has a digest mismatch, or cannot be represented in the distribution manifest. Exact-byte repair rules mirror version asset repair: a published plugin distribution manifest is immutable, and repair may only reproduce bytes that match the persisted manifest hash.
@@ -100,7 +100,7 @@ The distribution manifest must include:
 
 Plugin bundle signing must be specified precisely enough that operators can rotate keys and revoke signers without ambiguity.
 
-The requirements in this section describe the current signed-only implementation and initial hosted policy; the ADR 0111 unsigned provenance variant is target-only and does not relax the live verification and activation checks.
+The live signed-only intake currently selects, persists, and exposes one allowlisted `signerKeyId`; it does not yet persist or expose the complete target `verifiedSignatures[]` set. The complete-set requirements below define target convergence; the ADR 0111 unsigned provenance variant is also target-only and neither path relaxes the live verification and activation checks.
 
 Minimum requirements:
 
@@ -118,17 +118,17 @@ Minimum requirements:
   - Limits and failures must be audit-visible with deterministic bounded reason codes (for example `bundle_too_large`, `bundle_compression_ratio_exceeded`, `bundle_file_count_exceeded`, `bundle_parse_timeout`).
 - **Key identity**: every signature is tied to a `signerKeyId` (stable identifier for the public key used to verify the signature).
 - **Signature envelope (required)**:
-  - Bundles must contain a machine-readable signature manifest (for example `signatures.json`) that includes `bundleDigest`, `signerKeyId`, the `ed25519Signature` bytes, and an optional `signatureCreatedAt`.
-  - Multiple signatures may be present; verification succeeds if at least one signature is by an allowlisted `signerKeyId` and none are by explicitly revoked keys.
+  - Bundles must contain a machine-readable signature manifest (for example `signatures.json`) whose entries include `bundleDigest`, `signerKeyId`, the `ed25519Signature` bytes, and an optional `signatureCreatedAt`.
+  - Multiple signatures may be present; Game Design persists the complete canonically ordered verified signature set bound to the bundle digest and must not select or persist one preferred signer. The set permits at most one entry per `signerKeyId`; duplicate entries are rejected. Verified entries are ordered ascending by the canonical UTF-8 byte representation of each validated opaque `signerKeyId`, with no locale collation, case normalization, or alternate normalization. Verification succeeds only when at least one signature is by an allowlisted signer and no signature is by an explicitly revoked signer.
 - **Verification points**:
-  - Game Design verifies the signature at upload time and records `bundleDigest`, `signerKeyId`, and `signatureVerifiedAt`.
-  - Automation & Scripting re-verifies signatures at load/activation time (defense in depth) and rejects activation if verification fails or the signer is not allowed for the environment.
+  - Game Design verifies the complete signature set at upload time and records it with `bundleDigest` and `signatureVerifiedAt`.
+  - Automation & Scripting re-verifies the complete signature set and revalidates current signer, component, and capability policy at load/activation time and on resume/recovery (defense in depth), rejecting activation or resumption if verification fails or current policy does not allow the bundle.
 - **Rotation**:
   - Operators can introduce new signer keys without downtime by adding a new `signerKeyId` to the allowlist for the environment.
-  - Old keys may remain valid for existing bundles during a transition window, but new uploads should prefer the newest active key.
+  - Old keys may remain valid for existing bundles during a transition window; key rotation must not reduce a bundle's persisted evidence to one preferred signer.
 - **Revocation**:
   - Operators can revoke a signer by removing its `signerKeyId` from the allowlist and adding it to a revocation list.
-  - When a signer is revoked, subsequent loads/activations of bundles signed by that key must fail, and already-enabled plugins must transition to `pluginState=DISABLED` with mandatory `statusReason=signer_revoked`; triggers are rejected and the reason is recorded in `script_event_audit`.
+  - When a signer is revoked, subsequent loads/activations of any bundle whose complete signature set contains that key must fail, and already-enabled plugins must transition to `pluginState=DISABLED` with mandatory `statusReason=signer_revoked`; triggers are rejected and the reason is recorded in `script_event_audit`.
 - **Propagation (required)**:
   - The allowlist and revocation list must be distributed to runtime services as a signed configuration artifact with a bounded refresh interval.
 - Automation & Scripting must refresh signer policy on a bounded cadence (for example every 60 seconds) and must disable affected plugins within a fixed operator SLO (for example “revocation disables affected plugins within 5 minutes”). The current Automation runtime includes a scheduled plugin-policy reconciliation sweep over enabled plugin runtime states; it disables active plugins when Game Design publication metadata reports signer revocation, blocked/missing component policy, unavailable policy metadata, or a no-longer-published plugin version.
@@ -137,7 +137,7 @@ Minimum requirements:
   - If signer policy cannot be refreshed/verified for a scope beyond max-age, plugin admission must fail closed with `finalOutcome=signer_policy_unavailable` until policy converges.
   - Any override that permits plugin admission while signer policy is unavailable must be explicit, time-bounded, scoped, and operator-audited, and must auto-expire back to fail-closed mode.
 
-Logging & Admin must surface signer identity and verification status (including `bundleDigest` and `signerKeyId`) so operators can explain why a plugin version was accepted or rejected.
+Logging & Admin must surface the complete canonically ordered verified signature set and verification status (including `bundleDigest` and each `signerKeyId`) so operators can explain why a plugin version was accepted or rejected.
 Logging & Admin must also surface signer-policy propagation status and revocation application events (for example `SignerPolicyVersionObserved` and `SignerRevocationApplied`) so operators can prove enforcement timing across services.
 
 ## Outline
