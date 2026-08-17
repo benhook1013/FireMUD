@@ -115,7 +115,7 @@ Operator consumption rule:
 
 ## `PluginVersionRuntimeStateChanged` (Automation & Scripting -> Durable Event Flow)
 
-Emitted when operator actions or scheduled policy reconciliation materially change plugin active versions or runtime state. This family remains subject to the existing family admission gate and `CP-01` profile; this producer rule does not authorize publication beyond that gate.
+This is the stable committed activation-history event for material instance-scoped plugin transitions represented by `ENABLED`, `DISABLED`, or `DRAINING`, caused by operator actions or scheduled policy reconciliation. Status-only `RELOADING` or `FAILED` observations are outside this event family; if they require durable history, they need separately owned event and history semantics. This family remains subject to the existing family admission gate and `CP-01` profile; this producer rule does not authorize publication beyond that gate.
 
 Fields:
 
@@ -133,7 +133,7 @@ Fields:
 
 Operator consumption rule:
 
-- Use this event family for runtime activation state only, including material changes from operator actions and scheduled policy reconciliation.
+- Use this event family for committed runtime activation history only, including material changes from operator actions and scheduled policy reconciliation.
 - A committed transition advances `pluginActivationGeneration` exactly once if and only if it invalidates current plugin work, including a materially changed activation or binding when that change invalidates admitted work, and emits that resulting value. An event for a material change that does not invalidate admitted work carries the unchanged current generation. Failed operations, exact idempotent retries, and no-op requests emit no event and do not advance the generation.
 - `controlPlaneRequestId`, `actor`, and `reason` are omitted for scheduled policy reconciliation; `statusReason` records the policy/security cause.
 - Tooling that needs the full picture must join `PluginVersionStatusChanged` with instance-scoped runtime events/read APIs rather than overloading runtime events to explain design-time publication history.

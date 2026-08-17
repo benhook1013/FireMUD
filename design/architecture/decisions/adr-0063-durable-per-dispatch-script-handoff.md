@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-`AS-1.5` remains partial. Current Automation persists and retries a single parent work item and records the current Game Session handoff evidence, but it rejects multi-command output. Durable child dispatch rows, per-child partial-handoff retry/convergence, and retention gated by downstream replay and diagnostic horizons are target-state and are not proven end to end. See the [automation and scheduler runtime tracker](../../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status).
+`AS-1.5` remains partial. Current Automation persists one parent work item and records the current Game Session handoff evidence; bounded local multi-command and multi-target fan-out is live, but complete durable child/target identity and end-to-end handoff/dedup proof remain incomplete, so current fan-out is not target-conformant. Durable child dispatch rows, per-child partial-handoff retry/convergence, and retention gated by downstream replay and diagnostic horizons remain target-state and are not proven end to end. See the [automation and scheduler runtime tracker](../../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status).
 
 ## Canonical Design
 

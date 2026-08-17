@@ -10,7 +10,7 @@ This document collects the service readiness model, quota and fairness behavior,
 
 ## Implementation Status
 
-The current service implementation still combines pre-DSL trigger state and later handoff processing in its work-item row, lacks evaluation lease/fencing-generation recovery, and does not carry stable per-command identity and dedupe through the live producer/consumer boundary. Multi-command work items are therefore not a conformant admitted capability until that boundary is widened. The target durable boundary, state mapping, and recovery behavior are owned by [Scripting Runtime Execution](../../system-architecture-scripting-runtime-execution.md#pre-dsl-trigger-and-evaluated-descriptor-boundary).
+The current service implementation still combines pre-DSL trigger state and later handoff processing in its work-item row, lacks evaluation lease/fencing-generation recovery, and does not carry stable per-command identity and dedupe through the live producer/consumer boundary. Bounded local multi-command and multi-target fan-out is live, but complete durable child/target identity and end-to-end handoff/dedup proof remain incomplete, so current fan-out is not target-conformant. The target durable boundary, state mapping, and recovery behavior are owned by [Scripting Runtime Execution](../../system-architecture-scripting-runtime-execution.md#pre-dsl-trigger-and-evaluated-descriptor-boundary).
 
 ## Readiness and Liveness
 
