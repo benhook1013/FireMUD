@@ -273,9 +273,11 @@ Tooling in the Game Design and Logging & Admin services should surface these rel
 - World Management and Game Session may cache launch-descriptor values only as execution inputs for the current `controlPlaneRequestId`; they must not persist or reuse a descriptor as a rolling "latest launch defaults" record for later requests.
 - `GetPublishedReleaseBundle(tenantId, versionId)` is the canonical release-attestation surface for launch, cutover, and repair. In the initial slice it must expose:
   - `participantDigests[]`
+  - `abilitySchemaDigest` from the immutable Game Logic-owned ability-schema snapshot for this release; no aggregate participant `contentDigest` substitutes for it
   - `artifactDigests[] { usageKey, immutableObjectKey, contentDigest, ... }` for every exported binary or derived artifact
   - `manifestHash`
   - `requiredManifestAssetKeys[]` for stable manifest usage keys that are mandatory for launch/cutover validation of that release
+- The current release-bundle schema omits the dedicated `abilitySchemaDigest`, and plugin compatibility paths incorrectly reuse the Automation & Scripting participant digest. Those current paths are implementation drift and do not prove ability-schema compatibility.
 - `artifactDigests[]` is authoritative for mandatory actual-byte object digests. `requiredManifestAssetKeys[]` is complementary: every required usage key must select exactly one bundle artifact digest and exactly one manifest entry whose `usageKey`, `immutableObjectKey`, and `contentDigest` are byte-for-byte equal.
 - `manifestHash` attests the canonical manifest bytes containing those usage-key/object-key/digest bindings; it does not replace per-object byte verification.
 - The contract intentionally does not introduce a separate top-level artifact-path reference field outside this attested bundle shape. Runtime consumers still discover artifact locations through the attested `manifest.json`, not through ad hoc object-store path reconstruction.
