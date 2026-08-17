@@ -69,7 +69,7 @@ Compact publication-to-runtime sequence:
 
 - **Automation & Scripting Service (runtime + patch lifecycle)**
   - Evaluates triggers, persists script work items durably, and hands off to Game Session.
-  - Tracks per-tenant patch lifecycle state (`READY`, `FAILED`, `SUPERSEDED`) and requires `READY` for a new pin or progression; an already-current exact pinned immutable patch may remain runnable under its tuple after becoming `SUPERSEDED`.
+  - Tracks per-tenant patch lifecycle state (`READY`, `FAILED`, `SUPERSEDED`) and requires `READY` for a new pin or progression. A newer publish supersedes only an unpinned candidate in `PENDING_VALIDATION` or `ONLOAD_RUNNING`. An already-pinned `READY` patch is not relabeled `SUPERSEDED` merely because a newer publish arrives; it remains admissible only under its exact current Game Session tuple until an explicit Game Session repin or rollback.
   - Emits tenant patch readiness lifecycle events (`ScriptPatchTenantStatusChanged`) when readiness state changes.
   - Consumes Game Session pin events to project non-authoritative observed pin/convergence projections; it never owns or derives rollout history.
 
