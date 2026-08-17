@@ -329,7 +329,7 @@ Dead-letter recovery is stage-aware. The bounded explicit `workItemIds[]` select
 Inputs:
 
 - `tenantId`
-- Selector: bounded explicit `workItemIds[]` only; filters and descriptor references are listing/preview inputs, not mutation selectors
+- Selector: bounded, non-empty, unique, nonblank explicit `workItemIds[]` only; an empty list, blank ID, or duplicate ID fails deterministic validation before canonical request fingerprinting or claim acquisition. Filters and descriptor references are listing/preview inputs, not mutation selectors
 - `controlPlaneRequestId`
 - `actor`
 - `reason`
