@@ -169,7 +169,7 @@ Ownership and usage rules:
 - Retries for the same launch attempt, keyed by the same `controlPlaneRequestId` and the same input fields, must reuse the same descriptor values and must not re-resolve to a newer attestation, patch, or runtime default.
 - A fresh launch attempt with a new `controlPlaneRequestId` may resolve to newer valid state if the underlying published metadata has advanced.
 - World creation, Game Session admission, and script-patch pinning consume this descriptor as input; they must not fetch "latest READY patch" or re-parse template JSON mid-flight.
-- If descriptor resolution fails because a dependency is missing, not `READY`, not attested, or not enforceable under `GetTemplateReferencePhase`, the launch fails before any instance rows are created.
+- If descriptor resolution fails because a dependency is missing, the selected script patch is not tenant-`READY`, required immutable publication/compatibility evidence is absent, the release is not attested, or the dependency is not enforceable under `GetTemplateReferencePhase`, the launch fails before any instance rows are created. Plugin runtime readiness and current signer, component, and capability policy remain Automation activation/resume gates rather than launch-descriptor predicates.
 
 ### Launch Orchestration Ownership
 

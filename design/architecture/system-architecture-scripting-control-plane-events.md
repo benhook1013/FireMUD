@@ -125,6 +125,7 @@ Fields:
 - `gameInstanceId`
 - `pluginId`
 - `previousPluginVersionId` / `newPluginVersionId` (when applicable)
+- `pluginActivationGeneration` (the current Automation-owned runtime fence after the committed transition)
 - `newState` (`ENABLED` | `DISABLED` | `DRAINING`)
 - `statusReason` (optional generally; required for policy/security-driven changes, including fail-closed `DISABLED` transitions)
 - `instanceSequence`
@@ -135,6 +136,7 @@ Fields:
 Operator consumption rule:
 
 - Use this event family for runtime activation state only, including material changes from operator actions and scheduled policy reconciliation.
+- A committed transition that invalidates current plugin work advances `pluginActivationGeneration` exactly once and emits that resulting value. An event for a material change that does not invalidate admitted work carries the unchanged current generation. Exact idempotent retries and no-op requests emit no event and do not advance the generation.
 - `controlPlaneRequestId`, `actor`, and `reason` are omitted for scheduled policy reconciliation; `statusReason` records the policy/security cause.
 - Tooling that needs the full picture must join `PluginVersionStatusChanged` with instance-scoped runtime events/read APIs rather than overloading runtime events to explain design-time publication history.
 - Automation's operator read model must persist an append-only instance-scoped history for this family so `ListPluginRuntimeEvents` can expose real transition chronology without inferring it from the latest registry row.
