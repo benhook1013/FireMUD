@@ -2,7 +2,7 @@
 
 This document defines the observability contract for scripting and automation: what is recorded in `script_event_audit`, what is returned by `ListScriptHandoffEvents`, what is emitted as metrics, and which identifiers may be used for correlation.
 
-For gameplay/runtime records, observability preserves the exact Game Session `(scriptPatchVersion, scriptPinEpoch)` tuple. The tuple is diagnostic identity as well as a final-fence input; a version-only audit row cannot prove execution authority.
+Target-state gameplay/runtime observability preserves the exact Game Session `(scriptPatchVersion, scriptPinEpoch)` tuple. The tuple is diagnostic identity as well as a final-fence input; a version-only audit row cannot prove execution authority. The current live handoff/readback gap is recorded in [Implementation Status](#implementation-status) and does not narrow this target contract.
 
 Document conflict resolution order is defined in the [normative document precedence](./system-architecture-scripting-normative-contract-tables.md#document-precedence-normative). The normative tables own metric-family names, labels, and increment units; this document is authoritative for observability details not fully enumerated there.
 

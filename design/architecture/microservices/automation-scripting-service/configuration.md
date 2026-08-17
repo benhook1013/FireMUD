@@ -27,7 +27,8 @@ Current live bindings in the service are narrower than the full target-state scr
 - target-state scheduler admission uses the immutable artifact-pinned estimated millisecond cost and defers the remainder after the admitted ordered prefix; the current runtime does not implement this reservation, and actual runtime is calibration telemetry only.
 - signer/component-policy reconciliation cadence and ingress stale-threshold enforcement are now live bindings, while separate dead-letter alert thresholds and any split dead-letter cleanup cadence remain target-state follow-through in the `10.3` / `10.5` scripting slices.
 - live cleanup expires `HANDED_OFF` and `CANCELED` rows by status-specific retention and `DEAD_LETTERED` rows by max age plus a row-count cap; the current executor does not provide stage-aware recovery or a coherent retained-evidence bundle.
-- live instance-bound admission reads Game Session state and compares `scriptPatchVersion`, but the current projection/wire omits `scriptPinEpoch` and therefore does not prove exact-epoch admission.
+- live instance-bound admission reads Game Session state and compares `scriptPatchVersion`, but the current projection/wire omits `scriptPinEpoch` and therefore does not prove exact-epoch admission;
+- the target `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS` validation range is `1..30_000` milliseconds. Its upper bound is the canonical 30-second P99 projection freshness SLO, so configuration cannot hide a breached budget. Current live properties enforce only a positive minimum and do not enforce this target upper bound; that validation and proof remain an implementation gap.
 
 ## Service-Specific Variables
 
@@ -53,7 +54,7 @@ Current live bindings in the service are narrower than the full target-state scr
 | `SCRIPT_OUTPUT_MAX_COMMANDS_PER_RUN` | Maximum commands one live or dry-run execution may emit before output-budget failure | `64` | Stable operator knob |
 | `SCRIPT_OUTPUT_MAX_COMMANDS_PER_ENTITY_PER_TRIGGER` | Maximum commands a single trigger may emit for one entity before output-budget failure | `8` | Stable operator knob |
 | `SCRIPT_OUTPUT_MAX_SERIALIZED_WORK_ITEM_BYTES` | Maximum serialized work-item payload size before persistence or handoff rejection | `32768` | Stable operator knob |
-| `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS` | Maximum acceptable Automation pin/rollout projection lag before convergence reads report stale state | `5000` | Stable operator knob |
+| `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS` | Maximum acceptable Automation pin/rollout projection lag before convergence reads report stale state; target validation range `1..30_000 ms`, with `30_000 ms` tied to the canonical P99 projection freshness SLO | `5000` | Stable operator knob |
 | `SCRIPT_PLUGIN_POLICY_RECONCILE_INTERVAL_SECONDS` | Scheduled cadence for rechecking enabled plugin versions against current Game Design signer/component-policy publication metadata | `60` | Stable operator knob |
 | `SCRIPT_PLUGIN_POLICY_RECONCILE_BATCH_SIZE` | Maximum enabled plugin runtime states inspected per plugin-policy reconciliation sweep | `100` | Stable operator knob |
 | `SCRIPT_PLUGIN_POLICY_STALE_THRESHOLD_SECONDS` | Maximum age of the last successful enabled-plugin signer/component-policy check before plugin triggers fail closed | `300` | Stable operator knob |

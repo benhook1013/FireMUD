@@ -83,7 +83,7 @@ Fields:
 Operator consumption rule:
 
 - After this family passes the admission gate, use it for tenant patch readiness gates and publish validation UX (`READY`, `FAILED`, `SUPERSEDED`); until then, Automation's committed readiness state and read API remain authoritative.
-- For this readiness family, `SUPERSEDED` applies only to a displaced, unpinned `PENDING_VALIDATION` or `ONLOAD_RUNNING` record; already-admitted work follows its captured Game Session `(scriptPatchVersion, scriptPinEpoch)` and normal persistence, handoff, and execution fences.
+- For this readiness family, `SUPERSEDED` applies only to a displaced, unpinned `PENDING_VALIDATION` or `ONLOAD_RUNNING` record. Superseded tenant-readiness/onLoad work is terminal and fenced: it cannot complete readiness, re-enter the DSL, or continue under a fabricated or captured instance tuple. Captured-tuple continuation applies only to already-admitted instance-bound runtime work, which follows its captured Game Session `(scriptPatchVersion, scriptPinEpoch)` and normal persistence, handoff, and execution fences.
 
 ## `PluginVersionStatusChanged` (Game Design -> Durable Event Flow)
 

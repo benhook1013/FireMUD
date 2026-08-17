@@ -8,6 +8,8 @@ This inventory contains 54 decision rows: 48 retained rows and 6 distinct eviden
 
 `Complete` means the assigned corpus scan and independent coverage/fidelity audit are complete. Owning canonical architecture documents remain authoritative for technical target contracts; merged ADRs record accepted consequential choices and rationale within those boundaries. Implementation and proof remain incomplete. Human-led review is complete in the source archive, but this merged ledger retains pre-import evidence for reviewed outcomes not yet applied to `develop`.
 
+- **Current validation:** `./gradlew linkCheck lintMarkdown` passed, and `bash dev-tools/tests/architecture-doc-contracts.sh` passed with 184 tests. Runtime proof is not applicable because this parcel is documentation-only.
+
 The required baseline documents were read before the assigned corpus: [product capability taxonomy](../../product/capability-taxonomy.md), [system allocation](./design-capability-allocation-system.md), [main consequential decision inventory](./consequential-decision-inventory.md), and [cross-cutting decision inventory](./decision-inventory-cross-cutting.md).
 
 ## Status And Review Notation
