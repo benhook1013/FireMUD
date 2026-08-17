@@ -355,9 +355,11 @@ Inputs:
 - `tenantId`
 - Optional `gameInstanceId`
 - Optional `scriptPatchVersion`
+- Optional exact source pin filter (`scriptPinEpoch`)
+- Optional source runtime scope filters (`playableStateScope`, `regionId`, `regionEpoch`)
 - Optional `workItemId`
 - Optional `handoffOutcome`
-- Optional target runtime scope filters (`targetGameInstanceId`, `targetRegionId`, `targetRegionEpoch`)
+- Optional target runtime scope filters (`targetGameInstanceId`, `targetPlayableStateScope`, `targetRegionId`, `targetRegionEpoch`)
 - Optional durable remote-id filters (`remoteCoordinatorId`, `remoteFollowupId`)
 - Optional origin identity filters (`scriptId`, `pluginId`, `automationDispatchId`)
 - Optional `changedAfter` / `changedBefore`
@@ -365,7 +367,7 @@ Inputs:
 
 Outputs:
 
-- ordered event rows containing `eventId`, `tenantId`, `gameInstanceId`, `scriptPatchVersion`, `scriptId`, optional plugin identity and target-state `pluginActivationGeneration`, `workItemId`, `commandOrdinal`, `automationDispatchId`, target-state `handoffRequirement`, optional `gameSessionCommandId`, explicit target runtime scope (`targetGameInstanceId`, `targetRegionId`, `targetRegionEpoch`), optional remote follow-up ids (`remoteCoordinatorId`, `remoteFollowupId`), current owned target runtime scope (`currentTargetRuntimeGameInstanceId`, `currentTargetRuntimeRegionId`, `currentTargetRuntimeRegionEpoch`) plus the current owned routing bundle (`currentTargetRuntimePlayableStateScope`, `currentTargetRuntimeWorldSlug`, `currentTargetRuntimeRealmSlug`, `currentTargetRuntimePointerVersion`) and stale-scope/routing signaling, later Game Session gameplay-command execution truth (`gameplayCommandExecutionOutcome`, `gameplayCommandGameplayResult`, failure details, and remote-state tail), `targetEntityId`, resolved `playableStateScope`, rendered `emittedCommandText`, `handoffOutcome`, `handoffReason`, and `observedAt`
+- ordered event rows containing `eventId`, `tenantId`, source runtime scope (`gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`), exact source pin `scriptPatchVersion`/`scriptPinEpoch`, `scriptId`, optional plugin identity and target-state `pluginActivationGeneration`, `workItemId`, `commandOrdinal`, `automationDispatchId`, target-state `handoffRequirement`, optional `gameSessionCommandId`, distinct target runtime scope when applicable (`targetGameInstanceId`, `targetPlayableStateScope`, `targetRegionId`, `targetRegionEpoch`), optional remote follow-up ids (`remoteCoordinatorId`, `remoteFollowupId`), current owned target runtime scope (`currentTargetRuntimeGameInstanceId`, `currentTargetRuntimeRegionId`, `currentTargetRuntimeRegionEpoch`) plus the current owned routing bundle (`currentTargetRuntimePlayableStateScope`, `currentTargetRuntimeWorldSlug`, `currentTargetRuntimeRealmSlug`, `currentTargetRuntimePointerVersion`) and stale-scope/routing signaling, later Game Session gameplay-command execution truth (`gameplayCommandExecutionOutcome`, `gameplayCommandGameplayResult`, failure details, and remote-state tail), `targetEntityId`, rendered `emittedCommandText`, `handoffOutcome`, `handoffReason`, and `observedAt`
 
 Contract rules:
 
@@ -374,6 +376,7 @@ Contract rules:
 - `automationDispatchId` is the canonical low-cardinality correlation key between Automation handoff history and the Game Session gameplay-command ledger; metrics still must not label by it. Operator/debug reads can resolve the Game Session side either from the returned `gameSessionCommandId` or from the full automation identity tuple `(tenantId, gameInstanceId, regionId, regionEpoch, automationDispatchId)` when the command id is not yet known to the caller.
 - Operators use this read to answer which emitted command ordinal reached Game Session, which rendered command text, target entity, and target runtime scope it addressed, whether it stayed local or became a durable remote follow-up, and whether the failure happened before handoff, at Game Session admission, or after later gameplay-side execution disposition.
 - Because remote follow-up legs are now durable first-class runtime rows, this read must support direct filtering by target runtime scope, remote coordinator/follow-up ids, and origin script/plugin/dispatch identity rather than assuming one bulk history scan plus client-side correlation.
+- Source `playableStateScope`, `regionId`, `regionEpoch`, and exact `scriptPinEpoch` are the persisted source Trigger/Command-Handoff Identity fields. `targetPlayableStateScope` and the other `target*` scope fields are distinct optional target-state fields used only when the handoff targets a different runtime scope; they must not be inferred from source scope. These complete fields are target-state only: the current live handoff proto, storage, and read remain narrower and do not establish live support for this contract.
 - The read must also expose the current owned target runtime scope and routing bundle from Game Session when the target instance still exists, so operators can see directly whether the persisted target runtime scope or admitted routing bundle has gone stale without a separate ownership-status lookup.
 - When `gameSessionCommandId` is known, the read should also expose the later Game Session gameplay-command execution outcome instead of stopping at handoff-time admission, so operator diagnostics can stay on one handoff-history surface through local and remote gameplay execution tails.
 

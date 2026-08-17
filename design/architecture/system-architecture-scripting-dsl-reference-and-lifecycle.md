@@ -312,12 +312,12 @@ At a high level:
 
 - The **Game Design Service** owns the *authoring* view of versions and drives the durable `publish` workflow.
 - The **Automation & Scripting Service** owns the *runtime* view of script patch readiness per tenant (for example, whether a patch is `READY` or `FAILED`).
-- The **Game Session Service** owns the pinned `(scriptPatchVersion, scriptPinEpoch)` for each game and is responsible for including both exact fields in gameplay/runtime and scheduler events sent to the Automation & Scripting Service; control-plane events follow their own contract and do not acquire an instance epoch requirement by implication.
+- The **Game Session Service** owns and supplies the authoritative pinned `(scriptPatchVersion, scriptPinEpoch)` tuple for each game. Game Session includes both exact fields on the gameplay/runtime events it produces; the Automation & Scripting scheduler captures that tuple and propagates it on timer due candidates, firing claims, and resulting scheduler events. Control-plane events follow their own contract and do not acquire an instance epoch requirement by implication.
 
 The intended invariants are:
 
 - A script patch may be pinned for a game only after Automation has loaded and validated that exact patch for the tenant and marked it `READY` as part of the readiness workflow.
-- When Game Session emits gameplay/runtime or scheduler events, it includes the exact currently pinned version and epoch. Automation must **not** silently substitute a different version or epoch; unknown, failed, stale, or mismatched authority rejects that trigger. Control-plane events lacking an epoch remain governed by their own control-plane contract rather than being rejected for that omission.
+- When Game Session emits gameplay/runtime events, it includes the exact currently pinned version and epoch. When Automation's scheduler admits a timer due candidate, it captures and propagates that exact tuple through the due candidate, firing claim, and resulting scheduler event. Automation must **not** silently substitute a different version or epoch; unknown, failed, stale, or mismatched authority rejects that trigger. Control-plane events lacking an epoch remain governed by their own control-plane contract rather than being rejected for that omission.
 
 From the Automation & Scripting Service’s point of view, each `<tenantId, scriptPatchVersion>` follows the readiness lifecycle described in [Script Patch Lifecycle](#script-patch-lifecycle). Runtime script-event audit entries include the effective exact `(scriptPatchVersion, scriptPinEpoch)` tuple at evaluation so operators can correlate failures with the authoritative instance pin; tenant `onLoad` readiness records have no instance pin epoch.
 

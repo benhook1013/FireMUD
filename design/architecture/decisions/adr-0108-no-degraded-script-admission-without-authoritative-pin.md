@@ -29,7 +29,7 @@ Fail-closed instance-bound gameplay/runtime script admission without a stale-pin
 
 ## Context
 
-Instance-bound gameplay/runtime Automation admission must know the exact Game Session-owned script pin for an instance. Allowing an operator to bypass unavailable authority using a stale observation can admit work for a patch or pin epoch that has already been displaced by rollback or repin. A bounded TTL and durable audit can limit and explain that unsafe window, but neither proves that the admitted version was authoritative.
+Instance-bound gameplay/runtime Automation admission must know the exact Game Session-owned script pin for an instance. A bounded-fresh projection of that exact tuple is admissible evidence under this decision; an observation beyond the configured freshness bound is stale. Allowing an operator to bypass unavailable authority with that stale observation, even when it is wrapped in a TTL and durable audit, can admit work for a patch or pin epoch that has already been displaced by rollback or repin. A bounded TTL and durable audit can limit and explain that unsafe window, but neither proves that the admitted version was authoritative.
 
 FireMUD can degrade more safely by stopping new instance-bound scripted work while allowing ordinary gameplay that does not depend on Automation & Scripting to continue.
 
@@ -77,7 +77,7 @@ Projection freshness must be explicit and bounded. Instance-bound gameplay/runti
 
 Proof must cover missing and stale projections; bounded refresh success and failure; rollback or repin during a projection outage; repin to the same patch with a new epoch; reordered projection delivery; script and plugin triggers; scheduler firings; already-admitted work reaching persistence, handoff, and execution; recovery after authority returns; absence of an override path; and ordinary non-script gameplay continuing during scoped Automation failure. For already-admitted plugin work, proof must exercise the retained exact plugin tuple and applicable lifecycle/policy/capability/signer evidence independently from the Game Session script tuple at each applicable persistence, handoff, and final execution boundary, with Automation retaining plugin-state authority.
 
-The current instance-bound Automation ingress already fails closed with `pin_state_unavailable` when its pin projection is missing or stale, and no degraded operator override is implemented. That is the correct baseline. Exact `scriptPinEpoch` propagation and proof across instance-bound gameplay/runtime admission, scheduling, retry, replay, handoff, and execution boundaries remain incomplete under ADR 0103, so this decision does not claim the full contract is implemented or proved.
+The current instance-bound Automation ingress performs a direct bounded Game Session runtime-state read, updates the local pin projection, and fails closed with `pin_state_unavailable` when owner state is missing or the read errors; it compares only `scriptPatchVersion` because `scriptPinEpoch` is absent from the current request/runtime surface. No degraded operator override is implemented. That is the correct baseline. Exact `scriptPinEpoch` propagation and proof across instance-bound gameplay/runtime admission, scheduling, retry, replay, handoff, and execution boundaries remain incomplete under ADR 0103, so this decision does not claim the full contract is implemented or proved.
 
 ## Reversibility and Revisit Triggers
 
