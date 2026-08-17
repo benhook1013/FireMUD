@@ -545,7 +545,7 @@ Outputs:
 - `lastChangedAt`
 - `projectionAsOf` (timestamp of projection snapshot used for this read)
 - `projectionLagMs` (non-negative projection staleness estimate)
-- `isProjectionStale` (boolean; `true` when lag breaches published freshness SLO)
+- `isProjectionStale` (boolean; `true` when lag breaches the published freshness SLO; `projectionStatus=STALE` if and only if this is `true`, otherwise `projectionStatus=OBSERVED`)
 
 Read-model ownership:
 
