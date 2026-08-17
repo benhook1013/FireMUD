@@ -191,7 +191,7 @@ Each `(tenantId, pluginId, pluginVersionId)` must have one canonical design-time
 - `UPLOAD_REJECTED` – bundle ingestion failed before publication, for example due to archive safety limits, malformed manifest, or signature failure.
 - `SIGNATURE_VERIFIED` – the bundle passed canonicalization and signature verification and its signed metadata has been persisted. This is a durable operator-visible state, not merely an internal transient step; a version may remain here indefinitely until publication is requested or abandoned.
 - `VALIDATION_FAILED_DESIGN` – Game Design completed design-time validation and rejected the version due to deterministic authoring errors such as invalid bindings, disallowed components, `baseVersionId` mismatch, or `abilitySchemaDigest` mismatch.
-- `PUBLISHED` – the plugin version is accepted into immutable design-time history after its applicable immutable provenance and validated publication evidence is recorded, and is available as an input to a scoped runtime activation request; publication alone is not runtime eligibility.
+- `PUBLISHED` – the plugin version is accepted into immutable design-time history after its applicable immutable provenance and validated publication evidence is recorded, and is eligible to be selected as input to a scoped runtime activation request; publication alone does not authorize runtime activation or admission.
 - `SUPERSEDED` – a later plugin version for the same `pluginId` exists; older versions remain immutable historical records and are not eligible for runtime activation.
 - `REVOKED_DESIGN` – the previously published design artifact remains historically readable, but signer revocation or a design-time trust decision has made the version ineligible for further runtime activation.
 

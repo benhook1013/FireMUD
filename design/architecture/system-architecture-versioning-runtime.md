@@ -204,7 +204,7 @@ This contract ensures that Published template graphs remain stable inputs for ro
 Minor fixes to NPC behavior or quest logic often only touch automation scripts.
 To avoid a full world restart, the Game Design Service can publish a **script-only patch version** using the `PublishScriptPatchVersion` gRPC call.
 These records include a `baseVersionId` pointing to the immutable data version
-and a `scriptPatchVersion` value such as `v42-script.3`:
+and a `scriptPatchVersion` value such as `v42-script.3`. This is Game Design publication metadata, not the instance runtime pin tuple; Game Session allocates `scriptPinEpoch` later when an instance pins the published patch:
 
 ```json
 {

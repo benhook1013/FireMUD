@@ -46,17 +46,15 @@ Fields:
 
 - `tenantId`
 - `gameInstanceId`
-- `previousScriptPatchVersion`
-- `pinnedScriptPatchVersion`
-- `previousScriptPinEpoch`
-- `scriptPinEpoch`
+- `previousPin` (optional nested exact pin tuple containing required `scriptPatchVersion` and `scriptPinEpoch` members)
+- `pinnedPin` (required nested exact pin tuple containing required `scriptPatchVersion` and `scriptPinEpoch` members)
 - `changeType` (`SET` | `ROLLBACK` | `REPIN`; `REPIN` classifies an epoch-only repin to the same patch version)
 - `instanceSequence`
 - `controlPlaneRequestId`
 - `actor` and `reason`
 - `occurredAt`
 
-The `previousScriptPatchVersion` and `previousScriptPinEpoch` fields are an all-present/all-absent pair; both are absent on a first pin (semantic `UNPINNED`) and neither uses a sentinel. A successfully emitted pin-change event always has both `pinnedScriptPatchVersion` and `scriptPinEpoch` present as the resulting exact tuple.
+At the wire level, `previousPin` is an optional nested `ScriptPinTuple`: it is absent on a first pin (semantic `UNPINNED`), and when present both `scriptPatchVersion` and `scriptPinEpoch` members are required. `pinnedPin` is always present as a nested `ScriptPinTuple` with both members required. No flattened optional pair, partial tuple, or sentinel represents an unpinned instance.
 
 Only a successful mutation that changes the exact tuple emits this event. Deterministic failures, including attempts that leave the tuple unchanged, are retained in Game Session's bounded immutable history and do not emit this event.
 

@@ -69,13 +69,13 @@ Compact publication-to-runtime sequence:
 
 - **Automation & Scripting Service (runtime + patch lifecycle)**
   - Evaluates triggers, persists script work items durably, and hands off to Game Session.
-  - Tracks per-tenant patch lifecycle state (`READY`, `FAILED`, `SUPERSEDED`) and enforces admission rules (“only `READY` is runnable”).
+  - Tracks per-tenant patch lifecycle state (`READY`, `FAILED`, `SUPERSEDED`) and requires `READY` for a new pin or progression; an already-current exact pinned immutable patch may remain runnable under its tuple after becoming `SUPERSEDED`.
   - Emits tenant patch readiness lifecycle events (`ScriptPatchTenantStatusChanged`) when readiness state changes.
   - Consumes Game Session pin events to project non-authoritative observed pin/convergence projections; it never owns or derives rollout history.
 
 - **Game Session Service (gameplay + tick control plane)**
-  - Owns the pinned `scriptPatchVersion` for each `(tenantId, gameInstanceId)`.
-  - Enforces the version fence on execution: commands produced under a non-pinned patch must not execute.
+  - Owns the exact pinned `(scriptPatchVersion, scriptPinEpoch)` tuple for each `(tenantId, gameInstanceId)`.
+  - Enforces the exact version-and-epoch fence on execution: commands whose patch or epoch does not match the current tuple must not execute, even when the patch version is unchanged.
   - Exposes admin-only APIs to pause/resume ticks and to update the pin.
   - Emits a pin change event after a successful pin update.
 
