@@ -132,7 +132,7 @@ Game templates may optionally carry default runtime configuration alongside thei
 
 - `GameTemplateDto.config` can include optional fields such as a default `scriptPatchVersion` or initial feature-flag presets that the Game Session Service uses when creating new `gameInstanceId` values from the template.
 - Templates must not implicitly promise survival of instance-scoped world state across replacement-instance upgrades. Any persistent carry-forward behavior must be defined by the runtime-state upgrade contract in `system-architecture-versioning-runtime.md`.
-- When these defaults are present, instance-creation flows should apply them explicitly; when they are absent, callers must provide the desired `scriptPatchVersion` and runtime flags at creation time. Templates must not implicitly select “latest READY patch” or other moving targets without operator input.
+- When these defaults are present, instance-creation flows should apply them explicitly; when they are absent, callers may provide the desired `scriptPatchVersion` and runtime flags at creation time. If neither the template nor the caller selects a script patch, resolution uses explicit null/semantic `UNPINNED` and creates no script work. Templates must not implicitly select “latest READY patch” or other moving targets without operator input.
 - If a template pins a default `scriptPatchVersion`, instance creation must validate that Automation & Scripting has marked that patch `READY` for the tenant before pinning it for a running instance; otherwise instance creation fails with a clear error and no instance rows are created.
 - Caller-supplied runtime overrides are only allowed to fill fields the template leaves unset. If the template already supplies a runtime default, any caller-supplied value for that field is a deterministic launch-resolution failure instead of being merged heuristically.
 
@@ -201,7 +201,7 @@ These are application-level launch-preflight outcomes, not transport failures. R
 Illustrative control-plane schema:
 
 - Request: `ResolveLaunchDescriptorRequest { tenantId, gameTemplateId, controlPlaneRequestId, requestedRuntimeFlags?, requestedScriptPatchVersion?, sourceVersionId?, targetVersionId? }`
-- Response: `ResolveLaunchDescriptorResponse { launchDescriptorId, tenantId, gameTemplateId, versionId, scriptPatchVersion, enabledPluginVersions[] { pluginId, pluginVersionId }, runtimeFlags, generationConfigRevision, versionStateEpoch, remapSetId?, publishedReleaseBundleRef }`
+- Response: `ResolveLaunchDescriptorResponse { launchDescriptorId, tenantId, gameTemplateId, versionId, scriptPatchVersion (nullable; explicit null when no patch is pinned), enabledPluginVersions[] { pluginId, pluginVersionId }, runtimeFlags, generationConfigRevision, versionStateEpoch, remapSetId?, publishedReleaseBundleRef }`
 
 The exact transport schema may evolve, but every implementation must preserve the same contract shape:
 
