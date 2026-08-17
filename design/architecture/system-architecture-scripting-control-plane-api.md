@@ -55,7 +55,7 @@ Compact publication-to-runtime sequence:
 - **Game Session owns tick safety.** Game Session is the only writer for `tick:*` and enforces the version fence at execution time. Automation never writes `tick:*` directly.
 - **Pinned versions are explicit.** Runtime must never “auto-upgrade” to a newer patch without an operator/designer action captured in the control plane.
 - **Control plane is idempotent.** Every mutating operation must accept a caller-provided `controlPlaneRequestId` and be safely retryable.
-- **Auditable and observable.** Every mutating action must emit an audit entry and a durable status event that downstream tooling can consume.
+- **Auditable and observable.** Every accepted mutating request must produce its applicable durable audit/history record, while every committed state change must emit its applicable durable status event for downstream tooling. Consumers do not infer deterministic failed attempts from success-only change events.
 - **Pin visibility is bounded-staleness.** Services that cache pinned patch/plugin versions must enforce a max staleness bound and fail closed on stale/unknown pin state for admission-critical decisions.
 - **Runtime scope is instance-first.** Tenant-level patch readiness is only an eligibility gate; direct API mutations and read surfaces must preserve `(tenantId, gameInstanceId)` isolation.
 
@@ -751,7 +751,7 @@ Required enum values:
 Contract rules:
 
 - Backpressure outcomes (`*_BACKPRESSURE_*`) must include bounded `retryAfterMs`.
-- A terminal rollback convergence timeout uses `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE` with `admissionReason=rollback_convergence_timeout` and no `retryAfterMs`; it is fail-closed until repair or repin, not retryable backpressure.
+- A terminal rollback convergence timeout uses `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE` with `admissionReason=rollback_convergence_timeout` and no `retryAfterMs`; it is fail-closed until the same workflow transitions from `ROLLBACK_CONVERGENCE_TIMEOUT` back to `CONVERGING` with the same `controlPlaneRequestId` and a fresh deadline, explicit repair, or repin, and it is not retryable backpressure.
 - `admissionOutcome` and `admissionReason` describe the **event-scope ingress decision** only. They must not be interpreted as a summary of all handler-scoped outcomes created after binding resolution.
 - Event-scope `admissionOutcome` and `admissionReason` must map directly to the ingress-time admission result recorded in ingress audit/logging surfaces for that request; they are not the same thing as later handler-scoped `finalOutcome` values recorded in `script_event_audit`.
 - Handler-scoped denials such as `quota_denied`, `script_disabled`, `plugin_disabled`, and `plugin_component_blocked` remain handler/audit outcomes after binding resolution. They are not valid event-scope ingress `admissionOutcome` values in the general fan-out contract.
@@ -778,6 +778,6 @@ The detailed event and orchestration contracts now live in focused sibling docs:
 
 - All mutating operations accept `controlPlaneRequestId` and must be safe to retry.
 - All mutating operations require operator/admin authorization. Tenant-scoped operator actions must be auditable with actor identity and reason.
-- Operator actions must be reflected in audit logs and in durable status events so UIs can reconstruct history.
+- Operator actions must be reflected in their applicable durable audit/history records; committed state changes also emit their applicable durable status events so UIs can reconstruct current state without inferring deterministic failures from success-only events.
 
 For runtime trigger audit fields and metrics naming/label rules, see `design/architecture/system-architecture-scripting-observability-contract.md`.

@@ -56,7 +56,7 @@ Fields:
 
 At the wire level, `previousPin` is an optional nested `ScriptPinTuple`: it is absent on a first pin (semantic `UNPINNED`), and when present both `scriptPatchVersion` and `scriptPinEpoch` members are required. `pinnedPin` is always present as a nested `ScriptPinTuple` with both members required. No flattened optional pair, partial tuple, or sentinel represents an unpinned instance.
 
-Only a successful mutation that changes the exact tuple emits this event. Deterministic failures, including attempts that leave the tuple unchanged, are retained in Game Session's bounded immutable history and do not emit this event.
+Only a successful mutation that changes the exact tuple emits this event. Deterministic failures, including attempts that leave the tuple unchanged, are retained in Game Session's bounded immutable history and do not emit this event; consumers must read that authoritative history rather than infer failed pin attempts from `ScriptPatchPinChanged`.
 
 ## `ScriptPatchRollbackRequested` (Game Session -> Durable Event Flow)
 
