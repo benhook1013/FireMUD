@@ -16,6 +16,9 @@ The UUID target applies only to UUID-governed logical identifiers; it is not a b
 - `gameInstanceId` – identifies a running game instance for a tenant. Domain service runtime/instance data is scoped by `(tenantId, gameInstanceId)` and references the instance’s pinned `runtime_version`/`versionId`.
 - `scriptPatchVersion` – identifies an immutable embedded-script patch independently of instance selection. It pairs with Game Session's per-instance `scriptPinEpoch` in the exact instance-bound tuple. Tenant-readiness `onLoad` may use a declared candidate patch in its pre-instance-pin identity.
 - `scriptPinEpoch` – identifies Game Session's per-instance pin-selection epoch. It pairs with `scriptPatchVersion` in the exact instance-bound tuple; tenant-readiness `onLoad` omits it because no instance pin exists.
+
+`scriptPatchVersion` exists on the live boundary, but the exact pair remains target-state: the live Game Session pin/convergence proto/runtime does not yet carry or propagate `scriptPinEpoch`; see [Game Session API implementation status](./microservices/game-session-service/api-contracts.md#implementation-status) and the [Game Session runtime tracker](../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#script-pin-epoch-and-rollout-history-reconciliation).
+
 - `regionId` – identifies an operational tick region within `(tenantId, gameInstanceId)`. It is an opaque runtime-coordination identity, not a World Management row ID, design-time region template ID, room ID, or slug. The complete region scope is `{tenantId, gameInstanceId, regionId}`.
 - `characterId` – identifies a character owned within a tenant. Gameplay session binding and any instance-local playable state use it together with `{tenantId, gameInstanceId}` scope.
 
