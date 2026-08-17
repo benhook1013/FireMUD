@@ -16,7 +16,7 @@ dependencies {
     implementation(libs.spring.boot.starter.websocket)
     implementation(project(":common-security"))
     testImplementation(libs.micrometer.registry.prometheus)
-    testImplementation("com.squareup.okhttp3:mockwebserver:5.4.0")
+    testImplementation("com.squareup.okhttp3:mockwebserver:5.5.0")
     testImplementation(libs.spring.boot.starter.webflux)
     testImplementation(libs.spring.cloud.gateway)
     testImplementation(libs.spring.boot.starter.test)
