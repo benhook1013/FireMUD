@@ -503,7 +503,7 @@ Implementation note: the current Automation & Scripting implementation exposes a
 Inputs:
 
 - `tenantId`
-- Bounded, nonempty, unique `workItemIds[]` only (durable parent work-item identifiers); duplicate IDs fail deterministic request validation before request fingerprinting or claim acquisition. Descriptor references and filters are listing/preview inputs, not mutation selectors. Bulk filter replay remains deferred until preview plus stable per-row proof.
+- Nonempty, unique `workItemIds[]` only, with a maximum of 100 durable parent work-item identifiers. More than 100 IDs returns gRPC `INVALID_ARGUMENT` with bounded reason `work_item_ids_limit_exceeded`; an empty list, blank ID, or duplicate ID returns gRPC `INVALID_ARGUMENT` with bounded reason `invalid_work_item_ids`. Both validation paths run before request fingerprinting or claim acquisition. Descriptor references and filters are listing/preview inputs, not mutation selectors. Bulk filter replay remains deferred until preview plus stable per-row proof.
 - `controlPlaneRequestId`
 - `actor`
 - `reason`

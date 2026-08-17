@@ -317,7 +317,7 @@ Script execution spans several services (Game Design, Game Session, Automation &
 - `playableStateScope` (gameplay/runtime only) – identifies the resolved admitted gameplay-state namespace; shared and isolated realm state must not collide. Retain it in applicable audit/log/trace correlation, not as a metric label. See the [normative Trigger Identity table](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields); tenant-readiness `onLoad` intentionally omits it.
 - `regionEpoch` – fences triggers and tick effects across scoped coordination resets.
 - `entityId` – identifies the target entity for script-driven work.
-- `scriptId`, `scriptPatchVersion`, and `scriptPinEpoch` – identify the exact script definition and Game Session selection epoch.
+- `scriptId` and `scriptPatchVersion` identify the script definition; gameplay/runtime rows also require `scriptPinEpoch` to identify the Game Session selection epoch. Tenant-readiness `onLoad` rows omit `scriptPinEpoch`.
 - `scriptEventId` – caller-scoped idempotency token within the full applicable Trigger Identity; it is not a standalone execution identity.
 - `tickId` – identifies the authoritative game tick in which commands execute (paired with `regionEpoch`).
 - `correlationId` – optional cross-service correlation token for Sagas and user-visible flows.
