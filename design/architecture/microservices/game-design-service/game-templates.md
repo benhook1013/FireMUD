@@ -15,7 +15,7 @@ creators can quickly spin up new projects without starting from scratch.
 
 ## Implementation Status
 
-- The launch plugin-selection presence modes remain target-only and unimplemented: fresh omission/explicit empty (the same effective empty selection), rollback reuse (omission), rollback explicit empty, and explicit non-empty selection are not yet represented in proto/generated clients, launch-descriptor persistence/response, the request digest, service logic, or focused proof. Launch-resolution APIs are live, but the current implementation does not yet persist, expose, or prove the complete `enabledPluginVersions[]` set for deterministic retry and rollback. The detailed target contract remains below.
+- The launch plugin-selection presence modes remain target-only and unimplemented: a presence-capable selection wrapper/mode, fresh omission or explicit empty resolving to the same immutable empty selection, rollback omission reusing a named target, rollback explicit empty, and explicit non-empty selection are not yet represented in proto/generated clients, launch-descriptor persistence/response, the request digest, service logic, or focused proof. Launch-resolution APIs are live, but the current implementation does not yet persist, expose, or prove the complete `enabledPluginVersions[]` set for deterministic retry and rollback. The detailed target contract remains below.
 
 ## Starter Experience Profiles
 
@@ -150,7 +150,7 @@ Canonical minimum fields:
 - `gameTemplateId`
 - resolved `versionId`
 - resolved `scriptPatchVersion` (or explicit null when none is pinned)
-- **Target-state:** complete deterministically ordered `enabledPluginVersions[] { pluginId, pluginVersionId }`, persisted in the Game Design-owned launch-descriptor record as an immutable requested plugin selection bound to immutable publication and compatibility evidence for each selected version, reused unchanged by same-identity retries; its presence is not proof of Automation runtime activation
+- **Target-state:** normalized `pluginSelectionMode` plus complete deterministically ordered `enabledPluginVersions[] { pluginId, pluginVersionId }`, persisted in the Game Design-owned launch-descriptor record as an immutable requested plugin selection bound to immutable publication and compatibility evidence for each selected version, reused unchanged by same-identity retries; its presence is not proof of Automation runtime activation
 - resolved runtime feature flags/defaults
 - `generationConfigRevision` taken from the target version’s `published_release_bundle`
 - `versionStateEpoch` used for CAS-safe activation checks
@@ -200,15 +200,15 @@ These are application-level launch-preflight outcomes, not transport failures. R
 
 Illustrative control-plane schema:
 
-- Request: `ResolveLaunchDescriptorRequest { tenantId, gameTemplateId, controlPlaneRequestId, requestedRuntimeFlags?, requestedScriptPatchVersion?, requestedEnabledPluginVersions[]? { pluginId, pluginVersionId }, sourceVersionId?, targetVersionId?, rollbackTargetLaunchDescriptorId? }`
-- Response: `ResolveLaunchDescriptorResponse { launchDescriptorId, tenantId, gameTemplateId, versionId, scriptPatchVersion (nullable; explicit null when no patch is pinned), enabledPluginVersions[] { pluginId, pluginVersionId }, runtimeFlags, generationConfigRevision, versionStateEpoch, remapSetId?, publishedReleaseBundleRef }`
+- Request: `ResolveLaunchDescriptorRequest { tenantId, gameTemplateId, controlPlaneRequestId, requestedRuntimeFlags?, requestedScriptPatchVersion?, requestedPluginSelection?: { mode: EMPTY | EXPLICIT | REUSE_ROLLBACK_TARGET, enabledPluginVersions[]? { pluginId, pluginVersionId } }, sourceVersionId?, targetVersionId?, rollbackTargetLaunchDescriptorId? }`
+- Response: `ResolveLaunchDescriptorResponse { launchDescriptorId, tenantId, gameTemplateId, versionId, scriptPatchVersion (nullable; explicit null when no patch is pinned), pluginSelectionMode, enabledPluginVersions[] { pluginId, pluginVersionId }, runtimeFlags, generationConfigRevision, versionStateEpoch, remapSetId?, publishedReleaseBundleRef }`
 
 The exact transport schema may evolve, but every implementation must preserve the same contract shape:
 
 - request fields identify the template, the launch attempt identity, and any caller-supplied runtime overrides that are allowed to participate in deterministic resolution;
 - response fields are the immutable resolved values consumed by launch-time workflows;
-- Target contract: `enabledPluginVersions[] { pluginId, pluginVersionId }` is the complete deterministically ordered immutable requested plugin selection for launch and rollback, not proof that Automation has activated runtime state. The Game Design-owned persisted launch-descriptor record binds this selection to immutable publication and compatibility evidence; the response need not duplicate that evidence or transport mutable/current policy evidence. Before persistence, Game Design sorts tuples ascending by `pluginId` and then `pluginVersionId`, comparing the canonical UTF-8 byte representation of each already validated opaque identifier with no locale collation, case folding, or alternate normalization. The selection must contain at most one entry per `pluginId`; a duplicate `pluginId` is a deterministic validation failure because the scoped Automation registry has one active version per plugin. Tenant `READY` is the selected script patch's gate, not a plugin lifecycle state. Every plugin selection must prove publication as `PUBLISHED` and exact compatibility with the resolved base `versionId`, its `abilitySchemaDigest`, and the descriptor's release attestation. Signed and operator-permitted unsigned provenance evidence is defined by the [Modding Framework](./modding-framework.md#signing-and-key-lifecycle-required). These are design-time eligibility predicates, not plugin runtime readiness. The persisted selection, order, and bound evidence are reused unchanged for retries with the same `controlPlaneRequestId`. A fresh rollback that reuses a prior selection must name its exact Game Design-owned `rollbackTargetLaunchDescriptorId`; Game Design verifies that descriptor's tenant, template, and `versionId` match the requested rollback target, copies its ordered plugin selection into the new rollback descriptor, and revalidates every selected plugin against the recorded target release. It does not locate the selection from `sourceVersionId`/`targetVersionId` or a mutable alias. A `SUPERSEDED` or otherwise ineligible recorded selection fails deterministically unless the new request supplies a complete explicit replacement set as described below. An exact retry of an already-bound request returns its stored result without re-resolving or revalidating against newer publication state. That descriptor replay does not bypass runtime checks: before any activation or runtime-state change, Automation rechecks current Game Design publication and rejects every state other than `PUBLISHED`, including `REVOKED_DESIGN`. After launch, Automation performs the separate activation step and validates each selected exact `(pluginId, pluginVersionId, bindingId)` tuple against its runtime-state/activation fence.
-- A new launch or rollback request's explicitly present `requestedEnabledPluginVersions[]` is the complete desired plugin selection, not a replacement delta or partial merge. For a fresh launch without `rollbackTargetLaunchDescriptorId`, omission and an explicitly empty set both resolve to the immutable effective selection `enabledPluginVersions=[]`; they share the same canonical effective-selection/digest mode, and resolution must not infer template plugin defaults, `latest`, or another moving target. The transport must preserve field presence so rollback can distinguish the modes: every rollback request carries a named `rollbackTargetLaunchDescriptorId` to bind the recorded target and audit history; with that named target, omission means `REUSE_ROLLBACK_TARGET` and reuses that descriptor's exact recorded selection, while explicit `[]` means `EXPLICIT_EMPTY` and creates a new empty selection. An explicit non-empty set creates a new descriptor selection. The canonical sorting, one-entry-per-`pluginId`, publication, ability-schema compatibility, and release-attestation rules above apply before computing the request's idempotency digest, and that digest includes the recorded target descriptor identity plus the complete canonicalized selection or its explicit reuse mode. A new request replacing an ineligible recorded plugin must therefore supply the full desired set; an exact retry returns the stored result and selection without re-resolution.
+- Target contract: `enabledPluginVersions[] { pluginId, pluginVersionId }` is the complete deterministically ordered immutable requested plugin selection for launch and rollback, not proof that Automation has activated runtime state. A presence-capable `requestedPluginSelection` wrapper (or equivalent `oneof`/optional-presence transport) is required; a bare repeated list cannot distinguish rollback omission from explicit empty. The normalized modes are `EMPTY` (fresh omission or explicit `[]`, and rollback explicit `[]`), `REUSE_ROLLBACK_TARGET` (rollback omission with a named target), and `EXPLICIT` (an explicit non-empty set). Fresh omission and explicit empty therefore resolve to the same immutable effective selection `enabledPluginVersions=[]`; rollback omission copies the named target's exact recorded selection, while rollback explicit empty resolves to an empty selection. No mode may infer template plugin defaults, `latest`, or another moving target. The Game Design-owned persisted launch-descriptor record binds this mode and selection to immutable publication and compatibility evidence; the response need not duplicate that evidence or transport mutable/current policy evidence. Before persistence, Game Design sorts tuples ascending by `pluginId` and then `pluginVersionId`, comparing the canonical UTF-8 byte representation of each already validated opaque identifier with no locale collation, case folding, or alternate normalization. The selection must contain at most one entry per `pluginId`; a duplicate `pluginId` is a deterministic validation failure because the scoped Automation registry has one active version per plugin. Tenant `READY` is the selected script patch's gate, not a plugin lifecycle state. Every plugin selection must prove publication as `PUBLISHED` and exact compatibility with the resolved base `versionId`, its `abilitySchemaDigest`, and the descriptor's release attestation. Signed and operator-permitted unsigned provenance evidence is defined by the [Modding Framework](./modding-framework.md#signing-and-key-lifecycle-required). These are design-time eligibility predicates, not plugin runtime readiness. The persisted mode, selection, order, and bound evidence are reused unchanged for retries with the same `controlPlaneRequestId`. A fresh rollback that reuses a prior selection must name its exact Game Design-owned `rollbackTargetLaunchDescriptorId`; Game Design verifies that descriptor's tenant, template, and `versionId` match the requested rollback target, copies its ordered plugin selection into the new rollback descriptor, and revalidates every selected plugin against the recorded target release. It does not locate the selection from `sourceVersionId`/`targetVersionId` or a mutable alias. A `SUPERSEDED` or otherwise ineligible recorded selection fails deterministically unless the new request supplies a complete explicit replacement set as described below. An exact retry of an already-bound request returns its stored result without re-resolving or revalidating against newer publication state. That descriptor replay does not bypass runtime checks: before any activation or runtime-state change, Automation rechecks current Game Design publication and rejects every state other than `PUBLISHED`, including `REVOKED_DESIGN`. After launch, Automation performs the separate activation step and validates each selected exact `(pluginId, pluginVersionId, bindingId)` tuple against its runtime-state/activation fence.
+- A new launch or rollback request's `requestedPluginSelection` mode and selection are normalized before validation and included together in the request's idempotency digest. For a fresh launch without `rollbackTargetLaunchDescriptorId`, an omitted wrapper normalizes to `EMPTY` and an explicitly present empty wrapper also normalizes to `EMPTY`; both produce immutable `enabledPluginVersions=[]`. Every rollback request carries a named `rollbackTargetLaunchDescriptorId` to bind the recorded target and audit history. With that named target, an omitted wrapper normalizes to `REUSE_ROLLBACK_TARGET` and copies that descriptor's exact recorded selection; an explicitly empty wrapper normalizes to `EMPTY` and creates a new empty selection; an explicit non-empty wrapper normalizes to `EXPLICIT` and creates a new descriptor selection. The digest includes the normalized mode, the complete canonicalized selection, and the named rollback target identity when present, so presence semantics cannot be lost even when effective selections are equal. The canonical sorting, one-entry-per-`pluginId`, publication, ability-schema compatibility, and release-attestation rules above apply before computing the digest. A new request replacing an ineligible recorded plugin must therefore supply the full desired set; an exact retry returns the stored result, mode, and selection without re-resolution.
 - Current implementation behavior: `GetPublishedReleaseBundle` returns the bundle `id` and `generationConfigRevision` rather than a separate reference field, so the compatibility path reconstructs `prb:<tenantId>:<versionId>:<bundleId>` from request scope and the returned `bundle.id`. It must compare that value byte-for-byte with the descriptor reference and separately compare the attested `generationConfigRevision`; this format is not the target API contract.
 - Target convergence: `GetPublishedReleaseBundle` returns an owner-generated opaque `publishedReleaseBundleRef`. Consumers preserve and compare that value byte-for-byte without parsing its format, reconstructing it from identifiers, treating it as a raw UUID, or inventing another release alias.
 - A request with the same `(tenantId, gameTemplateId, controlPlaneRequestId)` and the same input fields must return the same descriptor values; a request with a different `controlPlaneRequestId` is a new launch attempt and may resolve against newer valid state.
@@ -234,6 +234,7 @@ The examples below intentionally use numeric `versionId` values because the curr
     "gameTemplateId": "gt-default",
     "versionId": 42,
     "scriptPatchVersion": null,
+    "pluginSelectionMode": "EMPTY",
     "enabledPluginVersions": [],
     "runtimeFlags": {
       "pvpEnabled": false
@@ -254,12 +255,15 @@ The examples below intentionally use numeric `versionId` values because the curr
     "tenantId": "11111111-1111-4111-8111-111111111111",
     "gameTemplateId": "gt-default",
     "controlPlaneRequestId": "ld-req-2001",
-    "requestedEnabledPluginVersions": [
-      {
-        "pluginId": "combat-ui",
-        "pluginVersionId": "plugin-version-43-1"
-      }
-    ],
+    "requestedPluginSelection": {
+      "mode": "EXPLICIT",
+      "enabledPluginVersions": [
+        {
+          "pluginId": "combat-ui",
+          "pluginVersionId": "plugin-version-43-1"
+        }
+      ]
+    },
     "sourceVersionId": 42,
     "targetVersionId": 43
   },
@@ -269,6 +273,7 @@ The examples below intentionally use numeric `versionId` values because the curr
     "gameTemplateId": "gt-default",
     "versionId": 43,
     "scriptPatchVersion": "v43-script.1",
+    "pluginSelectionMode": "EXPLICIT",
     "enabledPluginVersions": [
       {
         "pluginId": "combat-ui",
@@ -314,6 +319,7 @@ The examples below intentionally use numeric `versionId` values because the curr
   "resolvedDescriptor": {
     "launchDescriptorId": "ld-4001",
     "versionId": 42,
+    "pluginSelectionMode": "EMPTY",
     "enabledPluginVersions": [],
     "generationConfigRevision": "genrev-42a1",
     "publishedReleaseBundleRef": "opaque-release-ref-7f3c9a2b..."
