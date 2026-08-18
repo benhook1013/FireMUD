@@ -15,7 +15,7 @@ creators can quickly spin up new projects without starting from scratch.
 
 ## Implementation Status
 
-- Persistence and compatibility proof for the complete launch-descriptor `enabledPluginVersions[]` set remain target-state. Launch-resolution APIs are live, but the current implementation does not yet persist, expose, or prove that complete set for deterministic retry and rollback.
+- The launch plugin-selection presence modes remain target-only and unimplemented: fresh omission/explicit empty (the same effective empty selection), rollback reuse (omission), rollback explicit empty, and explicit non-empty selection are not yet represented in proto/generated clients, launch-descriptor persistence/response, the request digest, service logic, or focused proof. Launch-resolution APIs are live, but the current implementation does not yet persist, expose, or prove the complete `enabledPluginVersions[]` set for deterministic retry and rollback. The detailed target contract remains below.
 
 ## Starter Experience Profiles
 

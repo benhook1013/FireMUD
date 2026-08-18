@@ -707,7 +707,7 @@ Semantics:
 - Idempotent.
 - When the plugin is not already `DISABLED`, transitions it into a non-admitting state immediately.
 - Triggers are rejected at admission with a dedicated outcome (for example `finalOutcome=plugin_disabled`) and recorded in `script_event_audit`.
-- The committed disable transition advances `pluginActivationGeneration` exactly once; a repeated disable is an idempotent no-op and does not advance it. Revocation or policy-driven disable follows the same generation rule.
+- For a never-activated plugin at `pluginActivationGeneration` `0`, disabling it does not invalidate admitted work or advance `pluginActivationGeneration`; the first successful activation/enable emits `pluginActivationGeneration` `1`. Thereafter, an invalidating disable/revocation or materially changed activation/binding that invalidates admitted work advances `pluginActivationGeneration` exactly once, while non-invalidating state changes and exact retries retain the current value.
 - If the plugin is already `DISABLED`, returns the existing committed state without updating `lastChangedAt`, appending history, emitting the durable event, or triggering projections. Otherwise, emits `PluginVersionRuntimeStateChanged(newState=DISABLED)` after the committed state change.
 
 #### `DrainPlugin`
