@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-Game Session-authoritative per-instance script pins with exact-version execution and epoch fencing are target state. Current contracts contain tenant readiness, Game Session pin records, exact patch fields, and version fences, but they do not yet prove a per-instance `scriptPinEpoch` across every work boundary, prepare-before-commit behavior, immutable exact-version graph selection on every worker, or removal of the contradictory Automation-owned active/fallback model.
+Game Session-authoritative per-instance script pins with exact-version execution and epoch fencing are target state. Current contracts contain tenant readiness, Game Session pin records, exact patch fields, and version fences, but they do not yet prove a per-instance `scriptPinEpoch` across every work boundary, prepare-before-commit behavior, immutable exact-version graph selection on every worker, or removal of the contradictory Automation-owned active/fallback model. The target permits optional, non-authoritative Automation preparation before pin commit, but no current contract carries preparation or readiness revision identity or binds it to the pin request. Current Game Session implementation does not revalidate tenant `READY`/base/attestation as part of a pin transaction. These remain implementation and proof gaps; no cross-service transaction is implied.
 
 ## Canonical Design
 
