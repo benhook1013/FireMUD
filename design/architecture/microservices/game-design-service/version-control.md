@@ -1,6 +1,8 @@
 # Version Control for Design Assets
 
-Design assets are versioned to enable rollback and collaborative workflows. This document outlines how the Game Design Service integrates version control semantics.
+## Normative Target Contract
+
+Game Design is the canonical authored-history, publication-coordination, release-descriptor, and final-attestation authority. Owner APIs remain the write path for domain-owned Draft and Published participant data; immutable versions, script patches, release bundles, participant digests, and provenance must be validated and correlated through those APIs. Optimistic concurrency and deterministic replay preserve revision order and conflict safety, while any external Git integration is ingestion only and must not become a second content authority.
 
 ## Implementation Status
 

@@ -16,7 +16,7 @@ Separately, a terminal pre-DSL `DEAD_LETTERED` row with no committed descriptor 
 
 ## Implementation Status
 
-This section records current behavior only. The current Automation claim boundary is `PENDING_EVALUATION` -> `EVALUATING`; it has no recovery owner, evaluation lease expiry/fencing generation, or descriptor-commit marker/status, and its recovery behavior is unimplemented and unverified. The current replay mutation still accepts optional `gameInstanceId`/`regionId` scope fields and empty-ID selection, selects parent `workItemIds`, requeues eligible `script_work_items` rows as `PENDING_EVALUATION`, and returns aggregate counts instead of target per-row recovery results; it does not select independent command descriptors or prove post-evaluation recovery. `GetAutomationPinConvergence` currently serves the durable `ScriptPatchPinProjection`/`script_patch_pin_projections` view without `observedScriptPinEpoch`; that patch-only observation is diagnostic/incomplete exact-tuple evidence, so exact-tuple admission/replay must fail closed or use an epoch-carrying authoritative Game Session read. Expanding that field in runtime/proto code is an implementation follow-up outside this documentation parcel. `GetAutomationDrainStatus` currently counts `EVALUATING` and `HANDOFF_IN_FLIGHT` rows in `activeExecutionCount`, including unresolved stale `EVALUATING` rows, and counts every handoff-capable `PENDING_EVALUATION` row in `pendingCancelableWorkItemCount`; both counts are within the requested scope, and while `PAUSED_FOR_ROLLBACK` include only pre-pause rows with `workItem.admissionEpoch < current admissionEpoch`; normal mode counts scoped rows. Current terminal-row cleanup is retention-based; the target terminal-evidence purge rule is not current trigger-state recovery and does not establish that the current cleanup preserves an `EVALUATED_COMMITTED` marker, audit, or replay causation. These implementation facts are a cleanup-projection gap; they do not relax the target exact-artifact convergence and schedule-reconciliation gates for Automation admission.
+This section records current behavior only. The current Automation claim boundary is `PENDING_EVALUATION` -> `EVALUATING`; it has no recovery owner, evaluation lease expiry/fencing generation, or descriptor-commit marker/status, and its recovery behavior is unimplemented and unverified. The current replay mutation still accepts optional `gameInstanceId`/`regionId` scope fields and empty-ID selection, selects parent `workItemIds`, requeues eligible `script_work_items` rows as `PENDING_EVALUATION`, and returns aggregate counts instead of target per-row recovery results; it does not select independent command descriptors or prove post-evaluation recovery. `GetAutomationPinConvergence` currently serves the durable `ScriptPatchPinProjection`/`script_patch_pin_projections` view without `observedScriptPinEpoch` or `observedConvergenceAttemptGeneration`; that patch-only observation is diagnostic/incomplete evidence, so missing `observedScriptPinEpoch` keeps exact-tuple admission/replay fail-closed, while missing `observedConvergenceAttemptGeneration` separately prevents attempt-bound convergence proof. Expanding those fields in runtime/proto code is an implementation follow-up outside this documentation parcel. `GetAutomationDrainStatus` currently counts `EVALUATING` and `HANDOFF_IN_FLIGHT` rows in `activeExecutionCount`, including unresolved stale `EVALUATING` rows, and counts every handoff-capable `PENDING_EVALUATION` row in `pendingCancelableWorkItemCount`; both counts are within the requested scope, and while `PAUSED_FOR_ROLLBACK` include only pre-pause rows with `workItem.admissionEpoch < current admissionEpoch`; normal mode counts scoped rows. Current terminal-row cleanup is retention-based; the target terminal-evidence purge rule is not current trigger-state recovery and does not establish that the current cleanup preserves an `EVALUATED_COMMITTED` marker, audit, or replay causation. These implementation facts are a cleanup-projection gap; they do not relax the target exact-artifact convergence and schedule-reconciliation gates for Automation admission.
 
 ## Table of Contents
 
@@ -170,6 +170,7 @@ Outputs:
 - `tenantId`, `gameInstanceId`
 - `observedPinnedScriptPatchVersion` (nullable; absent for semantic `UNPINNED`)
 - `observedScriptPinEpoch` (nullable; absent for semantic `UNPINNED`)
+- `observedConvergenceAttemptGeneration` (positive generation observed with the exact pair and request identity; absent when no workflow observation exists)
 - `lastObservedControlPlaneRequestId` (nullable; absent for semantic `UNPINNED`)
 - `observedAt`
 - `projectionAsOfMs`
@@ -179,7 +180,7 @@ Outputs:
 Semantics:
 
 - Read-only.
-- Reports the latest pin observation used by admission and scheduler logic. For promotion or rollback convergence, the observation is an acknowledgment only when the expected `(scriptPatchVersion, scriptPinEpoch, controlPlaneRequestId)` tuple is present, `isProjectionStale=false`, and `projectionLagMs` is inside the configured freshness bound; a stale stored observation remains diagnostic data, not convergence proof. The freshness bound is the configured `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS` value from [Automation & Scripting Service Configuration](./microservices/automation-scripting-service/configuration.md).
+- Reports the latest pin observation used by admission and scheduler logic. Exact-tuple admission/replay requires the observed `(scriptPatchVersion, scriptPinEpoch)` pair and fails closed when the epoch is missing or stale. For promotion or rollback convergence, the observation is an acknowledgment only when the expected `(scriptPatchVersion, scriptPinEpoch, convergenceAttemptGeneration, controlPlaneRequestId)` tuple is present, `isProjectionStale=false`, and `projectionLagMs` is inside the configured freshness bound; a missing attempt generation separately prevents convergence proof. The freshness bound is the configured `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS` value from [Automation & Scripting Service Configuration](./microservices/automation-scripting-service/configuration.md).
 - Semantic `UNPINNED` is a valid observation represented by all three pin identity fields being absent: no `observedPinnedScriptPatchVersion`, no `observedScriptPinEpoch`, and no `lastObservedControlPlaneRequestId`. It is never represented by a sentinel or a partial tuple and cannot satisfy promotion/rollback acknowledgment, which requires the requested pinned tuple and matching request identity.
 - Reports only pin observation and projection freshness; it does not return an admission decision, `finalStage`, `finalOutcome`, `finalReason`, or a handler outcome.
 
@@ -195,6 +196,7 @@ Outputs:
 - `tenantId`, `gameInstanceId`
 - `observedPinnedScriptPatchVersion` (nullable; absent for semantic `UNPINNED`)
 - `observedScriptPinEpoch` (nullable; absent for semantic `UNPINNED`)
+- `currentConvergenceAttemptGeneration` (positive current generation; absent when no workflow exists)
 - `lastObservedControlPlaneRequestId` (nullable; the committed pin mutation request represented by this authoritative Game Session read; absent for semantic `UNPINNED`)
 - `observedAt`
 
@@ -202,7 +204,7 @@ Semantics:
 
 - Read-only.
 - Reports a Game Session owner-side convergence observation/acknowledgment for rollback and promotion. It is not the authoritative current-pin or rollout-history read and is not used by tick command intake or execution-time version fences; those use `GetPinnedScriptPatchVersion` and Game Session local owner state.
-- This is not an Automation projection read; projection lag and stale-projection fields do not apply, and no projection fields are returned. For rollback/promotion convergence, the observation is an acknowledgment only when it completes before the operation deadline and the exact `(scriptPatchVersion, scriptPinEpoch, controlPlaneRequestId)` matches the expected tuple; `observedAt` is the timestamp from the owner-side observation.
+- This is not an Automation projection read; projection lag and stale-projection fields do not apply, and no projection fields are returned. For rollback/promotion convergence, the observation is an acknowledgment only when it completes before the operation deadline and the exact `(scriptPatchVersion, scriptPinEpoch, convergenceAttemptGeneration, controlPlaneRequestId)` matches the expected tuple; `observedAt` is the timestamp from the owner-side observation.
 - Semantic `UNPINNED` is a valid observation represented by all three pin identity fields being absent: no `observedPinnedScriptPatchVersion`, no `observedScriptPinEpoch`, and no `lastObservedControlPlaneRequestId`. It is never represented by a sentinel or a partial tuple and cannot satisfy promotion/rollback acknowledgment, which requires the requested pinned tuple and matching request identity.
 
 #### `GetSignerPolicyConvergence`
@@ -431,8 +433,9 @@ Logging & Admin may expose a single high-level orchestration API (internally dri
 
 - `RequestScriptPatchRollback(tenantId, gameInstanceId, targetScriptPatchVersion, controlPlaneRequestId, actor, reason)`
 - `RequestScriptPatchPromotion(tenantId, gameInstanceId, targetScriptPatchVersion, controlPlaneRequestId, actor, reason)`
+- `RecoverScriptPinConvergence(tenantId, gameInstanceId, controlPlaneRequestId, expectedTimedOutConvergenceAttemptGeneration, actor, reason)`
 
-If implemented, these APIs must remain thin orchestration and must not become another source of truth for the pinned version.
+If implemented, these APIs must remain thin orchestration and must not become another source of truth for the pinned version. Recovery must forward the explicit Game Session owner mutation and must not infer recovery from a retry of the original promotion or rollback request.
 
 ## Pin Transition and Recovery Workflow
 
