@@ -15,7 +15,7 @@ The current evaluator supports a bounded emitted-command collection per work ite
 ### 1) Tick Queue Ownership (`tick:*`)
 
 - The Game Session Service is the **only** service that writes to `tick:{tenantRegionTag}:*` coordination keys and per-entity tick queues.
-- The Automation & Scripting Service never mutates `tick:*` keys directly (including via Redis Lua). It hands off script-generated commands to Game Session via internal gRPC so Game Session can enqueue them using its own Redis Lua registry and tick invariants.
+- The Automation & Scripting Service never mutates `tick:*` keys directly (including via Redis Lua). It hands off script-generated commands to Game Session via internal gRPC so Game Session can enqueue them through the shared [`firemud-common` Lua Script Registry, descriptors, key builders, and invocation helpers](./system-architecture-shared-libraries.md#redis-key-naming--lua-script-helpers), while retaining ownership of tick-key mutations and invariants.
 
 ### 2) Script Work Item vs Tick Command Boundary
 

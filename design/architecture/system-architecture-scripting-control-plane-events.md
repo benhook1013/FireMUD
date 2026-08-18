@@ -167,7 +167,7 @@ Fields:
 
 ## `ScriptPinConvergenceTimedOut` (Game Session -> Durable Event Flow)
 
-Emitted when promotion or rollback orchestration reaches terminal state `PIN_CONVERGENCE_TIMEOUT` before both convergence APIs acknowledge the expected `controlPlaneRequestId`. Logging & Admin may initiate orchestration, but Game Session is the mandatory producer-of-record for this event.
+Emitted once, and only by Game Session, when the persisted pin-transition workflow reaches terminal state `PIN_CONVERGENCE_TIMEOUT` before both convergence APIs acknowledge the expected exact target tuple. The event's exact `(tenantId, gameInstanceId, targetScriptPatchVersion, targetScriptPinEpoch, operationKind, controlPlaneRequestId)` must match that workflow record, with `operationKind` equal to its existing `SET`, `ROLLBACK`, or `REPIN` value; a request ID or partial/stale observation alone is insufficient. Logging & Admin may initiate orchestration, but Game Session is the mandatory producer-of-record. Workflow sequencing and recovery remain owned by [Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md#pin-convergence-acknowledgment-predicate).
 
 Fields:
 

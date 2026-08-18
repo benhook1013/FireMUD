@@ -10,6 +10,10 @@ This document is the short catalog of the testing areas that most often deserve 
 - Prefer linking to the canonical suite, harness, or proof doc rather than copying command transcripts or Gradle invocations into this file.
 - For current capability priorities and implementation status, use `design/project-management/implementation-tracking/README.md` and the relevant domain tracker rather than this file.
 
+## Implementation Status
+
+The script-transition requirements below are target-state, capability-gated proof obligations, not claims that the live implementation already satisfies them; current implementation and proof gaps remain recorded in the linked owners.
+
 ## 1. Admission, Authentication, and Session Binding
 
 - Prove `LOGIN`, `PLAY`, reconnect, takeover, and logout behavior across both WebSocket and Telnet when the change touches session ownership or account identity.
@@ -92,8 +96,6 @@ This document is the short catalog of the testing areas that most often deserve 
 ## 11. Script Transitions, Fences, and Recovery
 
 Canonical contract and proof owners: [Scripting Contracts](../architecture/system-architecture-scripting-contracts.md), [Rollout and Rollback](../architecture/system-architecture-scripting-rollout-and-rollback.md), [Runtime Execution](../architecture/system-architecture-scripting-runtime-execution.md), [Scheduler and Timers](../architecture/system-architecture-scripting-scheduler-and-timers.md), [Normative Contract Tables](../architecture/system-architecture-scripting-normative-contract-tables.md), the [Game Session Runtime and Tick Coordination tracker](implementation-tracking/game-session-runtime-and-tick-coordination.md#capability-status), and the [Automation and Scheduler Runtime tracker](implementation-tracking/automation-and-scheduler-runtime.md#capability-status).
-
-The requirements in this section are target-state, capability-gated proof obligations, not claims that the live implementation already satisfies them; current implementation and proof gaps remain recorded in the linked owners.
 
 - Test Game Session's atomic exact-pin tuple, rollout-history, and transactional-outbox boundary, including failure rollback, concurrent first pin, tagged precondition conflicts, exact-request idempotency, same-version repin, and strictly ordered projection replay. A successful same-version repin must advance `scriptPinEpoch`, emit exactly one `ScriptPatchPinChanged` outbox record, and cause final execution to reject work carrying the prior exact tuple. See the [control-plane event ordering contract](../architecture/system-architecture-scripting-control-plane-events.md#event-transport-contract-required) and [Automation projection consumption rules](../architecture/microservices/automation-scripting-service/api-contracts.md#script-patch-and-plugin-visibility-apis).
 

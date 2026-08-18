@@ -140,7 +140,7 @@ source of truth for world and entity history. Domain services (World Management,
 Entity Management, etc.) store the versioned templates they consume at runtime,
 but commit and revision history remains anchored in the Game Design Service.
 
-The Game Design Service must also persist an immutable `published_release_bundle` record per `(tenantId, versionId)` after publish gates and asset export succeed. This record is the canonical release attestation consumed by activation, rollback-preflight, and repair tooling. It contains the publish workflow identity, target `commitId`, required participant digests, the dedicated Game Logic-owned `abilitySchemaDigest`, `manifestHash`, and `generationConfigRevision` for that release. Aggregate participant content digests do not substitute for the separately attested ability-schema value.
+The Game Design Service must also persist an immutable `published_release_bundle` record per `(tenantId, versionId)` after publish gates and asset export succeed. This record is the canonical release attestation consumed by activation, rollback-preflight, and repair tooling. It contains the publish workflow identity, target `commitId`, required participant digests, `manifestHash`, and `generationConfigRevision` for that release. **Target state (currently unproved):** The record also contains the dedicated Game Logic-owned `abilitySchemaDigest`; current schema and validator status are recorded in the [API contract implementation status](api-contracts.md#implementation-status) and [version-control digest contract](version-control.md#digest-participants-by-publish-type).
 
 For releases that export derived artifacts outside participant-owned databases
 in the initial slice, `published_release_bundle` must also include
