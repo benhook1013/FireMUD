@@ -191,9 +191,9 @@ Game Design owns the authoring and publication lifecycle for plugin versions bef
 
 Each `(tenantId, pluginId, pluginVersionId)` must have one canonical design-time status:
 
-- `DRAFT` – authoring metadata exists but no accepted signed bundle has been stored.
-- `UPLOAD_REJECTED` – bundle ingestion failed before publication, for example due to archive safety limits, malformed manifest, or signature failure.
-- `SIGNATURE_VERIFIED` – the bundle passed canonicalization and signature verification and its signed metadata has been persisted. This is a durable operator-visible state, not merely an internal transient step; a version may remain here indefinitely until publication is requested or abandoned.
+- `DRAFT` – authoring metadata exists, but no package has been accepted and no provenance record has been accepted. For target unsigned intake, upload remains `DRAFT` until `PublishPluginVersion` records the exact digest, complete validation, scoped approval, and platform acceptance attestation; it then transitions to `PUBLISHED`. No unsigned-specific pre-publication status exists.
+- `UPLOAD_REJECTED` – package ingestion failed before publication, for example due to archive safety limits, malformed manifest, or (for signed intake) signature failure.
+- `SIGNATURE_VERIFIED` – signed-intake only: the bundle passed canonicalization and signature verification and its signed metadata has been persisted. This is a durable operator-visible state, not merely an internal transient step; a version may remain here indefinitely until publication is requested or abandoned. The target unsigned provenance path does not claim signature verification or introduce an unsigned-specific state.
 - `VALIDATION_FAILED_DESIGN` – Game Design completed design-time validation and rejected the version due to deterministic authoring errors such as invalid bindings, disallowed components, `baseVersionId` mismatch, or `abilitySchemaDigest` mismatch.
 - `PUBLISHED` – the plugin version is accepted into immutable design-time history after its applicable immutable provenance and validated publication evidence is recorded, and is eligible to be selected as input to a scoped runtime activation request; publication alone does not authorize runtime activation or admission.
 - `SUPERSEDED` – a later plugin version for the same `pluginId` exists; older versions remain immutable historical records and are not eligible for runtime activation.
@@ -211,9 +211,8 @@ Required lifecycle semantics:
 
 Required write path:
 
-- `UploadPluginBundle` accepts the bundle bytes, performs archive safety checks, canonicalization, signature verification, manifest extraction, and indexed metadata persistence.
-  - Success moves the version to `SIGNATURE_VERIFIED`.
-  - Deterministic ingestion or signature failures move the version to `UPLOAD_REJECTED`.
+- `UploadPluginBundle` accepts the bundle bytes, performs archive safety checks, canonicalization, provenance-specific intake checks, manifest extraction, and indexed metadata persistence. In the current signed-only flow, provenance checks include signature verification and success moves the version to `SIGNATURE_VERIFIED`; the target unsigned path uses the existing statuses and its exact-digest, approval, and attestation evidence without adding an unsigned-specific status.
+  - Deterministic ingestion or signed-intake signature failures move the version to `UPLOAD_REJECTED`.
 - `PublishPluginVersion` is the explicit design-time publication step for a previously uploaded bundle version.
   - It runs design-time validation over graphs, bindings, component policy, `baseVersionId`, and `abilitySchemaDigest`.
   - Validation failures move the version to `VALIDATION_FAILED_DESIGN`.

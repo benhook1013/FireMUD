@@ -8,6 +8,8 @@ Scripting identity terms are defined here only as identifiers: [Scripting Contra
 
 The UUID target applies only to UUID-governed logical identifiers; it is not a blanket requirement that every runtime or operational identifier be a UUID. That target has not fully converged: several current REST DTOs, OpenAPI schemas, database-facing service contracts, and persisted rows still expose numeric account, tenant, version, game-instance, character, or template IDs. Existing gRPC strings and architecture examples must carry canonical UUID values for UUID-governed logical identifiers rather than decimal strings or mnemonic placeholders, but that does not make the remaining schema and persistence migration complete. Typed scoped-numeric runtime room, entity, and item-instance identifiers remain valid inside their complete scope.
 
+The live Game Session pin/convergence proto/runtime carries `scriptPatchVersion` but not `scriptPinEpoch`; exact tuple propagation remains a target-state implementation and proof gap. See [Game Session API implementation status](./microservices/game-session-service/api-contracts.md#implementation-status) and the [Game Session runtime tracker](../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#script-pin-epoch-and-rollout-history-reconciliation).
+
 ## Core Identifiers
 
 - `accountId` – identifies a platform account. Present on authentication/session records and account-owned domain relationships.
@@ -16,8 +18,6 @@ The UUID target applies only to UUID-governed logical identifiers; it is not a b
 - `gameInstanceId` – identifies a running game instance for a tenant. Domain service runtime/instance data is scoped by `(tenantId, gameInstanceId)` and references the instance’s pinned `runtime_version`/`versionId`.
 - `scriptPatchVersion` – identifies an immutable embedded-script patch independently of instance selection. It pairs with Game Session's per-instance `scriptPinEpoch` in the exact instance-bound tuple. Tenant-readiness `onLoad` may use a declared candidate patch in its pre-instance-pin identity.
 - `scriptPinEpoch` – identifies Game Session's per-instance pin-selection epoch. It pairs with `scriptPatchVersion` in the exact instance-bound tuple; tenant-readiness `onLoad` omits it because no instance pin exists.
-
-`scriptPatchVersion` exists on the live boundary, but the exact pair remains target-state: the live Game Session pin/convergence proto/runtime does not yet carry or propagate `scriptPinEpoch`; see [Game Session API implementation status](./microservices/game-session-service/api-contracts.md#implementation-status) and the [Game Session runtime tracker](../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#script-pin-epoch-and-rollout-history-reconciliation).
 
 - `regionId` – identifies an operational tick region within `(tenantId, gameInstanceId)`. It is an opaque runtime-coordination identity, not a World Management row ID, design-time region template ID, room ID, or slug. The complete region scope is `{tenantId, gameInstanceId, regionId}`.
 - `characterId` – identifies a character owned within a tenant. Gameplay session binding and any instance-local playable state use it together with `{tenantId, gameInstanceId}` scope.

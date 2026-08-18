@@ -1,5 +1,9 @@
 # Game Session Service API Contracts
 
+## Target Control-Plane Summary
+
+Target state makes Game Session the authoritative owner of region/tick coordination, each instance's exact `(scriptPatchVersion, scriptPinEpoch)`, and append-only script rollout history. Owner mutations are fenced and idempotent; Logging & Admin is the external operator ingress, and session front ends forward region work without writing lease-owned state directly. Authoritative owner reads gate script admission and convergence. See [Scripting Control-Plane API](../../system-architecture-scripting-control-plane-api.md#game-session-patch-pinning).
+
 ## Implementation Status
 
 This document mixes live and target-state control-plane surfaces. Current live behavior is narrower:

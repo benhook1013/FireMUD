@@ -14,6 +14,10 @@ This doc set is the authoritative source for:
 - the minimal text command protocol and world-selection flow used by the initial gameplay slice; and
 - the service's control-plane, runtime, configuration, and operator contracts.
 
+## Target Control-Plane Summary
+
+Target state makes Game Session the authoritative owner of region/tick coordination, each instance's exact `(scriptPatchVersion, scriptPinEpoch)`, and append-only script rollout history. Owner mutations are fenced and idempotent; Logging & Admin is the external operator ingress, and session front ends forward region work without writing lease-owned state directly. See [Scripting Control-Plane API](../../system-architecture-scripting-control-plane-api.md#game-session-patch-pinning).
+
 ## Implementation Status
 
 Current seams are narrower: patch/request convergence reads, instance-scoped pause/resume, region-epoch fencing, and existing version-fence paths do not yet prove complete `scriptPinEpoch` propagation, final-effect enforcement, or Game-Session-owned append-only history. Track those implementation and proof gaps in the [Game Session runtime and tick coordination tracker](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#active-gaps).

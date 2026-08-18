@@ -4,7 +4,7 @@ Design assets are versioned to enable rollback and collaborative workflows. This
 
 ## Implementation Status
 
-External Git synchronization and canonical multi-branch merge semantics are not implemented. Current authoring uses Game Design-owned revision APIs with optimistic concurrency and deterministic replay order.
+External Git synchronization and canonical multi-branch merge semantics are not implemented. Current authoring uses Game Design-owned revision APIs with optimistic concurrency and deterministic replay order. Current release-bundle schema and plugin publication/activation code incorrectly reuse Automation & Scripting's aggregate participant `contentDigest` where the dedicated Game Logic-owned `abilitySchemaDigest` is required; exact ability-schema compatibility therefore remains an implementation and proof gap.
 
 ## Approach
 
@@ -130,7 +130,7 @@ Publish workflows must use an explicit participant matrix so digest gating is de
 
 Asset bytes are intentionally outside participant design digests, but they remain mandatory publication gates through private candidate verification, the attested manifest digest, and every actual-byte artifact digest in the release bundle.
 
-The full-version release bundle also carries a separately named `abilitySchemaDigest` produced from the immutable Game Logic-owned ability-schema snapshot for the same target commit. Game Logic's aggregate participant `contentDigest` and Automation & Scripting's participant digest cover broader, different manifests and cannot substitute for this field. Plugin and script-patch compatibility checks compare against this dedicated release-attested value; missing ability-schema evidence fails closed. The current release-bundle schema and plugin publication/activation code do not yet carry that dedicated field and incorrectly reuse the Automation participant digest, so exact ability-schema compatibility remains an implementation and proof gap.
+The full-version release bundle also carries a separately named `abilitySchemaDigest` produced from the immutable Game Logic-owned ability-schema snapshot for the same target commit. Game Logic's aggregate participant `contentDigest` and Automation & Scripting's participant digest cover broader, different manifests and cannot substitute for this field. Plugin and script-patch compatibility checks compare against this dedicated release-attested value; missing ability-schema evidence fails closed.
 
 ### Change Vehicle Selection Matrix
 

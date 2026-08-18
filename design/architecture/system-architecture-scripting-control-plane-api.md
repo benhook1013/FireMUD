@@ -262,7 +262,7 @@ Semantics:
 
 Outputs: same as `SetPinnedScriptPatchVersion`.
 
-Timeout event producer rule: when the persisted pin-transition workflow reaches `PIN_CONVERGENCE_TIMEOUT`, Game Session may emit `ScriptPinConvergenceTimedOut` only from workflow evidence whose exact `(tenantId, gameInstanceId, targetScriptPatchVersion, targetScriptPinEpoch, operationKind, controlPlaneRequestId)` matches the event payload. `operationKind` remains the existing `SET`, `ROLLBACK`, or `REPIN` value; a request ID or partial/stale observation alone is insufficient. Workflow deadline and recovery sequencing are owned by [Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md#pin-convergence-acknowledgment-predicate).
+Timeout event producer rule: for each valid persisted transition of the pin-transition workflow into `PIN_CONVERGENCE_TIMEOUT`, Game Session must emit exactly one `ScriptPinConvergenceTimedOut` event, and only from workflow evidence whose exact `(tenantId, gameInstanceId, targetScriptPatchVersion, targetScriptPinEpoch, operationKind, controlPlaneRequestId)` matches the event payload. `operationKind` remains the existing `SET`, `ROLLBACK`, or `REPIN` value; a request ID or partial/stale observation alone is insufficient. Workflow deadline and recovery sequencing are owned by [Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md#pin-convergence-acknowledgment-predicate).
 
 ### Automation & Scripting: Patch Lifecycle Visibility
 
