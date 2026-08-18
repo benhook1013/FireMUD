@@ -31,8 +31,8 @@ flowchart LR
     DESIGN_ALLOC --> SOURCE_INV[Source decision inventories]:::alignment
     SOURCE_INV --> HUMAN_QUEUE[Completed human-review queue]:::alignment
     HUMAN_QUEUE --> APPLY[Point-in-time application status]:::alignment
-    APPLY -->|merged to develop| ADRS[100 applied decision keys, including complete Packet 3 ADRs 0051-0092 plus TICK-05 and this selective Packet 4 parcel, plus owning design changes]:::status
-    ADRS -. explains; does not replace .-> ARCH
+    APPLY -->|merged to develop| APPLIED_DECISIONS[100 applied decision keys, including complete Packet 3 ADRs 0051-0092 plus TICK-05 and this selective Packet 4 parcel, plus owning design changes]:::status
+    APPLIED_DECISIONS -. explains; does not replace .-> ARCH
     APPLY -->|reviewed; pending selective import| PENDING[82 active decision keys pending selective import in Packet 4 and packets 5-7]:::pending
 
     TAXONOMY --> TRACKER_ALLOC[Implementation-tracker allocation]:::alignment

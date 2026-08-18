@@ -69,3 +69,8 @@ Entry format:
   - Context: a hosted full-review command replied `Action failed` within a minute, but the CodeRabbit status check remained pending and `check-coderabbit-review.py` continued to report the request as unfinished for more than an hour.
   - Observation: a pending external check and an unfinished helper result do not prove that hosted review is still active when the direct command reply is already terminal.
   - Expected pattern: when hosted review remains pending substantially longer than normal, inspect the direct CodeRabbit reply to the latest command. Treat an explicit failed reply as terminal for review-safety, preserve any prepared local fixes, and request a fresh review only after publishing the next validated head or after the applicable cooldown.
+
+- `2026-08-18`: Structural agent-thread exhaustion is not model capacity
+  - Context: autonomous delegation encountered `agent thread limit reached`.
+  - Observation: the harness slot limit requires a different recovery path from a model-capacity failure.
+  - Expected pattern: route thread exhaustion through the [AI Delegation And Review](../developer-workflows/ai-delegation-and-review.md) status/close-out path; reserve delayed same-tier retries for actual model-capacity failures.

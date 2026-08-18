@@ -4,6 +4,10 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 
 Platform Operations is a cross-cutting operational authority rather than a microservice column in this matrix: it owns object-storage, CDN, registry, and promotion-evidence infrastructure and delivery. Game Design remains the authority for publication coordination, release descriptors, asset lifecycle, CAS state, and purge eligibility; domain services retain participant data and digest authority.
 
+## Target Responsibility Model
+
+The matrix below is the target participation and ownership contract. `Authoritative owner:` rows identify the sole invariant or policy authority; other participants coordinate or provide bounded evidence through documented contracts and do not create competing state authority.
+
 ## Implementation Status
 
 - Live external operator availability includes the Gateway edge plus Logging & Admin domain ingress for reads, investigation, admission-pointer reads/audit, and prepared-upgrade proof reads. TCP Proxy does not participate in this HTTP operator read/proof-read path. `EvaluateModerationPolicy` is a separate live internal owner-boundary read consumed by Account, Game Session, and Social & Groups, not external operator availability. The target mutation rows below are normative contracts, not claims that every listed mutation is currently routable.
@@ -19,7 +23,7 @@ Platform Operations is a cross-cutting operational authority rather than a micro
 | Custom in-game scripting authoring | ✔ | | | | | | | | | | |
 | Game version publishing | ✔ | | | | | | | | | | |
 | Authoritative owner: exact script pin and append-only rollout history for each `(tenantId, gameInstanceId)` (`scriptPatchVersion`, `scriptPinEpoch`) — Game Session only | | | | ✔ | | | | | | | |
-| Tenant-scoped patch readiness and instance-scoped observed pin/convergence projections — Automation & Scripting-owned; non-authoritative and distinct from Game Session's authoritative current-pin/history read. | | | | | | | ✔ | | | | |
+| Tenant-scoped patch readiness and instance-scoped observed pin/convergence projections plus projection freshness — Automation & Scripting-owned; non-authoritative and distinct from Game Session's authoritative current-pin/history read. | | | | | | | ✔ | | | | |
 | Game Session-owned non-authoritative `GetGameSessionPinConvergence` owner-side observation/acknowledgment — distinct from the authoritative current-pin/history row above and never a replacement for that authority. | | | | ✔ | | | | | | | |
 | Design-time feature flag definitions | ✔ | | | | | | | | | | |
 | Room and zone editing | ✔ | | | | | | | | | | |

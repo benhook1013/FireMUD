@@ -1,5 +1,7 @@
 # Game Session Service Configuration
 
+**Target-state:** Script pin epochs, current pins, and rollout history are durable Game Session state, not configurable defaults. For instance-scoped gameplay/runtime Automation admission, no service-local stale-pin grace period or operator override may authorize work when the authoritative tuple cannot be read. Tenant-readiness `onLoad` remains pre-instance-pin: it carries only candidate `scriptPatchVersion`, omits `gameInstanceId`, runtime scope, and `scriptPinEpoch`, and cannot emit gameplay work or effects. Any future preparation, timeout, or cleanup tuning must preserve exact tuple fencing and must not turn routine script rollback into a full gameplay pause.
+
 ## Implementation Status
 
 Live pin/convergence reads exist, while complete `scriptPinEpoch` propagation, atomic pin/history commit, authoritative rollout-history reads, and final-effect fencing remain implementation/proof gaps. See the [Game Session runtime and tick coordination tracker](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#active-gaps).
@@ -47,8 +49,6 @@ The generated reference carries the current defaults, descriptions, valid values
 - The service enforces multi-tenant isolation. All tables include a `tenant_id` column and Redis keys are prefixed with this value as outlined in [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
 - Service discovery for downstream gRPC calls uses `ServiceEndpointsProperties` and mTLS identities issued through cert-manager.
 - `firemud.presentation`, `firemud.reconnection`, `firemud.command-history`, `firemud.command-capabilities`, `firemud.movement`, and `firemud.world-topology` remain file/env-backed operator defaults.
-
-**Target-state:** Script pin epochs, current pins, and rollout history are durable Game Session state, not configurable defaults. For instance-scoped gameplay/runtime Automation admission, no service-local stale-pin grace period or operator override may authorize work when the authoritative tuple cannot be read. Tenant-readiness `onLoad` remains pre-instance-pin: it carries only candidate `scriptPatchVersion`, omits `gameInstanceId`, runtime scope, and `scriptPinEpoch`, and cannot emit gameplay work or effects. Any future preparation, timeout, or cleanup tuning must preserve exact tuple fencing and must not turn routine script rollback into a full gameplay pause.
 
 - Tenant/game overrides for these surfaced domains now come from the shared Game Design settings authority rather than service-local file/env maps.
 - The generated per-key schema/reference for those domains is the canonical operator/admin-facing documentation surface; this service doc keeps only the Game Session-specific ownership and runtime notes.
