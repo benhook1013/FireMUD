@@ -92,6 +92,8 @@ This target mutation belongs to Game Design and is separate from runtime plugin 
 
 The owner first resolves `controlPlaneRequestId` and the normalized request digest: an exact terminal retry returns its stored result before current status/evidence validation, while changed-digest reuse returns `IDEMPOTENCY_CONFLICT` without mutation. Only a new request evaluates current `SIGNATURE_VERIFIED`/`PUBLISHED` eligibility. The owner serializes this mutation with `RevokePluginVersion` status transitions and `PublishPluginVersion` supersession of older versions. Under one owner-row/status-revision transaction, it rechecks status eligibility and commits the duplicate/conflict decision, the ledger append when applicable, the idempotency result, and exactly one `PluginVersionSignatureEvidenceAppended` outbox event if and only if the outcome is `APPENDED`; an identical no-op or conflict has no ledger append or event. Revoke, supersede, and evidence append therefore resolve as one ordered owner decision, never as a partially applied combination.
 
+Signature verification uses the canonical [Signing and Key Lifecycle](modding-framework.md#signing-and-key-lifecycle-required) owner contract: resolve the exact stored immutable `bundleDigest` for `(tenantId, pluginId, pluginVersionId)`, require it to equal the expected `bundleDigest`, and verify the appended entry against the signed-intake-v1 envelope and preimage. The resulting canonical `verifiedSignatures[]` retains the owner-defined key metadata; this API defines no separate algorithm, schema, or domain-separator scheme.
+
 Inputs:
 
 - exact `(tenantId, pluginId, pluginVersionId)`;
