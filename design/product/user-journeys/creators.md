@@ -151,7 +151,7 @@ Creator → Game Design Service (publish) → Control plane → Game Session Ser
 8. **Verify Performance** – Check metrics, traces, and rollout signals after deployment; see [Logging & Monitoring](../../architecture/system-architecture-logging-monitoring.md) and [Testing Strategy](../../architecture/system-architecture-testing.md).
 
 ```plaintext
-Routine: Game Design Service (publish) → tenantAdmin (routine ownership; all admission, compatibility, and readiness predicates) → Script Patch Pin, Plugin Activation, or Replacement-Instance Cutover
+Routine actor: tenantAdmin → Game Design Service (publication/descriptor compatibility) → Game Session (script-pin authority) + Automation & Scripting (readiness, plugin activation, and runtime admission predicates) → Script Patch Pin, Plugin Activation, or Replacement-Instance Cutover
 Break-glass: platformAdmin → separately authorized emergency path; no bypass of other admission, compatibility, or readiness predicates
 ```
 

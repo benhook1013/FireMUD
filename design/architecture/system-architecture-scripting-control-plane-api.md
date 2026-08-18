@@ -515,7 +515,7 @@ Target-state outputs:
   - `outcome` is exactly one of `retried_evaluation`, `resumed_dispatch`, `already_recovered`, `recovery_failed`, or `rejected`.
   - `rejectionReason` is present only with `outcome=rejected` and uses established bounded values such as `not_found_or_not_owned`, `stage_evidence_unavailable`, `work_item_not_dead_lettered`, `recovery_in_progress`, `script_pin_epoch_mismatch`, `plugin_binding_mismatch`, `plugin_activation_generation_mismatch`, `runtime_scope_mismatch`, `plugin_disabled`, `plugin_version_not_published`, `plugin_component_policy_blocked`, `component_policy_unavailable`, `signer_policy_unavailable`, `signer_revoked`, or `authority_unavailable`.
   - `failureReason` is required only with `outcome=recovery_failed`, absent for every other outcome, and reuses the established stage-aware failure-reason vocabulary for the terminal failed recovery attempt rather than introducing a parallel taxonomy.
-- `replayedCount` (bounded count of selected work items that progressed)
+- `replayedCount` (the number of `results[]` rows whose stored `outcome` is `retried_evaluation` or `resumed_dispatch`; `already_recovered`, `recovery_failed`, and `rejected` do not contribute, and exact retries derive the same count from the stored results)
 - `rejectedCount`
 
 Contract rules:

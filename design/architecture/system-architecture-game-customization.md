@@ -8,7 +8,7 @@ This brief document summarizes optional ways a hosted game can change its look a
 
 - Bulk JSON import/export remains deferred. Current creator workflows use service-owned design APIs and world-editing tools.
 - Current publication exports ordinary bytes from the first-slice Game Design database source into version-scoped object storage and emits a narrower manifest. Target publication builds and verifies a private candidate before exposing immutable content-addressed objects; all private-candidate/content-addressed bullets and examples below are target state and are not yet the live publication path.
-- Current live script handoff does not yet carry `scriptPinEpoch`, so exact same-version old-epoch rejection remains target-state behavior rather than implementation proof.
+- Current live script handoff does not yet carry `scriptPinEpoch` or the complete applicable plugin fence `(pluginId, pluginVersionId, bindingId, pluginActivationGeneration)`, so exact same-version old-epoch and old-activation-generation rejection remain target-state behavior rather than implementation proof.
 
 ## Theme and Branding
 
