@@ -129,10 +129,10 @@ Within a given published game version:
 
 Scripts and plugins may safely reference abilities by identifier within a game version and across script-only or plugin-only patches, but they should not assume that those identifiers remain valid across **different game versions**. Versioning runtime docs describe how these assets are pinned and how rollbacks behave when a game version is reverted.
 
-The Game Design Service’s publish workflows are responsible for enforcing these rules at **design time** in the target contract (the dedicated ability-schema validation remains unimplemented/unproved):
+The Game Design Service’s `PublishVersion`, `PublishScriptPatchVersion`, and `PublishPluginVersion` workflows are responsible for enforcing these rules at **design time** in the target contract (the dedicated ability-schema validation remains unimplemented/unproved). They do not own instance activation compatibility; Automation & Scripting owns the runtime `SetPluginActiveVersion` checks against the current published plugin metadata and running-instance compatibility/fence state.
 
 - During `PublishVersion`, it verifies that all ability identifiers referenced by scripts and plugins targeting a given `(tenantId, versionId)` exist and are compatible with the ability schema for that version.
-- During `PublishScriptPatchVersion` and plugin bundle publication/enablement, it must re-validate that the patch/plugin remains compatible with the pinned `baseVersionId` (the underlying published game version) and its ability schema. Script-only and plugin-only patches must not introduce new dependencies that require a new `versionId`.
+- During `PublishScriptPatchVersion` and `PublishPluginVersion`, it must re-validate that the patch/plugin remains compatible with the pinned `baseVersionId` (the underlying published game version) and its ability schema. Script-only and plugin-only patches must not introduce new dependencies that require a new `versionId`.
 - Compatibility checks must be bound to an immutable `abilitySchemaDigest` associated with `baseVersionId`. Patch/plugin validation must use that digest snapshot, and the same digest must be recorded in publish metadata so validation cannot drift due to mutable schema reads.
 - For plugins, compatibility is exact: one `pluginVersionId` targets one `baseVersionId` and one `abilitySchemaDigest`. If a creator needs the same logical plugin on a different game version, they must publish a new plugin version rather than relying on an implicit “compatible version” rule.
 

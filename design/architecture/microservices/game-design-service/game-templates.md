@@ -215,6 +215,8 @@ The exact transport schema may evolve, but every implementation must preserve th
 - Idempotent retries that previously produced a deterministic business failure must return the same failure code and resolved context (where applicable) rather than re-evaluating against newer publish, patch, or template state.
 - If callers change any semantically relevant input field while reusing the same `controlPlaneRequestId`, the request must fail deterministically as an idempotency-key misuse rather than silently creating a second descriptor record.
 
+Before computing the request idempotency digest, normalization rejects `EMPTY` with a non-empty list, `EXPLICIT` with an empty list, and `REUSE_ROLLBACK_TARGET` without a named rollback target or with any entries; accepted presence forms must first derive the modes and effective selections defined above consistently.
+
 Normative examples:
 
 The examples below intentionally use numeric `versionId` values because the current Game Design launch and published-bundle protobuf contracts expose `int64 version_id`. UUID-shaped version identifiers elsewhere in the target architecture must not be substituted into these current-contract examples until those transport fields are migrated together.
