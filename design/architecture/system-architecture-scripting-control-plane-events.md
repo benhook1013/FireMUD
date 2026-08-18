@@ -165,9 +165,9 @@ Fields:
 - `controlPlaneRequestId` (optional when operator-driven rollout change is correlated)
 - `occurredAt`
 
-## `ScriptRollbackConvergenceTimedOut` (Game Session -> Durable Event Flow)
+## `ScriptPinConvergenceTimedOut` (Game Session -> Durable Event Flow)
 
-Emitted when rollback orchestration reaches terminal state `ROLLBACK_CONVERGENCE_TIMEOUT` before both convergence APIs acknowledge the expected `controlPlaneRequestId`. Logging & Admin may initiate orchestration, but Game Session is the mandatory producer-of-record for this event.
+Emitted when promotion or rollback orchestration reaches terminal state `PIN_CONVERGENCE_TIMEOUT` before both convergence APIs acknowledge the expected `controlPlaneRequestId`. Logging & Admin may initiate orchestration, but Game Session is the mandatory producer-of-record for this event.
 
 Fields:
 
@@ -175,10 +175,11 @@ Fields:
 - `gameInstanceId`
 - `targetScriptPatchVersion`
 - `targetScriptPinEpoch`
+- `operationKind` (`SET` | `ROLLBACK` | `REPIN`), using the existing immutable rollout-history value
 - `instanceSequence`
 - `controlPlaneRequestId`
 - `timeoutMs`
 - `reason` (bounded enum/code)
 - `occurredAt`
 
-Consumer correlation/action rule: a consumer may correlate or act on this event only when the event's `(tenantId, gameInstanceId)` matches the local rollback workflow scope, its exact `(targetScriptPatchVersion, targetScriptPinEpoch)` matches the local workflow's target tuple, and its `controlPlaneRequestId` matches that local workflow. Matching only one tuple field, the wrong event scope, or a tuple/request from another workflow is insufficient. The event is an advisory wakeup: consumers must poll the authoritative Game Session workflow state/read before acting, and missing, duplicate, or out-of-order delivery cannot change state or authorize a resume. Consumer action is limited to the local timeout consequence defined by the rollback workflow and must not create a competing timeout signal or a second rollout lifecycle.
+Consumer correlation/action rule: a consumer may correlate or act on this event only when the event's `(tenantId, gameInstanceId)` matches the local pin-transition workflow scope, its exact `(targetScriptPatchVersion, targetScriptPinEpoch)` and `operationKind` match the local workflow, and its `controlPlaneRequestId` matches that local workflow. Matching only part of that evidence, the wrong event scope, or a tuple/request from another workflow is insufficient. The event is an advisory wakeup: consumers must poll the authoritative Game Session workflow state/read before acting, and missing, duplicate, or out-of-order delivery cannot change state or authorize a resume. Consumer action is limited to the local timeout consequence defined by the pin-transition workflow and must not create a competing timeout signal or a second rollout lifecycle.

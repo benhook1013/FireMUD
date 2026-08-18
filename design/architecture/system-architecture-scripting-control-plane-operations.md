@@ -26,7 +26,7 @@ This section records current behavior only. The current Automation claim boundar
 - [Principles](#principles)
 - [Actors and Responsibilities](#actors-and-responsibilities)
 - [Control Plane Workflow APIs (Normative)](#control-plane-workflow-apis-normative)
-- [Rollback and Recovery Workflow](#rollback-and-recovery-workflow)
+- [Pin Transition and Recovery Workflow](#pin-transition-and-recovery-workflow)
 - [Related Control Plane Contracts](#related-control-plane-contracts)
 
 ---
@@ -35,8 +35,8 @@ This section records current behavior only. The current Automation claim boundar
 
 This document covers:
 
-- Tick pause/resume and admission pause/resume for rollback-safe orchestration.
-- Rollback convergence reads used to decide when it is safe to resume normal operation, with drain-status reads retained as diagnostic cleanup progress.
+- Tick pause/resume and admission pause/resume for pin-transition orchestration, with tick pause remaining exceptional.
+- Pin convergence reads used to decide when it is safe to resume normal operation after promotion or rollback, with drain-status reads retained as diagnostic cleanup progress.
 - Queue cleanup for script patch and plugin version changes.
 - Outbox, dead-letter, and stuck-workitem recovery.
 - Operator workflow APIs that orchestrate the above steps.
@@ -55,8 +55,8 @@ This document does not redefine the direct API request/response contracts or can
 
 - **Game Session Service**
   - Owns tick-scheduling pause/resume.
-  - Owns the canonical rollback workflow state keyed by `controlPlaneRequestId`.
-  - Is the sole producer of the pin-change and rollback-timeout events used for operator visibility.
+  - Owns the canonical pin-transition workflow state keyed by `controlPlaneRequestId` and immutable `operationKind`.
+  - Is the sole producer of the pin-change and pin-convergence-timeout events used for operator visibility.
 
 - **Automation & Scripting Service**
   - Owns admission pause/resume.
@@ -65,13 +65,13 @@ This document does not redefine the direct API request/response contracts or can
 
 - **Logging & Admin Service**
   - Presents operator workflows and calls the underlying workflow APIs.
-  - Must not become a competing source of truth for rollback state.
+  - Must not become a competing source of truth for pin-transition state.
 
 ## Control Plane Workflow APIs (Normative)
 
 The operations below are workflow APIs. Their direct contract shapes are intentionally kept separate from the direct API surface document.
 
-Every mutating rollback or cleanup call in this document, including pause/resume, repin, cancel, and purge operations, requires `controlPlaneRequestId`, a non-blank `actor` principal, and a non-blank `reason`. Services validate all three before reading or mutating owned state; read-only convergence and status calls do not require these mutation fields.
+Every mutating pin-transition or cleanup call in this document, including pause/resume, repin, cancel, and purge operations, requires `controlPlaneRequestId`, a non-blank `actor` principal, and a non-blank `reason`. Services validate all three before reading or mutating owned state; read-only convergence and status calls do not require these mutation fields.
 
 ### Game Session: Tick Pause/Resume (Rollback Support)
 
@@ -152,9 +152,9 @@ Semantics:
 - Reports whether any pre-pause executions or already-persisted work remain in the rollback scope after the current `admissionEpoch` took effect.
 - Rollback orchestration uses this API to expose asynchronous cleanup progress. Drain counts do not gate Automation resumption or ordinary gameplay ticks; the [Pin Convergence Acknowledgment Predicate](./system-architecture-scripting-rollout-and-rollback.md#pin-convergence-acknowledgment-predicate), including fresh exact-tuple acknowledgments from `GetAutomationPinConvergence` and `GetGameSessionPinConvergence`, exact target-artifact convergence, and schedule reconciliation are the admission gates. For a scope with applicable plugin-backed admission, fresh signer-policy convergence is an additional admission gate: missing, stale, revoked, or otherwise fail-closed signer evidence keeps plugin admission blocked and cannot be replaced by drain counts. A cached, stale, or earlier-epoch response remains diagnostic rather than convergence evidence, and bounded cleanup may remain pending after `COMPLETED` under the displaced exact epoch fence.
 
-### Rollback Convergence Readiness (Required)
+### Pin Convergence Readiness (Required)
 
-Rollback orchestration must verify that runtime services have observed the new pin before Automation admission resumes. Ordinary gameplay ticks do not wait for this convergence check.
+Promotion and rollback orchestration must verify that runtime services have observed the new pin before Automation admission resumes. Ordinary gameplay ticks do not wait for this convergence check.
 
 #### `GetAutomationPinConvergence`
 
@@ -177,7 +177,7 @@ Outputs:
 Semantics:
 
 - Read-only.
-- Reports the latest pin observation used by admission and scheduler logic. For rollback convergence, the observation is an acknowledgment only when the expected `(scriptPatchVersion, scriptPinEpoch, controlPlaneRequestId)` tuple is present, `isProjectionStale=false`, and `projectionLagMs` is inside the configured freshness bound; a stale stored observation remains diagnostic data, not convergence proof. The freshness bound is the configured `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS` value from [Automation & Scripting Service Configuration](./microservices/automation-scripting-service/configuration.md).
+- Reports the latest pin observation used by admission and scheduler logic. For promotion or rollback convergence, the observation is an acknowledgment only when the expected `(scriptPatchVersion, scriptPinEpoch, controlPlaneRequestId)` tuple is present, `isProjectionStale=false`, and `projectionLagMs` is inside the configured freshness bound; a stale stored observation remains diagnostic data, not convergence proof. The freshness bound is the configured `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS` value from [Automation & Scripting Service Configuration](./microservices/automation-scripting-service/configuration.md).
 - Semantic `UNPINNED` is a valid observation represented by all three pin identity fields being absent: no `observedPinnedScriptPatchVersion`, no `observedScriptPinEpoch`, and no `lastObservedControlPlaneRequestId`. It is never represented by a sentinel or a partial tuple and cannot satisfy promotion/rollback acknowledgment, which requires the requested pinned tuple and matching request identity.
 - Reports only pin observation and projection freshness; it does not return an admission decision, `finalStage`, `finalOutcome`, `finalReason`, or a handler outcome.
 
@@ -432,14 +432,14 @@ Logging & Admin may expose a single high-level orchestration API (internally dri
 
 If implemented, these APIs must remain thin orchestration and must not become another source of truth for the pinned version.
 
-## Rollback and Recovery Workflow
+## Pin Transition and Recovery Workflow
 
-The canonical rollback ordering, durable state machine, convergence timeout, diagnostic cleanup progress, schedule reconciliation, and degraded-operation policy remain owned by [Scripting & Automation: Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md#patch-rollback-operator-driven-required). Use that owner document for command ordering and state transitions. The [operations cookbook](./system-architecture-scripting-operations-cookbook.md#rollback-protocol-example-non-authoritative) is only a non-authoritative worked example and must not be treated as a source of command ordering.
+The canonical promotion and rollback ordering, durable state machine, convergence timeout, diagnostic cleanup progress, schedule reconciliation, and degraded-operation policy remain owned by [Scripting & Automation: Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md#pin-transition-orchestration-state-machine-required). Use that owner document for command ordering and state transitions. The [operations cookbook](./system-architecture-scripting-operations-cookbook.md#rollback-protocol-and-diagnostics) is only a non-authoritative rollback example and must not be treated as a source of command ordering.
 
 This document retains only the participating API consequences:
 
 - Automation & Scripting implements the admission barrier, durable schedule reconciliation, work-item cancellation, drain-status reads, pin-convergence reads, and auditable cleanup APIs described above.
-- Game Session owns the durable rollback workflow, exact patch/epoch pin, and rollout history, and is the sole producer of the rollback-timeout signal. Routine rollback advances the script epoch while ordinary ticks/player commands continue; Automation consumes the durable timeout state/signal and must not create a competing timeout or recovery state machine. Logging & Admin may orchestrate those APIs but must not persist a competing workflow state machine.
+- Game Session owns the durable promotion/rollback workflow, immutable `operationKind`, exact patch/epoch pin, and rollout history, and is the sole producer of the pin-convergence-timeout signal. Routine pin transitions advance the script epoch while ordinary ticks/player commands continue; Automation consumes the durable timeout state/signal and must not create a competing timeout or recovery state machine. Logging & Admin may orchestrate those APIs but must not persist a competing workflow state machine.
 - The same `controlPlaneRequestId`, authenticated operator `actor`/`requestedBy`, and `reason` flow through every mutating step. System-owned reconciliation records use a separate `executedBy=system:automation` rather than replacing the operator identity.
 - Patch- and plugin-scoped cancel/purge calls omit `regionId` for an instance-wide repin so every affected region is covered. API retries remain idempotent under the owning request/response contracts.
 

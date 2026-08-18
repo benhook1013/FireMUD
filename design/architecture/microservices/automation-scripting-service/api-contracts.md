@@ -165,15 +165,15 @@ During operator rollback pause (`PAUSED_FOR_ROLLBACK`), ingress must return an e
 - `admissionReason=rollback_pause`
 - event-scope identity fields from the request, without inventing synthetic `scriptId` or `bindingId` fields
 
-While terminal `ROLLBACK_CONVERGENCE_TIMEOUT` is active, pre-handler ingress remains rejected using the terminal version-unavailable response; no `retryAfterMs` is returned because terminal convergence has no bounded retry horizon:
+While terminal `PIN_CONVERGENCE_TIMEOUT` is active for either promotion or rollback, pre-handler ingress remains rejected using the terminal version-unavailable response; no `retryAfterMs` is returned because terminal convergence has no bounded retry horizon:
 
 - `TriggerScriptEventResponse.admitted=false`
 - `TriggerScriptEventResponse.admissionOutcome=TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE`
-- `TriggerScriptEventResponse.admissionReason=rollback_convergence_timeout`
-- `script_event_ingress_audit` records the same event-scope admission outcome and `admissionReason=rollback_convergence_timeout`, with no `retryAfterMs`
-- Each rejected ingress increments the existing `automation_script_triggers_dropped_total{scope, script_category="UNRESOLVED", reason="rollback_convergence_timeout"}` family. `automation_rollback_convergence_timeout_total{scope, operation, reason}` increments only when rollback enters the terminal state, not for each rejected ingress.
+- `TriggerScriptEventResponse.admissionReason=pin_convergence_timeout`
+- `script_event_ingress_audit` records the same event-scope admission outcome and `admissionReason=pin_convergence_timeout`, with no `retryAfterMs`
+- Each rejected ingress increments the existing `automation_script_triggers_dropped_total{scope, script_category="UNRESOLVED", reason="pin_convergence_timeout"}` family. `automation_pin_convergence_timeout_total{scope, operation, reason}` increments only when the owner workflow enters the terminal state, not for each rejected ingress.
 
-This is an event-scope decision. It must not create or relabel a handler-scoped `script_event_audit` row with `finalOutcome=rollback_convergence_timeout`.
+This is an event-scope decision. It must not create or relabel a handler-scoped `script_event_audit` row with `finalOutcome=pin_convergence_timeout`.
 
 The current ingress implementation looks up an existing ingress-audit result before handler resolution, then performs validation and handler fan-out before writing the audit result. It does not yet provide the target durable `IN_PROGRESS` claim that fences resolution/fan-out and makes concurrent retries wait or return a retryable signal without an admission result; that target retry behavior remains defined by the normative event-scope contract.
 
