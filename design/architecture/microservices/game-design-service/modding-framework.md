@@ -95,7 +95,7 @@ The distribution manifest must include:
 
 - `tenantId`, `pluginId`, `pluginVersionId`, `baseVersionId`, and `abilitySchemaDigest`.
 - `manifestHash` and `manifestSchemaVersion`.
-- **Target state:** `bundleDigest` and the immutable publication-time/base verified-signature evidence set bound to that digest. Post-publication signature-only approvals do not version or rewrite this manifest; current complete signature reads compose the base set with the append-only Game Design evidence ledger.
+- **Target state:** `bundleDigest` and the immutable publication-time/base verified-signature evidence set bound to that digest. Post-publication signature-only approvals do not version or rewrite this manifest; target complete signature reads compose the base set with the append-only Game Design evidence ledger.
 - `assets[]` entries keyed by signed `assetId`, with canonical object-store URL or opaque storage key, content hash, media type, byte size, and optional localization or usage metadata.
 
 `PublishPluginVersion` must fail before `PUBLISHED` if any signed `assetRefs[]` entry is missing from the bundle, cannot be exported, has a digest mismatch, or cannot be represented in the distribution manifest. Exact-byte repair rules mirror version asset repair: a published plugin distribution manifest is immutable, and repair may only reproduce bytes that match the persisted manifest hash.

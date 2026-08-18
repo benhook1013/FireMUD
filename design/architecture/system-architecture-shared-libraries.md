@@ -6,7 +6,7 @@ FireMUD's microservices share a set of utility classes and data transfer objects
 
 ## Implementation Status
 
-The current `EnqueueAutomationCommandIfAbsentRequest` carries `scriptPatchVersion` but not `scriptPinEpoch`, so shared code must not synthesize an absent epoch; exact tuple propagation and final enforcement remain an implementation gap at that boundary.
+The current `EnqueueAutomationCommandIfAbsentRequest` carries `scriptPatchVersion` but not `scriptPinEpoch`, so shared code must not synthesize an absent epoch; exact tuple propagation and final enforcement remain implementation and focused-proof gaps at that boundary. See the [Automation and Scheduler Runtime tracker](../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status) for current status and proof evidence.
 
 ---
 
