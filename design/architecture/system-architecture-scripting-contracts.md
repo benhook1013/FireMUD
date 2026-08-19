@@ -34,7 +34,7 @@ Audit and outcomes must distinguish between:
 - “DSL evaluated successfully” vs
 - “commands were accepted into the tick system”.
 
-Live `script_event_audit.finalOutcome=handoff_accepted` means every required child dispatch was durably accepted by Game Session, not that the DSL merely evaluated or gameplay applied. A valid handler emitting no commands uses `finalStage=DSL_EVAL`, `finalOutcome=completed_no_commands`. Dry-run/test success remains `finalStage=DRY_RUN_RESULT`, `finalOutcome=dry_run_success`. Per-command gameplay outcomes remain authoritative in Game Session and are linked through the complete Command-Handoff Identity, including source/target scope, `automationDispatchId`, and `commandOrdinal`, as specified in [ADR 0064](./decisions/adr-0064-stage-qualified-script-outcomes.md).
+Live `script_event_audit.finalOutcome=handoff_accepted` means every required child dispatch was durably accepted by Game Session, not that the DSL merely evaluated or gameplay applied. A valid handler emitting no commands uses `finalStage=DSL_EVAL`, `finalOutcome=completed_no_commands`. Target ADR 0114 isolated preview success uses `finalStage=DRY_RUN_RESULT`, `finalOutcome=dry_run_success`, and creates no handler audit row; the current legacy materialized dry-run path uses `finalStage=DSL_EVAL`, `finalOutcome=dry_run_completed`, `finalReason=dry_run_no_handoff`. Per-command gameplay outcomes remain authoritative in Game Session and are linked through the complete Command-Handoff Identity, including source/target scope, `automationDispatchId`, and `commandOrdinal`, as specified in [ADR 0064](./decisions/adr-0064-stage-qualified-script-outcomes.md).
 
 ### 3) Version Fencing (Rollback Safety)
 
