@@ -42,7 +42,7 @@ java {
 }
 
 val fullCheck = project.hasProperty("fullCheck") || System.getenv("CI") != null
-val checkstyleToolVersion = "13.11.0"
+val checkstyleToolVersion = "14.0.0"
 val spotbugsToolVersion = "4.10.3"
 val platformSettingsMetadataFiles = listOf(
     file("services/game-session-service/src/main/resources/META-INF/additional-spring-configuration-metadata.json"),
