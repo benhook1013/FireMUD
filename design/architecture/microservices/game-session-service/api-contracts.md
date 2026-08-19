@@ -172,4 +172,6 @@ Game Session owns the gameplay session front door and the split between protocol
 - Gameplay commands such as `LOOK`, `SAY`, movement, and combat are validated and normalized by Game Session, then forwarded to the tick/gameplay path. Game Session does not re-implement gameplay rules for these commands.
 - If a command would produce both immediate text and enqueue metadata, enqueue failure wins. Game Session returns a single `ERROR` response instead of reporting success and silently dropping gameplay work.
 
+For the [ADR 0112](../../decisions/adr-0112-typed-bounded-gameplay-effect-extension.md) boundary, Game Session is the single semantic admission point: it resolves the release-pinned command declaration, validates the player/session context, and admits the typed command into the appropriate tick. It does not resolve actor targets, evaluate effect predicates, or mutate actor state; those remain Game Logic and Entity Management responsibilities.
+
 For the player-visible line protocol and examples, see [`protocols.md`](./protocols.md).

@@ -145,14 +145,14 @@ When a downstream service reports a later handoff or execution result, the targe
 - `automationDispatchId` – the stable dispatch-group identifier shared by the emitted gameplay commands; `commandOrdinal` distinguishes each command under it within the complete command-handoff scope.
 - `commandOrdinal` – the deterministic ordinal of that emitted command within the handler handoff.
 - `handoffRequirement` – the immutable `REQUIRED` or `OPTIONAL` classification committed with the evaluated descriptor and preserved on the child; it explains whether the child gates parent `HANDED_OFF` convergence.
-- `pluginActivationGeneration` – required for plugin-backed children as the captured Automation-owned runtime fence; it is execution evidence rather than Command-Handoff Identity.
+- `pluginActivationEpoch` – required for plugin-backed children as the captured Automation-owned runtime fence; it is execution evidence rather than Command-Handoff Identity.
 - `gameSessionCommandId` – the Game Session command identity when assigned; it is `null`/absent while the child has not been accepted into Game Session.
 - `handoffOutcome` – the durable handoff result for this child, present after a handoff attempt and independent of later gameplay execution.
 - `executionOutcome` – the authoritative Game Session execution lifecycle result when available; it remains `null`/absent until execution reaches a result or terminal disposition.
 - `gameplayResult` – the terminal gameplay result when available, using the canonical uppercase vocabulary `SUCCESS`, `PARTIAL`, `FAILED`, `TIMEOUT`, or `NOT_APPLIED`; it remains `null`/absent while execution is unresolved.
 - `commandStatusLink` – a link or stable reference to the authoritative Game Session command-status record when `gameSessionCommandId` is assigned; it is `null`/absent before that point.
 - `outcome` – closed target enum: `accepted`, `rejected`, `execution_updated`, or `version_fence_dropped`. `accepted` and `rejected` are handoff dispositions; `execution_updated` points to the separate authoritative `executionOutcome` and `gameplayResult` fields; `version_fence_dropped` records execution-time fencing. Terminality is established only by those separate authoritative fields, not by `outcome` alone.
-- `reason` – bounded reason such as `script_patch_mismatch` or `plugin_binding_mismatch`; use `plugin_activation_generation_mismatch` specifically when the captured plugin activation generation mismatches current authoritative generation evidence.
+- `reason` – bounded reason such as `script_patch_mismatch` or `plugin_binding_mismatch`; use `plugin_activation_epoch_mismatch` specifically when the captured plugin activation epoch mismatches current authoritative epoch evidence.
 - `recordedAt` – timestamp.
 - `sourceService` – producer of the disposition (for example `game-session`).
 

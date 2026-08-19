@@ -34,6 +34,8 @@ Implementation is partial: Game Session has durable per-instance pin state, whil
 - [Scripting runtime execution](../../architecture/system-architecture-scripting-runtime-execution.md) and [scheduler/timers](../../architecture/system-architecture-scripting-scheduler-and-timers.md) consume the shared timing and workflow model. [ADR 0059](../../architecture/decisions/adr-0059-causal-floor-cross-service-presentation-reads.md), [ADR 0063](../../architecture/decisions/adr-0063-durable-per-dispatch-script-handoff.md), and [ADR 0069](../../architecture/decisions/adr-0069-at-least-once-effect-execution-with-one-logical-terminal-outcome.md) define shared identity, durable handoff, and logical terminal-outcome boundaries without claiming this tracker owns their service implementation.
 - [Logging and monitoring](../../architecture/system-architecture-logging-monitoring.md) defines audit, failure, and observability expectations at service boundaries.
 
+[ADR 0113](../../architecture/decisions/adr-0113-bounded-pull-settings-distribution-with-freshness-classes.md) adds monotonic revision and bounded freshness/fallback evidence to shared settings consumption; implementation and proof of revision ordering, stale handling, and restrictive fences remain open. [ADR 0117](../../architecture/decisions/adr-0117-producer-owned-event-schemas-with-one-materialized-catalogue.md) keeps producer schema ownership while requiring one Automation materialized catalogue; producer-manifest discovery, compatibility, retention, and digest convergence remain unimplemented. These accepted boundaries do not upgrade shared-contract capability states.
+
 ## Consolidated Implementation Record
 
 ### Time Domains, Duration Contracts, and Scheduling

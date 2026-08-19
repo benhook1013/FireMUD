@@ -23,12 +23,12 @@ No service may invent a private `eventType` contract outside this registry and s
 
 ## Ownership Model
 
-- Automation & Scripting owns the canonical runtime registry used for ingress admission, producer authorization, and handler-resolution validation.
-- Source definitions are service-owned, versioned manifests checked into the repo or generated from primary service contracts; producer services own the correctness of their event schema and semantics.
+- Producer services own event semantics and versioned schemas through service-owned manifests checked into the repo or generated from primary service contracts.
+- Automation & Scripting mechanically validates and materializes those manifests into the one canonical runtime catalogue used for ingress admission, producer authorization, handler-resolution validation, and read APIs. Teams do not manually duplicate producer definitions into a second authoritative registry file.
 - Game Design consumes the same registry as a read-only design-time dependency so editor/event-binding UI and publish validation never drift from runtime admission.
 - Logging & Admin and other operator tooling read the registry for inspection only; they do not mutate entries directly.
 
-This means source ownership is distributed, but canonical runtime truth is centralized.
+This means source semantic ownership is distributed, while canonical enforcement and read truth is centralized in Automation's materialized catalogue.
 
 ## Registry Entry Contract
 
@@ -50,6 +50,8 @@ Each entry must define at least:
 - `allowedBindingScopes`
 - `dryRunSupport`
 - `deprecationStatus`
+
+Each complete materialized catalogue must also expose an immutable catalogue revision identity and canonical digest over the exact validated producer-manifest inputs and deterministically ordered entries. These catalogue-level fields identify which complete catalogue state supplied an entry; they are not part of the `(eventType, eventSchemaVersion)` key.
 
 Required semantics for those fields:
 
@@ -95,15 +97,15 @@ Required semantics for those fields:
 Registry changes follow one canonical path:
 
 1. A producer-owning service adds or updates a versioned event-definition manifest in its primary contract surface.
-2. Automation & Scripting validates that the manifest is well-formed, names one owner, and does not redefine an existing `(eventType, eventSchemaVersion)` incompatibly.
-3. The validated definition is materialized into the canonical event registry used by ingress admission.
-4. Game Design refreshes its read model from that same canonical registry before exposing the event in authoring UI or publish validation.
+2. Automation & Scripting mechanically discovers the declared source manifests and validates that each is well formed, names one owner, resolves its schema reference, and does not redefine an existing `(eventType, eventSchemaVersion)` incompatibly.
+3. Automation deterministically materializes the complete validated source set, assigns the immutable catalogue revision and canonical digest, and atomically accepts that complete catalogue for ingress and reads. Failed or partial materialization leaves the prior complete accepted catalogue authoritative.
+4. Game Design refreshes its read model from that same canonical catalogue before exposing the event in authoring UI or publish validation.
 
 Rules:
 
-- Breaking payload or identity changes require a new `eventSchemaVersion`.
-- Narrowing allowed producers, changing snapshot authority, or changing allowed binding scopes is a breaking change unless explicitly proven compatible.
-- Removing an event requires a deprecation phase in the registry first; Game Design must stop offering new bindings before runtime ingress rejects it as `REMOVED`.
+- Breaking payload, identity, producer-authorization, snapshot-authority, consistency, replay, quota, or binding-scope changes require a new `eventSchemaVersion`; compatible additive changes must pass declared mechanical compatibility validation.
+- Removing an event requires a deprecation phase in the catalogue first; Game Design must stop offering new bindings before runtime ingress rejects it as `REMOVED`.
+- Source manifests and catalogue entries required by supported patches remain retained for validation, runtime admission, rollback, and operator explanation. Removal or compaction is allowed only after the authoritative patch-support lifecycle proves that no supported patch still references the event schema version.
 
 ## Read Surfaces
 
@@ -115,6 +117,7 @@ The registry must expose one canonical read API family:
 
 Minimum read payload:
 
+- catalogue revision identity and canonical digest
 - identity fields for the entry
 - owner service
 - payload schema reference

@@ -209,6 +209,12 @@ That resolver or read model must:
 
 This does not need to become a full distributed config platform. A bounded authoritative settings read model is enough.
 
+### Distribution and Freshness
+
+[ADR 0113](./decisions/adr-0113-bounded-pull-settings-distribution-with-freshness-classes.md) makes distribution a typed, revisioned pull contract rather than a generalized push fabric. Consumers may retain bounded local last-known-good snapshots, but each key or domain declares a freshness class and an implementation-selected maximum stale age. Presentation-only settings may use an explicitly safe fallback when that bound is exceeded; restrictive or authoritative settings fail closed or hold an authoritative fence, and urgent revocation uses a separate immediate path. Notification plus pull may be an optimization, but notifications do not become the authority.
+
+The current short-TTL, force-refresh, and per-scope eviction reader is a bounded implementation seam. It does not yet prove monotonic revision handling, class-specific stale behavior, or the restrictive-setting fence; those remain implementation gaps. Concrete freshness durations are intentionally not specified here.
+
 ## Current Practical Rule
 
 Current practical rule:

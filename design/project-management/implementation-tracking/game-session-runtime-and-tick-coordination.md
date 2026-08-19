@@ -44,6 +44,8 @@ The [ADR 0016](../../architecture/decisions/adr-0016-canonical-gameplay-command-
 - [Game Session Service](../../architecture/microservices/game-session-service/README.md) owns the live command, batch, effect, and runtime ownership records.
 - [Automation Scripting Service](../../architecture/microservices/automation-scripting-service/README.md), [Game Logic Service](../../architecture/microservices/game-logic-service/README.md), and [Logging & Admin Service](../../architecture/microservices/logging-admin-service/README.md) consume or expose the canonical runtime seams rather than duplicating their truth.
 
+For this tracker, [ADR 0112](../../architecture/decisions/adr-0112-typed-bounded-gameplay-effect-extension.md) confirms that Game Session owns semantic command/tick admission while Game Logic resolves effects and Entity Management mutates actor state; it does not upgrade the current command/effect proof. [ADR 0113](../../architecture/decisions/adr-0113-bounded-pull-settings-distribution-with-freshness-classes.md) adds revision, age, provenance, and degraded/expired diagnostics to the settings-consumer handoff; class-specific freshness and restrictive-setting fencing remain unproved. No runtime or capability state is promoted by these links.
+
 ## Consolidated Implementation Record
 
 ### Authority and Scope

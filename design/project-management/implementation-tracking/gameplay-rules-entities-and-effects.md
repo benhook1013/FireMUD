@@ -29,6 +29,8 @@ The live implementation is strongest in item containment and transfer, durable e
 - [Transactions](../../architecture/system-architecture-transactions.md), [spatial and ambient effects](../../architecture/system-architecture-spatial-and-ambient-effects-catalog.md), and the [identifier glossary](../../architecture/system-architecture-identifier-glossary.md) own split spatial mutation, causal identity, and ambient-fact contracts through [ADR 0054](../../architecture/decisions/adr-0054-split-spatial-authority-with-causal-read-composition.md), [ADR 0059](../../architecture/decisions/adr-0059-causal-floor-cross-service-presentation-reads.md), [ADR 0060](../../architecture/decisions/adr-0060-world-owned-ambient-facts-and-logic-owned-consequences.md), and [ADR 0061](../../architecture/decisions/adr-0061-single-owner-spatial-mutations-across-split-authority.md).
 - [Game Logic Service](../../architecture/microservices/game-logic-service/README.md) owns orchestration and rule evaluation over the authoritative domain state.
 
+[ADR 0112](../../architecture/decisions/adr-0112-typed-bounded-gameplay-effect-extension.md) is the accepted target boundary for this tracker: Game Logic owns bounded release-pinned target plans and Entity Management owns validated actor/effect mutation, costs, and cooldowns. The live first self-targeted `APPLY_ACTION_STATE` path does not prove general target plans, multi-effect composition, cross-region outcomes, or the wider typed primitive catalogue; capability and verification states remain unchanged.
+
 ## Consolidated Implementation Record
 
 ### Ownership and Visible World

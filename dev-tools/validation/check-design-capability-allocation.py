@@ -471,6 +471,36 @@ ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md": adr_allocation(
         "AS-1", "Accepted", "AR-1", "GR-4", "SF-1"
     ),
+    "design/architecture/decisions/adr-0112-typed-bounded-gameplay-effect-extension.md": adr_allocation(
+        "GR-4", "Accepted", "GR-3", "AR-1", "AR-3", "SF-1", "AS-1"
+    ),
+    "design/architecture/decisions/adr-0113-bounded-pull-settings-distribution-with-freshness-classes.md": adr_allocation(
+        "AR-2", "Accepted", "SF-2", "GR-1"
+    ),
+    "design/architecture/decisions/adr-0114-command-plan-preview-dry-run-isolation.md": adr_allocation(
+        "AS-1", "Accepted", "AR-3", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0115-manifest-complete-onload-readiness-without-durable-game-initialization.md": adr_allocation(
+        "AS-1", "Accepted", "AR-1", "GR-1"
+    ),
+    "design/architecture/decisions/adr-0116-routine-component-migration-and-explicit-emergency-revocation.md": adr_allocation(
+        "AS-1", "Accepted", "AR-1", "PO-1"
+    ),
+    "design/architecture/decisions/adr-0117-producer-owned-event-schemas-with-one-materialized-catalogue.md": adr_allocation(
+        "AS-1", "Accepted", "AR-1", "SF-1", "PO-4", "GR-1"
+    ),
+    "design/architecture/decisions/adr-0118-preselected-exclusive-handlers-and-durable-fanout-ordering.md": adr_allocation(
+        "AS-1", "Accepted", "AR-1", "PO-1"
+    ),
+    "design/architecture/decisions/adr-0119-epoch-fenced-per-instance-plugin-activation.md": adr_allocation(
+        "AS-1", "Accepted", "AR-3", "SF-1", "AR-1", "GR-1"
+    ),
+    "design/architecture/decisions/adr-0120-owner-read-first-control-plane-notifications.md": adr_allocation(
+        "SF-1", "Accepted", "AS-1", "AR-3", "PO-1", "PO-4", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0121-historical-broad-dry-run-semantics.md": adr_allocation(
+        "AS-1", "Superseded", "PO-1", "PO-2", "PO-4"
+    ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
     "README.md": "Service overview",
