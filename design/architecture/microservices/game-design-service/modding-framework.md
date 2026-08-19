@@ -6,7 +6,7 @@ Game Design publishes immutable plugin versions with compatibility and provenanc
 
 ## Implementation Status
 
-The current implementation and hosted policy support signed-only plugin intake and activation after allowlisted Ed25519 verification. The operator-permitted unsigned provenance flow in [ADR 0111](../../decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md) is target-only, and complete runtime tuple/plugin-epoch fencing proof remains target-state and incomplete; the detailed local boundaries below and the linked scripting contracts remain authoritative.
+The current implementation and hosted policy support signed-only plugin intake and activation after allowlisted Ed25519 verification. The operator-permitted unsigned provenance flow in [ADR 0111](../../decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md) is target-only, and complete runtime tuple, `pluginActivationEpoch`, and `lifecycleRevision` fencing proof remains target-state and incomplete, including same-epoch lifecycle transitions such as `DRAINING`, which advance `lifecycleRevision` without advancing `pluginActivationEpoch`; the detailed local boundaries below and the linked scripting contracts remain authoritative.
 
 This document outlines the modding system that lets administrators extend a published game without republishing a full version.
 
