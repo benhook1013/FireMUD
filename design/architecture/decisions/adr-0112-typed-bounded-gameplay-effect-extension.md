@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The current implementation proves only the first self-targeted `APPLY_ACTION_STATE` declaration and retains transitional built-in routing. General target plans, multi-effect composition, costs, cooldowns, cross-region outcomes, and the wider primitive catalog remain implementation and proof work.
+The current implementation proves only the first self-targeted `APPLY_ACTION_STATE` declaration and retains transitional built-in routing. Its self-targeted path still accepts caller-supplied `effectPayloadJson`, so it is not trusted typed-effect authority; the target contract remains a server-resolved typed effect snapshot persisted and read by Entity Management. General target plans, multi-effect composition, costs, cooldowns, cross-region outcomes, and the wider primitive catalog remain implementation and proof work.
 
 ## Decision Record
 
