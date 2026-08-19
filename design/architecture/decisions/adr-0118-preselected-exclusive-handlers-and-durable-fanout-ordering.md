@@ -34,10 +34,10 @@ At most one authorized exclusive binding may exist in that complete set. When pr
 When no exclusive binding is selected, handlers are ordered by:
 
 1. `orderIndex ASC`;
-2. `handlerType ASC`, with `SCRIPT` before `PLUGIN` unless an explicit operator policy says otherwise; and
+2. the normalized finite handler-kind rank ASC: `SCRIPT` has the default rank before `PLUGIN`, unless an explicit operator-controlled policy places `PLUGIN` ahead; and
 3. the canonical stable handler-order identity ascending, as defined by the [DSL lifecycle owner](../system-architecture-scripting-dsl-reference-and-lifecycle.md#canonical-stable-handler-order-identity). This is the ordering projection owned by that document, not the complete Trigger Identity or an informal tie-breaker: core handlers include `scriptId` plus their applicable authored binding/scope identity, and plugin handlers include `(pluginId, pluginVersionId, bindingId)`.
 
-The tuple `(orderIndex, handlerType, canonical stable handler-order identity)` is the total ordering key before `handlerSequence` assignment. Duplicate identical order keys are rejected; Automation must not invent an ordering from arrival, queue, or worker order.
+Automation normalizes every resolved handler to the finite kind `SCRIPT` or `PLUGIN` before ranking; designers cannot control that rank. The tuple `(orderIndex, normalized handler-kind rank, canonical stable handler-order identity)` is the total ordering key before `handlerSequence` assignment. Duplicate identical normalized total keys are rejected; Automation must not invent an ordering from arrival, queue, or worker order.
 
 Automation assigns each handler a durable `handlerSequence` or equivalent stable ordinal. The complete ordered resolution, handler work, generated commands, handoff, retries, and final command application preserve that sequence and each handler's local command order. Queue position, timestamps, row IDs, worker claims, scheduling priority, and retry timing are not ordering authority.
 
