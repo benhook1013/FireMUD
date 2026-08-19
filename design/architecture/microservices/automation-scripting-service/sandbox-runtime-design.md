@@ -28,7 +28,7 @@ The table below captures the required sandbox behavior contract (target-state se
 | Per-run wall-clock timeout | Abort a script run that exceeds its allocated wall-clock budget and record `finalStage=DSL_EVAL` with `finalOutcome=sandbox_error` and `finalReason=cpu_budget_exceeded`. |
 | Iteration / loop guards | Enforce per-run iteration limits so even bounded loops cannot hot-loop indefinitely. |
 | Soft memory guards | Approximate tracking of script-local data sizes and early abort with `finalOutcome=sandbox_error` and `finalReason=memory_budget_exceeded` before JVM OOM. |
-| Outcome taxonomy | Use canonical stage-aware audit outcomes (`finalStage` + `finalOutcome` / `finalReason`) in `script_event_audit` consistent with the observability and normative contract docs. |
+| Outcome taxonomy | Use canonical stage-aware outcomes (`finalStage` + `finalOutcome` / `finalReason`) in the applicable audit surface: live and current legacy materialized dry-run handler outcomes use `script_event_audit`; target ADR 0114 previews use an isolated preview result/audit surface. |
 | Failure-rate circuit breaker integration | Use live-traffic sandbox failures to transition scripts into `runtimeStatus=DISABLED_DUE_TO_ERRORS`, with dry-run/test isolation by default. |
 | Test / dry-run parity | Dry-run executions share the same sandbox limits as live runs while remaining isolated for quotas, budgets, and metrics. |
 | Plugin sandbox reuse | Plugins run in the same sandbox engine with component allowlists and stricter quotas where policy requires; plugin activation/version lifecycle remains distinct from embedded script publication. |
@@ -73,23 +73,26 @@ The remainder of this document focuses on the execution sandbox and how CPU and 
 
 Each script run follows a consistent lifecycle:
 
+For the [ADR 0114](../../decisions/adr-0114-command-plan-preview-dry-run-isolation.md) command-plan preview, this lifecycle uses the same evaluator and sandbox guards with an explicit authorized fenced snapshot or fixture bundle. The preview branch is terminally isolated from the live work lifecycle: it creates no live gameplay work or queue pointer, persists no live execution state, acquires no live capacity lease, performs no handoff or external side effect, and retains only isolated preview result/audit evidence with the bounded command plan and exact provenance/fixture-or-fenced-input evidence. The target preview does not use `script_event_audit`; that remains the live handler-audit surface and the current legacy materialized dry-run surface. The legacy `TriggerScriptEvent(isDryRun=true)` path remains separate legacy behavior and is not proof of the target preview contract. Endpoint, wire, and result-status details defer to [ADR 0114](../../decisions/adr-0114-command-plan-preview-dry-run-isolation.md).
+
 1. **Trigger admission**
    - A trigger arrives from the scheduler (event, timer, interval, or manual test run).
-   - At the scheduler's event/handler admission boundary, after raw event ingress, the service performs the registry and quota/charge checks. It does not acquire a lease or perform the later execution-scheduler estimate reservation. An authoritative policy denial is recorded as the applicable typed handler outcome (`finalStage=ADMISSION`, `finalOutcome=quota_denied` or `tenant_budget_exceeded`). If authoritative resource/capacity exhaustion prevents producing that decision, return non-OK `RESOURCE_EXHAUSTED`; if route, charge, worker, or dependency infrastructure is unavailable and cannot produce it, return non-OK `UNAVAILABLE`.
-   - For each admitted handler, the service seals the handler input manifest and durably creates and queues `PENDING_EVALUATION` work. Queued work holds no capacity or execution marker; the later execution scheduler considers queued work for its canonical estimate reservation and leaves unselected work durably queued under the same identity.
+   - At the scheduler's event/handler admission boundary, after raw event ingress, the service performs registry checks and, once a handler is resolved, handler-scoped quota/charge checks. It does not acquire a lease or perform the later execution-scheduler estimate reservation. An authoritative post-resolution policy denial is recorded as the applicable typed handler outcome (`finalStage=ADMISSION`, `finalOutcome=quota_denied` or `tenant_budget_exceeded`). If authoritative resource/capacity exhaustion prevents producing that decision, return non-OK `RESOURCE_EXHAUSTED`; if route, charge, worker, or dependency infrastructure is unavailable and cannot produce it, return non-OK `UNAVAILABLE`. Pre-resolution dry-run/test ingress denials instead use the event-scope `admissionOutcome`/`admissionReason` and `script_event_ingress_audit` contract and create no handler-scoped `script_event_audit` row.
+   - For each admitted live handler, the service seals the handler input manifest and durably creates and queues `PENDING_EVALUATION` work. Queued work holds no capacity or execution marker; the later execution scheduler considers queued work for its canonical estimate reservation and leaves unselected work durably queued under the same identity. An ADR 0114 preview handler takes the isolated preview branch instead: it creates no live work item or live queue pointer and retains its result/provenance only in the isolated preview result/audit surface. The current legacy materialized dry-run path follows the existing work-item and `script_event_audit` path and does not establish the target preview contract.
 
 2. **Sandbox setup and executor acceptance**
    - The scheduler allocates a **sandbox context** from the sealed handler manifest. The following locally useful categories are not an exhaustive schema; the [canonical read-consistency contract](../../system-architecture-scripting-dsl-reference-and-lifecycle.md#read-consistency-contract) defines every required field and evidence:
      - For instance-bound gameplay/runtime runs, the complete applicable owner/runtime scope (`tenantId`, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, and `entityId` when applicable)
      - Tenant/script identity (`scriptId`, `eventType`, `eventSchemaVersion`, `scriptEventId`, and `isDryRun`)
      - The exact pinned `(scriptPatchVersion, scriptPinEpoch)` tuple for instance-bound gameplay/runtime runs
-     - Plugin provenance (`pluginId`, `pluginVersionId`, `bindingId`, and captured `pluginActivationGeneration`) when applicable
+     - The applicable component-revocation security-policy fence under [ADR 0116](../../decisions/adr-0116-routine-component-migration-and-explicit-emergency-revocation.md) for any work referencing a revocable component, including embedded/core-script and plugin-backed work
+     - Plugin provenance (`pluginId`, `pluginVersionId`, `bindingId`) and, only for plugin-backed work, the additional independent lifecycle-fence evidence `(pluginActivationEpoch, lifecycleRevision)`
      - Per-run budgets (CPU/time, memory, and concurrency)
      - For tenant-readiness `onLoad`, the declared readiness identity and configuration/runtime metadata are the applicable context; it is pre-instance-pin and does not require or fabricate instance scope or epoch
-   - Missing, stale, or contradictory manifest, applicable runtime tuple/scope, or applicable plugin provenance evidence fails closed before evaluation or applicable post-evaluation dispatch. Immediately before evaluation and immediately before each applicable post-evaluation dispatch, the service revalidates the captured `pluginActivationGeneration` against the current Automation-owned generation together with current activation/lifecycle and applicable component-policy, capability-grant, and signer/publication evidence; unavailable, stale, or mismatched evidence fails closed rather than evaluating or dispatching. `DRAINING` remains valid for already-admitted recovery, while lifecycle invalidation such as `DISABLED`, revocation, or policy-driven disablement rejects it. The declared `onLoad` readiness context is the applicable exception and must not be rejected for absent instance tuple, scope, or epoch. These revalidation points follow the [Scripting Contracts](../../system-architecture-scripting-contracts.md#12-dead-letter-replay-version-fence-safety), [Runtime Execution](../../system-architecture-scripting-runtime-execution.md#operator-replay-of-dead-lettered-work), and [Control Plane API](../../system-architecture-scripting-control-plane-api.md#replaydeadletteredworkitems) owners.
+   - Missing, stale, or contradictory manifest, applicable runtime tuple/scope, plugin provenance, or component-revocation security-policy fence evidence fails closed before evaluation or applicable post-evaluation dispatch. Any work referencing a revocable component, including embedded/core-script and plugin-backed work, carries and revalidates the component-revocation fence through evaluation, durable persistence, handoff, staged/final effects, retry, replay, and recovery, with an immediate check before gameplay effects. For plugin-backed work only, the captured `(pluginActivationEpoch, lifecycleRevision)` is additional independent lifecycle-fence evidence and is likewise carried and revalidated; neither lifecycle fence substitutes for the other. Unavailable, stale, or mismatched evidence fails closed rather than evaluating or dispatching. `DRAINING` remains valid for already-admitted recovery only when the winning admission/fence compare-and-set durably committed the immediately preceding `ENABLED` revision before the durable Automation-owned `DRAINING` admission barrier was created, with the same exact plugin version and activation epoch while every other fence passes; lifecycle invalidation such as `DISABLED`, revocation, or policy-driven disablement rejects it. The declared `onLoad` readiness context is the applicable exception only for absent instance tuple, scope, or epoch; it does not waive an applicable component-revocation fence. These revalidation points follow the [Scripting Contracts](../../system-architecture-scripting-contracts.md#12-dead-letter-replay-version-fence-safety), [Runtime Execution](../../system-architecture-scripting-runtime-execution.md#operator-replay-of-dead-lettered-work), and [Control Plane API](../../system-architecture-scripting-control-plane-api.md#replaydeadletteredworkitems) owners.
    - The run is submitted to a **bounded thread pool** dedicated to script execution.
    - Dry-run/test work must use isolated execution capacity (separate pool, reserved worker share, or equivalent partition) so live automation retains guaranteed worker availability under load.
-   - Immediately before evaluation, and only at this step, the worker acquires the lease and in one Automation-owned durable executor-acceptance transaction revalidates its current fence, durably accepts/claims the run for the executor, persists the exactly-once execution-start marker, and advances the work item to `EXECUTING`. Only after that commit may evaluation begin. If executor acceptance fails, the transition does not commit, the lease is released or reclaimed, and no execution charge is recorded; a crash after commit recovers from the durable executor claim and may reacquire a lease but never admits a second marker.
+   - Immediately before evaluation, and only for an admitted live handler, the worker acquires the lease and in one Automation-owned durable executor-acceptance transaction revalidates its current fence, durably accepts/claims the run for the executor, persists the exactly-once execution-start marker, and advances the work item to `EXECUTING`. Only after that commit may live evaluation begin. If executor acceptance fails, the transition does not commit, the lease is released or reclaimed, and no execution charge is recorded; a crash after commit recovers from the durable executor claim and may reacquire a lease but never admits a second marker. An ADR 0114 preview handler skips this live acceptance/`EXECUTING` transition and uses only its isolated preview capacity and evidence.
 
 3. **Graph evaluation**
    - The engine evaluates the script’s component graph:
@@ -105,10 +108,8 @@ Each script run follows a consistent lifecycle:
    - Eligible instance-bound gameplay/runtime work reaches this stage only after the earlier execution-scheduler selection over queued work. Target-state handoff uses the event-count ceiling (`AUTOMATION_TICK_MAX_EVENTS`) and only documented `automation:*` Redis prefixes for projection and quotas. The Automation & Scripting Service never writes `tick:*` keys directly; it hands off commands to Game Session over internal gRPC so Game Session can enqueue tick commands under its own tick and locking model. Current live capacity enforcement is the aggregate per-tenant, priority-tier reservation described below.
 
 5. **Outcome recording**
-   - The engine records a **stage-aware outcome** for the run in `script_event_audit`:
-     - `finalStage` (`ADMISSION`, `DSL_EVAL`, `WORK_ITEM_PERSIST`, `TICK_HANDOFF`)
-     - `finalOutcome` and `finalReason`
-   - Pre-admission quota denials (`finalStage=ADMISSION`, `finalOutcome=quota_denied`) are handled by `ScriptQuotaService` before sandbox work begins and do **not** contribute to sandbox failure metrics; sandbox errors (`finalStage=DSL_EVAL`, `finalOutcome=sandbox_error`) do, and are considered by the failure-rate circuit breaker. Dry-run/test executions must emit failures via test-only metrics (for example `automation_script_test_sandbox_failures_total`) rather than incrementing live-traffic error counters. See `design/architecture/system-architecture-scripting-observability-contract.md` for the authoritative metric families and label sets.
+   - Live handlers and current legacy materialized dry-run handlers record their **stage-aware handler outcome** in `script_event_audit`. The target ADR 0114 preview records its result and provenance in the isolated preview result/audit surface instead and does not use `script_event_audit`. The canonical stage and outcome taxonomy remains owned by the [scripting observability contract](../../system-architecture-scripting-observability-contract.md).
+   - Pre-admission quota denials (`finalStage=ADMISSION`, `finalOutcome=quota_denied`) are handled by `ScriptQuotaService` before sandbox work begins and do **not** contribute to sandbox failure metrics. Live sandbox errors (`finalStage=DSL_EVAL`, `finalOutcome=sandbox_error`) contribute to live sandbox-failure metrics and the live failure-rate circuit breaker. Preview/test sandbox errors affect only isolated test metrics and breakers (for example `automation_script_test_sandbox_failures_total`) and never increment live-traffic error counters or advance the live breaker. See `design/architecture/system-architecture-scripting-observability-contract.md` for the authoritative metric families and label sets.
 
 ---
 
@@ -157,16 +158,17 @@ When a script exceeds its CPU/time budget:
 
 - The run stops immediately; no further nodes are evaluated.
 - Any commands already staged for the current run are **discarded** before commit.
-- The `script_event_audit` record is written with:
+- For live handlers and current legacy materialized dry-run handlers, the `script_event_audit` record is written with:
   - `finalStage = DSL_EVAL`
   - `finalOutcome = sandbox_error`
   - `finalReason = cpu_budget_exceeded`
   - The elapsed time and node count
-- Metrics are incremented:
+- Live handlers increment the live metrics:
   - `automation_script_sandbox_failures_total{reason="cpu_budget_exceeded"}`
   - `automation_script_runtime_seconds` (histogram bucket for the partial run)
+- Dry-run/test handlers, including a target ADR 0114 preview, use the applicable test-only failure and runtime metric families instead of live-traffic counters; the target preview records its corresponding outcome in the isolated preview result/audit surface.
 
-Repeated CPU budget violations contribute to the failure-rate circuit breaker. Once thresholds are exceeded, the script transitions to `runtimeStatus=DISABLED_DUE_TO_ERRORS` and new triggers are skipped until an administrator intervenes.
+Repeated CPU budget violations by live handlers contribute to the live failure-rate circuit breaker. Once its thresholds are exceeded, the script transitions to `runtimeStatus=DISABLED_DUE_TO_ERRORS` and new live triggers are skipped until an administrator intervenes. Preview/test failures never contribute to that live breaker; they remain within the isolated test-only metrics and breaker namespace.
 
 ---
 
@@ -206,19 +208,18 @@ When a script exceeds its soft memory budget:
 
 - The run is aborted before further allocations.
 - Any commands staged from that run are discarded prior to commit.
-- The `script_event_audit` record is written with:
+- For live handlers and current legacy materialized dry-run handlers, the `script_event_audit` record is written with:
   - `finalStage = DSL_EVAL`
   - `finalOutcome = sandbox_error`
   - `finalReason = memory_budget_exceeded`
   - Counts for nodes visited, collections sizes, and approximate bytes used (where available)
-- Metrics are incremented:
-  - `automation_script_sandbox_failures_total{reason="memory_budget_exceeded"}`
+- Live handlers increment `automation_script_sandbox_failures_total{reason="memory_budget_exceeded"}`. Dry-run/test handlers, including a target ADR 0114 preview, use the applicable test-only failure metric family and isolated preview result/audit surface instead.
 
 If instead the JVM or container hits a hard limit and restarts:
 
 - The run, and possibly other concurrent runs, fail with `infrastructure_error`.
 - Standard platform health checks and alerts (logging, Prometheus, OpenTelemetry) report the outage.
-- Upon recovery, the scheduler continues from the next tick; at-most-once guarantees ensure the failed run is not retried automatically. In this case `script_event_audit.finalOutcome=infrastructure_error` (with an appropriate `finalStage`) matches the canonical taxonomy described in the observability contract.
+- After the service restarts, the scheduler may continue from the next tick, but recovery is stage-aware and is not an unconditional automatic retry. Subject to the operator/control-plane recovery mutation, exact fence checks, and retained evidence, an eligible, retryable instance-bound gameplay/runtime evaluation-stage failure may retry only the original Trigger Identity and frozen manifest/input snapshot with the exact immutable graph and artifact references; it must not refresh mutable inputs or create a new logical trigger. Non-retryable failure classes and tenant-readiness `onLoad` do not use this evaluation replay path. Once evaluated output is durably committed, recovery resumes only the stored unfinished child ledger (reconciling any in-flight child) and never re-enters the DSL; accepted or terminal children are not redispatched. If the required eligibility or evidence is absent, the work remains dead-lettered. For live and current legacy materialized dry-run handlers, the applicable audit record uses `infrastructure_error` with the canonical stage in `script_event_audit`; a target ADR 0114 preview records the corresponding result and provenance in its isolated preview result/audit surface.
 
 ---
 
@@ -231,9 +232,10 @@ Sandbox limits do not replace existing quotas and scheduling policies; they **la
   - Only admitted runs consume CPU and memory budgets in the sandbox.
 
 - **Per-script vs per-tenant safety**
-  - Per-script sandbox failures (`sandbox_error`) count toward:
-    - Per-script failure-rate circuit breakers
-    - Per-scope error metrics, for example `automation_script_errors_total{scope, script_category, reason=...}`
+  - Live per-script sandbox failures (`sandbox_error`) count toward:
+    - Live per-script failure-rate circuit breakers
+    - Live per-scope error metrics, for example `automation_script_errors_total{scope, script_category, reason=...}`
+  - Preview/test sandbox failures contribute only to their isolated test metrics and breakers; they never increment live error metrics or advance a live failure-rate breaker.
   - This prevents one script from repeatedly failing without impacting other tenants’ automation workloads.
 
 - **Tick alignment**
@@ -251,7 +253,7 @@ Sandbox behavior is shaped by a combination of in-code defaults and environment 
 - `AUTOMATION_TICK_DURATION_MS` – bounds the wall-clock duration of an automation tick. This, together with the scheduler’s batching strategy, constrains how often sandboxed runs are admitted.
 - `AUTOMATION_TICK_MAX_EVENTS` – caps how many automation events (including script runs) are staged from `automation:queue` per automation tick.
 - `AUTOMATION_TICK_BUDGET_MS` – **target-state** cumulative estimate reservation for queued script work selected by the later execution scheduler inside a single automation tick. It is separate from the fenced occupancy lease required before execution, is not actual execution time or a per-run timeout, and is not the current live per-trigger or per-region enforcement bucket.
-- `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` / `SCRIPT_EVENT_AUDIT_MAX_ROWS` – control how long sandbox outcomes (for example, `sandbox_error` with `cpu_budget_exceeded` or `memory_budget_exceeded`) remain queryable in `script_event_audit`.
+- `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` / `SCRIPT_EVENT_AUDIT_MAX_ROWS` – control how long live and current legacy materialized dry-run sandbox outcomes remain queryable in `script_event_audit`; target preview result/audit retention remains part of the isolated preview surface defined by ADR 0114.
 
 Per-script and per-tenant quotas (for example, `SCRIPT_QUOTA_LIMIT`, `SCRIPT_QUOTA_WINDOW_SECONDS`, and `SCRIPT_TENANT_BUDGET_NORMAL_RUNS_PER_MINUTE`) are documented in the service configuration and operations docs and in `design/architecture/system-architecture-scripting-quotas-and-operations.md`; they determine current live admission, while the target-state sandbox budgets describe how future tick-window capacity and per-run limits may be layered on top.
 
@@ -263,15 +265,13 @@ Additional resource-related environment variables may be introduced over time. N
 
 When diagnosing sandbox-related issues in production, operators should:
 
-- Check `script_event_audit` records for:
-  - `finalStage` (`ADMISSION`, `DSL_EVAL`, `WORK_ITEM_PERSIST`, `TICK_HANDOFF`)
-  - `finalOutcome` (`sandbox_error`, `infrastructure_error`, `quota_denied`)
-  - `finalReason` (`cpu_budget_exceeded`, `memory_budget_exceeded`, other sandbox reasons)
-  - Associated `tenantId`, `scriptId`, and `tickId`
+- For live and current legacy materialized dry-run handlers, check `script_event_audit` for the canonical `finalStage`, `finalOutcome`, and `finalReason`, plus associated `tenantId`, `scriptId`, and `tickId`. The current legacy dry-run completion remains implemented under its existing handler stage and is not evidence of ADR 0114 preview isolation.
+- For a target ADR 0114 preview, inspect the isolated preview result/audit surface for its bounded result, exact handler/input provenance, and fixture-or-fenced-input evidence. Do not infer preview success or provenance from `script_event_audit`.
 - Inspect metrics such as:
   - `automation_script_sandbox_failures_total` (broken down by `reason`)
   - `automation_script_runtime_seconds`
   - `script_quota_denied_total` and related quota metrics
+  - For preview/test runs, the existing `automation_script_test_runs_total`, `automation_script_test_runtime_seconds`, and `automation_script_test_sandbox_failures_total` families instead of live-traffic counters
 - Verify whether the script has entered `runtimeStatus=DISABLED_DUE_TO_ERRORS` and, if so, decide whether to:
   - Adjust quotas or budgets
   - Fix the script definition

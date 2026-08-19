@@ -12,6 +12,7 @@ This ledger maps canonical product and architecture sources to the stable capabi
 - Historical canonical validator evidence dated 2026-08-14 Pacific/Auckland (2026-08-13 UTC): `design capability allocation passed: 277 sources (274 allocated, 3 explicit exemptions)`.
 - Historical Markdown/link validation on 2026-08-14 Pacific/Auckland (2026-08-13 UTC): `linkCheck` checked 4,574 links (4,536 OK, 0 errors, 38 excluded); `lintMarkdown` checked 454 files with 0 issues. The architecture contract suite and `git diff --check` also passed with no errors.
 - Historical canonical proof evidence recorded for calendar date 2026-08-15 Pacific/Auckland; exact command execution timestamp is not retained: `design capability allocation passed: 284 sources (281 allocated, 3 explicit exemptions)`; `linkCheck` checked 4,769 links (4,731 OK, 0 errors, 38 excluded); `lintMarkdown` checked 461 files with 0 issues; the architecture contract suite passed 184 tests; and `git diff --check` passed with no errors.
+- Canonical validation evidence recorded on 2026-08-20 Pacific/Auckland: `design capability allocation passed: 294 sources (291 allocated, 3 explicit exemptions)`; `linkCheck` checked 5,106 links (5,068 OK, 0 errors, 38 excluded); `lintMarkdown` checked 471 files with 0 issues; ADR review status validation passed for 108 reviewed ADRs and 11 pre-formal records; the architecture contract suite passed 184 tests; and `git diff --check` passed with no errors.
 - Runtime proof is not applicable to this documentation-only allocation change.
 - Implementation and verification evidence do not belong in this allocation ledger. The initial cross-capability baseline is preserved in the frozen [capability implementation reconciliation snapshot](./capability-implementation-reconciliation.md); live status and focused-proof anchors are maintained in the permanent implementation trackers.
 
@@ -30,16 +31,16 @@ This ledger maps canonical product and architecture sources to the stable capabi
 | Infrastructure | 6 | 6 | 0 | 100% classified |
 | Generated references | 2 | 2 | 0 | 100% classified |
 | Microservice architecture | 76 | 74 | 0; 2 explicit governance/template exemptions | 100% classified |
-| Architecture decisions | 110 | 109 | 0; 1 registry exemption | 100% classified |
+| Architecture decisions | 120 | 119 | 0; 1 registry exemption | 100% classified |
 | Product documentation | 7 | 7 | 0 | 100% classified |
-| **Total** | **284** | **281** | **0; 3 explicit exemptions** | **100% classified** |
+| **Total** | **294** | **291** | **0; 3 explicit exemptions** | **100% classified** |
 
 ## Allocation Ledger
 
 | Design source | Heading or scope | Primary capability | Secondary handoffs | Source class | Notes or gap |
 | --- | --- | --- | --- | --- | --- |
 | [Microservice architecture allocation](./design-capability-allocation-microservices.md) | All 76 files under `design/architecture/microservices/**` | Per-source allocation | Per-source handoffs | Service design, contract, runtime/data, configuration, operations, and reference sources | All 76 files are accounted for as 74 allocated sources plus 2 exempt governance/template files: `service-documentation-structure.md` and `service-template.md`; complete path-set coverage |
-| [Architecture decision registry](../../architecture/decisions/README.md) | Registry plus 109 ADRs | Per-record allocation | Per-record affected capabilities | Decision record | The registry is an index; accepted, superseded, and withdrawn records remain distinguishable |
+| [Architecture decision registry](../../architecture/decisions/README.md) | Registry plus 119 ADRs | Per-record allocation | Per-record affected capabilities | Decision record | The registry is an index; accepted, superseded, and withdrawn records remain distinguishable |
 | [System architecture allocation](./design-capability-allocation-system.md) | All 83 direct architecture, 6 infrastructure, and 2 generated sources | Per-source allocation | Per-source handoffs | Normative design, runbook, reference, index, and generated sources | Complete path-set coverage |
 | [Product documentation](../../product/README.md#canonical-sources) | All 7 files under `design/product/**` | Per-source allocation | Per-source product behavior scope | Requirements, taxonomy, index, and observable product behavior | Complete path-set coverage |
 
@@ -157,6 +158,18 @@ This ledger maps canonical product and architecture sources to the stable capabi
 | `design/architecture/decisions/adr-0109-game-session-owned-script-rollout-history.md` | `GR-1` | `AS-1`, `AR-3`, `SF-1`, `SF-2`, `PO-4` | Accepted |
 | `design/architecture/decisions/adr-0110-explicit-opt-in-schedule-continuity-across-script-transitions.md` | `AR-3` | `AS-1`, `AR-1`, `GR-1`, `SF-2` | Accepted |
 | `design/architecture/decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md` | `AS-1` | `AR-1`, `GR-4`, `SF-1` | Accepted |
+| `design/architecture/decisions/adr-0112-typed-bounded-gameplay-effect-extension.md` | `GR-4` | `GR-3`, `AR-1`, `AR-3`, `SF-1`, `AS-1` | Accepted |
+| `design/architecture/decisions/adr-0113-bounded-pull-settings-distribution-with-freshness-classes.md` | `AR-2` | `SF-2`, `GR-1` | Accepted |
+| `design/architecture/decisions/adr-0114-command-plan-preview-dry-run-isolation.md` | `AS-1` | `AR-3`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0115-manifest-complete-onload-readiness-without-durable-game-initialization.md` | `AS-1` | `AR-1`, `GR-1` | Accepted |
+| `design/architecture/decisions/adr-0116-routine-component-migration-and-explicit-emergency-revocation.md` | `AS-1` | `AR-1`, `PO-1` | Accepted |
+| `design/architecture/decisions/adr-0117-producer-owned-event-schemas-with-one-materialized-catalogue.md` | `AS-1` | `AR-1`, `SF-1`, `PO-4`, `GR-1` | Accepted |
+| `design/architecture/decisions/adr-0118-preselected-exclusive-handlers-and-durable-fanout-ordering.md` | `AS-1` | `AR-1`, `PO-1` | Accepted |
+| `design/architecture/decisions/adr-0119-epoch-fenced-per-instance-plugin-activation.md` | `AS-1` | `AR-3`, `SF-1`, `AR-1`, `GR-1` | Accepted |
+| `design/architecture/decisions/adr-0120-owner-read-first-control-plane-notifications.md` | `SF-1` | `AS-1`, `AR-3`, `PO-1`, `PO-4`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0121-historical-broad-dry-run-semantics.md` | `AS-1` | `PO-1`, `PO-2`, `PO-4` | Superseded |
+
+ADR 0121 is superseded by [ADR 0114](../../architecture/decisions/adr-0114-command-plan-preview-dry-run-isolation.md); its historical capability allocation remains recorded above.
 
 ## Product Documentation Allocation
 

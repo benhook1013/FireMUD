@@ -43,6 +43,7 @@ The generated reference carries the current defaults, descriptions, valid values
 
 ## Configuration Notes
 
+- Settings distribution follows [ADR 0113](../../decisions/adr-0113-bounded-pull-settings-distribution-with-freshness-classes.md): Game Session consumes revisioned snapshots through a bounded local cache and must retain revision, age, provenance, and degraded/expired state in its effective-settings diagnostics. The current short TTL plus explicit refresh/evict behavior is a local implementation seam; class-specific freshness outcomes and an authoritative fence for restrictive settings remain gaps. No generalized push channel or concrete TTL is implied.
 - Environment variables configure PostgreSQL and Redis connections via `DatabaseAutoConfiguration` and `RedisProperties`.
 - `.env.sample` contains example values for local development.
 - [Deployment Environments](../../infrastructure/deployment-environments.md) remains the canonical source for concrete environment examples and deployment-specific binding expectations.

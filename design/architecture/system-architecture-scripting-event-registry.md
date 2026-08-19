@@ -8,7 +8,7 @@ Use `system-architecture-scripting-dsl-reference-and-lifecycle.md` for DSL seman
 
 ## Implementation Status
 
-The target exact-fence requirement below is not fully implemented at the live handoff: the current request carries `scriptPatchVersion` but not `scriptPinEpoch`, so same-version work from an older epoch cannot be rejected there today. See the [runtime execution implementation status](./system-architecture-scripting-runtime-execution.md#current-implementation-status); this gap does not weaken the target registry contract.
+The target exact-fence and materialized-catalogue requirements below are not fully implemented. At the live handoff, the current request carries `scriptPatchVersion` but not `scriptPinEpoch`, so same-version work from an older epoch cannot be rejected there today. The current static registry also lacks an accepted materialized catalogue revision/digest and the applicable immutable schema identity/digest evidence required for its mutable `payloadSchemaRef` anchors. See the [runtime execution implementation status](./system-architecture-scripting-runtime-execution.md#current-implementation-status); these gaps do not weaken the target registry contract.
 
 ## Purpose
 
@@ -23,16 +23,16 @@ No service may invent a private `eventType` contract outside this registry and s
 
 ## Ownership Model
 
-- Automation & Scripting owns the canonical runtime registry used for ingress admission, producer authorization, and handler-resolution validation.
-- Source definitions are service-owned, versioned manifests checked into the repo or generated from primary service contracts; producer services own the correctness of their event schema and semantics.
+- Producer services own event semantics and versioned schemas through service-owned manifests checked into the repo or generated from primary service contracts. For every `(eventType,eventSchemaVersion)`, exactly one producer manifest is the authoritative semantic owner; a manifest may authorize multiple producer principals without making them additional owners.
+- Automation & Scripting mechanically validates and materializes those manifests into the one canonical runtime catalogue used for ingress admission, producer authorization, handler-resolution validation, and read APIs. Teams do not manually duplicate producer definitions into a second authoritative registry file.
 - Game Design consumes the same registry as a read-only design-time dependency so editor/event-binding UI and publish validation never drift from runtime admission.
 - Logging & Admin and other operator tooling read the registry for inspection only; they do not mutate entries directly.
-
-This means source ownership is distributed, but canonical runtime truth is centralized.
 
 ## Registry Entry Contract
 
 Every registry entry is keyed by `(eventType, eventSchemaVersion)`.
+
+`allowedProducerPrincipals` may list multiple authorized emitters, but no second manifest may declare the same key. Duplicate declarations, including byte-equivalent copies, and any conflict in a required registry-entry field or source-level semantic for the same key are materialization errors; the catalogue has no merge or precedence rule for them.
 
 Each entry must define at least:
 
@@ -51,6 +51,10 @@ Each entry must define at least:
 - `dryRunSupport`
 - `deprecationStatus`
 
+Each complete materialized catalogue must also expose an immutable catalogue revision identity, `catalogueDigestProfileVersion`, and `catalogueDigest` over the exact validated producer-manifest inputs and deterministically ordered entries. These catalogue-level fields identify which complete catalogue state supplied an entry; they are not part of the `(eventType, eventSchemaVersion)` key.
+
+`catalogueDigestProfileVersion` identifies the explicitly versioned canonical digest profile under which `catalogueDigest` was computed and must be validated. The profile is owned by this catalogue contract and must define the complete digest input envelope, whether omitted fields are materialized to declared defaults or remain absent, exact UTF-8/canonical-byte serialization, map/object key ordering, set-member ordering, list ordering, hash algorithm, and digest encoding. There is no implicit default profile: a catalogue with a missing, unknown, or mismatched profile version is not accepted as complete, and consumers must not invent local serialization or hash rules. A profile change is a catalogue-contract change and must be versioned and carried with the digest.
+
 Required semantics for those fields:
 
 - `ownerService`
@@ -58,7 +62,7 @@ Required semantics for those fields:
 - `allowedProducerPrincipals`
   - Exact service principals or internal caller classes allowed to emit the event.
 - `payloadSchemaRef`
-  - The authoritative schema or proto reference for the payload shape.
+  - The authoritative schema or proto reference for the payload shape. The reference must resolve to a separately generated or retained immutable schema artifact (or an already content-addressed artifact). For a mutable documentation reference such as a built-in Markdown anchor, catalogue materialization resolves the reference to that artifact and records immutable `resolvedPayloadSchemaRevision` and `resolvedPayloadSchemaDigest` evidence over the artifact's exact canonical bytes under the identified catalogue digest profile; that profile owns the canonical artifact serialization. The selected evidence is retained on the entry and included in the canonical catalogue digest. A mutable document anchor alone is not immutable schema evidence.
 - `requiredTriggerIdentityFields`
   - The exact identity fields applicable to this event at each stage: the event-scope ingress subset before handler resolution and the full handler Trigger Identity after each handler resolves, as defined by the [normative identity tables](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields).
   - Ordinary producer event-scope ingress must not require, fabricate, or use synthetic values for handler-only fields. In particular, `scriptId`, `pluginId`, `pluginVersionId`, and `bindingId` are unavailable before handler resolution; they become required only when the resolved handler's scope requires them.
@@ -95,15 +99,19 @@ Required semantics for those fields:
 Registry changes follow one canonical path:
 
 1. A producer-owning service adds or updates a versioned event-definition manifest in its primary contract surface.
-2. Automation & Scripting validates that the manifest is well-formed, names one owner, and does not redefine an existing `(eventType, eventSchemaVersion)` incompatibly.
-3. The validated definition is materialized into the canonical event registry used by ingress admission.
-4. Game Design refreshes its read model from that same canonical registry before exposing the event in authoring UI or publish validation.
+2. Automation & Scripting mechanically discovers the declared source manifests and validates that each is well formed, names exactly one owner and authoritative producer manifest, resolves its schema reference (including a built-in Markdown anchor) to a separately generated or retained immutable schema artifact, records revision/digest evidence over the artifact's exact canonical bytes under the identified catalogue digest profile, and declares one authoritative snapshot and binding-scope contract for the key. The profile owns the artifact serialization; materialization must not hash a whole mutable Markdown source or recursively include the catalogue digest in the artifact evidence. It rejects missing manifests, duplicate declarations even when byte-equivalent, unresolved or mutable-without-digest schema references, and any conflict in a required registry-entry field or source-level semantic for the same `(eventType,eventSchemaVersion)`; it does not merge declarations or choose a winner.
+3. Automation deterministically materializes the complete validated source set, assigns the immutable catalogue revision and `(catalogueDigestProfileVersion, catalogueDigest)`, validates the digest under exactly that identified profile, and atomically accepts that complete catalogue for ingress and reads. Failed or partial materialization leaves the prior complete accepted catalogue authoritative.
+4. Game Design refreshes its read model from that same canonical catalogue before exposing the event in authoring UI or publish validation.
+
+Before a producer emits any `(eventType,eventSchemaVersion)`, the exact producer manifest and payload schema for that key must be present in the same complete catalogue revision and `catalogueDigest` that is currently accepted for ingress. Producer authorization is evaluated against that accepted entry; a manifest or schema that exists only in an unaccepted, failed, partial, or newer materialization cannot authorize emission. If materialization fails, the prior complete catalogue remains active only for the keys it already accepted and cannot authorize a new key or schema version. Emission of a new or not-yet-accepted key/version therefore fails closed until its complete source set is accepted as one catalogue.
+
+The producer-side activation gate is a control-plane/read gate, not an event-wire assertion. Before enabling a release or producer process to emit a new key/version, the producer's activation path must read the exact entry from the canonical registry read API (or an Automation-owned or authorized equivalent read of the same accepted catalogue) and verify its `eventType`, `eventSchemaVersion`, `ownerService`, authorized producer principal, `payloadSchemaRef`, applicable immutable schema identity/digest evidence, immutable catalogue revision, `catalogueDigestProfileVersion`, and `catalogueDigest`. Only a successful exact read against the currently accepted complete catalogue may mark that key/version enabled for the producer; an unaccepted, failed, partial, newer, or mismatched read leaves it disabled. This gate is evaluated at producer activation/release time and does not add catalogue fields to event identity or require producers to assert them on every event. Automation independently repeats the exact active-entry, principal, immutable-schema, and payload validation at ingress and records the accepted catalogue revision/digest, applicable immutable schema identity/digest evidence, and resolved owner/principal in the existing ingress audit, so a stale or incorrectly activated producer cannot bypass the enforcement authority; ingress rejection is the safety fence, not the producer activation mechanism.
 
 Rules:
 
-- Breaking payload or identity changes require a new `eventSchemaVersion`.
-- Narrowing allowed producers, changing snapshot authority, or changing allowed binding scopes is a breaking change unless explicitly proven compatible.
-- Removing an event requires a deprecation phase in the registry first; Game Design must stop offering new bindings before runtime ingress rejects it as `REMOVED`.
+- Breaking payload, identity, producer-authorization, snapshot-authority, consistency, replay, quota, or binding-scope changes require a new `eventSchemaVersion`; compatible additive changes must pass declared mechanical compatibility validation.
+- Removing an event requires a deprecation phase in the catalogue first; Game Design must stop offering new bindings before runtime ingress rejects it as `REMOVED`.
+- Source manifests and catalogue entries required by supported patches remain retained for validation, runtime admission, rollback, and operator explanation. Removal or compaction is allowed only after the authoritative patch-support lifecycle proves that no supported patch still references the event schema version.
 
 ## Read Surfaces
 
@@ -115,9 +123,10 @@ The registry must expose one canonical read API family:
 
 Minimum read payload:
 
+- catalogue revision identity, `catalogueDigestProfileVersion`, and canonical `catalogueDigest`
 - identity fields for the entry
 - owner service
-- payload schema reference
+- payload schema reference plus the applicable content-addressed identity or resolved schema revision/digest
 - allowed producers
 - required trigger identity fields
 - snapshot authority and consistency class
@@ -132,7 +141,7 @@ Game Design, Logging & Admin, and documentation generators should all consume th
 
 ## Built-In Payload References
 
-The built-in registry entries currently use the following canonical payload-schema references:
+The built-in registry entries currently use the following canonical payload-schema references. These Markdown anchors are source documentation references for the built-in payload contracts; they are not by themselves immutable schema evidence. During catalogue materialization, each built-in entry must resolve its anchor to a separately generated or retained immutable schema artifact and record the artifact revision/digest over its exact canonical bytes under the identified catalogue digest profile. The artifact evidence is included in the catalogue digest envelope, but neither the artifact digest nor the catalogue digest hashes the whole mutable Markdown source or recursively hashes itself. This is registry/materialization evidence, not a new wire-payload or event-identity field.
 
 ### `onLoad` payload `v1`
 
@@ -268,7 +277,8 @@ Publish validation must fail closed if it cannot read the canonical registry for
 
 Registry-driven admission must be observable:
 
-- `script_event_ingress_audit` records the `eventType`, `eventSchemaVersion`, and producing service identity for every admitted or rejected custom/service-specific event before handler resolution
+- The current bounded `script_event_ingress_audit` fallback records the `eventType`, `eventSchemaVersion`, and producing service identity for every admitted or rejected custom/service-specific event before handler resolution
+- **Target state:** For registry-governed events, that audit also records the accepted catalogue revision, `catalogueDigestProfileVersion`, `catalogueDigest`, applicable immutable schema identity/digest evidence, resolved `ownerService`, and authenticated producer principal used for the decision; these fields explain the exact registry state without becoming event identity
 - ingress rejection metrics must tag bounded reasons such as `unknown_event_type`, `unauthorized_producer`, `missing_owner_input`, or `illegal_binding_scope`; an owner-specific missing token may use a more specific bounded reason when that owner contract requires one
 - registry change events must be replayable so operator read models can explain why an event became valid, deprecated, or rejected
 

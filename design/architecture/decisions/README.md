@@ -206,6 +206,16 @@ Validation precedence is fixed: first parse every checked queue row and validate
 | [ADR 0109](./adr-0109-game-session-owned-script-rollout-history.md) | Accepted | `GR-1.4` | `AR-3.2`, `AS-1.6`, `SF-1.1`, `SF-2.3`, `PO-4.1` | Game Session-owned exact pin and append-only rollout history with Automation-only convergence projection |
 | [ADR 0110](./adr-0110-explicit-opt-in-schedule-continuity-across-script-transitions.md) | Accepted | `AR-3.3` | `AS-1.4`, `AR-1.5`, `GR-1.4`, `SF-2.3` | Default-reset interval transitions with explicit stable-owner schedule continuity |
 | [ADR 0111](./adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md) | Accepted | `AS-1.2` | `AR-1.3`, `AR-1.5`, `AS-1.5`, `AS-1.6`, `GR-4.1`, `SF-1.3` | One DSL runtime with distinct embedded-script and linked-plugin lifecycles, explicit acceptance, and typed-engine hot-path authority |
+| [ADR 0112](./adr-0112-typed-bounded-gameplay-effect-extension.md) | Accepted | `GR-4.1` | `GR-3.1`, `AR-1.1`, `AR-1.5`, `AR-3.3`, `SF-1.1`, `AS-1.2` | Typed release-pinned gameplay effects with bounded target plans and domain-owned mutation authority |
+| [ADR 0113](./adr-0113-bounded-pull-settings-distribution-with-freshness-classes.md) | Accepted | `AR-2.3` | `AR-2.1`, `SF-2.1`, `SF-2.2`, `GR-1.1` | Pull-based typed settings snapshots with monotonic revisions, freshness classes, and class-specific stale behavior |
+| [ADR 0114](./adr-0114-command-plan-preview-dry-run-isolation.md) | Accepted | `AS-1.2` | `AS-1.6`, `AS-1.5`, `AR-3.4`, `SF-2.2` | Honest no-side-effect command-plan previews with exact inputs and live-protecting isolation |
+| [ADR 0115](./adr-0115-manifest-complete-onload-readiness-without-durable-game-initialization.md) | Accepted | `AS-1.2` | `AR-1.5`, `AS-1.6`, `GR-1.4` | Manifest-complete bounded onLoad readiness without durable game initialization |
+| [ADR 0116](./adr-0116-routine-component-migration-and-explicit-emergency-revocation.md) | Accepted | `AS-1.2` | `AR-1.5`, `AS-1.6`, `PO-1.4` | Routine component migration separated from explicit scoped emergency security revocation |
+| [ADR 0117](./adr-0117-producer-owned-event-schemas-with-one-materialized-catalogue.md) | Accepted | `AS-1.1` | `AR-1.1`, `SF-1.1`, `PO-4.1`, `GR-1.1` | Producer-owned event schemas compiled into one revisioned Automation enforcement catalogue |
+| [ADR 0118](./adr-0118-preselected-exclusive-handlers-and-durable-fanout-ordering.md) | Accepted | `AS-1.1` | `AR-1.1`, `AS-1.3`, `PO-1.1` | Preselected sole exclusive handlers and durable deterministic non-exclusive fan-out ordering |
+| [ADR 0119](./adr-0119-epoch-fenced-per-instance-plugin-activation.md) | Accepted | `AS-1.6` | `AR-3.3`, `SF-1.3`, `AR-1.5`, `GR-1.4` | Per-instance plugin activation with monotonic epochs and acknowledged final-execution fences |
+| [ADR 0120](./adr-0120-owner-read-first-control-plane-notifications.md) | Accepted | `SF-1.1` | `AS-1.6`, `AR-3.3`, `PO-1.1`, `PO-4.1`, `SF-2.3` | Owner-read-first control-plane notifications with selectively durable asynchronous flows |
+| [ADR 0121](./adr-0121-historical-broad-dry-run-semantics.md) | Superseded | `AS-1.6` | `PO-1.1`, `PO-2.4`, `PO-4.1` | Historical broad dry-run semantics superseded by explicit command-plan preview isolation |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../../product/capability-taxonomy.md).
 
@@ -217,6 +227,7 @@ This is a hand-maintained index, not an independent authority. The ADR review-st
 | --- | --- | --- |
 | [ADR 0004](./adr-0004-gameplay-reroute-vs-backend-unavailable.md) | Superseded | [ADR 0007](./adr-0007-edge-sharding-and-close-taxonomy.md) |
 | [ADR 0006](./adr-0006-gameplay-shard-routing-key-transport.md) | Withdrawn | [ADR 0007](./adr-0007-edge-sharding-and-close-taxonomy.md) |
+| [ADR 0121](./adr-0121-historical-broad-dry-run-semantics.md) | Superseded | [ADR 0114](./adr-0114-command-plan-preview-dry-run-isolation.md) |
 
 ## Record Shape For New Decisions
 

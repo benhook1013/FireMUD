@@ -21,6 +21,7 @@ This document defines the canonical FireMUD settings model for operator/bootstra
 - Game Session exposes the current effective result at `/actuator/settings/effective`, including resolved `presentation`, `prompts`, `reconnection`, `movement`, `worldTopology`, `commandHistory`, and `commandCapabilities`, plus normalized subgroup views for the live room-view/transcript seams (`transcriptRendering`, `reconnectionPolicy`, and `reconnectBuffer`), movement/topology seams (`movementPostMoveView`, `worldTopologyScopeModel`, and `worldTopologyRegionBehavior`), and the current scoped `communication` override layer it sees for the same session or synthesized scope.
 - Game Logic exposes the current effective `communication` result at `/actuator/settings/effective/communication`.
 - The shared authority reader now has explicit bounded local cache semantics: normal reads use a short TTL cache, callers may force refresh, and callers may evict one scope locally. Distributed push invalidation, full centralized operator-default/caps resolution, and preset-baseline expansion are still future work.
+- The current reader/proof gap is explicit: short-TTL, force-refresh, and per-scope eviction do not yet prove monotonic revision handling, class-specific stale behavior, or the restrictive-setting fence. The reader applies the canonical per-key/domain freshness maximum once that typed metadata is present; it does not select a local alternative.
 
 ## Canonical Decisions
 
@@ -177,9 +178,12 @@ Every surfaced setting should carry at least:
 - default
 - valid range or enum
 - scope/owner
+- a recognized freshness class and one canonical, finite, non-negative maximum stale age for that key/domain; zero means that no stale last-known-good value may be used
 - whether hot-reloadable
 - whether advanced
 - example value
+
+Schema publication rejects a surfaced setting when its freshness class or maximum stale age is missing, unsupported, non-finite, or negative, or when its declared expiry behavior is incompatible with that class. Restrictive and authoritative settings fail closed or hold their authoritative fence once the canonical maximum is exceeded; only a setting explicitly classified as harmless presentation may retain bounded last-known-good behavior or use its documented safe fallback.
 
 The current Spring configuration metadata is the first live step toward that schema. Later generated markdown/schema output and admin/creator tooling should read from the same typed metadata source rather than inventing their own setting definitions.
 
@@ -208,6 +212,12 @@ That resolver or read model must:
 - present the validated operator-constraint generation with every capped effective value so cross-service consumers can prove convergence
 
 This does not need to become a full distributed config platform. A bounded authoritative settings read model is enough.
+
+### Distribution and Freshness
+
+[ADR 0113](./decisions/adr-0113-bounded-pull-settings-distribution-with-freshness-classes.md) makes distribution a typed, revisioned pull contract rather than a generalized push fabric. Consumers may retain bounded local last-known-good snapshots, but each key or domain declares a freshness class and one canonical maximum stale age in its typed contract. Consumers apply that maximum; they do not select a competing local bound. Presentation-only settings may use an explicitly safe fallback when that bound is exceeded; restrictive or authoritative settings fail closed or hold an authoritative fence, and urgent revocation uses a separate immediate path. Notification plus pull may be an optimization, but notifications do not become the authority. Concrete freshness durations remain schema-policy work.
+
+At expiry, fail-closed and fence-retention are two representations of the same restrictive direction, not competing fallback choices. An expired harmless-presentation key returns only its schema-declared safe fallback; an expired restrictive key returns no permissive effective value and denies the dependent action; and an expired fence-valued key retains the last authoritative restrictive fence without treating its stale payload as permission. The effective-result diagnostics retain the last accepted revision, provenance, and observation age, mark the key or domain expired, and identify which of those schema-declared dispositions was applied. Urgent revocation is not an expiry disposition and remains on its separate authoritative path.
 
 ## Current Practical Rule
 
