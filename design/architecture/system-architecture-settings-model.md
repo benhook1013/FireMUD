@@ -217,6 +217,8 @@ This does not need to become a full distributed config platform. A bounded autho
 
 [ADR 0113](./decisions/adr-0113-bounded-pull-settings-distribution-with-freshness-classes.md) makes distribution a typed, revisioned pull contract rather than a generalized push fabric. Consumers may retain bounded local last-known-good snapshots, but each key or domain declares a freshness class and one canonical maximum stale age in its typed contract. Consumers apply that maximum; they do not select a competing local bound. Presentation-only settings may use an explicitly safe fallback when that bound is exceeded; restrictive or authoritative settings fail closed or hold an authoritative fence, and urgent revocation uses a separate immediate path. Notification plus pull may be an optimization, but notifications do not become the authority. Concrete freshness durations remain schema-policy work.
 
+At expiry, fail-closed and fence-retention are two representations of the same restrictive direction, not competing fallback choices. An expired harmless-presentation key returns only its schema-declared safe fallback; an expired restrictive key returns no permissive effective value and denies the dependent action; and an expired fence-valued key retains the last authoritative restrictive fence without treating its stale payload as permission. The effective-result diagnostics retain the last accepted revision, provenance, and observation age, mark the key or domain expired, and identify which of those schema-declared dispositions was applied. Urgent revocation is not an expiry disposition and remains on its separate authoritative path.
+
 ## Current Practical Rule
 
 Current practical rule:
