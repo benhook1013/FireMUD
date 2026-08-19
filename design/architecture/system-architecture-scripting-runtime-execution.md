@@ -61,8 +61,6 @@ The target runtime uses one canonical two-layer lifecycle, not parallel state ma
 
 `EVALUATED_COMMITTED` is the canonical target trigger state reached by the atomic descriptor commit. One transaction persists the immutable evaluated descriptor rows, parent outbox evidence, terminal evaluation outcome, and audit update, and compare-and-set transitions the pre-`EVALUATED_COMMITTED` trigger from `EXECUTING` to `EVALUATED_COMMITTED`. Recovery uses the committed descriptors and retained outcome as its only replay input and never re-enters the DSL. The trigger state itself contributes zero to `activeExecutionCount`; any unresolved child descriptors contribute through their descriptor status.
 
-The current implementation does not persist `EVALUATED_COMMITTED` or the separate descriptor layer. Its live claim and handoff boundaries remain the current behaviors documented below.
-
 ## Current Implementation Status
 
 This section records current implementation boundaries, not target-state authority. The normative contracts below and the linked owning documents remain canonical. Metric names, labels, and increment units are owned by [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix); audit fields and handoff diagnostics are owned by the [Scripting & Automation Observability Contract](./system-architecture-scripting-observability-contract.md). Normative audit stage/outcome semantics and final lifecycle statuses remain owned by the normative audit and scripting lifecycle/rollout documents.
