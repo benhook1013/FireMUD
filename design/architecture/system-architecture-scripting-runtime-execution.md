@@ -168,7 +168,7 @@ The pointer/index format must be forward-compatible (versioned envelope) so it c
 
 ### Rebuild and Deduplication Rules
 
-For plugin-owned schedule-derived work, rebuilding a due candidate or firing claim never mints a new candidate identity solely because its captured lifecycle revision changed. The old candidate remains fenced under its original evidence; a target schedule reconciliation may derive a fresh candidate only for the target lifecycle/activation tuple after exact current admission checks.
+For plugin-owned schedule-derived work, rebuilding a due candidate or firing claim never mints a new candidate identity solely because its captured `lifecycleRevision` changed. The old candidate remains fenced under its original evidence; a target schedule reconciliation may derive a fresh candidate only when the scheduler identity tuple changes, including the tagged `pluginActivationEpoch` and excluding `lifecycleRevision`, after exact current admission checks. A lifecycle-revision-only change preserves the old candidate/firing identity and follows the applicable fence or terminalization contract; those identities are never rewritten or reused.
 
 - Rebuilding `automation:queue:*` from the outbox must be safe to run repeatedly and concurrently (idempotent projection).
 - Automation's queue-drain/rebuild path must dedupe repeated parent pointers by `outboxWorkItemId` (not by Redis list position) so queue resets and re-indexing do not multiply discovery. The durable executor and Game Session must dedupe each descriptor by the complete Command-Handoff Identity so parent-pointer retries do not cause double-handoff.

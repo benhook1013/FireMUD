@@ -168,7 +168,7 @@ The ingress endpoint determines who owns `scriptEventId` generation and retry be
 | `DSL_EVAL` | DSL graph evaluation and sandbox enforcement (validation, loop safety, runtime budgets). | Only `readiness_success` or `completed_no_commands` in their declared cases |
 | `WORK_ITEM_PERSIST` | Durable persistence of the resulting work item (outbox). | No |
 | `TICK_HANDOFF` | Durable handoff of every required dispatch to Game Session. | Only `handoff_accepted` |
-| `DRY_RUN_RESULT` | Non-committing dry-run/test result after DSL evaluation; would-be commands are returned to the authorized caller and are not persisted or handed off. Allowed only when `isDryRun=true`. | Yes, but only with `finalOutcome=dry_run_success`. |
+| `DRY_RUN_RESULT` | Target ADR 0114 non-committing preview after DSL evaluation; the would-be commands are returned directly to the authorized caller or retained on the isolated preview result/audit surface, never in handler `script_event_audit`, and are not persisted as live work or handed off. | Target preview only, with `finalOutcome=dry_run_success`. |
 
 ### Required Audit Write Semantics (Normative)
 
@@ -177,7 +177,7 @@ The ingress endpoint determines who owns `scriptEventId` generation and retry be
 - There must be at most one row per full handler Trigger Identity (Table 1 plus `pluginId`, `pluginVersionId`, and `bindingId` where applicable); the captured `(pluginActivationEpoch, lifecycleRevision)` pair is execution-fence evidence, not a handler-row uniqueness field.
 - Implementations must enforce uniqueness at storage level (composite unique key over Trigger Identity).
 - Retries and duplicate deliveries must update the existing row instead of inserting a new one.
-- Stage progression must be monotonic for live runs (`ADMISSION` <= `DSL_EVAL` <= `WORK_ITEM_PERSIST` <= `TICK_HANDOFF`); writers must not regress `finalStage`. Current legacy materialized dry-run/test handler rows use the non-committing terminal branch `ADMISSION` <= `DSL_EVAL` <= `DRY_RUN_RESULT` and must never progress to `WORK_ITEM_PERSIST` or `TICK_HANDOFF`; target ADR 0114 previews use that same branch only on their isolated preview result/audit surface.
+- Stage progression must be monotonic for live runs (`ADMISSION` <= `DSL_EVAL` <= `WORK_ITEM_PERSIST` <= `TICK_HANDOFF`); writers must not regress `finalStage`. Current legacy materialized dry-run/test handler rows use the terminal `ADMISSION` <= `DSL_EVAL` branch with `dry_run_completed`/`dry_run_no_handoff` and must never progress to `WORK_ITEM_PERSIST` or `TICK_HANDOFF`; target ADR 0114 previews use `DRY_RUN_RESULT`/`dry_run_success` only on their isolated preview result/audit surface or direct authorized result path.
 - On conflicting updates, the higher stage wins; if stages are equal, preserve the first terminal non-success outcome unless a later write provides a strictly higher-fidelity reason for the same stage.
 
 ### Required Outcome Rules (Normative)
@@ -188,7 +188,7 @@ The ingress endpoint determines who owns `scriptEventId` generation and retry be
 | `DSL_EVAL` | Sandbox failures use `finalOutcome=sandbox_error`. A valid live handler that intentionally emits no commands uses `finalOutcome=completed_no_commands`; it does not claim handoff. |
 | `WORK_ITEM_PERSIST` | If durable persistence fails, the audit record must not show success. It must record a persistence failure outcome and must not claim that effects were enqueued. |
 | `TICK_HANDOFF` | `finalOutcome=handoff_accepted` is permitted only when Game Session has durably accepted every required child dispatch. Evaluation or partial handoff is not handoff acceptance. |
-| `DRY_RUN_RESULT` | `finalOutcome=dry_run_success` is permitted only for an authorized `isDryRun=true` execution after DSL evaluation completes and the non-committing result has been returned or stored for inspection. A current legacy materialized dry-run/test handler may record it in `script_event_audit`; a target ADR 0114 preview records it only on the isolated preview result/audit surface. It must not imply durable work-item persistence or tick handoff. |
+| `DRY_RUN_RESULT` | `finalOutcome=dry_run_success` is permitted only for the target ADR 0114 authorized `isDryRun=true` preview after DSL evaluation completes and the non-committing result has been returned directly to the authorized caller or stored on the isolated preview result/audit surface; it never creates a handler `script_event_audit` row and must not imply durable work-item persistence or tick handoff. The current legacy materialized dry-run/test handler instead records `DSL_EVAL`/`dry_run_completed`/`dry_run_no_handoff`. |
 
 Additional non-committing terminal outcome rules:
 
@@ -229,7 +229,7 @@ Taxonomy governance rule:
 | `handoff_accepted` | `TICK_HANDOFF` | Every required child dispatch was durably accepted by Game Session; this is not gameplay application. |
 | `completed_no_commands` | `DSL_EVAL` | A valid live handler evaluated and intentionally emitted no commands. |
 | `readiness_success` | `DSL_EVAL` | Tenant-readiness `onLoad` completed successfully and contributed to patch readiness. No work item or tick handoff was created. |
-| `dry_run_success` | `DRY_RUN_RESULT` | Non-committing dry-run/test execution completed and returned would-be commands for inspection. |
+| `dry_run_success` | `DRY_RUN_RESULT` | Target ADR 0114 non-committing preview completed and returned would-be commands directly or retained them on its isolated result/audit surface for inspection. |
 | `skipped_reloading` | `ADMISSION` | Explicit reload backpressure. For a low-rate event denied before handler resolution, apply the [event-scope claim retry lifecycle](#event-scope-claim-and-retry-semantics-normative): only an explicitly retryable denial may be reclaimed after its bounded retry hint/window, using the same event-scope identity and `scriptEventId`; it must not fan out while denied. After handler resolution, a handler retry reuses that handler's full Trigger Identity and the same propagated `scriptEventId`. A timer/cadence candidate skip remains the Table 3 candidate-audit outcome and creates no event-scope firing claim or `scriptEventId`. |
 | `rollback_paused` | `ADMISSION` | Post-resolution handler rollback backpressure while control-plane rollback pause is active; a handler retry reuses its full Trigger Identity and the same propagated `scriptEventId`, if policy allows. For low-rate event ingress denied before handler resolution, apply the [event-scope claim retry lifecycle](#event-scope-claim-and-retry-semantics-normative) to the ingress pair `TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK` / `rollback_pause`: reclaim the same claim/identity only within its bounded retry eligibility, with no fan-out while denied. Timer candidates use the Table 3 candidate-audit outcome, not this handler or ingress audit path. |
 | `quota_denied` | `ADMISSION` | Script quota or concurrency/capacity denial before DSL evaluation. |
