@@ -254,7 +254,7 @@ This is target-state behavior. The current live Game Session handoff does not ye
 
 A handler's terminal failure or empty output closes its sequence position and allows later non-exclusive handler commands to proceed without canceling them. A delayed lower sequence is not equivalent to a terminal failure; downstream application must retain or reconstruct enough resolution state to avoid applying a higher sequence prematurely. Missing or contradictory sequence/completeness metadata fails explicitly rather than degrading to arrival order.
 
-An authorized exclusive binding is selected before work-item fan-out and is the only handler materialized for that event scope. If it fails or is denied, no sibling fallback is created.
+Automation first resolves and seals the complete applicable core/plugin binding set, rejecting missing or contradictory completeness evidence, multiple exclusive claims, or unauthorized exclusive claims. It then selects an authorized exclusive binding before work-item fan-out; that binding is the only handler materialized for the event scope. If it fails or is denied, no sibling fallback is created.
 
 ## Output Budgeting and Command Fan-Out
 

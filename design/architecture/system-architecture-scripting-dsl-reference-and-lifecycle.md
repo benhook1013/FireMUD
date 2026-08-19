@@ -200,7 +200,7 @@ If there is no exclusive binding, the Automation & Scripting Service evaluates b
 2. the normalized finite handler-kind rank ASC (`SCRIPT` before `PLUGIN` by default, unless an operator-controlled policy explicitly places `PLUGIN` ahead; designers cannot control this rank)
 3. `canonical stable handler-order identity ASC`, using the owner-defined projection and comparator below.
 
-This ordering is stable across deployments so that the same binding set produces the same command sequence for a given event. Each resolved non-exclusive handler receives a durable `handlerSequence` or equivalent stable ordinal. Handler audit, durable work, generated commands, handoff, and command application preserve that sequence plus handler-local command order; queue position, timestamps, row IDs, worker claims, and retry timing are not semantic ordering authority.
+This ordering is stable across deployments so that the same binding set produces the same command sequence for a given event. Each resolved handler, including a selected exclusive handler, receives a durable `handlerSequence` or equivalent stable ordinal before handler audit, durable work, generated-command, handoff, or application records are written. Those records preserve that sequence plus handler-local command order; queue position, timestamps, row IDs, worker claims, and retry timing are not semantic ordering authority.
 
 ### Canonical Stable Handler-Order Identity
 
