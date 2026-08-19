@@ -310,6 +310,8 @@ Failure example:
 
 Plugins follow a lifecycle similar to script patches but scoped to `<tenantId, gameInstanceId, pluginId>` so a tenant can run multiple game instances with different plugin selections safely.
 
+The lifecycle rules in this section are **target-state**. The current runtime persists and exposes a narrower plugin state/version and runtime-scope projection; it does not yet persist and propagate the complete `pluginActivationEpoch`, `lifecycleRevision`, `targetLifecycleRevision`, Game Session install acknowledgement, and final-fence evidence across status, event, handoff, and recovery surfaces. The target rules below therefore define the convergence contract and current gaps, not a claim that the complete lifecycle fence is already live.
+
 - Plugins do **not** participate in the script-patch `onLoad` lifecycle. There is no plugin-scoped `onLoad` or `onUnload` contract in the first implementation slice.
 - Plugin activation therefore consists only of:
   - signature and policy verification,
@@ -420,6 +422,8 @@ Example:
 Policy configs should be versioned so operators can roll back to a previous allowlist if enforcement causes unexpected disruption. Report-only and enforcing behavior are configuration choices on the policy version and must be applied consistently across environments as part of the normal deployment pipeline.
 
 Operationally, Logging & Admin acts as the operator-facing orchestration and audit surface for plugin lifecycle management. The authoritative runtime control plane remains the Automation & Scripting APIs that own `activeVersionId`, `pendingVersionId`, `pluginState`, `pluginActivationEpoch`, and `lifecycleRevision`; a pending transition also owns its `targetLifecycleRevision`. Logging & Admin coordinates those APIs rather than owning a competing runtime registry contract. The [Scripting Control Plane API](../../system-architecture-scripting-control-plane-api.md) and [ADR 0119](../../decisions/adr-0119-epoch-fenced-per-instance-plugin-activation.md) own the exact install/acknowledgement and final-fence rules.
+
+The lifecycle operation and serialization rules that follow are **target-state**. The current `SetPluginActiveVersion`, `DisablePlugin`, and `DrainPlugin` surfaces are present, but their current persistence and event/readback path does not yet carry the complete epoch/revision reservation, idempotent Game Session acknowledgement, and completion-CAS evidence; callers must not infer those guarantees from the current state/version response alone.
 
 Automation serializes lifecycle mutations in one pending-transition slot for `(tenantId, gameInstanceId, pluginId)`. It captures the current `(pluginVersionId, pluginActivationEpoch, pluginState, lifecycleRevision)` tuple and reserves `targetLifecycleRevision = current + 1` for every state-changing transition, with an epoch-advancing target only when the canonical lifecycle rules require it; an exact request resumes, while a different activation, switch, drain, disable, revocation, reactivation, or policy mutation fails closed as `transition_in_progress`. Completion must CAS the unchanged tuple, pending request identity, target epoch when applicable, and target lifecycle revision after the idempotent Game Session install/acknowledgement. Security, component, and signer-policy fences remain independent and may fail closed immediately. See [ADR 0119](../../decisions/adr-0119-epoch-fenced-per-instance-plugin-activation.md) rather than duplicating its lifecycle saga here.
 

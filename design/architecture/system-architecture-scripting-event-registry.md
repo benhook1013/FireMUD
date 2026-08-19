@@ -51,7 +51,9 @@ Each entry must define at least:
 - `dryRunSupport`
 - `deprecationStatus`
 
-Each complete materialized catalogue must also expose an immutable catalogue revision identity and canonical digest over the exact validated producer-manifest inputs and deterministically ordered entries. These catalogue-level fields identify which complete catalogue state supplied an entry; they are not part of the `(eventType, eventSchemaVersion)` key.
+Each complete materialized catalogue must also expose an immutable catalogue revision identity, `catalogueDigestProfileVersion`, and `catalogueDigest` over the exact validated producer-manifest inputs and deterministically ordered entries. These catalogue-level fields identify which complete catalogue state supplied an entry; they are not part of the `(eventType, eventSchemaVersion)` key.
+
+`catalogueDigestProfileVersion` identifies the explicitly versioned canonical digest profile under which `catalogueDigest` was computed and must be validated. The profile is owned by this catalogue contract and must define the complete digest input envelope, whether omitted fields are materialized to declared defaults or remain absent, exact UTF-8/canonical-byte serialization, map/object key ordering, set-member ordering, list ordering, hash algorithm, and digest encoding. There is no implicit default profile: a catalogue with a missing, unknown, or mismatched profile version is not accepted as complete, and consumers must not invent local serialization or hash rules. A profile change is a catalogue-contract change and must be versioned and carried with the digest.
 
 Required semantics for those fields:
 
@@ -98,8 +100,10 @@ Registry changes follow one canonical path:
 
 1. A producer-owning service adds or updates a versioned event-definition manifest in its primary contract surface.
 2. Automation & Scripting mechanically discovers the declared source manifests and validates that each is well formed, names exactly one owner and authoritative producer manifest, resolves its schema reference, and declares one authoritative snapshot and binding-scope contract for the key. It rejects missing manifests, duplicate declarations even when byte-equivalent, unresolved references, and any conflicting owner, allowed-producer, snapshot-authority, consistency, or binding-scope authority for the same `(eventType,eventSchemaVersion)`; it does not merge declarations or choose a winner.
-3. Automation deterministically materializes the complete validated source set, assigns the immutable catalogue revision and canonical digest, and atomically accepts that complete catalogue for ingress and reads. Failed or partial materialization leaves the prior complete accepted catalogue authoritative.
+3. Automation deterministically materializes the complete validated source set, assigns the immutable catalogue revision and `(catalogueDigestProfileVersion, catalogueDigest)`, validates the digest under exactly that identified profile, and atomically accepts that complete catalogue for ingress and reads. Failed or partial materialization leaves the prior complete accepted catalogue authoritative.
 4. Game Design refreshes its read model from that same canonical catalogue before exposing the event in authoring UI or publish validation.
+
+Before a producer emits any `(eventType,eventSchemaVersion)`, the exact producer manifest and payload schema for that key must be present in the same complete catalogue revision and `catalogueDigest` that is currently accepted for ingress. Producer authorization is evaluated against that accepted entry; a manifest or schema that exists only in an unaccepted, failed, partial, or newer materialization cannot authorize emission. If materialization fails, the prior complete catalogue remains active only for the keys it already accepted and cannot authorize a new key or schema version. Emission of a new or not-yet-accepted key/version therefore fails closed until its complete source set is accepted as one catalogue.
 
 Rules:
 
@@ -117,7 +121,7 @@ The registry must expose one canonical read API family:
 
 Minimum read payload:
 
-- catalogue revision identity and canonical digest
+- catalogue revision identity, `catalogueDigestProfileVersion`, and canonical `catalogueDigest`
 - identity fields for the entry
 - owner service
 - payload schema reference

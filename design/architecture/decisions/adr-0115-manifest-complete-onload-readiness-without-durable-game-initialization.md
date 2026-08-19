@@ -32,7 +32,7 @@ Each handler uses one stable logical execution identity for that tenant and patc
 
 Tenant readiness accepts publication candidates under a monotonic accepted-publication sequence. Only a candidate with a greater accepted sequence may supersede the current non-terminal candidate. Supersession is terminal for the older candidate; work not yet started is canceled, and late completion may be retained for audit but cannot move the older candidate to `READY` or reopen readiness.
 
-Cache warming is optional and recomputable. Cache loss after `READY` cannot invalidate gameplay correctness, and successful tenant-level `onLoad` does not promise every worker is warm. Schema evolution, authored game data, player-state transformation, and instance initialization use their owning migrations, publication, cutover/remap, or instance-lifecycle workflows. `onLoad` does not write durable or semi-durable gameplay artifacts to shared stores.
+Cache warming is optional and recomputable. Shared-cache warming may be performed only when it is loss-safe and recomputable; it is not a required readiness outcome and cannot make a patch `READY` or otherwise affect readiness. Cache loss after `READY` cannot invalidate gameplay correctness, and successful tenant-level `onLoad` does not promise every worker is warm. Durable or semi-durable gameplay artifacts, and any non-recomputable shared effect, are prohibited. Schema evolution, authored game data, player-state transformation, and instance initialization use their owning migrations, publication, cutover/remap, or instance-lifecycle workflows. `onLoad` does not write durable or semi-durable gameplay artifacts to shared stores.
 
 ## Consequences
 

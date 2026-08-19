@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The current control-plane event document does not establish one complete durable outbox and independent-consumer delivery path for every listed family. This decision removes that universal target; it does not claim that owner history APIs, notification paths, bounded polling, cache freshness, or targeted durable flows are implemented. The separately named `ScriptPinConvergenceTimedOut` producer capture remains governed by its rollout contract and is not generalized to other families.
+
 ## Decision Record
 
 - Human review status: Completed
@@ -71,8 +75,6 @@ Publish lossy notifications and let projections become the usable cross-service 
 Allocate monotonic `tenantSequence` or `instanceSequence` values spanning event families and producer services. Rejected because this introduces a cross-service sequencing authority and contention without a demonstrated global-order requirement.
 
 ## Implementation and Proof Obligations
-
-The current control-plane event document does not establish one complete durable outbox and independent-consumer delivery path for every listed family. This decision removes that universal target; it does not claim that owner history APIs, notification paths, bounded polling, cache freshness, or targeted durable flows are implemented. The separately named `ScriptPinConvergenceTimedOut` producer capture remains governed by its rollout contract and is not generalized to other families.
 
 Each owner must prove durable authoritative state and any promised append-only history or cursor behavior. Advisory-notification proof must cover loss, duplication, delay, reordering, Redis reset or gRPC disconnection, polling recovery, stale-cache expiry, restart, read throttling, and herd control. Consumers must demonstrate that notification loss affects freshness only and that stale aggregate versions cannot overwrite newer state.
 

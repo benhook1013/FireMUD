@@ -10,6 +10,8 @@ For canonical custom-event definitions and producer authorization, see `design/a
 
 For the cross-service exact pin/epoch contract, use [Scripting & Automation: Cross-Service Contracts](./system-architecture-scripting-contracts.md). Rollout/rollback, schedule continuity, runtime admission/recovery, and DSL artifact/lifecycle distinctions are owned by [Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md), [Scripting Scheduler and Timer Lifecycle](./system-architecture-scripting-scheduler-and-timers.md), [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md), and [DSL Reference & Lifecycle](./system-architecture-scripting-dsl-reference-and-lifecycle.md), respectively. The hub does not define a competing active patch or fallback authority.
 
+For selecting and reporting validation and runtime proof, use the repository's [Validation and Runtime Proof workflow](../developer-workflows/validation-and-runtime-proof.md); this hub does not maintain a separate per-change validation ledger.
+
 It complements:
 
 - [Automation & Scripting Service README](./microservices/automation-scripting-service/README.md)
