@@ -145,7 +145,7 @@ When a downstream service reports a later handoff or execution result, the targe
 - `automationDispatchId` – the stable dispatch-group identifier shared by the emitted gameplay commands; `commandOrdinal` distinguishes each command under it within the complete command-handoff scope.
 - `commandOrdinal` – the deterministic ordinal of that emitted command within the handler handoff.
 - `handoffRequirement` – the immutable `REQUIRED` or `OPTIONAL` classification committed with the evaluated descriptor and preserved on the child; it explains whether the child gates parent `HANDED_OFF` convergence.
-- `pluginActivationEpoch` – required for plugin-backed children as the captured Automation-owned runtime fence; it is execution evidence rather than Command-Handoff Identity.
+- `pluginActivationEpoch` and `lifecycleRevision` – required for plugin-backed children as the captured Automation-owned runtime-fence pair; both are execution evidence rather than Command-Handoff Identity, and both are retained and revalidated together at the applicable downstream boundary.
 - `gameSessionCommandId` – the Game Session command identity when assigned; it is `null`/absent while the child has not been accepted into Game Session.
 - `handoffOutcome` – the durable handoff result for this child, present after a handoff attempt and independent of later gameplay execution.
 - `executionOutcome` – the authoritative Game Session execution lifecycle result when available; it remains `null`/absent until execution reaches a result or terminal disposition.

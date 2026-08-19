@@ -108,7 +108,7 @@ The working rule is to continue selective ADR-family imports rather than pause f
 
 The design-allocation and decision-inventory phases were completed against these gates:
 
-- `python3 dev-tools/validation/check-design-capability-allocation.py` derives the product and architecture source sets, parses each allocation ledger, and reconciles the declared `284`-source coverage summary (`281` capability allocations plus the canonical `2` governance/template exemptions and `1` registry exemption).
+- `python3 dev-tools/validation/check-design-capability-allocation.py` derives the product and architecture source sets, parses each allocation ledger, and reconciles the declared `294`-source coverage summary (`291` capability allocations plus the canonical `2` governance/template exemptions and `1` registry exemption).
 - all intended FireMUD user, creator, operator, runtime, authoring, automation, platform, and commercial concerns have a capability home;
 - every Markdown source under `design/product/**` and `design/architecture/**` is present and classified in the allocation ledger, including generated/index material, unless it is one of the two explicit governance/template exemptions or the decision-registry exemption;
 - mixed canonical documents have heading-level allocations where file-level allocation would hide a real ownership split;

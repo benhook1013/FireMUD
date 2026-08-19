@@ -2,13 +2,13 @@
 
 This brief document summarizes optional ways a hosted game can change its look and feel without modifying FireMUD source code. FireMUD runs out of the box with default settings, so none of these customizations are required.
 
-**Target-state customization model:** Customization uses the one-DSL embedded-script and linked-plugin model owned by the [DSL lifecycle reference](./system-architecture-scripting-dsl-reference-and-lifecycle.md#one-dsl-distinct-artifact-and-lifecycle-roles). Locally, embedded game-owned patches follow the Game Design/Game Session pin workflow, while linked-plugin rollout remains independent in the `(tenantId, gameInstanceId, pluginId)` scope, does not advance `scriptPinEpoch`, and fails stale reactivation closed.
+**Target-state customization model:** Customization uses the one-DSL embedded-script and linked-plugin model owned by the [DSL lifecycle reference](./system-architecture-scripting-dsl-reference-and-lifecycle.md#one-dsl-distinct-artifact-and-lifecycle-roles). Locally, embedded game-owned patches follow the Game Design/Game Session pin workflow, while linked-plugin rollout remains independent in the `(tenantId, gameInstanceId, pluginId)` scope, carries the captured `(pluginActivationEpoch, lifecycleRevision)` fence pair as runtime evidence, does not advance `scriptPinEpoch`, and fails stale reactivation closed.
 
 ## Implementation Status
 
 - Bulk JSON import/export remains deferred. Current creator workflows use service-owned design APIs and world-editing tools.
 - Current publication exports ordinary bytes from the first-slice Game Design database source into version-scoped object storage and emits a narrower manifest. Target publication builds and verifies a private candidate before exposing immutable content-addressed objects; all private-candidate/content-addressed bullets and examples below are target state and are not yet the live publication path.
-- Current live script handoff does not yet carry `scriptPinEpoch` or the complete applicable plugin fence `(pluginId, pluginVersionId, bindingId, pluginActivationEpoch)`, so exact same-version old-epoch and old-activation-epoch rejection remain target-state behavior rather than implementation proof.
+- Current live script handoff does not yet carry `scriptPinEpoch` or the complete applicable plugin fence `(pluginId, pluginVersionId, bindingId, pluginActivationEpoch, lifecycleRevision)`, so exact same-version old-epoch and old-activation-epoch/lifecycle-revision rejection remain target-state behavior rather than implementation proof.
 
 ## Theme and Branding
 
@@ -75,7 +75,7 @@ Target-state content-addressed `manifest.json` example for the production `versi
 
 - A default world is available, but creators can define custom worlds entirely through the **Game Design Service**. They add rooms, items, and NPCs through the [world editing tools](./microservices/game-design-service/world-editing-tools.md) and canonical service-owned design APIs. Any package transport must validate and apply through the same versioned authoring contracts rather than becoming a filesystem or second data authority.
 - Additional design-time utilities like the [ability & action tools](./microservices/game-design-service/ability-action-tools.md) and [item & equipment balancing](./microservices/game-design-service/item-equipment-balancing.md) help tune gameplay without code changes.
-- When multiple versions are published, they are stored per tenant so multiple games can coexist on the same infrastructure. Target-state **script-only patch versions** may link to a `baseVersionId` without republishing unaffected non-script assets; each script-patch change creates a new complete immutable runtime tuple and requires explicit `READY`, compatibility, and Game Session pin rollout. Linked-plugin changes use the same scoped linked-plugin lifecycle above and do not advance `scriptPinEpoch`; stale reactivation fails closed. Neither path may hot-reload a running descriptor or follow a latest patch/plugin alias. See [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md) for details.
+- When multiple versions are published, they are stored per tenant so multiple games can coexist on the same infrastructure. Target-state **script-only patch versions** may link to a `baseVersionId` without republishing unaffected non-script assets; each script-patch change creates a new complete immutable runtime tuple and requires explicit `READY`, compatibility, and Game Session pin rollout. Linked-plugin changes use the same scoped linked-plugin lifecycle above and do not advance `scriptPinEpoch`; stale reactivation fails closed against the captured fence pair. Neither path may hot-reload a running descriptor or follow a latest patch/plugin alias. See [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md) for details.
 
 ---
 
@@ -95,7 +95,7 @@ The platform deliberately does not execute arbitrary SQL/DML text, Java snippets
 
 - Custom scripts can drive dynamic events and NPC behaviour using the [Automation & Scripting Service](./microservices/automation-scripting-service/README.md).
 - The [modding framework](./microservices/game-design-service/modding-framework.md) allows runtime plugins for additional behavior.
-- **Target-state script-patch lifecycle:** Scripts are versioned alongside other game data. Designers may publish a `scriptPatchVersion` like `v42-script.3` to update automation without republishing all assets; changing a script patch creates a new recorded immutable runtime tuple and requires explicit `READY`, compatibility, and Game Session pin rollout. Linked-plugin changes retain that same scoped linked-plugin lifecycle, do not advance `scriptPinEpoch`, and fail stale reactivation closed. Hot reload must not mutate a running descriptor or follow a latest patch/plugin alias.
+- **Target-state script-patch lifecycle:** Scripts are versioned alongside other game data. Designers may publish a `scriptPatchVersion` like `v42-script.3` to update automation without republishing all assets; changing a script patch creates a new recorded immutable runtime tuple and requires explicit `READY`, compatibility, and Game Session pin rollout. Linked-plugin changes retain that same scoped linked-plugin lifecycle, carry the captured `(pluginActivationEpoch, lifecycleRevision)` fence pair as runtime evidence, do not advance `scriptPinEpoch`, and fail stale reactivation closed. Hot reload must not mutate a running descriptor or follow a latest patch/plugin alias.
 
 ---
 

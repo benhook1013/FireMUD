@@ -18,6 +18,7 @@ The required baseline documents were read before the assigned corpus: [product c
 | --- | --- |
 | `accepted-explicit` | The specialized corpus explicitly establishes the choice. This does not prove human consultation. |
 | `accepted-implicit` | The corpus consistently implies the choice, but rationale or ADR evidence is incomplete. |
+| `superseded` | The historical row remains for provenance while its replacement decision is authoritative. |
 | `proposed/deferred` | The target choice is stated but implementation, tooling, or an acceptance gate is incomplete. |
 | `conflicting` | Current and target sources materially disagree, or two assigned sources establish incompatible behavior. |
 | `needs-human-review` | The choice is explicit or implied but requires product, security, reliability, or operator consultation before being treated as settled. |

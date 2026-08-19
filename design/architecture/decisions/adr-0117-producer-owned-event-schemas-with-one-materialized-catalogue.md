@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The current implementation loads one built-in Automation JSON catalogue and exposes definition reads, but does not discover producer manifests, materialize revisions/digests, validate compatibility, prove read-only Game Design consumption, or retain entries from an authoritative supported-patch set.
+The current implementation loads one built-in Automation JSON catalogue and exposes definition reads, but does not discover producer manifests, materialize revisions/digests, validate compatibility, prove read-only Game Design consumption, or retain entries from an authoritative supported-patch set. This static registry does not implement the catalogue activation fence and must not be treated as one.
 
 ## Decision Record
 
@@ -30,6 +30,8 @@ Scripting events originate in domain services that understand their meaning, pay
 Producer services own the semantics and versioned schemas of the events they emit. Each producer publishes a versioned event-definition manifest from its primary contract surface. The manifest defines event meaning, payload schema reference, authorized producers, required Trigger Identity and consistency fields, replay and quota semantics, allowed binding scopes, dry-run support, and compatibility/deprecation metadata.
 
 Automation & Scripting owns one canonical materialized event catalogue keyed by `(eventType, eventSchemaVersion)`. It is the enforcement and read authority for ingress admission and handler-resolution validation. Game Design consumes it read-only for editor choices and publish validation and does not maintain a competing registry.
+
+The catalogue has an activation fence. A producer must not emit a new event key/version until the exact producer manifest and schema are present in an accepted active catalogue revision and digest. Ingress admits only an exact entry in that active catalogue and rejects newer, unaccepted, or otherwise mismatched producer assertions. If materialization fails, the prior complete catalogue remains active only for contracts that were already activated against its exact revision/digest; it does not authorize a newly asserted key/version. A later successful materialization must activate the new exact entries before their producers may emit them.
 
 Automation mechanically validates and materializes the complete producer-manifest set. It rejects malformed manifests, duplicate ownership, unresolved schema references, incompatible reuse of an existing key, and any source set that cannot produce one complete deterministic catalogue. Each accepted catalogue has an immutable revision identity and canonical digest over its validated inputs and ordered entries. Failed or partial materialization leaves the prior complete catalogue active.
 
@@ -67,7 +69,7 @@ Rejected because retries, retained patches, rollback, and audit interpretation w
 
 ## Implementation and Proof Obligations
 
-Proof must cover manifest ownership and schema-reference validation, deterministic materialization, duplicate/missing source rejection, incompatible same-version edits, additive and new-version changes, revision/digest stability, failed-materialization retention of the prior catalogue, Game Design read-only use, source/catalogue skew, deprecation, supported-patch retention, safe removal, mixed-node convergence, and revision-specific audit explanation.
+Proof must cover manifest ownership and schema-reference validation, deterministic materialization, duplicate/missing source rejection, incompatible same-version edits, additive and new-version changes, revision/digest stability, the producer activation fence before any new key/version emission, exact active-catalogue ingress admission, rejection of newer/unaccepted assertions, failed-materialization retention of the prior catalogue only for already activated contracts, Game Design read-only use, source/catalogue skew, deprecation, supported-patch retention, safe removal, mixed-node convergence, and revision-specific audit explanation.
 
 ## Reversibility and Revisit Triggers
 

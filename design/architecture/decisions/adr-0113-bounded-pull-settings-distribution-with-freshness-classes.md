@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The current short-TTL, force-refresh, and per-scope eviction reader is a bounded implementation seam. It does not yet prove monotonic revision handling, class-specific stale behavior, or the restrictive-setting fence; concrete freshness durations remain schema policy and implementation work.
+The current short-TTL, force-refresh, and per-scope eviction reader is a bounded implementation seam. It does not yet prove monotonic revision handling, atomic revision/content compare-and-set, class-specific stale behavior, or the restrictive-setting fence; concrete freshness durations remain schema policy and implementation work. Missing authoritative scope revisions and consumer CAS application are implementation gaps, not shipped behavior.
 
 ## Decision Record
 
@@ -28,7 +28,7 @@ Runtime services need effective tenant and game settings without synchronously c
 
 FireMUD uses bounded typed settings domains and local pull-based caching. It does not build a generalized arbitrary-key configuration service or distributed push fabric.
 
-Each authoritative scope snapshot carries a monotonic revision. Every surfaced domain or key declares its source eligibility and a freshness class with a maximum stale interval appropriate to its consequences. Writes become effective at each consumer within the declared bound; they are not described as globally instantaneous.
+Each authoritative scope snapshot carries a monotonic revision. A consumer applies an authority response through an atomic compare-and-set against its effective snapshot: a strictly newer scope revision replaces the effective value and its diagnostics together. An equal revision is accepted only when its canonical content/digest is identical; a lower revision or a contradictory equal revision is rejected before changing either the effective value or diagnostics, while the last-known-good value and evidence remain available. Every surfaced domain or key declares its source eligibility and a freshness class with a maximum stale interval appropriate to its consequences. Writes become effective at each consumer within the declared bound; they are not described as globally instantaneous.
 
 During a settings-authority outage, a consumer may retain its last-known-good snapshot only within that bound. After expiry, ordinary presentation preferences may use a documented safe fallback when the key permits it, while admission, tenant-isolation, resource-safety, and other restrictive policy must fail closed or consult a dedicated authoritative fence. Consumers must not silently continue an indefinitely stale permissive value.
 
@@ -46,7 +46,7 @@ Immediate revocation and emergency fencing are not ordinary cached settings. The
 
 The typed schema must declare scope eligibility, freshness class, maximum stale interval, fallback or fail-closed behavior, and whether a setting is prohibited from carrying urgent revocation semantics. Effective-setting diagnostics must expose authoritative scope revision, observation age, provenance, disregarded invalid overrides, and degraded or expired state.
 
-Proof must cover refresh, forced refresh, per-scope eviction, monotonic revision changes, bounded last-known-good retention, safe presentation fallback, fail-closed restrictive settings, authority recovery, and concurrent cap tightening. Consumers must not invent incompatible stale-data behavior.
+Proof must cover refresh, forced refresh, per-scope eviction, monotonic revision changes, atomic newer-revision application, equal-revision identical-content acceptance, lower-revision rejection, contradictory equal-revision rejection, preservation of last-known-good value/evidence and diagnostics on every rejected response, bounded last-known-good retention, safe presentation fallback, fail-closed restrictive settings, authority recovery, and concurrent cap tightening. Consumers must not invent incompatible stale-data behavior.
 
 ## Related Contracts
 

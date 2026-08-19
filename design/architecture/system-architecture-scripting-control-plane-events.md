@@ -38,7 +38,7 @@ Adopting durable delivery for one family does not upgrade the rest of this catal
 
 ## `ScriptPatchPinChanged` (Game Session -> Advisory Notification)
 
-Published after the authoritative Game Session pin and append-only history record commit. It is an optional cache-refresh wake-up whenever the pinned patch changes.
+Published after the authoritative Game Session pin and append-only history record commit. It is an optional cache-refresh wake-up if and only if the committed exact `(scriptPatchVersion, scriptPinEpoch)` tuple changes, including a same-version `REPIN` that advances the epoch.
 
 Fields in addition to the common envelope:
 
@@ -50,7 +50,7 @@ Fields in addition to the common envelope:
 - `controlPlaneRequestId` (optional for non-operator changes; required when operator-driven)
 - `actor` and `reason`
 
-At the wire level, `previousPin` is absent only on a first pin (semantic `UNPINNED`), and when present both tuple members are required. `pinnedPin` is always present with both members required; no flattened partial tuple or sentinel represents an unpinned instance. Consumers read current state and history through Game Session APIs. Notification delivery, retention, or a consumer projection does not become rollout-history authority.
+At the wire level, `previousPin` is absent only on a first pin (semantic `UNPINNED`), and when present both tuple members are required. `pinnedPin` is always present with both members required; no flattened partial tuple or sentinel represents an unpinned instance. An unchanged or no-op request, failed mutation, or exact idempotent retry publishes no new occurrence. Consumers read current state and history through Game Session APIs. Notification delivery, retention, or a consumer projection does not become rollout-history authority.
 
 ## `ScriptPatchRollbackRequested` (Reserved; do not publish)
 
@@ -93,7 +93,7 @@ There is no mandatory `ScriptPatchInstanceRolloutChanged` family. Game Session's
 
 ## `PluginVersionRuntimeStateChanged` (Automation & Scripting -> Advisory Notification)
 
-Published after an instance-scoped plugin lifecycle transition and required Game Session fence acknowledgement under [ADR 0119](decisions/adr-0119-epoch-fenced-per-instance-plugin-activation.md). It retains the settled runtime-state event identity and is not the activation or containment barrier.
+Published after an instance-scoped plugin lifecycle transition, the authoritative owner history commit, and required Game Session fence acknowledgement under [ADR 0119](decisions/adr-0119-epoch-fenced-per-instance-plugin-activation.md). It retains the settled runtime-state event identity and is not the activation or containment barrier.
 
 Fields in addition to the common envelope:
 
@@ -102,7 +102,8 @@ Fields in addition to the common envelope:
 - `pluginId`
 - `previousPluginVersionId` / `newPluginVersionId` (when applicable)
 - `pluginActivationEpoch`
-- `newState` (`ENABLED` | `DISABLED` | `DRAINING`)
+- `lifecycleRevision`
+- `newState` (`ENABLED` | `RELOADING` | `FAILED` | `DISABLED` | `DRAINING`)
 - `controlPlaneRequestId` (if operator-driven)
 - `actor` and `reason` (if operator-driven)
 
