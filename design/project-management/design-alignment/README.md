@@ -4,7 +4,7 @@ This workstream establishes a complete, reviewable chain from FireMUD product ca
 
 ## Status
 
-Completed phases: capability allocation, implementation/proof reconciliation, cross-domain convergence, structural enforcement, independent validation, human-led adversarial review of all `183` queue/navigation rows in the remotely backed review archive, and the completed baseline authority pass for ADRs 0001-0050 plus its major adjacent non-ADR contract families. Packet 3 is complete: ADRs 0051-0092 and the no-ADR TICK-05 outcome are selectively applied with family-local contract consolidation; they do not redefine the completed baseline. This selective Packet 4 parcel applies 10 of 36 reviewed publication, assets, promotion, and procedural-generation outcomes. The canonical registry now contains `102` ADR records (`100` accepted, `1` superseded, `1` withdrawn). On this parcel, `93` of the `182` active decision keys have checked applied provenance; the other `89` reviewed active decision keys remain pending selective import and are not yet canonical repository state. Pending work remains in Packet 4 and packets 5-7. Canonical ADRs 0093-0102 are repository state here; unimported source-archive identifiers remain archive-local evidence and may collide numerically with canonical ADRs (for example, source candidates 0100-0102 are not the canonical repository ADR 0100-0102 records).
+Completed phases: capability allocation, implementation/proof reconciliation, cross-domain convergence, structural enforcement, independent validation, human-led adversarial review of all `183` queue/navigation rows in the remotely backed review archive, and the completed baseline authority pass for ADRs 0001-0050 plus its major adjacent non-ADR contract families. Packet 3 is complete: ADRs 0051-0092 and the no-ADR TICK-05 outcome are selectively applied with family-local contract consolidation; they do not redefine the completed baseline. The prior ten-outcome publication/assets/promotion/procedural-generation parcel and this seven-outcome patch-pin/script-transition/timer and unified DSL/plugin-lifecycle parcel, including `CONTENT-03` / ADR 0111, together apply 17 of 36 reviewed Packet 4 outcomes. The canonical registry now contains `109` ADR records (`107` accepted, `1` superseded, `1` withdrawn). On this parcel, `100` of the `182` active decision keys have checked applied provenance; the other `82` reviewed active decision keys remain pending selective import and are not yet canonical repository state. Pending work remains in Packet 4 and packets 5-7. Canonical ADRs 0093-0103 and 0106-0111 are repository state here; unimported source-archive identifiers remain archive-local evidence and may collide numerically with canonical ADRs (for example, source candidates 0100-0102 are not the canonical repository ADR 0100-0102 records).
 
 | Phase | Status | Output |
 | --- | --- | --- |
@@ -15,7 +15,7 @@ Completed phases: capability allocation, implementation/proof reconciliation, cr
 | Code and proof reconciliation | Complete and independently validated | Per-capability implementation/verification states and evidence anchors in the domain trackers |
 | Cross-domain convergence | Complete and independently validated as a point-in-time baseline | [Frozen capability implementation reconciliation](./capability-implementation-reconciliation.md) |
 | Human-led adversarial decision review | Complete in the `design/adversarial-decision-review` source archive | Human-owned dispositions for all `183` queue/navigation rows |
-| Accepted-decision application | In progress | `93` active decision keys have checked applied provenance; `89` reviewed active decision keys remain pending selective import |
+| Accepted-decision application | In progress | `100` active decision keys have checked applied provenance; `82` reviewed active decision keys remain pending selective import |
 | Contract-authority consolidation | Baseline pass complete for ADRs 0001-0050 and major adjacent non-ADR families; Packet 3 (ADRs 0051-0092 plus TICK-05) is selectively applied with family-local consolidation; continue incrementally through packets 4-7, then perform a whole-corpus authority review | [Architecture contract authority map](../../architecture/README.md#contract-authority-map) and owner-link-plus-local-consequence conversions |
 
 ## Implementation Status
@@ -31,9 +31,9 @@ flowchart LR
     DESIGN_ALLOC --> SOURCE_INV[Source decision inventories]:::alignment
     SOURCE_INV --> HUMAN_QUEUE[Completed human-review queue]:::alignment
     HUMAN_QUEUE --> APPLY[Point-in-time application status]:::alignment
-    APPLY -->|merged to develop| ADRS[93 applied decision keys, including complete Packet 3 ADRs 0051-0092 plus TICK-05 and this selective Packet 4 parcel, plus owning design changes]:::canonical
-    ADRS -. explains; does not replace .-> ARCH
-    APPLY -->|reviewed; pending selective import| PENDING[89 active decision keys pending selective import in Packet 4 and packets 5-7]:::pending
+    APPLY -->|merged to develop| APPLIED_DECISIONS[100 applied decision keys, including complete Packet 3 ADRs 0051-0092 plus TICK-05 and this selective Packet 4 parcel, plus owning design changes]:::status
+    APPLIED_DECISIONS -. explains; does not replace .-> ARCH
+    APPLY -->|reviewed; pending selective import| PENDING[82 active decision keys pending selective import in Packet 4 and packets 5-7]:::pending
 
     TAXONOMY --> TRACKER_ALLOC[Implementation-tracker allocation]:::alignment
     TRACKER_ALLOC --> TRACKERS[Ten live domain trackers]:::status
@@ -64,7 +64,7 @@ This table describes merged repository state, not merely completed human review.
 | Applied review packet 1, 9 active decision keys | Complete | Checked provenance merged through ADRs 0012-0019 by #2527, with recovery and CI follow-through in #2537 | Baseline owner-and-secondary consolidation complete through #2593 and #2594 | Live gaps remain in the domain trackers |
 | Applied review packet 2, 31 active decision keys | Complete | Checked provenance merged through ADRs 0020-0050 across #2528, #2574, #2583, #2581, and #2529 | Baseline owner-and-secondary consolidation complete through #2593 and #2594 | Live gaps remain in the domain trackers |
 | Selective Packet 3, ADRs 0051-0092 plus TICK-05 | Complete | Selectively applied with checked provenance for all 43 reviewed outcomes | Family-local owner-link and local-consequence consolidation; the ADRs explain the choices but do not replace their owning contracts | Live gaps remain in the domain trackers |
-| Selective Packet 4 parcel, 10 of 36 active decision keys | Complete in the review archive | 10 outcomes applied with checked provenance; 26 Packet 4 outcomes and packets 5-7 remain pending; canonical ADRs 0093-0102 are applied here, while unimported source-archive identifiers remain archive-local evidence and may collide numerically with canonical ADRs | Family-local owner-link and local-consequence consolidation for this parcel; continue through remaining Packet 4 and packets 5-7, then perform a whole-corpus authority review | Reconcile owning trackers only where accepted target state changes implementation/proof gaps |
+| Selective Packet 4, prior 10-outcome publication/assets/promotion/procedural-generation parcel plus 7-outcome patch-pin/script-transition/timer parcel (17 of 36 active decision keys) | Complete in the review archive | Prior parcel's 10 plus this parcel's 7 outcomes applied with checked provenance; 19 Packet 4 outcomes and packets 5-7 remain pending; canonical ADRs 0093-0103 and 0106-0111 are applied here, while unimported source-archive identifiers remain archive-local evidence and may collide numerically with canonical ADRs | Family-local owner-link and local-consequence consolidation for this parcel; continue through remaining Packet 4 and packets 5-7, then perform a whole-corpus authority review | Reconcile owning trackers only where accepted target state changes implementation/proof gaps |
 
 ## Contract Authority Consolidation Scope
 
@@ -73,6 +73,8 @@ Contract-authority consolidation applies to repeated normative product and archi
 Consolidation names one canonical owner for a target contract and reduces competing secondary definitions to owner links plus local API, persistence, transport, operational, user-visible, implementation-drift, or proof consequences. It is not editorial deduplication: useful examples, runbooks, evidence schemas, local constraints, and explanatory context remain where they serve their owning document.
 
 Each pending decision-family import must consolidate all related normative duplication in the affected design area, including non-ADR contracts. After packets 3-7 are applied, perform one broad design-area authority review across the complete product and architecture corpus to identify residual owner conflicts and non-ADR duplication that family-local imports did not expose.
+
+The working rule is to continue selective ADR-family imports rather than pause for another standalone broad cleanup, applying owner-link and local-consequence deduplication within each parcel before the planned whole-corpus authority pass after packets 3-7. During PR review, follow the linked [PR lifecycle](../../developer-workflows/pr-lifecycle.md); stop additional review cycles when new findings have tapered to duplicates, stylistic polish, or immaterial restatement rather than requiring zero conceivable suggestions.
 
 ## Authority Boundaries
 
@@ -106,7 +108,7 @@ Each pending decision-family import must consolidate all related normative dupli
 
 The design-allocation and decision-inventory phases were completed against these gates:
 
-- `python3 dev-tools/validation/check-design-capability-allocation.py` derives the product and architecture source sets, parses each allocation ledger, and reconciles the declared `277`-source coverage summary (`274` capability allocations plus the canonical `2` governance/template exemptions and `1` registry exemption).
+- `python3 dev-tools/validation/check-design-capability-allocation.py` derives the product and architecture source sets, parses each allocation ledger, and reconciles the declared `284`-source coverage summary (`281` capability allocations plus the canonical `2` governance/template exemptions and `1` registry exemption).
 - all intended FireMUD user, creator, operator, runtime, authoring, automation, platform, and commercial concerns have a capability home;
 - every Markdown source under `design/product/**` and `design/architecture/**` is present and classified in the allocation ledger, including generated/index material, unless it is one of the two explicit governance/template exemptions or the decision-registry exemption;
 - mixed canonical documents have heading-level allocations where file-level allocation would hide a real ownership split;

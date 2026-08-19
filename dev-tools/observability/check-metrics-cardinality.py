@@ -28,6 +28,8 @@ FORBIDDEN_EXACT_LABELS = {
     "scriptId",
     "script_patch_version",
     "scriptPatchVersion",
+    "script_pin_epoch",
+    "scriptPinEpoch",
     "serviceInstanceId",
     "sessionId",
     "spanId",

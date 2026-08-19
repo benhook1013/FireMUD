@@ -18,14 +18,36 @@ For day-to-day operations, environment variables fall into three broad categorie
 - Advanced or experimental – powerful tuning knobs that should be changed only with guidance from maintainers.
 - Internal implementation details – not intended for direct use and may change or be removed without notice.
 
-## Implementation Notes
+## Target Configuration Semantics
+
+- The output knobs below are runtime-cap inputs only. Publication resolves the cap values and pins the normalized cap payload together with its versioned `artifactRuntimeCapDigest`; publish-time analysis and runtime validation/enforcement use that artifact-pinned pair, owned by [Scripting Runtime Execution](../../system-architecture-scripting-runtime-execution.md#static-output-cost-contract), and never substitute newer local cap values. A later local/configuration reduction requires compatibility preflight or rejection for already-`READY`/pinned artifacts rather than silently changing their contract.
+- Scheduler admission uses the immutable artifact-pinned estimated millisecond cost and defers the remainder after the admitted ordered prefix; actual runtime is calibration telemetry only.
+
+**Target state:** script-transition configuration is local policy, not pin authority. In particular, `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS` triggers a bounded authoritative Game Session refresh when projection evidence is absent or stale at any applicable instance-scoped admission or fence boundary; that boundary rejects with `pin_state_unavailable` when the refresh fails, and the threshold must never be widened into a degraded stale-pin override.
+
+**Target-state retention and recovery:** [ADR 0107](../../decisions/adr-0107-stage-aware-script-dead-letter-recovery.md) requires that a row advertised as recoverable and all of its stage, manifest, evaluated-output, and child-dispatch evidence form one coherent retention bundle. Age/capacity cleanup or explicit purge may remove the whole bundle when eligible, but must not delete supporting evidence independently while leaving the row advertised recoverable; configuration validation covers settings only, while runtime cleanup and explicit purge fail closed on incoherent retained evidence. The bounded `SCRIPT_DEAD_LETTER_MAX_AGE_SECONDS` and `SCRIPT_DEAD_LETTER_MAX_ROWS` controls select cleanup candidates rather than guaranteeing deletion of an ineligible bundle or authorizing partial evidence removal; there is no additional numeric floor. [ADR 0110](../../decisions/adr-0110-explicit-opt-in-schedule-continuity-across-script-transitions.md) keeps timer continuity declarations in authored artifact data rather than a service-wide configuration switch: `SCRIPT_TIMER_CATCH_UP_MAX_FIRINGS_PER_RESUME` applies only to interval schedules, while one-shot recovery uses its durable intent/outcome semantics.
+
+These knobs are the authoritative defaults referenced by the scripting architecture docs:
+
+- publish-time validation and runtime enforcement share `SCRIPT_OUTPUT_MAX_COMMANDS_PER_RUN`, `SCRIPT_OUTPUT_MAX_COMMANDS_PER_ENTITY_PER_TRIGGER`, and `SCRIPT_OUTPUT_MAX_SERIALIZED_WORK_ITEM_BYTES` as the runtime-cap ceilings, while the artifact-pinned cost metadata/digests determine whether a component graph may publish or run;
+- the durable quota owner records one full-Trigger-Identity handler admission charge and a separate execution-start marker; `SCRIPT_QUOTA_LIMIT` / `SCRIPT_QUOTA_WINDOW_SECONDS` and the live tenant-tier settings are inputs to those decisions. Queued work holds no capacity; execution uses a separately fenced/reclaimable lease, and `PUBLISH_READINESS` `onLoad` work is isolated;
+- live `PUBLISH_READINESS` `onLoad` work uses dedicated `SCRIPT_READINESS_MAX_CONCURRENCY` and `SCRIPT_READINESS_MAX_CLUSTER_CONCURRENCY` capacity instead of an unbounded live-budget bypass, and exhausted readiness work is canceled as `onload_budget_exceeded`;
+- dry-run/test traffic uses `SCRIPT_TEST_MAX_RUNS_PER_MINUTE`, `SCRIPT_TEST_MAX_RUNS_PER_MINUTE_PER_PRINCIPAL`, `SCRIPT_TEST_MAX_CONCURRENCY`, and `SCRIPT_TEST_MAX_CLUSTER_CONCURRENCY` rather than consuming live per-script quota or tenant runtime budget;
+- pin and rollout convergence reads use `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS` to derive the public `isProjectionStale` wire field; internal Java projection summaries use `projectionStale` and map it to that public field rather than exposing a second public field or relying on hardcoded local thresholds;
+- enabled plugin runtime states are rechecked against current publication, signer-revocation, and component-policy metadata using `SCRIPT_PLUGIN_POLICY_RECONCILE_INTERVAL_SECONDS` and `SCRIPT_PLUGIN_POLICY_RECONCILE_BATCH_SIZE`; plugin-trigger ingress fails closed when the last successful policy check is older than `SCRIPT_PLUGIN_POLICY_STALE_THRESHOLD_SECONDS`;
+- outbox cleanup and diagnosis for `HANDED_OFF`, `CANCELED`, and `DEAD_LETTERED` rows must follow the documented retention knobs above rather than ad hoc cleanup windows; and
+- queue rebuild cadence and scan bounds for the derived `automation:queue:*` projection must follow `SCRIPT_OUTBOX_QUEUE_REBUILD_INTERVAL_SECONDS` and `SCRIPT_OUTBOX_QUEUE_REBUILD_BATCH_SIZE` rather than unbounded best-effort loops; and
+- the durable evaluator cadence and claim bounds must follow `SCRIPT_OUTBOX_EXECUTION_INTERVAL_SECONDS` and `SCRIPT_OUTBOX_EXECUTION_BATCH_SIZE` rather than ad hoc polling loops.
+
+## Implementation Status
 
 Current live bindings in the service are narrower than the full target-state scripting design:
 
-- the live runtime binds live per-script quota, priority-tagged live tenant-budget, dry-run quota/capacity, output-budget, pin-projection freshness, outbox retention, queue rebuild, and dead-letter size/age knobs listed below;
-- the target output knobs below are runtime-cap inputs only. Publication resolves the cap values and pins the normalized cap payload together with its versioned `artifactRuntimeCapDigest`; publish-time analysis and runtime validation/enforcement use that artifact-pinned pair, owned by [Scripting Runtime Execution](../../system-architecture-scripting-runtime-execution.md#static-output-cost-contract), and never substitute newer local cap values. A later local/configuration reduction requires compatibility preflight or rejection for already-`READY`/pinned artifacts rather than silently changing their contract.
-- target-state scheduler admission uses the immutable artifact-pinned estimated millisecond cost and defers the remainder after the admitted ordered prefix; the current runtime does not implement this reservation, and actual runtime is calibration telemetry only.
-- signer/component-policy reconciliation cadence and ingress stale-threshold enforcement are now live bindings, while separate dead-letter alert thresholds and any split dead-letter cleanup cadence remain target-state follow-through in the `10.3` / `10.5` scripting slices.
+- the live runtime binds live per-script quota, priority-tagged live tenant-budget, dry-run quota/capacity, output-budget, pin-projection freshness, signer/component-policy reconciliation cadence, outbox retention, queue rebuild, and dead-letter size/age knobs listed below;
+- the current runtime does not implement artifact-estimate ordered-prefix reservation;
+- live cleanup expires `HANDED_OFF` and `CANCELED` rows by status-specific retention and `DEAD_LETTERED` rows by max age plus a row-count cap; stage-aware recovery and a coherent retained-evidence bundle remain unimplemented;
+- live instance-bound admission reads Game Session state and compares `scriptPatchVersion`, but the current projection/wire omits `scriptPinEpoch` and therefore does not prove exact-epoch admission;
+- current live properties enforce only a positive minimum for `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS`; target upper-bound validation and focused proof remain an implementation gap.
 
 ## Service-Specific Variables
 
@@ -51,7 +73,7 @@ Current live bindings in the service are narrower than the full target-state scr
 | `SCRIPT_OUTPUT_MAX_COMMANDS_PER_RUN` | Maximum commands one live or dry-run execution may emit before output-budget failure | `64` | Stable operator knob |
 | `SCRIPT_OUTPUT_MAX_COMMANDS_PER_ENTITY_PER_TRIGGER` | Maximum commands a single trigger may emit for one entity before output-budget failure | `8` | Stable operator knob |
 | `SCRIPT_OUTPUT_MAX_SERIALIZED_WORK_ITEM_BYTES` | Maximum serialized work-item payload size before persistence or handoff rejection | `32768` | Stable operator knob |
-| `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS` | Maximum acceptable Automation pin/rollout projection lag before convergence reads report stale state | `5000` | Stable operator knob |
+| `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS` | Maximum acceptable Automation pin/rollout projection lag before convergence reads report stale state; target validation range `1..30_000 ms`, with `30_000 ms` tied to the canonical P99 projection freshness SLO | `5000` | Stable operator knob |
 | `SCRIPT_PLUGIN_POLICY_RECONCILE_INTERVAL_SECONDS` | Scheduled cadence for rechecking enabled plugin versions against current Game Design signer/component-policy publication metadata | `60` | Stable operator knob |
 | `SCRIPT_PLUGIN_POLICY_RECONCILE_BATCH_SIZE` | Maximum enabled plugin runtime states inspected per plugin-policy reconciliation sweep | `100` | Stable operator knob |
 | `SCRIPT_PLUGIN_POLICY_STALE_THRESHOLD_SECONDS` | Maximum age of the last successful enabled-plugin signer/component-policy check before plugin triggers fail closed | `300` | Stable operator knob |
@@ -66,18 +88,6 @@ Current live bindings in the service are narrower than the full target-state scr
 | `SCRIPT_DEAD_LETTER_MAX_AGE_SECONDS` | Maximum age for dead-lettered work items | `604800` | Stable operator knob |
 
 Any additional, less common tuning variables should be documented alongside their introduction and clearly marked as advanced or internal. Operational runbooks should treat only stable operator knobs as supported surface for routine adjustments.
-
-These knobs are the authoritative defaults referenced by the scripting architecture docs:
-
-- publish-time validation and runtime enforcement share `SCRIPT_OUTPUT_MAX_COMMANDS_PER_RUN`, `SCRIPT_OUTPUT_MAX_COMMANDS_PER_ENTITY_PER_TRIGGER`, and `SCRIPT_OUTPUT_MAX_SERIALIZED_WORK_ITEM_BYTES` as the runtime-cap ceilings, while the artifact-pinned cost metadata/digests determine whether a component graph may publish or run;
-- the durable quota owner records one full-Trigger-Identity handler admission charge and a separate execution-start marker; `SCRIPT_QUOTA_LIMIT` / `SCRIPT_QUOTA_WINDOW_SECONDS` and the live tenant-tier settings are inputs to those decisions. Queued work holds no capacity; execution uses a separately fenced/reclaimable lease, and `PUBLISH_READINESS` `onLoad` work is isolated;
-- live `PUBLISH_READINESS` `onLoad` work uses dedicated `SCRIPT_READINESS_MAX_CONCURRENCY` and `SCRIPT_READINESS_MAX_CLUSTER_CONCURRENCY` capacity instead of an unbounded live-budget bypass, and exhausted readiness work is canceled as `onload_budget_exceeded`;
-- dry-run/test traffic uses `SCRIPT_TEST_MAX_RUNS_PER_MINUTE`, `SCRIPT_TEST_MAX_RUNS_PER_MINUTE_PER_PRINCIPAL`, `SCRIPT_TEST_MAX_CONCURRENCY`, and `SCRIPT_TEST_MAX_CLUSTER_CONCURRENCY` rather than consuming live per-script quota or tenant runtime budget;
-- pin and rollout convergence reads use `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS` to set `isProjectionStale` / `projectionStale` rather than relying on hardcoded local thresholds;
-- enabled plugin runtime states are rechecked against current publication, signer-revocation, and component-policy metadata using `SCRIPT_PLUGIN_POLICY_RECONCILE_INTERVAL_SECONDS` and `SCRIPT_PLUGIN_POLICY_RECONCILE_BATCH_SIZE`; plugin-trigger ingress fails closed when the last successful policy check is older than `SCRIPT_PLUGIN_POLICY_STALE_THRESHOLD_SECONDS`;
-- outbox cleanup and diagnosis for `HANDED_OFF`, `CANCELED`, and `DEAD_LETTERED` rows must follow the documented retention knobs above rather than ad hoc cleanup windows; and
-- queue rebuild cadence and scan bounds for the derived `automation:queue:*` projection must follow `SCRIPT_OUTBOX_QUEUE_REBUILD_INTERVAL_SECONDS` and `SCRIPT_OUTBOX_QUEUE_REBUILD_BATCH_SIZE` rather than unbounded best-effort loops; and
-- the durable evaluator cadence and claim bounds must follow `SCRIPT_OUTBOX_EXECUTION_INTERVAL_SECONDS` and `SCRIPT_OUTBOX_EXECUTION_BATCH_SIZE` rather than ad hoc polling loops.
 
 ## Proto Files
 

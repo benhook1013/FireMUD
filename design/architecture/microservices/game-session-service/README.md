@@ -14,6 +14,14 @@ This doc set is the authoritative source for:
 - the minimal text command protocol and world-selection flow used by the initial gameplay slice; and
 - the service's control-plane, runtime, configuration, and operator contracts.
 
+## Target Control-Plane Summary
+
+Target state makes Game Session the authoritative owner of region/tick coordination, each instance's exact `(scriptPatchVersion, scriptPinEpoch)`, and append-only script rollout history. Owner mutations are fenced and idempotent; Logging & Admin is the external operator ingress, and session front ends forward region work without writing lease-owned state directly. See [Scripting Control-Plane API](../../system-architecture-scripting-control-plane-api.md#game-session-patch-pinning).
+
+## Implementation Status
+
+Current seams are narrower: patch/request convergence reads, instance-scoped pause/resume, region-epoch fencing, and existing version-fence paths do not yet prove complete `scriptPinEpoch` propagation, final-effect enforcement, or Game-Session-owned append-only history. Track those implementation and proof gaps in the [Game Session runtime and tick coordination tracker](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#active-gaps).
+
 ## Terminology
 
 - **Tenant** – a hosted game world or project, identified by `tenantId`. All database rows and Redis keys include this prefix so data is isolated between games.
@@ -30,12 +38,18 @@ This doc set is the authoritative source for:
 - Own the canonical live gameplay-presence and recent-presence substrate for active sessions, first `WHO`, AFK/activity resolution, and disconnect disposition handoff into later social surfaces.
 - Broadcast lifecycle events and world updates to other services.
 - Support reconnection and recovery of running games.
-- Own the authoritative, pinned `scriptPatchVersion` for each running game instance and enforce version fencing for script-generated work.
+- **Target-state script authority:** Game Session owns the durable exact `{scriptPatchVersion, scriptPinEpoch}` for each running game instance, atomically advances the epoch on every pin/repin/rollback, and retains the append-only committed rollout history. Automation readiness and observed-pin projections never replace this authority.
 - Publish coordination and tick-health metrics per `<tenantId, gameInstanceId, regionId>` and expose control APIs that allow authorized services to pause/resume tick execution and participate in scoped coordination resets. The shipped pause/resume path is currently instance-scoped at `{tenantId, gameInstanceId}`; the target-state `GetRegionTickStatus` and regional pause/status APIs remain the broader regional control surface and are not yet fully implemented.
 - Front gameplay login commands and session binding, calling Account Service to verify credentials and obtain JWTs/tokens while enforcing single-session control for each character.
 - Accept bootstrap-backed bare `LOGIN` for first-party `/ws/game/**` after Gateway connect-token validation and signed connect-context verification; this path is intentionally credentialless and must not prompt the browser to replay username/password/OTP.
 - Attach typed unsigned `PlayerExecutionContext` to player-delegated gameplay RPCs; expose a concrete mTLS workload identity and rely on exact method caller allowlists, context/domain validation, and mutation idempotency rather than per-action signing or a generic cross-service replay cache. Command, effect, and request idempotency records remain mandatory in their owning services.
 - Fail readiness for new gameplay traffic when the currently exposed `LOGIN` plus first-command path is not safe.
+
+### Script pin and rollout authority (target-state contract)
+
+Target state: Game Session allocates and persists the per-instance exact script pin and `scriptPinEpoch`, atomically commits a successful pin plus its resulting epoch and immutable rollout-history record, exposes bounded authoritative current-pin and rollout-history reads, and is the only service that may commit a new exact script tuple. Once a syntactically valid request is accepted and bound to its normalized request digest, a deterministic validation or preparation failure appends one immutable unsuccessful history record whose previous and resulting exact tuples are equal, without changing the pin or advancing the epoch. An exact retry with the same request identity and digest returns that stored result without another history entry; reusing the request identity with a different digest is an idempotency conflict with no mutation. Each instance-scoped gameplay/runtime script trigger, durable work item, schedule or timer firing, command handoff, and final effect carries the captured patch and epoch; tenant-readiness `onLoad` is the pre-instance-pin exception, carrying only candidate `scriptPatchVersion`, omitting `gameInstanceId`, runtime scope, and `scriptPinEpoch`, and unable to emit gameplay work or effects. Stale work is rejected at the applicable final fence. Rollback is an explicit repin to a prior tenant-`READY`, base-compatible artifact and does not ordinarily pause unrelated player commands or gameplay ticks. Automation may pause only new script admission for scoped reconciliation. See the canonical scripting rollout contracts and [ADR 0103](../../decisions/adr-0103-single-authority-script-pins-with-exact-version-execution.md), [ADR 0106](../../decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md), and [ADR 0109](../../decisions/adr-0109-game-session-owned-script-rollout-history.md).
+
+Locally, semantic `UNPINNED` is represented by `scriptPatchVersion`, `scriptPinEpoch`, and the associated current-pin `controlPlaneRequestId` being absent together; no sentinel is used, and persistence, current-pin reads, convergence, and admission apply that same representation. The owning pin/API contract is [Scripting Control-Plane API](../../system-architecture-scripting-control-plane-api.md#game-session-patch-pinning); Automation observations remain projections.
 
 ## Architecture Summary
 

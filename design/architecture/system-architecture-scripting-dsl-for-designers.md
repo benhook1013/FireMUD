@@ -32,7 +32,7 @@ For the scripting editor UX and how graphs are created and managed, see:
 
 ## Implementation Status
 
-The current runtime provides only bounded per-observation timer catch-up and does not yet prove one durable `resumeWindowId` across repeated observations, leader takeovers, or region-epoch transitions. Unresolved `EVALUATING` work remains fail-closed and active, and the live runtime lacks an `EVALUATED_COMMITTED` descriptor-replay layer. Retry-before-`EVALUATED_COMMITTED` and descriptor recovery without DSL re-entry remain target-state behavior. See [ADR 0072](./decisions/adr-0072-class-specific-timer-durability-and-recovery.md), the [automation and scheduler runtime tracker](../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status), and the [normative timer semantics matrix](./system-architecture-scripting-normative-contract-tables.md#table-3-timer-semantics-matrix).
+The target runtime uses `PENDING_EVALUATION` -> `EXECUTING` -> `EVALUATED_COMMITTED` for the pre-DSL trigger lifecycle; executor acceptance, the execution-start charge marker, and the fenced capacity lease commit before DSL evaluation. The current runtime provides only bounded per-observation timer catch-up and does not yet prove one durable `resumeWindowId` reused across repeated observations and leader takeovers within a single `regionEpoch`, nor the required epoch-transition behavior that fences the prior window before creating a new stable window for the new epoch. Unresolved current-live `EVALUATING` work remains fail-closed and active, and the live runtime lacks an `EVALUATED_COMMITTED` descriptor-replay layer. Retry-before-`EVALUATED_COMMITTED` and descriptor recovery without DSL re-entry remain target-state behavior. See [ADR 0072](./decisions/adr-0072-class-specific-timer-durability-and-recovery.md), the [automation and scheduler runtime tracker](../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status), and the [normative timer semantics matrix](./system-architecture-scripting-normative-contract-tables.md#table-3-timer-semantics-matrix).
 
 ---
 
@@ -50,6 +50,8 @@ If you need the exact terms, data flows, and runtime guarantees used by services
 ---
 
 ## What the Scripting DSL Is
+
+FireMUD uses one component-based DSL for both ordinary embedded scripts and linked plugins. An embedded script is game-owned content released with a game version or script-only patch; a linked plugin is an independently versioned and instance-activated bundle that uses the same language, sandbox, quotas, and output limits. Plugin packaging or marketplace/source provenance does not create a separate language or automatic trust tier. Packages containing ordinary base-game DML are materialized into a Game Design Draft and republished rather than layered as a runtime plugin. See [DSL Reference & Lifecycle](./system-architecture-scripting-dsl-reference-and-lifecycle.md#one-dsl-distinct-artifact-and-lifecycle-roles).
 
 The scripting DSL lets you define behavior by **wiring together predefined components** rather than writing general-purpose code:
 

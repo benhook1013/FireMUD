@@ -2,20 +2,25 @@
 
 This document defines the observability contract for scripting and automation: what is recorded in `script_event_audit`, what is returned by `ListScriptHandoffEvents`, what is emitted as metrics, and which identifiers may be used for correlation.
 
+Target-state gameplay/runtime observability preserves the exact Game Session `(scriptPatchVersion, scriptPinEpoch)` tuple. The tuple is diagnostic identity as well as a final-fence input; a version-only audit row cannot prove execution authority. The current live handoff/readback gap is recorded in [Implementation Status](#implementation-status) and does not narrow this target contract.
+
 Document conflict resolution order is defined in the [normative document precedence](./system-architecture-scripting-normative-contract-tables.md#document-precedence-normative). The normative tables own metric-family names, labels, and increment units; this document is authoritative for observability details not fully enumerated there.
 
 ## Target-State Command Identity and Handoff Contract
 
-The target per-command handoff contract records one child disposition for each emitted command. Each child carries the complete applicable Trigger Identity plus the `(automationDispatchId, commandOrdinal)` command discriminator described by the [Command-Handoff Identity](./system-architecture-scripting-normative-contract-tables.md#command-handoff-identity-target-state). `outboxWorkItemId` is retained solely as parent correlation and is excluded from command identity, uniqueness, and deduplication keys. `automationDispatchId` is not assumed globally unique, and a pair shown without its parent/scope context is only a display suffix. `script_event_audit` remains one handler row per Trigger Identity and is never a substitute for the command collection.
+The target per-command handoff contract records one child disposition for each emitted command. Each child is keyed by the complete source/optional-target runtime scope plus the `(automationDispatchId, commandOrdinal)` discriminator described by the [Command-Handoff Identity](./system-architecture-scripting-normative-contract-tables.md#command-handoff-identity-target-state) and retains the complete applicable parent Trigger Identity for diagnosis. `outboxWorkItemId` and the parent Trigger Identity are correlation-only and excluded from command identity, uniqueness, deduplication, and replay keys. `automationDispatchId` is not assumed globally unique, and a pair shown without its complete source/target runtime scope is only a display suffix. `script_event_audit` remains one handler row per Trigger Identity and is never a substitute for the command collection.
 
 ## Implementation Status
 
-The complete per-command handoff diagnostic model is **target-state**. The live `EnqueueAutomationCommandIfAbsent` contract currently carries the narrower scope, dispatch/work-item, script/plugin provenance, target-command, routing, and origin-source fields listed in [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#work-item-outbox-contract-normative), plus the returned Game Session `commandId`/admission outcome. It does not yet carry `commandOrdinal` or the full applicable Trigger Identity, including fields such as `bindingId`, `eventType`, `eventSchemaVersion`, `scriptEventId`, `isDryRun`, and scheduler identity. Current live command status/readbacks therefore expose only that narrower fallback surface; the examples below must not be read as evidence that the full target-state handoff contract is already implemented.
+The complete per-command handoff diagnostic model is **target-state**. The live `EnqueueAutomationCommandIfAbsent` contract currently carries the narrower scope, dispatch/work-item, script/plugin provenance, target-command, routing, and origin-source fields listed in [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#work-item-outbox-contract-normative), plus the returned Game Session `commandId`/admission outcome. It does not yet carry `scriptPinEpoch`, `commandOrdinal`, or the full applicable Trigger Identity, including fields such as `bindingId`, `eventType`, `eventSchemaVersion`, `scriptEventId`, `isDryRun`, and scheduler identity. Current live command status/readbacks therefore expose only that narrower fallback surface; the examples below must not be read as evidence that the full target-state handoff contract is already implemented.
 
 ## Correlation Rules (High Cardinality)
 
 - `scriptEventId` is for `script_event_audit`, logs, and traces.
 - `automationDispatchId` is for per-command handoff history, logs, and cross-service correlation with Game Session command admission, not for Prometheus labels.
+
+**Target-state dead-letter and recovery observability** retains Automation's `failureGeneration` beside `tenantId` and `outboxWorkItemId`. The current live proto/readback does not yet expose this field. In the target contract, the dead-letter row, per-item request result, recovery claim/attempt, successful-recovery evidence, and `already_recovered` readback bind `(tenantId, outboxWorkItemId, failureGeneration)`; this is recovery evidence only and is not part of Trigger Identity or Command-Handoff Identity. Older-generation evidence remains immutable and cannot satisfy or block a newer current-generation request.
+
 - `scriptEventId` must not be used as a Prometheus metric label (or any other high-cardinality metric dimension).
 - `automationDispatchId` must not be used as a Prometheus metric label (or any other high-cardinality metric dimension).
 - Metric schema is owned by [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix). The bounded dimensions used in the local diagnostic examples below, such as `eventType`, `outcome`, `reason`, `priorityTag`, and `scope`, must be interpreted and emitted only as Table 4 permits; raw `tenantId`, `scriptId`, `pluginId`, and `pluginVersionId` belong in audit rows, logs, traces, and control-plane queries.
@@ -64,6 +69,7 @@ Audit records must include at least:
   - `pluginId`, `pluginVersionId`, and `bindingId` (required for resolved plugin handlers)
   - `eventType`
   - `scriptPatchVersion`
+  - `scriptPinEpoch` (required for gameplay/runtime and scheduler triggers; absent for tenant-readiness `onLoad`)
   - `scriptEventId`
   - `isDryRun` (boolean)
   - `sourceService` (derived from authenticated producer/workload identity for custom/service-specific events; the same value used in ingress dedupe and persisted unchanged in ingress and handler audit; omitted for built-in events that originate entirely within Automation & Scripting)
@@ -138,19 +144,21 @@ When a downstream service reports a later handoff or execution result, the targe
 
 - `automationDispatchId` – the stable dispatch-group identifier shared by the emitted gameplay commands; `commandOrdinal` distinguishes each command under it within the complete command-handoff scope.
 - `commandOrdinal` – the deterministic ordinal of that emitted command within the handler handoff.
+- `handoffRequirement` – the immutable `REQUIRED` or `OPTIONAL` classification committed with the evaluated descriptor and preserved on the child; it explains whether the child gates parent `HANDED_OFF` convergence.
+- `pluginActivationGeneration` – required for plugin-backed children as the captured Automation-owned runtime fence; it is execution evidence rather than Command-Handoff Identity.
 - `gameSessionCommandId` – the Game Session command identity when assigned; it is `null`/absent while the child has not been accepted into Game Session.
 - `handoffOutcome` – the durable handoff result for this child, present after a handoff attempt and independent of later gameplay execution.
 - `executionOutcome` – the authoritative Game Session execution lifecycle result when available; it remains `null`/absent until execution reaches a result or terminal disposition.
 - `gameplayResult` – the terminal gameplay result when available, using the canonical uppercase vocabulary `SUCCESS`, `PARTIAL`, `FAILED`, `TIMEOUT`, or `NOT_APPLIED`; it remains `null`/absent while execution is unresolved.
 - `commandStatusLink` – a link or stable reference to the authoritative Game Session command-status record when `gameSessionCommandId` is assigned; it is `null`/absent before that point.
 - `outcome` – closed target enum: `accepted`, `rejected`, `execution_updated`, or `version_fence_dropped`. `accepted` and `rejected` are handoff dispositions; `execution_updated` points to the separate authoritative `executionOutcome` and `gameplayResult` fields; `version_fence_dropped` records execution-time fencing. Terminality is established only by those separate authoritative fields, not by `outcome` alone.
-- `reason` – bounded reason such as `script_patch_mismatch` or `plugin_version_mismatch`.
+- `reason` – bounded reason such as `script_patch_mismatch` or `plugin_binding_mismatch`; use `plugin_activation_generation_mismatch` specifically when the captured plugin activation generation mismatches current authoritative generation evidence.
 - `recordedAt` – timestamp.
 - `sourceService` – producer of the disposition (for example `game-session`).
 
 `outcome` and `reason` describe the child handoff disposition and remain separate from effect status, `executionOutcome`, and `gameplayResult`. In particular, `outcome=version_fence_dropped` (and its reason) does not by itself prove that gameplay was not applied: leave `executionOutcome` and `gameplayResult` `null` while authoritative application evidence is unresolved. Proven no-mutation maps to `executionOutcome=ABANDONED` and `gameplayResult=NOT_APPLIED`; proven commit maps to `executionOutcome=APPLIED` and the canonical command-result rules. A fence disposition must never fabricate terminalization.
 
-Each returned child retains the parent `outboxWorkItemId` only for correlation and retains the complete applicable Trigger Identity needed for diagnosis, including plugin `bindingId` when applicable; the target-state `(automationDispatchId, commandOrdinal)` fields complete that child identity and must not be treated as globally unique or replaced with the parent `scriptEventId`. A pair shown without the Trigger Identity and scope is only a display suffix, never an identity, uniqueness, or deduplication key.
+Each returned child retains the parent `outboxWorkItemId` and complete applicable Trigger Identity only for correlation and diagnosis, including plugin `bindingId` when applicable. The target-state child identity instead comprises the complete source/optional-target runtime scope plus `(automationDispatchId, commandOrdinal)`; the pair must not be treated as globally unique or replaced with the parent `scriptEventId`. A pair shown without that complete source/target runtime scope is only a display suffix, never an identity, uniqueness, deduplication, or replay key.
 
 Rules:
 
@@ -161,7 +169,7 @@ Rules:
 
 During rollback, operator views must show the handler's `finalStage`/`finalOutcome` beside the `commandHandoffDispositions[]` returned from `ListScriptHandoffEvents`. A `TICK_HANDOFF` with `finalOutcome=handoff_accepted` therefore remains visible even when one or more individual commands later receive `version_fence_dropped`; a child result must never overwrite the handler result or collapse sibling command records.
 
-Concrete example. Both child records below use the complete `T123` Trigger Identity (`tenantId=11111111-1111-4111-8111-111111111111`, `gameInstanceId=44444444-4444-4444-8444-444444444444`, `playableStateScope=isolated`, `regionId=R2`, `regionEpoch=14`, `entityId=npc-guard-9`, `scriptId=guard-on-enter`, `eventType=onEnterRegion`, `eventSchemaVersion=1`, `scriptPatchVersion=P22`, `scriptEventId=evt-7f4c`, `isDryRun=false`) plus the command discriminator. `automationDispatchId=dispatch-9` identifies the dispatch group, while `outboxWorkItemId=work-9` is parent correlation only. The `(automationDispatchId, commandOrdinal)` notation in the bullets is a display suffix, not a standalone key.
+Concrete example. Both child records below carry the complete `T123` Trigger Identity (`tenantId=11111111-1111-4111-8111-111111111111`, `gameInstanceId=44444444-4444-4444-8444-444444444444`, `playableStateScope=isolated`, `regionId=R2`, `regionEpoch=14`, `entityId=npc-guard-9`, `scriptId=guard-on-enter`, `eventType=onEnterRegion`, `eventSchemaVersion=1`, `scriptPatchVersion=P22`, `scriptPinEpoch=23`, `scriptEventId=evt-7f4c`, `isDryRun=false`) for correlation and diagnosis. Each child is keyed by the complete Command-Handoff Identity: complete source/target runtime scope plus `automationDispatchId` and `commandOrdinal`. Parent Trigger Identity fields, `outboxWorkItemId`, and `scriptEventId` are not child uniqueness, deduplication, or replay keys. `automationDispatchId=dispatch-9` identifies the dispatch group, while `outboxWorkItemId=work-9` is parent correlation only. The `(automationDispatchId, commandOrdinal)` notation in the bullets is a display suffix, not a standalone key. This is a same-instance, same-runtime-scope example; the optional target fields (`targetGameInstanceId`, `targetPlayableStateScope`, `targetRegionId`, `targetRegionEpoch`) are intentionally absent because no distinct target scope applies.
 
 - `script_event_audit` row for Trigger Identity `T123` ends with `finalStage=TICK_HANDOFF`, `finalOutcome=handoff_accepted`.
 - The handler emitted two commands. Later, Game Session rejects only the child ending in `(automationDispatchId=dispatch-9, commandOrdinal=1)` under the same complete command-handoff scope during rollback convergence and appends a child disposition with `outcome=version_fence_dropped`, `reason=script_patch_mismatch`, `sourceService=game-session`, and `recordedAt=...`; the child ending in `(automationDispatchId=dispatch-9, commandOrdinal=0)` remains a separate sibling record.
@@ -181,6 +189,7 @@ Illustrative record shape:
   "eventType": "onEnterRegion",
   "eventSchemaVersion": 1,
   "scriptPatchVersion": "P22",
+  "scriptPinEpoch": 23,
   "scriptEventId": "evt-7f4c",
   "isDryRun": false,
   "finalStage": "TICK_HANDOFF",
@@ -223,12 +232,14 @@ Illustrative record shape:
       "eventType": "onEnterRegion",
       "eventSchemaVersion": 1,
       "scriptPatchVersion": "P22",
+      "scriptPinEpoch": 23,
       "scriptEventId": "evt-7f4c",
       "isDryRun": false,
       "commandOrdinal": 0,
       "automationDispatchId": "dispatch-9",
       "outboxWorkItemId": "work-9",
       "playableStateScope": "isolated",
+      "handoffRequirement": "REQUIRED",
       "gameSessionCommandId": "gs-cmd-0",
       "handoffOutcome": "accepted",
       "executionOutcome": null,
@@ -249,12 +260,14 @@ Illustrative record shape:
       "eventType": "onEnterRegion",
       "eventSchemaVersion": 1,
       "scriptPatchVersion": "P22",
+      "scriptPinEpoch": 23,
       "scriptEventId": "evt-7f4c",
       "isDryRun": false,
       "commandOrdinal": 1,
       "automationDispatchId": "dispatch-9",
       "outboxWorkItemId": "work-9",
       "playableStateScope": "isolated",
+      "handoffRequirement": "OPTIONAL",
       "gameSessionCommandId": "gs-cmd-1",
       "handoffOutcome": "accepted",
       "executionOutcome": null,
@@ -282,7 +295,7 @@ In particular:
 - Use `pin_state_unavailable` when a resolved handler's admission fails closed because bounded-staleness pin data cannot be refreshed; pre-resolution failures use the event-scope mapping in the normative contract tables.
 - Use `signer_policy_unavailable` for a resolved handler's admission failure after binding resolution when signer policy cannot be refreshed/verified from authoritative policy sources; pre-handler signer-policy unavailability uses the event-scope mapping in the normative contract tables and is not a handler `finalOutcome`.
 - Use `script_disabled` for operator disable/drain admission skips (never `skipped_disabled`).
-- A rollback convergence timeout is an event-scope ingress decision, not a handler `finalOutcome`: return `admitted=false` with `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK` and `admissionReason=rollback_convergence_timeout`, and record the same pair in `script_event_ingress_audit`.
+- A promotion or rollback pin convergence timeout is an event-scope ingress decision, not a handler `finalOutcome`: return `admitted=false` with `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE`, `admissionReason=pin_convergence_timeout`, and no `retryAfterMs`, and record the same fields in `script_event_ingress_audit`. This terminal outcome is fail-closed until recovery of that owner workflow, repair, or repin, not retryable backpressure.
 - Output-budget failures may be represented by different `finalOutcome` values depending on the last attempted stage, but they must use one of the bounded canonical `finalReason` values above and must never be collapsed into an unstructured catch-all.
 
 ### `policyViolations` Schema (Required When Present)
