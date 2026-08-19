@@ -109,11 +109,11 @@ Stages:
 - `DSL_EVAL` – the DSL graph was evaluated in the sandbox (validation, loop safety, runtime guards).
 - `WORK_ITEM_PERSIST` – the resulting script work item was persisted durably (for example, into a Postgres outbox) before being indexed into the rebuildable automation queue projection.
 - `TICK_HANDOFF` – every required child dispatch was durably accepted by Game Session (the point at which `finalOutcome=handoff_accepted` is allowed).
-- `DRY_RUN_RESULT` – preview-stage/outcome terminology for a non-committing dry-run/test execution completed after DSL evaluation and returned the would-be commands to the authorized caller without persisting a work item or handing off to tick queues. A current legacy materialized dry-run/test handler may record it in `script_event_audit`; a target ADR 0114 command-plan preview records the same stage/outcome terminology only on its isolated preview result/audit surface.
+- `DRY_RUN_RESULT` – preview-stage/outcome terminology for a non-committing dry-run/test execution completed after DSL evaluation. A target ADR 0114 command-plan preview returns the bounded would-be commands to the authorized caller or retains them on its isolated preview result/audit surface; either path avoids persisting a live work item or handing off to tick queues. A current legacy materialized dry-run/test handler may record it in `script_event_audit`.
 
 Required fields:
 
-- `finalStage` must be one of the stages above and must match the last stage attempted for the trigger. Live executions must not use `DRY_RUN_RESULT`; current legacy materialized dry-run/test handler executions must not use `WORK_ITEM_PERSIST` or `TICK_HANDOFF`. Target ADR 0114 previews use the non-committing `DRY_RUN_RESULT` branch only on their isolated preview result/audit surface.
+- `finalStage` must be one of the stages above and must match the last stage attempted for the trigger. Live executions must not use `DRY_RUN_RESULT`; current legacy materialized dry-run/test handler executions must not use `WORK_ITEM_PERSIST` or `TICK_HANDOFF`. Target ADR 0114 previews use the non-committing `DRY_RUN_RESULT` semantics only through the authorized result path defined by that ADR: direct return to the authorized caller or the isolated preview result/audit surface.
 - `finalOutcome` / `finalReason` must describe what happened at `finalStage`.
 
 Recommended (strongly preferred) structured representation:

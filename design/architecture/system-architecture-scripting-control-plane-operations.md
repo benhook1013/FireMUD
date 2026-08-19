@@ -430,7 +430,7 @@ Semantics:
 
 Outputs:
 
-- `results[]` (bounded, one result per requested parent `workItemId`; each result retains the stable `workItemId` and the stored `bindingId` evidence when present)
+- `results[]` (bounded, one result per requested parent `workItemId`; each result retains the stable `workItemId`, the stored `bindingId` evidence when present, and stored plugin fence evidence `(pluginActivationEpoch, lifecycleRevision)` when present)
   - `outcome` is exactly one of `canceled`, `already_terminal`, `recovery_in_progress`, `not_found_or_not_owned`, or `rejected`.
   - `reason` is present only when applicable, including for `outcome=rejected`, and uses a bounded reason such as `plugin_binding_mismatch`, `plugin_activation_epoch_mismatch`, `script_pin_epoch_mismatch`, `runtime_scope_mismatch`, `component_policy_unavailable`, `signer_policy_unavailable`, or `authority_unavailable`.
 - `canceledCount` (derived from `results[]` by counting only `outcome=canceled`; an exact retry returns the same aggregate)
