@@ -85,7 +85,7 @@ The matrix below is the target participation and ownership contract. `Authoritat
 | Economy logic (trading, shops, pricing) | | | | | | ✔ | | | | | |
 | AI-driven actions and behaviors | | | | | | | ✔ | | | | |
 | Triggered script execution | | | | | | | ✔ | | | | |
-| Exact script admission/execution fence (Game Session exact pin tuple and append-only rollout history; Automation immutable exact-version compiled graphs and bindings plus tenant-scoped readiness and instance-scoped admission, scheduling, execution/recovery, plugin runtime state, and convergence projections) | | | | ✔ | | | ✔ | | | | |
+| Exact script admission/execution fence (Game Session exact pin tuple and append-only rollout history; Automation immutable exact-version compiled graphs and bindings plus tenant-scoped readiness and instance-scoped admission, scheduling, execution/recovery, plugin runtime state, convergence projections, and projection freshness) | | | | ✔ | | | ✔ | | | | |
 | Redis-backed automation queue projection and timer coordination (`automation:queue:*`, `automation:timer:*`, `script-scheduler:*`) | | | | | | | ✔ | | | | |
 | Coordination Redis participation via shared helpers (locks and documented automation/tick prefix rules) | | | | ✔ | ✔ | | ✔ | | | | |
 | Cache/Rate-Limit Redis usage (caches, quotas, rate limiting) | | ✔ | | | ✔ | | ✔ | ✔ | | ✔ | ✔ |

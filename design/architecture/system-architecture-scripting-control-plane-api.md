@@ -301,7 +301,7 @@ Inputs:
 
 - `tenantId`
 - `gameInstanceId`
-- `controlPlaneRequestId` (the original promotion/rollback workflow request ID)
+- `controlPlaneRequestId` (the original pin-transition workflow request ID)
 - `expectedTimedOutConvergenceAttemptGeneration` (the terminal attempt generation being recovered)
 - `actor`
 - `reason`
@@ -310,8 +310,8 @@ Semantics:
 
 - This is a Game Session owner mutation. Logging & Admin may expose or forward it but must not persist recovery or pin-transition state.
 - The recovery idempotency identity is `(controlPlaneRequestId, expectedTimedOutConvergenceAttemptGeneration)`. The normalized fingerprint also binds `tenantId`, `gameInstanceId`, `actor`, and `reason`; an exact retry returns the recorded resulting generation and deadline, while a changed actor, reason, or other normalized field conflicts before mutation.
-- After exact recovery-request idempotency is resolved, a new recovery input atomically compare-and-sets the current workflow record to `PIN_CONVERGENCE_TIMEOUT` at the expected generation; a mismatch is a non-mutating conflict. On success it records the mapping from the expected timed-out generation to the resulting generation, increments `convergenceAttemptGeneration` exactly once, persists fresh `CONVERGING` state and an absolute `convergenceDeadlineAt`, and leaves the pinned exact tuple and immutable `operationKind` unchanged. An exact retry returns the recorded mapping even after the workflow has advanced beyond the expected timed-out generation.
-- A retry of the original promotion or rollback mutation is not recovery: it returns that request's stored terminal result and does not allocate a generation. Only this explicit recovery mutation can move `PIN_CONVERGENCE_TIMEOUT` back to `CONVERGING`.
+- After exact recovery-request idempotency is resolved, a new recovery input atomically verifies that the current workflow is `PIN_CONVERGENCE_TIMEOUT` at the expected generation and transitions it to `CONVERGING` with the new generation and deadline; a mismatch is a non-mutating conflict. On success it records the mapping from the expected timed-out generation to the resulting generation, increments `convergenceAttemptGeneration` exactly once, persists fresh `CONVERGING` state and an absolute `convergenceDeadlineAt`, and leaves the pinned exact tuple and immutable `operationKind` unchanged. An exact retry returns the recorded mapping even after the workflow has advanced beyond the expected timed-out generation.
+- A retry of the original pin-transition mutation is not recovery: it returns that request's stored terminal result and does not allocate a generation. Only this explicit recovery mutation can move `PIN_CONVERGENCE_TIMEOUT` back to `CONVERGING`.
 
 Outputs:
 
@@ -817,7 +817,7 @@ Required enum values:
 Contract rules:
 
 - Backpressure outcomes (`*_BACKPRESSURE_*`) must include bounded `retryAfterMs`.
-- A terminal promotion or rollback pin convergence timeout uses `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE` with `admissionReason=pin_convergence_timeout` and no `retryAfterMs`; it is fail-closed until the same workflow transitions from `PIN_CONVERGENCE_TIMEOUT` back to `CONVERGING` with the same `controlPlaneRequestId`, immutable `operationKind`, and a fresh deadline, explicit repair, or repin, and it is not retryable backpressure.
+- A terminal pin-transition convergence timeout uses `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE` with `admissionReason=pin_convergence_timeout` and no `retryAfterMs`; it is fail-closed until the same workflow transitions from `PIN_CONVERGENCE_TIMEOUT` back to `CONVERGING` with the same `controlPlaneRequestId`, immutable `operationKind`, and a fresh deadline, explicit repair, or repin, and it is not retryable backpressure.
 - `admissionOutcome` and `admissionReason` describe the **event-scope ingress decision** only. They must not be interpreted as a summary of all handler-scoped outcomes created after binding resolution.
 - Event-scope `admissionOutcome` and `admissionReason` must map directly to the ingress-time admission result recorded in ingress audit/logging surfaces for that request; they are not the same thing as later handler-scoped `finalOutcome` values recorded in `script_event_audit`.
 - Handler-scoped denials such as `quota_denied`, `script_disabled`, `plugin_disabled`, and `plugin_component_blocked` remain handler/audit outcomes after binding resolution. They are not valid event-scope ingress `admissionOutcome` values in the general fan-out contract.

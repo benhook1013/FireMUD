@@ -42,7 +42,7 @@ Once a syntactically valid pin, repin, or rollback request is accepted and its `
 
 Game Session exposes direct authoritative reads for the current pin and bounded, paginated rollout history. Rollback to a previously used patch remains a new committed epoch and history entry rather than being inferred from version equality. Current-state and history reads come from the same owner that enforces gameplay execution fences.
 
-Automation & Scripting owns tenant patch readiness and only the instance-local observed exact-pin, convergence, and freshness state needed for admission, scheduling, handoff, and diagnostics. Those records are explicitly projections. Automation does not author `PINNED`, `ROLLED_BACK`, or `REPINNED` history from work-item presence, projection refresh, or local guesses, and its reads do not become rollout authority.
+Automation & Scripting owns tenant patch readiness and, for rollout-history state, only the instance-local observed exact-pin, convergence, and freshness state needed for admission, scheduling, handoff, and diagnostics. Those records are explicitly projections. Automation does not author `PINNED`, `ROLLED_BACK`, or `REPINNED` history from work-item presence, projection refresh, or local guesses, and its reads do not become rollout authority.
 
 Logging & Admin composes Game Session's authoritative current pin and rollout history with Automation's readiness, observed-pin convergence, and freshness state. A discrepancy is presented as convergence or projection lag, not resolved by selecting Automation's history over Game Session.
 
