@@ -1,6 +1,6 @@
 # FireMUD Scripting & Automation: Observability Contract
 
-This document defines the observability contract for scripting and automation: what is recorded in `script_event_audit`, what is returned by `ListScriptHandoffEvents`, what is emitted as metrics, and which identifiers may be used for correlation.
+This document defines the observability contract for scripting and automation: what is recorded in `script_event_audit`, what is returned by `ListScriptHandoffEvents`, what is emitted as metrics, and which identifiers may be used for correlation. Target ADR 0114 command-plan previews use an isolated preview result/audit surface and do not write `script_event_audit`; the current legacy materialized `TriggerScriptEvent(isDryRun=true)` path may still use the handler-audit surface described here.
 
 Target-state gameplay/runtime observability preserves the exact Game Session `(scriptPatchVersion, scriptPinEpoch)` tuple. The tuple is diagnostic identity as well as a final-fence input; a version-only audit row cannot prove execution authority. The current live handoff/readback gap is recorded in [Implementation Status](#implementation-status) and does not narrow this target contract.
 
@@ -30,7 +30,7 @@ The complete per-command handoff diagnostic model is **target-state**. The live 
 Event-scope ingress decisions and handler-scoped execution outcomes are separate observability facts.
 
 - Event-scope ingress audit/logging records pre-resolution decisions for the incoming event, such as auth failure, reload backpressure, rollback pause, pin-state unavailability, signer-policy unavailability, or version unavailability. A rejected pre-handler ingress returns `admitted=false` with its event-scope `admissionOutcome` and `admissionReason`, records the same pair in `script_event_ingress_audit`, and has the corresponding Table 4 ingress-drop consequence using the bounded reason. These records use the uniqueness key and atomic first-claim/retry rules in [Table 1](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields), must not invent a synthetic `scriptId`, `bindingId`, or command identity, and must not create a handler-scoped `script_event_audit` row.
-- `script_event_audit` records resolved-handler/materialized-work lifecycles, including scheduler/timer-scoped, tenant-readiness `onLoad`, and dry-run/test executions after a concrete script or plugin handler identity exists. For event ingress, pre-handler dry-run rejection, signer-policy unavailability, and rollback backpressure remain ingress-audit outcomes; scheduler due-candidate skips use the `scheduleCandidateId` candidate-audit surface. A live admitted event with zero handlers is metric-only.
+- `script_event_audit` records resolved-handler/materialized-work lifecycles, including scheduler/timer-scoped, tenant-readiness `onLoad`, and current legacy materialized dry-run/test executions after a concrete script or plugin handler identity exists. Target ADR 0114 command-plan previews use the isolated preview result/audit surface instead. For event ingress, pre-handler dry-run rejection, signer-policy unavailability, and rollback backpressure remain ingress-audit outcomes; scheduler due-candidate skips use the `scheduleCandidateId` candidate-audit surface. A live admitted event with zero handlers is metric-only.
 - per-command handoff history is a separate durable child surface keyed by the complete Command-Handoff Identity; `outboxWorkItemId` is retained only as parent-work correlation so one handler audit row can still correlate to multiple emitted gameplay commands.
 - A successful event-scope ingress record means the event was accepted for handler resolution. It is not a summary of every handler outcome.
 - If live ingress is accepted and resolves three handlers, tooling should expect one event-scope ingress record and three handler-scoped `script_event_audit` records, one per resolved Trigger Identity. The Table 4 metric consequence does not add a separate admitted-event increment.
@@ -47,7 +47,7 @@ A resolved handler may emit zero, one, or many gameplay commands. `script_event_
 
 ## `script_event_audit` (Required Fields)
 
-Each observed resolved-handler/materialized-work trigger, scheduler/timer trigger, tenant-readiness `onLoad` trigger, or materialized dry-run/test execution must write (or update) a single audit record keyed by the trigger identity described in [Table 1](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields). For event ingress, pre-handler dry-run rejection, signer-policy unavailability, and rollback backpressure remain ingress-audit outcomes; scheduler due-candidate skips use the `scheduleCandidateId` candidate-audit surface. A live admitted event with zero handlers remains metric-only.
+Each observed resolved-handler/materialized-work trigger, scheduler/timer trigger, tenant-readiness `onLoad` trigger, or current legacy materialized dry-run/test execution must write (or update) a single handler-audit record keyed by the trigger identity described in [Table 1](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields). Target ADR 0114 command-plan previews instead retain their result and provenance in the isolated preview result/audit surface and do not create or update a `script_event_audit` row. For event ingress, pre-handler dry-run rejection, signer-policy unavailability, and rollback backpressure remain ingress-audit outcomes; scheduler due-candidate skips use the `scheduleCandidateId` candidate-audit surface. A live admitted event with zero handlers remains metric-only.
 
 Write behavior requirements:
 
@@ -109,11 +109,11 @@ Stages:
 - `DSL_EVAL` – the DSL graph was evaluated in the sandbox (validation, loop safety, runtime guards).
 - `WORK_ITEM_PERSIST` – the resulting script work item was persisted durably (for example, into a Postgres outbox) before being indexed into the rebuildable automation queue projection.
 - `TICK_HANDOFF` – every required child dispatch was durably accepted by Game Session (the point at which `finalOutcome=handoff_accepted` is allowed).
-- `DRY_RUN_RESULT` – a non-committing dry-run/test execution completed after DSL evaluation and returned the would-be commands to the authorized caller without persisting a work item or handing off to tick queues.
+- `DRY_RUN_RESULT` – preview-stage/outcome terminology for a non-committing dry-run/test execution completed after DSL evaluation and returned the would-be commands to the authorized caller without persisting a work item or handing off to tick queues. A current legacy materialized dry-run/test handler may record it in `script_event_audit`; a target ADR 0114 command-plan preview records the same stage/outcome terminology only on its isolated preview result/audit surface.
 
 Required fields:
 
-- `finalStage` must be one of the stages above and must match the last stage attempted for the trigger. Live executions must not use `DRY_RUN_RESULT`; dry-run/test executions must not use `WORK_ITEM_PERSIST` or `TICK_HANDOFF`.
+- `finalStage` must be one of the stages above and must match the last stage attempted for the trigger. Live executions must not use `DRY_RUN_RESULT`; current legacy materialized dry-run/test handler executions must not use `WORK_ITEM_PERSIST` or `TICK_HANDOFF`. Target ADR 0114 previews use the non-committing `DRY_RUN_RESULT` branch only on their isolated preview result/audit surface.
 - `finalOutcome` / `finalReason` must describe what happened at `finalStage`.
 
 Recommended (strongly preferred) structured representation:
@@ -130,7 +130,7 @@ Stage semantics:
 - `finalOutcome=handoff_accepted` must imply `finalStage=TICK_HANDOFF` and durable acceptance of every required child dispatch. It does not imply gameplay application.
 - A valid live handler that intentionally emits no commands uses `finalStage=DSL_EVAL`, `finalOutcome=completed_no_commands`.
 - Tenant-readiness `onLoad` completion must use `finalStage=DSL_EVAL` and `finalOutcome=readiness_success`; a valid live handler emitting no commands uses `finalOutcome=completed_no_commands`; neither is a live gameplay handoff signal.
-- `finalOutcome=dry_run_success` must imply `finalStage=DRY_RUN_RESULT` and `isDryRun=true`. It means only that the non-committing test evaluation completed and returned inspectable would-be commands.
+- `finalOutcome=dry_run_success` must imply `finalStage=DRY_RUN_RESULT` and `isDryRun=true`. It means only that the non-committing test evaluation completed and returned inspectable would-be commands; for target ADR 0114 previews, this is recorded on the isolated preview result/audit surface rather than as a handler `script_event_audit` row.
 - Backpressure outcomes like `skipped_reloading` must use `finalStage=ADMISSION`.
 - Post-resolution handler rollback pause backpressure `rollback_paused` must use `finalStage=ADMISSION`; for event ingress, pre-handler rollback pause is recorded only as the event-scope ingress outcome in `script_event_ingress_audit`, while timer candidates use the `scheduleCandidateId` candidate-audit outcome. Evaluated descriptors canceled from `PENDING` or `INDEXED` use `finalStage=WORK_ITEM_PERSIST`, `finalOutcome=canceled`, and the bounded cancellation reason.
 - Quota denials must use `finalStage=ADMISSION` unless quotas are evaluated inside the DSL runtime for a given trigger (rare; avoid mixing).

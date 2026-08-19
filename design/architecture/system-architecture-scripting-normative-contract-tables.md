@@ -160,7 +160,7 @@ The ingress endpoint determines who owns `scriptEventId` generation and retry be
 
 ## Table 2: `script_event_audit` Stages and Outcomes
 
-`script_event_audit` is limited to a concrete resolved-handler lifecycle: handler-scoped admission and materialized-work decisions, DSL evaluation, persistence, handoff, and dry-run/test results. It must be stage-aware so operators can distinguish handler-scoped “rejected before evaluation” from “evaluated but not handed off” and from “accepted into tick queues”. Pre-handler event-scope decisions for event ingress, including dry-run rejection, signer-policy unavailability, and rollback backpressure, are represented by `script_event_ingress_audit` and its `admissionOutcome`/`admissionReason` fields instead. Scheduler due-candidate skips use the candidate-audit rule in Table 3. A live admitted event that resolves zero handlers is metric-only and is not an ingress- or handler-audit outcome.
+`script_event_audit` is limited to a concrete resolved-handler lifecycle: handler-scoped admission and materialized-work decisions, DSL evaluation, persistence, handoff, and current legacy materialized dry-run/test results. It must be stage-aware so operators can distinguish handler-scoped “rejected before evaluation” from “evaluated but not handed off” and from “accepted into tick queues”. Target ADR 0114 command-plan previews use an isolated preview result/audit surface and do not create or update `script_event_audit`; they may use the `DRY_RUN_RESULT`/`dry_run_success` stage and outcome terminology there, but that terminology does not make the preview a handler-audit row. Pre-handler event-scope decisions for event ingress, including dry-run rejection, signer-policy unavailability, and rollback backpressure, are represented by `script_event_ingress_audit` and its `admissionOutcome`/`admissionReason` fields instead. Scheduler due-candidate skips use the candidate-audit rule in Table 3. A live admitted event that resolves zero handlers is metric-only and is not an ingress- or handler-audit outcome.
 
 ### Required Stage Set
 
@@ -179,7 +179,7 @@ The ingress endpoint determines who owns `scriptEventId` generation and retry be
 - There must be at most one row per full handler Trigger Identity (Table 1 plus `pluginId`, `pluginVersionId`, and `bindingId` where applicable); the captured `(pluginActivationEpoch, lifecycleRevision)` pair is execution-fence evidence, not a handler-row uniqueness field.
 - Implementations must enforce uniqueness at storage level (composite unique key over Trigger Identity).
 - Retries and duplicate deliveries must update the existing row instead of inserting a new one.
-- Stage progression must be monotonic for live runs (`ADMISSION` <= `DSL_EVAL` <= `WORK_ITEM_PERSIST` <= `TICK_HANDOFF`); writers must not regress `finalStage`. Dry-run/test runs use the non-committing terminal branch `ADMISSION` <= `DSL_EVAL` <= `DRY_RUN_RESULT` and must never progress to `WORK_ITEM_PERSIST` or `TICK_HANDOFF`.
+- Stage progression must be monotonic for live runs (`ADMISSION` <= `DSL_EVAL` <= `WORK_ITEM_PERSIST` <= `TICK_HANDOFF`); writers must not regress `finalStage`. Current legacy materialized dry-run/test handler rows use the non-committing terminal branch `ADMISSION` <= `DSL_EVAL` <= `DRY_RUN_RESULT` and must never progress to `WORK_ITEM_PERSIST` or `TICK_HANDOFF`; target ADR 0114 previews use that same branch only on their isolated preview result/audit surface.
 - On conflicting updates, the higher stage wins; if stages are equal, preserve the first terminal non-success outcome unless a later write provides a strictly higher-fidelity reason for the same stage.
 
 ### Required Outcome Rules (Normative)
@@ -190,7 +190,7 @@ The ingress endpoint determines who owns `scriptEventId` generation and retry be
 | `DSL_EVAL` | Sandbox failures use `finalOutcome=sandbox_error`. A valid live handler that intentionally emits no commands uses `finalOutcome=completed_no_commands`; it does not claim handoff. |
 | `WORK_ITEM_PERSIST` | If durable persistence fails, the audit record must not show success. It must record a persistence failure outcome and must not claim that effects were enqueued. |
 | `TICK_HANDOFF` | `finalOutcome=handoff_accepted` is permitted only when Game Session has durably accepted every required child dispatch. Evaluation or partial handoff is not handoff acceptance. |
-| `DRY_RUN_RESULT` | `finalOutcome=dry_run_success` is permitted only for authorized `isDryRun=true` executions after DSL evaluation completes and the non-committing result has been returned or stored for inspection. It must not imply durable work-item persistence or tick handoff. |
+| `DRY_RUN_RESULT` | `finalOutcome=dry_run_success` is permitted only for an authorized `isDryRun=true` execution after DSL evaluation completes and the non-committing result has been returned or stored for inspection. A current legacy materialized dry-run/test handler may record it in `script_event_audit`; a target ADR 0114 preview records it only on the isolated preview result/audit surface. It must not imply durable work-item persistence or tick handoff. |
 
 Additional non-committing terminal outcome rules:
 

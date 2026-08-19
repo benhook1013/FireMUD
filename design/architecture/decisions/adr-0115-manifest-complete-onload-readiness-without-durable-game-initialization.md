@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The current path admits bounded tenant-readiness `onLoad` work and exposes a readiness projection, but it does not yet seal or prove the immutable complete handler manifest required by this ADR. Monotonic publication acceptance and late-completion fencing, along with readiness-owner recovery and terminalization of stale `ONLOAD_RUNNING` work, remain target convergence and proof gaps; the generic replay behavior described in the automation tracker is implementation drift rather than supported readiness recovery.
+
 ## Decision Record
 
 - Decision date: 2026-07-20
