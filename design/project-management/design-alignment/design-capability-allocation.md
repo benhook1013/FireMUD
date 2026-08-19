@@ -168,6 +168,8 @@ This ledger maps canonical product and architecture sources to the stable capabi
 | `design/architecture/decisions/adr-0120-owner-read-first-control-plane-notifications.md` | `SF-1` | `AS-1`, `AR-3`, `PO-1`, `PO-4`, `SF-2` | Accepted |
 | `design/architecture/decisions/adr-0121-historical-broad-dry-run-semantics.md` | `AS-1` | `PO-1`, `PO-2`, `PO-4` | Superseded |
 
+ADR 0121 is superseded by [ADR 0114](../../architecture/decisions/adr-0114-command-plan-preview-dry-run-isolation.md); its historical capability allocation remains recorded above.
+
 ## Product Documentation Allocation
 
 Product sources define requirements and observable product behavior. Their allocation chooses the nearest product-facing capability lens without changing the technical authority of linked architecture contracts.

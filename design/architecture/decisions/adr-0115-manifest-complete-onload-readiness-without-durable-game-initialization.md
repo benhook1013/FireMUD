@@ -32,6 +32,8 @@ Readiness cannot be inferred from whatever work happens to be observed. A missin
 
 Each immutable script patch declares the exact set of required `onLoad` handler identities, including an explicitly empty set. Automation marks `<tenantId, scriptPatchVersion>` `READY` only when every declared handler has been admitted and reached one successful logical terminal outcome. Missing expected work, failure to admit a required handler, or failure of any required handler prevents `READY`; observing no work is sufficient only when the immutable manifest declares zero handlers.
 
+Each declared handler also follows the complete immutable [handler-input-manifest contract](../system-architecture-scripting-dsl-reference-and-lifecycle.md#read-consistency-contract): Automation seals that manifest before evaluation, and every permitted retry or recovery reuses it unchanged. This ADR does not define a narrower readiness-only input manifest.
+
 Each handler uses one stable logical execution identity for that tenant and patch. Bounded infrastructure retries reuse that identity and deterministic `scriptEventId`; “once” means one successful logical outcome, not one physical attempt. Duplicate or late attempts cannot create a second readiness result.
 
 Tenant readiness accepts publication candidates under a monotonic accepted-publication sequence. Only a candidate with a greater accepted sequence may supersede the current non-terminal candidate. Supersession is terminal for the older candidate; work not yet started is canceled, and late completion may be retained for audit but cannot move the older candidate to `READY` or reopen readiness.

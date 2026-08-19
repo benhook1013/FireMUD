@@ -8,7 +8,7 @@ Use `system-architecture-scripting-dsl-reference-and-lifecycle.md` for DSL seman
 
 ## Implementation Status
 
-The target exact-fence requirement below is not fully implemented at the live handoff: the current request carries `scriptPatchVersion` but not `scriptPinEpoch`, so same-version work from an older epoch cannot be rejected there today. See the [runtime execution implementation status](./system-architecture-scripting-runtime-execution.md#current-implementation-status); this gap does not weaken the target registry contract.
+The target exact-fence and materialized-catalogue requirements below are not fully implemented. At the live handoff, the current request carries `scriptPatchVersion` but not `scriptPinEpoch`, so same-version work from an older epoch cannot be rejected there today. The current static registry also lacks an accepted materialized catalogue revision/digest and the applicable immutable schema identity/digest evidence required for its mutable `payloadSchemaRef` anchors. See the [runtime execution implementation status](./system-architecture-scripting-runtime-execution.md#current-implementation-status); these gaps do not weaken the target registry contract.
 
 ## Purpose
 
@@ -62,7 +62,7 @@ Required semantics for those fields:
 - `allowedProducerPrincipals`
   - Exact service principals or internal caller classes allowed to emit the event.
 - `payloadSchemaRef`
-  - The authoritative schema or proto reference for the payload shape.
+  - The authoritative schema or proto reference for the payload shape. The reference must itself be content-addressed, or catalogue materialization must resolve it to an immutable `resolvedPayloadSchemaRevision` and `resolvedPayloadSchemaDigest`. The selected branch is the entry's applicable immutable schema identity/digest evidence; that evidence is retained on the entry and included in the canonical catalogue digest. A mutable document anchor alone is not immutable schema evidence.
 - `requiredTriggerIdentityFields`
   - The exact identity fields applicable to this event at each stage: the event-scope ingress subset before handler resolution and the full handler Trigger Identity after each handler resolves, as defined by the [normative identity tables](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields).
   - Ordinary producer event-scope ingress must not require, fabricate, or use synthetic values for handler-only fields. In particular, `scriptId`, `pluginId`, `pluginVersionId`, and `bindingId` are unavailable before handler resolution; they become required only when the resolved handler's scope requires them.
@@ -99,13 +99,13 @@ Required semantics for those fields:
 Registry changes follow one canonical path:
 
 1. A producer-owning service adds or updates a versioned event-definition manifest in its primary contract surface.
-2. Automation & Scripting mechanically discovers the declared source manifests and validates that each is well formed, names exactly one owner and authoritative producer manifest, resolves its schema reference, and declares one authoritative snapshot and binding-scope contract for the key. It rejects missing manifests, duplicate declarations even when byte-equivalent, unresolved references, and any conflict in a required registry-entry field or source-level semantic for the same `(eventType,eventSchemaVersion)`; it does not merge declarations or choose a winner.
+2. Automation & Scripting mechanically discovers the declared source manifests and validates that each is well formed, names exactly one owner and authoritative producer manifest, resolves its schema reference to content-addressed evidence or an immutable schema revision and digest, and declares one authoritative snapshot and binding-scope contract for the key. It rejects missing manifests, duplicate declarations even when byte-equivalent, unresolved or mutable-without-digest schema references, and any conflict in a required registry-entry field or source-level semantic for the same `(eventType,eventSchemaVersion)`; it does not merge declarations or choose a winner.
 3. Automation deterministically materializes the complete validated source set, assigns the immutable catalogue revision and `(catalogueDigestProfileVersion, catalogueDigest)`, validates the digest under exactly that identified profile, and atomically accepts that complete catalogue for ingress and reads. Failed or partial materialization leaves the prior complete accepted catalogue authoritative.
 4. Game Design refreshes its read model from that same canonical catalogue before exposing the event in authoring UI or publish validation.
 
 Before a producer emits any `(eventType,eventSchemaVersion)`, the exact producer manifest and payload schema for that key must be present in the same complete catalogue revision and `catalogueDigest` that is currently accepted for ingress. Producer authorization is evaluated against that accepted entry; a manifest or schema that exists only in an unaccepted, failed, partial, or newer materialization cannot authorize emission. If materialization fails, the prior complete catalogue remains active only for the keys it already accepted and cannot authorize a new key or schema version. Emission of a new or not-yet-accepted key/version therefore fails closed until its complete source set is accepted as one catalogue.
 
-The producer-side activation gate is a control-plane/read gate, not an event-wire assertion. Before enabling a release or producer process to emit a new key/version, the producer's activation path must read the exact entry from the canonical registry read API (or an Automation-owned or authorized equivalent read of the same accepted catalogue) and verify its `eventType`, `eventSchemaVersion`, `ownerService`, authorized producer principal, `payloadSchemaRef`, immutable catalogue revision, `catalogueDigestProfileVersion`, and `catalogueDigest`. Only a successful exact read against the currently accepted complete catalogue may mark that key/version enabled for the producer; an unaccepted, failed, partial, newer, or mismatched read leaves it disabled. This gate is evaluated at producer activation/release time and does not add catalogue fields to event identity or require producers to assert them on every event. Automation independently repeats the exact active-entry, principal, schema, and payload validation at ingress and records the accepted catalogue revision/digest and resolved owner/principal in the existing ingress audit, so a stale or incorrectly activated producer cannot bypass the enforcement authority; ingress rejection is the safety fence, not the producer activation mechanism.
+The producer-side activation gate is a control-plane/read gate, not an event-wire assertion. Before enabling a release or producer process to emit a new key/version, the producer's activation path must read the exact entry from the canonical registry read API (or an Automation-owned or authorized equivalent read of the same accepted catalogue) and verify its `eventType`, `eventSchemaVersion`, `ownerService`, authorized producer principal, `payloadSchemaRef`, applicable immutable schema identity/digest evidence, immutable catalogue revision, `catalogueDigestProfileVersion`, and `catalogueDigest`. Only a successful exact read against the currently accepted complete catalogue may mark that key/version enabled for the producer; an unaccepted, failed, partial, newer, or mismatched read leaves it disabled. This gate is evaluated at producer activation/release time and does not add catalogue fields to event identity or require producers to assert them on every event. Automation independently repeats the exact active-entry, principal, immutable-schema, and payload validation at ingress and records the accepted catalogue revision/digest, applicable immutable schema identity/digest evidence, and resolved owner/principal in the existing ingress audit, so a stale or incorrectly activated producer cannot bypass the enforcement authority; ingress rejection is the safety fence, not the producer activation mechanism.
 
 Rules:
 
@@ -126,7 +126,7 @@ Minimum read payload:
 - catalogue revision identity, `catalogueDigestProfileVersion`, and canonical `catalogueDigest`
 - identity fields for the entry
 - owner service
-- payload schema reference
+- payload schema reference plus the applicable content-addressed identity or resolved schema revision/digest
 - allowed producers
 - required trigger identity fields
 - snapshot authority and consistency class
@@ -278,7 +278,7 @@ Publish validation must fail closed if it cannot read the canonical registry for
 Registry-driven admission must be observable:
 
 - `script_event_ingress_audit` records the `eventType`, `eventSchemaVersion`, and producing service identity for every admitted or rejected custom/service-specific event before handler resolution
-- For registry-governed events, that audit also records the accepted catalogue revision, `catalogueDigestProfileVersion`, `catalogueDigest`, resolved `ownerService`, and authenticated producer principal used for the decision; these fields explain the exact registry state without becoming event identity
+- For registry-governed events, that audit also records the accepted catalogue revision, `catalogueDigestProfileVersion`, `catalogueDigest`, applicable immutable schema identity/digest evidence, resolved `ownerService`, and authenticated producer principal used for the decision; these fields explain the exact registry state without becoming event identity
 - ingress rejection metrics must tag bounded reasons such as `unknown_event_type`, `unauthorized_producer`, `missing_owner_input`, or `illegal_binding_scope`; an owner-specific missing token may use a more specific bounded reason when that owner contract requires one
 - registry change events must be replayable so operator read models can explain why an event became valid, deprecated, or rejected
 
