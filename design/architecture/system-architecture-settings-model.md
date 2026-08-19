@@ -21,6 +21,7 @@ This document defines the canonical FireMUD settings model for operator/bootstra
 - Game Session exposes the current effective result at `/actuator/settings/effective`, including resolved `presentation`, `prompts`, `reconnection`, `movement`, `worldTopology`, `commandHistory`, and `commandCapabilities`, plus normalized subgroup views for the live room-view/transcript seams (`transcriptRendering`, `reconnectionPolicy`, and `reconnectBuffer`), movement/topology seams (`movementPostMoveView`, `worldTopologyScopeModel`, and `worldTopologyRegionBehavior`), and the current scoped `communication` override layer it sees for the same session or synthesized scope.
 - Game Logic exposes the current effective `communication` result at `/actuator/settings/effective/communication`.
 - The shared authority reader now has explicit bounded local cache semantics: normal reads use a short TTL cache, callers may force refresh, and callers may evict one scope locally. Distributed push invalidation, full centralized operator-default/caps resolution, and preset-baseline expansion are still future work.
+- The current reader/proof gap is explicit: short-TTL, force-refresh, and per-scope eviction do not yet prove monotonic revision handling, class-specific stale behavior, or the restrictive-setting fence. The reader applies the canonical per-key/domain freshness maximum once that typed metadata is present; it does not select a local alternative.
 
 ## Canonical Decisions
 
@@ -177,6 +178,7 @@ Every surfaced setting should carry at least:
 - default
 - valid range or enum
 - scope/owner
+- freshness class and one canonical maximum stale age for that key/domain
 - whether hot-reloadable
 - whether advanced
 - example value
@@ -211,9 +213,7 @@ This does not need to become a full distributed config platform. A bounded autho
 
 ### Distribution and Freshness
 
-[ADR 0113](./decisions/adr-0113-bounded-pull-settings-distribution-with-freshness-classes.md) makes distribution a typed, revisioned pull contract rather than a generalized push fabric. Consumers may retain bounded local last-known-good snapshots, but each key or domain declares a freshness class and an implementation-selected maximum stale age. Presentation-only settings may use an explicitly safe fallback when that bound is exceeded; restrictive or authoritative settings fail closed or hold an authoritative fence, and urgent revocation uses a separate immediate path. Notification plus pull may be an optimization, but notifications do not become the authority.
-
-The current short-TTL, force-refresh, and per-scope eviction reader is a bounded implementation seam. It does not yet prove monotonic revision handling, class-specific stale behavior, or the restrictive-setting fence; those remain implementation gaps. Concrete freshness durations are intentionally not specified here.
+[ADR 0113](./decisions/adr-0113-bounded-pull-settings-distribution-with-freshness-classes.md) makes distribution a typed, revisioned pull contract rather than a generalized push fabric. Consumers may retain bounded local last-known-good snapshots, but each key or domain declares a freshness class and one canonical maximum stale age in its typed contract. Consumers apply that maximum; they do not select a competing local bound. Presentation-only settings may use an explicitly safe fallback when that bound is exceeded; restrictive or authoritative settings fail closed or hold an authoritative fence, and urgent revocation uses a separate immediate path. Notification plus pull may be an optimization, but notifications do not become the authority. Concrete freshness durations remain schema-policy work.
 
 ## Current Practical Rule
 

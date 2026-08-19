@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The current implementation proves only the first self-targeted `APPLY_ACTION_STATE` declaration and retains transitional built-in routing. General target plans, multi-effect composition, costs, cooldowns, cross-region outcomes, and the wider primitive catalog remain implementation and proof work.
+
 ## Decision Record
 
 - Decision date: 2026-07-20
@@ -40,8 +44,6 @@ Routine gameplay relies on authenticated service transport, scoped execution con
 ## Implementation and Proof Obligations
 
 Contracts must preserve exact release and declaration identity, canonical source actor identity, typed target policies, bounded owner fact snapshots, effect idempotency, cost/cooldown semantics, target-leg outcomes, and fail-closed handling of unknown schemas or facts. Tests must prove aliases, scripts, plugins, retries, and direct internal calls cannot bypass the same target and mutation validation.
-
-The current implementation proves only the first self-targeted `APPLY_ACTION_STATE` declaration and retains transitional built-in routing. General target plans, multi-effect composition, costs, cooldowns, cross-region outcomes, and the wider primitive catalog remain implementation and proof work.
 
 ## Related Contracts
 

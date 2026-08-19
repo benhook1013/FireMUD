@@ -1,6 +1,6 @@
 # Consequential Design Decision Inventory
 
-Status: Inventory and human-led review are complete and independently coverage/fidelity-audited. Cumulative reviewed outcomes with applied provenance now cover 110 of 182 distinct active decisions, up from 100 before this parcel; this parcel added ten queue outcomes (nine active decisions plus one historical alias), with the historical alias formalized as superseded ADR 0121. The historical navigation alias is excluded from active-decision counts, and 72 reviewed decisions remain pending selective import. ADR numbering records how applied outcomes were materialized but does not define the application boundary.
+Status: Inventory and human-led review are complete and independently coverage/fidelity-audited. Cumulative reviewed outcomes with applied provenance now cover 110 of 182 distinct active decisions, up from 100 before this parcel; this parcel added ten applied reviewed decision outcomes (nine accepted/revised target decisions plus one formal superseded historical decision recorded in ADR 0121). ADR 0121 is applied provenance for that historical outcome, not an excluded lightweight alias. The separately tracked service-scan `MS-AA-TOKEN-REVOCATION` row remains the only excluded navigation alias, and 72 reviewed decisions remain pending selective import. ADR numbering records how applied outcomes were materialized but does not define the application boundary.
 
 ## Implementation Status
 
@@ -60,7 +60,7 @@ The canonical design allocation covers all 294 discovered product and architectu
 | Microservice architecture | 76 covered paths (74 allocated evidence paths; 2 explicit governance/template exemptions) | 23 rows = 22 active decisions + superseded historical `MS-AA-TOKEN-REVOCATION` alias; stronger evidence for 40 existing keys | Complete in the source archive | Complete and independently audited |
 | Specialized runtime architecture | 38 sources | 54 new; stronger evidence for 20 existing keys | Complete in the source archive | Complete and independently audited |
 | Product and operations architecture | 38 sources | 38 new; stronger evidence for 11 existing keys | Complete in the source archive | Complete and independently audited |
-| **Total active decisions / navigation rows** | **All 294 design sources: 291 allocated decision-bearing sources (172 allocated non-ADR documents and 119 ADR records), 1 exempt architecture decision registry/index, and 2 excluded governance/template exemptions; 291 allocated and 3 total exemptions** | **182 active decisions; 183 navigation/key rows including one historical alias** | **All 183 queue/navigation rows reviewed in the source archive** | **110 of 182 distinct decisions have reviewed outcomes applied cumulatively, up from 100 before this parcel; this parcel added ten queue outcomes (nine active decisions plus one historical alias); 72 remain pending selective import** |
+| **Total active decisions / navigation rows** | **All 294 design sources: 291 allocated decision-bearing sources (172 allocated non-ADR documents and 119 ADR records), 1 exempt architecture decision registry/index, and 2 excluded governance/template exemptions; 291 allocated and 3 total exemptions** | **182 active decisions; 183 navigation/key rows including one historical service-scan alias** | **All 183 queue/navigation rows reviewed in the source archive** | **110 of 182 distinct decisions have reviewed outcomes applied cumulatively, up from 100 before this parcel; this parcel added ten applied reviewed outcomes (nine accepted/revised target decisions plus one formal superseded historical decision recorded in ADR 0121); 72 remain pending selective import** |
 
 ## Legacy ADR Alias Navigation
 
@@ -118,13 +118,13 @@ Future imports preserve the archive's exact disposition and review date, materia
 | 1 | Known conflicts and drift | 9 | 9 | `applied` |
 | 2 | Identity, authority, and security | 32 | 31 | `applied`; one historical alias is navigation-only |
 | 3 | Execution correctness and durability | 43 | 43 | `applied` |
-| 4 | Publishing, settings, and authored behavior | 36 | 17 | `partially-applied`; 19 remain pending-import |
+| 4 | Publishing, settings, and authored behavior | 36 | 27 | `partially-applied`; 9 remain pending-import |
 | 5 | Gameplay and player experience | 21 | 0 | `pending-import` |
 | 6 | Operations and delivery | 25 | 0 | `pending-import` |
 | 7 | Existing ADR-backed and lower-risk remainder | 17 | 0 | `pending-import` |
 | **Total** | | **183** | **110** | `review-complete`; `import-in-progress` |
 
-The source-archive total counts 183 navigation rows. Packet 2 contains 31 distinct decision keys plus the `MS-AA-TOKEN-REVOCATION` historical alias, producing 32 archive rows but only 31 applicable decisions. The applied-provenance checklist excludes that alias and therefore has 182 rows: 110 reviewed outcomes applied cumulatively, up from 100 before this parcel because this parcel added ten queue outcomes, and 72 unchecked decisions pending selective import. The 110 applied decisions are Packet 1's nine decisions, Packet 2's 31 distinct decisions, Packet 3's 43 imported decisions, Packet 4's 10 previously applied decisions, and this parcel's ten queue outcomes (nine active decisions plus one historical alias). The nine legacy ADR labels above are mappings to active checklist keys rather than additional rows.
+The source-archive total counts 183 navigation rows. Packet 2 contains 31 distinct decision keys plus the `MS-AA-TOKEN-REVOCATION` historical alias, producing 32 archive rows but only 31 applicable decisions. The applied-provenance checklist excludes that service-scan alias and therefore has 182 rows: 110 reviewed outcomes applied cumulatively, up from 100 before this parcel because this parcel added ten applied reviewed outcomes, and 72 unchecked decisions pending selective import. The ten outcomes in this parcel are nine accepted/revised target decisions plus one formal superseded historical decision recorded in ADR 0121; the historical outcome remains provenance and is not an excluded alias. The nine legacy ADR labels above are mappings to active checklist keys rather than additional rows.
 
 ### Priority Overrides
 

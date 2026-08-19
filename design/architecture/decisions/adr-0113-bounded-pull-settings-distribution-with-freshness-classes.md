@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The current short-TTL, force-refresh, and per-scope eviction reader is a bounded implementation seam. It does not yet prove monotonic revision handling, class-specific stale behavior, or the restrictive-setting fence; concrete freshness durations remain schema policy and implementation work.
+
 ## Decision Record
 
 - Decision date: 2026-07-20
@@ -42,7 +46,7 @@ Immediate revocation and emergency fencing are not ordinary cached settings. The
 
 The typed schema must declare scope eligibility, freshness class, maximum stale interval, fallback or fail-closed behavior, and whether a setting is prohibited from carrying urgent revocation semantics. Effective-setting diagnostics must expose authoritative scope revision, observation age, provenance, disregarded invalid overrides, and degraded or expired state.
 
-Proof must cover refresh, forced refresh, per-scope eviction, monotonic revision changes, bounded last-known-good retention, safe presentation fallback, fail-closed restrictive settings, authority recovery, and concurrent cap tightening. Concrete TTLs and freshness values remain schema policy and implementation work; consumers must not invent incompatible stale-data behavior.
+Proof must cover refresh, forced refresh, per-scope eviction, monotonic revision changes, bounded last-known-good retention, safe presentation fallback, fail-closed restrictive settings, authority recovery, and concurrent cap tightening. Consumers must not invent incompatible stale-data behavior.
 
 ## Related Contracts
 

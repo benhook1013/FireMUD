@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The current `TriggerScriptEvent(isDryRun=true)` path is legacy/incomplete and does not establish ADR 0114's command-plan preview guarantees. The distinct command-plan preview surface and contract remain unimplemented and unproved; its concrete API and wire shape are implementation details.
+
 ## Decision Record
 
 - Decision date: 2026-07-20
@@ -22,7 +26,7 @@ Creators and operators need to inspect what an Automation handler would emit wit
 
 ## Decision
 
-The target Automation operation is a **command-plan preview**, exposed through a separate preview endpoint rather than the current legacy `TriggerScriptEvent(isDryRun=true)` event-ingress path. Until that endpoint is implemented and proved, the legacy path must not be treated as this preview contract. The target preview executes the selected immutable script or plugin handler through the same evaluator, component allowlist, sandbox, loop guards, and per-run input, resource, and output limits used by live execution.
+The target Automation capability is a **command-plan preview** with a distinct preview surface and contract. Its concrete API and wire shape remain implementation details. The target preview executes the selected immutable script or plugin handler through the same evaluator, component allowlist, sandbox, loop guards, and per-run input, resource, and output limits used by live execution.
 
 The preview evaluates one explicit input bundle. Authorized live gameplay facts may be read only through one caller-supplied fenced snapshot or epoch; when no authorized fence is supplied, all simulated facts come from declared fixtures. The evaluator must not silently fall back to unfenced live reads or substitute a newer snapshot. Results identify the exact handler artifact/version, event or fixture inputs, snapshot token or epoch when used, and the complete ordered list of valid would-be commands.
 

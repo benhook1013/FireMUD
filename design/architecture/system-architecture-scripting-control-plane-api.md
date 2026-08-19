@@ -6,7 +6,7 @@ It exists to remove ambiguity from “conceptual APIs” referenced in service R
 
 Workflow sequencing for rollback, pause/resume, drain/purge, dead-letter recovery, and operator audit flows lives in [Scripting & Automation: Control Plane Operations](./system-architecture-scripting-control-plane-operations.md).
 
-The exact pin/epoch authority and stage-aware recovery rules used by these APIs are defined in [Scripting & Automation: Cross-Service Contracts](./system-architecture-scripting-contracts.md), with accepted transition rationale in [ADR 0103](./decisions/adr-0103-single-authority-script-pins-with-exact-version-execution.md), [ADR 0106](./decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md), [ADR 0107](./decisions/adr-0107-stage-aware-script-dead-letter-recovery.md), [ADR 0108](./decisions/adr-0108-no-degraded-script-admission-without-authoritative-pin.md), [ADR 0109](./decisions/adr-0109-game-session-owned-script-rollout-history.md), [ADR 0110](./decisions/adr-0110-explicit-opt-in-schedule-continuity-across-script-transitions.md), and [ADR 0111](./decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md).
+The exact pin/epoch authority and stage-aware recovery rules used by these APIs are defined in [Scripting & Automation: Cross-Service Contracts](./system-architecture-scripting-contracts.md), with accepted transition rationale in [ADR 0103](./decisions/adr-0103-single-authority-script-pins-with-exact-version-execution.md), [ADR 0106](./decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md), [ADR 0107](./decisions/adr-0107-stage-aware-script-dead-letter-recovery.md), [ADR 0108](./decisions/adr-0108-no-degraded-script-admission-without-authoritative-pin.md), [ADR 0109](./decisions/adr-0109-game-session-owned-script-rollout-history.md), [ADR 0110](./decisions/adr-0110-explicit-opt-in-schedule-continuity-across-script-transitions.md), [ADR 0111](./decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md), [ADR 0119](./decisions/adr-0119-epoch-fenced-per-instance-plugin-activation.md), and [ADR 0120](./decisions/adr-0120-owner-read-first-control-plane-notifications.md).
 
 ## Implementation Status
 
@@ -257,7 +257,7 @@ Semantics:
 - If the target patch is not `READY`, the operation must fail deterministically with an application error (for example `errorCode=SCRIPT_PATCH_NOT_READY`) and must not mutate pin state.
 - The operation must also validate base-version cohesion: the target patch's `baseVersionId` must match the game instance's currently pinned `runtimeVersionId`. If they do not match, the operation must fail deterministically with `errorCode=SCRIPT_PATCH_BASE_VERSION_MISMATCH` and must not mutate pin state.
 - Once a syntactically valid request is accepted and its `controlPlaneRequestId` is bound to the normalized request digest, any deterministic validation, attestation, or preparation failure returns and stores one unsuccessful immutable Game Session history result with identical previous/resulting exact tuples and no epoch advance. An exact retry of that request returns the stored result without another history entry; a different normalized digest under the same request ID is an idempotency conflict.
-- On success, Game Session persists the new pin for `(tenantId, gameInstanceId)` and emits `ScriptPatchPinChanged`.
+- On success, Game Session persists the new pin for `(tenantId, gameInstanceId)` and emits the advisory `ScriptPatchPinChanged` reread wake-up.
 - On success, Game Session atomically persists `(pinnedScriptPatchVersion, scriptPinEpoch)` and the corresponding append-only rollout-history record. The resulting epoch is new even when the target version equals the previous version.
 - When the target equals the currently pinned patch, this general pin mutation is the intentional same-version epoch-only repin and is classified as `REPIN` in the resulting history/event.
 
@@ -291,7 +291,7 @@ Semantics:
 - The accepted-request failure-history rule from `SetPinnedScriptPatchVersion` applies equally here: after the normalized digest is bound, deterministic validation or preparation failure stores one unsuccessful immutable history result with identical previous/resulting exact tuples and no epoch advance; exact same-ID retries return it and a different digest conflicts.
 - Target patch readiness requirements are identical to `SetPinnedScriptPatchVersion`: rollback targets must be `READY` for the tenant or the request fails with a deterministic application error (`SCRIPT_PATCH_NOT_READY`).
 - Base-version cohesion requirements are identical to `SetPinnedScriptPatchVersion`: rollback targets must have `baseVersionId` equal to the instance `runtimeVersionId` or the request fails with `SCRIPT_PATCH_BASE_VERSION_MISMATCH`.
-- On success, emits only `ScriptPatchPinChanged` with `changeType=ROLLBACK`; the reserved `ScriptPatchRollbackRequested` family is neither emitted nor consumed.
+- On success, emits only the advisory `ScriptPatchPinChanged` reread wake-up with `changeType=ROLLBACK`; the reserved `ScriptPatchRollbackRequested` family is neither emitted nor consumed.
 
 Outputs: same as `SetPinnedScriptPatchVersion`.
 
@@ -447,11 +447,13 @@ Contract rules:
 Inputs:
 
 - `tenantId`
+- `gameInstanceId` (required; plugin cancellation is instance-scoped)
 - `pluginId`
 - `pluginVersionId`
+- `pluginActivationEpoch` (the displaced activation epoch; cancellation must match the stored exact plugin activation tuple)
 - `scriptPatchVersion` (the displaced script patch version carried by the plugin-produced work)
-- `scriptPinEpoch` (the displaced pin epoch; cancellation must match the stored exact tuple, and a same-version repin with a newer epoch is not eligible)
-- `gameInstanceId` (required; plugin cancellation is instance-scoped)
+- `scriptPinEpoch` (the displaced pin epoch; cancellation must match the stored exact runtime tuple, and a same-version repin with a newer epoch is not eligible)
+- `workItemIds[]` (required, nonempty, unique explicit parent work-item IDs; maximum 100)
 - Optional `regionId`
 - `controlPlaneRequestId`
 - `actor`
@@ -459,12 +461,19 @@ Inputs:
 
 Outputs:
 
-- `canceledCount`
+- `results[]` (bounded, one result per requested parent `workItemId`; each result retains the stable `workItemId` and the stored `bindingId` evidence when present)
+  - `outcome` is exactly one of `canceled`, `already_terminal`, `recovery_in_progress`, `not_found_or_not_owned`, or `rejected`.
+  - `reason` is present only when applicable, including for `outcome=rejected`, and uses a bounded reason such as `plugin_binding_mismatch`, `plugin_activation_epoch_mismatch`, `script_pin_epoch_mismatch`, `runtime_scope_mismatch`, `component_policy_unavailable`, `signer_policy_unavailable`, or `authority_unavailable`.
+- `canceledCount` (derived from `results[]` by counting only `outcome=canceled`; an exact retry returns the same aggregate)
 
 Contract rules:
 
 - This is the plugin-version companion to `CancelPendingWorkItemsForPatch`.
-- **Target-state cancellation semantics:** the request is scoped to the supplied `gameInstanceId`; `tenantId` authorizes and audits the request but does not apply one epoch tenant-wide. It selects only rows whose stored `(scriptPatchVersion, scriptPinEpoch)` exactly matches the request's displaced tuple; a same-version repin with a newer epoch is not eligible. `PENDING_EVALUATION` is compare-and-set to `CANCELED` without DSL evaluation. An `EXECUTING` row is fenced and its descriptor-commit marker inspected; if committed, cancellation never resumes or re-dispatches a committed child: `PENDING` and `INDEXED` children compare-and-set to `CANCELED` with durable `cancelReason`, `finalStage=WORK_ITEM_PERSIST`, and `finalOutcome=canceled`; `HANDOFF_IN_FLIGHT` fences further retry and reconciles the durable downstream outcome (remaining active/unresolved when ambiguous); and `HANDED_OFF`, `CANCELED`, or `DEAD_LETTERED` children retain their outcome and no-op. An `EXECUTING` row with no descriptor commit (a started-but-uncommitted evaluation) is explicitly canceled with `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and bounded cancellation metadata, and is never replay-eligible. Only the distinct expired-stale recovery-owner path for an `EXECUTING` row with no descriptor commit may use the `DEAD_LETTERED`/`stale_execution_fenced` mapping; this cancellation request does not dead-letter stale displaced rows. The current live surface remains limited to pre-evaluation/non-handoff rows until descriptor persistence and downstream reconciliation are implemented.
+- `workItemIds[]` is validated as a nonempty, unique, nonblank list of at most 100 IDs before candidate reads or mutation. Over-limit, duplicate, blank, or otherwise invalid selector input is rejected with `INVALID_ARGUMENT`; the service never silently truncates or pages an exact request. Callers repeat bounded batches with new request IDs. The canonical request digest binds the normalized, set-canonical (sorted unique) IDs together with the complete operation name, exact selection scope `(tenantId, gameInstanceId, pluginId, pluginVersionId, pluginActivationEpoch, scriptPatchVersion, scriptPinEpoch, optional regionId)`, `actor`, and `reason`. An exact retry returns the same stored batch results without selection or mutation; a changed digest conflicts first.
+- Each requested ID is resolved against all applicable plugin-owned rows under that exact activation/version/runtime tuple and optional region; rows may belong to any binding. `bindingId` is per-row provenance and final-fence evidence, never a request selector. Missing or not-owned IDs return `not_found_or_not_owned`; tuple, scope, or other precondition failures return `rejected`, before mutation. There is no tenant-wide fallback or unbounded scope scan.
+- **Target-state cancellation semantics:** the request is scoped to the supplied `gameInstanceId`; `tenantId` authorizes and audits the request but does not apply one epoch tenant-wide. A same-version repin with a newer `scriptPinEpoch` is not eligible. `PENDING_EVALUATION` is compare-and-set to `CANCELED` without DSL evaluation. An `EXECUTING` row is fenced and its descriptor-commit marker inspected; if committed, cancellation never resumes or re-dispatches a committed child: `PENDING` and `INDEXED` children compare-and-set to `CANCELED` with durable `cancelReason`, `finalStage=WORK_ITEM_PERSIST`, and `finalOutcome=canceled`; `HANDOFF_IN_FLIGHT` fences further retry and reconciles the durable downstream outcome (remaining active/unresolved when ambiguous); and `HANDED_OFF`, `CANCELED`, or `DEAD_LETTERED` children retain their outcome and no-op. An `EXECUTING` row with no descriptor commit (a started-but-uncommitted evaluation) is explicitly canceled with `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and bounded cancellation metadata, and is never replay-eligible. Only the distinct expired-stale recovery-owner path for an `EXECUTING` row with no descriptor commit may use the `DEAD_LETTERED`/`stale_execution_fenced` mapping; this cancellation request does not dead-letter stale displaced rows. The current live surface remains limited to pre-evaluation/non-handoff rows until descriptor persistence and downstream reconciliation are implemented.
+- Each requested parent produces exactly one result, aggregating its parent and applicable child states with deterministic priority: `not_found_or_not_owned` or `rejected` for precondition failure; `recovery_in_progress` if any selected parent/child remains active or ambiguous (including `HANDOFF_IN_FLIGHT`), even when siblings were canceled; `canceled` only when this request changed at least one eligible parent/child and every applicable child is terminal afterward; and `already_terminal` only when no mutation was needed and the parent and every applicable child was already terminal. Results may include bounded child-state counts and a reason/evidence code. `canceledCount` is derived only by counting parent results whose outcome is `canceled`.
+- This is bounded asynchronous cleanup for rollback, disable, and revocation resource convergence. Cleanup completion is never the correctness fence: exact runtime and plugin fences, including the row's `bindingId` evidence and `pluginActivationEpoch`, remain authoritative before handoff and final effects.
 
 #### `GetAutomationPinConvergence`
 
@@ -615,7 +624,7 @@ Outputs:
 
 Read-model ownership:
 
-- The authoritative source for rollout transitions is Game Session pin mutations and committed `ScriptPatchPinChanged` events.
+- The authoritative source for rollout transitions is Game Session's durable current pin state and append-only rollout history. A committed `ScriptPatchPinChanged` notification is an advisory reread wake-up, not rollout-history authority.
 - The current Automation & Scripting implementation persists an Automation-owned patch-only observation keyed by `(tenantId, gameInstanceId, scriptPatchVersion)` and does not yet persist `scriptPinEpoch` on this projection. Its refresh implementation also derives non-authoritative local projection statuses/events from observed Game Session pin state plus durable work-item/current-pin state. These local rows/events are implementation drift and diagnostics, not rollout-history authority; the target projection is keyed by the exact `(scriptPatchVersion, scriptPinEpoch)` tuple and must not synthesize history from work-item transitions.
 - These Automation reads are non-authoritative projection reads, not Game Session rollout-history reads. Target reads return only observed projection rows for the requested exact tuple and must not synthesize historical `PINNED`, `ROLLED_BACK`, or `REPINNED` status; current patch-only rows and locally derived events are implementation drift and must not be treated as committed history. When an exact-tuple target projection row is absent, the read returns a deterministic not-found result; use `ListScriptPatchInstanceRolloutEvents` for committed rollout history.
 
@@ -641,6 +650,8 @@ Outputs:
 ### Automation & Scripting: Plugin Lifecycle Management
 
 Plugins are controlled by operators via Logging & Admin, but the runtime registry and enforcement live in Automation & Scripting. The authoritative row for `(tenantId, gameInstanceId, pluginId)` binds the exact `pluginVersionId`, monotonic `pluginActivationEpoch`, and lifecycle state. Mutating operations are scoped to a running instance, are idempotent against a canonical operation digest, and must install and durably acknowledge the corresponding Game Session final-execution fence before reporting activation or containment complete. Notifications are advisory refresh wakeups, not that fence.
+
+Lifecycle mutations use one durable pending-transition slot per `(tenantId, gameInstanceId, pluginId)`. Initiation compare-and-sets from the captured current `(pluginVersionId, pluginActivationEpoch, pluginState)` only when no transition is pending; an epoch-advancing target reserves `current + 1` exactly once. An exact same-request retry resumes that slot, while any different activation, switch, drain, disable, revocation, reactivation, or policy mutation returns `transition_in_progress`/fails closed rather than reusing or overwriting the target. Completion compare-and-sets the unchanged captured tuple plus pending request identity/digest and target epoch; stale completion cannot overwrite newer state. Security, component, and signer-policy fences remain independent immediate fail-closed checks and are not delayed by this serialization.
 
 #### `GetPluginStatus`
 
@@ -767,10 +778,11 @@ Inputs:
 
 Semantics:
 
-- Digest-bound idempotent.
-- When an active/current lifecycle is not already `DISABLED`, stops new admission and advances the epoch into a non-executable state. A never-active epoch-0 disable is an idempotent no-op. Game Session must durably acknowledge that final fence before containment is reported complete; a failed installation leaves the transition retryable and fail closed.
+- Digest-bound idempotent: the `controlPlaneRequestId` is bound to the canonical digest of the complete operation input; a changed input conflicts before mutation, and an exact retry either resumes the same pending transition or, after completion, returns its stored result.
+- For an active/current lifecycle, initiation atomically creates a durable request-digest-bound pending transition/admission-barrier record with the current tuple and one reserved target epoch (`current + 1`) plus target `pluginState=DISABLED`. It durably blocks new admission, survives restart, and does not change the current epoch/state at initiation; admission must check the barrier before admitting work.
+- Game Session installs that exact target epoch/state idempotently. A failed or lost acknowledgement leaves the barrier and pending transition in place and fail closed; an exact retry resumes the same target epoch and install command and does not return a completed or no-op result while pending. After durable acknowledgement, one Automation transaction advances the current epoch/state exactly once, marks the transition complete, and stores the result; exact retries after completion return that stored result.
 - Triggers are rejected at admission with a dedicated outcome (for example `finalOutcome=plugin_disabled`) and recorded in `script_event_audit`.
-- For a never-activated plugin at epoch `0`, disabling it does not invalidate admitted work or advance the epoch. Thereafter, disable, revocation, or policy-driven containment advances the epoch exactly once when an executable activation exists. If the plugin is already `DISABLED`, returns the existing committed state without updating `lastChangedAt`, appending history, or emitting a notification. Otherwise, records owner history and may publish `PluginVersionRuntimeStateChanged(newState=DISABLED)` as an advisory notification after the committed state and fence acknowledgement.
+- Disabling a never-active plugin at epoch `0` is an idempotent no-op and does not advance the epoch. An already-`DISABLED` request is a no-op only when the corresponding transition and Game Session fence acknowledgement are complete; otherwise it resumes the pending transition. Failed operations and retries do not add epochs. The barrier is not automatically cleared on timeout or failure; any clearance requires a separate authorized, audited pre-fence cancellation compare-and-set and is forbidden once the target fence may have installed. After the completed owner transition, `PluginVersionRuntimeStateChanged(newState=DISABLED)` may be published as an advisory notification; it follows completed owner state and is never the containment barrier. See [ADR 0119](./decisions/adr-0119-epoch-fenced-per-instance-plugin-activation.md) for the lifecycle authority.
 
 #### `DrainPlugin`
 

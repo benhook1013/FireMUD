@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The current implementation lacks the core-script component policy, `UNSAFE` readiness path, affected-patch dependency index, emergency authority, active-scope discovery, and focused containment proof. The existing rollback RPC is not proof of the complete emergency workflow.
+
 ## Decision Record
 
 - Decision date: 2026-07-20
@@ -40,6 +44,7 @@ Once accepted at the authoritative security-policy boundary:
 
 - Automation blocks new affected evaluation, including evaluation under an otherwise `READY` or pinned patch.
 - Evaluation crossing the revocation fence must recheck that fence before durable work-item persistence or handoff; its output is rejected after the fence. Potentially compromised evaluator workers are quarantined and replaced.
+- Any work that references a revocable component, including embedded/core-script and plugin-backed work, must carry and revalidate the component-revocation security-policy fence through applicable durable persistence, handoff, staged/final effects, retry, replay, and recovery boundaries, with an immediate check before gameplay effects are applied. Missing, stale, unavailable, or mismatched revocation evidence rejects the output, and rejected output cannot execute gameplay effects. `pluginActivationEpoch` is an additional independent fence only for plugin-backed work; neither fence substitutes for the other.
 - The platform discovers affected published patches and active Automation scopes, pauses those scopes, and drives explicit disable or fenced rollback.
 - Where no exact safe target exists, affected Automation remains fail closed while unrelated gameplay continues.
 
@@ -72,9 +77,7 @@ Rejected because platform sandbox and isolation boundaries are platform-security
 
 ## Implementation and Proof Obligations
 
-The current implementation lacks the core-script component policy, `UNSAFE` readiness path, affected-patch dependency index, emergency authority, active-scope discovery, and focused containment proof. The existing rollback RPC is not proof of the complete emergency workflow.
-
-Proof must cover routine authoring/publication/readiness rejection, preservation of ready and pinned behavior, separation of routine and emergency authority, emergency authorization/audit, dependency and scope discovery, admission/evaluation/persistence/handoff races, worker quarantine, scoped pause, safe-target rollback or disable, no-safe-target fail-closed behavior, partial-containment recovery, unrelated gameplay continuity, and the fact that applied effects are not automatically reversed.
+Proof must cover routine authoring/publication/readiness rejection, preservation of ready and pinned behavior, separation of routine and emergency authority, emergency authorization/audit, dependency and scope discovery, admission/evaluation/persistence/handoff races, component-revocation fencing for any work referencing a revocable component, including embedded/core-script and plugin-backed work, through applicable staged/final-effects, retry, replay, and recovery boundaries, the immediate pre-gameplay-effects check, rejection of output before gameplay effects, and, only for plugin-backed work, the additional independent `pluginActivationEpoch` fence, followed by worker quarantine, scoped pause, safe-target rollback or disable, no-safe-target fail-closed behavior, partial-containment recovery, unrelated gameplay continuity, and the fact that applied effects are not automatically reversed.
 
 The exact component-policy storage owner, API/event names, security evidence workflow, and creator/operator UX remain implementation choices.
 

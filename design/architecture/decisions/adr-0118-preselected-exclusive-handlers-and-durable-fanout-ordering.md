@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The current implementation does not carry durable handler sequence through work and handoff, does not resolve complete core/plugin sets with the required total ordering key, and does not prove exclusive grants or sole-handler selection across scopes.
+
 ## Decision Record
 
 - Decision date: 2026-07-20
@@ -31,7 +35,9 @@ When no exclusive binding is selected, handlers are ordered by:
 
 1. `orderIndex ASC`;
 2. `handlerType ASC`, with `SCRIPT` before `PLUGIN` unless an explicit operator policy says otherwise; and
-3. stable handler identity ascending, using `scriptId` for core scripts and `(pluginId, bindingId)` for plugin bindings.
+3. the canonical stable handler-order identity ascending, as defined by the [DSL lifecycle owner](../system-architecture-scripting-dsl-reference-and-lifecycle.md#canonical-stable-handler-order-identity). This is the ordering projection owned by that document, not the complete Trigger Identity or an informal tie-breaker: core handlers include `scriptId` plus their applicable authored binding/scope identity, and plugin handlers include `(pluginId, pluginVersionId, bindingId)`.
+
+The tuple `(orderIndex, handlerType, canonical stable handler-order identity)` is the total ordering key before `handlerSequence` assignment. Duplicate identical order keys are rejected; Automation must not invent an ordering from arrival, queue, or worker order.
 
 Automation assigns each handler a durable `handlerSequence` or equivalent stable ordinal. The complete ordered resolution, handler work, generated commands, handoff, retries, and final command application preserve that sequence and each handler's local command order. Queue position, timestamps, row IDs, worker claims, scheduling priority, and retry timing are not ordering authority.
 
@@ -65,9 +71,7 @@ Rejected because tenant content could displace game-owned behavior without expli
 
 ## Implementation and Proof Obligations
 
-The current implementation does not carry durable handler sequence through work and handoff, does not resolve complete core/plugin sets with the required tie-breaker, and does not prove exclusive grants or sole-handler selection across scopes.
-
-Proof must cover mixed bindings, equal/unequal indexes, stable plugin identity, all applicable scopes, zero/one/multiple exclusive claims, missing or revoked grants, exclusive failures without fallback, isolated non-exclusive failures, retries and queue rebuilds, delayed sequences, and ordered multi-command application. Priority and fairness may change timing but not semantic order.
+Proof must cover mixed bindings, equal/unequal indexes, equal total ordering keys being rejected, complete core binding/scope identity, stable plugin identity, all applicable scopes, zero/one/multiple exclusive claims, missing or revoked grants, exclusive failures without fallback, isolated non-exclusive failures, retries and queue rebuilds, delayed sequences, and ordered multi-command application. Priority and fairness may change timing but not semantic order.
 
 ## Reversibility and Revisit Triggers
 

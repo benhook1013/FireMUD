@@ -16,6 +16,10 @@ Accepted
 - Affected capabilities: `AS-1.6`, `AR-3.3`, `PO-1.1`, `PO-4.1`, `SF-2.3`
 - Decision owner: FireMUD human product and architecture owner
 
+## Consultation
+
+- Prior CP-01 human reconciliation accepted one explicit owner-contract exception: `ScriptPinConvergenceTimedOut` is captured atomically by Game Session with the terminal timeout transition, while downstream notification delivery remains advisory and consumers recover by rereading the owner. This exception does not generalize durable delivery to other notifications.
+
 ## Context
 
 The scripting control-plane catalogue previously implied that every listed state-change family required durable at-least-once delivery, generic tenant- or instance-scoped sequencing, replay, and reconstruction. Most identified consumers need fresh owner state or operator history rather than the notification itself as an independently guaranteed business consequence. Those consumers can recover through authoritative reads, while a notification only reduces freshness latency.

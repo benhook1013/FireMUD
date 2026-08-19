@@ -4,6 +4,10 @@ This document defines the control-plane notification catalogue for scripting and
 
 The producing service's durable state and, where chronology matters, append-only history with a stable producer-owned cursor are authoritative. The notification families below are advisory unless a family explicitly names a durable asynchronous consumer and delivery objective.
 
+## Implementation Status
+
+This catalogue is target-state. Game Session's current pin state is live, while append-only rollout history and the timeout workflow/event capture remain partial; Automation's observed-pin and convergence projections remain non-authoritative and exact epoch propagation is incomplete. See the [Game Session Runtime and Tick Coordination tracker](../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#capability-status), [Automation and Scheduler Runtime tracker](../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status), and [Shared Runtime tracker](../project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md#capability-status).
+
 ## Notification and Recovery Contract
 
 Under [ADR 0120](decisions/adr-0120-owner-read-first-control-plane-notifications.md), consumers obtain correctness through direct owner reads. They may use bounded-staleness caches and controlled polling with rate limits, jitter, and herd control. Redis or gRPC may carry disposable wake-ups that tell a consumer to reread the owner; notifications may be lost, duplicated, delayed, or reordered.
@@ -43,7 +47,7 @@ Fields in addition to the common envelope:
 - `previousPin` (optional nested exact pin tuple containing required `scriptPatchVersion` and `scriptPinEpoch` members)
 - `pinnedPin` (required nested exact pin tuple containing required `scriptPatchVersion` and `scriptPinEpoch` members)
 - `changeType` (`SET` | `ROLLBACK` | `REPIN`)
-- `controlPlaneRequestId`
+- `controlPlaneRequestId` (optional for non-operator changes; required when operator-driven)
 - `actor` and `reason`
 
 At the wire level, `previousPin` is absent only on a first pin (semantic `UNPINNED`), and when present both tuple members are required. `pinnedPin` is always present with both members required; no flattened partial tuple or sentinel represents an unpinned instance. Consumers read current state and history through Game Session APIs. Notification delivery, retention, or a consumer projection does not become rollout-history authority.
@@ -135,7 +139,7 @@ A named compliance or alerting subscriber with a guaranteed-delivery requirement
 
 ## `ScriptPinConvergenceTimedOut` (Game Session -> Durable Event Flow)
 
-Game Session atomically captures exactly one event with the pin-transition transaction after committing terminal state `PIN_CONVERGENCE_TIMEOUT` for the current convergence attempt because the required owner acknowledgements did not arrive. Logging & Admin may initiate orchestration, but Game Session owns the terminal state, workflow history, timeout identity, and producer outbox/equivalent capture. Downstream delivery is an advisory wake-up; consumers must reread the authoritative Game Session workflow/status API before acting, and loss, duplication, delay, or reordering cannot lose the timeout state or create a second producer event.
+Game Session captures exactly one event in the same transaction that commits terminal state `PIN_CONVERGENCE_TIMEOUT` for the current convergence attempt because the required owner acknowledgements did not arrive. Logging & Admin may initiate orchestration, but Game Session owns the terminal state, workflow history, timeout identity, and producer outbox/equivalent capture. Downstream delivery is an advisory wake-up; consumers must reread the authoritative Game Session workflow/status API before acting, and loss, duplication, delay, or reordering cannot lose the timeout state or create a second producer event.
 
 Fields in addition to the common envelope:
 

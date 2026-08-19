@@ -4,7 +4,7 @@ This document defines the service participation and API-usage layer for scriptin
 
 The direct API surface and request/response contracts for pinning, plugin activation, plugin drain, patch visibility, and admission outcomes live in [Scripting & Automation: Control Plane API](./system-architecture-scripting-control-plane-api.md).
 
-The accepted rollback boundary is epoch-fenced and does not routinely pause gameplay; see [ADR 0106](./decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md). Game Session owns the exact pin tuple and rollout history ([ADR 0109](./decisions/adr-0109-game-session-owned-script-rollout-history.md)); Automation owns only scoped admission, convergence, schedule, and recovery consequences. Stage-aware dead-letter recovery follows [ADR 0107](./decisions/adr-0107-stage-aware-script-dead-letter-recovery.md), and no degraded admission follows [ADR 0108](./decisions/adr-0108-no-degraded-script-admission-without-authoritative-pin.md).
+The accepted rollback boundary is epoch-fenced and does not routinely pause gameplay; see [ADR 0106](./decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md). Game Session owns the exact pin tuple and rollout history ([ADR 0109](./decisions/adr-0109-game-session-owned-script-rollout-history.md)); Automation owns only scoped admission, convergence, schedule, and recovery consequences. Stage-aware dead-letter recovery follows [ADR 0107](./decisions/adr-0107-stage-aware-script-dead-letter-recovery.md), no degraded admission follows [ADR 0108](./decisions/adr-0108-no-degraded-script-admission-without-authoritative-pin.md), emergency component revocation follows [ADR 0116](./decisions/adr-0116-routine-component-migration-and-explicit-emergency-revocation.md), and per-instance plugin activation fencing follows [ADR 0119](./decisions/adr-0119-epoch-fenced-per-instance-plugin-activation.md).
 
 ## Normative Target Contract
 
@@ -406,11 +406,13 @@ Outputs:
 Inputs:
 
 - `tenantId`
+- `gameInstanceId` (required; plugin cancellation is instance-scoped)
 - `pluginId`
 - `pluginVersionId`
-- `scriptPatchVersion`
-- `scriptPinEpoch` (the displaced pin epoch; cancellation must match the stored exact tuple)
-- `gameInstanceId` (required; plugin cancellation is instance-scoped)
+- `pluginActivationEpoch` (the displaced activation epoch; cancellation must match the stored exact plugin activation tuple)
+- `scriptPatchVersion` (the displaced script patch version carried by the plugin-produced work)
+- `scriptPinEpoch` (the displaced pin epoch; cancellation must match the stored exact runtime tuple)
+- `workItemIds[]` (required, nonempty, unique explicit parent work-item IDs; maximum 100)
 - Optional scope: `regionId`
 - `controlPlaneRequestId`
 - `actor`
@@ -419,16 +421,24 @@ Inputs:
 Semantics:
 
 - Idempotent.
-- **Target-state semantics:** cancellation is fencing-aware across both durable layers and is scoped to the required `gameInstanceId`; `tenantId` is not a tenant-wide epoch selector. `PENDING_EVALUATION` transitions by compare-and-set to `CANCELED` without entering the DSL. Target `EXECUTING` is fenced and its descriptor-commit marker is inspected first. Descriptor commit and cancellation use the same durable compare-and-set/transaction and winner semantics described for patch cancellation above: a committed descriptor is reconciled without resume/redispatch, while a cancellation winner rejects descriptor commit and leaves no dispatchable children. If committed, cancellation never resumes or re-dispatches a committed child: evaluated `PENDING` and `INDEXED` children compare-and-set to `workItemStatus=CANCELED` with durable `cancelReason`, `finalStage=WORK_ITEM_PERSIST`, and `finalOutcome=canceled`; `HANDOFF_IN_FLIGHT` fences further retry and reconciles the durable downstream outcome (remaining active/unresolved when ambiguous); and `HANDED_OFF`, `CANCELED`, or `DEAD_LETTERED` children retain their outcome and no-op. An uncommitted trigger transitions to `CANCELED` with `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and bounded cancellation metadata and is never replay-eligible. Only the distinct expired-stale recovery-owner path uses the canonical `DEAD_LETTERED` mapping with `finalReason=stale_execution_fenced`; the cancellation API itself does not dead-letter stale displaced rows. Each transition records the corresponding stage-aware `script_event_audit` cancellation outcome. The current implementation lacks the descriptor layer and recovery owner, so these are target-state semantics rather than current live proof.
-- Cancellation selects only rows whose stored `(scriptPatchVersion, scriptPinEpoch)` exactly matches the displaced tuple for that `gameInstanceId`. A same-version repin with a newer epoch is not eligible. Required for plugin disable/rollback/revocation workflows to avoid repeated execution-time plugin version fence drops and queue growth.
+- `workItemIds[]` is validated as a nonempty, unique, nonblank list of at most 100 IDs before candidate reads or mutation. Over-limit, duplicate, blank, or otherwise invalid selector input is rejected with `INVALID_ARGUMENT`; an exact request is never silently truncated or paged. Callers repeat bounded batches with new request IDs. The canonical request digest binds the normalized sorted ID set together with the complete operation name, exact selection scope `(tenantId, gameInstanceId, pluginId, pluginVersionId, pluginActivationEpoch, scriptPatchVersion, scriptPinEpoch, optional regionId)`, `actor`, and `reason`; an exact retry returns the stored batch result without selection or mutation, while a changed digest conflicts first.
+- Each requested ID resolves across all applicable plugin-owned bindings under the exact scope; `bindingId` is per-row provenance/fence evidence, not a selector. Missing or not-owned IDs return `not_found_or_not_owned`; tuple, scope, and other precondition failures return `rejected` before mutation. There is no tenant-wide fallback or unbounded scope scan.
+- **Target-state semantics:** cancellation is fencing-aware across both durable layers and is scoped to the required `gameInstanceId`; `tenantId` is not a tenant-wide epoch selector. A same-version repin with a newer `scriptPinEpoch` is not eligible. `PENDING_EVALUATION` transitions by compare-and-set to `CANCELED` without entering the DSL. Target `EXECUTING` is fenced and its descriptor-commit marker is inspected first. Descriptor commit and cancellation use the same durable compare-and-set/transaction and winner semantics described for patch cancellation above: a committed descriptor is reconciled without resume/redispatch, while a cancellation winner rejects descriptor commit and leaves no dispatchable children. If committed, cancellation never resumes or re-dispatches a committed child: evaluated `PENDING` and `INDEXED` children compare-and-set to `workItemStatus=CANCELED` with durable `cancelReason`, `finalStage=WORK_ITEM_PERSIST`, and `finalOutcome=canceled`; `HANDOFF_IN_FLIGHT` fences further retry and reconciles the durable downstream outcome (remaining active/unresolved when ambiguous); and `HANDED_OFF`, `CANCELED`, or `DEAD_LETTERED` children retain their outcome and no-op. An uncommitted trigger transitions to `CANCELED` with `finalStage=DSL_EVAL`, `finalOutcome=canceled`, and bounded cancellation metadata and is never replay-eligible. Only the distinct expired-stale recovery-owner path uses the canonical `DEAD_LETTERED` mapping with `finalReason=stale_execution_fenced`; the cancellation API itself does not dead-letter stale displaced rows. Each transition records the corresponding stage-aware `script_event_audit` cancellation outcome. The current implementation lacks the descriptor layer and recovery owner, so these are target-state semantics rather than current live proof.
+- Each requested parent yields exactly one aggregated result with priority `not_found_or_not_owned`/`rejected` for precondition failures, `recovery_in_progress` when any selected parent or child remains active or ambiguous (including `HANDOFF_IN_FLIGHT`), `canceled` only when this request changed at least one eligible row and every applicable child is terminal afterward, and `already_terminal` only when no mutation was needed and all applicable children were already terminal. Bounded child-state counts or evidence reasons may be returned. `canceledCount` counts only parent results whose outcome is `canceled`.
+- This is bounded asynchronous cleanup for rollback, disable, and revocation resource convergence. Cleanup completion is never the correctness fence: exact runtime and plugin fences, including the row's `bindingId` evidence and `pluginActivationEpoch`, remain authoritative before handoff and final effects.
 
 Outputs:
 
-- `canceledCount` (best-effort count; may be approximate for large batches)
+- `results[]` (bounded, one result per requested parent `workItemId`; each result retains the stable `workItemId` and the stored `bindingId` evidence when present)
+  - `outcome` is exactly one of `canceled`, `already_terminal`, `recovery_in_progress`, `not_found_or_not_owned`, or `rejected`.
+  - `reason` is present only when applicable, including for `outcome=rejected`, and uses a bounded reason such as `plugin_binding_mismatch`, `plugin_activation_epoch_mismatch`, `script_pin_epoch_mismatch`, `runtime_scope_mismatch`, `component_policy_unavailable`, `signer_policy_unavailable`, or `authority_unavailable`.
+- `canceledCount` (derived from `results[]` by counting only `outcome=canceled`; an exact retry returns the same aggregate)
 
 ### Automation & Scripting: Plugin Drain Workflow
 
 `DrainPlugin` is a direct control-plane API defined in [Scripting & Automation: Control Plane API](./system-architecture-scripting-control-plane-api.md#drainplugin). This workflow section defines how operators use that API in combination with convergence reads and cancellation APIs; it does not redefine the request/response contract.
+
+All plugin lifecycle calls use the Automation-owned single pending-transition slot for `(tenantId, gameInstanceId, pluginId)`. Initiation CASes the captured current tuple only when no transition is pending; an exact request resumes, while a different activation, switch, drain, disable, revocation, reactivation, or policy mutation fails closed as `transition_in_progress`. Completion CAS requires that captured tuple, pending request identity/digest, and target epoch to remain unchanged, so stale workers cannot overwrite newer state. Security, component, and signer-policy fences remain independent immediate fail-closed checks.
 
 ### Logging & Admin: Operator Workflow APIs
 

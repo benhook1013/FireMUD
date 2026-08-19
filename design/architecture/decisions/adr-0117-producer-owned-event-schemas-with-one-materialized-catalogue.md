@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The current implementation loads one built-in Automation JSON catalogue and exposes definition reads, but does not discover producer manifests, materialize revisions/digests, validate compatibility, prove read-only Game Design consumption, or retain entries from an authoritative supported-patch set.
+
 ## Decision Record
 
 - Decision date: 2026-07-20
@@ -62,8 +66,6 @@ Rejected because copy omissions and ordering could leave producer and runtime co
 Rejected because retries, retained patches, rollback, and audit interpretation would change underneath immutable artifacts.
 
 ## Implementation and Proof Obligations
-
-The current implementation loads one built-in Automation JSON catalogue and exposes definition reads, but does not discover producer manifests, materialize revisions/digests, validate compatibility, prove read-only Game Design consumption, or retain entries from an authoritative supported-patch set.
 
 Proof must cover manifest ownership and schema-reference validation, deterministic materialization, duplicate/missing source rejection, incompatible same-version edits, additive and new-version changes, revision/digest stability, failed-materialization retention of the prior catalogue, Game Design read-only use, source/catalogue skew, deprecation, supported-patch retention, safe removal, mixed-node convergence, and revision-specific audit explanation.
 
