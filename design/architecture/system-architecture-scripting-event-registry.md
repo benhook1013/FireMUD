@@ -32,7 +32,7 @@ No service may invent a private `eventType` contract outside this registry and s
 
 Every registry entry is keyed by `(eventType, eventSchemaVersion)`.
 
-`allowedProducerPrincipals` may list multiple authorized emitters, but no second manifest may declare the same key. Duplicate declarations, including byte-equivalent copies, and conflicting owner, producer, payload, snapshot-authority, consistency, replay, quota, or binding-scope declarations are materialization errors; the catalogue has no merge or precedence rule for them.
+`allowedProducerPrincipals` may list multiple authorized emitters, but no second manifest may declare the same key. Duplicate declarations, including byte-equivalent copies, and any conflict in a required registry-entry field or source-level semantic for the same key are materialization errors; the catalogue has no merge or precedence rule for them.
 
 Each entry must define at least:
 
@@ -99,7 +99,7 @@ Required semantics for those fields:
 Registry changes follow one canonical path:
 
 1. A producer-owning service adds or updates a versioned event-definition manifest in its primary contract surface.
-2. Automation & Scripting mechanically discovers the declared source manifests and validates that each is well formed, names exactly one owner and authoritative producer manifest, resolves its schema reference, and declares one authoritative snapshot and binding-scope contract for the key. It rejects missing manifests, duplicate declarations even when byte-equivalent, unresolved references, and any conflicting owner, allowed-producer, snapshot-authority, consistency, or binding-scope authority for the same `(eventType,eventSchemaVersion)`; it does not merge declarations or choose a winner.
+2. Automation & Scripting mechanically discovers the declared source manifests and validates that each is well formed, names exactly one owner and authoritative producer manifest, resolves its schema reference, and declares one authoritative snapshot and binding-scope contract for the key. It rejects missing manifests, duplicate declarations even when byte-equivalent, unresolved references, and any conflict in a required registry-entry field or source-level semantic for the same `(eventType,eventSchemaVersion)`; it does not merge declarations or choose a winner.
 3. Automation deterministically materializes the complete validated source set, assigns the immutable catalogue revision and `(catalogueDigestProfileVersion, catalogueDigest)`, validates the digest under exactly that identified profile, and atomically accepts that complete catalogue for ingress and reads. Failed or partial materialization leaves the prior complete accepted catalogue authoritative.
 4. Game Design refreshes its read model from that same canonical catalogue before exposing the event in authoring UI or publish validation.
 

@@ -257,8 +257,7 @@ Semantics:
 - If the target patch is not `READY`, the operation must fail deterministically with an application error (for example `errorCode=SCRIPT_PATCH_NOT_READY`) and must not mutate pin state.
 - The operation must also validate base-version cohesion: the target patch's `baseVersionId` must match the game instance's currently pinned `runtimeVersionId`. If they do not match, the operation must fail deterministically with `errorCode=SCRIPT_PATCH_BASE_VERSION_MISMATCH` and must not mutate pin state.
 - Once a syntactically valid request is accepted and its `controlPlaneRequestId` is bound to the normalized request digest, any deterministic validation, attestation, or preparation failure returns and stores one unsuccessful immutable Game Session history result with identical previous/resulting exact tuples and no epoch advance. An exact retry of that request returns the stored result without another history entry; a different normalized digest under the same request ID is an idempotency conflict.
-- On success, Game Session persists the new pin for `(tenantId, gameInstanceId)` and emits the advisory `ScriptPatchPinChanged` reread wake-up.
-- On success, Game Session atomically persists `(pinnedScriptPatchVersion, scriptPinEpoch)` and the corresponding append-only rollout-history record. The resulting epoch is new even when the target version equals the previous version.
+- On success, Game Session atomically persists the exact `(pinnedScriptPatchVersion, scriptPinEpoch)` tuple and its corresponding append-only rollout-history record for `(tenantId, gameInstanceId)`. Only after that authoritative commit may it publish the advisory `ScriptPatchPinChanged` reread wake-up. The resulting epoch is new even when the target version equals the previous version.
 - When the target equals the currently pinned patch, this general pin mutation is the intentional same-version epoch-only repin and is classified as `REPIN` in the resulting history/event.
 
 Outputs:
@@ -291,7 +290,7 @@ Semantics:
 - The accepted-request failure-history rule from `SetPinnedScriptPatchVersion` applies equally here: after the normalized digest is bound, deterministic validation or preparation failure stores one unsuccessful immutable history result with identical previous/resulting exact tuples and no epoch advance; exact same-ID retries return it and a different digest conflicts.
 - Target patch readiness requirements are identical to `SetPinnedScriptPatchVersion`: rollback targets must be `READY` for the tenant or the request fails with a deterministic application error (`SCRIPT_PATCH_NOT_READY`).
 - Base-version cohesion requirements are identical to `SetPinnedScriptPatchVersion`: rollback targets must have `baseVersionId` equal to the instance `runtimeVersionId` or the request fails with `SCRIPT_PATCH_BASE_VERSION_MISMATCH`.
-- On success, emits only the advisory `ScriptPatchPinChanged` reread wake-up with `changeType=ROLLBACK`; the reserved `ScriptPatchRollbackRequested` family is neither emitted nor consumed.
+- On success, Game Session first atomically persists the exact resulting pin tuple and corresponding append-only rollout-history record, then emits only the advisory `ScriptPatchPinChanged` reread wake-up with `changeType=ROLLBACK`; the reserved `ScriptPatchRollbackRequested` family is neither emitted nor consumed.
 
 Outputs: same as `SetPinnedScriptPatchVersion`.
 
@@ -834,6 +833,7 @@ Required response fields:
 - `admissionOutcome` (enum)
 - `admissionReason` (bounded code/string)
 - `retryAfterMs` (optional server hint; required for backpressure outcomes where retry is expected)
+- `resolvedHandlerCount` (non-negative count of the complete handler set resolved for the finalized ingress attempt; immutable with the ingress result and `0` when no handler set was resolved)
 
 Required enum values:
 
@@ -863,7 +863,7 @@ Contract rules:
   - `admitted=true` means the request passed ingress-time fences and was accepted for handler resolution.
   - Per-handler Trigger Identities and outcomes are recorded asynchronously in `script_event_audit` (one row per resolved handler).
   - If all handlers later fail individually, the ingress response still remains `admitted=true`; callers do not retry based on those handler-level outcomes.
-- Implementations may expose optional informational fields such as `resolvedHandlerCount`, but those fields must not replace per-handler audit records as the source of truth.
+- `resolvedHandlerCount` is a finalized ingress result, not an estimate or a summary of handler outcomes; it must not replace per-handler audit records as the source of truth. The current gRPC exception/unavailable fallback leaves the protobuf scalar at its default `0` because no finalized admission result exists; this fallback is implementation behavior, not target proof of a resolved handler count.
 
 ## Related Control Plane Contracts
 

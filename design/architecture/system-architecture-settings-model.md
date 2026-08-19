@@ -178,10 +178,12 @@ Every surfaced setting should carry at least:
 - default
 - valid range or enum
 - scope/owner
-- freshness class and one canonical maximum stale age for that key/domain
+- a recognized freshness class and one canonical, finite, non-negative maximum stale age for that key/domain; zero means that no stale last-known-good value may be used
 - whether hot-reloadable
 - whether advanced
 - example value
+
+Schema publication rejects a surfaced setting when its freshness class or maximum stale age is missing, unsupported, non-finite, or negative, or when its declared expiry behavior is incompatible with that class. Restrictive and authoritative settings fail closed or hold their authoritative fence once the canonical maximum is exceeded; only a setting explicitly classified as harmless presentation may retain bounded last-known-good behavior or use its documented safe fallback.
 
 The current Spring configuration metadata is the first live step toward that schema. Later generated markdown/schema output and admin/creator tooling should read from the same typed metadata source rather than inventing their own setting definitions.
 
