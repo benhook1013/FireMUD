@@ -8,6 +8,8 @@ For conflicts among secondary architecture documents over the exact identity fie
 
 These tables define the canonical target-state scripting contracts. Current implementation and proof remain partial; see the [Automation and Scheduler Runtime tracker](../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status). In particular, plugin lifecycle epoch/revision propagation and final-fence proof remain incomplete; this document does not claim those target fields are live. Any explicitly labeled current live fallback in this document is implementation evidence and does not narrow or replace the target tables.
 
+- The ADR 0114 isolated `DRY_RUN_RESULT` preview remains unimplemented and unproved; the current legacy materialized dry-run path records `DSL_EVAL` / `dry_run_completed` / `dry_run_no_handoff` instead.
+
 ## Document Precedence (Normative)
 
 For the table-owned surfaces above, resolve conflicts among current canonical architecture documents in this order:
