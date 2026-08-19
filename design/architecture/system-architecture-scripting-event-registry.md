@@ -99,7 +99,7 @@ Required semantics for those fields:
 Registry changes follow one canonical path:
 
 1. A producer-owning service adds or updates a versioned event-definition manifest in its primary contract surface.
-2. Automation & Scripting mechanically discovers the declared source manifests and validates that each is well formed, names exactly one owner and authoritative producer manifest, resolves its schema reference to content-addressed evidence or an immutable schema revision and digest, and declares one authoritative snapshot and binding-scope contract for the key. It rejects missing manifests, duplicate declarations even when byte-equivalent, unresolved or mutable-without-digest schema references, and any conflict in a required registry-entry field or source-level semantic for the same `(eventType,eventSchemaVersion)`; it does not merge declarations or choose a winner.
+2. Automation & Scripting mechanically discovers the declared source manifests and validates that each is well formed, names exactly one owner and authoritative producer manifest, resolves its schema reference (including a built-in Markdown anchor) to content-addressed evidence or an immutable schema revision and digest, and declares one authoritative snapshot and binding-scope contract for the key. It rejects missing manifests, duplicate declarations even when byte-equivalent, unresolved or mutable-without-digest schema references, and any conflict in a required registry-entry field or source-level semantic for the same `(eventType,eventSchemaVersion)`; it does not merge declarations or choose a winner.
 3. Automation deterministically materializes the complete validated source set, assigns the immutable catalogue revision and `(catalogueDigestProfileVersion, catalogueDigest)`, validates the digest under exactly that identified profile, and atomically accepts that complete catalogue for ingress and reads. Failed or partial materialization leaves the prior complete accepted catalogue authoritative.
 4. Game Design refreshes its read model from that same canonical catalogue before exposing the event in authoring UI or publish validation.
 
@@ -141,7 +141,7 @@ Game Design, Logging & Admin, and documentation generators should all consume th
 
 ## Built-In Payload References
 
-The built-in registry entries currently use the following canonical payload-schema references:
+The built-in registry entries currently use the following canonical payload-schema references. These Markdown anchors are source documentation references for the built-in payload contracts; they are not by themselves immutable schema evidence. During catalogue materialization, each built-in entry must resolve its referenced payload contract to the immutable schema revision/digest evidence required above and include that evidence in the catalogue digest. This is registry/materialization evidence, not a new wire-payload or event-identity field.
 
 ### `onLoad` payload `v1`
 
