@@ -16,7 +16,7 @@ Authoritative read surfaces worth wiring into creator/operator tooling:
 
 ## Implementation Status
 
-Current capability and proof gaps remain: Game Session's exact pin/epoch persistence and convergence, plus its append-only rollout-history append/readback, are partial and unproved; Game Design plugin publication currently uses the signed-only intake path and exposes one allowlisted `signerKeyId` rather than the target complete `verifiedSignatures[]` set. The ADR 0111 operator-permitted unsigned provenance path remains unimplemented. See the [Game Session runtime and tick coordination tracker](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#capability-status), [modding-framework.md](./modding-framework.md), and [ADR 0111](../../decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md).
+Current capability and proof gaps remain: Game Session's exact pin/epoch persistence and convergence, plus its append-only rollout-history append/readback, are partial and unproved; Game Design plugin publication currently uses the signed-only intake path and exposes one allowlisted `signerKeyId` rather than the target complete `verifiedSignatures[]` set. The ADR 0111 operator-permitted unsigned provenance path remains unimplemented. Draft commit coordination, owner-local compare-and-swap, and the synchronized read fence in [ADR 0129](../../decisions/adr-0129-durable-fenced-multi-owner-draft-commits.md) are also target-state and unproved. See the [Game Session runtime and tick coordination tracker](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#capability-status), [modding-framework.md](./modding-framework.md), [ADR 0111](../../decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md), and [ADR 0128](../../decisions/adr-0128-game-design-plugin-trust-provenance.md).
 
 ## Responsibilities
 
@@ -96,11 +96,11 @@ Game Design owns authored script-patch revisions, immutable publication metadata
 
 ### Canonical Authoring Boundary
 
-The initial supported authoring package for first-party game content is the Game Design Service's own revision and commit model, not a filesystem project format. Designers edit through the web UI and service-owned APIs; Game Design persists revisions, applies them to domain-owned Draft templates, and publishes immutable versions or script-only patches from that canonical history.
+First-party game authoring uses the Game Design Service's revision and version model, not a filesystem project format. Designers edit through the web UI and service-owned typed APIs; Game Design persists revisions, applies them to domain-owned Draft templates, and publishes immutable versions or script-only patches from that canonical history. AI-assisted and other external tools use explicitly public creator APIs or purpose-specific batch APIs and receive the same proposal, concurrency, owner-validation, and review semantics as ordinary creator tools; they do not write databases, object storage, or runtime state directly. See [ADR 0126](../../decisions/adr-0126-untrusted-models-and-scoped-authoring-tools.md) and [ADR 0129](../../decisions/adr-0129-durable-fenced-multi-owner-draft-commits.md).
 
 Implementations must not introduce ad hoc import/export, Git checkout, or local package semantics for first-party content. Any future external authoring package must be specified as a separate contract before it is exposed, including stable ID preservation, cross-service reference validation, asset inclusion, plugin inclusion, conflict handling, and mapping back into Game Design revisions and commits. Until that contract exists, "version control integration" means Game Design's database-backed branches, commits, provenance, and optional synchronization hooks described in [Version Control for Design Assets](version-control.md), not a second source of truth.
 
-Plugin bundles are the only supported file-based content package in the initial slice. They do not replace or extend the first-party revision package format; provenance and publication requirements are owned by [modding-framework.md](./modding-framework.md).
+Plugin bundles are the only supported file-based content package in the initial slice. They do not replace or extend the first-party revision package format; provenance and publication requirements are owned by [modding-framework.md](./modding-framework.md) and the service-local provenance record [ADR 0128](../../decisions/adr-0128-game-design-plugin-trust-provenance.md), under canonical [ADR 0111](../../decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md).
 
 ## Key Features
 
@@ -119,8 +119,8 @@ Plugin bundles are the only supported file-based content package in the initial 
   version metadata is recorded. Runtime services manage the active script
   registry and are notified when a patch version is published.
 - [Item & Equipment Balancing Tools](item-equipment-balancing.md)
-- Import/export of design assets is deferred until a canonical contract exists for ID remapping, cross-service reference validation, asset/plugin inclusion, and conflict handling.
-- Version control integration for design assets.
+- Database-backed revision, version, commit, and provenance history for design assets.
+- No whole-game import/export, round-trip filesystem project, or external Git-synchronization surface.
 - In-game modding and plugin framework for runtime customization.
 
 ### Data Model

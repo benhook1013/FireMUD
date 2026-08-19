@@ -15,12 +15,17 @@ The live Game Session pin/convergence proto/runtime carries `scriptPatchVersion`
 - `accountId` – identifies a platform account. Present on authentication/session records and account-owned domain relationships.
 - `tenantId` – identifies the game/tenant. Present on all persistent domain tables and all cross-service APIs.
 - `versionId` – identifies a design bundle/version for a tenant. Domain service template data is scoped by `(tenantId, versionId)`.
-- `gameInstanceId` – identifies a running game instance for a tenant. Domain service runtime/instance data is scoped by `(tenantId, gameInstanceId)` and references the instance’s pinned `runtime_version`/`versionId`.
+- `gameInstanceId` – identifies a running game instance for a tenant. Disposable runtime/instance data is scoped by `(tenantId, gameInstanceId)` and references the instance’s pinned `runtime_version`/`versionId`; durable playable state intended to survive replacement uses `playableStateNamespaceId` instead.
+- `playableStateNamespaceId` – identifies the durable player/entity state namespace that survives replacement. It is scoped by tenant and playable-realm policy, remains stable while a logical playable lifecycle continues, and is distinct from the replaceable `gameInstanceId`. A shared production realm uses one tenant namespace, an isolated realm retains its own stable namespace, and each new playtest lifecycle receives a new namespace.
+- `lifecycleEpoch` – the monotonic database-owned world-lifecycle generation used to fence activation, termination, and stale workflow activity. Temporal workflow identity or history does not replace this value.
 - `scriptPatchVersion` – identifies an immutable embedded-script patch independently of instance selection. It pairs with Game Session's per-instance `scriptPinEpoch` in the exact instance-bound tuple. Tenant-readiness `onLoad` may use a declared candidate patch in its pre-instance-pin identity.
 - `scriptPinEpoch` – identifies Game Session's per-instance pin-selection epoch. It pairs with `scriptPatchVersion` in the exact instance-bound tuple; tenant-readiness `onLoad` omits it because no instance pin exists.
 
 - `regionId` – identifies an operational tick region within `(tenantId, gameInstanceId)`. It is an opaque runtime-coordination identity, not a World Management row ID, design-time region template ID, room ID, or slug. The complete region scope is `{tenantId, gameInstanceId, regionId}`.
 - `characterId` – identifies a character owned within a tenant. Gameplay session binding and any instance-local playable state use it together with `{tenantId, gameInstanceId}` scope.
+- `draftRevision` – identifies one owner-local Draft revision used by compare-and-set authoring writes; a multi-owner commit carries the exact base revision/digest and affected owner epoch set rather than one global revision.
+- `draftCommitFence` – the synchronized read fence that becomes visible only after every required owner has recorded a durable outcome for a Draft commit. It is not a distributed transaction or a merge authority.
+- `equipmentLayoutDigest` – identifies the complete game-authored equipment vocabulary/body-layout schema used by publication and runtime validation. Missing, partial, or mismatched schema evidence fails closed.
 
 ## Identifier Format Conventions
 

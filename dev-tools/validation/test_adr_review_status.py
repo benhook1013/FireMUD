@@ -511,6 +511,7 @@ class AdrReviewStatusTests(unittest.TestCase):
         for status, disposition in (
             ("Accepted", "Accepted"),
             ("Accepted", "Revised"),
+            ("Accepted", "Deferred"),
             ("Superseded", "Superseded"),
             ("Withdrawn", "Withdrawn"),
         ):
@@ -986,7 +987,6 @@ class AdrReviewStatusTests(unittest.TestCase):
         invalid_pairs = (
             ("Accepted", "Superseded"),
             ("Accepted", "Withdrawn"),
-            ("Accepted", "Deferred"),
             ("Superseded", "Revised"),
             ("Withdrawn", "Revised"),
         )
@@ -1000,11 +1000,7 @@ class AdrReviewStatusTests(unittest.TestCase):
                 expect_failure(
                     self,
                     lambda root=root: self.validator.validate(root),
-                    (
-                        "checked deferred review row"
-                        if disposition == "Deferred"
-                        else "does not allow human review disposition"
-                    ),
+                    "does not allow human review disposition",
                 )
 
     def test_checked_review_requires_completed_metadata(self) -> None:
@@ -1112,18 +1108,50 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "does not allow human review disposition 'Revised'",
             )
 
-    def test_checked_deferred_row_with_exact_adr_provenance_is_rejected(self) -> None:
+    def test_checked_deferred_row_with_exact_adr_provenance_is_valid_for_accepted_adr(
+        self,
+    ) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            set_review_status(root, "Accepted", "Deferred")
+            self.validator.validate(root)
+
+    def test_checked_deferred_row_without_adr_provenance_remains_valid(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
             append_provenance_row(
                 root,
                 "- [x] `TEST-DEFERRED` — `deferred` on 2026-07-27; "
-                "[ADR 0013](../../architecture/decisions/adr-0013-pending.md)",
+                "[notes](https://example.com)",
+            )
+            self.validator.validate(root)
+
+    def test_checked_deferred_adr_provenance_requires_accepted_status(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            set_review_status(root, "Superseded", "Deferred")
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "does not allow human review disposition 'Deferred'",
+            )
+
+    def test_checked_deferred_adr_provenance_requires_matching_metadata(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            set_review_status(root, "Accepted", "Deferred")
+            path = root / "design/architecture/decisions/adr-0012-reviewed.md"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(
+                    "Human review disposition: Deferred",
+                    "Human review disposition: Revised",
+                ),
+                encoding="utf-8",
             )
             expect_failure(
                 self,
                 lambda: self.validator.validate(root),
-                "checked deferred review row",
+                "human review disposition must match",
             )
 
     def test_checked_non_deferred_row_requires_exact_adr_provenance(self) -> None:

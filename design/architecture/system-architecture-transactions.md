@@ -8,6 +8,8 @@ Script evaluation and pin transitions are not a new transaction substrate. The s
 
 The structured participant-guard request, shared `IdempotentEffectExecutor`, standardized tick-effect outcome metric, and replay-verification helper described below are target-state contracts. The current replay tables and helpers remain narrower and domain-local; complete propagation and validation of the root `EffectId`, typed operation, target aggregate, immutable request digest, complete participant set, and shared helper/metric behavior are not yet fully implemented or proven. The current scripting handoff also does not carry, persist, or enforce `scriptPinEpoch` end to end, so it cannot yet reject same-version work from an older epoch; this is an implementation gap rather than a weakened target invariant. The target contract remains authoritative: matching requests may replay safely, while an operation, target, or digest mismatch fails closed.
 
+Lifecycle and authoring workflows follow the same local-transaction boundary. World Management commits its lifecycle row/epoch with database compare-and-set; Temporal coordinates retries and waits but is not a transaction or authority. Replacement cutover commits the active-instance pointer only after owner-local classification/mapping evidence and then waits for registered cleanup acknowledgements. A multi-owner Draft commit carries an exact base revision/digest and owner epoch set, performs compare-and-set in each owner database, records durable per-owner outcomes, and publishes through a synchronized read fence; it never uses a global epoch, silent merge, or distributed transaction. These are control-plane workflows and do not add a global ACID path to ordinary gameplay.
+
 ---
 
 ## Terminology Clarification

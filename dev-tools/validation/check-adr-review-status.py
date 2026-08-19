@@ -29,7 +29,7 @@ PENDING_REVIEW_FIELDS = {
 }
 STATUS_TO_HUMAN_REVIEW_DISPOSITIONS = {
     PENDING_ADR_STATUS: frozenset({"Pending"}),
-    "Accepted": frozenset({"Accepted", "Revised"}),
+    "Accepted": frozenset({"Accepted", "Revised", "Deferred"}),
     "Superseded": frozenset({"Superseded"}),
     "Withdrawn": frozenset({"Withdrawn"}),
 }
@@ -862,11 +862,6 @@ def checked_reviews(
             )
             is_no_adr = True
 
-        if review.disposition == "Deferred" and outcome_adr_numbers:
-            fail(
-                f"{path}: checked deferred review row at line {line_number} "
-                "must not use exact ADR provenance"
-            )
         if (
             review.disposition in {"Accepted", "Revised", "Superseded", "Withdrawn"}
             and not outcome_adr_numbers

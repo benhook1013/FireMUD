@@ -36,6 +36,10 @@ Account Service is the sole writer of account authority-generation advances and 
 
 For account security events, Account alone advances the durable authority tuple, applicable cutoff, and `issuanceFence` and emits the corresponding committed outbox event in the same Account transaction; an asynchronous projection consumer later applies each canonical generation set-if-greater. Game Session consumes that event and projection idempotently, applies the separate derived issuer projection set-if-greater, and revokes only its owned gameplay bindings through the bounded issuer, account, tenant, membership, private-realm, and character-uniqueness indexes plus their ordered repair/CAS protocol; it must not scan Redis, advance Account authority, write canonical projections, or infer authorization from a missing or stale projection.
 
+## Replacement-State Continuity
+
+[ADR 0122](./decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md) adds a stable `playableStateNamespaceId` to the session's resolved gameplay context. The current session uniqueness key remains `{tenantId, gameInstanceId, characterId}`; target admission, takeover, and resume must additionally prove that this runtime is the active fenced instance for the resolved namespace and must not treat a stale instance binding as durable character identity. [ADR 0123](./decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md) keeps lifecycle row/epoch and cleanup completion in the owning database; a Temporal workflow or Redis session record cannot independently authorize replacement or termination. Existing implementation and proof gaps remain.
+
 ## Multi-Client Behavior and Session Takeover
 
 Each gameplay identity can only be controlled by one session at a time, keyed by `{tenantId, gameInstanceId, characterId}`.

@@ -70,6 +70,8 @@ See [Identifier Glossary](../../system-architecture-identifier-glossary.md) for 
 - [`runtime-and-data.md#character-location-ownership`](./runtime-and-data.md#character-location-ownership)
 - [`procedural-generation-control.md#procedural-generation-control-apis`](./procedural-generation-control.md#procedural-generation-control-apis)
 - [`world-creation-workflow.md`](./world-creation-workflow.md)
+- [ADR 0122 – Stable playable-state namespaces](../../decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md)
+- [ADR 0123 – Database-authoritative world lifecycle](../../decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md)
 - [`configuration.md#environment-variables`](./configuration.md#environment-variables)
 
 ## Dependencies

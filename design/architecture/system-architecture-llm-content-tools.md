@@ -1,68 +1,76 @@
 # LLM-Assisted Content Authoring
 
-This document describes a later-phase capability for using large language models (LLMs) as assistants for creating and refining game content such as room descriptions, NPC backstories, item flavor text, and quest dialogue. The focus is on design-time workflows that operate through the Game Design Service and related tooling, not on in-game chatbot behavior.
+This document defines the target boundary for AI-assisted game authoring. FireMUD supports ordinary external AI/tool clients through explicitly public creator APIs and may later provide a first-party conversational authoring agent. In both cases the model is an untrusted authoring participant, not a source of authority.
 
-> 🔗 See the [Game Design Service](./microservices/game-design-service/README.md) for the core content authoring APIs.
+See [ADR 0126](./decisions/adr-0126-untrusted-models-and-scoped-authoring-tools.md) for the accepted decision and the [Game Design Service](./microservices/game-design-service/README.md) for the canonical authoring boundary.
 
-## Scope
+## Capability Forms
 
-- Help creators draft and iterate on narrative content (rooms, NPCs, items, quests, and lore).
-- Suggest alternative wordings, difficulty tuning notes, and accessibility improvements for existing text.
-- Operate through the Game Design Service admin UI, which orchestrates all LLM-backed generation; LLMs never modify design assets directly or offline.
-- Keep all LLM-assisted changes under creator control; humans review and commit content before it is published.
+### External AI and Tool Clients
+
+An external AI or tool may perform any design-time operation that an explicitly public creator API authorizes for its authenticated caller. It receives no special route, trust, or bypass. The API and its owning service enforce the same tenant scope, validation, optimistic concurrency, idempotency, audit, rate limits, and errors used for other public clients.
+
+Frontend usage alone does not make an endpoint a stable public API. Only a creator API deliberately classified, documented, versioned, and exposed for external use carries that compatibility commitment. FireMUD may publish a skill or instruction package to help tools use those APIs, but instructions do not grant authority or weaken runtime enforcement.
+
+The external creator surface does not absorb unrelated control-plane authority. Account security, identity, real-money, billing, deletion, operator, moderation, remediation, publication, activation, and other sensitive actions keep their existing authorization, recent-authentication, confirmation, audit, and execution contracts.
+
+### First-Party Conversational Agent
+
+A future first-party agent may help a creator inspect and iteratively modify rooms, NPCs, items, quests, scripts, rules, and related design data. An untrusted model operates behind a trusted scoped tool broker:
+
+- the broker preserves the initiating human, tenant, game, version, Draft, and proposal scope;
+- the model sees only allowlisted authoring tools and authorized, minimized results;
+- credentials and service secrets remain in the broker and are never model context;
+- authoritative effects flow through typed owning-service APIs with owner-side authorization and validation; and
+- neither the model nor the broker writes authoritative databases, object storage, or runtime state directly.
+
+Internal tools may combine several public-style actions or expose a coarser read optimized for agent use. They may be more convenient, but not more authoritative: they cannot expand the human's readable scope, bypass domain invariants, or turn the broker's workload identity into user authority.
+
+## Proposal, Review, and Publication
+
+The first-party agent works inside an isolated proposal. It may iterate through reversible reads and proposed Draft writes without asking for approval after every tool call. Those changes remain reviewable and cannot silently alter a shared Draft or Published content.
+
+The creator reviews one structured diff and explicitly accepts the proposal into the Draft. Acceptance binds the exact proposal identity to ADR 0129's immutable base commit, canonical digest of the complete diff, and complete affected owner/aggregate/scope epoch set. A stale base is rejected for updated review rather than silently merged. Publication and runtime activation remain later, separate, ordinary human-authorized actions.
+
+Each mutation or compound apply carries a stable request identity bound to that same ADR 0129 base, complete-diff digest, and complete affected owner/aggregate/scope epoch set. The concrete tool and API shape remains deferred until it preserves those bindings. Compound tools declare whether application is atomic. Prefer a staged proposal with one fenced finalize/apply boundary; a multi-owner operation that cannot be all-or-nothing must expose durable per-step outcomes and explicit retry, repair, or abort behavior rather than reporting ambiguous partial success.
+
+## Security and Data Boundary
+
+Tenant-authored content, retrieved context, tool output, and model output are untrusted data and may contain prompt-injection instructions. Enforcement remains outside the model and system prompt:
+
+- tools are allowlisted, typed, scope-complete, and bounded;
+- tenant isolation and owning-service authorization are rechecked on every authoritative operation;
+- player-private, account, billing, security, secret, and unrelated operator data are excluded from authoring context;
+- arbitrary database, object-store, filesystem, shell, internal-API, and network access is unavailable; and
+- execution has bounded time, tokens, output, concurrency, temporary storage, and cost.
+
+Provider retention, training use, data residency, tenant-content policy, and any future retrieval source must be approved before that provider or source is enabled. These choices do not move enforcement into provider prompts or policies.
+
+## Provenance
+
+Revision and audit records bind the initiating human, external client or first-party agent session, tenant/Draft scope, proposal and request identities, tool calls and outcomes, resulting revisions, and accepting human. First-party runs also retain the applicable model, harness, tool-set, and prompt-template versions or digests needed to explain the run without promising deterministic regeneration.
+
+The accepted Draft content and normal revision history are authoritative. Raw sensitive prompts are not retained merely to make a nondeterministic model run appear reproducible.
+
+## Deferred Implementation Choices
+
+The exact provider, model, harness, system prompt, tool schemas and granularity, broker topology, proposal-store representation, delegated-credential shape, quota values, review UI, and retrieval approach remain deferred. Public creator APIs plus a FireMUD skill are a valid first implementation; internal compound tools should be introduced only where their measured coherence, latency, or atomicity benefit justifies the additional contract.
+
+No LLM integration, tool broker, agent proposal store, or focused LLM proof is implemented today. LLM availability is never required for ordinary authoring, validation, publication, activation, or gameplay.
 
 ## Non-Goals
 
-- No in-game NPC chatbots or live conversational agents. Runtime behavior remains scripted via the Automation & Scripting Service and related systems.
-- No direct write access from LLMs to production databases. All changes flow through versioned design workflows.
-
-## Integration Model
-
-LLM-assisted authoring is implemented as a set of small, composable capabilities exposed only through the Game Design Service and its admin UI. The LLM’s role is to generate text or structured suggestions on top of existing world data—often including procedurally generated layouts—while FireMUD-owned services remain responsible for reading data, making edits, and talking to backend systems. The LLM never calls design APIs directly.
-
-- The Game Design Service exposes “generate” endpoints (for example, generate room description, NPC backstory, or quest bundle) that:
-  - accept structured instructions and context from the admin UI
-  - call an LLM (directly or via a dedicated helper service)
-  - turn the result into one or more design revisions or draft artifacts
-
-From the platform’s perspective, these flows behave like any other design client: they create revisions, group them into versions, and rely on the existing publish workflow to promote changes to runtime.
-
-## Phased Implementation
-
-To keep complexity manageable, LLM-assisted workflows evolve in stages:
-
-1. **Direct draft generation (experimental tooling)** – For early experiments, external scripts may export a slice of design data, build a prompt, call a locally hosted LLM, and write the result into a draft file or revision that a human reviews and imports. The LLM is not aware of FireMUD’s APIs; it only sees text and draft artifacts.
-2. **Service-backed generation** – The Game Design Service adds dedicated “generate” endpoints that:
-   - read world summaries, rooms, NPCs, and items in a structured format
-   - call an LLM (directly or via a helper service) using that context
-   - accept a structured “quest or content bundle” (for example, `quest_bundle.json`) and turn it into one or more design revisions
-   The admin UI becomes a thin client over these endpoints.
-3. **Offline agent sandbox** – Optionally, run an LLM-driven agent in a sandbox process that can call a handful of read-only helper tools plus one or two “write draft bundle” endpoints on the Game Design Service. The agent may chain helper calls to propose new quests or content using real world data, but the only outputs that matter are structured draft bundles that go through normal review and publish workflows.
-
-Each phase builds on the previous one and can be useful on its own; nothing requires deploying an agent before basic draft-generation tools exist.
-
-## Agent Sandbox Model
-
-For more powerful flows such as “generate a new quest based on existing characters and locations,” an offline agent can be introduced with strict boundaries:
-
-- The agent runs in its own sandboxed environment with access only to:
-  - read-only helper tools such as `list_world_overview`, `get_room_detail`, or `get_npc_profile` exposed by the Game Design Service or a companion helper.
-  - one or more endpoints that accept a well-typed draft artifact (for example, `quest_bundle.json`) and create corresponding design revisions.
-- The agent may create temporary scratch files while reasoning, but the only contract with the rest of the system is a final structured artifact that passes validation.
-- Importing that artifact into FireMUD always happens through the Game Design Service, so all schema and business rules are enforced outside the LLM.
-
-This model allows the agent to query existing world data and propose coherent content while keeping all authoritative writes inside the Game Design Service and its design pipeline.
-
-## Safety and Review
-
-- All LLM-assisted changes must be traceable back to a human reviewer via the Game Design Service’s revision history.
-- Tools should prefer idempotent operations that can be rerun safely, such as “generate a new draft into a separate revision” rather than overwriting live content in place.
-- Validation (for example, schema checks, linting, and content guidelines) remains the responsibility of the design pipeline; LLM suggestions are treated as drafts, not authoritative data.
+- No direct model access to authoritative storage or unrestricted internal APIs.
+- No automatic publication or activation from accepting an agent proposal.
+- No inheritance of account, financial, operator, or other sensitive authority from authoring access.
+- No in-game NPC chatbot or live conversational gameplay agent under this decision.
+- No whole-game filesystem, round-trip JSON, or external Git authoring format; see [ADR 0125](./decisions/adr-0125-defer-whole-game-portability-and-external-authoring-formats.md).
 
 ## Related Documentation
 
+- [ADR 0126](./decisions/adr-0126-untrusted-models-and-scoped-authoring-tools.md)
 - [Game Design Service](./microservices/game-design-service/README.md)
-- [Automation & Scripting Service](./microservices/automation-scripting-service/README.md)
+- [Authentication and Authorization](./system-architecture-authentication.md)
+- [Authorization Route Matrix](./system-architecture-authz-route-matrix.md)
 - [Procedural Generation](./system-architecture-procedural-generation.md)
-- [Scripting & Automation Framework](./system-architecture-scripting.md)
-- [AGENTS.md](../../AGENTS.md)
+- [Scripting and Automation Framework](./system-architecture-scripting.md)

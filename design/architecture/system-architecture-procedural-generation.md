@@ -22,6 +22,8 @@ Generation flows share one pure generator engine owned by World Management but u
 - **Design-time/template generation** – invoked only from Game Design workflows to produce versioned world scaffolding that is saved into template tables keyed by `(tenantId, versionId)` and later published like any other design asset.
 - **Runtime/instance generation** – invoked from the Temporal world-lifecycle workflow or tick-driven commands to create per-instance layouts keyed by `(tenantId, gameInstanceId)`; these flows never modify template tables for Published versions.
 
+Runtime generation is a concrete instance target, not a durable playable-state identity. Any generated family that survives replacement must be classified by its owner as S1/S2/S3 and use the stable `playableStateNamespaceId` plus active-instance authorization under [ADR 0122](./decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md); declared transient topology may remain S3 and instance-scoped. A generation request or echoed mapping identifier does not authorize a namespace transition or prove mapping application.
+
 The authenticated endpoint and its typed target union determine the namespace and persistence semantics:
 
 - the design ingress accepts a Draft target keyed by `(tenantId, versionId, DraftScopeTarget)` and only Game Design may orchestrate it;

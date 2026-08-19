@@ -45,6 +45,8 @@ This document outlines the **core functional and non-functional requirements** f
 - Supports **game balancing, including experience curves, combat formulas, and economy adjustments**.
 - Enables **scripted event design for quests, encounters, and world events**.
 - **Procedural generation** supports **algorithm-driven world creation** (e.g., procedural room layouts) while allowing **manual overrides**.
+- Starter profiles create editable content in the creator's Draft. Later profile changes do not silently rewrite that Draft, and a runtime realm never uses a profile as an implicit fallback. See [ADR 0124](../architecture/decisions/adr-0124-materialized-starter-profiles-with-conservative-draft-upgrades.md).
+- Creators define each game's equipment vocabulary and body layouts. Publication fails closed when the published equipment description is incomplete, and players receive an explicit unavailable/invalid outcome rather than a platform-default slot; a live cutover must account for any required equipment remapping. See [ADR 0127](../architecture/decisions/adr-0127-game-authored-equipment-layouts-with-fail-closed-publication.md).
 
 ### 2.3 User & Account Management
 
@@ -65,6 +67,7 @@ See [Account Service](../architecture/microservices/account-service/README.md) f
 - Support for **multi-room game worlds** with region-based navigation.
 - **Instance-based game spaces** allow separate world states (e.g., public production realms, creator-managed playtest forks, private dungeons, event-based scenarios, or personalized player housing).
 - Game creators can configure **instance rules, expiration, and persistence settings**.
+- A replacement realm is not exposed to players until it is ready. If its state cannot be safely carried forward or cleaned up, the creator sees a blocked/failed cutover and the currently usable realm remains the player-facing target.
 - **World Persistence & Scheduled Events**:
   - The platform must support **persistent world states**, ensuring that world changes **persist beyond player sessions**.
   - **Scheduled events** (e.g., daily resets, seasonal world changes, NPC schedules) should be configurable.
@@ -100,6 +103,8 @@ See [Social & Groups Service](../architecture/microservices/social-groups-servic
   - AI behaviors should be flexible enough to allow **autonomous world simulation**, making the game feel persistent and alive.
   - Creators can author validated automation through **textual and visual tools** appropriate to their experience level.
   - Untrusted automation must not compromise platform security, stability, tenant isolation, or gameplay fairness; execution resources remain bounded. See [Scripting & Automation](../architecture/system-architecture-scripting.md).
+- Optional model-assisted authoring may propose Draft changes through the same scoped creator tools used by a human. Suggestions remain reviewable and require creator acceptance; a model cannot publish content or mutate a live game directly. See [ADR 0126](../architecture/decisions/adr-0126-untrusted-models-and-scoped-authoring-tools.md).
+- Whole-game import/export, filesystem or Git interchange, and portable snapshots are outside the current product boundary; creators use the supported typed Game Design APIs instead. See [ADR 0125](../architecture/decisions/adr-0125-defer-whole-game-portability-and-external-authoring-formats.md).
 - **Item & equipment balancing tools** to allow game creators to tweak in-game balance.
 
 See [Game Design Service](../architecture/microservices/game-design-service/README.md) for authoring tools.
@@ -125,6 +130,7 @@ See [Logging & Admin Service](../architecture/microservices/logging-admin-servic
 
 - Creators can publish **immutable, identifiable game versions** and select a published version when launching or updating a realm.
 - A running realm uses one **internally consistent published design** rather than mixing independently changing authoring state.
+- Concurrent Draft edits surface a base/version conflict for the creator to resolve; the product does not silently merge competing changes or claim a successful commit when one owner has not accepted it. See [ADR 0129](../architecture/decisions/adr-0129-durable-fenced-multi-owner-draft-commits.md).
 - Authorized administrators can activate versions and runtime flags through controlled launch, cutover, and rollback experiences. See [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md).
 - Published versions include **patch notes** so creators, administrators, and players can understand relevant changes over time.
 See [Game Design Service](../architecture/microservices/game-design-service/README.md) for publishing workflows.

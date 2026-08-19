@@ -16,6 +16,13 @@ Target rollback requires the scoped Automation admission barrier to pause new sc
 
 Distinct-instance remote follow-up has bounded durable coordinator/follow-up persistence and handoff paths live. The remaining target implementation/proof gap is source/target exact tuple binding: source revalidation, target admission under a frozen target tuple, complete source/target fencing and retry/replay proof, and plugin `pluginActivationEpoch`/owner `lifecycleRevision` propagation where applicable. Game Session's local plugin projection, lexicographic lifecycle-fence CAS, durable lifecycle install acknowledgement, and exact final revision fence are also not implemented or proved. Game Session owns the remote coordinator/follow-up records and its local plugin projection; Automation owns authoritative plugin activation/lifecycle state and the owner `pluginActivationEpoch`/`lifecycleRevision` fence evidence. The tuple, fence, durable install acknowledgement, and exact final revision requirements remain cross-service target obligations; see the [canonical scripting contract](../../architecture/system-architecture-scripting-contracts.md#2-script-work-item-vs-tick-command-boundary), [ADR 0119](../../architecture/decisions/adr-0119-epoch-fenced-per-instance-plugin-activation.md), and [normative remote-follow-up tuple-binding contract](../../architecture/system-architecture-scripting-normative-contract-tables.md#remote-follow-up-tuple-binding-normative) for target semantics.
 
+## Packet 4 Status and Proof Gaps
+
+- `GR-1.1` / `GR-1.4`: [ADR 0122](../../architecture/decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md) adds the runtime local consequence that admission and reconnects must use the active playable-state namespace/instance fence. Existing pointer, handoff, drain, and route-swap gaps remain; current Game Session evidence does not prove replacement-state migration or cleanup.
+- `AR-3.1`: [ADR 0123](../../architecture/decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md) keeps the durable lifecycle row/epoch authoritative while Temporal coordinates. Current workflow/lifecycle evidence remains partial and does not prove owner acknowledgement aggregation or `TERMINATED` cleanup completion.
+
+These links add decision provenance only; they do not upgrade any Game Session implementation or verification state.
+
 ## Capability Status
 
 | Capability | Implementation | Verification | Design | Implementation anchors | Proof anchors | Secondary handoffs | Gap or decision |

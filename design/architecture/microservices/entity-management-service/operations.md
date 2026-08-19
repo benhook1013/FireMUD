@@ -6,6 +6,8 @@ This document collects Entity Management’s readiness model, tick-lock/tick-ide
 
 The complete participant-guard contract described here—root `EffectId`, typed operation and target, immutable `requestDigest`, and complete replay verification—is target-state. The current `EntityMutationEffectReplayService` and schema provide narrower effect/operation replay and do not yet enforce or prove the target mutation-boundary contract. [Transaction Strategies](../../system-architecture-transactions.md) is the canonical owner of participant-guard and replay-verification semantics.
 
+Replacement operations use the stable `playableStateNamespaceId` for durable S1/S2 state and the active `gameInstanceId` as a runtime fence; explicitly disposable S3 families may remain instance-keyed. Entity must report owner-local classification, mapping validation/application, and cleanup acknowledgement to World Management. Unknown or unregistered families block cutover/termination, and an echoed `remapSetId` is not proof of mapping application. [ADR 0122](../../decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md) and [ADR 0123](../../decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md) own the cross-service decisions; this file records the Entity operational consequence.
+
 At the live enqueue boundary, the absence of `commandOrdinal` and the complete target child identity means current live processing accepts at most one emitted command per work item. Multi-command work is rejected atomically before admission. `automationDispatchId` alone is not a dedupe key; use the complete Command-Handoff Identity for the target contract.
 
 ## Operational Notes
@@ -33,9 +35,9 @@ Entity Management follows the per-command execution phases in the [Tick System d
 
 Entity Management implements tick idempotency using the per-aggregate last-tick state pattern described in the [Tick System and Runtime Design](../../system-architecture-ticks.md#domain-idempotency-rules-region-epoch--tickid-in-postgresql) document:
 
-- A shadow table (for example `entity_tick_state`) uses `(tenantId, gameInstanceId, playableStateScope, regionId, targetAggregateType, entityId)` as its complete lookup key and tracks `(last_region_epoch, last_tick_id)` for that key, so shared and isolated gameplay-state namespaces and aggregate types cannot reuse one watermark. For this table, `entityId` is the `targetAggregateId`; entity handlers supply the canonical entity aggregate type.
+- A shadow table (for example `entity_tick_state`) uses `(tenantId, playableStateNamespaceId, gameInstanceId, playableStateScope, regionId, targetAggregateType, entityId)` as its complete lookup key and tracks `(last_region_epoch, last_tick_id)` for that key, so shared and isolated gameplay-state namespaces, active-runtime fences, and aggregate types cannot reuse one watermark. For this table, `entityId` is the `targetAggregateId`; entity handlers supply the canonical entity aggregate type.
 - Tick-driven handlers that mutate an entity:
-  - resolve and read the `entity_tick_state` row using the complete `(tenantId, gameInstanceId, playableStateScope, regionId, targetAggregateType, entityId)` key; an `entityId`-only lookup is invalid;
+  - resolve and read the `entity_tick_state` row using the complete `(tenantId, playableStateNamespaceId, gameInstanceId, playableStateScope, regionId, targetAggregateType, entityId)` key; an `entityId`-only or namespace-free lookup is invalid;
   - compare `(last_region_epoch, last_tick_id)` from that exact row with `(currentRegionEpoch, currentTickId)` and treat `>=` as a replay/out-of-order no-op (or validation-only check); and
   - when the comparison is `<`, apply the change and update `(last_region_epoch, last_tick_id) = (currentRegionEpoch, currentTickId)` on that same composite-key row in the same transaction as the entity update.
 

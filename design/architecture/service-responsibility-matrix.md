@@ -1,6 +1,6 @@
 # Microservices Responsibility Matrix
 
-Checkmarks in this table indicate **participation** in a workflow. Rows prefixed with `Authoritative owner:` identify the single service that owns invariant enforcement or policy-of-record for that function.
+Checkmarks in this table indicate **participation** in a workflow. Rows prefixed with `Authoritative owner:` identify the sole invariant-enforcement or policy-of-record authority for that function. Cross-cutting contracts such as Multi-Tenancy are named explicitly in the function label; service checkmarks on those rows show runtime serving or participation and do not transfer the cross-cutting authority.
 
 Platform Operations is a cross-cutting operational authority rather than a microservice column in this matrix: it owns object-storage, CDN, registry, and promotion-evidence infrastructure and delivery. Game Design remains the authority for publication coordination, release descriptors, asset lifecycle, CAS state, and purge eligibility; domain services retain participant data and digest authority.
 
@@ -22,6 +22,11 @@ The matrix below is the target participation and ownership contract. `Authoritat
 | Game configuration authoring | ✔ | | | | | | | | | | |
 | Custom in-game scripting authoring | ✔ | | | | | | | | | | |
 | Game version publishing | ✔ | | | | | | | | | | |
+| Starter-profile materialization and conservative Draft upgrade lineage | ✔ | | | | | | | | | | |
+| Scoped model-assisted authoring proposal and human publication gate | ✔ | | | | | ✔ | | | | | |
+| Authoritative owner: game-authored equipment vocabulary and publication validation | ✔ | | | | | | | | | | |
+| Service-local plugin provenance under ADR 0111 (no competing trust authority) | ✔ | | | | | ✔ | | | | | |
+| Authoritative owner: durable multi-owner Draft commit fence and commit outcome projection | ✔ | | | | | | | | | | |
 | Authoritative owner: exact script pin and append-only rollout history for each `(tenantId, gameInstanceId)` (`scriptPatchVersion`, `scriptPinEpoch`) — Game Session only | | | | ✔ | | | | | | | |
 | Tenant-scoped patch readiness and instance-scoped observed pin/convergence projections plus projection freshness — Automation & Scripting-owned; non-authoritative and distinct from Game Session's authoritative current-pin/history read. | | | | | | | ✔ | | | | |
 | Game Session-owned non-authoritative `GetGameSessionPinConvergence` owner-side observation/acknowledgment — distinct from the authoritative current-pin/history row above and never a replacement for that authority. | | | | ✔ | | | | | | | |
@@ -65,6 +70,13 @@ The matrix below is the target participation and ownership contract. `Authoritat
 | Gameplay WebSocket route definition and routing (`/ws/game/**` canonical route) | | | | | | | | | | | ✔ |
 | Game version activation at runtime | | | | ✔ | | | | | | | |
 | Replacement-instance compatibility preflight (`ValidateInstanceCutoverCompatibility`) | ✔ | ✔ | | ✔ | ✔ | | ✔ | | ✔ | | |
+| Authoritative owner: Multi-Tenancy realm catalog and stable playable-state namespace contract (Game Session serves the resolved runtime contract) | | | | ✔ | | | | | | | |
+| Authoritative owner: Game Session runtime realm-catalog and admission-pointer resolution, persistence, and CAS orchestration | | | | ✔ | | | | | | | |
+| Registered owner participation: replacement state-family S1/S2/S3 classification, mapping application, and cleanup acknowledgement (each domain service only for its registered families) | | ✔ | | ✔ | ✔ | | ✔ | | | | |
+| Diagnostic reader: replacement state-family and cleanup progress (read-only; no lifecycle or cleanup authority) | | | | | | | | | ✔ | | |
+| Authoritative owner: World Management database lifecycle row, monotonic lifecycle epoch, and lifecycle Temporal coordination | | ✔ | | | | | | | | | |
+| Registered owner participation: lifecycle cleanup acknowledgement (each owner performs only its registered local cleanup) | | ✔ | | ✔ | ✔ | | ✔ | | | | |
+| Diagnostic reader: lifecycle row/epoch, workflow, and per-owner cleanup progress (read-only; no authority) | | | | | | | | | ✔ | | |
 | Authoritative owner: `versionStateEpoch` CAS enforcement | ✔ | | | | | | | | | | |
 | Version-state CAS API invocation for activation/rollback (`versionStateEpoch`) | ✔ | | | ✔ | | | | | ✔ | | |
 | Authoritative owner: admission-pointer reads, prepared-upgrade proof reads, gated version-upgrade preparation mutation (action-family schema, shared cross-language `mutationDigest/v1` golden vectors, and Account authorization-reference issuance/redemption required), implemented-but-externally-gated open/close/retarget `pointerVersion` CAS, and implemented-but-externally-gated cutover | | | | ✔ | | | | | | | |
@@ -100,7 +112,8 @@ The matrix below is the target participation and ownership contract. `Authoritat
 | Authoritative owner: subscription entitlements, plan-driven quota values, and effective quota override overlay (`GetTenantEntitlementsForRuntime(tenantId, requestId)`) | | | ✔ | | | | | | | | |
 | Operator quota override ingress, UX, and audit (hypothetical target-only/non-routable; Logging & Admin may forward to the Account-owned entitlement overlay only after the owner contract, action schema, shared digest vectors, and Account authorization flow exist) | | | ✔ | | | | | | ✔ | | |
 | Movement/location write contract orchestration (effect identity, order, and replay safety) | | ✔ | | ✔ | ✔ | ✔ | | | | | |
-| Instance termination orchestration (`PREPARING/ACTIVE/TERMINATING/TERMINATED`) and cross-service cleanup | | ✔ | | ✔ | ✔ | | | | ✔ | | |
+| Authoritative owner: World Management instance lifecycle transitions and termination orchestration (`PREPARING/ACTIVE/FAILED_PRE_ACTIVATION/TERMINATING/TERMINATED`) | | ✔ | | | | | | | | | |
+| Game Session admission drain and runtime-pointer handoff for instance termination (participation only; World Management owns lifecycle transitions) | | | | ✔ | | | | | | | |
 | Scoped per-instance tick pause/resume (implementation-participating but externally gated through Logging & Admin) | | | ✔ | ✔ | | | | | ✔ | | ✔ |
 | Guarded tick remediation (target-only/non-routable enumeration, regional mutation, and reset/remediate orchestration until owner contracts, action schemas, shared digest vectors, and Account authorization flow exist) | | | ✔ | ✔ | | | | | ✔ | | |
 | Game asset publication, release descriptors, and lifecycle/CAS authority | ✔ | | | | | | | | | | |

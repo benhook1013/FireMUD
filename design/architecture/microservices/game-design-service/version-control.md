@@ -48,6 +48,24 @@ revisions with the versioned templates stored in domain services.
 
 ### Design-Time Synchronization
 
+The exact-base, digest-bound, multi-owner commit contract is owned by [ADR 0129](../../decisions/adr-0129-durable-fenced-multi-owner-draft-commits.md); this section records the Game Design local history, coordination, and visibility consequences.
+
+Game Design owns the durable, creator-visible coordination record for every shared-Draft commit and isolated proposal. Each record binds the exact base commit, stable request or proposal identity, canonical digest of the complete input, canonical revision order, every affected owner/aggregate/scope with its expected epoch, and durable per-owner application status.
+
+- Isolated AI-assisted or external proposals use the same exact-base, complete-diff, affected-epoch, and digest contract. Proposal acceptance creates or selects one exact commit application; it does not grant a separate write or merge path.
+- Reusing one request, proposal, or commit identity with the same canonical digest returns the recorded result. Reusing it with changed input, base, affected set, or digest is rejected.
+- Each owner applies its portion through one storage-level atomic compare-and-swap transaction. That transaction checks every required aggregate and scope epoch, applies the local mutation, advances those epochs, and records the exact commit/digest result. A service-layer read followed by an unconditional update is not sufficient.
+- The typed mutation determines its complete affected scope. An owner rejects an omitted required containing scope rather than allowing the caller to evade a scope conflict.
+- Aggregate and scope epochs remain narrow conflict boundaries. The exact proposal base remains immutable provenance, while a newer synchronized commit that changed only disjoint scopes does not invalidate unchanged expected epochs.
+- Cross-owner application is a durable coordinated workflow, not one distributed transaction. Game Design retries with the same identities and retains per-owner status across restarts.
+- Owner-local application is not accepted shared Draft truth. Normal creator reads and subsequent edits bind to the last fully synchronized commit fence. Each owner must preserve the ability to serve that fence while later partial work exists.
+- Game Design advances the synchronized fence only after every required owner durably reports the exact commit and digest. Partial application remains diagnostic workflow state and cannot satisfy `IN_SYNC` or become a publish target.
+- Conflict assistance may construct a new proposed diff, but it must produce a new digest and exact base/epoch binding for creator review. Reconciliation never silently merges a stale proposal.
+
+The Game Design Service tracks a derived `designSyncStatus` for each `(tenantId, versionId)`. It is `IN_SYNC` only when the durable commit record, every required owner result, and the synchronized commit fence agree on the exact commit and digest. The `PublishVersion` workflow must verify this state before starting durable publication. The coordinator may use the canonical durable workflow substrate and transactional outbox delivery where appropriate, but it must not claim cross-database atomicity or expose partial application as accepted Draft state.
+
+### Draft Digest and Reconciliation Details
+
 Game Design is the canonical owner of publication coordination, release descriptors, and the final release attestation. Domain services remain the canonical owners of their versioned participant data and participant digests. This owner split implements [ADR 0093](../../decisions/adr-0093-game-design-coordinated-digest-attested-content-publication.md); service-local documents link here for their participant and persistence consequences instead of copying the publication contract.
 
 Because design changes often span multiple domain services (for example World
@@ -56,7 +74,7 @@ the source of truth for which revisions belong to a version, and the domain
 services as the source of truth for the current Draft template graphs:
 
 - Applying a commit is **eventually consistent** across services:
-  - Revisions are written to the Game Design Service first.
+  - The durable commit/proposal record and its revisions are written to the Game Design Service first.
   - Design-time workers or APIs apply those revisions to the owning domain
     services’ Draft templates via idempotent design APIs.
 - Idempotency and replay safety are mandatory:

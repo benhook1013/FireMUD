@@ -6,10 +6,10 @@
 
 ## Template and Runtime Ownership
 
-World Management owns both version-scoped template topology and runtime world-instance state, but the two surfaces are strictly separated:
+World Management owns both version-scoped template topology and runtime world-instance state, but the two surfaces are strictly separated. Stable playable identity and replacement classification are governed by [ADR 0122](../../decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md); this document records only World Management's storage and owner-local consequences:
 
 - Template tables are keyed by `(tenantId, versionId)` and updated only through design-time workflows coordinated by Game Design.
-- Runtime instance tables are keyed by `(tenantId, gameInstanceId)` and created or mutated only by the world-lifecycle workflow and tick-driven gameplay flows.
+- Runtime topology and explicitly disposable instance state are keyed by `(tenantId, gameInstanceId)` and created or mutated only by the world-lifecycle workflow and tick-driven gameplay flows. Durable playable state, if introduced, is keyed by `(tenantId, playableStateNamespaceId)` and must retain the active-instance context for authorization.
 - Runtime logic must never modify template rows for published versions.
 
 World Management instances are intended to be replaceable workers over authoritative runtime storage. Runtime room/location/ambient state that matters after process loss belongs in the service-owned database rows and documented caches, not as the sole authoritative copy in one JVM. Another World Management instance of the same type should therefore be able to continue serving and mutating runtime world state after restart without that restart itself becoming the player-visible event.
@@ -86,8 +86,8 @@ When changing Redis usage or adding prefixes here, follow the [Redis Design Chec
 
 - `region_instance`, `zone_instance`, `room_instance`, and `room_instance_exit` materialize topology for a running game instance based on the chosen version and any runtime procedural generation.
 - `instance` tracks temporary copies of zones for instanced gameplay, with `expires_at` defining when instances enter `InstanceTermination`.
-- `world_instance_status`, or equivalent lifecycle state, tracks monotonic lifecycle transitions: `PREPARING -> (ACTIVE | FAILED_PRE_ACTIVATION)` and `ACTIVE -> TERMINATING -> TERMINATED`.
-- `FAILED_PRE_ACTIVATION` is terminal for that `gameInstanceId`; recovery is modeled as provisioning a new `gameInstanceId` and rerunning world creation.
+- `world_instance_status`, or equivalent lifecycle state, tracks the ADR 0123 transitions `PREPARING -> ACTIVE`, `PREPARING -> FAILED_PRE_ACTIVATION`, `PREPARING -> TERMINATING`, `ACTIVE -> TERMINATING`, and `TERMINATING -> TERMINATED`.
+- `FAILED_PRE_ACTIVATION` is terminal for admission by that `gameInstanceId`, not proof that cleanup completed; separate owner-scoped cleanup progress may continue. Recovery is modeled as provisioning a new `gameInstanceId` and rerunning world creation.
 - `world_instance_lifecycle_lock`, or equivalent fenced token, enforces single-writer lifecycle transitions per `(tenantId, gameInstanceId)`.
 - `character_location` records the current room for each character, including instance occupancy.
 
@@ -109,7 +109,7 @@ Redis caches hot rooms for active sessions to speed up lookups. Target Class A c
 
 ## Replacement-Instance State Classification
 
-World Management must classify its runtime persistence surface for cutover and migration tooling:
+The exhaustive S1/S2/S3 rules, unknown-state fail-closed behavior, namespace modes, owner mapping/application evidence, and freshness-bound preflight are owned by [ADR 0122](../../decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md). World Management publishes only this local family inventory and current implementation caveat; it must not infer a class for an unregistered family.
 
 - `S2` world-owned durable state:
   - none are mandatory in the initial implementation slice;
@@ -122,12 +122,7 @@ World Management must classify its runtime persistence surface for cutover and m
   - `population_schedule_instance` rows keyed by `gameInstanceId`;
   - runtime-instance `generation_run` rows retained only for diagnostic or provenance purposes.
 
-Initial-slice rule:
-
-- Unless a world-owned row family is explicitly documented as `S2`, treat it as `S3` and discard it during replacement-instance cutover.
-- World Management must not silently copy room ambient state, occupancy, scheduled world events, or generated instance topology into the target instance.
-- No World-owned initial-slice table is classified as mandatory `S2`.
-- The live first validation cut is still honest about that boundary, but it now does more than existence-check one row: replacement-instance preflight requires the source `world_instance` to be in a cutover-eligible lifecycle state and to retain `region_instance`, `zone_instance`, and `room_instance` topology before World Management returns `COMPATIBLE`.
+Local consequence: the initial World-owned runtime families listed above are explicitly `S3`; no World-owned initial-slice family is mandatory `S2`. World Management must not silently copy room ambient state, occupancy, scheduled world events, or generated instance topology into the target instance. Any new family must be registered with its owner, classification, mapping/application contract where applicable, cleanup operation, and freshness evidence before launch or cutover can use it. The live first validation cut remains shallow: it checks a cutover-eligible source lifecycle and retained topology, but does not prove the complete ADR 0122 preflight.
 
 ## Digest Input Manifest
 

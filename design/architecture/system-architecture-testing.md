@@ -287,6 +287,20 @@ To keep PR feedback fast while still preventing “it only breaks in staging” 
 
 This split ensures that contract drift is caught on every change, while backend-dependent checks run only where Alertmanager/Jaeger are actually available.
 
+### Packet 4 Lifecycle And Authoring Proof Obligations
+
+The following focused proofs are required by the accepted target contracts; their presence here does not claim that the current implementation has closed them:
+
+- Replacement must cover shared, isolated, and fresh-playtest namespace modes; exhaustive S1/S2/S3 owner classification; unknown/unowned/unclassified blocking; owner-validated mapping application rather than an echoed `remapSetId`; active-instance fencing; stale preflight; concurrent cutover; and cleanup acknowledgement before old-instance termination ([ADR 0122](./decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md)).
+- World lifecycle must cover database row/epoch CAS, Temporal retry/restart, termination from preparation, `FAILED_PRE_ACTIVATION` with incomplete cleanup, newly registered/unavailable owners, refusal to reach `TERMINATED` without every acknowledgement, stuck-state telemetry, and routine gameplay without a Temporal call ([ADR 0123](./decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md)).
+- Profiles must cover materialized editable Draft content, exact baseline/source lineage, conservative unchanged-only upgrades, explicit conflict resolution, and no runtime fallback ([ADR 0124](./decisions/adr-0124-materialized-starter-profiles-with-conservative-draft-upgrades.md)).
+- Portability tests must verify the current unsupported boundary is surfaced without pretending that whole-game export/import or Git/filesystem synchronization exists ([ADR 0125](./decisions/adr-0125-defer-whole-game-portability-and-external-authoring-formats.md)).
+- Model-assisted authoring must prove scoped tool access, exact base/digest proposal binding, isolation/untrusted handling, human acceptance, and ordinary authoring when the model path is unavailable ([ADR 0126](./decisions/adr-0126-untrusted-models-and-scoped-authoring-tools.md)).
+- Equipment publication/runtime tests must fail closed for incomplete vocabulary/schema/bindings, validate occupancy against the published digest, and exercise explicit cutover remapping ([ADR 0127](./decisions/adr-0127-game-authored-equipment-layouts-with-fail-closed-publication.md)).
+- Plugin provenance tests must preserve ADR 0111 as trust/runtime authority while checking service-local signed-intake evidence, signer/key lifecycle, capability/policy projection, and incomplete-validation behavior ([ADR 0128](./decisions/adr-0128-game-design-plugin-trust-provenance.md)).
+- Draft concurrency tests must cover exact-base/digest mismatch, owner-local CAS conflicts, durable per-owner outcomes, synchronized read-fence visibility, retry convergence, no silent merge, and no distributed transaction/global epoch ([ADR 0129](./decisions/adr-0129-durable-fenced-multi-owner-draft-commits.md)).
+- The superseded equipment-history record must remain traceable to ADR 0130 while all active behavior and proof resolve to ADR 0127.
+
 ---
 
 ## Related Documentation

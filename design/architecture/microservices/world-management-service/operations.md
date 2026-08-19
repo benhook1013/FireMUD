@@ -13,7 +13,7 @@ The service creates temporary instances of zones for dungeons or housing. Instan
 
 - Expiry processing enqueues `InstanceTermination` workflows.
 - Direct periodic deletion of instance rows is not a valid cleanup path.
-- Scheduled expiry jobs must participate in the same fenced lifecycle workflow documented in the service API/runtime contracts.
+- Scheduled expiry jobs must participate in the same fenced lifecycle workflow documented in the service API/runtime contracts and [ADR 0123](../../decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md). They must not infer lifecycle authority from Temporal status or delete rows directly.
 
 ## Current LOOK Slice Status
 
@@ -23,4 +23,4 @@ The service creates temporary instances of zones for dungeons or housing. Instan
 
 ## Temporal Participation
 
-The [Transaction Strategies workflow classification](../../system-architecture-transactions.md#mandatory-workflow-adopter-classification) and [Temporal adopter contract](../../system-architecture-temporal-workflows.md) own placement rules. The [World Runtime and Movement implementation tracker](../../../project-management/implementation-tracking/world-runtime-and-movement.md) owns current implementation/proof status, gaps, and evidence. World Management's local consequence is that creation, activation, failure, and termination for a game instance run through the shared Temporal `world-lifecycle` family: command activities own durable lifecycle steps, the lifecycle read surface projects deterministic workflow identity/status, and gameplay runtime remains out of scope. Local lifecycle architecture and consequences, including the current restart/failure and durable step-guard gaps, are detailed in [`world-creation-workflow.md`](./world-creation-workflow.md).
+The [Transaction Strategies workflow classification](../../system-architecture-transactions.md#mandatory-workflow-adopter-classification) and [Temporal adopter contract](../../system-architecture-temporal-workflows.md) own placement rules. [ADR 0123](../../decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md) owns lifecycle authority and all-owner completion. World Management's local consequence is that creation, activation, failure, and termination use the shared Temporal `world-lifecycle` family for coordination while the durable World row and epoch remain authoritative; gameplay runtime remains out of scope. Current restart/failure, owner-registry, and durable step-guard gaps are detailed in [`world-creation-workflow.md`](./world-creation-workflow.md) and the implementation tracker.

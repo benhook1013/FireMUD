@@ -8,6 +8,13 @@ This is a non-normative implementation tracker for realm routing and playable st
 
 The working realm-catalog projection, admission-pointer reads, bootstrap/connect-scope flow, session-freshness normalization, runtime projections, and currently live playable-state boundaries are implemented. This is not a claim that routing is fully implemented. The direct-text `REALMS`-to-`JOIN` scope handoff is target-only and unimplemented: Account issuance/validation, Game Session-owned pending transport-local state that retains the scope, response-local selector, and server-generated join-attempt request ID through retries and terminal outcome or scope expiry, and the required retry reuse still need implementation and proof. The complete routing boundary remains partial: persisted routes cannot represent explicit `CLOSED`, catalog and route revisions are combined, the key is not tenant-qualified, version checking is not an atomic database CAS, prepared-cutover execution is recorded after the pointer transaction, and active bindings are invalidated from current pointer state rather than ending through the target bounded drain. Public/grant policy is also partial because designed grant expiry and tenant-admin management are absent.
 
+## Packet 4 Status and Proof Gaps
+
+- `AA-3.3` / `AR-3.1`: [ADR 0122](../../architecture/decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md) requires a stable playable-state namespace distinct from each runtime instance. Current pointer/routing and playable-state records still retain the documented implementation gaps around instance identity, atomic cutover, and active-session drain; no namespace migration proof is claimed.
+- `AR-3.1`: [ADR 0123](../../architecture/decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md) records the database lifecycle row/epoch and owner-cleanup acknowledgement target. Existing lifecycle and replacement preparation evidence remains partial and does not prove all-owner cleanup or termination completion.
+
+These links add decision provenance only; they do not upgrade routing or playable-state capability status.
+
 ## Capability Status
 
 | Capability | Implementation | Verification | Design | Implementation anchors | Proof anchors | Secondary handoffs | Gap or decision |

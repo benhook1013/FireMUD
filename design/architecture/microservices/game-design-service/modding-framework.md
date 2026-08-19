@@ -2,7 +2,7 @@
 
 ## Target State
 
-Game Design publishes immutable plugin versions with compatibility and provenance evidence; Automation & Scripting owns plugin readiness, activation, and runtime lifecycle; and Game Session remains authoritative for the exact script-pin tuple that fences runtime work. The broader target provenance contract permits operator-approved unsigned packages only after exact digest, complete validation, scoped approval, and platform acceptance attestation ([ADR 0111](../../decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md)); current implementation and hosted policy remain signed-only.
+Game Design publishes immutable plugin versions with compatibility and provenance evidence; Automation & Scripting owns plugin readiness, activation, and runtime lifecycle; and Game Session remains authoritative for the exact script-pin tuple that fences runtime work. The broader target provenance contract permits operator-approved unsigned packages only after exact digest, complete validation, scoped approval, and platform acceptance attestation ([ADR 0111](../../decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md)). This service-local evidence and status record is captured in [ADR 0128](../../decisions/adr-0128-game-design-plugin-trust-provenance.md); current implementation and hosted policy remain signed-only.
 
 ## Implementation Status
 
@@ -31,9 +31,7 @@ Plugins run with the same core execution model as other scripts but are subject 
 - The current implementation and initial hosted policy accept plugin bundles only after allowlisted **Ed25519** signature verification; key management and allowed signers are environment-specific and controlled by platform operators.
 - Different environments (development, staging, production) may use distinct signing keys and role policies so that development plugins cannot be promoted directly into production without review.
 
-The Logging & Admin Service exposes management APIs for listing, enabling, disabling, and inspecting plugins; these APIs enforce the same role model and provide audit trails for all plugin state changes.
-
-[ADR 0111](../../decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md) records a broader target provenance contract: an operator-permitted unsigned package may be accepted only after exact digest, complete validation, explicit scoped approval, and platform acceptance attestation. Hosted policy may prohibit unsigned intake entirely, and this unsigned path is not implemented in the current signed-only upload and activation flow.
+The Logging & Admin Service exposes management APIs for listing, enabling, disabling, and inspecting plugins; these APIs enforce the same role model and provide audit trails for all plugin state changes. The package, approval, attestation, capability, signer, and revocation authority remains [ADR 0111](../../decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md); Game Design's local evidence/status consequences are summarized in [ADR 0128](../../decisions/adr-0128-game-design-plugin-trust-provenance.md).
 
 ## Initial Authoring Mode
 
@@ -323,7 +321,7 @@ The lifecycle rules in this section are **target-state**. The current runtime pe
 
 Design-time publication and runtime activation are separate:
 
-- Publication in the current Game Design implementation means the plugin bundle is immutable, signed, validated, and available for activation; the ADR 0111 target unsigned-provenance path still requires exact package evidence and explicit approval/attestation.
+- Publication in the current Game Design implementation means the plugin bundle is immutable, signed, validated, and available for activation; provenance evidence follows the service-local record in [ADR 0128](../../decisions/adr-0128-game-design-plugin-trust-provenance.md) under the target authority of ADR 0111.
 - Activation in Automation & Scripting means a `PUBLISHED` plugin version has been selected for one `(tenantId, gameInstanceId, pluginId)` and admitted into the runtime registry.
 - A plugin version that is `PUBLISHED` in Game Design may still be `DISABLED` or never activated for any instance.
 - Game Design publication visibility and Automation runtime state must remain separate read surfaces. Operator tooling should read immutable publication metadata (for example `GetPublishedPluginVersion`) alongside runtime activation state (`GetPluginStatus`) rather than relying on one synthetic plugin-state enum to encode both concerns.
@@ -352,7 +350,7 @@ This ensures that even trusted tenant administrators cannot inadvertently weaken
 
 ### Canonical Binding Model
 
-Plugin bindings are authored as immutable design-time data, not as ad hoc instance-local toggles; current intake requires them in the signed bundle, while the ADR 0111 target unsigned provenance path still requires exact manifest, digest, validation, approval, and platform-attestation evidence before activation.
+Plugin bindings are authored as immutable design-time data, not as ad hoc instance-local toggles; current intake requires them in the signed bundle, while the target provenance path remains governed by ADR 0111 and the local evidence/status consequences by ADR 0128.
 
 - The authoritative `bindings[]` array lives in `plugin-manifest.json`. For current signed intake, it is part of the signed bundle; for the target unsigned path, it is part of the accepted package and attested evidence.
 - Each binding must declare:
@@ -478,3 +476,5 @@ For details on the metrics glossary and cross-service correlation, see `design/a
 - [Asset Storage Setup](asset-storage.md)
 - [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
 - [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md)
+- [ADR 0128: Game Design Plugin Trust Provenance](../../decisions/adr-0128-game-design-plugin-trust-provenance.md)
+- [ADR 0111: Unified DSL with Distinct Embedded Script and Plugin Lifecycles](../../decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md)

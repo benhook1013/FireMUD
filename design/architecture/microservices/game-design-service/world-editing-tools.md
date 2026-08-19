@@ -6,7 +6,7 @@ Game creators use these interfaces to craft rooms, items and NPCs without modify
 
 ## Implementation Status
 
-The current editor contract preserves revision ordering, approval, and local conflict reporting, but complete destructive-preview UI, plan-digest and reference-analysis proof, and identity-mapping proof remain incomplete.
+The current editor contract preserves revision ordering, approval, and local conflict reporting, but complete destructive-preview UI, plan-digest and reference-analysis proof, and identity-mapping proof remain incomplete. The current `SaveRevision` path also does not prove the durable multi-owner Draft coordination contract in [ADR 0129](../../decisions/adr-0129-durable-fenced-multi-owner-draft-commits.md).
 
 ## Capabilities
 
@@ -46,11 +46,12 @@ Example consequence:
 2. Each change is stored as a **revision** linked to the author's account and
    associated with concrete domain objects (rooms, regions, NPCs, items) via
    stable identifiers defined by the owning domain services.
-3. As revisions are committed, the Game Design Service applies them
-   incrementally to domain services’ **Draft** template rows via idempotent
-   design APIs keyed by `(tenantId, versionId)`. Draft templates in World
-   Management and Entity Management are therefore the authoritative snapshots of
-   world and entity data for each version.
+3. As revisions are committed, Game Design durably records the exact base commit,
+   canonical request or proposal digest, complete affected aggregates/scopes and
+   expected epochs, revision order, and per-owner apply status before coordinating
+   idempotent owner writes. World Management and Entity Management remain
+   authoritative for their Draft template graphs, while Game Design owns the
+   fully synchronized commit fence.
 4. Revisions are grouped into a **version** and published via the durable workflow
    described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
    At publish time, the workflow validates the Draft templates already stored in
@@ -67,19 +68,23 @@ Example consequence:
 
 ### Draft Write Concurrency
 
-Eventually consistent application does not permit last-writer-wins mutation of Draft templates.
+Durable cross-owner application does not permit last-writer-wins mutation of Draft templates or make a partially applied commit accepted Draft truth. See [ADR 0129](../../decisions/adr-0129-durable-fenced-multi-owner-draft-commits.md).
 
 Initial-slice concurrency contract:
 
 - Each design-time mutation against a domain-owned Draft aggregate must carry:
   - stable `revisionId`;
   - containing `commitId`;
+  - the exact commit/request digest;
   - the target `(tenantId, versionId)`;
   - an `expectedDraftRevisionEpoch` (or equivalent monotonic aggregate version) for the aggregate being edited.
+- Each complete commit or proposal must also bind its exact `baseCommitId`, canonical revision order, every affected owner/aggregate/scope, and the expected epoch for every affected mutation.
 - World topology edits and generation revisions that can touch more than one room use an explicit scope aggregate keyed by `(tenantId, versionId, scopeType, scopeId)`, for example `REGION_SUBTREE:<regionTemplateId>` or `ZONE_SUBTREE:<zoneTemplateId>`. Manual edits inside that scope and generation revisions targeting that scope must check and advance the same `draftScopeRevisionEpoch`.
 - The scope epoch is the canonical conflict boundary for subtree generation. A room-level edit may still carry a room aggregate epoch for precise UI conflict messages, but it must also validate the containing scope epoch whenever the edit changes topology or publish-visible room semantics inside a generation-addressable scope.
 - World Management and Entity Management design APIs must reject the write with a conflict error if the expected epoch does not match the current Draft aggregate state.
+- Every owner must derive or validate the complete scope set required by its typed mutation and reject an omitted containing scope. Epoch comparison, local mutation, epoch advancement, and exact commit/digest ledger recording must occur in one owner-local storage transaction; a service-layer read followed by an unconditional update is not sufficient.
 - Replays of the same `revisionId` remain idempotent; a duplicate delivery with the same already-applied revision must no-op rather than fail conflict.
+- Reusing a commit, request, proposal, or revision identity with different input or digest is rejected rather than treated as a replay. An owner-local apply does not advance the shared Draft fence until every required owner reports the exact commit and digest.
 - Game Design must surface the conflict to the editor as a Draft-write concurrency failure, not silently overwrite the newer state.
 - Publish reconciliation replays commits in commit order and revision order within the commit. It must not reorder concurrent conflicting edits into a synthetic merged result.
 
@@ -96,7 +101,9 @@ The generation preview, revision, and CAS rules below are target-state requireme
 - Game Design forwards the approved typed `WORLD_GENERATION_SUBTREE` payload through `ApplyWorldDesignMutation`; generated subtree content is not stored only as opaque revision JSON. World Management includes `generationRequestId`, immutable `generatorImplementationVersion`, the exact canonical inputs, `outputDigest`, plan digest, scope epoch, and approved reference facts in its owner-local CAS, fails closed and leaves prior topology unchanged when any differ from the preview, while Game Design surfaces the conflict and records the apply outcome.
 - A generation revision targeting a newly created empty container with no prior scope epoch initializes its scope epoch with the generated topology. An existing scope emptied by deletion or replacement preserves its monotonic epoch; later edits and generation revisions use that epoch.
 
-Illustrative request/response shapes:
+The following examples are illustrative owner-local apply fragments beneath the enclosing Game Design coordinator record. The coordinator binds the exact commit/request digest and complete affected owner/aggregate/scope set; these fragments do not define that complete multi-owner wire shape or add fields beyond the owner-local epoch/apply result.
+
+Illustrative owner-local apply fragments:
 
 ```json
 {
