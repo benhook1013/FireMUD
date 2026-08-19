@@ -21,7 +21,7 @@ This API contract is target-state canonical; implementation coverage is partial 
 - `ActivatePreparedWorldInstance` – performs the fenced `PREPARING -> ACTIVE` lifecycle transition after Game Session has finished local start-up work for the same `gameInstanceId`.
 - `FailPreparedWorldInstance` – performs the fenced `PREPARING -> FAILED_PRE_ACTIVATION` transition when Game Session or another pre-admission consumer must roll back a prepared instance before admission opens.
 - `GetWorldInstanceLifecycle` – returns the current fenced lifecycle snapshot for an existing `(tenantId, gameInstanceId)` so stop/cutover consumers can retry against fresh lifecycle truth instead of cached guesses.
-- `TerminateWorldInstance` – requests or resumes fenced termination from `PREPARING` or `ACTIVE`; it reports `TERMINATED` only after every registered durable instance-data owner acknowledges cleanup and the final lifecycle CAS commits.
+- `TerminateWorldInstance` – requests or resumes fenced termination from `PREPARING`, `FAILED_PRE_ACTIVATION`, or `ACTIVE`; it reports `TERMINATED` only after every registered durable instance-data owner acknowledges cleanup and the final lifecycle CAS commits.
 
 The gRPC contract for world operations is located in [../../../../protos/world-management/v1](../../../../protos/world-management/v1). Run `./gradlew generateProto` to regenerate sources after editing these files.
 
@@ -78,14 +78,14 @@ Digest input manifest rules live in [`runtime-and-data.md`](./runtime-and-data.m
 
 `ValidateWorldUpgradeMappings` is World Management's owner-local participant in the replacement contract owned by [ADR 0122](../../decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md). It must expose enough detail for cutover tooling to reason about World-owned references without becoming a second classification authority:
 
-- Input identifies `tenantId`, stable `playableStateNamespaceId`, `sourceGameInstanceId`, exact source and target versions, and optional approved `remapSetId`.
-- Response enumerates every registered World-owned row family, owner, local S1/S2/S3 classification, count, referenced template identifiers, outcome, unknown/unclassified state, freshness epoch, and any mapping validation/application result. Unknown or unregistered state is incompatible; a supplied or echoed `remapSetId` is not proof of mapping validation or application.
+- Input identifies `tenantId`, stable `playableStateNamespaceId`, `sourceGameInstanceId`, exact `sourceVersionId` and `targetVersionId`, and optional approved `remapSetId`. A target replacement request may also carry the prepared `targetGameInstanceId`; it is evidence for the same cutover, not a new World authority.
+- Response enumerates every registered World-owned row family, owner, local S1/S2/S3 classification, count, referenced template identifiers, outcome, unknown/unclassified state, freshness epoch, and any mapping validation/application result. `remapSetId` must resolve to immutable persisted Game Design approval and exact source-version-to-target-version mapping evidence; a supplied or echoed id is not proof of validation or application. Unknown or unregistered state is incompatible.
 - If the service currently has no `S2` row families for a tenant/version pair, it must report that explicitly rather than implying compatibility from an empty response.
 
 Current live first slice:
 
 - The RPC now exists and returns the canonical cutover-validation payload shape.
-- The implementation currently proves the source `world_instance` exists for `(tenantId, sourceGameInstanceId)`, requires a cutover-eligible world lifecycle state, and verifies retained instance topology rows for `region_instance`, `zone_instance`, and `room_instance` while still reporting only the initial World-owned `S3` families.
+- The implementation currently proves the source `world_instance` exists for `(tenantId, sourceGameInstanceId)`, requires a cutover-eligible world lifecycle state, and verifies retained instance topology rows for `region_instance`, `zone_instance`, and `room_instance` while still reporting only the initial World-owned `S3` families. It does not yet validate the exact namespace, source/target version pair, target instance binding, or persisted remap evidence required above; those are explicit implementation/proof gaps.
 - World therefore currently returns `stateClassesChecked=["S3"]`, `checkedFamilies=["world_instance", "region_instance", "zone_instance", "room_instance", "room_instance_exit", "world_event"]`, `hasS2Rows=false`, and `remapSetRequired=false`; it returns `INCOMPATIBLE` when the source world lifecycle or retained topology is not cutover-eligible.
 - Later World-owned durable metadata families can widen this contract to real `S2` checks without changing the owning RPC surface.
 
@@ -199,7 +199,7 @@ The unresolved target work is tracked in [World Runtime and Movement](../../../p
 World Management owns the authoritative lifecycle row and monotonic epoch for `gameInstanceId` rows. The lifecycle state, owner registry, cleanup acknowledgements, and Temporal boundary are owned by [ADR 0123](../../decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md); this section records the World API consequence. Teardown is cross-service:
 
 - Game Session must first mark the instance non-admissible and draining before World transitions lifecycle.
-- A termination request may fence either `PREPARING` or `ACTIVE` to `TERMINATING` through the durable Temporal `world-lifecycle` workflow; the same epoch makes stale activation fail.
+- A termination request may fence `PREPARING`, `FAILED_PRE_ACTIVATION`, or `ACTIVE` to `TERMINATING` through the durable Temporal `world-lifecycle` workflow; the same epoch makes stale activation fail.
 - Every registered durable `gameInstanceId` owner must acknowledge idempotent cleanup in its own durable state before World marks the instance `TERMINATED`; Entity Management is one required owner, not the complete future registry.
 - `FAILED_PRE_ACTIVATION` is admission-terminal but does not imply cleanup completion; its cleanup progress is read separately from lifecycle status.
 - Scheduled expiry jobs must start or signal the lifecycle workflow and must not directly delete world rows for a still-unconfirmed termination.

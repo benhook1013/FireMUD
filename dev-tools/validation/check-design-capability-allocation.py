@@ -526,7 +526,7 @@ ADR_ALLOCATION_EXPECTATIONS = {
         "AR-1", "Accepted", "AR-3", "SF-2", "EA-3"
     ),
     "design/architecture/decisions/adr-0130-historical-equipment-body-layout-authority.md": adr_allocation(
-        "GR-3", "Superseded by ADR 0127", "AR-1", "GR-1", "SF-1"
+        "GR-3", "Superseded", "AR-1", "GR-1", "SF-1"
     ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {

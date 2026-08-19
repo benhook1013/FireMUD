@@ -45,11 +45,13 @@ Reusing one request or proposal identity with the same canonical digest returns 
 
 An isolated proposal is not shared Draft state. Accepting it creates or selects one exact commit application bound to the reviewed base, diff, affected epochs, and digest. AI-assisted and external clients use this same contract and receive no alternate merge or write authority.
 
+The fencing unit is the owner-local tuple `(owner, aggregateId, scopeId, epoch)`. A scope identifier names the narrowest independently editable unit; an aggregate-wide invariant is represented by the canonical aggregate scope and therefore expands the affected set when required. Owner CAS checks every expected tuple in the complete affected set, and a mutation touching multiple scopes advances them atomically in that owner's transaction. Disjoint scope tuples may advance independently, while an operation that declares an incomplete or under-scoped set is rejected.
+
 ### Owner-Local Atomic Compare-and-Swap
 
 Each authoritative owner validates the complete affected aggregate and scope set for its typed mutation. In one owner-local storage transaction it must:
 
-1. compare every required expected epoch as a storage-level write predicate or equivalent lock-protected condition;
+1. compare every expected epoch required by the typed mutation, for every fencing tuple in the complete affected set, as a storage-level write predicate or equivalent lock-protected condition;
 2. apply all of that owner's local mutations for the commit;
 3. advance the affected aggregate and scope epochs; and
 4. record the exact commit, canonical digest, and idempotent owner result.
@@ -62,7 +64,7 @@ Exact replay is a no-op returning the recorded result. The same commit or reques
 
 Cross-owner application is a durable coordinated workflow, not a distributed database transaction. Retries and recovery reuse the same commit and digest identities, and Game Design persists enough per-owner state to distinguish not yet attempted, in progress, applied, and rejected or failed work without relying on process memory.
 
-An owner-local apply does not by itself make the commit accepted shared Draft truth. Normal authoring reads and subsequent edits bind to a Game Design-owned fully synchronized commit fence. Game Design advances that fence only after every required owner reports durable application of the exact commit and digest. Owner storage must preserve the ability to serve the synchronized fence while later partial work exists; the physical staging, visibility, or cleanup representation may vary by owner.
+An owner-local apply does not by itself make the commit accepted shared Draft truth. Normal authoring reads and subsequent edits bind to the Game Design-owned synchronized visibility fence, which records the exact commit, digest, and complete `(owner, aggregateId, scopeId, epoch)` set visible to ordinary Draft readers. Game Design advances that fence only after every required owner reports durable application of the exact commit and digest at those expected fencing units. Owner storage must preserve the ability to serve the synchronized fence while later partial work exists; the physical staging, visibility, or cleanup representation may vary by owner.
 
 Partial application is creator-visible diagnostic workflow state. It cannot advance the normal Draft read fence, satisfy `IN_SYNC`, or become a publish target. Retry, repair, conflict, and abort handling may inspect the partial owner outcomes, but cannot relabel an incomplete commit as healthy Draft state. Publication additionally retains the existing participant-digest and release-attestation gates.
 
@@ -101,7 +103,7 @@ Apply a stale proposal when a field-level or generated merge appears safe. Rejec
 
 Implementation proof must cover two edits to the same aggregate; overlapping and disjoint scopes; omission of an owner-derived containing scope; concurrent first writes at epoch zero; exact replay; changed-digest identity reuse; process loss before and after each owner-local commit; owner timeout and unavailable/rejected outcomes; recovery from partial application; normal reads while partial work exists; later edits bound to the synchronized fence; unresolved cross-service references; publish attempted against partial, stale, or mismatched commits; AI/external proposal acceptance after unrelated and conflicting edits; and assisted conflict resolution that always creates a newly reviewed proposal.
 
-Storage proof must demonstrate compare-and-swap in the mutation statement or equivalent owner-local locking transaction, not only a service-layer pre-read. Cross-owner proof must demonstrate restart-safe coordination and exact commit/digest convergence without claiming distributed atomicity.
+Storage proof must demonstrate compare-and-swap in the mutation statement or equivalent owner-local locking transaction for every complete affected `(owner, aggregateId, scopeId, epoch)` tuple, not only a service-layer pre-read. Cross-owner proof must demonstrate restart-safe coordination and exact commit/digest convergence without claiming distributed atomicity. Read-fence proof must show that ordinary Draft visibility advances only through the Game Design-owned synchronized fence carrying that same complete set.
 
 ## Reversibility and Revisit Triggers
 

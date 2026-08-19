@@ -16,7 +16,7 @@ Completed phases: capability allocation, implementation/proof reconciliation, cr
 | Cross-domain convergence | Complete and independently validated as a point-in-time baseline | [Frozen capability implementation reconciliation](./capability-implementation-reconciliation.md) |
 | Human-led adversarial decision review | Complete in the `design/adversarial-decision-review` source archive | Human-owned dispositions for all `183` queue/navigation rows |
 | Accepted-decision application | In progress | `119` active decision keys have checked applied provenance; `63` reviewed active decision keys remain pending selective import |
-| Contract-authority consolidation | Baseline pass complete for ADRs 0001-0050 and major adjacent non-ADR families; Packet 3 (ADRs 0051-0092 plus TICK-05) is selectively applied with family-local consolidation; continue incrementally through packets 4-7, then perform a whole-corpus authority review | [Architecture contract authority map](../../architecture/README.md#contract-authority-map) and owner-link-plus-local-consequence conversions |
+| Contract-authority consolidation | Baseline pass complete for ADRs 0001-0050 and major adjacent non-ADR families; Packets 3-4 (ADRs 0051-0130 plus TICK-05) are selectively applied with family-local consolidation; continue incrementally through packets 5-7, then perform a whole-corpus authority review | [Architecture contract authority map](../../architecture/README.md#contract-authority-map) and owner-link-plus-local-consequence conversions |
 
 ## Implementation Status
 
@@ -68,7 +68,7 @@ This table describes merged repository state, not merely completed human review.
 
 ## Contract Authority Consolidation Scope
 
-Contract-authority consolidation applies to repeated normative product and architecture contracts whether or not an ADR records their rationale. ADRs organize the selective application process, but they are not the boundary of the deduplication work. PRs #2593 and #2594 complete the baseline pass for ADRs 0001-0050 and the major adjacent non-ADR contract families encountered across those design areas. Packet 3 (ADRs 0051-0092 plus TICK-05) is now complete with family-local consolidation; packets 4-7 continue the same owner-link and local-consequence process without redefining that baseline.
+Contract-authority consolidation applies to repeated normative product and architecture contracts whether or not an ADR records their rationale. ADRs organize the selective application process, but they are not the boundary of the deduplication work. PRs #2593 and #2594 complete the baseline pass for ADRs 0001-0050 and the major adjacent non-ADR contract families encountered across those design areas. Packets 3-4 (ADRs 0051-0130 plus TICK-05) are now complete with family-local consolidation; packets 5-7 continue the same owner-link and local-consequence process without redefining that baseline.
 
 Consolidation names one canonical owner for a target contract and reduces competing secondary definitions to owner links plus local API, persistence, transport, operational, user-visible, implementation-drift, or proof consequences. It is not editorial deduplication: useful examples, runbooks, evidence schemas, local constraints, and explanatory context remain where they serve their owning document.
 

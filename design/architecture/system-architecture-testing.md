@@ -289,7 +289,7 @@ This split ensures that contract drift is caught on every change, while backend-
 
 ### Packet 4 Lifecycle And Authoring Proof Obligations
 
-The following focused proofs are required by the accepted target contracts; their presence here does not claim that the current implementation has closed them:
+The following focused proofs are required by the accepted target contracts; their presence here does not claim that the current implementation has closed them. Run them through the shared [validation and runtime-proof workflow](../developer-workflows/validation-and-runtime-proof.md), which selects the applicable checks and evidence location; this section is only the Packet 4 obligation index and does not duplicate a result ledger.
 
 - Replacement must cover shared, isolated, and fresh-playtest namespace modes; exhaustive S1/S2/S3 owner classification; unknown/unowned/unclassified blocking; owner-validated mapping application rather than an echoed `remapSetId`; active-instance fencing; stale preflight; concurrent cutover; and cleanup acknowledgement before old-instance termination ([ADR 0122](./decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md)).
 - World lifecycle must cover database row/epoch CAS, Temporal retry/restart, termination from preparation, `FAILED_PRE_ACTIVATION` with incomplete cleanup, newly registered/unavailable owners, refusal to reach `TERMINATED` without every acknowledgement, stuck-state telemetry, and routine gameplay without a Temporal call ([ADR 0123](./decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md)).

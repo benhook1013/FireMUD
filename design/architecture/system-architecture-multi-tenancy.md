@@ -8,7 +8,7 @@ Tenant identity, explicit public-production membership creation, realm-local gam
 
 Scripting pins and rollout history are tenant/game-instance scoped: Game Session owns the exact `(scriptPatchVersion, scriptPinEpoch)` for each instance, and Automation's observed pin projection is keyed by `(tenantId, gameInstanceId)` and carries that exact observed version/epoch tuple. Automation-owned instance admission requires both a fresh authoritative Game Session result for that exact tuple and a fresh, matching Automation projection carrying the same tuple; the projection is mandatory evidence at this boundary but is never authority, and only the authoritative Game Session result can authorize the admission. Tenant-scoped readiness only says a patch is eligible for an explicit instance pin; it never authorizes instance work. For a promotion/rollback workflow carrying a canonical request identity, the owner-committed `controlPlaneRequestId` must also match in the applicable projection/request evidence; ordinary gameplay/runtime ingress does not carry that owner request field. Any stale, unverified, missing, unavailable, ambiguous, or mismatched tuple/result/projection evidence, and any applicable request-identity mismatch, fails closed for such work, including for the same tenant and game instance. An authoritative `UNPINNED` result is instead the valid no-script state for that tenant/instance and produces no script work; it must not be inferred from missing, stale, or unavailable authority. The exact identity, epoch, and `UNPINNED` semantics belong to [Scripting Contracts](./system-architecture-scripting-contracts.md); this document owns the tenancy and routing consequence.
 
-Replacement keeps the logical playable-state identity separate from runtime routing. `playableStateNamespaceId` is stable for a shared tenant realm or an isolated realm lifecycle and changes only for a new playtest lifecycle; `gameInstanceId` identifies the concrete runtime selected by the admission pointer. Durable state intended to survive replacement is authorized and keyed by the namespace plus the active-instance fence, while disposable runtime state remains instance-scoped. See [ADR 0122](./decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md).
+Replacement keeps the logical playable-state identity separate from runtime routing. `playableStateNamespaceId` is stable for a shared tenant realm or an isolated realm lifecycle and changes only when an intentional new playable-state lifecycle is created, including a new isolated realm, playtest, fork, or fresh standalone lifecycle; replacing its runtime does not create a new namespace. `gameInstanceId` identifies the concrete runtime selected by the admission pointer. Durable state intended to survive replacement is authorized and keyed by the namespace plus the active-instance fence, while disposable runtime state remains instance-scoped. See [ADR 0122](./decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md).
 
 ## Implementation Status
 
@@ -73,7 +73,7 @@ Minimum downstream consequences of realm policy:
 
 Character-selection and creation policy must also respect realm mode:
 
-- `CHARS` lists the character choices valid for the resolved `{tenantId, gameInstanceId}` target, not a tenant-wide superset.
+- `CHARS` lists the character choices valid for the resolved `{tenantId, playableStateNamespaceId, gameInstanceId}` target, not a tenant-wide superset; the namespace identifies durable playable state and the instance provides the active authorization fence.
 - Shared-state realms normally expose the tenant's normal live durable roster for that account.
 - Isolated-state realms expose only that realm's valid roster, which may consist of copied fork-local characters, seeded/sample characters, newly created realm-local characters, or a policy-defined subset of those.
 - `CHARS` must return one realm-local decision surface for the selected target: the visible roster plus a bounded `creationPolicy` / equivalent flag explaining whether fresh character creation is allowed, denied, or limited to a documented realm-local mode. Clients must not infer creation rules by comparing roster contents to tenant-wide state.
@@ -83,8 +83,8 @@ Character-selection and creation policy must also respect realm mode:
 This distinction is normative for all realm-aware flows:
 
 - `REALMS` describes which player-addressable realms exist for a tenant.
-- `CHARS` lists the character choices valid for the resolved `{tenantId, gameInstanceId}` target.
-- `PLAY` binds the session to that same `{tenantId, gameInstanceId, characterId}` target.
+- `CHARS` lists the character choices valid for the resolved `{tenantId, playableStateNamespaceId, gameInstanceId}` target.
+- `PLAY` binds the session to that same `{tenantId, playableStateNamespaceId, gameInstanceId, characterId}` target.
 
 Services must therefore avoid collapsing "character belongs to tenant" into "all character-associated data is keyed only by tenant" or treating a replaceable runtime as durable identity. Tenant ownership and playable-state namespace remain stable, while disposable runtime state may be recreated per `gameInstanceId` according to the resolved realm policy.
 

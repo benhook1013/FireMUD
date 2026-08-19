@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The current Game Design proto and implementation have no general whole-game graph enumeration, import, export, filesystem-project, merge, or Git-synchronization contract. `SaveRevision` provides revision ingress with a typed World Design mutation family; asset export serves immutable runtime publication; and plugin upload handles the separate immutable plugin package. None of those surfaces is a whole-game round-trip format. This decision records the current non-support boundary and does not claim that a portability implementation exists.
+
 ## Decision Record
 
 - Human review status: Completed
@@ -71,9 +75,7 @@ Reuse an existing artifact to avoid a new format. This is rejected because a rel
 
 Permit database-local identities, opaque references, or authoring APIs that make later copying impossible. This is rejected because stable identities, normalized references, and typed versioned writes already benefit ordinary authoring, validation, migration, and publication and preserve future options without a package commitment.
 
-## Implementation and Proof Reality
-
-The current Game Design proto and implementation have no general whole-game graph enumeration, import, export, filesystem-project, merge, or Git-synchronization contract. `SaveRevision` provides revision ingress with a typed World Design mutation family; asset export serves immutable runtime publication; and plugin upload handles the separate immutable plugin package. None of those surfaces is a whole-game round-trip format.
+## Implementation and Proof Obligations
 
 Future external or AI tooling should prove authenticated typed reads and writes, validation, optimistic-concurrency failure, tenant isolation, revision provenance, and rejection of direct authoritative-store mutation. A future first-party clone should prove that it creates ordinary Draft state through owning services and does not introduce a hidden content authority.
 

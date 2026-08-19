@@ -79,14 +79,15 @@ Replacement classification rule:
 Implementation notes:
 
 - The current cutover-validation RPC is `ValidateEntityUpgradeMappings(tenantId, sourceGameInstanceId, targetVersionId, remapSetId?)`; the target contract must additionally bind `playableStateNamespaceId`, active-instance authorization, and the exact source/target versions. The current signature and shallow implementation do not prove the target contract.
-- The live implementation enumerates tenant-surviving families (`character`, `inventory`, `character_equipment`, `character_friend`) plus the currently persisted instance-scoped families (`room_ground_inventory`, `item_instances`, `item_stacks`, `container_instances`).
+- The live implementation enumerates tenant-surviving families (`character`, `inventory`, `character_equipment`, `character_friend`) plus the currently persisted families requiring holder classification (`room_ground_inventory`, `item_instances`, `item_stacks`, `container_instances`).
+- `item_instances` and `item_stacks` are not table-wide `S3` families: each row follows its holder/container graph. A durable player or durable namespace-backed container holder is `S1` or `S2` according to template-remap requirements; only a synthetic room-ground holder or another explicitly instance-scoped holder is `S3`. Termination cleanup must apply the holder/container and namespace/scope predicate and must not delete all rows in either table by `gameInstanceId` alone. The current table-level enumeration does not yet prove this predicate, so this remains an implementation/proof gap rather than permission to classify durable inventory as `S3`.
 - `character` and `character_friend` rows are supported `S1` survivor state at the current boundary. Their presence does not require a remap set by itself.
 - `inventory` and `character_equipment` rows are treated as current `S2` template-bound survivor state. If either family has rows and no approved `remapSetId` was frozen by launch resolution, validation returns `result=INCOMPATIBLE`, `hasS2Rows=true`, `remapSetRequired=true`, and `ENTITY_REMAP_REQUIRED`.
 - When template-bound `S2` rows exist and the caller supplies the frozen approved `remapSetId`, the current implementation reports `COMPATIBLE` and echoes that id. This is an implementation gap, not validation or application proof: Entity Management must validate and apply the exact mapping locally before acknowledging compatibility. Entity Management does not infer remaps or create a second remap identity; Game Design remains the source of truth for approval and the prepared cutover artifact binds the exact id used.
 
 Entity upgrade validation minimum contract:
 
-- The service must expose a cutover-validation API that accepts `tenantId`, `playableStateNamespaceId`, `sourceGameInstanceId`, `targetVersionId`, and optional `remapSetId`, and proves that the source instance is the active authorized runtime for that namespace.
+- The service must expose a cutover-validation API that accepts `tenantId`, `playableStateNamespaceId`, `sourceGameInstanceId`, exact `sourceVersionId` and `targetVersionId`, and optional `remapSetId`, and proves that the source instance is the active authorized runtime for that namespace. The target replacement requirements are this namespace/version-bound classification, holder-aware S1/S2/S3 evidence, and owner-validated/applied mapping evidence; they are distinct from the current shallow `ValidateEntityUpgradeMappings` result, which may only enumerate rows and echo a remap id.
 - The response must enumerate the entity-owned row families checked, the referenced template identifiers, and per-family outcomes `COMPATIBLE`, `REQUIRES_MAPPING`, or `INCOMPATIBLE`.
 - If the service currently has no `S2` rows for a given namespace/source instance, it must report that explicitly rather than collapsing the result into a generic success; unknown or unclassified families must produce a blocking result.
 
@@ -101,7 +102,7 @@ Cutover fence contract:
 
 Illustrative responses for the current live first slice:
 
-- Current first-cut response with only instance-scoped `S3` families:
+- Current first-cut response with an incomplete, non-authoritative table-level enumeration. The `item_instances` and `item_stacks` entries below mean only rows held by synthetic room-ground containers; they do not classify every row in either table as `S3`.
 
 ```json
 {
@@ -114,6 +115,8 @@ Illustrative responses for the current live first slice:
     "item_stacks",
     "container_instances"
   ],
+  "classificationScope": "synthetic room-ground holder rows only",
+  "authoritativeClassification": false,
   "stateClassesChecked": ["S3"],
   "hasS2Rows": false,
   "result": "COMPATIBLE",
@@ -253,6 +256,8 @@ Equipment is intentionally not modeled as "just another bag position":
 - Item definitions declare compatibility through configurable slot groups, attachment rules, or equivalent game-defined constraints rather than through a hardcoded universal slot set.
 - Game Design owns the complete published equipment vocabulary/body-layout schema and its digest. Entity Management consumes that exact schema for occupancy and compatibility checks, rejects missing/partial/mismatched vocabulary or mapping evidence fail closed, and does not provide a platform-global slot fallback. Replacement cutover remaps bindings only through the owner-validated mapping contract; profiles materialize authored equipment content rather than supplying runtime defaults. See [ADR 0127](../../decisions/adr-0127-game-authored-equipment-layouts-with-fail-closed-publication.md).
 
+The target inventory/equipment identity for a durable holder or binding is the complete tuple `{tenantId, playableStateNamespaceId, playableStateScope, gameInstanceId, characterId, itemInstanceId, itemDefinitionId, containerInstanceId?, equipmentBindingId?, slotKey?, roomInstanceId?}`. `playableStateNamespaceId` and the resolved `playableStateScope` are required for namespace-backed inventory, character, and equipment state; `gameInstanceId` remains the active-instance fence and is the sole durable identity for explicitly instance-scoped `S3` holders. The current proto and OpenAPI surfaces do not yet carry this complete tuple on every inventory/equipment read or mutation, so this is a target contract only: this ADR parcel does not add wire fields, regenerate protos, or change runtime lookup behavior.
+
 This keeps the platform compatible with games that need unusual body plans or attachment models such as horns instead of hands, asymmetric limbs, species-specific slot topologies, or non-humanoid wearable layouts.
 
 ### Inventory Queries and Type Filtering
@@ -286,7 +291,7 @@ Every transfer-like mutation should emit an audit record using one canonical mov
 - destination container id or equipped binding
 - actor entity/account/session when applicable
 - action reason such as `pickup`, `drop`, `loot`, `put`, `take`, `equip`, `unequip`, `split_stack`, `merge_stack`, `create`, `destroy`, or `admin_grant`
-  - tenant id, playable-state namespace when the mutation is durable, game instance id, and room context when applicable
+- tenant id, `playableStateNamespaceId`, `playableStateScope`, game instance id, and room context when applicable
 - timestamp plus correlation id / command id / effect id
 
 Because everything is modeled as container movement plus equipment bindings, the audit format can stay uniform across player inventories, room-ground transfers, nested containers, equipment changes, scripted rewards, and administrative interventions.

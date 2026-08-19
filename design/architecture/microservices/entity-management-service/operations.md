@@ -6,9 +6,13 @@ This document collects Entity Management’s readiness model, tick-lock/tick-ide
 
 The complete participant-guard contract described here—root `EffectId`, typed operation and target, immutable `requestDigest`, and complete replay verification—is target-state. The current `EntityMutationEffectReplayService` and schema provide narrower effect/operation replay and do not yet enforce or prove the target mutation-boundary contract. [Transaction Strategies](../../system-architecture-transactions.md) is the canonical owner of participant-guard and replay-verification semantics.
 
-Replacement operations use the stable `playableStateNamespaceId` for durable S1/S2 state and the active `gameInstanceId` as a runtime fence; explicitly disposable S3 families may remain instance-keyed. Entity must report owner-local classification, mapping validation/application, and cleanup acknowledgement to World Management. Unknown or unregistered families block cutover/termination, and an echoed `remapSetId` is not proof of mapping application. [ADR 0122](../../decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md) and [ADR 0123](../../decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md) own the cross-service decisions; this file records the Entity operational consequence.
+The current replacement-validation path is also narrower than the target contract: `ValidateEntityUpgradeMappings` does not yet bind the stable `playableStateNamespaceId` and active-instance authorization to the exact source/target versions, and the live result may echo a supplied `remapSetId` without locally validating or applying its mapping. This is an implementation/proof gap; the echo is not compatibility or cleanup evidence.
 
 At the live enqueue boundary, the absence of `commandOrdinal` and the complete target child identity means current live processing accepts at most one emitted command per work item. Multi-command work is rejected atomically before admission. `automationDispatchId` alone is not a dedupe key; use the complete Command-Handoff Identity for the target contract.
+
+## Target Replacement Operations
+
+Replacement operations use the stable `playableStateNamespaceId` for durable S1/S2 state and the active `gameInstanceId` as a runtime fence; explicitly disposable S3 families may remain instance-keyed. Entity must report owner-local classification, mapping validation/application, and cleanup acknowledgement to World Management. Unknown or unregistered families block cutover/termination, and an echoed `remapSetId` is not proof of mapping application. [ADR 0122](../../decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md) and [ADR 0123](../../decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md) own the cross-service decisions; this file records the Entity operational consequence.
 
 ## Operational Notes
 

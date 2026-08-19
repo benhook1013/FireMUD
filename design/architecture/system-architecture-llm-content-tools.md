@@ -4,6 +4,10 @@ This document defines the target boundary for AI-assisted game authoring. FireMU
 
 See [ADR 0126](./decisions/adr-0126-untrusted-models-and-scoped-authoring-tools.md) for the accepted decision and the [Game Design Service](./microservices/game-design-service/README.md) for the canonical authoring boundary.
 
+## Implementation Status
+
+The current implementation does not provide the target LLM authoring boundary: no LLM integration, scoped tool broker, agent proposal store, or focused LLM proof is implemented. Ordinary authoring remains available through typed service APIs; model assistance is optional target-state behavior and is not required for authoring, publication, activation, or gameplay.
+
 ## Capability Forms
 
 ### External AI and Tool Clients
@@ -56,7 +60,7 @@ The accepted Draft content and normal revision history are authoritative. Raw se
 
 The exact provider, model, harness, system prompt, tool schemas and granularity, broker topology, proposal-store representation, delegated-credential shape, quota values, review UI, and retrieval approach remain deferred. Public creator APIs plus a FireMUD skill are a valid first implementation; internal compound tools should be introduced only where their measured coherence, latency, or atomicity benefit justifies the additional contract.
 
-No LLM integration, tool broker, agent proposal store, or focused LLM proof is implemented today. LLM availability is never required for ordinary authoring, validation, publication, activation, or gameplay.
+The implementation-status boundary above remains in force until those target choices are implemented and proved. LLM availability is never required for ordinary authoring, validation, publication, activation, or gameplay.
 
 ## Non-Goals
 

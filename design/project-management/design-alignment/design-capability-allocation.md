@@ -12,7 +12,7 @@ This ledger maps canonical product and architecture sources to the stable capabi
 - Historical canonical validator evidence dated 2026-08-14 Pacific/Auckland (2026-08-13 UTC): `design capability allocation passed: 277 sources (274 allocated, 3 explicit exemptions)`.
 - Historical Markdown/link validation on 2026-08-14 Pacific/Auckland (2026-08-13 UTC): `linkCheck` checked 4,574 links (4,536 OK, 0 errors, 38 excluded); `lintMarkdown` checked 454 files with 0 issues. The architecture contract suite and `git diff --check` also passed with no errors.
 - Historical canonical proof evidence recorded for calendar date 2026-08-15 Pacific/Auckland; exact command execution timestamp is not retained: `design capability allocation passed: 284 sources (281 allocated, 3 explicit exemptions)`; `linkCheck` checked 4,769 links (4,731 OK, 0 errors, 38 excluded); `lintMarkdown` checked 461 files with 0 issues; the architecture contract suite passed 184 tests; and `git diff --check` passed with no errors.
-- Current declared coverage after the final Packet 4 allocation is `303` sources (`300` allocated, `3` explicit exemptions). The nine final Packet 4 ADR records are allocated below; consolidated validators remain the main agent's responsibility.
+- Current validator execution on 2026-08-20 (Pacific/Auckland) confirms `303` sources (`300` allocated, `3` explicit exemptions): `python3 dev-tools/validation/check-design-capability-allocation.py` returned `design capability allocation passed: 303 sources (300 allocated, 3 explicit exemptions)`. The nine final Packet 4 ADR records are allocated below; subsequent consolidated validators remain the main agent's responsibility.
 - Runtime proof is not applicable to this documentation-only allocation change.
 - Implementation and verification evidence do not belong in this allocation ledger. The initial cross-capability baseline is preserved in the frozen [capability implementation reconciliation snapshot](./capability-implementation-reconciliation.md); live status and focused-proof anchors are maintained in the permanent implementation trackers.
 
@@ -176,7 +176,7 @@ This ledger maps canonical product and architecture sources to the stable capabi
 | `design/architecture/decisions/adr-0127-game-authored-equipment-layouts-with-fail-closed-publication.md` | `GR-3` | `AR-1`, `AR-3`, `GR-1`, `SF-1` | Accepted |
 | `design/architecture/decisions/adr-0128-game-design-plugin-trust-provenance.md` | `AR-1` | `AS-1`, `SF-1`, `GR-4` | Accepted |
 | `design/architecture/decisions/adr-0129-durable-fenced-multi-owner-draft-commits.md` | `AR-1` | `AR-3`, `SF-2`, `EA-3` | Accepted |
-| `design/architecture/decisions/adr-0130-historical-equipment-body-layout-authority.md` | `GR-3` | `AR-1`, `GR-1`, `SF-1` | Superseded by ADR 0127 |
+| `design/architecture/decisions/adr-0130-historical-equipment-body-layout-authority.md` | `GR-3` | `AR-1`, `GR-1`, `SF-1` | Superseded |
 
 ADR 0121 is superseded by [ADR 0114](../../architecture/decisions/adr-0114-command-plan-preview-dry-run-isolation.md); its historical capability allocation remains recorded above.
 

@@ -46,7 +46,7 @@ This document outlines the **core functional and non-functional requirements** f
 - Enables **scripted event design for quests, encounters, and world events**.
 - **Procedural generation** supports **algorithm-driven world creation** (e.g., procedural room layouts) while allowing **manual overrides**.
 - Starter profiles create editable content in the creator's Draft. Later profile changes do not silently rewrite that Draft, and a runtime realm never uses a profile as an implicit fallback. See [ADR 0124](../architecture/decisions/adr-0124-materialized-starter-profiles-with-conservative-draft-upgrades.md).
-- Creators define each game's equipment vocabulary and body layouts. Publication fails closed when the published equipment description is incomplete, and players receive an explicit unavailable/invalid outcome rather than a platform-default slot; a live cutover must account for any required equipment remapping. See [ADR 0127](../architecture/decisions/adr-0127-game-authored-equipment-layouts-with-fail-closed-publication.md).
+- Creators define each game's equipment vocabulary and body layouts. Game Design publication rejects an incomplete equipment description before that version is published. Separately, runtime rejects missing or invalid schema, occupancy, or equipment mappings against the admitted published digest, and a live cutover blocks when required remapping lacks owner-validated/applied evidence for the exact source and target versions; players receive an explicit unavailable/invalid outcome rather than a platform-default slot. See [ADR 0127](../architecture/decisions/adr-0127-game-authored-equipment-layouts-with-fail-closed-publication.md).
 
 ### 2.3 User & Account Management
 

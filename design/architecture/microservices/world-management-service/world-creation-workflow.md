@@ -69,10 +69,10 @@ The Class A/Class B boundary is persisted explicitly through a monotonic instanc
 - `world_instance_status=PREPARING` while world-lifecycle workflow steps are still compensatable.
 - `world_instance_status=ACTIVE` once admission opens for gameplay.
 - `world_instance_status=FAILED_PRE_ACTIVATION` when Class A preparation cannot converge and admission never opens.
-- `world_instance_status=TERMINATING` after a fenced termination request from `PREPARING` or `ACTIVE`.
+- `world_instance_status=TERMINATING` after a fenced termination request from `PREPARING`, `FAILED_PRE_ACTIVATION`, or `ACTIVE`.
 - `world_instance_status=TERMINATED` only after every registered durable instance-data owner has acknowledged cleanup and the final fenced transition commits.
 
-Allowed transitions are `PREPARING -> ACTIVE`, `PREPARING -> FAILED_PRE_ACTIVATION`, `PREPARING -> TERMINATING`, `ACTIVE -> TERMINATING`, and `TERMINATING -> TERMINATED`. `FAILED_PRE_ACTIVATION` is terminal for admission and activation of that instance but does not prove cleanup completion; separate owner-scoped cleanup may continue, and a new instance is required to retry admission. Compensation logic in the world-lifecycle workflow is allowed only before `ACTIVE` commits; once status is `ACTIVE`, failures use Class B retry/reconciliation semantics instead of destructive rollback.
+Allowed transitions are `PREPARING -> ACTIVE`, `PREPARING -> FAILED_PRE_ACTIVATION`, `PREPARING -> TERMINATING`, `FAILED_PRE_ACTIVATION -> TERMINATING`, `ACTIVE -> TERMINATING`, and `TERMINATING -> TERMINATED`. `FAILED_PRE_ACTIVATION` is terminal for admission and activation of that instance but does not prove cleanup completion; a fenced `FAILED_PRE_ACTIVATION -> TERMINATING` transition starts or resumes the same owner-scoped cleanup path, and a new instance is required to retry admission. Compensation logic in the world-lifecycle workflow is allowed only before `ACTIVE` commits; once status is `ACTIVE`, failures use Class B retry/reconciliation semantics instead of destructive rollback.
 
 Initial NPC and item presence is modeled declaratively:
 
@@ -175,7 +175,7 @@ See [Transaction Strategies](../../system-architecture-transactions.md) for the 
 Instance expiry and operator-driven shutdown must use an explicit cross-service termination workflow rather than independent cleanup jobs.
 
 - Game Session must first mark the target instance non-admissible/draining before World starts termination.
-- World Management starts or resumes the canonical `world-lifecycle` Temporal workflow and performs a storage-level compare-and-set from `PREPARING` or `ACTIVE` to `TERMINATING` under the expected lifecycle epoch. A stale activation cannot reopen the instance.
+- World Management starts or resumes the canonical `world-lifecycle` Temporal workflow and performs a storage-level compare-and-set from `PREPARING`, `FAILED_PRE_ACTIVATION`, or `ACTIVE` to `TERMINATING` under the expected lifecycle epoch. A stale activation cannot reopen the instance.
 - The workflow records a stable termination request, the complete registered owner set, and separate per-owner cleanup acknowledgement state. Each owner runs an idempotent local cleanup step under its own durable guard; Temporal workflow/run identity is execution trace only.
 - World Management finalizes world-side cleanup and marks the instance `TERMINATED` only after every registered owner acknowledges cleanup and the final compare-and-set succeeds. Entity Management removes its synthetic room-ground containers and containment rows; current World cleanup hard-deletes runtime `world_event`, `room_instance_exit`, `room_instance`, `zone_instance`, and `region_instance` rows while retaining terminal lifecycle evidence.
 - If preparation reaches `FAILED_PRE_ACTIVATION`, its admission remains closed while the separate owner-scoped cleanup state can continue or be repaired; the failure result is not cleanup proof.
@@ -189,7 +189,7 @@ Instance expiry and operator-driven shutdown must use an explicit cross-service 
 Activation and termination share one lifecycle fence per `(tenantId, gameInstanceId)`:
 
 - Activation acquires the fence before committing `PREPARING -> ACTIVE`.
-- Termination acquires the same fence before committing either `PREPARING -> TERMINATING` or `ACTIVE -> TERMINATING`.
+- Termination acquires the same fence before committing `PREPARING -> TERMINATING`, `FAILED_PRE_ACTIVATION -> TERMINATING`, or `ACTIVE -> TERMINATING`.
 - If both workflows race, only the storage-level CAS against the current state and epoch may transition lifecycle state; stale-token attempts fail and must retry from fresh state.
 
 ## Version Switching and Instance Data

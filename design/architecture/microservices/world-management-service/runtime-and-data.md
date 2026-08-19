@@ -86,7 +86,7 @@ When changing Redis usage or adding prefixes here, follow the [Redis Design Chec
 
 - `region_instance`, `zone_instance`, `room_instance`, and `room_instance_exit` materialize topology for a running game instance based on the chosen version and any runtime procedural generation.
 - `instance` tracks temporary copies of zones for instanced gameplay, with `expires_at` defining when instances enter `InstanceTermination`.
-- `world_instance_status`, or equivalent lifecycle state, tracks the ADR 0123 transitions `PREPARING -> ACTIVE`, `PREPARING -> FAILED_PRE_ACTIVATION`, `PREPARING -> TERMINATING`, `ACTIVE -> TERMINATING`, and `TERMINATING -> TERMINATED`.
+- `world_instance_status`, or equivalent lifecycle state, tracks the ADR 0123 transitions `PREPARING -> ACTIVE`, `PREPARING -> FAILED_PRE_ACTIVATION`, `PREPARING -> TERMINATING`, `FAILED_PRE_ACTIVATION -> TERMINATING`, `ACTIVE -> TERMINATING`, and `TERMINATING -> TERMINATED`.
 - `FAILED_PRE_ACTIVATION` is terminal for admission by that `gameInstanceId`, not proof that cleanup completed; separate owner-scoped cleanup progress may continue. Recovery is modeled as provisioning a new `gameInstanceId` and rerunning world creation.
 - `world_instance_lifecycle_lock`, or equivalent fenced token, enforces single-writer lifecycle transitions per `(tenantId, gameInstanceId)`.
 - `character_location` records the current room for each character, including instance occupancy.
