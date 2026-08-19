@@ -179,14 +179,14 @@ Inputs:
 Outputs:
 
 - `tenantId`, `gameInstanceId`
-- `pinnedScriptPatchVersion` and `scriptPinEpoch` as a nullable pair (both present for a pin; both absent for semantic `UNPINNED`, never a sentinel; the epoch advances on every pin selection change, including repin to the same version)
+- `pinnedScriptPatchVersion` and `scriptPinEpoch` as a nullable pair (both present for a pin; both absent only for a never-pinned semantic `UNPINNED`, never a sentinel; the epoch advances on every pin selection change, including repin to the same version)
 - `pinnedAt` (timestamp; nullable/inapplicable when the instance has never been pinned and is semantically `UNPINNED`)
 - `pinnedBy` (actor principal, nullable/inapplicable when the instance has never been pinned and is semantically `UNPINNED`)
 - `controlPlaneRequestId` (nullable; the idempotent request that last changed the pin, absent before the first pin)
 
 #### `GetGameSessionPinConvergence`
 
-Implementation note: the current Game Session implementation now exposes this convergence read directly from the persisted game-instance pin record. The live service returns the observed pinned patch, observational `lastObservedControlPlaneRequestId`, and observed timestamp instead of leaving convergence identity implicit in actor/reason text; the current proto/implementation does not yet expose `observedScriptPinEpoch` or `currentConvergenceAttemptGeneration`, which remain required by the target exact-tuple/attempt contract below. Until `observedScriptPinEpoch` exists, exact pinned-tuple admission/replay and convergence are unavailable; a missing `currentConvergenceAttemptGeneration` separately prevents attempt-bound convergence proof even when the exact pin tuple is present. Semantic `UNPINNED` is represented separately by both tuple fields being absent, while a partial tuple is invalid owner state, cannot satisfy `EXPECT_UNPINNED` or `EXPECT_EPOCH`, and is rejected/fails closed even for an `UNCONDITIONAL` request.
+Implementation note: the current Game Session implementation now exposes this convergence read directly from the persisted game-instance pin record. The live service returns the observed pinned patch, observational `lastObservedControlPlaneRequestId`, and observed timestamp instead of leaving convergence identity implicit in actor/reason text; the current proto/implementation does not yet expose `observedScriptPinEpoch` or `currentConvergenceAttemptGeneration`, which remain required by the target exact-tuple/attempt contract below. Until `observedScriptPinEpoch` exists, exact pinned-tuple admission/replay and convergence are unavailable; a missing `currentConvergenceAttemptGeneration` separately prevents attempt-bound convergence proof even when the exact pin tuple is present. Semantic `UNPINNED` is represented separately by both tuple fields being absent only before the first pin, while a partial tuple is invalid owner state, cannot satisfy `EXPECT_UNPINNED` or `EXPECT_EPOCH`, and is rejected/fails closed even for an `UNCONDITIONAL` request.
 
 Inputs:
 
@@ -196,15 +196,42 @@ Inputs:
 Outputs:
 
 - `tenantId`, `gameInstanceId`
-- `observedPinnedScriptPatchVersion` and `observedScriptPinEpoch` as the observed nullable exact Game Session pair (both present for a pin; both absent for semantic `UNPINNED`, never a sentinel)
+- `observedPinnedScriptPatchVersion` and `observedScriptPinEpoch` as the observed nullable exact Game Session pair (both present for a pin; both absent only for a never-pinned semantic `UNPINNED`, never a sentinel)
 - `currentConvergenceAttemptGeneration` (positive generation for the current pin-transition workflow attempt; absent when no workflow exists)
-- `lastObservedControlPlaneRequestId` (nullable; absent only when the instance has never been pinned and the observation is semantic `UNPINNED`; retained after a previously pinned instance becomes `UNPINNED`, as the committed pin-mutation request represented by this authoritative read)
+- `lastObservedControlPlaneRequestId` (nullable; absent only when the instance has never been pinned and the observation is semantic `UNPINNED`; present with every pinned observation as the committed pin-mutation request represented by this authoritative read)
 - `observedAt`
 
 Contract rules:
 
 - This is the canonical Game Session-side convergence read for rollback/promotion orchestration.
 - The response must be derived from the same persisted pin mutation that `SetPinnedScriptPatchVersion` / `RollbackScriptPatchVersion` commit, not reconstructed from logs or operator events.
+
+#### `GetScriptPinTransitionWorkflowStatus`
+
+Implementation status: target-state, read-only Game Session owner surface. The current proto/runtime does not expose this read, and no implementation or proof is claimed.
+
+Inputs:
+
+- `tenantId`
+- `gameInstanceId`
+- `controlPlaneRequestId` (exact durable pin-transition workflow selector)
+
+Outputs:
+
+- `tenantId`, `gameInstanceId`, `controlPlaneRequestId`
+- `operationKind` (`SET` | `ROLLBACK` | `REPIN`)
+- `targetScriptPatchVersion` and `targetScriptPinEpoch` (the exact target tuple bound to the workflow)
+- `workflowState` (the current durable pin-transition state)
+- `currentConvergenceAttemptGeneration` (the current attempt generation)
+- `convergenceDeadlineAt` (nullable before the current attempt enters `CONVERGING`; once assigned, the immutable absolute deadline for that attempt)
+- `terminalTimeoutOutcome` (nullable; `PIN_CONVERGENCE_TIMEOUT` only when the current attempt is terminal)
+- `terminalTimeoutEvidence` (nullable immutable `{timeoutMs, reason, occurredAt}` captured with the exactly-once timeout transition/event; absent for a non-terminal current attempt)
+
+Contract rules:
+
+- This is an authoritative, read-only Game Session workflow read; it does not mutate, recover, or resume the workflow and is distinct from `GetGameSessionPinConvergence`.
+- The exact `(tenantId, gameInstanceId, controlPlaneRequestId)` selector identifies one durable workflow. Missing, incomplete, or ambiguous workflow authority is unavailable and is never interpreted as semantic `UNPINNED`.
+- Timeout consumers compare the event's exact target tuple, `operationKind`, `convergenceAttemptGeneration`, and request ID with this current workflow result before acting. A delayed event from a prior generation fails that comparison after explicit recovery has advanced the current generation.
 
 #### `SetPinnedScriptPatchVersion`
 
@@ -238,7 +265,7 @@ Outputs:
 
 - `previousScriptPatchVersion` (nullable)
 - `previousScriptPinEpoch` (nullable; the two previous fields are all-present or all-absent)
-- `pinnedScriptPatchVersion` (nullable resulting tuple member; present together with `scriptPinEpoch` or absent together for semantic `UNPINNED`; on deterministic failure the resulting tuple equals the previous tuple)
+- `pinnedScriptPatchVersion` (nullable resulting tuple member; present together with `scriptPinEpoch` or absent together only for a never-pinned semantic `UNPINNED`; on deterministic failure the resulting tuple equals the previous tuple)
 - `scriptPinEpoch` (nullable resulting exact authority epoch, paired with `pinnedScriptPatchVersion`; deterministic failure does not advance it)
 - `controlPlaneRequestId`
 - `errorCode` (optional on failure; required for deterministic business failures such as `SCRIPT_PATCH_NOT_READY`)
@@ -373,7 +400,7 @@ Inputs:
 
 Outputs:
 
-- ordered authoritative Game Session history rows containing `eventId`, `tenantId`, `gameInstanceId`, `operationKind` (`SET` | `ROLLBACK` | `REPIN`), nullable previous tuple (`previousScriptPatchVersion`, `previousScriptPinEpoch`), nullable resulting tuple (`scriptPatchVersion`, `scriptPinEpoch`), nullable `rolloutStatus`, `controlPlaneRequestId`, `actor`, `reason`, `outcome`, `committedAt`, and bounded pagination metadata. Each tuple is all-present or all-absent; both absent is semantic `UNPINNED`, never a sentinel.
+- ordered authoritative Game Session history rows containing `eventId`, `tenantId`, `gameInstanceId`, `operationKind` (`SET` | `ROLLBACK` | `REPIN`), nullable previous tuple (`previousScriptPatchVersion`, `previousScriptPinEpoch`), nullable resulting tuple (`scriptPatchVersion`, `scriptPinEpoch`), nullable `rolloutStatus`, `controlPlaneRequestId`, `actor`, `reason`, `outcome`, `committedAt`, and bounded pagination metadata. Each tuple is all-present or all-absent; both absent is semantic `UNPINNED` only for a never-pinned instance, never a sentinel.
 - `nextPageToken` (opaque continuation token; absent when there are no more rows).
 - Rows are ordered deterministically by `committedAt` descending (newest first), then by unique `eventId` ascending. The page token resumes this order without requiring an unbounded history read.
 
@@ -451,9 +478,9 @@ Inputs:
 Outputs:
 
 - `tenantId`, `gameInstanceId`
-- `observedPinnedScriptPatchVersion` and `observedScriptPinEpoch` (nullable exact pair; both present or both absent for semantic `UNPINNED`, never a sentinel or partial projection)
+- `observedPinnedScriptPatchVersion` and `observedScriptPinEpoch` (nullable exact pair; both present or both absent only for a never-pinned semantic `UNPINNED`, never a sentinel or partial projection)
 - `observedConvergenceAttemptGeneration` (positive generation observed with the exact pair and request identity; absent when no workflow observation exists)
-- `lastObservedControlPlaneRequestId` (nullable; absent only when the instance has never been pinned and the observed pair is semantic `UNPINNED`; retained after a previously pinned instance becomes `UNPINNED` and when the projection is stale, and otherwise represents the last committed pin mutation associated with the observation)
+- `lastObservedControlPlaneRequestId` (nullable; absent only when the instance has never been pinned and the observed pair is semantic `UNPINNED`; retained with a pinned pair when the projection is stale, and otherwise represents the last committed pin mutation associated with the observation)
 - `observedAt`
 - `projectionAsOfMs`
 - `projectionLagMs`

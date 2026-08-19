@@ -132,8 +132,6 @@ Compatibility proof must cover a profile-derived unmodified game, edited or remo
 
 Performance proof must measure representative trigger fan-out, evaluation, durable-row and audit amplification, handoff latency, tick-queue delay, quota behavior, and tenant isolation. Correctness-bearing mechanics must prove their typed owner and failure semantics independently of best-effort or quota-deniable DSL execution.
 
-The current implementation and focused proof are partial. FireMUD has signed ZIP intake, immutable plugin metadata and asset storage, publication rows, runtime plugin state, activation preflight, policy reconciliation, durable script work items, and shared sandbox seams. Current intake requires an allowlisted Ed25519 signature, parses only part of the documented plugin manifest, and does not yet demonstrate one complete bundle-to-compiled-runtime path for bindings, component requirements, capability grants, or unsigned platform-attested intake. The current evaluator is also narrower than the complete graph runtime described by the target architecture.
-
 ## Reversibility and Revisit Triggers
 
 Provenance channels, marketplace policy, attestation format, package schema, and capability vocabulary may evolve while retaining one DSL/runtime and explicit embedded-versus-linked lifecycles. Revisit linked plugins if measured use shows that Draft materialization covers nearly all packages and the independent activation control plane is not justified. Define a separate layered-content decision before allowing linked plugins to introduce ordinary version-owned DML, and require measured runtime evidence before moving routine hot-path mechanics into DSL execution.

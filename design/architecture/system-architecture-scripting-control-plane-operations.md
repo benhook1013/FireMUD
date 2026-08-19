@@ -168,10 +168,10 @@ Inputs:
 Outputs:
 
 - `tenantId`, `gameInstanceId`
-- `observedPinnedScriptPatchVersion` (nullable; absent for semantic `UNPINNED`)
-- `observedScriptPinEpoch` (nullable; absent for semantic `UNPINNED`)
+- `observedPinnedScriptPatchVersion` (nullable; absent only for a never-pinned semantic `UNPINNED`)
+- `observedScriptPinEpoch` (nullable; absent only for a never-pinned semantic `UNPINNED`)
 - `observedConvergenceAttemptGeneration` (positive generation observed with the exact pair and request identity; absent when no workflow observation exists)
-- `lastObservedControlPlaneRequestId` (nullable; absent only when the instance has never been pinned and the observed pair is semantic `UNPINNED`; retained after a formerly pinned instance becomes `UNPINNED` and when the projection is stale, representing the last committed pin mutation associated with the observation)
+- `lastObservedControlPlaneRequestId` (nullable; absent only when the instance has never been pinned and the observed pair is semantic `UNPINNED`; retained with a pinned pair when the projection is stale, representing the last committed pin mutation associated with the observation)
 - `observedAt`
 - `projectionAsOfMs`
 - `projectionLagMs`
@@ -181,7 +181,7 @@ Semantics:
 
 - Read-only.
 - Reports the latest pin observation used by admission and scheduler logic. Exact-tuple admission/replay requires the observed `(scriptPatchVersion, scriptPinEpoch)` pair and fails closed when the epoch is missing or stale. For promotion or rollback convergence, the observation is an acknowledgment only when the expected `(scriptPatchVersion, scriptPinEpoch, convergenceAttemptGeneration, controlPlaneRequestId)` tuple is present, `isProjectionStale=false`, and `projectionLagMs` is inside the configured freshness bound; a missing attempt generation separately prevents convergence proof. The freshness bound is the configured `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS` value from [Automation & Scripting Service Configuration](./microservices/automation-scripting-service/configuration.md).
-- Semantic `UNPINNED` is a valid observation represented by an absent `observedPinnedScriptPatchVersion`/`observedScriptPinEpoch` pair, never by a sentinel or partial pair. `lastObservedControlPlaneRequestId` is absent only when the instance has never been pinned; it is retained after a formerly pinned instance becomes `UNPINNED` and cannot make that observation satisfy promotion/rollback acknowledgment, which requires the requested pinned tuple and matching request identity.
+- Semantic `UNPINNED` is a valid observation only before the first pin, represented by an absent `observedPinnedScriptPatchVersion`/`observedScriptPinEpoch` pair, never by a sentinel or partial pair. `lastObservedControlPlaneRequestId` is absent only for that never-pinned observation; a pinned observation retains its request identity and cannot satisfy promotion/rollback acknowledgment unless it also carries the requested pinned tuple and matching request identity.
 - Reports only pin observation and projection freshness; it does not return an admission decision, `finalStage`, `finalOutcome`, `finalReason`, or a handler outcome.
 
 #### `GetGameSessionPinConvergence`
@@ -194,10 +194,10 @@ Inputs:
 Outputs:
 
 - `tenantId`, `gameInstanceId`
-- `observedPinnedScriptPatchVersion` (nullable; absent for semantic `UNPINNED`)
-- `observedScriptPinEpoch` (nullable; absent for semantic `UNPINNED`)
+- `observedPinnedScriptPatchVersion` (nullable; absent only for a never-pinned semantic `UNPINNED`)
+- `observedScriptPinEpoch` (nullable; absent only for a never-pinned semantic `UNPINNED`)
 - `currentConvergenceAttemptGeneration` (positive current generation; absent when no workflow exists)
-- `lastObservedControlPlaneRequestId` (nullable; the committed pin mutation request represented by this authoritative Game Session read; absent only when the instance has never been pinned and the observation is semantic `UNPINNED`; retained after a formerly pinned instance becomes `UNPINNED`)
+- `lastObservedControlPlaneRequestId` (nullable; the committed pin mutation request represented by this authoritative Game Session read; absent only for a never-pinned semantic `UNPINNED` observation)
 - `observedAt`
 
 Semantics:
@@ -205,7 +205,7 @@ Semantics:
 - Read-only.
 - Reports a Game Session owner-side convergence observation/acknowledgment for rollback and promotion. It is not the authoritative current-pin or rollout-history read and is not used by tick command intake or execution-time version fences; those use `GetPinnedScriptPatchVersion` and Game Session local owner state.
 - This is not an Automation projection read; projection lag and stale-projection fields do not apply, and no projection fields are returned. For rollback/promotion convergence, the observation is an acknowledgment only when it completes before the operation deadline and the exact `(scriptPatchVersion, scriptPinEpoch, convergenceAttemptGeneration, controlPlaneRequestId)` matches the expected tuple; `observedAt` is the timestamp from the owner-side observation.
-- Semantic `UNPINNED` is a valid observation represented by an absent `observedPinnedScriptPatchVersion`/`observedScriptPinEpoch` pair, never by a sentinel or partial pair. `lastObservedControlPlaneRequestId` is absent only when the instance has never been pinned; it is retained after a formerly pinned instance becomes `UNPINNED` and cannot make that observation satisfy promotion/rollback acknowledgment, which requires the requested pinned tuple and matching request identity.
+- Semantic `UNPINNED` is a valid observation only before the first pin, represented by an absent `observedPinnedScriptPatchVersion`/`observedScriptPinEpoch` pair, never by a sentinel or partial pair. `lastObservedControlPlaneRequestId` is absent only for that never-pinned observation and cannot make an observation satisfy promotion/rollback acknowledgment without the requested pinned tuple and matching request identity.
 
 #### `GetSignerPolicyConvergence`
 
