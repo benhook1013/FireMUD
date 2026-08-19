@@ -48,7 +48,7 @@ Fields in addition to the common envelope:
 - `pinnedPin` (required nested exact pin tuple containing required `scriptPatchVersion` and `scriptPinEpoch` members)
 - `changeType` (`SET` | `ROLLBACK` | `REPIN`)
 - `controlPlaneRequestId` (optional for non-operator changes; required when operator-driven)
-- `actor` and `reason`
+- `actor` and `reason` (if operator-driven)
 
 At the wire level, `previousPin` is absent only on a first pin (semantic `UNPINNED`), and when present both tuple members are required. `pinnedPin` is always present with both members required; no flattened partial tuple or sentinel represents an unpinned instance. An unchanged or no-op request, failed mutation, or exact idempotent retry publishes no new occurrence. Consumers read current state and history through Game Session APIs. Notification delivery, retention, or a consumer projection does not become rollout-history authority.
 
