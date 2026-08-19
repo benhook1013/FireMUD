@@ -136,6 +136,8 @@ Fields in addition to the common envelope:
 - `affectedPluginCount`
 - `controlPlaneRequestId` (optional when correlated with an operator-driven rollout change)
 
+When one signer revocation affects multiple instances, Automation emits at most one occurrence per affected `gameInstanceId`; `affectedPluginCount` counts only the affected plugin lifecycles within this event's exact `(tenantId, gameInstanceId, signerKeyId, observedSignerPolicyVersion)` scope and is never a tenant-wide total.
+
 A named compliance or alerting subscriber with a guaranteed-delivery requirement may justify a targeted ADR 0083 outbox flow later. Until then, operational consumers poll or reread authoritative revocation and activation history.
 
 ## `ScriptPinConvergenceTimedOut` (Game Session -> Durable Event Flow)

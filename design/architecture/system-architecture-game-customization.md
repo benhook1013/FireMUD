@@ -2,7 +2,7 @@
 
 This brief document summarizes optional ways a hosted game can change its look and feel without modifying FireMUD source code. FireMUD runs out of the box with default settings, so none of these customizations are required.
 
-**Target-state customization model:** Customization uses the one-DSL embedded-script and linked-plugin model owned by the [DSL lifecycle reference](./system-architecture-scripting-dsl-reference-and-lifecycle.md#one-dsl-distinct-artifact-and-lifecycle-roles). Locally, embedded game-owned patches follow the Game Design/Game Session pin workflow, while linked-plugin rollout remains independent in the `(tenantId, gameInstanceId, pluginId)` scope, carries the captured `(pluginActivationEpoch, lifecycleRevision)` fence pair as runtime evidence, does not advance `scriptPinEpoch`, and fails stale reactivation closed.
+**Target-state customization model:** Customization uses the one-DSL embedded-script and linked-plugin model owned by the [DSL lifecycle reference](./system-architecture-scripting-dsl-reference-and-lifecycle.md#one-dsl-distinct-artifact-and-lifecycle-roles). Locally, embedded game-owned patches follow the Game Design/Game Session pin workflow, while each linked plugin has an independent rollout scope `(tenantId, gameInstanceId, pluginId)`, carries the captured `(pluginActivationEpoch, lifecycleRevision)` fence pair as runtime evidence, does not advance `scriptPinEpoch`, and fails stale reactivation closed; one plugin's lifecycle transition must not advance or disable another plugin's runtime row.
 
 ## Implementation Status
 
