@@ -50,6 +50,8 @@ Every authored timer declares both its clock unit and recovery class. Tick/game 
 
   For plugin-owned candidates, the transient candidate state, reconciliation evidence, and retry/reload state retain the captured `(pluginActivationEpoch, lifecycleRevision)` pair. Reconciliation and retry revalidate both values against the current owner pair; `lifecycleRevision` is fence evidence only and is not added to `scheduleCandidateId`, firing-claim, or `scriptEventId` identity.
 
+  Legacy-row migration is reconciliation evidence, not candidate recovery: retain the original `scheduleInstanceId` and source `controlPlaneRequestId`, record the bounded missing-field or migration reason, and never synthesize a missing activation epoch, lifecycle revision, due-candidate identity, or `scriptEventId`. Only a later validated target schedule reconciliation may create fresh state. Use `plugin_activation_epoch_mismatch` only when a present captured epoch differs from authoritative current epoch evidence; use `plugin_binding_mismatch` for a present plugin/lifecycle provenance mismatch, and `authority_unavailable`, `component_policy_unavailable`, or `signer_policy_unavailable` when the applicable evidence is unavailable or unverifiable.
+
 Within that model:
 
 - The Game Session Service owns authoritative tick progression and tick timers, as described in [Tick System and Runtime Design](./system-architecture-ticks.md).
