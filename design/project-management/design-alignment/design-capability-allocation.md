@@ -179,7 +179,6 @@ This ledger maps canonical product and architecture sources to the stable capabi
 | `design/architecture/decisions/adr-0130-historical-equipment-body-layout-authority.md` | `GR-3` | `AR-1`, `GR-1`, `SF-1` | Superseded |
 
 ADR 0121 is superseded by [ADR 0114](../../architecture/decisions/adr-0114-command-plan-preview-dry-run-isolation.md); its historical capability allocation remains recorded above.
-ADR 0130 is superseded by [ADR 0127](../../architecture/decisions/adr-0127-game-authored-equipment-layouts-with-fail-closed-publication.md); its historical capability allocation remains recorded above.
 
 ## Product Documentation Allocation
 

@@ -6,7 +6,7 @@ Game Design publishes immutable plugin versions with compatibility and provenanc
 
 ## Implementation Status
 
-The current implementation and hosted policy support signed-only plugin intake and activation after allowlisted Ed25519 verification. The operator-permitted unsigned provenance flow in [ADR 0111](../../decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md) is target-only, and complete runtime tuple, `pluginActivationEpoch`, and `lifecycleRevision` fencing proof remains target-state and incomplete, including same-epoch lifecycle transitions such as `DRAINING`, which advance `lifecycleRevision` without advancing `pluginActivationEpoch`; the detailed local boundaries below and the linked scripting contracts remain authoritative.
+The current implementation and hosted policy support signed-only plugin intake and activation after allowlisted Ed25519 verification. At the current publication definition, this is structural validation: immutable publication, signing, availability, and provenance claims remain in force, while the dedicated ability-schema and complete signature-set proof are not yet live. The operator-permitted unsigned provenance flow in [ADR 0111](../../decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md) is target-only, and complete runtime tuple, `pluginActivationEpoch`, and `lifecycleRevision` fencing proof remains target-state and incomplete, including same-epoch lifecycle transitions such as `DRAINING`, which advance `lifecycleRevision` without advancing `pluginActivationEpoch`; the detailed local boundaries below and the linked scripting contracts remain authoritative.
 
 This document outlines the modding system that lets administrators extend a published game without republishing a full version.
 
@@ -321,7 +321,7 @@ The lifecycle rules in this section are **target-state**. The current runtime pe
 
 Design-time publication and runtime activation are separate:
 
-- Publication in the current Game Design implementation means the plugin bundle is immutable, signed, validated, and available for activation; provenance evidence follows the service-local record in [ADR 0128](../../decisions/adr-0128-game-design-plugin-trust-provenance.md) under the target authority of ADR 0111.
+- Publication in the current Game Design implementation means the plugin bundle is immutable, signed, structurally validated, and available for activation; provenance evidence follows the service-local record in [ADR 0128](../../decisions/adr-0128-game-design-plugin-trust-provenance.md) under the target authority of ADR 0111.
 - Activation in Automation & Scripting means a `PUBLISHED` plugin version has been selected for one `(tenantId, gameInstanceId, pluginId)` and admitted into the runtime registry.
 - A plugin version that is `PUBLISHED` in Game Design may still be `DISABLED` or never activated for any instance.
 - Game Design publication visibility and Automation runtime state must remain separate read surfaces. Operator tooling should read immutable publication metadata (for example `GetPublishedPluginVersion`) alongside runtime activation state (`GetPluginStatus`) rather than relying on one synthetic plugin-state enum to encode both concerns.

@@ -12,7 +12,7 @@ SEC-04 does not move player session ownership into Logging & Admin. Game Session
 
 ## Packet 4 Status and Proof Gaps
 
-- `AA-2.1` / `AA-3.3`: [ADR 0122](../../architecture/decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md) requires player selection, admission, and reconnect to resolve the durable playable-state namespace together with the active runtime instance. Existing account/session and realm-routing evidence remains partial and does not prove namespace-aware replacement or cleanup behavior.
+- `AA-2.1` / `AA-2.2` / `AA-3.3`: [ADR 0122](../../architecture/decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md) requires player selection, admission, and reconnect to resolve the durable playable-state namespace together with the active runtime instance. Existing account/session and realm-routing evidence remains partial and does not prove namespace-aware replacement or cleanup behavior.
 - `AA-3.3`: [ADR 0123](../../architecture/decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md) adds the player-visible lifecycle consequence that only an active, admissible realm is exposed; Temporal coordination does not become admission authority. Existing lifecycle and reconnect caveats remain.
 
 These links add decision provenance only; they do not upgrade player-access or session capability status.
