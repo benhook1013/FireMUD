@@ -74,7 +74,7 @@ For v1, the creator lifecycle is:
 2. **Assign Roles** – `designer` authors content and publishes versions. `tenantAdmin` owns routine runtime lifecycle for that tenant, while `platformAdmin` emergency controls are reserved for platform incidents or support.
 3. **Resolve Billing and Go-Live Readiness** – Before the first public production realm starts, the tenant must satisfy plan and entitlement requirements and have a published version ready to launch. The creator can choose or repair a hosting plan, view high-level entitlement status, and understand why launch is blocked without requiring routine operator intervention.
 
-Choosing a starter profile at creation copies its content into the tenant's editable Draft. A creator may revise or remove that content without changing the profile, and later profile edits do not silently overwrite the Draft. If no published Draft content is available, launch remains blocked; the runtime does not fall back to the profile.
+Choosing a starter profile at creation copies its content into the tenant's editable Draft. A creator may revise or remove that content without changing the profile, and later profile edits do not silently overwrite the Draft. Launch is blocked until that Draft produces a published version; the runtime never falls back to the profile.
 
 ```plaintext
 Account Service (user) → Game Design Service (new game)

@@ -79,31 +79,40 @@ Digest input manifest rules live in [`runtime-and-data.md`](./runtime-and-data.m
 `ValidateWorldUpgradeMappings` is World Management's owner-local participant in the replacement contract owned by [ADR 0122](../../decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md). It must expose enough detail for cutover tooling to reason about World-owned references without becoming a second classification authority:
 
 - Input identifies `tenantId`, stable `playableStateNamespaceId`, `sourceGameInstanceId`, exact `sourceVersionId` and `targetVersionId`, and optional approved `remapSetId`. A target replacement request may also carry the prepared `targetGameInstanceId`; it is evidence for the same cutover, not a new World authority.
-- Response enumerates every registered World-owned row family, owner, local S1/S2/S3 classification, count, referenced template identifiers, outcome, unknown/unclassified state, freshness epoch, and any mapping validation/application result. `remapSetId` must resolve to immutable persisted Game Design approval and exact source-version-to-target-version mapping evidence; a supplied or echoed id is not proof of validation or application. Unknown or unregistered state is incompatible.
+- Response enumerates every registered World-owned row family, owner, local S1/S2/S3 classification, count, referenced template identifiers, outcome, unknown/unclassified state, freshness epoch, and any mapping validation/application result. It binds that enumeration to the exact common state-family/owner-registry revision or to a complete set of owner-scoped catalog epochs; each family evidence row identifies the applicable owner catalog epoch and freshness evidence when owner-scoped catalogs are used. `remapSetId` must resolve to immutable persisted Game Design approval and exact source-version-to-target-version mapping evidence; a supplied or echoed id is not proof of validation or application. Unknown or unregistered state is incompatible.
+- The response declares its report capability and completeness and binds the exact namespace, source/target versions, source instance, and optional target instance from the request. World may return `COMPATIBLE` only for a supported, complete report with exhaustive family evidence, current freshness evidence, the exact registry revision or complete owner-catalog epochs, and any required mapping validation/application proof. A missing, unsupported, or incomplete report cannot be interpreted as `COMPATIBLE`; family registration, ownership, or classification drift after preflight invalidates the report rather than being hidden behind an unchanged family count.
 - If the service currently has no `S2` row families for a tenant/version pair, it must report that explicitly rather than implying compatibility from an empty response.
 
 Current live first slice:
 
 - The RPC now exists and returns the canonical cutover-validation payload shape.
-- The implementation currently proves the source `world_instance` exists for `(tenantId, sourceGameInstanceId)`, requires a cutover-eligible world lifecycle state, and verifies retained instance topology rows for `region_instance`, `zone_instance`, and `room_instance` while still reporting only the initial World-owned `S3` families. It does not yet validate the exact namespace, source/target version pair, target instance binding, or persisted remap evidence required above; those are explicit implementation/proof gaps.
+- The implementation currently proves the source `world_instance` exists for `(tenantId, sourceGameInstanceId)`, requires a cutover-eligible world lifecycle state, and verifies retained instance topology rows for `region_instance`, `zone_instance`, and `room_instance` while still reporting only the initial World-owned `S3` families. It does not yet validate the exact namespace, source/target version pair, target instance binding, report capability/completeness, exact registry revision or owner-scoped catalog epochs, or persisted remap evidence required above; those are explicit implementation/proof gaps.
 - World therefore currently returns `stateClassesChecked=["S3"]`, `checkedFamilies=["world_instance", "region_instance", "zone_instance", "room_instance", "room_instance_exit", "world_event"]`, `hasS2Rows=false`, and `remapSetRequired=false`; it returns `INCOMPATIBLE` when the source world lifecycle or retained topology is not cutover-eligible.
 - Later World-owned durable metadata families can widen this contract to real `S2` checks without changing the owning RPC surface.
 
-Illustrative responses:
+Target illustrative responses (field names remain conceptual until the coordinated wire change):
 
 ```json
 {
   "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
+  "playableStateNamespaceId": "shared-live",
   "sourceGameInstanceId": "2e3ee139-a6e8-44ad-b840-891b22c2255b",
+  "sourceVersionId": "54ce6198-ccea-4f94-8541-ec8ca322070d",
+  "targetGameInstanceId": "4862ba66-fda2-490a-97e9-28358fbd0888",
   "targetVersionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
-  "stateClassesChecked": ["S3"],
-  "checkedFamilies": [
-    "world_instance",
-    "region_instance",
-    "zone_instance",
-    "room_instance",
-    "world_event"
+  "reportCapability": "EXHAUSTIVE_WORLD_FAMILY_EVIDENCE",
+  "complete": true,
+  "registryEvidenceMode": "OWNER_SCOPED_CATALOG_EPOCHS",
+  "familyEvidence": [
+    {"family": "world_instance", "owner": "world-management", "ownerCatalogEpoch": 17, "freshnessEpoch": 41, "classification": "S3", "count": 1, "outcome": "COMPATIBLE"},
+    {"family": "region_instance", "owner": "world-management", "ownerCatalogEpoch": 17, "freshnessEpoch": 41, "classification": "S3", "count": 4, "outcome": "COMPATIBLE"},
+    {"family": "zone_instance", "owner": "world-management", "ownerCatalogEpoch": 17, "freshnessEpoch": 41, "classification": "S3", "count": 12, "outcome": "COMPATIBLE"},
+    {"family": "room_instance", "owner": "world-management", "ownerCatalogEpoch": 17, "freshnessEpoch": 41, "classification": "S3", "count": 96, "outcome": "COMPATIBLE"},
+    {"family": "room_instance_exit", "owner": "world-management", "ownerCatalogEpoch": 17, "freshnessEpoch": 41, "classification": "S3", "count": 144, "outcome": "COMPATIBLE"},
+    {"family": "world_event", "owner": "world-management", "ownerCatalogEpoch": 17, "freshnessEpoch": 41, "classification": "S3", "count": 3, "outcome": "COMPATIBLE"}
   ],
+  "unknownFamilies": [],
+  "mappingProof": {"required": false, "validation": "NOT_REQUIRED", "application": "NOT_REQUIRED"},
   "hasS2Rows": false,
   "result": "COMPATIBLE",
   "remapSetRequired": false
@@ -113,15 +122,28 @@ Illustrative responses:
 ```json
 {
   "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
+  "playableStateNamespaceId": "shared-live",
   "sourceGameInstanceId": "2e3ee139-a6e8-44ad-b840-891b22c2255b",
+  "sourceVersionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
+  "targetGameInstanceId": "f4ba2a7a-ee8f-43eb-af1a-749c07773a3a",
   "targetVersionId": "8e65e4a1-5b49-4c31-9f27-3d0b8c6a1e74",
-  "checkedFamilies": [
+  "reportCapability": "EXHAUSTIVE_WORLD_FAMILY_EVIDENCE",
+  "complete": true,
+  "registryEvidenceMode": "OWNER_SCOPED_CATALOG_EPOCHS",
+  "familyEvidence": [
     {
       "family": "housing_anchor",
+      "owner": "world-management",
+      "ownerCatalogEpoch": 18,
+      "freshnessEpoch": 45,
+      "classification": "S2",
+      "count": 1,
       "referencedTemplateIds": ["roomTemplateId:starter-house-01"],
       "outcome": "REQUIRES_MAPPING"
     }
   ],
+  "unknownFamilies": [],
+  "mappingProof": {"required": true, "validation": "MISSING", "application": "NOT_APPLIED"},
   "hasS2Rows": true,
   "result": "INCOMPATIBLE",
   "remapSetRequired": true

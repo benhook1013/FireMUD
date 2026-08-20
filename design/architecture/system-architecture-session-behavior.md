@@ -56,7 +56,7 @@ This enables:
 - Forced logins (for example "kick and take over").
 - Session continuity with at-most-once edge delivery semantics. In-flight command loss at disconnect boundaries remains possible.
 
-All session rebinding is enforced by the Game Session Service using Redis locks. See [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding).
+Game Session uses Redis locks only to serialize session rebind and takeover operations. Those locks do not authorize a replacement or select the active runtime: replacement authorization still requires the owner-database admission-pointer expected-version CAS, the authoritative lifecycle row and epoch, and fresh namespace-bound active-instance authorization under [ADR 0122](./decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md) and [ADR 0123](./decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md). See [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding) for the serialization boundary.
 
 ## Mid-Session Role Updates
 
