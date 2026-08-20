@@ -70,8 +70,8 @@ The matrix below is the target participation and ownership contract. `Authoritat
 | Gameplay WebSocket route definition and routing (`/ws/game/**` canonical route) | | | | | | | | | | | ✔ |
 | Game version activation at runtime | | | | ✔ | | | | | | | |
 | Replacement-instance compatibility preflight (`ValidateInstanceCutoverCompatibility`) | ✔ | ✔ | | ✔ | ✔ | | ✔ | | ✔ | | |
-| Authoritative owner: Multi-Tenancy realm catalog and stable playable-state namespace contract (Game Session serves the resolved runtime contract) | | | | ✔ | | | | | | | |
-| Authoritative owner: Game Session runtime realm-catalog and admission-pointer resolution, persistence, and CAS orchestration | | | | ✔ | | | | | | | |
+| Authoritative owner: Multi-Tenancy realm-catalog schema and stable playable-state namespace semantics/classification under ADR 0122 | | | | ✔ | | | | | | | |
+| Authoritative owner: Game Session runtime realm-catalog/admission-pointer resolution, persistence, expected-version CAS, and orchestration (not namespace semantics) | | | | ✔ | | | | | | | |
 | Registered owner participation: replacement state-family S1/S2/S3 classification, mapping application, and cleanup acknowledgment (each domain service only for its registered families) | | ✔ | | ✔ | ✔ | | ✔ | | | | |
 | Diagnostic reader: replacement state-family and cleanup progress (read-only; no lifecycle or cleanup authority) | | | | | | | | | ✔ | | |
 | Authoritative owner: World Management database lifecycle row, monotonic lifecycle epoch, and lifecycle Temporal coordination | | ✔ | | | | | | | | | |

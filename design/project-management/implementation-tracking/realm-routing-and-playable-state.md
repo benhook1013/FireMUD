@@ -10,7 +10,7 @@ The working realm-catalog projection, admission-pointer reads, bootstrap/connect
 
 ## Packet 4 Status and Proof Gaps
 
-- `AA-3.3` / `AR-3.1`: [ADR 0122](../../architecture/decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md) requires a stable playable-state namespace distinct from each runtime instance. Current pointer/routing and playable-state records still retain the documented implementation gaps around instance identity, atomic cutover, and active-session drain; no namespace migration proof is claimed.
+- `AA-3.3` / `AR-3.1`: [ADR 0122](../../architecture/decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md) requires a stable playable-state namespace distinct from each runtime instance and an immutable `playableStateScope` for that namespace during one playable lifecycle. A `SHARED`↔`ISOLATED` transition must select or allocate the appropriate new namespace and must not reinterpret durable state under the existing namespace. Current pointer/routing and playable-state records still retain the documented implementation gaps around instance identity, atomic cutover, active-session drain, and this scope-transition boundary; no namespace-selection or transition proof is claimed.
 - `AR-3.1`: [ADR 0123](../../architecture/decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md) records the database lifecycle row/epoch and owner-cleanup acknowledgement target. Existing lifecycle and replacement preparation evidence remains partial and does not prove all-owner cleanup or termination completion.
 
 These links add decision provenance only; they do not upgrade routing or playable-state capability status.

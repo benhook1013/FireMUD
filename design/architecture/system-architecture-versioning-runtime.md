@@ -133,7 +133,7 @@ Ownership is split between the Game Design Service and domain services:
   - References from revisions/versions to assets, scripts, and templates via stable identifiers.
 - Domain services such as World Management, Entity Management, Game Logic, and others are the canonical stores for:
   - Versioned template graphs keyed by `(tenantId, versionId)` (world topology, entity templates, balance records, etc.).
-  - Durable playable state keyed by `(tenantId, playableStateNamespaceId)` and explicitly instance-scoped runtime state keyed by `(tenantId, gameInstanceId)`, as defined by [ADR 0122](./decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md).
+  - Durable playable state keyed by `(tenantId, playableStateNamespaceId, playableStateScope)` and explicitly instance-scoped runtime state keyed by `(tenantId, gameInstanceId)`, as defined by [ADR 0122](./decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md).
 
 Domain services must not persist their own commit histories; they expose only the current and historical template snapshots keyed by `(tenantId, versionId)`. Game Design Service must not maintain a second, divergent copy of world or entity template graphs; it references domain templates via stable IDs and version metadata.
 
@@ -186,7 +186,7 @@ Published versions are immutable from the perspective of domain templates:
 - The Game Design Service is the source of truth for version state (`Draft`, `Published`, `Active`, `Failed`, `Retired`).
 - Domain services such as World Management and Entity Management expose **design APIs** that create or update template rows only for Draft versions keyed by `(tenantId, versionId)`. Authoring tools call these APIs incrementally as revisions are saved so Draft template graphs in domain services always reflect the latest committed design state for that version.
 - Once a version reaches the Published state, template tables in domain services must treat rows for that `(tenantId, versionId)` as read-only. Any attempt to modify templates for a Published, Active, or Failed version should fail fast at the design API boundary and be surfaced as a validation error in the Game Design UI.
-- Runtime gameplay flows (ticks, world-lifecycle workflows, etc.) never mutate template tables. They only read templates for the active `runtime_version`; writes use `(tenantId, playableStateNamespaceId)` for durable playable state and `(tenantId, gameInstanceId)` only for explicitly instance-scoped runtime state.
+- Runtime gameplay flows (ticks, world-lifecycle workflows, etc.) never mutate template tables. They only read templates for the active `runtime_version`; writes use `(tenantId, playableStateNamespaceId, playableStateScope)` for durable playable state and `(tenantId, gameInstanceId)` only for explicitly instance-scoped runtime state.
 
 At a high level, each `(tenantId, versionId)` template graph in a domain service follows this lifecycle:
 
@@ -412,7 +412,7 @@ Termination requires ordered handoff across runtime and domain owners:
 3. After World Management confirms that fence/rejection, Game Session makes one bounded notice attempt to affected source clients.
 4. Game Session unconditionally closes the affected source sockets after that bounded notice attempt; notice failure or unavailability never keeps sockets open or extends the deadline.
 5. World Management runs `InstanceTermination` with Entity Management cleanup.
-6. World Management commits `TERMINATED` only after every registered durable instance-data owner confirms cleanup; Entity Management is one required owner, not the complete registry. See [ADR 0123](./decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md).
+6. World Management freezes the durable instance-data owner set for the cleanup attempt at its ownership-registry revision and commits `TERMINATED` only after every owner in that frozen snapshot confirms cleanup; Entity Management is one required owner, not the complete registry. See [ADR 0123](./decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md).
 7. Game Session marks the `game_instances` runtime record terminated/stopped only after step 6.
 
 If any step after step 1 fails, admission remains closed and the same termination workflow identity must retry until convergence.
