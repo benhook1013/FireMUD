@@ -21,7 +21,7 @@ This API contract is target-state canonical; implementation coverage is partial 
 - `ActivatePreparedWorldInstance` – performs the fenced `PREPARING -> ACTIVE` lifecycle transition after Game Session has finished local start-up work for the same `gameInstanceId`.
 - `FailPreparedWorldInstance` – performs the fenced `PREPARING -> FAILED_PRE_ACTIVATION` transition when Game Session or another pre-admission consumer must roll back a prepared instance before admission opens.
 - `GetWorldInstanceLifecycle` – returns the current fenced lifecycle snapshot for an existing `(tenantId, gameInstanceId)` so stop/cutover consumers can retry against fresh lifecycle truth instead of cached guesses.
-- `TerminateWorldInstance` – requests or resumes fenced termination from `PREPARING`, `FAILED_PRE_ACTIVATION`, or `ACTIVE`; it reports `TERMINATED` only after every registered durable instance-data owner acknowledges cleanup and the final lifecycle CAS commits.
+- `TerminateWorldInstance` – requests or resumes fenced termination from `PREPARING`, `FAILED_PRE_ACTIVATION`, or `ACTIVE`; it reports `TERMINATED` only after every owner in the frozen required cleanup-owner snapshot captured for `terminationRequestId`, together with its ownership-registry revision, acknowledges cleanup and the final lifecycle CAS commits against that same snapshot.
 
 The gRPC contract for world operations is located in [../../../../protos/world-management/v1](../../../../protos/world-management/v1). Run `./gradlew generateProto` to regenerate sources after editing these files.
 
@@ -234,9 +234,11 @@ The authoritative `expiresAt` is a diagnostic and repair trigger only. Expiry ne
 
 World Management owns the authoritative lifecycle row and monotonic epoch for `gameInstanceId` rows. The lifecycle state, owner registry, cleanup acknowledgements, and Temporal boundary are owned by [ADR 0123](../../decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md); this section records the World API consequence. Teardown is cross-service:
 
+Termination owner-set and registry-revision snapshot semantics are defined by [Instance Termination and Cleanup](./world-creation-workflow.md#instance-termination-and-cleanup): when `terminationRequestId` begins, World freezes the required durable-owner set and matching ownership-registry revision. Every owner acknowledgement and final lifecycle compare-and-set exact-matches that snapshot, even if registry membership changes later; only owners in that snapshot are required.
+
 - Game Session must first mark the instance non-admissible and draining before World transitions lifecycle.
 - A termination request may fence `PREPARING`, `FAILED_PRE_ACTIVATION`, or `ACTIVE` to `TERMINATING` through the durable Temporal `world-lifecycle` workflow; the same epoch makes stale activation fail.
-- Every registered durable `gameInstanceId` owner must acknowledge idempotent cleanup in its own durable state before World marks the instance `TERMINATED`; Entity Management is one required owner, not the complete future registry.
+- Every durable `gameInstanceId` owner in the frozen termination snapshot must acknowledge idempotent cleanup in its own durable state before World marks the instance `TERMINATED`; Entity Management is one required owner, not the complete future registry.
 - `FAILED_PRE_ACTIVATION` is admission-terminal but does not imply cleanup completion; its cleanup progress is read separately from lifecycle status.
 - Scheduled expiry jobs must start or signal the lifecycle workflow and must not directly delete world rows for a still-unconfirmed termination.
 - Lifecycle fencing is mandatory. Every transition is a storage-level compare-and-set against expected state and epoch; if activation and termination race, only the winning CAS advances the row and stale callers reread authoritative state.

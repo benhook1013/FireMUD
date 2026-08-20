@@ -299,7 +299,7 @@ The following focused proofs are required by the accepted target contracts; thei
 - Equipment publication/runtime tests must fail closed for incomplete vocabulary/schema/bindings, validate occupancy against the published digest, and exercise explicit cutover remapping ([ADR 0127](./decisions/adr-0127-game-authored-equipment-layouts-with-fail-closed-publication.md)).
 - Plugin provenance tests must preserve ADR 0111 as trust/runtime authority while checking service-local signed-intake evidence, signer/key lifecycle, capability/policy projection, and incomplete-validation behavior ([ADR 0128](./decisions/adr-0128-game-design-plugin-trust-provenance.md)).
 - Draft concurrency tests must cover exact-base/digest mismatch, owner-local CAS conflicts, durable per-owner outcomes, synchronized read-fence visibility, retry convergence, no silent merge, and no distributed transaction/global epoch ([ADR 0129](./decisions/adr-0129-durable-fenced-multi-owner-draft-commits.md)).
-- The superseded equipment-history record must remain traceable to ADR 0130 while all active behavior and proof resolve to ADR 0127.
+- The superseded equipment-history record must remain traceable to [ADR 0130](./decisions/adr-0130-historical-equipment-body-layout-authority.md) while all active behavior and proof resolve to [ADR 0127](./decisions/adr-0127-game-authored-equipment-layouts-with-fail-closed-publication.md).
 
 ---
 

@@ -31,7 +31,7 @@ World Management distinguishes these primary identifiers:
 - `tenantId` – identifies the game tenant.
 - `versionId` – identifies a published world/template configuration.
 - `playableStateNamespaceId` – identifies the stable durable playable-state namespace retained across runtime replacement, as defined by [ADR 0122](../../decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md).
-- `gameInstanceId` – identifies the active, replaceable runtime instance managed by Game Session; it scopes disposable runtime state rather than durable playable-state identity.
+- `gameInstanceId` – identifies the active, replaceable runtime instance. Game Session manages its runtime/admission routing; World Management owns the `world_instance` lifecycle row, lifecycle epoch, and `TerminateWorldInstance` transitions. It scopes disposable runtime state rather than durable playable-state identity.
 
 World data uses two distinct identifier families:
 

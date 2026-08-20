@@ -274,7 +274,7 @@ Operational recovery flows (for example, restoring services after outages) are d
 
 ## 8. Switch Games or Manage Multiple Games
 
-Players can participate in multiple games using the same platform account. The [Multi-Tenancy](../../architecture/system-architecture-multi-tenancy.md) model keeps character ownership per `tenantId` while resolving actual playable character choices against the selected realm's `gameInstanceId`. Account selection and tenant setup are managed through the [Account Service](../../architecture/microservices/account-service/README.md) and [Game Design Service](../../architecture/microservices/game-design-service/README.md).
+Players can participate in multiple games using the same platform account. The [Multi-Tenancy](../../architecture/system-architecture-multi-tenancy.md) model keeps character ownership per `tenantId` while resolving actual playable character choices against the selected target binding identity `{tenantId, playableStateNamespaceId, playableStateScope, characterId}`; `gameInstanceId` is retained only as active-runtime fence/value evidence. Account selection and tenant setup are managed through the [Account Service](../../architecture/microservices/account-service/README.md) and [Game Design Service](../../architecture/microservices/game-design-service/README.md).
 
 Switching now follows the same lobby contract used during onboarding:
 

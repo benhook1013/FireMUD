@@ -73,7 +73,7 @@ Minimum downstream consequences of realm policy:
 
 Character-selection and creation policy must also respect realm mode:
 
-- `CHARS` lists the character choices valid for the resolved `{tenantId, playableStateNamespaceId, gameInstanceId}` target, not a tenant-wide superset; the namespace identifies durable playable state and the instance provides the active authorization fence.
+- `CHARS` lists the character choices valid for the resolved `{tenantId, playableStateNamespaceId, playableStateScope, gameInstanceId}` target, not a tenant-wide superset; the namespace identifies durable playable state, the server-derived scope comes from the exact catalog policy, and the instance provides the active authorization fence.
 - Shared-state realms normally expose the tenant's normal live durable roster for that account.
 - Isolated-state realms expose only that realm's valid roster, which may consist of copied fork-local characters, seeded/sample characters, newly created realm-local characters, or a policy-defined subset of those.
 - `CHARS` must return one realm-local decision surface for the selected target: the visible roster plus a bounded `creationPolicy` / equivalent flag explaining whether fresh character creation is allowed, denied, or limited to a documented realm-local mode. Clients must not infer creation rules by comparing roster contents to tenant-wide state.
@@ -83,7 +83,7 @@ Character-selection and creation policy must also respect realm mode:
 This distinction is normative for all realm-aware flows:
 
 - `REALMS` describes which player-addressable realms exist for a tenant.
-- `CHARS` lists the character choices valid for the resolved `{tenantId, playableStateNamespaceId, gameInstanceId}` target.
+- `CHARS` lists the character choices valid for the resolved `{tenantId, playableStateNamespaceId, playableStateScope, gameInstanceId}` target; `playableStateScope` is derived server-side from the exact catalog policy snapshot and is not caller-selected.
 - `PLAY` binds the session to the target `{tenantId, playableStateNamespaceId, playableStateScope, characterId}` identity and retains the active runtime/value evidence `{gameInstanceId, sessionId, bindingGeneration}`.
 
 Services must therefore avoid collapsing "character belongs to tenant" into "all character-associated data is keyed only by tenant" or treating a replaceable runtime as durable identity. Tenant ownership and playable-state namespace remain stable, while disposable runtime state may be recreated per `gameInstanceId` according to the resolved realm policy.
@@ -179,7 +179,7 @@ Pointer freshness and cutover rules:
 - `tenantId` is the authoritative tenant identifier owned by the Game Design Service. Identifier naming and format conventions are defined in [Identifier Glossary](./system-architecture-identifier-glossary.md).
 - Persistence models must treat `tenantId` as an opaque identifier, not as a user-facing value.
 - Gameplay clients may select worlds using `tenantSlug` values returned by `WORLDS` in the lobby flow, but `tenantSlug` must never be used as a substitute for `tenantId` in APIs or persistence outside of lobby selection.
-- Gameplay clients select a world and optional realm in the lobby flow, and the server resolves that selection to canonical `{tenantId, gameInstanceId}` values through the realm-routing contract.
+- Gameplay clients select a world and optional realm in the lobby flow, and the server resolves that selection to canonical `{tenantId, playableStateNamespaceId, playableStateScope, gameInstanceId}` values through the realm-routing contract; `playableStateScope` is derived server-side from the exact catalog policy snapshot.
 - Character ownership is scoped per `tenantId`, so a player may have different characters in different games. Realm-resolved durable playable state may either reuse the tenant-shared namespace or use an isolated stable namespace selected by the realm policy; `gameInstanceId` remains the active runtime fence and disposable-state scope.
 - Friend lists and guilds are maintained by the Social & Groups Service. Per-game friendships store `tenantId` plus player IDs, while account-to-account friendships reference global account IDs.
 - Tenant roles, profiles, characters, subscriptions, and hosting/game entitlements are tenant-scoped relationships or records. Explicit account-scoped purchases, grants, and donations remain global account records without a fabricated `tenantId`; using one for a tenant-scoped feature requires an explicit tenant binding or consumption record. Gameplay state is tenant-owned but may be shared-state or realm-scoped according to realm policy, with durable isolated state keyed by `playableStateNamespaceId` and disposable state keyed by `gameInstanceId`. Leaving one game changes only that relationship under its retention rules and does not delete the account or unrelated relationships.

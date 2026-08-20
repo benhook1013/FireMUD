@@ -33,17 +33,17 @@ AI-assisted and external proposals make the same problem more visible but do not
 
 ### Game Design-Owned Commit and Proposal Records
 
-Game Design owns the durable, creator-visible coordination record for every shared-Draft commit and isolated proposal. The record binds at least:
+Game Design owns the durable, creator-visible coordination record for every shared-Draft commit and isolated proposal. For every mutation, the record binds at least the target `tenantId` and `versionId`, plus:
 
-- the exact base commit from which the complete diff was produced;
+- the exact `baseCommitId` from which the complete diff was produced;
 - a stable request or proposal identity and canonical digest of the complete proposed input;
-- every affected owner, aggregate, and scope together with its expected epoch;
+- the complete affected `(tenantId, versionId, owner, aggregateId, scopeId, epoch)` set;
 - canonical commit and revision order; and
 - each required owner's durable application status and exact applied commit/digest identity.
 
-Reusing one request or proposal identity with the same canonical digest returns the existing result. Reusing it with different input is rejected as changed-request reuse. The base commit remains immutable provenance for the reviewed diff. Freshness is evaluated over the complete affected aggregate and scope epoch set, so a newer synchronized commit that changed only disjoint scopes does not by itself create a conflict.
+Reusing one request or proposal identity returns the existing result only when the complete binding matches: target `tenantId`/`versionId`, canonical mutation/input, exact `baseCommitId`, canonical revision order, complete affected set, and canonical digest. Reusing it with any changed or omitted binding field is rejected as changed-request reuse, even when the digest happens to match. The base commit remains immutable provenance for the reviewed diff. Freshness is evaluated over the complete affected aggregate and scope epoch set, so a newer synchronized commit that changed only disjoint scopes does not by itself create a conflict.
 
-An isolated proposal is not shared Draft state. Accepting it creates or selects one exact commit application bound to the reviewed base, diff, affected epochs, and digest. AI-assisted and external clients use this same contract and receive no alternate merge or write authority.
+An isolated proposal is not shared Draft state. Accepting it creates or selects one exact commit application bound to the reviewed base, diff, affected epochs, and digest. External AI/tool clients use ordinary scoped public creator APIs; a first-party agent uses the trusted scoped tool broker and isolated proposal flow. Both use this same commit contract and receive no alternate merge or write authority.
 
 The fencing unit is the owner-local tuple `(owner, aggregateId, scopeId, epoch)`. A scope identifier names the narrowest independently editable unit; an aggregate-wide invariant is represented by the canonical aggregate scope and therefore expands the affected set when required. Owner CAS checks every expected tuple in the complete affected set, and a mutation touching multiple scopes advances them atomically in that owner's transaction. Disjoint scope tuples may advance independently, while an operation that declares an incomplete or under-scoped set is rejected.
 
@@ -58,7 +58,7 @@ Each authoritative owner validates the complete affected aggregate and scope set
 
 A read followed by an unconditional epoch or content update is not sufficient compare-and-swap proof. A client also cannot avoid a conflict by omitting a containing affected scope: the owner derives or validates the required scope set from the typed mutation and rejects an incomplete declaration.
 
-Exact replay is a no-op returning the recorded result. The same commit or request identity with a different digest, base, affected set, or mutation is rejected. A stale affected epoch rejects that owner's application without silently overwriting or merging newer state.
+Exact replay is a no-op returning the recorded result. The same commit or request identity with a different or omitted tenant/version, canonical revision order, digest, base, affected set, or mutation is rejected. A stale affected epoch rejects that owner's application without silently overwriting or merging newer state.
 
 ### Durable Cross-Owner Coordination and Visibility
 

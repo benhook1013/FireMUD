@@ -161,6 +161,8 @@ Authorization: Bearer <bootstrapToken>
    realmSlug: "production",
    displayName: "Live Realm",
    tenantId: "7b3b074e-d597-4e9b-b96f-4f5946d26120",
+   playableStateNamespaceId: "0b7a8e52-3dc7-4f87-a8f5-4d6f9b4c2a10",
+   playableStateScope: "PLAYABLE_STATE_SCOPE_SHARED",
    gameInstanceId: "2f1c7ad0-8d5a-4a61-9d4b-6c93f11a2e01",
    connectScopeId: "cs_demo_production_v17",
    pointerVersion: 17,
@@ -171,13 +173,13 @@ Authorization: Bearer <bootstrapToken>
 
 GET /auth/bootstrap/worlds/demo/realms/production/characters?connectScopeId=cs_demo_production_v17
 Authorization: Bearer <bootstrapToken>
--> [{ characterName: "Mara", playableStateScope: "PLAYABLE_STATE_SCOPE_SHARED" }]  # server-derived response projection from the exact realm snapshot; never a caller-selected query or join field
+-> [{ characterName: "Mara", playableStateNamespaceId: "0b7a8e52-3dc7-4f87-a8f5-4d6f9b4c2a10", playableStateScope: "PLAYABLE_STATE_SCOPE_SHARED" }]  # server-derived response projection from the exact realm snapshot; never a caller-selected query or join field
 
 POST /auth/connect-token
 Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_demo_production_v17", requestId: "req-reconnect-1" }
 Set-Cookie: Firemud-Connect-Token=<connectToken>; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=30
--> { accountId, expiresAt, tenantId: "7b3b074e-d597-4e9b-b96f-4f5946d26120", realmSlug: "production", gameInstanceId: "2f1c7ad0-8d5a-4a61-9d4b-6c93f11a2e01", issuedAt }
+-> { accountId, expiresAt, tenantId: "7b3b074e-d597-4e9b-b96f-4f5946d26120", realmSlug: "production", playableStateNamespaceId: "0b7a8e52-3dc7-4f87-a8f5-4d6f9b4c2a10", playableStateScope: "PLAYABLE_STATE_SCOPE_SHARED", gameInstanceId: "2f1c7ad0-8d5a-4a61-9d4b-6c93f11a2e01", issuedAt }
 
 GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
 
@@ -192,7 +194,7 @@ POST /auth/connect-token
 Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_demo_production_v17", requestId: "req-reconnect-2" }
 Set-Cookie: Firemud-Connect-Token=<connectToken>; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=30
--> { accountId, expiresAt, tenantId: "7b3b074e-d597-4e9b-b96f-4f5946d26120", realmSlug: "production", gameInstanceId: "2f1c7ad0-8d5a-4a61-9d4b-6c93f11a2e01", issuedAt }
+-> { accountId, expiresAt, tenantId: "7b3b074e-d597-4e9b-b96f-4f5946d26120", realmSlug: "production", playableStateNamespaceId: "0b7a8e52-3dc7-4f87-a8f5-4d6f9b4c2a10", playableStateScope: "PLAYABLE_STATE_SCOPE_SHARED", gameInstanceId: "2f1c7ad0-8d5a-4a61-9d4b-6c93f11a2e01", issuedAt }
 
 GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
 

@@ -50,10 +50,10 @@ revisions with the versioned templates stored in domain services.
 
 The exact-base, digest-bound, multi-owner commit contract is owned by [ADR 0129](../../decisions/adr-0129-durable-fenced-multi-owner-draft-commits.md); this section records the Game Design local history, coordination, and visibility consequences.
 
-Game Design owns the durable, creator-visible coordination record for every shared-Draft commit and isolated proposal. Each record binds the exact base commit, stable request or proposal identity, canonical digest of the complete input, canonical revision order, every affected owner/aggregate/scope with its expected epoch, and durable per-owner application status.
+Game Design owns the durable, creator-visible coordination record for every shared-Draft commit and isolated proposal. Each record binds the target `tenantId` and `versionId`, exact `baseCommitId`, stable request or proposal identity, canonical digest of the complete input, canonical revision order, the complete affected `(tenantId, versionId, owner, aggregateId, scopeId, epoch)` set, and durable per-owner application status.
 
-- Isolated AI-assisted or external proposals use the same exact-base, complete-diff, affected-epoch, and digest contract. Proposal acceptance creates or selects one exact commit application; it does not grant a separate write or merge path.
-- Reusing one request, proposal, or commit identity with the same canonical digest returns the recorded result. Reusing it with changed input, base, affected set, or digest is rejected.
+- External AI/tool clients use ordinary scoped public creator APIs. A first-party agent uses the trusted scoped tool broker to build an isolated, reviewable Draft proposal; proposal acceptance creates or selects one exact commit application and does not grant a separate write or merge path. Both flows use the same exact tenant/version, base, complete-diff, affected-epoch, revision-order, and digest contract.
+- Reusing one request, proposal, or commit identity returns the recorded result only when the complete binding matches. Reusing it with changed or omitted tenant/version, input, base, revision order, affected set, or digest is rejected.
 - Each owner applies its portion through one storage-level atomic compare-and-swap transaction. That transaction checks every expected epoch required by the typed mutation for every aggregate and scope in the complete affected set, applies the local mutation, advances those epochs, and records the exact commit/digest result. A service-layer read followed by an unconditional update is not sufficient.
 - The typed mutation determines its complete affected scope. An owner rejects an omitted required containing scope rather than allowing the caller to evade a scope conflict.
 - Aggregate and scope epochs remain narrow conflict boundaries. The exact proposal base remains immutable provenance, while a newer synchronized commit that changed only disjoint scopes does not invalidate unchanged expected epochs.
@@ -123,6 +123,7 @@ In addition to domain-service digests, publish safety requires a Game Design con
   - `requiredManifestAssetKeys[]` listing the stable manifest usage keys required for launch or cutover validation of that release
   - `publishedReleaseBundleRef` — target-state owner-generated opaque identity for the immutable release bundle; the current implementation may expose only its internal bundle row identifier, so this field is not yet live
   - `manifestHash`, `manifestSchemaVersion`
+  - `abilitySchemaDigest` — the dedicated Game Logic-owned ability-schema digest for the same target commit, carried with the existing Game Logic participant `digestSchemaVersion` and canonicalization evidence; aggregate participant digests are not substitutes
   - `generationConfigRevision`
   - attestation schema/version fields for future evolution
   - Error semantics: `NOT_FOUND` means not publish-complete; `SCHEMA_VERSION_UNSUPPORTED` means fail closed until callers support the attestation schema.
@@ -134,6 +135,7 @@ Digest comparison rules:
 - Reconciliation and publish-time checks compare the current digest reported by each service against the recorded digest for the target commit.
 - If `digestSchemaVersion` differs, publish must fail fast and require an explicit migration of digest semantics (for example by bumping `digestSchemaVersion` and replaying commits to record new digests), rather than silently comparing incompatible hashes.
 - For one publish attempt, every required participant must attest the same target commit scope. Publish must fail closed if required participants report different `appliedCommitId` values for the same requested publish target, even if no individual digest payload is malformed.
+- The dedicated `abilitySchemaDigest` is compared exactly with the Game Logic-owned digest for the same target commit and its existing participant `digestSchemaVersion`/canonicalization contract; missing, unsupported, stale, or mismatched evidence fails closed.
 - Digest request/response payloads are canonical across participants:
   - `GetDraftDesignDigestRequest { tenantId, scope: oneof {versionId, scriptPatchVersion} }`
   - `GetDraftDesignDigestResponse { tenantId, scope, appliedCommitId, contentDigest, digestSchemaVersion }`
@@ -150,7 +152,7 @@ Publish workflows must use an explicit participant matrix so digest gating is de
 
 Asset bytes are intentionally outside participant design digests, but they remain mandatory publication gates through private candidate verification, the attested manifest digest, and every actual-byte artifact digest in the release bundle.
 
-The full-version release bundle also carries a separately named `abilitySchemaDigest` produced from the immutable Game Logic-owned ability-schema snapshot for the same target commit. Game Logic's aggregate participant `contentDigest` and Automation & Scripting's participant digest cover broader, different manifests and cannot substitute for this field. Plugin and script-patch compatibility checks compare against this dedicated release-attested value; missing ability-schema evidence fails closed.
+The full-version release bundle also carries a separately named `abilitySchemaDigest` produced from the Game Logic-owned ability-schema inputs under Game Logic's existing participant digest manifest, `digestSchemaVersion`, and canonicalization rules for the same target commit. Game Logic's broader aggregate participant `contentDigest` and Automation & Scripting's participant digest cannot substitute for this field. Plugin and script-patch compatibility checks compare against this dedicated release-attested value exactly; missing ability-schema evidence fails closed.
 
 ### Change Vehicle Selection Matrix
 

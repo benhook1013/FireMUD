@@ -505,7 +505,7 @@ The drain item remains durable until every required effect is confirmed and the 
 
 ### Fork-Snapshot Boundary For Playtest Realms
 
-Playtest namespace identity is governed by [ADR 0122](./decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md). This document records only the versioning/runtime consequence: a fork remains a tenant-owned, player-addressable realm whose control-plane discovery and admission retain the explicit `{tenantId, gameInstanceId, characterId}` execution context and realm identity; it does not create a tenant or account.
+Playtest namespace identity is governed by [ADR 0122](./decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md). This document records only the versioning/runtime consequence: a fork remains a tenant-owned, player-addressable realm whose control-plane discovery and admission retain the explicit binding identity `{tenantId, playableStateNamespaceId, playableStateScope, characterId}` and realm identity; `gameInstanceId` is retained only as the concrete runtime target and active-instance fence. It does not create a tenant or account.
 
 - Durable fork-local playable state is keyed by `(tenantId, playableStateNamespaceId)` and is evaluated with the active `gameInstanceId`, runtime version, and routing/admission context.
 - Replacing the runtime within one playtest lifecycle retains its namespace. A reset or new playtest lifecycle receives a fresh namespace and must not destructively reuse the old namespace.

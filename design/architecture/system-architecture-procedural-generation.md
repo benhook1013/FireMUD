@@ -225,9 +225,11 @@ In `FULL_GRID`, every valid cell is logically addressable and traversable accord
 World Management exclusively assigns or resolves canonical identifiers when finalizing and exposing generator output:
 
 - Design-time/template locations resolve to stable `roomTemplateId` values keyed by `(tenantId, versionId)`.
-- Runtime locations exposed to gameplay resolve to stable `roomInstanceId` values keyed by `(tenantId, gameInstanceId)`.
+- Current World runtime locations/topology are `S3` instance-scoped output and resolve to `roomInstanceId` values keyed by `(tenantId, gameInstanceId)`, carried through the instance-scoped `RoomInstanceRef`.
 
 Generator outputs must not assume database row identity. World Management may eagerly persist bounded graphs or resolve a cell from an immutable chunked base plus durable instance state, but the same logical cell must resolve to the same authoritative identity for its required lifetime.
+
+If a future generated location family is classified as `S1` or `S2`, its durable location identity must instead be namespace-backed by `playableStateNamespaceId`, and readers must perform an explicit namespace-to-active-instance resolution before obtaining an instance-scoped `RoomInstanceRef`. An instance-keyed `roomInstanceId` cannot serve as that durable identity. This future rule does not reclassify the current World runtime families or add a mapping API; it preserves their existing `S3` instance scope.
 
 ### Large Full-Grid Representation
 

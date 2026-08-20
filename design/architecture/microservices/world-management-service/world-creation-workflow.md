@@ -70,7 +70,7 @@ The Class A/Class B boundary is persisted explicitly through a monotonic instanc
 - `world_instance_status=ACTIVE` once admission opens for gameplay.
 - `world_instance_status=FAILED_PRE_ACTIVATION` when Class A preparation cannot converge and admission never opens.
 - `world_instance_status=TERMINATING` after a fenced termination request from `PREPARING`, `FAILED_PRE_ACTIVATION`, or `ACTIVE`.
-- `world_instance_status=TERMINATED` only after every registered durable instance-data owner has acknowledged cleanup and the final fenced transition commits.
+- `world_instance_status=TERMINATED` only after every owner in the frozen required cleanup-owner snapshot has acknowledged cleanup and the final fenced transition commits.
 
 Allowed transitions are `PREPARING -> ACTIVE`, `PREPARING -> FAILED_PRE_ACTIVATION`, `PREPARING -> TERMINATING`, `FAILED_PRE_ACTIVATION -> TERMINATING`, `ACTIVE -> TERMINATING`, and `TERMINATING -> TERMINATED`. `FAILED_PRE_ACTIVATION` is terminal for admission and activation of that instance but does not prove cleanup completion; a fenced `FAILED_PRE_ACTIVATION -> TERMINATING` transition starts or resumes the same owner-scoped cleanup path, and a new instance is required to retry admission. Compensation logic in the world-lifecycle workflow is allowed only before `ACTIVE` commits; once status is `ACTIVE`, failures use Class B retry/reconciliation semantics instead of destructive rollback.
 

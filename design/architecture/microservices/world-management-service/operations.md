@@ -9,11 +9,13 @@
 
 ## Instance Cleanup and Expiry
 
-The current `instance` table models legacy temporary zone copies for dungeons or housing, with `expires_at` derived from `world.instance.expiration-hours`. The live scheduled cleanup still deletes those rows directly. That is explicit implementation drift, not evidence that the legacy row participates in the [ADR 0123](../../decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md) lifecycle.
-
-- When temporary content is modeled as a complete `world_instance` with its own `gameInstanceId`, expiry must request the normal fenced `InstanceTermination` workflow; the World row and lifecycle epoch remain authoritative rather than Temporal status.
+- When temporary content is modeled as a complete `world_instance` with its own `gameInstanceId`, expiry must use the canonical `world-lifecycle` Temporal workflow and fenced `TerminateWorldInstance` RPC; the World row and lifecycle epoch remain authoritative rather than Temporal status.
 - When temporary content remains a zone-scoped child of a parent game instance, it requires a separate scoped, idempotent cleanup contract. Expiring the child must not transition or terminate the parent `world_instance`.
 - Direct periodic deletion is not a valid target cleanup path for either boundary.
+
+## Implementation Status
+
+The current `instance` table models legacy temporary zone copies for dungeons or housing, with `expires_at` derived from `world.instance.expiration-hours`. The live scheduled cleanup still deletes those rows directly. That is explicit implementation drift, not evidence that the legacy row participates in the [ADR 0123](../../decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md) lifecycle.
 
 ## Current LOOK Slice Status
 

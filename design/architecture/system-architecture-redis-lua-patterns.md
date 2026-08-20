@@ -200,7 +200,7 @@ The target one-active-character binding owner and takeover semantics are defined
 
 These scripts must instead validate session-specific invariants:
 
-- **Session key and binding** – verify that the target session key exists and, where applicable, that it is bound to the expected `{tenantId, playableStateNamespaceId, playableStateScope, characterId}` uniqueness identity plus the value/evidence `{sessionId, gameInstanceId, bindingGeneration}` or token hash provided in `ARGV`. The current runtime's `{tenantId, gameInstanceId, characterId}` identity/index is implementation drift and must not be treated as the target key.
+- **Session key and binding** – always require the full expected `{tenantId, playableStateNamespaceId, playableStateScope, characterId}` uniqueness identity plus the value/evidence `{sessionId, gameInstanceId, bindingGeneration}` in `ARGV` or the stored session payload. A token hash may be an additional credential check, but token-hash-only evidence is not an alternative to the full identity and binding evidence; the Account-owned `session:auth:*` contract owns auth-token registry checks. The current runtime's `{tenantId, gameInstanceId, characterId}` identity/index is implementation drift and must not be treated as the target key.
 - **Expiry and logical window** – enforce the logical expiry rules described in the session design (for example, do not revive sessions whose logical expiry timestamp has passed, even if the Redis TTL has not).
 - **Optional CAS fields** – when scripts implement compare-and-set semantics on session payloads (for example, update only if a `version` or `lockToken` field matches), they must:
   - Treat mismatched versions as non-mutating outcomes (for example, `"SESSION_VERSION_MISMATCH"`).
