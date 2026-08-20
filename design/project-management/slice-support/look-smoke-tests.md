@@ -1,6 +1,6 @@
 # LOOK Smoke Tests
 
-These lightweight scripts document the manual sequence of `LOGIN` + `LOOK` commands for both WebSocket and Telnet transports so developers can verify the LOOK capability alongside the automated cross-service tests and canonical smoke helpers. World supplies snapshot facts for Game Logic's typed `LookResult`; Game Session maps accepted outcomes to compact versioned `PlayerOutput` and owns final prose/rendering/delivery. The current implementation boundary is recorded in `design/project-management/implementation-tracking/player-experience-commands-and-communication.md`; the protocol contract remains canonical in `design/architecture/microservices/game-session-service/protocols.md`.
+These lightweight scripts document the manual sequence of `LOGIN` → `PLAY` → `LOOK` commands for both WebSocket and Telnet transports so developers can verify the LOOK capability alongside the automated cross-service tests and canonical smoke helpers. World supplies snapshot facts for Game Logic's typed `LookResult`; Game Session maps accepted outcomes to compact versioned `PlayerOutput` and owns final prose/rendering/delivery. The current implementation boundary is recorded in `design/project-management/implementation-tracking/player-experience-commands-and-communication.md`; the protocol contract remains canonical in `design/architecture/microservices/game-session-service/protocols.md`.
 
 ## 1. WebSocket smoke script
 
@@ -14,9 +14,10 @@ Dependencies: `wscat` (npm install -g wscat) or any WebSocket client.
 
 2. Continue with the normal flow; typed attach metadata is not part of the player-facing protocol.
 3. Send `LOGIN demo@example.com swordfish` and expect `OK LOGIN Logged in as demo@example.com`.
-4. Send `LOOK`. The response should match the canonical Game Session protocol and the current LOOK implementation record (`OK LOOK`, room/exit/entity lines). Save the transcript (command + response) as `look-ws-<timestamp>.log`.
-5. (Optional) After the test, poll `/actuator/prometheus` or the Micrometer endpoint and confirm `gamesession.command.look.invocations` incremented once and any failure scenario incremented `gamesession.command.look.failures{error="..."}`.
-6. If the room does not exist or downstream services fail, verify the response matches one of the documented error codes (`ERROR ROOM_NOT_FOUND`, `ERROR WORLD_UNAVAILABLE`, `ERROR ENTITY_UNAVAILABLE`, `ERROR LOOK_UNAVAILABLE`).
+4. Send `PLAY demo` and expect `OK PLAY`.
+5. Send `LOOK`. The response should match the canonical Game Session protocol and the current LOOK implementation record (`OK LOOK`, room/exit/entity lines). Save the transcript (command + response) as `look-ws-<timestamp>.log`.
+6. (Optional) After the test, poll `/actuator/prometheus` or the Micrometer endpoint and confirm `gamesession.command.look.invocations` incremented once and any failure scenario incremented `gamesession.command.look.failures{error="..."}`.
+7. If the room does not exist or downstream services fail, verify the response matches one of the documented error codes (`ERROR ROOM_NOT_FOUND`, `ERROR WORLD_UNAVAILABLE`, `ERROR ENTITY_UNAVAILABLE`, `ERROR LOOK_UNAVAILABLE`).
 
 Save the full transcript (commands + responses) to a file for regression comparison.
 

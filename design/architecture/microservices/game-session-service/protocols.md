@@ -441,13 +441,16 @@ Entities:
 - Player "Sora" (half-hidden in the shadowed niche)
 
 SAY Hello travelers
+OK SAY
 You say, "Hello travelers."
 Emberline says, "Hello travelers."
 
 WHISPER Sora Keep quiet
+OK WHISPER
 You whisper to Sora, "Keep quiet."
 
 TELL Sora Meet me at the forge
+OK TELL
 You tell Sora, "Meet me at the forge."
 
 DANCE

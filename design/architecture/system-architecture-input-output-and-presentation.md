@@ -325,7 +325,7 @@ That means:
 
 - gameplay services should not become the primary owners of final transport strings
 - Game Session should apply presentation policy and render per client surface
-- built-in view caches and reconnect screen buffers should store player-facing rendered output only when that is the intentional cache purpose
+- built-in view caches should store player-facing rendered output only when that is the intentional cache purpose; reconnect context remains structured durable state rendered for the current client surface
 
 This means the canonical model has two related layers:
 
@@ -480,7 +480,7 @@ Future smart clients may consume richer prompt or output metadata over MCP or eq
 
 ## Relationship to Existing Systems
 
-- Reconnection uses a bounded per-player screen buffer for transcript context, plus a fresh redraw such as `LOOK`; it does not replay arbitrary missed transport bytes.
+- Reconnection restores bounded durable semantic recent context from retained structured entries, followed by a fresh authoritative redraw such as `LOOK`; it never replays cached room snapshots, arbitrary missed transport bytes, or unsent frames.
 - `LOOK` remains a structured gameplay view rendered into a classic MUD transcript shape for text clients.
 - Communication actions already distinguish structured delivery metadata from canonical player-facing prose and should continue moving toward later rendering rather than hard-coding plain strings too early.
 - Prompt/status remains a separate output class and should not be treated as ordinary transcript history.
