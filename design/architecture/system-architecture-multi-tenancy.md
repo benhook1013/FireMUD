@@ -63,7 +63,7 @@ Realm-scoped playable state may follow either of these patterns:
 Minimum downstream consequences of realm policy:
 
 - Shared-state realms reuse the tenant's normal live gameplay state namespace for the selected character.
-- Isolated-state realms must treat at least the following as realm-scoped playable state keyed to the resolved `playableStateNamespaceId` and authorized against the active `gameInstanceId`:
+- Isolated-state realms must treat at least the following as realm-scoped playable state keyed to the resolved `(tenantId, playableStateNamespaceId, playableStateScope)` identity and authorized against the active `gameInstanceId`:
   - visible character roster for `CHARS`;
   - character progression/resources;
   - durable inventory/equipment/containment state;
