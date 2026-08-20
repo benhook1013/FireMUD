@@ -8,7 +8,7 @@ These journeys define observable product behavior and user-facing outcomes; tech
 
 ## Implementation Status
 
-Typed Game Design APIs are the current supported creator-authoring path. Whole-game portability and external authoring formats remain deliberately unsupported under [ADR 0125](../../architecture/decisions/adr-0125-defer-whole-game-portability-and-external-authoring-formats.md), while the scoped exact-base model-assisted proposal flow in [ADR 0126](../../architecture/decisions/adr-0126-untrusted-models-and-scoped-authoring-tools.md) is target-only and unimplemented.
+Typed Game Design APIs are the current supported creator-authoring path, with creator/versioning surfaces partially implemented. Starter-profile materialization and conservative upgrades are target-only and unimplemented; see the [creator journey implementation status](./creators.md#implementation-status) and [ADR 0124](../../architecture/decisions/adr-0124-materialized-starter-profiles-with-conservative-draft-upgrades.md). Whole-game portability and external authoring formats remain deliberately unsupported under [ADR 0125](../../architecture/decisions/adr-0125-defer-whole-game-portability-and-external-authoring-formats.md), while the scoped exact-base model-assisted proposal flow in [ADR 0126](../../architecture/decisions/adr-0126-untrusted-models-and-scoped-authoring-tools.md) is target-only and unimplemented.
 
 ## Table of Contents
 

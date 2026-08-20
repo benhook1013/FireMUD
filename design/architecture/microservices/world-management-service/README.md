@@ -30,7 +30,8 @@ World Management distinguishes these primary identifiers:
 
 - `tenantId` – identifies the game tenant.
 - `versionId` – identifies a published world/template configuration.
-- `gameInstanceId` – identifies a running game instance managed by Game Session.
+- `playableStateNamespaceId` – identifies the stable durable playable-state namespace retained across runtime replacement, as defined by [ADR 0122](../../decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md).
+- `gameInstanceId` – identifies the active, replaceable runtime instance managed by Game Session; it scopes disposable runtime state rather than durable playable-state identity.
 
 World data uses two distinct identifier families:
 
@@ -43,7 +44,7 @@ World data uses two distinct identifier families:
 
 At service boundaries, `roomInstanceId` means the canonical runtime room identity carried through `RoomInstanceRef`, not a database row id. World Management internals may still use numeric room topology/storage keys for joins, but those keys are an internal implementation detail and should not share the public `roomInstanceId` name.
 
-Template/topology data is keyed by `(tenantId, versionId)`, while runtime world instances are keyed by `(tenantId, gameInstanceId)` with references back to the active `versionId`.
+Template/topology data is keyed by `(tenantId, versionId)`, durable playable state by `(tenantId, playableStateNamespaceId)`, and runtime world instances by `(tenantId, gameInstanceId)` with references back to the active `versionId`.
 
 See [Identifier Glossary](../../system-architecture-identifier-glossary.md) for naming and scoping rules.
 

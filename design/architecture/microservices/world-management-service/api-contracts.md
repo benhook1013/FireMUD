@@ -90,7 +90,9 @@ Current live first slice:
 - World therefore currently returns `stateClassesChecked=["S3"]`, `checkedFamilies=["world_instance", "region_instance", "zone_instance", "room_instance", "room_instance_exit", "world_event"]`, `hasS2Rows=false`, and `remapSetRequired=false`; it returns `INCOMPATIBLE` when the source world lifecycle or retained topology is not cutover-eligible.
 - Later World-owned durable metadata families can widen this contract to real `S2` checks without changing the owning RPC surface.
 
-Target illustrative responses (field names remain conceptual until the coordinated wire change):
+Target illustrative response fragments (field names remain conceptual until the coordinated wire change):
+
+These are deliberately abbreviated, non-admissible fragments. The World inventory includes conceptual family groups without exact registered family identifiers (for example, ambient runtime state and occupancy rows), so these examples cannot claim exhaustive evidence. An admissible response must enumerate every exact family identifier in the full World registry and satisfy the capability, completeness, freshness, and registry-evidence requirements above.
 
 ```json
 {
@@ -101,7 +103,7 @@ Target illustrative responses (field names remain conceptual until the coordinat
   "targetGameInstanceId": "4862ba66-fda2-490a-97e9-28358fbd0888",
   "targetVersionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
   "reportCapability": "EXHAUSTIVE_WORLD_FAMILY_EVIDENCE",
-  "complete": true,
+  "complete": false,
   "registryEvidenceMode": "OWNER_SCOPED_CATALOG_EPOCHS",
   "familyEvidence": [
     {"family": "world_instance", "owner": "world-management", "ownerCatalogEpoch": 17, "freshnessEpoch": 41, "classification": "S3", "count": 1, "outcome": "COMPATIBLE"},
@@ -114,7 +116,7 @@ Target illustrative responses (field names remain conceptual until the coordinat
   "unknownFamilies": [],
   "mappingProof": {"required": false, "validation": "NOT_REQUIRED", "application": "NOT_REQUIRED"},
   "hasS2Rows": false,
-  "result": "COMPATIBLE",
+  "result": "INCOMPATIBLE",
   "remapSetRequired": false
 }
 ```
@@ -128,7 +130,7 @@ Target illustrative responses (field names remain conceptual until the coordinat
   "targetGameInstanceId": "f4ba2a7a-ee8f-43eb-af1a-749c07773a3a",
   "targetVersionId": "8e65e4a1-5b49-4c31-9f27-3d0b8c6a1e74",
   "reportCapability": "EXHAUSTIVE_WORLD_FAMILY_EVIDENCE",
-  "complete": true,
+  "complete": false,
   "registryEvidenceMode": "OWNER_SCOPED_CATALOG_EPOCHS",
   "familyEvidence": [
     {

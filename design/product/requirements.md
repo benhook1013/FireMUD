@@ -1,5 +1,9 @@
 # Product Requirements Document (PRD): MUD Game Platform
 
+## Implementation Status
+
+Typed Game Design creator/versioning APIs have partial current implementation. Starter-profile materialization and conservative upgrades, along with model-assisted authoring, remain target-state and are not implemented; see the [Game Authoring, Publishing, and Activation tracker](../project-management/implementation-tracking/game-authoring-publishing-and-activation.md) and [creator journey implementation status](./user-journeys/creators.md#implementation-status) for the current boundary and proof.
+
 ## 1. Introduction
 
 This document is the canonical product requirements overview for the FireMUD platform. It records product scope and intended outcomes; detailed technical contracts remain in the linked architecture documents.
@@ -130,7 +134,7 @@ See [Logging & Admin Service](../architecture/microservices/logging-admin-servic
 
 - Creators can publish **immutable, identifiable game versions** and select a published version when launching or updating a realm.
 - A running realm uses one **internally consistent published design** rather than mixing independently changing authoring state.
-- Concurrent Draft edits surface a base/version conflict for the creator to resolve; the product does not silently merge competing changes or claim a successful commit when one owner has not accepted it. See [ADR 0129](../architecture/decisions/adr-0129-durable-fenced-multi-owner-draft-commits.md).
+- Concurrent Draft edits surface a base/version conflict when their affected aggregate/scope tuples overlap; disjoint-scope edits may proceed independently. The product does not silently merge competing changes or claim a successful commit until every required owner accepts it. See [ADR 0129](../architecture/decisions/adr-0129-durable-fenced-multi-owner-draft-commits.md).
 - Authorized administrators can activate versions and runtime flags through controlled launch, cutover, and rollback experiences. See [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md).
 - Published versions include **patch notes** so creators, administrators, and players can understand relevant changes over time.
 See [Game Design Service](../architecture/microservices/game-design-service/README.md) for publishing workflows.

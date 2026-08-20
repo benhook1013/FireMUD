@@ -121,7 +121,7 @@ Illustrative responses for the current live first slice:
   "authoritativeClassification": false,
   "stateClassesChecked": ["S3"],
   "hasS2Rows": false,
-  "result": "COMPATIBLE",
+  "result": "INCOMPLETE",
   "remapSetRequired": false
 }
 ```
@@ -186,7 +186,48 @@ Target-state illustrative responses:
   "sourceGameInstanceId": "2e3ee139-a6e8-44ad-b840-891b22c2255b",
   "targetVersionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
   "durableFenceToken": "f1d6a3c8-9e24-4b70-b5f2-8c1a6d9e3f04",
-  "checkedFamilies": [],
+  "checkedFamilies": [
+    {
+      "family": "character",
+      "referencedTemplateIds": [],
+      "outcome": "COMPATIBLE"
+    },
+    {
+      "family": "inventory",
+      "referencedTemplateIds": [],
+      "outcome": "COMPATIBLE"
+    },
+    {
+      "family": "character_equipment",
+      "referencedTemplateIds": [],
+      "outcome": "COMPATIBLE"
+    },
+    {
+      "family": "character_friend",
+      "referencedTemplateIds": [],
+      "outcome": "COMPATIBLE"
+    },
+    {
+      "family": "room_ground_inventory",
+      "referencedTemplateIds": [],
+      "outcome": "COMPATIBLE"
+    },
+    {
+      "family": "item_instances",
+      "referencedTemplateIds": [],
+      "outcome": "COMPATIBLE"
+    },
+    {
+      "family": "item_stacks",
+      "referencedTemplateIds": [],
+      "outcome": "COMPATIBLE"
+    },
+    {
+      "family": "container_instances",
+      "referencedTemplateIds": [],
+      "outcome": "COMPATIBLE"
+    }
+  ],
   "hasS2Rows": false,
   "result": "COMPATIBLE",
   "remapSetRequired": false
@@ -262,7 +303,7 @@ Equipment is intentionally not modeled as "just another bag position":
 - Equipment slot definitions are game-configured design data, not fixed platform-wide enums.
 - Body layouts or equivalent runtime configuration determine which slots are available to a particular character/NPC/species.
 - Item definitions declare compatibility through configurable slot groups, attachment rules, or equivalent game-defined constraints rather than through a hardcoded universal slot set.
-- Game Design owns the complete published equipment vocabulary/body-layout schema and its digest. Entity Management consumes that exact schema for occupancy and compatibility checks, rejects missing/partial/mismatched vocabulary or mapping evidence fail closed, and does not provide a platform-global slot fallback. Replacement cutover remaps bindings only through the owner-validated mapping contract; profiles materialize authored equipment content rather than supplying runtime defaults. See [ADR 0127](../../decisions/adr-0127-game-authored-equipment-layouts-with-fail-closed-publication.md).
+- Game Design owns the complete published equipment vocabulary/body-layout schema and its digest. Entity Management consumes that exact schema for occupancy and compatibility checks; all missing, partial, or mismatched vocabulary or mapping evidence is rejected and validation fails closed. It does not provide a platform-global slot fallback. Replacement cutover remaps bindings only through the owner-validated mapping contract; profiles materialize authored equipment content rather than supplying runtime defaults. See [ADR 0127](../../decisions/adr-0127-game-authored-equipment-layouts-with-fail-closed-publication.md).
 
 The target inventory/equipment operation context for a durable holder or binding is the complete tuple `{tenantId, playableStateNamespaceId, playableStateScope, gameInstanceId, characterId, itemInstanceId, itemDefinitionId, containerInstanceId?, equipmentBindingId?, slotKey?, roomInstanceId?}`. For namespace-backed S1/S2 inventory, character, and equipment state, durable storage and replay/deduplication identity use `{tenantId, playableStateNamespaceId, playableStateScope, ...}` and omit `gameInstanceId`; the current `gameInstanceId` is validated only as the active-instance fence. Explicitly instance-scoped S3 holders instead include `gameInstanceId` in durable identity. The current proto and OpenAPI surfaces do not yet carry this complete operation context on every inventory/equipment read or mutation, so this is a target contract only: this ADR parcel does not add wire fields, regenerate protos, or change runtime lookup behavior.
 
