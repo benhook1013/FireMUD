@@ -6,8 +6,13 @@ Accounts span multiple hosted games. The [Multi-Tenancy](../../architecture/syst
 
 These journeys define observable product behavior and user-facing outcomes; technical contracts remain in the linked architecture documents.
 
+## Implementation Status
+
+Typed Game Design APIs are the current supported creator-authoring path, with creator/versioning surfaces partially implemented. Starter-profile materialization and conservative upgrades are target-only and unimplemented; see the [creator journey implementation status](./creators.md#implementation-status) and [ADR 0124](../../architecture/decisions/adr-0124-materialized-starter-profiles-with-conservative-draft-upgrades.md). Whole-game portability and external authoring formats remain deliberately unsupported under [ADR 0125](../../architecture/decisions/adr-0125-defer-whole-game-portability-and-external-authoring-formats.md), while the scoped exact-base model-assisted proposal flow in [ADR 0126](../../architecture/decisions/adr-0126-untrusted-models-and-scoped-authoring-tools.md) is target-only and unimplemented.
+
 ## Table of Contents
 
+- [Implementation Status](#implementation-status)
 - [Goals](#goals)
 - [Quick Reference](#quick-reference)
 - [Persona Guides](#persona-guides)
@@ -37,7 +42,7 @@ Player journeys focus on account management, characters, gameplay, and social fe
 
 Creator journeys focus on designing games, publishing worlds, and iterating on content:
 
-- **Game Design and Content Authoring** – Game creation, world and entity design, and scripted behavior are described in [Game Creation](./creators.md#1-game-creation), [World and Entity Design](./creators.md#2-world-and-entity-design), and [Add Automation & Scripting](./creators.md#3-add-automation--scripting). These flows rely on the Game Design, World Management, Entity Management, and Automation & Scripting services.
+- **Game Design and Content Authoring** – Game creation, starter-profile materialization, world and entity design, scripted behavior, and model-assisted proposal flows are described in [Game Creation](./creators.md#1-game-creation), [World and Entity Design](./creators.md#2-world-and-entity-design), and [Add Automation & Scripting](./creators.md#3-add-automation--scripting). These flows rely on the Game Design, World Management, Entity Management, and Automation & Scripting services.
 - **Publishing and Live Updates** – Launching production realms, patching content, and cutover/rollback flows are covered in [Publish and Start a Game Instance](./creators.md#4-publish-and-start-a-game-instance) and [Patch and Update a Live Game](./creators.md#5-patch-and-update-a-live-game). Operators share the same CI/CD and deployment pipelines, detailed in [Testing & Continuous Delivery](./operators.md#3-testing--continuous-delivery) and [Platform Service Updates](./operators.md#6-platform-service-updates).
 - **Branding, Playtesting, and Extensibility** – Custom themes, UI branding, playtests, analytics, and extensibility via MCP and modding are summarized in [Branding and Customization](./creators.md#6-branding-and-customization), [Playtesting & Analytics](./creators.md#7-playtesting--analytics), and [Extensibility & External Tools](./creators.md#8-extensibility--external-tools).
 

@@ -9,11 +9,13 @@
 
 ## Instance Cleanup and Expiry
 
-The service creates temporary instances of zones for dungeons or housing. Instances expire automatically based on the `world.instance.expiration-hours` property.
+- When temporary content is modeled as a complete `world_instance` with its own `gameInstanceId`, expiry must use the canonical `world-lifecycle` Temporal workflow and fenced `TerminateWorldInstance` RPC; the World row and lifecycle epoch remain authoritative rather than Temporal status.
+- When temporary content remains a zone-scoped child of a parent game instance, it requires a separate scoped, idempotent cleanup contract. Expiring the child must not transition or terminate the parent `world_instance`.
+- Direct periodic deletion is not a valid target cleanup path for either boundary.
 
-- Expiry processing enqueues `InstanceTermination` workflows.
-- Direct periodic deletion of instance rows is not a valid cleanup path.
-- Scheduled expiry jobs must participate in the same fenced lifecycle workflow documented in the service API/runtime contracts.
+## Implementation Status
+
+The current `instance` table models legacy temporary zone copies for dungeons or housing, with `expires_at` derived from `world.instance.expiration-hours`. The live scheduled cleanup still deletes those rows directly. That is explicit implementation drift, not evidence that the legacy row participates in the [ADR 0123](../../decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md) lifecycle.
 
 ## Current LOOK Slice Status
 
@@ -23,4 +25,4 @@ The service creates temporary instances of zones for dungeons or housing. Instan
 
 ## Temporal Participation
 
-The [Transaction Strategies workflow classification](../../system-architecture-transactions.md#mandatory-workflow-adopter-classification) and [Temporal adopter contract](../../system-architecture-temporal-workflows.md) own placement rules. The [World Runtime and Movement implementation tracker](../../../project-management/implementation-tracking/world-runtime-and-movement.md) owns current implementation/proof status, gaps, and evidence. World Management's local consequence is that creation, activation, failure, and termination for a game instance run through the shared Temporal `world-lifecycle` family: command activities own durable lifecycle steps, the lifecycle read surface projects deterministic workflow identity/status, and gameplay runtime remains out of scope. Local lifecycle architecture and consequences, including the current restart/failure and durable step-guard gaps, are detailed in [`world-creation-workflow.md`](./world-creation-workflow.md).
+The [Transaction Strategies workflow classification](../../system-architecture-transactions.md#mandatory-workflow-adopter-classification) and [Temporal adopter contract](../../system-architecture-temporal-workflows.md) own placement rules. [ADR 0123](../../decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md) owns lifecycle authority and all-owner completion. World Management's local consequence is that creation, activation, failure, and termination for the target `world_instance` lifecycle use the shared Temporal `world-lifecycle` family for coordination while the durable World row and epoch remain authoritative; legacy temporary zone-copy cleanup remains the implementation drift described above, and gameplay runtime remains out of scope. Current restart/failure, owner-registry, and durable step-guard gaps are detailed in [`world-creation-workflow.md`](./world-creation-workflow.md) and the implementation tracker.

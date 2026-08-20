@@ -132,8 +132,8 @@ Ownership is split between the Game Design Service and domain services:
   - Branches, commits, revisions, and their relationships to domain objects.
   - References from revisions/versions to assets, scripts, and templates via stable identifiers.
 - Domain services such as World Management, Entity Management, Game Logic, and others are the canonical stores for:
-  - Versioned template graphs keyed by `(tenantId, versionId)` (world topology, entity templates, balance records, etc.).
-  - Runtime/instance state keyed by `(tenantId, gameInstanceId)` or equivalent.
+  - Versioned template/config graphs and snapshots read by `(tenantId, versionId)` for the selected runtime version (world topology, entity templates, balance records, etc.).
+  - Durable playable state keyed by `(tenantId, playableStateNamespaceId, playableStateScope)` and explicit S3 instance-scoped runtime state keyed by `(tenantId, gameInstanceId)`, as defined by [ADR 0122](./decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md).
 
 Domain services must not persist their own commit histories; they expose only the current and historical template snapshots keyed by `(tenantId, versionId)`. Game Design Service must not maintain a second, divergent copy of world or entity template graphs; it references domain templates via stable IDs and version metadata.
 
@@ -186,7 +186,7 @@ Published versions are immutable from the perspective of domain templates:
 - The Game Design Service is the source of truth for version state (`Draft`, `Published`, `Active`, `Failed`, `Retired`).
 - Domain services such as World Management and Entity Management expose **design APIs** that create or update template rows only for Draft versions keyed by `(tenantId, versionId)`. Authoring tools call these APIs incrementally as revisions are saved so Draft template graphs in domain services always reflect the latest committed design state for that version.
 - Once a version reaches the Published state, template tables in domain services must treat rows for that `(tenantId, versionId)` as read-only. Any attempt to modify templates for a Published, Active, or Failed version should fail fast at the design API boundary and be surfaced as a validation error in the Game Design UI.
-- Runtime gameplay flows (ticks, world-lifecycle workflows, etc.) never mutate template tables. They only read templates for the active `runtime_version` and write to runtime/instance tables keyed by `(tenantId, gameInstanceId)` or equivalent.
+- Runtime gameplay flows (ticks, world-lifecycle workflows, etc.) never mutate template tables. They only read templates for the active `runtime_version`; writes use `(tenantId, playableStateNamespaceId, playableStateScope)` for durable playable state and `(tenantId, gameInstanceId)` only for explicitly instance-scoped runtime state.
 
 At a high level, each `(tenantId, versionId)` template graph in a domain service follows this lifecycle:
 
@@ -344,55 +344,13 @@ Normalized-template dependency checks require explicit phase enforcement:
 
 ### Replacement-Instance Upgrade Contract
 
-Replacement-instance cutover is not allowed to infer runtime-state behavior. The system must classify persistent state before any version cutover workflow is considered complete:
+Replacement-instance cutover is governed by [ADR 0122](./decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md). That ADR owns the stable `playableStateNamespaceId`, exhaustive S1/S2/S3 classification, unknown-state fail-closed behavior, owner-validated mapping application, durable freshness-bound preflight, and fenced pointer swap. This document records only versioning-local consequences and orchestration:
 
-- **Class S1: account-scoped durable state** – state expected to survive version replacement by default (for example character identity, progression, account ownership, currency balances, stable inventory contents where the referenced templates remain valid).
-- **Class S2: version-mapped durable state** – state that may survive only through an explicit upgrade mapping validated against the target version (for example equipment slots tied to item templates, learned abilities tied to ability identifiers, starter-loadout references, housing metadata keyed to world templates).
-- **Class S3: instance-scoped ephemeral state** – state that never survives replacement-instance cutover unless a feature-specific migration contract says otherwise (for example room-ground containers, transient ambient world state, temporary dungeon topology, in-flight instanced events, and other data keyed to the source `gameInstanceId`).
-
-Required cutover workflow additions:
-
-- Game Session owns a pre-admission `PrepareVersionUpgrade(tenantId, sourceGameInstanceId, targetVersionId)` compatibility workflow.
-- Entity Management must expose an upgrade surface that validates entity-owned S1/S2 runtime entities against the target version and returns deterministic outcomes: `COMPATIBLE`, `REQUIRES_MAPPING`, or `INCOMPATIBLE`.
-- World Management must expose `ValidateWorldUpgradeMappings`, which validates world-owned S2 references and persistent world-bound metadata against the target version using the same outcome vocabulary.
-- Any S2 data that survives must do so through explicit versioned remap records owned by the domain service that owns the referenced template identifiers. The system must not infer remaps from names, slugs, or “closest match” heuristics.
-- Game Design control-plane metadata is the source of truth for approved version-to-version remap set identities and audit history when a cutover depends on remapped template references across services.
-- Remap sets must be persisted explicitly in Game Design control-plane storage (for example `version_template_remap_set` and child mapping rows) and exposed through APIs such as:
-  - `CreateTemplateRemapSet(sourceVersionId, targetVersionId, mappings...)`
-  - `ApproveTemplateRemapSet(remapSetId, reason)`
-  - `GetTemplateRemapSet(remapSetId)`
-- The first launch-resolution substrate is now live on this model: `ResolveLaunchDescriptor` freezes the approved `remapSetId` for cross-version replacement launches, and runtime `game_instance` / `world_instance` rows persist that frozen id as launch proof.
-- The first cutover-preflight substrate is now live too: Game Session exposes `ValidateInstanceCutoverCompatibility`, resolves the target launch descriptor to freeze the approved `remapSetId`, checks target version-state / published-release-bundle proof through Game Design, and gathers World / Entity participant attestations before admission-pointer swap can proceed.
-- The first persisted cutover-preparation substrate is also live: `PrepareVersionUpgrade` now records one durable `prepared_version_upgrade` control-plane artifact containing the target launch-descriptor identity, frozen `remapSetId`, participant results, and checked-at timestamp for the requested source-instance -> target-version pair, keyed by explicit `controlPlaneRequestId` for retry-safe idempotency.
-- Once `ExecutePreparedVersionCutover` succeeds, that same durable artifact now records execution state as well (`executedTargetGameInstanceId`, `executedPointerVersion`, `executedAt`, `executionControlPlaneRequestId`) so later reads can prove which prepared cutover actually ran.
-- The first canonical cutover-execution substrate is now live too: `ExecutePreparedVersionCutover` consumes one durable `prepared_version_upgrade` id plus the replacement `gameInstanceId`, revalidates the proof against the current admission pointer and target instance, and performs the pointer swap under the same CAS/audit surface instead of leaving operators to stitch preparation and pointer mutation manually. Retrying the same execution request after the pointer has already moved is idempotent when the durable preparation execution state matches the requested target and request id.
-- `PrepareVersionUpgrade` and `ValidateInstanceCutoverCompatibility` must reference a concrete `remapSetId` whenever cutover depends on remapped S2 state. Ad hoc inferred remaps are not allowed.
-- If any surviving runtime row references missing or incompatible target-version templates and no approved remap exists, cutover fails closed before admission-pointer swap.
-- S3 state is discarded with the source instance through standard termination workflows. No component may silently copy room-ground containers, room ambient state, or instance topology to the target `gameInstanceId`.
-- The owning domain service docs must publish a table-family classification for their persistence slice:
-  - `S1` rows that survive by default,
-  - `S2` rows that survive only with a validated remap,
-  - `S3` rows that never survive cutover.
-  Cutover preflight is incomplete until every owning domain has documented this mapping or explicitly declared that a class has no rows in the current supported boundary.
-
-Current row-family references used by preflight:
-
-- World Management:
-  - `region_instance`, `zone_instance`, `room_instance`, `character_location`, `npc_location`, instance-scoped `world_event`, and instance-scoped population-materialization tables are `S3`.
-  - no mandatory World-owned `S2` rows in the initial slice.
-- Entity Management:
-  - `character` plus attached progression/currency/account-ownership rows are `S1` unless they reference templates that require remap;
-  - equipment-binding rows and durable class/archetype / learned-ability / starter-loadout references are `S2`;
-  - synthetic room-ground containers and encounter-scoped containment rows keyed to the source `gameInstanceId` are `S3`.
-
-These names are the canonical initial-slice preflight vocabulary until service implementation docs replace them with exact schema table names.
-
-Initial-slice notes:
-
-- In the first live implementation slice, World Management declares no mandatory `S2` row families. `ValidateWorldUpgradeMappings` therefore still reports `stateClassesChecked=["S3"]` and `hasS2Rows=false`, but it now proves more than one row exists: the source world must be in a cutover-eligible lifecycle state and still have retained `region_instance`, `zone_instance`, and `room_instance` topology before it reports `COMPATIBLE`.
-- In the first live Entity Management implementation slice, the validation surface is also honest about current persisted runtime families: it checks tenant-surviving `character`, `inventory`, `character_equipment`, and `character_friend` families plus the current instance-scoped `S3` families (`room_ground_inventory`, `item_instances`, `item_stacks`, `container_instances`). `character` and `character_friend` are supported `S1` survivor state. `inventory` and `character_equipment` are treated as current `S2` template-bound survivor state: if either family has rows, cutover requires the frozen approved `remapSetId`; without that id Entity returns `INCOMPATIBLE` with `ENTITY_REMAP_REQUIRED`, and with it Entity reports `COMPATIBLE` while echoing the exact id bound into the prepared cutover proof.
-
-The `ValidateInstanceCutoverCompatibility` contract below is the orchestration surface for these rules; it must report which state classes were checked, which owning domains attested compatibility, and whether any remap set was required.
+- Game Session owns the pre-admission `PrepareVersionUpgrade` and `ValidateInstanceCutoverCompatibility` orchestration and the admission-pointer CAS; it does not become the state-family or mapping authority.
+- Every durable instance-data owner registered by World Management's canonical owner registry publishes its owner-local family inventory and participant attestation through the lifecycle/replacement APIs; World Management coordinates the registry, while each registered service retains authority for its own persistence, classification, mapping application, and cleanup acknowledgement.
+- A replacement receives a new `gameInstanceId` and keeps the realm's resolved `playableStateNamespaceId`; an intentional new isolated playable-state lifecycle (for example a new playtest or fork) receives a new namespace. The pointer, launch descriptor, source/target versions, namespace, approved mapping identity, participant results, and freshness evidence must agree at cutover.
+- At target, preparation captures the exact World `PREPARING` state/epoch as the activation precondition. World alone performs the `PREPARING -> ACTIVE` lifecycle CAS; after that proof, World acquires one durable one-shot `cutoverHoldId`/`cutoverHoldFence` bound to the exact source/target lifecycle proofs and expected pointer version. The durable cutover execution/result records the exact resulting `ACTIVE` proof and hold identity, and the final admission-pointer CAS requires fresh World reads matching both. World finalizes the hold only after Game Session's authoritative post-swap readback proves the hold-bound local transaction.
+- Current preparation and execution seams are partial: the first World validation slice reports only its initial explicit `S3` families and does not prove complete namespace, unknown-state, mapping-application, freshness, or lifecycle-proof obligations. The implementation tracker and owner docs retain those caveats.
 
 ### Schema Migrations vs Design Data
 
@@ -425,95 +383,7 @@ a stricter lifecycle than scripts:
 
 For non-script content, there is no cross-version reuse of instance data. A given `gameInstanceId` is always tied to a single `runtime_version`, and all `*_instance` rows for that instance must be derivable from that version’s templates. Migrating a game to a different version is modeled as starting a new game instance with its own `gameInstanceId` (and fresh world creation workflow) rather than reusing existing world instance rows across versions.
 
-Replacement-instance cutover requires an explicit compatibility preflight before admission-pointer swap:
-
-- Game Session Service is the authoritative owner of cutover preflight orchestration and now exposes `ValidateInstanceCutoverCompatibility(tenantId, sourceGameInstanceId, targetVersionId)`.
-- The API must return deterministic payload fields at minimum: `{result: COMPATIBLE|INCOMPATIBLE|UNAVAILABLE, reasons[], checkedParticipants[], checkedAt}`.
-- `UNAVAILABLE` (for participant outage or stale dependency state) is fail-closed for cutover.
-- Minimum required checks:
-  - S1/S2 runtime-state compatibility passes in every owning domain and all required remap sets are present, versioned, and approved.
-  - All template identifiers referenced by the target launch path resolve in owning domain services for `(tenantId, targetVersionId)`.
-  - Entity/runtime bootstrap compatibility passes (starter inventory, class/archetype mappings, required item/NPC templates, balance schema compatibility).
-  - World/runtime bootstrap compatibility passes (required region/room templates, persistent world-bound metadata mappings, generation config revision resolution, required script patch readiness when pinned).
-  - No unresolved `OUT_OF_SYNC` digest state for required publish participants.
-  - The target `published_release_bundle` attestation returned by `GetPublishedReleaseBundle` exists and matches the digests, `manifestHash`, and `generationConfigRevision` used during preflight.
-- Current live first slice:
-  - Game Session resolves the replacement launch descriptor first, freezing any approved `remapSetId`.
-  - Game Session then fails closed if target Game Design version-state or published-release-bundle proof is missing/invalid.
-  - Game Session gathers World and Entity participant attestations into one canonical response.
-  - `PrepareVersionUpgrade` persists that same proof bundle as a durable `prepared_version_upgrade` control-plane record for later cutover consumers.
-  - World currently reports the honest first-cut `S3` row-family view described above. Entity now enumerates both survivor and instance-scoped row families, accepts current `S1` survivor rows, and requires the frozen approved `remapSetId` whenever current `S2` inventory/equipment rows exist.
-- Pointer swap is forbidden until this preflight reports `COMPATIBLE`; no best-effort fallback defaults are allowed at cutover time.
-
-Illustrative compatibility responses:
-
-- Compatible cutover with no remap:
-
-```json
-{
-  "result": "COMPATIBLE",
-  "reasons": [],
-  "checkedParticipants": ["GAME_DESIGN", "WORLD", "ENTITY"],
-  "checkedAt": "2026-03-13T10:15:00Z",
-  "remapSetId": null
-}
-```
-
-- Incompatible cutover because a remap is required but not approved:
-
-```json
-{
-  "result": "INCOMPATIBLE",
-  "reasons": [
-    "ENTITY.class_assignment requires approved remapSetId",
-    "WORLD.housing_anchor requires approved remapSetId"
-  ],
-  "checkedParticipants": ["GAME_DESIGN", "WORLD", "ENTITY"],
-  "checkedAt": "2026-03-13T10:16:00Z",
-  "remapSetId": null
-}
-```
-
-- Compatible cutover with explicit per-domain attestations and an approved remap:
-
-```json
-{
-  "result": "COMPATIBLE",
-  "reasons": [],
-  "checkedParticipants": ["GAME_DESIGN", "WORLD", "ENTITY"],
-  "checkedAt": "2026-03-13T10:17:00Z",
-  "remapSetId": "remap-v42-v43-r1",
-  "participantResults": [
-    {
-      "participant": "WORLD",
-      "stateClassesChecked": ["S3"],
-      "checkedFamilies": [
-        "region_instance",
-        "zone_instance",
-        "room_instance",
-        "character_location",
-        "npc_location",
-        "world_event",
-        "population_schedule_instance"
-      ],
-      "hasS2Rows": false,
-      "result": "COMPATIBLE"
-    },
-    {
-      "participant": "ENTITY",
-      "stateClassesChecked": ["S1", "S2", "S3"],
-      "checkedFamilies": [
-        "character",
-        "equipment_bindings",
-        "class_assignment",
-        "room_ground_container"
-      ],
-      "hasS2Rows": true,
-      "result": "COMPATIBLE"
-    }
-  ]
-}
-```
+Replacement-instance cutover requires the namespace-bound durable preflight and final revalidation defined by [ADR 0122](./decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md). Game Session owns only the orchestration and pointer CAS. The durable prepared artifact, each final participant read, the pointer CAS/commit, and retries must bind the tenant, `playableStateNamespaceId`, exact source and target `gameInstanceId`/version pairs, every owner family with its classification, count, and unknown evidence, the exact state-family/owner-registry revision or complete owner-scoped catalog epochs used to enumerate those families, owner-validated and applied mapping state, and participant freshness epochs; that revision/epoch evidence must match at every revalidation boundary. Missing, stale, unavailable, unknown, or contradictory evidence is fail-closed; a prior compatible summary is not sufficient after source writes are fenced. The current `ValidateInstanceCutoverCompatibility`/`PrepareVersionUpgrade` slice remains partial and must not be read as proof of this complete contract.
 
 ## Version Activation & Rollback
 
@@ -541,8 +411,8 @@ Termination requires ordered handoff across runtime and domain owners:
 2. At the persisted source-drain deadline, Game Session requests that World Management acquire the source lifecycle fence, transition the source to `TERMINATING`, and confirm that new commands or other source work are rejected.
 3. After World Management confirms that fence/rejection, Game Session makes one bounded notice attempt to affected source clients.
 4. Game Session unconditionally closes the affected source sockets after that bounded notice attempt; notice failure or unavailability never keeps sockets open or extends the deadline.
-5. World Management runs `InstanceTermination` with Entity Management cleanup.
-6. World Management commits `TERMINATED` only after Entity Management confirms cleanup.
+5. Before invoking cleanup, World Management freezes the durable instance-data owner set for the cleanup attempt at its ownership-registry revision, then runs `InstanceTermination` against that snapshot with each participant performing its owner-local cleanup; Entity Management performs its own cleanup as one participant.
+6. World Management commits `TERMINATED` only after every owner in that frozen snapshot confirms cleanup; Entity Management is one required owner, not the complete registry. See [ADR 0123](./decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md).
 7. Game Session marks the `game_instances` runtime record terminated/stopped only after step 6.
 
 If any step after step 1 fails, admission remains closed and the same termination workflow identity must retry until convergence.
@@ -598,19 +468,21 @@ When the bounded reconciliation deadline expires without durable positive runtim
 Version cutover contract for a player-addressable realm:
 
 1. Prepare the replacement instance as non-admissible (`PREPARING`/draining-safe) and run world creation to completion.
-2. Run compatibility preflight for source instance -> target version and fail closed on mismatch.
-3. Persist a durable `PrepareVersionUpgrade` artifact for that cutover attempt and use it as the proof input to the realm-route swap.
-4. Re-run the final activation gate above immediately before changing admission state.
-5. Perform one atomic `OPEN(source)` -> `OPEN(target)` realm-route swap so the selected realm has exactly one target for new or renewed bindings at any instant.
-6. **Target-only bounded source drain:** in the same cutover commit, persist the source instance, a unique `sourceDrainId`, a deadline-armed source command-fence identity with `effectiveAt=sourceDrainDeadlineAt`, and absolute `sourceDrainDeadlineAt` resolved from `firemud.game-session.cutover-drain.duration-ms`. Keep the old instance closed to new/reconnected bindings while already connected source sessions may issue commands before that deadline. At or after the deadline, command handling rejects source commands from the persisted fence using the authoritative clock even if reconciliation lags; for zero duration, `effectiveAt` is the cutover commit and rejection is effective at commit. The drain reconciler records and reads back fence-activation and lifecycle effects, then World Management acquires the lifecycle fence and confirms that rejection before Game Session unconditionally makes one bounded update-notice attempt and closes the remaining source sockets before the standard `InstanceTermination` workflow. The notice attempt cannot hold sockets open indefinitely.
-7. If swap fails, keep the previously routed instance as the sole admissible target for that realm and retry; do not open dual admission for the same realm.
+2. Run compatibility preflight for source instance -> target version, capture the target’s exact World `PREPARING` state/epoch, and fail closed on mismatch.
+3. Persist a durable `PrepareVersionUpgrade` artifact for that cutover attempt, including the `PREPARING` activation precondition.
+4. Re-run the final version and compatibility gates, then ask World to CAS the exact prepared `PREPARING` state/epoch to `ACTIVE`; persist World’s resulting exact `ACTIVE` state/epoch in the durable cutover execution/result.
+5. After the target `ACTIVE` proof, have World acquire one durable one-shot `cutoverHoldId`/`cutoverHoldFence`, bound to the exact prepared request/digest, realm/namespace, source/target instance/version pairs, source/target `ACTIVE` epochs, and expected pointer version. World locks both lifecycle rows in stable order and rejects any conflicting nonterminal hold; termination CAS remains blocked while this hold is unresolved.
+6. Reread World authority and require that same `ACTIVE` state/epoch and hold identity/fence, then perform one atomic `OPEN(source)` -> `OPEN(target)` realm-route swap with the hold, idempotent source-cleanup registration, prepared execution/result, audit, and drain fence in one Game Session owner-local transaction so the selected realm has exactly one target for new or renewed bindings at any instant. World’s hold/lifecycle CAS is separate authoritative World-owned state, sequenced and confirmed by exact readback; this is not a cross-service transaction. World finalizes the hold only after authoritative post-swap Game Session readback proves that transaction committed.
+7. **Target-only bounded source drain:** in the same cutover commit, persist the source instance, a unique `sourceDrainId`, a deadline-armed source command-fence identity with `effectiveAt=sourceDrainDeadlineAt`, and absolute `sourceDrainDeadlineAt` resolved from `firemud.game-session.cutover-drain.duration-ms`. Keep the old instance closed to new/reconnected bindings while already connected source sessions may issue commands before that deadline. At or after the deadline, command handling rejects source commands from the persisted fence using the authoritative clock even if reconciliation lags; for zero duration, `effectiveAt` is the cutover commit and rejection is effective at commit. The drain reconciler records and reads back fence-activation and lifecycle effects, then World Management acquires the lifecycle fence and confirms that rejection before Game Session unconditionally makes one bounded update-notice attempt and closes the remaining source sockets before the standard `InstanceTermination` workflow. The notice attempt cannot hold sockets open indefinitely.
+8. If swap fails, keep the previously routed instance as the sole admissible target for that realm and retry; do not open dual admission for the same realm. If hold or pointer evidence is lost, reconcile by the exact hold identity; abort is valid only with proof that the pointer transaction did not commit and the prior pointer remains authoritative, otherwise keep the hold `RECONCILIATION_REQUIRED` and termination-blocking. Hold expiry is diagnostic/repair input and never an automatic release.
 
 Realm pointer schema and authority are canonical in [Multi-Tenancy](./system-architecture-multi-tenancy.md#realm-catalog-and-admission-pointer-contract). Versioning and runtime retains only the cutover lifecycle and its local consequences below. Game Session remains the sole routing owner; versioning workflows consume its API rather than direct table writes.
 
-- A pointer swap to a different `gameInstanceId` is a cutover operation, not a generic edit. It must reference one durable `prepared_version_upgrade` record, and Game Session must reject the swap unless that preparation is still `COMPATIBLE` and matches both the current source pointer target and the replacement instance's frozen launch proof (`versionId`, `launchDescriptorId`, `remapSetId`).
+- A pointer swap to a different `gameInstanceId` is a cutover operation, not a generic edit. It must use the canonical `ExecutePreparedVersionCutover` operation, one durable `prepared_version_upgrade` record, and one World-owned one-shot cutover hold; `SetAdmissionPointer` is not an independent replacement commit path. The `COMPATIBLE` preparation binds the exact World `PREPARING` activation precondition plus the catalog-derived `{playableStateNamespaceId, playableStateScope}`, source and target instances/versions, frozen launch proof, exhaustive participant summary, owner-validated/applied mapping evidence, and freshness epochs required by [ADR 0122](./decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md). That namespace/scope tuple is carried unchanged through the prepared artifact, participant evidence, hold, pointer CAS/readback, and exact retry result; any catalog or tuple mismatch fails closed. World’s activation CAS produces the exact target `ACTIVE` proof; subsequent stable-order hold acquisition rereads and validates the exact source and target `ACTIVE` proofs, then produces its `cutoverHoldId`/`cutoverHoldFence`, which are stored with the durable execution/result. The Game Session owner-local pointer transaction validates both lifecycle proofs, the hold identity/fence, and expected pointer version. Final pointer CAS/readback and exact retries require all of those proofs rather than accepting a later lifecycle epoch or minting another hold.
 - Pointer-audit history must preserve that same preparation identity. A successful cutover write records the `preparedVersionUpgradeId` on the resulting admission-pointer audit event so operators can prove which durable preparation authorized a given swap.
 - Stopping a realm without a replacement uses the owner-defined `CLOSED` state before the old instance drains; the owner-defined unavailable and realm-unavailable outcomes remain distinct.
 - **Target-only bounded source-drain behavior:** pointer state controls new or renewed gameplay bindings. Existing connected source sessions do not re-read it per action and remain on the source only before the persisted drain deadline; fresh `PLAY` and reconnect use the current target.
+- **Same-character target takeover:** fresh `PLAY` or reconnect for a character still bound on the source first uses the existing namespace/scope/character binding-generation CAS to fence further commands for that source binding and reconcile every already-admitted source effect to durable terminal or authoritative readback state. Only then may Game Session CAS-switch that character binding to the target and admit target commands. Other source characters may continue under the ordinary bounded drain; if exact reconciliation or CAS proof is unavailable, the target waits or fails closed. This is a local session-binding consequence and does not introduce another lease or change the ADR 0027 drain deadline.
 - In the target-only drain contract, `firemud.game-session.cutover-drain.duration-ms` is an integer millisecond duration in the closed range `0..300000`, with a five-minute platform default and hard maximum. Tenant/game overrides may shorten it or set it to zero but cannot extend it. Negative, non-finite, fractional, or non-representable values fail closed before preparation or cutover commit. The cutover audit and prepared-upgrade execution record preserve the effective value, policy version, `sourceDrainId`, and `sourceDrainDeadlineAt` so retries and operators observe one deadline.
 - In that target contract, Game Session may complete a drain early after the source session index is empty. Deadline-based command rejection follows the persisted fence and authoritative clock independently of reconciliation. The durable reconciliation contract below records and reads back the fence/lifecycle effects; in particular, World Management's lifecycle fence and command-rejection readback precede the bounded notice and unconditional source-socket close.
 - **Local target consequence:** the source instance remains closed to new or reconnected bindings while existing sessions may continue only through `sourceDrainDeadlineAt`; after the deadline, terminal source cleanup follows the standard `InstanceTermination` workflow.
@@ -619,12 +491,12 @@ Realm pointer schema and authority are canonical in [Multi-Tenancy](./system-arc
 
 Game Session owns the retryable reconciler and startup-recovery path for each durable source-drain item. A worker claims the item with a compare-and-set lease carrying a monotonically increasing `drainClaimFence`, bound to the exact `sourceDrainId` and source `gameInstanceId`. Only the current claim fence may persist effect state or completion. Lease expiry permits another worker to claim the item with a higher fence; a stale worker cannot commit after that handoff.
 
-Each external effect uses a durable replay identity derived from `{sourceDrainId, sourceGameInstanceId, effectType}`. The effect types are source command-fence deadline activation/readback, lifecycle fencing/readback, bounded notice delivery, socket closure, and `InstanceTermination`. The cutover transaction persists the source command-fence identity deadline-armed with `effectiveAt=sourceDrainDeadlineAt`; command handling evaluates that fence against the authoritative clock and rejects source commands at or after `effectiveAt`, immediately at commit when the drain duration is zero. The reconciler records and reads back the fence-activation and lifecycle effects, but its timely execution is not required for command rejection correctness. Game Session persists each effect's pending, applied, and confirmed/read-back state. A crash after an external effect but before local acknowledgement therefore retries with the same identity and reconciles authoritative readback rather than emitting an untracked duplicate.
+Each external effect uses a durable replay identity derived from `{sourceDrainId, sourceGameInstanceId, effectType}`. The effect types are cutover-hold finalization/readback, source command-fence deadline activation/readback, lifecycle fencing/readback, bounded notice delivery, socket closure, and `InstanceTermination`. The cutover transaction persists the source command-fence identity deadline-armed with `effectiveAt=sourceDrainDeadlineAt`; command handling evaluates that fence against the authoritative clock and rejects source commands at or after `effectiveAt`, immediately at commit when the drain duration is zero. The reconciler records and reads back the hold-finalization, fence-activation, and lifecycle effects, but its timely execution is not required for command rejection correctness. Game Session persists each effect's pending, applied, and confirmed/read-back state. A crash after an external effect but before local acknowledgement therefore retries with the same identity and reconciles authoritative readback rather than emitting an untracked duplicate.
 
 At or after `sourceDrainDeadlineAt`, the current claimant performs the ordered sequence below:
 
 1. Claim or renew the fenced drain item.
-2. Record/read back the deadline activation of the persisted source command-fence identity and request World Management to acquire the source lifecycle fence and transition the source to `TERMINATING`; command handling already rejects source commands at or after the deadline from the fence and authoritative clock, and lifecycle plus command-rejection readback must complete before notice.
+2. Record/read back the deadline activation of the persisted source command-fence identity, obtain authoritative post-swap Game Session readback proving the hold-bound local pointer transaction committed, request World Management's idempotent hold finalization and read it back authoritatively, then request World Management to acquire the source lifecycle fence and transition the source to `TERMINATING`; command handling already rejects source commands at or after the deadline from the fence and authoritative clock, and hold-finalization, lifecycle, and command-rejection readback must complete before notice.
 3. Unconditionally attempt one bounded update notice using the notice replay identity and its own bounded timeout/reconciliation path.
 4. Unconditionally close remaining source sockets after that bounded attempt completes, regardless of whether notice delivery succeeded, failed, or was unavailable; notice failure or unavailability cannot hold source sockets open indefinitely.
 5. Reconcile the idempotent World Management `InstanceTermination` workflow until the standard [instance termination handoff](#instance-termination-handoff) confirms the source terminal.
@@ -633,19 +505,11 @@ The drain item remains durable until every required effect is confirmed and the 
 
 ### Fork-Snapshot Boundary For Playtest Realms
 
-Creator-managed playtest forks are temporary player-addressable realms derived from a source realm snapshot. The fork-snapshot boundary is normative for v1:
+Playtest namespace identity is governed by [ADR 0122](./decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md). This document records only the versioning/runtime consequence: a fork remains a tenant-owned, player-addressable realm whose control-plane discovery and admission retain the explicit binding identity `{tenantId, playableStateNamespaceId, playableStateScope, characterId}` and realm identity; `gameInstanceId` is retained only as the concrete runtime target and active-instance fence. It does not create a tenant or account.
 
-- **Source identity** – A fork is created from a specific `{tenantId, sourceRealmSlug, sourceGameInstanceId}` plus the resolved source build identity (`runtimeVersionId` and optional `scriptPatchVersion`) captured at snapshot time.
-- **Account model** – Forks reuse the same platform `accountId` identities as production. Visibility is controlled by explicit tester/creator/operator access grants; unauthorized accounts must not see the fork in `REALMS <world>`.
-- **Copied gameplay state** – The snapshot copies the source realm's player gameplay state needed for realistic validation, including character progression, inventory, learned abilities, and other realm-scoped runtime/world state required to reproduce gameplay behavior.
-- **Fork-local identity** – Copied gameplay state becomes fork-local runtime state keyed to the fork's `gameInstanceId`. A copied character in the fork remains associated with the same platform account, but it is a separate fork-local gameplay record, not a live reference back to production rows.
-- **Relation to tenant ownership** – This fork-local gameplay record does not create a new tenant or a new platform account. It is an isolated realm-state variant of a tenant-owned character, which is why discovery and admission still resolve through the same `{tenantId, gameInstanceId, characterId}` contract.
-- **Build selection** – A fork may launch on the source realm's current build for reproduction or on a different published `versionId` and optional `scriptPatchVersion` for validation. Published/runtime version pointers are copied from source only when they are also the chosen target build.
-- **Excluded state** – Billing records, invoices, payment methods, live auth sessions, connect-token replay state, and source moderation/audit cases are never cloned as active source records into the fork.
-- **Fork-generated records** – Analytics, moderation reports, audit entries, and similar operational data created during the playtest are written as new fork-scoped records tagged to the fork realm rather than appended to the source realm's production history.
-- **External side effects** – Fork gameplay must not emit production-side effects. Outbound integrations, monetization effects, and any other irreversible external actions must be suppressed, redirected to test sinks, or otherwise isolated so the fork cannot mutate production state outside the fork-local datastore boundary.
-- **No merge-back** – Runtime writes from a fork never merge automatically into production. Promotion from a successful playtest occurs only through the normal launch/cutover workflow against the target production realm.
-- **Reset semantics** – Resetting a fork replaces its fork-local gameplay state with a fresh application of the chosen source snapshot and preserves only the control-plane identity and audit history needed to track the fork lifecycle.
+- Durable fork-local playable state is keyed by `(tenantId, playableStateNamespaceId, playableStateScope)` and is evaluated with the active `gameInstanceId`, runtime version, and routing/admission context.
+- Replacing the runtime within one playtest lifecycle retains its namespace. A reset or new playtest lifecycle receives a fresh namespace and must not destructively reuse the old namespace.
+- Detailed initialization modes, snapshot contents/protocol, generation coordination, side-effect isolation, promotion, and retention belong to the future owning playtest decision; they must preserve this namespace and control-plane identity boundary.
 
 When entitlements transition to hard-cutoff states (`suspended` or `canceled`) after an instance is already running, runtime behavior is deterministic:
 

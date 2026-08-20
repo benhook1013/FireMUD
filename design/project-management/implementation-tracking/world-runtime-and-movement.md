@@ -8,6 +8,13 @@ This is a non-normative implementation tracker for world runtime and movement. C
 
 This tracker is the permanent reader-facing implementation record for world runtime, room reads, movement, lifecycle orchestration, and Draft topology mutation. Canonical target-state design remains under [design/architecture](../../architecture/README.md).
 
+## Packet 4 Status and Proof Gaps
+
+- `GR-2.1` / `AR-3.1`: [ADR 0122](../../architecture/decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md) requires world runtime state to distinguish the durable playable-state namespace and `playableStateScope` from a disposable instance and to classify owner data before replacement. Current world instance and lifecycle evidence remains partial; no exhaustive S1/S2/S3 mapping or cleanup proof is claimed.
+- `AR-3.1`: [ADR 0123](../../architecture/decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md) records the database lifecycle row/epoch and Temporal coordination boundary. Existing prepare/activate/terminate caveats, including blocking calls and missing stages, remain active gaps.
+
+These links add decision provenance only; they do not upgrade world runtime, lifecycle, or Draft mutation status.
+
 ## Capability Status
 
 | Capability | Implementation | Verification | Design | Implementation anchors | Proof anchors | Secondary handoffs | Gap or decision |
@@ -98,6 +105,7 @@ This tracker is the permanent reader-facing implementation record for world runt
 - Broader travel, pathfinding, combat adjacency, richer movement failure semantics, and additional client polish are outside the completed directional-movement baseline.
 - World Management still needs the authoritative character/session location-transition mutation contract used by live movement; the current Game Session binding update is not a substitute for that ownership boundary.
 - Prepare and activate lifecycle commands still hold local transactions across blocking Game Design attestation reads; they need the same staged/fenced transaction separation already used around termination cleanup.
+- Replacement cutover still lacks the World-owned one-shot hold record/readback contract: exact source/target `ACTIVE` epoch locking, the nonterminal-hold termination predicate, hold-bound Game Session pointer transaction, safe abort/finalize reconciliation, diagnostic-only expiry, and focused proof. This remains target implementation drift; it does not introduce a new world lifecycle state.
 - Starter-region preparation still persists hard-coded `SimpleDungeonGenerator` metadata and does not consume the frozen published generation inputs and provenance required by the launch descriptor.
 - Initial world-event scheduling is absent from the current prepare path despite being canonical lifecycle step 2.
 - Omitted optional terrain/population stages have no durable `SKIPPED_NOT_REQUIRED` outcome or operator-facing projection, so current lifecycle status cannot distinguish intentional omission from not-started or failed work.

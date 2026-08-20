@@ -6,7 +6,7 @@ Game Design is the canonical authored-history, publication-coordination, release
 
 ## Implementation Status
 
-External Git synchronization and canonical multi-branch merge semantics are not implemented. Current authoring uses Game Design-owned revision APIs with optimistic concurrency and deterministic replay order. Current release-bundle schema and plugin publication/activation code incorrectly reuse Automation & Scripting's aggregate participant `contentDigest` where the dedicated Game Logic-owned `abilitySchemaDigest` is required; exact ability-schema compatibility therefore remains an implementation and proof gap. Plugin publication currently uses signed-only intake; [ADR 0111](../../decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md)'s approved unsigned provenance remains target-only.
+External Git synchronization and canonical multi-branch merge semantics are not implemented. Current authoring uses Game Design-owned revision APIs with optimistic concurrency and deterministic replay order, but it does not yet implement ADR 0129's durable multi-owner coordinator, owner-local compare-and-swap application, synchronized commit fence, or proof that partially applied owner rows remain invisible to ordinary Draft reads. Current release-bundle schema and plugin publication/activation code incorrectly reuse Automation & Scripting's aggregate participant `contentDigest` where the dedicated Game Logic-owned `abilitySchemaDigest` is required; exact ability-schema compatibility therefore remains an implementation and proof gap. Plugin publication currently uses signed-only intake; [ADR 0111](../../decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md)'s approved unsigned provenance remains target-only.
 
 ## Approach
 
@@ -48,7 +48,27 @@ revisions with the versioned templates stored in domain services.
 
 ### Design-Time Synchronization
 
+The exact-base, digest-bound, multi-owner commit contract is owned by [ADR 0129](../../decisions/adr-0129-durable-fenced-multi-owner-draft-commits.md); this section records the Game Design local history, coordination, and visibility consequences.
+
+Game Design owns the durable, creator-visible coordination record for every shared-Draft commit and isolated proposal. Each record binds the target `tenantId` and `versionId`, exact `baseCommitId`, stable request or proposal identity, canonical digest of the complete input, canonical revision order, the complete affected `(tenantId, versionId, owner, aggregateId, scopeId, epoch)` set, and durable per-owner application status.
+
+- External AI/tool clients use ordinary scoped public creator APIs. A first-party agent uses the trusted scoped tool broker to build an isolated, reviewable Draft proposal; proposal acceptance creates or selects one exact commit application and does not grant a separate write or merge path. Both flows use the same exact tenant/version, base, complete-diff, affected-epoch, revision-order, and digest contract.
+- Reusing one request, proposal, or commit identity returns the recorded result only when the complete binding matches. Reusing it with changed or omitted tenant/version, input, base, revision order, affected set, or digest is rejected.
+- Each owner applies its portion through one storage-level atomic compare-and-swap transaction. That transaction checks every expected epoch required by the typed mutation for every fencing tuple in the complete subset owned by that service, while validating the complete affected set required by the typed mutation; it applies the local mutation, advances those epochs, and records the exact commit/digest result. A service-layer read followed by an unconditional update is not sufficient.
+- The typed mutation determines its complete affected scope. An owner rejects an omitted required containing scope rather than allowing the caller to evade a scope conflict.
+- Aggregate and scope epochs remain narrow conflict boundaries. The exact proposal base remains immutable provenance, while a newer synchronized commit that changed only disjoint scopes does not invalidate unchanged expected epochs.
+- Cross-owner application is a durable coordinated workflow, not one distributed transaction. Game Design retries with the same identities and retains per-owner status across restarts.
+- Owner-local application is not accepted shared Draft truth. Normal creator reads and subsequent edits use the durable snapshot/version at the last fully synchronized commit fence; rows applied under a later partial owner commit remain invisible to those reads. Each owner must preserve the ability to serve that fenced snapshot while later partial work exists.
+- Game Design advances the synchronized fence only after every required owner durably reports the same exact commit and digest. Partial application remains diagnostic workflow state and cannot satisfy `IN_SYNC` or become a publish target.
+- Conflict assistance may construct a new proposed diff, but it must produce a new digest and exact base/epoch binding for creator review. Reconciliation never silently merges a stale proposal.
+
+The Game Design Service tracks a derived `designSyncStatus` for each `(tenantId, versionId)`. It is `IN_SYNC` only when the durable commit record, every required owner result, and the synchronized commit fence agree on the exact commit and digest. The `PublishVersion` workflow must verify this state before starting durable publication. The coordinator may use the canonical durable workflow substrate and transactional outbox delivery where appropriate, but it must not claim cross-database atomicity or expose partial application as accepted Draft state.
+
+### Draft Digest and Reconciliation Details (Target State)
+
 Game Design is the canonical owner of publication coordination, release descriptors, and the final release attestation. Domain services remain the canonical owners of their versioned participant data and participant digests. This owner split implements [ADR 0093](../../decisions/adr-0093-game-design-coordinated-digest-attested-content-publication.md); service-local documents link here for their participant and persistence consequences instead of copying the publication contract.
+
+The following eventual-consistency ordering and replay rules are ADR 0129 target-state requirements, not current live ordering. Current `SaveRevision` ordering and its missing durable-coordinator/deduplication gap are recorded in [Game Design API implementation status](api-contracts.md#implementation-status); this section does not repeat those details.
 
 Because design changes often span multiple domain services (for example World
 Management and Entity Management), the system treats the Game Design Service as
@@ -56,7 +76,7 @@ the source of truth for which revisions belong to a version, and the domain
 services as the source of truth for the current Draft template graphs:
 
 - Applying a commit is **eventually consistent** across services:
-  - Revisions are written to the Game Design Service first.
+  - The durable commit/proposal record and its revisions are written to the Game Design Service first.
   - Design-time workers or APIs apply those revisions to the owning domain
     services’ Draft templates via idempotent design APIs.
 - Idempotency and replay safety are mandatory:
@@ -81,8 +101,11 @@ services as the source of truth for the current Draft template graphs:
   durably applied for that scope. Services may keep revision-level ledgers
   internally, but publish gates and reconciler comparisons must use
   commit-level convergence only. The reconciler updates `designSyncStatus` back
-  to `IN_SYNC` once all participating services report digests matching the
-  commit being published.
+  to `IN_SYNC` only when the durable commit record and synchronized commit fence
+  identify the same commit, every required durable per-owner outcome is
+  `APPLIED` (or an equivalent successful terminal state) for and matches that
+  exact commit and digest, and every participating service reports the matching
+  exact digest for that commit.
 - The `PublishVersion` workflow must verify that `designSyncStatus == IN_SYNC`
   before starting the durable `publish` workflow. Versions that are out of sync cannot be
   published until reconciliation succeeds.
@@ -105,6 +128,7 @@ In addition to domain-service digests, publish safety requires a Game Design con
   - `requiredManifestAssetKeys[]` listing the stable manifest usage keys required for launch or cutover validation of that release
   - `publishedReleaseBundleRef` — target-state owner-generated opaque identity for the immutable release bundle; the current implementation may expose only its internal bundle row identifier, so this field is not yet live
   - `manifestHash`, `manifestSchemaVersion`
+  - `abilitySchemaDigest` — the dedicated Game Logic-owned ability-schema digest for the same target commit, carried with the existing Game Logic participant `digestSchemaVersion` and canonicalization evidence; aggregate participant digests are not substitutes
   - `generationConfigRevision`
   - attestation schema/version fields for future evolution
   - Error semantics: `NOT_FOUND` means not publish-complete; `SCHEMA_VERSION_UNSUPPORTED` means fail closed until callers support the attestation schema.
@@ -116,6 +140,7 @@ Digest comparison rules:
 - Reconciliation and publish-time checks compare the current digest reported by each service against the recorded digest for the target commit.
 - If `digestSchemaVersion` differs, publish must fail fast and require an explicit migration of digest semantics (for example by bumping `digestSchemaVersion` and replaying commits to record new digests), rather than silently comparing incompatible hashes.
 - For one publish attempt, every required participant must attest the same target commit scope. Publish must fail closed if required participants report different `appliedCommitId` values for the same requested publish target, even if no individual digest payload is malformed.
+- The dedicated `abilitySchemaDigest` is compared exactly with the Game Logic-owned digest for the same target commit and its existing participant `digestSchemaVersion`/canonicalization contract; missing, unsupported, stale, or mismatched evidence fails closed.
 - Digest request/response payloads are canonical across participants:
   - `GetDraftDesignDigestRequest { tenantId, scope: oneof {versionId, scriptPatchVersion} }`
   - `GetDraftDesignDigestResponse { tenantId, scope, appliedCommitId, contentDigest, digestSchemaVersion }`
@@ -132,7 +157,7 @@ Publish workflows must use an explicit participant matrix so digest gating is de
 
 Asset bytes are intentionally outside participant design digests, but they remain mandatory publication gates through private candidate verification, the attested manifest digest, and every actual-byte artifact digest in the release bundle.
 
-The full-version release bundle also carries a separately named `abilitySchemaDigest` produced from the immutable Game Logic-owned ability-schema snapshot for the same target commit. Game Logic's aggregate participant `contentDigest` and Automation & Scripting's participant digest cover broader, different manifests and cannot substitute for this field. Plugin and script-patch compatibility checks compare against this dedicated release-attested value; missing ability-schema evidence fails closed.
+The full-version release bundle also carries a separately named `abilitySchemaDigest` produced from the Game Logic-owned ability-schema inputs under Game Logic's existing participant digest manifest, `digestSchemaVersion`, and canonicalization rules for the same target commit. Game Logic's broader aggregate participant `contentDigest` and Automation & Scripting's participant digest cannot substitute for this field. Plugin and script-patch compatibility checks compare against this dedicated release-attested value exactly; missing ability-schema evidence fails closed.
 
 ### Change Vehicle Selection Matrix
 

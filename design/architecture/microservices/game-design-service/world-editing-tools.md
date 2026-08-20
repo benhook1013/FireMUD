@@ -6,7 +6,7 @@ Game creators use these interfaces to craft rooms, items and NPCs without modify
 
 ## Implementation Status
 
-The current editor contract preserves revision ordering, approval, and local conflict reporting, but complete destructive-preview UI, plan-digest and reference-analysis proof, and identity-mapping proof remain incomplete.
+The current editor contract preserves revision ordering, approval, and local conflict reporting, but complete destructive-preview UI, plan-digest and reference-analysis proof, and identity-mapping proof remain incomplete. The current `SaveRevision` path also does not prove the durable multi-owner Draft coordination contract in [ADR 0129](../../decisions/adr-0129-durable-fenced-multi-owner-draft-commits.md).
 
 ## Capabilities
 
@@ -46,11 +46,7 @@ Example consequence:
 2. Each change is stored as a **revision** linked to the author's account and
    associated with concrete domain objects (rooms, regions, NPCs, items) via
    stable identifiers defined by the owning domain services.
-3. As revisions are committed, the Game Design Service applies them
-   incrementally to domain services’ **Draft** template rows via idempotent
-   design APIs keyed by `(tenantId, versionId)`. Draft templates in World
-   Management and Entity Management are therefore the authoritative snapshots of
-   world and entity data for each version.
+3. As revisions are committed, Game Design durably records the exact base commit, canonical request or proposal digest, complete affected aggregates/scopes and expected epochs, revision order, and per-owner apply status before coordinating idempotent owner writes. World Management and Entity Management remain authoritative for their Draft template graphs, while Game Design owns the fully synchronized commit fence.
 4. Revisions are grouped into a **version** and published via the durable workflow
    described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
    At publish time, the workflow validates the Draft templates already stored in
@@ -67,19 +63,23 @@ Example consequence:
 
 ### Draft Write Concurrency
 
-Eventually consistent application does not permit last-writer-wins mutation of Draft templates.
+Durable cross-owner application does not permit last-writer-wins mutation of Draft templates or make a partially applied commit accepted Draft truth. See [ADR 0129](../../decisions/adr-0129-durable-fenced-multi-owner-draft-commits.md).
 
 Initial-slice concurrency contract:
 
 - Each design-time mutation against a domain-owned Draft aggregate must carry:
   - stable `revisionId`;
   - containing `commitId`;
+  - the exact commit/request digest;
   - the target `(tenantId, versionId)`;
   - an `expectedDraftRevisionEpoch` (or equivalent monotonic aggregate version) for the aggregate being edited.
+- Each complete commit or proposal must also bind its exact `baseCommitId`, canonical revision order, every affected owner/aggregate/scope, and the expected epoch for every affected mutation.
 - World topology edits and generation revisions that can touch more than one room use an explicit scope aggregate keyed by `(tenantId, versionId, scopeType, scopeId)`, for example `REGION_SUBTREE:<regionTemplateId>` or `ZONE_SUBTREE:<zoneTemplateId>`. Manual edits inside that scope and generation revisions targeting that scope must check and advance the same `draftScopeRevisionEpoch`.
 - The scope epoch is the canonical conflict boundary for subtree generation. A room-level edit may still carry a room aggregate epoch for precise UI conflict messages, but it must also validate the containing scope epoch whenever the edit changes topology or publish-visible room semantics inside a generation-addressable scope.
 - World Management and Entity Management design APIs must reject the write with a conflict error if the expected epoch does not match the current Draft aggregate state.
-- Replays of the same `revisionId` remain idempotent; a duplicate delivery with the same already-applied revision must no-op rather than fail conflict.
+- Every owner must derive or validate the complete scope set required by its typed mutation and reject an omitted containing scope. Epoch comparison, local mutation, epoch advancement, and exact commit/digest ledger recording must occur in one owner-local storage transaction; a service-layer read followed by an unconditional update is not sufficient.
+- Replays of the same `revisionId` are idempotent only when the complete enclosing binding matches exactly; a duplicate delivery with the same already-applied revision and exact binding may return `NO_OP_ALREADY_APPLIED`, but changed or omitted binding is rejected before owner-local apply.
+- Reusing a commit, request, proposal, or revision identity with a different canonical input or mutation, `baseCommitId`, canonical revision order where applicable, complete affected owner/aggregate/scope set, complete expected epoch set, or digest is rejected rather than treated as a replay. Only a replay whose complete bindings match exactly is idempotent. An owner-local apply does not advance the shared Draft fence until every required owner reports the exact commit and digest.
 - Game Design must surface the conflict to the editor as a Draft-write concurrency failure, not silently overwrite the newer state.
 - Publish reconciliation replays commits in commit order and revision order within the commit. It must not reorder concurrent conflicting edits into a synthetic merged result.
 
@@ -96,7 +96,9 @@ The generation preview, revision, and CAS rules below are target-state requireme
 - Game Design forwards the approved typed `WORLD_GENERATION_SUBTREE` payload through `ApplyWorldDesignMutation`; generated subtree content is not stored only as opaque revision JSON. World Management includes `generationRequestId`, immutable `generatorImplementationVersion`, the exact canonical inputs, `outputDigest`, plan digest, scope epoch, and approved reference facts in its owner-local CAS, fails closed and leaves prior topology unchanged when any differ from the preview, while Game Design surfaces the conflict and records the apply outcome.
 - A generation revision targeting a newly created empty container with no prior scope epoch initializes its scope epoch with the generated topology. An existing scope emptied by deletion or replacement preserves its monotonic epoch; later edits and generation revisions use that epoch.
 
-Illustrative request/response shapes:
+The following examples are illustrative, non-admissible owner-local pseudocode fragments beneath the enclosing Game Design coordinator record; they cannot be submitted standalone. The coordinator binds the exact commit/request digest and complete affected owner/aggregate/scope set. `NO_OP_ALREADY_APPLIED` is valid only after exact complete-binding replay equality; the same identity with any changed or omitted binding is rejected as changed-request reuse before owner-local apply. These fragments do not define that complete multi-owner wire shape or add fields beyond the owner-local epoch/apply result.
+
+Illustrative owner-local apply fragments:
 
 ```json
 {
@@ -196,16 +198,13 @@ Each participating domain service must publish a service-local **digest input ma
 
 Publish gating should be treated as invalid if a service cannot provide a digest payload consistent with its documented manifest for the active `digestSchemaVersion`.
 
-Publish completion must also persist an immutable release attestation in Game Design:
+Publish completion must also persist an immutable release attestation in Game Design according to the canonical [Version Control release-attestation contract](version-control.md#draft-digest-and-reconciliation-details-target-state), including its dedicated Game Logic-owned `abilitySchemaDigest` and exact comparison rules:
 
-- After all required digest participants pass and asset export has produced the final `manifestHash`, Game Design writes `published_release_bundle(tenantId, versionId, commitId, publishWorkflowId, participantDigests..., artifactDigests..., requiredManifestAssetKeys..., manifestHash, generationConfigRevision, publishedAt)`.
-- This row is the canonical record proving what was actually published.
-- Activation, repair, and rollback-preflight workflows must validate against this attestation instead of reconstructing release state from multiple service-local sources.
-- Game Design must expose this attestation through a read-only API such as `GetPublishedReleaseBundle(tenantId, versionId)` so runtime and operator workflows never depend on direct table access.
+- After all required digest participants pass and asset export succeeds, Game Design writes the canonical `published_release_bundle` for the target `(tenantId, versionId)`.
+- This row is the canonical record proving what was actually published; activation, repair, and rollback-preflight workflows validate against it rather than reconstructing release state from service-local sources.
+- Game Design exposes the attestation through a read-only API such as `GetPublishedReleaseBundle(tenantId, versionId)` so runtime and operator workflows never depend on direct table access.
 
-For initial-slice releases that export derived world artifacts, the attestation must also carry typed `artifactDigests[]` entries for those payloads and `requiredManifestAssetKeys[]` for any stable manifest usage keys that are mandatory for launch/cutover validation, in addition to `participantDigests[]` and `manifestHash`.
-
-For exported world bundles in the initial slice, these `artifactDigests[]` and `requiredManifestAssetKeys[]` entries are mandatory fields of the release attestation rather than optional extensions.
+For initial-slice releases that export derived world artifacts, the canonical attestation must include the typed artifact-digest and required-manifest-key evidence for those payloads; these world-bundle entries are mandatory rather than optional extensions.
 
 ### Implementation Checklist
 

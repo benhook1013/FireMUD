@@ -19,17 +19,34 @@ creators can quickly spin up new projects without starting from scratch.
 
 ## Starter Experience Profiles
 
-Game Design provides curated starter experience profiles so a creator can begin with a coherent playable ruleset without hand-authoring every stat, condition, action, floor-disposition, observation/targeting/target-selection-policy/default-path binding, and feedback declaration. Examples may include a classic text-MUD baseline, a solo-RPG baseline, and a minimal sandbox baseline.
+Game Design provides curated starter experience profiles so a creator can begin with a coherent playable ruleset without hand-authoring every stat, condition, action, floor-disposition, observation/targeting/target-selection-policy/default-path binding, feedback declaration, and ordinary script. Examples may include a classic text-MUD baseline, a solo-RPG baseline, and a minimal sandbox baseline.
 
-A game selects one optional base profile and zero or more optional extension packs while building a Draft version. Game Design materializes their content into that Draft version as ordinary versioned DML; profiles never remain as live runtime inheritance.
+A game selects one optional base profile and zero or more optional extension packs while building a Draft version. Game Design materializes their content into that Draft version as ordinary versioned DML and scripts; profiles never remain as live runtime inheritance.
 
 - Imported definitions are game-owned after application and may be edited, replaced, or removed. A creator may select no profile.
 - A base profile and optional packs compose in explicitly declared order. Duplicate definition keys are rejected unless the later pack records an explicit override of the earlier definition; implicit last-writer-wins merging is prohibited.
-- Game Design records every selected pack's identity, revision, hash, application order, and explicit overrides as Draft provenance. Publishing freezes only the resulting single game version and release bundle.
+- Game Design records every selected pack's identity, revision, hash, application order, explicit overrides, and materialization schema/compiler version as Draft provenance. It also retains, or makes permanently reconstructible, the exact resolved applied baseline, stable namespaced source identities, source-to-game authored-identifier mappings, application and upgrade commit lineage, and explicit locally deleted, detached, and retained state. Publishing freezes only the resulting single game version and release bundle.
 - Profiles are not runtime settings and provide no hidden fallback behavior. Removing an imported definition removes it from that game's published design; runtime services must not substitute a platform default.
-- A profile may seed recommended ordinary tenant/game setting values, such as the default bounded-resource capacity-change policy, during creation. The seed is written as an editable scoped setting, is not inherited from the profile at runtime, and may be changed or removed independently of the imported DML.
+- A profile may suggest ordinary tenant/game setting values, such as the default bounded-resource capacity-change policy. Accepted suggestions are written separately through the ordinary typed settings authority, are not inherited from the profile at runtime, and may be changed or removed independently of imported content. Applying or upgrading a profile never silently overwrites a setting.
+- A profile may materialize ordinary scripts. Linked plugins remain separate immutable platform-attested release-tuple dependencies: profile application or upgrade does not rewrite a plugin bundle or make a plugin version compatible with a different base game version.
 
-This model keeps templates convenient while retaining the single-base-version and immutable-release invariants below. The canonical cohesive tuple and admission rules live in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md#launch-descriptor-version-resolution-rules) under [ADR 0094](../../decisions/adr-0094-explicit-cohesive-runtime-release-tuples.md); this document owns only template-local references, defaults, and validation consequences.
+This model keeps templates convenient while retaining the single-base-version and immutable-release invariants below. The profile authority and upgrade boundary are defined by [ADR 0124](../../decisions/adr-0124-materialized-starter-profiles-with-conservative-draft-upgrades.md); this document owns only template-local references, defaults, and validation consequences.
+
+### Profile Upgrade Planning (Target State)
+
+A newer profile revision never changes an existing game automatically. A creator may explicitly request an upgrade while editing a Draft. The planner compares:
+
+- `O` – the exact old resolved base-and-pack composite recorded as the current application baseline;
+- `L` – the current game-owned Draft; and
+- `N` – the exact newly selected resolved composite.
+
+The automatic plan is object-level and conservative. An object may be automatically replaced from `O` with its `N` representation only when its canonical identity and semantics remain compatible; it may be deleted when `N` removed it. A newly introduced object may be added after identity, collision, schema, and reference validation. Locally changed or deleted objects, broken references, unsafe deletions, ambiguous overrides, semantic incompatibility, and replacements, splits, merges, renames, or re-scopes require explicit creator resolution; where identity changes, an explicit safe mapping is required evidence but never substitutes for that resolution, and missing or ambiguous mappings block the plan. The planner does not perform a generic JSON merge or promise automatic field-level merge.
+
+The creator previews and resolves the complete plan before Game Design applies it as one normal Draft commit guarded by the complete affected aggregate and scope epoch set. A later edit invalidates the preview only when it advances an aggregate or scope in that affected set (including any required containing scope); an edit confined to a disjoint scope does not invalidate the preview. The resulting Draft follows the ordinary reconciliation, validation, digest, and publication workflow. Runtime rollout of the published version follows the ordinary game-version migration and cutover contracts; there is no profile-specific runtime path.
+
+This guarded planning and application is target-state behavior. The current `SaveRevision` seam instead runs the optional World mutation and Game Design revision save in separate owner transactions, without a durable coordinator or synchronized visibility fence; see [Game Design API implementation status](api-contracts.md#implementation-status) for the verified ordering and retry gap.
+
+After a successful upgrade, the exact profile baseline advances to `N`, while retained local differences, explicit deletions, detachments, mappings, and resolution outcomes remain recorded for the next upgrade. This makes repeated upgrades deterministic without turning the profile into an authoring or runtime inheritance layer.
 
 `GameTemplateDto` includes `id`, `tenantId`, `name`, an optional `description`,
 the raw `config` JSON and a `createdAt` timestamp. The `id` is assigned by the

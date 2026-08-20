@@ -501,6 +501,33 @@ ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/adr-0121-historical-broad-dry-run-semantics.md": adr_allocation(
         "AS-1", "Superseded", "PO-1", "PO-2", "PO-4"
     ),
+    "design/architecture/decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md": adr_allocation(
+        "AR-3", "Accepted", "GR-2", "GR-3", "SF-2", "PO-1"
+    ),
+    "design/architecture/decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md": adr_allocation(
+        "AR-3", "Accepted", "SF-2", "GR-2", "PO-1", "GR-1", "AS-1"
+    ),
+    "design/architecture/decisions/adr-0124-materialized-starter-profiles-with-conservative-draft-upgrades.md": adr_allocation(
+        "AR-2", "Accepted", "AR-1", "AR-3", "GR-4", "EA-3"
+    ),
+    "design/architecture/decisions/adr-0125-defer-whole-game-portability-and-external-authoring-formats.md": adr_allocation(
+        "AR-1", "Accepted; review disposition Deferred", "AR-3", "PO-3", "SF-2", "EA-3"
+    ),
+    "design/architecture/decisions/adr-0126-untrusted-models-and-scoped-authoring-tools.md": adr_allocation(
+        "AR-1", "Accepted", "AS-1", "SF-1", "EA-3", "PO-4"
+    ),
+    "design/architecture/decisions/adr-0127-game-authored-equipment-layouts-with-fail-closed-publication.md": adr_allocation(
+        "GR-3", "Accepted", "AR-1", "AR-3", "GR-1", "SF-1"
+    ),
+    "design/architecture/decisions/adr-0128-game-design-plugin-trust-provenance.md": adr_allocation(
+        "AR-1", "Accepted", "AS-1", "SF-1", "GR-4"
+    ),
+    "design/architecture/decisions/adr-0129-durable-fenced-multi-owner-draft-commits.md": adr_allocation(
+        "AR-1", "Accepted", "AR-3", "SF-2", "EA-3"
+    ),
+    "design/architecture/decisions/adr-0130-historical-equipment-body-layout-authority.md": adr_allocation(
+        "GR-3", "Superseded", "AR-1", "GR-1", "SF-1"
+    ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
     "README.md": "Service overview",

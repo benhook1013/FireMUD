@@ -15,6 +15,8 @@ Current status (non-authoritative summary; [Shared Runtime, Service Contracts, a
 - Automation Scripting now hosts the `script-patch-readiness` workflow family for durable `onLoad`/readiness progression after `NotifyScriptVersionUpdate`;
 - `common-saga` remains the canonical substrate for short synchronous orchestration that does not need durable workflow execution.
 
+The World Management `world-lifecycle` family is the concrete lifecycle adopter governed by [ADR 0123](./decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md). Temporal coordinates prepare, activation, failure, termination, retries, waits, and operator progress; World Management's durable lifecycle row and epoch remain the authority for `PREPARING`, `ACTIVE`, `FAILED_PRE_ACTIVATION`, `TERMINATING`, and `TERMINATED`. Owner cleanup acknowledgements are read from durable owner state, and routine gameplay/tick paths never query Temporal or wait on cleanup.
+
 ## Canonical Usage Boundary
 
 Use Temporal when the workflow must provide one or more of the following:

@@ -9,6 +9,7 @@ import re
 root = pathlib.Path(".")
 obsolete_public_resume_signature = "`resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)`"
 obsolete_gameplay_session_selector = "session:game:{tenantInstanceTag}"
+obsolete_gameplay_character_index = "session:game:index:character:{tenantGameplayTag}:<gameInstanceId>:<characterId>"
 maintenance_lock_token_syntax = re.compile(r"--maintenance-lock-token(?![A-Za-z0-9_-])")
 maintenance_lock_token_prohibition = re.compile(
     r"(?:"
@@ -442,8 +443,18 @@ def reject_obsolete_gameplay_session_selector(path, text):
         )
 
 
+def reject_obsolete_gameplay_character_index(path, text):
+    if is_historical_adr_record(path, text):
+        return
+    if obsolete_gameplay_character_index in text:
+        raise SystemExit(
+            f"{path}: character-session indexes must use the canonical "
+            "playableStateNamespaceId/playableStateScope shape"
+        )
+
+
 historical_adr_fixture = decision_history_dir / "adr-9999-history-fixture.md"
-historical_adr_fixture_text = "# ADR 9999: Historical Fixture\n\n## Status\n\nSuperseded by ADR 0001\n\nAccount-issued envelope\nrebind-envelope\nsession:game:{tenantInstanceTag}\n"
+historical_adr_fixture_text = "# ADR 9999: Historical Fixture\n\n## Status\n\nSuperseded by ADR 0001\n\nAccount-issued envelope\nrebind-envelope\nsession:game:{tenantInstanceTag}\n" + obsolete_gameplay_character_index + "\n"
 indented_status_heading_fixture_cases = (
     (
         decision_history_dir / "adr-9990-one-space-status-heading-fixture.md",
@@ -647,6 +658,10 @@ reject_obsolete_gameplay_session_selector(
     historical_adr_fixture,
     historical_adr_fixture_text,
 )
+reject_obsolete_gameplay_character_index(
+    historical_adr_fixture,
+    historical_adr_fixture_text,
+)
 for fixture_path, fixture_text in indented_status_heading_fixture_cases:
     if not is_historical_adr_record(fixture_path, fixture_text):
         raise SystemExit(
@@ -805,6 +820,16 @@ except SystemExit as error:
 else:
     raise SystemExit("Accepted ADR fixture was not checked for obsolete selectors")
 try:
+    reject_obsolete_gameplay_character_index(
+        accepted_adr_fixture,
+        accepted_adr_fixture_text + obsolete_gameplay_character_index,
+    )
+except SystemExit as error:
+    if "character-session indexes" not in str(error):
+        raise SystemExit(f"unexpected Accepted ADR character-index diagnostic: {error}")
+else:
+    raise SystemExit("Accepted ADR fixture was not checked for obsolete character indexes")
+try:
     reject_obsolete_envelope_phrases(
         accepted_adr_fixture,
         accepted_adr_fixture_text,
@@ -850,6 +875,7 @@ for path in (root / "design").rglob("*.md"):
     reject_obsolete_redis_rebind_envelope(path, text)
     reject_obsolete_envelope_phrases(path, text)
     reject_obsolete_gameplay_session_selector(path, text)
+    reject_obsolete_gameplay_character_index(path, text)
 
 canonical_world_dynamic = "world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>"
 for path in [
@@ -963,7 +989,7 @@ require_contains(
         "`session:auth:token:*` and `session:auth:generation:*`",
         "Region- and tenant-scoped resets preserve those records",
         "`session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`",
-        "`session:game:index:character:{tenantGameplayTag}:<gameInstanceId>:<characterId>`",
+        "`session:game:index:character:{tenantGameplayTag}:<playableStateNamespaceId>:<playableStateScope>:<characterId>`",
         "Derived gameplay indexes are independent of that choice",
         "The one untagged global account index is an explicit exception",
         "Account-owned idempotent durable generation-mutation/repair operation is the fallback",

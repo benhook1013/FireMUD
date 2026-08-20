@@ -21,7 +21,7 @@ This API contract is target-state canonical; implementation coverage is partial 
 - `ActivatePreparedWorldInstance` – performs the fenced `PREPARING -> ACTIVE` lifecycle transition after Game Session has finished local start-up work for the same `gameInstanceId`.
 - `FailPreparedWorldInstance` – performs the fenced `PREPARING -> FAILED_PRE_ACTIVATION` transition when Game Session or another pre-admission consumer must roll back a prepared instance before admission opens.
 - `GetWorldInstanceLifecycle` – returns the current fenced lifecycle snapshot for an existing `(tenantId, gameInstanceId)` so stop/cutover consumers can retry against fresh lifecycle truth instead of cached guesses.
-- `TerminateWorldInstance` – performs the fenced `ACTIVE -> TERMINATING -> TERMINATED` shutdown path and runs the canonical cross-service runtime cleanup before World reports termination complete.
+- `TerminateWorldInstance` – requests or resumes fenced termination from `PREPARING`, `FAILED_PRE_ACTIVATION`, or `ACTIVE`; it reports `TERMINATED` only after every owner in the frozen required cleanup-owner snapshot captured for `terminationRequestId`, together with its ownership-registry revision, acknowledges cleanup and the final lifecycle CAS commits against that same snapshot.
 
 The gRPC contract for world operations is located in [../../../../protos/world-management/v1](../../../../protos/world-management/v1). Run `./gradlew generateProto` to regenerate sources after editing these files.
 
@@ -76,36 +76,47 @@ Digest input manifest rules live in [`runtime-and-data.md`](./runtime-and-data.m
 
 ## ValidateWorldUpgradeMappings Minimum Contract
 
-`ValidateWorldUpgradeMappings` must expose enough detail for replacement-instance cutover tooling to reason about world-owned durable references:
+`ValidateWorldUpgradeMappings` is World Management's owner-local participant in the replacement contract owned by [ADR 0122](../../decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md). It must expose enough detail for cutover tooling to reason about World-owned references without becoming a second classification authority:
 
-- Input identifies `tenantId`, `sourceGameInstanceId`, `targetVersionId`, and optional `remapSetId`.
-- Response enumerates the checked world-owned row families, the template identifiers referenced by each family, whether each family is `COMPATIBLE`, `REQUIRES_MAPPING`, or `INCOMPATIBLE`, and whether the supplied `remapSetId` satisfied all required mappings.
+- Input identifies `tenantId`, stable `playableStateNamespaceId`, `sourceGameInstanceId`, exact `sourceVersionId` and `targetVersionId`, and optional approved `remapSetId`. A target replacement request may also carry the prepared `targetGameInstanceId`; it is evidence for the same cutover, not a new World authority.
+- Response enumerates every registered World-owned row family, owner, local S1/S2/S3 classification, count, referenced template identifiers, outcome, unknown/unclassified state, freshness epoch, and any mapping validation/application result. It binds that enumeration to the exact common state-family/owner-registry revision or to a complete set of owner-scoped catalog epochs; each family evidence row identifies the applicable owner catalog epoch and freshness evidence when owner-scoped catalogs are used. `remapSetId` must resolve to immutable persisted Game Design approval and exact source-version-to-target-version mapping evidence; a supplied or echoed id is not proof of validation or application. Unknown or unregistered state is incompatible.
+- The response declares its report capability and completeness and binds the exact namespace, source/target versions, source instance, and optional target instance from the request. World may return `COMPATIBLE` only for a supported, complete report with exhaustive family evidence, current freshness evidence, the exact registry revision or complete owner-catalog epochs, and any required mapping validation/application proof. A missing, unsupported, or incomplete report cannot be interpreted as `COMPATIBLE`; family registration, ownership, or classification drift after preflight invalidates the report rather than being hidden behind an unchanged family count.
 - If the service currently has no `S2` row families for a tenant/version pair, it must report that explicitly rather than implying compatibility from an empty response.
 
 Current live first slice:
 
-- The RPC now exists and returns the canonical cutover-validation payload shape.
-- The implementation currently proves the source `world_instance` exists for `(tenantId, sourceGameInstanceId)`, requires a cutover-eligible world lifecycle state, and verifies retained instance topology rows for `region_instance`, `zone_instance`, and `room_instance` while still reporting the initial World-owned `S3` families only.
+- The RPC now exists and returns an initial/partial cutover-validation payload shape; the canonical/admissible response remains target-only until the required fields and validation converge.
+- The implementation currently proves the source `world_instance` exists for `(tenantId, sourceGameInstanceId)`, requires a cutover-eligible world lifecycle state, and verifies retained instance topology rows for `region_instance`, `zone_instance`, and `room_instance` while still reporting only the initial World-owned `S3` families. It does not yet validate the exact namespace, source/target version pair, target instance binding, report capability/completeness, exact registry revision or owner-scoped catalog epochs, or persisted remap evidence required above; those are explicit implementation/proof gaps.
 - World therefore currently returns `stateClassesChecked=["S3"]`, `checkedFamilies=["world_instance", "region_instance", "zone_instance", "room_instance", "room_instance_exit", "world_event"]`, `hasS2Rows=false`, and `remapSetRequired=false`; it returns `INCOMPATIBLE` when the source world lifecycle or retained topology is not cutover-eligible.
 - Later World-owned durable metadata families can widen this contract to real `S2` checks without changing the owning RPC surface.
 
-Illustrative responses:
+Target illustrative response fragments (field names remain conceptual until the coordinated wire change):
+
+These are deliberately abbreviated, non-admissible fragments. The World inventory includes conceptual family groups without exact registered family identifiers (for example, ambient runtime state and occupancy rows), so these examples cannot claim exhaustive evidence. An admissible response must enumerate every exact family identifier in the full World registry and satisfy the capability, completeness, freshness, and registry-evidence requirements above.
 
 ```json
 {
   "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
+  "playableStateNamespaceId": "0d47c2a7-9b3d-4f52-8a11-6e0c4d88b3f7",
   "sourceGameInstanceId": "2e3ee139-a6e8-44ad-b840-891b22c2255b",
+  "sourceVersionId": "54ce6198-ccea-4f94-8541-ec8ca322070d",
+  "targetGameInstanceId": "4862ba66-fda2-490a-97e9-28358fbd0888",
   "targetVersionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
-  "stateClassesChecked": ["S3"],
-  "checkedFamilies": [
-    "world_instance",
-    "region_instance",
-    "zone_instance",
-    "room_instance",
-    "world_event"
+  "reportCapability": "EXHAUSTIVE_WORLD_FAMILY_EVIDENCE",
+  "complete": false,
+  "registryEvidenceMode": "OWNER_SCOPED_CATALOG_EPOCHS",
+  "familyEvidence": [
+    {"family": "world_instance", "owner": "world-management", "ownerCatalogEpoch": 17, "freshnessEpoch": 41, "classification": "S3", "count": 1, "outcome": "COMPATIBLE"},
+    {"family": "region_instance", "owner": "world-management", "ownerCatalogEpoch": 17, "freshnessEpoch": 41, "classification": "S3", "count": 4, "outcome": "COMPATIBLE"},
+    {"family": "zone_instance", "owner": "world-management", "ownerCatalogEpoch": 17, "freshnessEpoch": 41, "classification": "S3", "count": 12, "outcome": "COMPATIBLE"},
+    {"family": "room_instance", "owner": "world-management", "ownerCatalogEpoch": 17, "freshnessEpoch": 41, "classification": "S3", "count": 96, "outcome": "COMPATIBLE"},
+    {"family": "room_instance_exit", "owner": "world-management", "ownerCatalogEpoch": 17, "freshnessEpoch": 41, "classification": "S3", "count": 144, "outcome": "COMPATIBLE"},
+    {"family": "world_event", "owner": "world-management", "ownerCatalogEpoch": 17, "freshnessEpoch": 41, "classification": "S3", "count": 3, "outcome": "COMPATIBLE"}
   ],
+  "unknownFamilies": [],
+  "mappingProof": {"required": false, "validation": "NOT_REQUIRED", "application": "NOT_REQUIRED"},
   "hasS2Rows": false,
-  "result": "COMPATIBLE",
+  "result": "INCOMPATIBLE",
   "remapSetRequired": false
 }
 ```
@@ -113,15 +124,28 @@ Illustrative responses:
 ```json
 {
   "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
+  "playableStateNamespaceId": "0d47c2a7-9b3d-4f52-8a11-6e0c4d88b3f7",
   "sourceGameInstanceId": "2e3ee139-a6e8-44ad-b840-891b22c2255b",
+  "sourceVersionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
+  "targetGameInstanceId": "f4ba2a7a-ee8f-43eb-af1a-749c07773a3a",
   "targetVersionId": "8e65e4a1-5b49-4c31-9f27-3d0b8c6a1e74",
-  "checkedFamilies": [
+  "reportCapability": "EXHAUSTIVE_WORLD_FAMILY_EVIDENCE",
+  "complete": false,
+  "registryEvidenceMode": "OWNER_SCOPED_CATALOG_EPOCHS",
+  "familyEvidence": [
     {
       "family": "housing_anchor",
+      "owner": "world-management",
+      "ownerCatalogEpoch": 18,
+      "freshnessEpoch": 45,
+      "classification": "S2",
+      "count": 1,
       "referencedTemplateIds": ["roomTemplateId:starter-house-01"],
       "outcome": "REQUIRES_MAPPING"
     }
   ],
+  "unknownFamilies": [],
+  "mappingProof": {"required": true, "validation": "MISSING", "application": "NOT_APPLIED"},
   "hasS2Rows": true,
   "result": "INCOMPATIBLE",
   "remapSetRequired": true
@@ -194,15 +218,30 @@ The current `worldSnapshotId` remains the deterministic same-scope marker descri
 
 The unresolved target work is tracked in [World Runtime and Movement](../../../project-management/implementation-tracking/world-runtime-and-movement.md#active-gaps): Game Session floor allocation from durable region commit authority and Game Logic propagation are target obligations, while World participant floor satisfaction and the opaque component-version plus scoped `servedThroughTickId` response remain unimplemented and unproved. The current proto/request and focused proof do not carry or demonstrate this contract; the exact coordinated wire shape and proof encoding remain implementation gaps.
 
+## Replacement Cutover Hold Contract
+
+World Management owns the durable one-shot hold that closes the race between proving the replacement target `ACTIVE` and Game Session committing the realm admission-pointer swap. This is a separate hold record/state, not a new `world_instance` lifecycle state and not a distributed transaction. The hold is acquired only after the target activation CAS and is finalized only after Game Session proves its local pointer transaction committed.
+
+One cutover execution allocates one opaque `cutoverHoldId` and one opaque equality-only `cutoverHoldFence`. The durable hold binds, as one immutable identity, the `preparedVersionUpgradeId`, exact `controlPlaneRequestId` and normalized request digest, tenant and normalized realm selector, stable `playableStateNamespaceId` and `playableStateScope`, source and target `gameInstanceId`/version pairs, exact source and target `ACTIVE` lifecycle state/epochs, expected Game Session pointer version, the World-issued hold fence, and the authoritative World-database `expiresAt`. Exact acquire, read, finalize, and reconciliation retries reuse that identity and fence; they never mint another hold for the execution.
+
+After activating the target, World locks the source and target lifecycle rows in a stable order, validates both exact `ACTIVE` epochs and the complete bound identity, including the exact `playableStateNamespaceId`/`playableStateScope` pair, rejects any conflicting nonterminal hold, and commits the hold in its own local transaction. Every source or target termination CAS includes the local predicate that no nonterminal cutover hold exists for that instance. While the hold is nonterminal, termination remains pending/retryable and cannot advance either lifecycle epoch. The hold's state is separate from `PREPARING`, `ACTIVE`, `TERMINATING`, and the other lifecycle states.
+
+Game Session must bind `cutoverHoldId`, `cutoverHoldFence`, the exact `playableStateNamespaceId`/`playableStateScope` pair, and the exact source/target lifecycle proofs into one local pointer transaction with the pointer update, append-only audit event, prepared execution/result, source-cleanup registration, and drain-fence identity. World finalizes the hold only after an authoritative Game Session post-swap readback proves that exact namespace/scope-bound transaction committed. A lost acquire, pointer, or finalize response is reconciled by exact hold identity and owner-local reads. World may mark a hold aborted only after authoritative evidence proves that the pointer transaction did not commit and the prior pointer remains authoritative; contradictory or unavailable evidence sets or preserves `RECONCILIATION_REQUIRED` and continues blocking termination.
+
+The authoritative `expiresAt` is a diagnostic and repair trigger only. Expiry never auto-releases an unresolved hold, and no operator bypass or numeric TTL policy is implied. The current service lacks the hold table/state, coordinated acquire/finalize RPC or wire fields, owner-read reconciliation, termination predicate, and focused runtime proof; this documentation-only parcel does not add or claim those artifacts, which remain required target implementation and proof work.
+
 ## Instance Termination Contract
 
-World Management owns the lifecycle of `gameInstanceId` rows, but teardown is cross-service:
+World Management owns the authoritative lifecycle row and monotonic epoch for `gameInstanceId` rows. The lifecycle state, owner registry, cleanup acknowledgements, and Temporal boundary are owned by [ADR 0123](../../decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md); this section records the World API consequence. Teardown is cross-service:
+
+Termination owner-set and registry-revision snapshot semantics are defined by [Instance Termination and Cleanup](./world-creation-workflow.md#instance-termination-and-cleanup): when `terminationRequestId` begins, World freezes the required durable-owner set and matching ownership-registry revision. Every owner acknowledgement and final lifecycle compare-and-set exact-matches that snapshot, even if registry membership changes later; only owners in that snapshot are required.
 
 - Game Session must first mark the instance non-admissible and draining before World transitions lifecycle.
-- Expiry or operator shutdown transitions the instance to `TERMINATING` through the durable Temporal `world-lifecycle` workflow.
-- Entity Management must acknowledge idempotent cleanup of containment and room-ground containers scoped to `(tenantId, gameInstanceId)` before World marks the instance `TERMINATED`.
+- A termination request may fence `PREPARING`, `FAILED_PRE_ACTIVATION`, or `ACTIVE` to `TERMINATING` through the durable Temporal `world-lifecycle` workflow; the same epoch makes stale activation fail.
+- Every durable `gameInstanceId` owner in the frozen termination snapshot must acknowledge idempotent cleanup in its own durable state before World marks the instance `TERMINATED`; Entity Management is one required owner, not the complete future registry.
+- `FAILED_PRE_ACTIVATION` is admission-terminal but does not imply cleanup completion; its cleanup progress is read separately from lifecycle status.
 - Scheduled expiry jobs must start or signal the lifecycle workflow and must not directly delete world rows for a still-unconfirmed termination.
-- Lifecycle fencing is mandatory. Termination acquires the same per-instance lifecycle fence used by activation. If activation and termination race, termination is authoritative unless admission has already opened and `ACTIVE` is committed.
+- Lifecycle fencing is mandatory. Every transition is a storage-level compare-and-set against expected state and epoch; if activation and termination race, only the winning CAS advances the row and stale callers reread authoritative state.
 - Game Session finalizes runtime `game_instances` termination only after World reports `TERMINATED`.
 
 Current implementation notes:

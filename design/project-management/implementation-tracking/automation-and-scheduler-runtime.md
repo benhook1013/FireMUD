@@ -24,6 +24,13 @@ The target local consequences are tracked against [ADR 0103](../../architecture/
 
 [ADR 0119](../../architecture/decisions/adr-0119-epoch-fenced-per-instance-plugin-activation.md) and [ADR 0120](../../architecture/decisions/adr-0120-owner-read-first-control-plane-notifications.md) now record accepted target authority for per-instance activation fencing and owner-read-first control-plane notifications; activation epochs, lifecycle revisions, lexicographic projections/final fences, owner histories/cursors, durable acknowledgements, recovery, and focused proof remain gaps. They do not upgrade capability states.
 
+## Packet 4 Status and Proof Gaps
+
+- `AS-1.5` / `AS-1.6`: [ADR 0123](../../architecture/decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md) makes Automation an instance-data owner that must register cleanup work and acknowledge it before lifecycle termination. Existing scheduler/plugin cleanup and recovery evidence remains partial; no all-owner acknowledgement proof is claimed.
+- `AS-1.6`: [ADR 0128](../../architecture/decisions/adr-0128-game-design-plugin-trust-provenance.md) is limited to Game Design's service-local accepted provenance record under [ADR 0111](../../architecture/decisions/adr-0111-unified-dsl-with-distinct-embedded-script-and-plugin-lifecycles.md). Existing signed intake and activation caveats remain, and this record is not platform trust or runtime authorization proof.
+
+These links add decision provenance only; they do not upgrade Automation implementation or verification state.
+
 ## Capability Status
 
 | Capability | Implementation | Verification | Design | Implementation anchors | Proof anchors | Secondary handoffs | Gap or decision |

@@ -40,11 +40,11 @@ Every formal ADR must obey the status-to-review mapping below. Terminal statuses
 | ADR Status | Human review status | Allowed human review disposition |
 | --- | --- | --- |
 | `Proposed - Pending Human Review` | `Pending` | `Pending`, with no checked provenance row |
-| `Accepted` | `Completed` | `Accepted` or `Revised` |
+| `Accepted` | `Completed` | `Accepted`, `Revised`, or `Deferred` when the record explicitly defines the current non-support boundary and revisit trigger |
 | `Superseded` | `Completed` | `Superseded` |
 | `Withdrawn` | `Completed` | `Withdrawn` |
 
-`Deferred` has no ADR status mapping. A checked `deferred` queue row may record a canonical-design outcome, but it must not use an exact `[ADR NNNN]` provenance link until a status and mapping are added deliberately. A pending ADR cannot carry completed queue evidence.
+`Deferred` is not a standalone ADR status. A checked `deferred` queue row may either record a canonical-design outcome without ADR provenance or link an `Accepted` ADR whose decision explicitly records the current non-support boundary and revisit trigger. In the latter case the ADR's completed review disposition is `Deferred` and must match the checked row exactly. A pending ADR cannot carry completed queue evidence.
 
 ## Review Metadata Contract
 
@@ -52,12 +52,12 @@ The `Decision Record` section of a reviewed ADR is machine-readable. A completed
 
 - `Human review status: Completed`
 - `Human review date: YYYY-MM-DD`
-- `Human review disposition: Accepted`, `Revised`, `Superseded`, or `Withdrawn` for an ADR provenance record
+- `Human review disposition: Accepted`, `Revised`, `Deferred`, `Superseded`, or `Withdrawn` for an ADR provenance record
 - `Review source:` followed by one or more backtick-delimited checked-queue decision keys separated by commas
 
-For a formal `Withdrawn` ADR that omits `## Supersession`, the same `Decision Record` section must also contain exactly one non-empty `Withdrawal rationale:` field. Its value is normalized as single-spaced text by validation and must explain why the proposal was withdrawn.
+For a formal `Withdrawn` ADR, the same `Decision Record` section must also contain exactly one non-empty `Withdrawal rationale:` field, whether or not `## Supersession` is present. Its value is normalized as single-spaced text by validation and must explain why the proposal was withdrawn.
 
-Completed review metadata is distinct from the pending proposal shape: for `Accepted`, `Superseded`, or `Withdrawn` records, `Review source` contains only one or more checked-queue decision keys and must never be `AI-AUTHORED-PENDING`. `AI-AUTHORED-PENDING` is metadata reserved exclusively for an ADR whose status is `Proposed - Pending Human Review` and whose review metadata has the exact pending shape below. It is not a completed review source, checked provenance, or human review evidence.
+Completed review metadata is distinct from the pending proposal shape: for `Accepted`, `Superseded`, or `Withdrawn` records, and for an `Accepted` record whose reviewed disposition is `Deferred`, `Review source` contains only one or more checked-queue decision keys and must never be `AI-AUTHORED-PENDING`. `AI-AUTHORED-PENDING` is metadata reserved exclusively for an ADR whose status is `Proposed - Pending Human Review` and whose review metadata has the exact pending shape below. It is not a completed review source, checked provenance, or human review evidence.
 
 The authoritative provenance is the checked review queue in the [consequential decision inventory](../../project-management/design-alignment/consequential-decision-inventory.md), not the ADR metadata alone. A checked queue row has this exact shape:
 
@@ -67,13 +67,13 @@ The authoritative provenance is the checked review queue in the [consequential d
 - [x] `DECISION-KEY` — `accepted` on YYYY-MM-DD; [canonical contract](../../architecture/system-architecture-transactions.md#saga-vs-temporal-boundary); no ADR required
 ```
 
-`OUTCOME` must be non-empty, use either the semicolon or `by` form shown in the queue, and contain one or more Markdown links. Provenance is label-based, not disposition-based: an ADR provenance reference is specifically a link labeled `[ADR NNNN]` whose target filename is `adr-NNNN-*.md`, and every such ADR link in any checked row receives that row's source key, date, and disposition. Every checked non-alias row with an `accepted` or `revised` disposition and no exact `[ADR NNNN]` link must use the strict no-ADR form shown above: exactly one link labeled `[canonical contract]`, targeting an existing Markdown file inside `design/architecture` but outside the canonical ADR directory, with the outcome ending exactly `; no ADR required`. A valid no-ADR row contributes no ADR review metadata. Checked non-alias rows with `superseded` or `withdrawn` dispositions always require exact `[ADR NNNN]` provenance. Deferred behavior is unchanged: a checked `deferred` row must contain an outcome link and must not use exact ADR provenance. A superseded scan alias is a historical replacement mapping, not a separate ADR decision: every Markdown link in its outcome must be a replacement decision with either a non-provenance `[replacement ADR NNNN]` label targeting that exact canonical ADR, or a decision-key label such as `[JWT-01]` targeting an existing Markdown decision document. Exact `[ADR NNNN]` labels, arbitrary labels, external targets, and non-Markdown replacement references are invalid. Alias links do not contribute provenance to the historical row, and a replacement ADR receives provenance only from its own checked row. Other outcome prose may follow. Distinct coupled queue rows may reference the same ADR only when their date and disposition agree. Duplicate source keys, conflicting duplicate ADR provenance, duplicate ADR links in one row, malformed checked rows, and checked rows without an outcome link are invalid. Unchecked rows are not parsed as completed review evidence.
+`OUTCOME` must be non-empty, use either the semicolon or `by` form shown in the queue, and contain one or more Markdown links. Provenance is label-based, not disposition-based: an ADR provenance reference is specifically a link labeled `[ADR NNNN]` whose target filename is `adr-NNNN-*.md`, and every such ADR link in any checked row receives that row's source key, date, and disposition. Every checked non-alias row with an `accepted` or `revised` disposition and no exact `[ADR NNNN]` link must use the strict no-ADR form shown above: exactly one link labeled `[canonical contract]`, targeting an existing Markdown file inside `design/architecture` but outside the canonical ADR directory, with the outcome ending exactly `; no ADR required`. A valid no-ADR row contributes no ADR review metadata. Checked non-alias rows with `superseded` or `withdrawn` dispositions always require exact `[ADR NNNN]` provenance. A checked `deferred` row normally has no ADR provenance; the deliberate exception is an `Accepted` ADR that records the deferred non-support boundary and revisit trigger, in which case the row may carry one exact `[ADR NNNN]` link and the ADR's completed disposition must be `Deferred`. A superseded scan alias is a historical replacement mapping, not a separate ADR decision: every Markdown link in its outcome must be a replacement decision with either a non-provenance `[replacement ADR NNNN]` label targeting that exact canonical ADR, or a decision-key label such as `[JWT-01]` targeting an existing Markdown decision document. Exact `[ADR NNNN]` labels, arbitrary labels, external targets, and non-Markdown replacement references are invalid. Alias links do not contribute provenance to the historical row, and a replacement ADR receives provenance only from its own checked row. Other outcome prose may follow. Distinct coupled queue rows may reference the same ADR only when their date and disposition agree. Duplicate source keys, conflicting duplicate ADR provenance, duplicate ADR links in one row, malformed checked rows, and checked rows without an outcome link are invalid. Unchecked rows are not parsed as completed review evidence.
 
 For any ADR linked by an exact `[ADR NNNN]` provenance label in a checked queue row, all four completed review fields are mandatory and must match the aggregate queue evidence exactly:
 
 - `Human review status: Completed`
 - `Human review date: YYYY-MM-DD`
-- `Human review disposition: Accepted`, `Revised`, `Superseded`, or `Withdrawn` for an ADR provenance record
+- `Human review disposition: Accepted`, `Revised`, `Deferred`, `Superseded`, or `Withdrawn` for an ADR provenance record
 - `Review source:` followed by one or more backtick-delimited queue keys, for example `` `DECISION-KEY` `` or `` `DECISION-KEY`, `OTHER-KEY` ``
 
 The pre-formal records `0001` through `0011` are the explicit exception only when no checked queue row links them; those historical records may omit review metadata. An AI-authored pending record is not completed review evidence and must use this exact shape instead; `AI-AUTHORED-PENDING` is valid only in this pending shape:
@@ -216,6 +216,15 @@ Validation precedence is fixed: first parse every checked queue row and validate
 | [ADR 0119](./adr-0119-epoch-fenced-per-instance-plugin-activation.md) | Accepted | `AS-1.6` | `AR-3.3`, `SF-1.3`, `AR-1.5`, `GR-1.4` | Per-instance plugin activation with monotonic epochs and acknowledged final-execution fences |
 | [ADR 0120](./adr-0120-owner-read-first-control-plane-notifications.md) | Accepted | `SF-1.1` | `AS-1.6`, `AR-3.3`, `PO-1.1`, `PO-4.1`, `SF-2.3` | Owner-read-first control-plane notifications with selectively durable asynchronous flows |
 | [ADR 0121](./adr-0121-historical-broad-dry-run-semantics.md) | Superseded | `AS-1.6` | `PO-1.1`, `PO-2.4`, `PO-4.1` | Historical broad dry-run semantics superseded by explicit command-plan preview isolation |
+| [ADR 0122](./adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md) | Accepted | `AR-3.3` | `GR-2.1`, `GR-3.1`, `GR-3.2`, `AR-3.4`, `SF-2.3` | Stable playable-state namespaces with owner-classified replacement state and fenced cutover |
+| [ADR 0123](./adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md) | Accepted | `AR-3.1` | `SF-2.4`, `GR-2.1`, `AR-3.3`, `PO-1.1`, `AS-1.5`, `AS-1.6` | Database-authoritative, Temporal-coordinated lifecycle with all-owner cleanup acknowledgement |
+| [ADR 0124](./adr-0124-materialized-starter-profiles-with-conservative-draft-upgrades.md) | Accepted | `AR-2.2` | `AR-1.1`, `AR-1.5`, `AR-2.3`, `GR-4.1`, `GR-4.3` | Materialized starter profiles with conservative creator-initiated Draft upgrades |
+| [ADR 0125](./adr-0125-defer-whole-game-portability-and-external-authoring-formats.md) | Accepted | `AR-1.2` | `AR-1.1`, `AR-1.3`, `AR-1.5`, `SF-1.2`, `PO-3.3` | Current non-support boundary for whole-game portability and external authoring formats |
+| [ADR 0126](./adr-0126-untrusted-models-and-scoped-authoring-tools.md) | Accepted | `AR-1.2` | `AR-1.5`, `AS-1.2`, `EA-3.2`, `SF-1.3` | Untrusted models behind ordinary creator APIs or scoped proposal tools |
+| [ADR 0127](./adr-0127-game-authored-equipment-layouts-with-fail-closed-publication.md) | Accepted | `GR-3.3` | `AR-1.1`, `AR-3.2`, `GR-3.1` | Game-authored equipment vocabulary with fail-closed publication and cutover validation |
+| [ADR 0128](./adr-0128-game-design-plugin-trust-provenance.md) | Accepted | `AR-1.3` | `AS-1.2`, `AS-1.6`, `SF-1.3`, `AR-3.3` | Game Design plugin-trust provenance under ADR 0111's canonical lifecycle |
+| [ADR 0129](./adr-0129-durable-fenced-multi-owner-draft-commits.md) | Accepted | `AR-1.1` | `AR-1.5`, `AR-1.2`, `AR-3.4`, `SF-2.1`, `EA-3.2` | Durable fenced multi-owner Draft commits with synchronized visibility and no silent merge |
+| [ADR 0130](./adr-0130-historical-equipment-body-layout-authority.md) | Superseded | `GR-3.3` | `GR-3.2`, `AR-1.1`, `AR-1.5`, `SF-1.2` | Historical equipment/body-layout authority proposal retained for provenance only |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../../product/capability-taxonomy.md).
 
@@ -228,6 +237,7 @@ This is a hand-maintained index, not an independent authority. The ADR review-st
 | [ADR 0004](./adr-0004-gameplay-reroute-vs-backend-unavailable.md) | Superseded | [ADR 0007](./adr-0007-edge-sharding-and-close-taxonomy.md) |
 | [ADR 0006](./adr-0006-gameplay-shard-routing-key-transport.md) | Withdrawn | [ADR 0007](./adr-0007-edge-sharding-and-close-taxonomy.md) |
 | [ADR 0121](./adr-0121-historical-broad-dry-run-semantics.md) | Superseded | [ADR 0114](./adr-0114-command-plan-preview-dry-run-isolation.md) |
+| [ADR 0130](./adr-0130-historical-equipment-body-layout-authority.md) | Superseded | [ADR 0127](./adr-0127-game-authored-equipment-layouts-with-fail-closed-publication.md) |
 
 ## Record Shape For New Decisions
 

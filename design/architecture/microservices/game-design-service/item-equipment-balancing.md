@@ -42,12 +42,17 @@ Current `06.3` / item-instance note:
 - eligible stackable items now use holder-local `item_stacks` records with compatibility and stack-family validation; non-stackable item-instance identity remains distinct;
 - non-stackable remains the safe default for ordinary physical items, especially equipment, containers, and other stateful items.
 
-Current equipment-schema note:
+Target equipment-schema requirements:
 
 - slots and body layouts are game-authored versioned concepts, not platform-global enums;
 - item templates use `equipmentSlot` as their default target slot for the current player command loop and may use `equipmentSlotGroupKey` to constrain compatibility against the authored slot definition;
-- characters use a `bodyLayoutKey`; runtime equipment binding rejects a slot when the active version has a body-layout schema for that key and the slot is not included;
-- versions without authored slot/body-layout schema keep a bootstrap fallback that accepts the item template's direct slot string, so early content can run while creator-facing editors are still being built.
+- starter profiles may materialize conventional editable slots, groups, layouts, and compatibility rows into a Draft, but those rows become ordinary game-owned content rather than a runtime inheritance layer;
+- slot definitions may carry authored localized labels, ordering, grouping, icons, and optional semantic hints for clients without making those hints a platform-global compatibility vocabulary;
+- a game with equipment capability must publish a complete valid schema, and every equip-capable actor must resolve a valid body layout for that version;
+- runtime equipment binding fails closed on missing or unknown schemas and validates slot existence, item compatibility, body-layout membership, and occupancy; the legacy direct-string bootstrap fallback is not part of the target state; and
+- version cutover validates surviving equipped state against the target schema and requires explicit mappings or resolution for renamed, removed, split, merged, or newly incompatible definitions.
+
+The live implementation is partial: versioned slot/layout data and focused slot, group, and layout validation exist, but missing-schema and unknown-layout fallback remain permissive, the complete presentation and occupancy model is absent, and equipped-state cutover validation/remapping is not proved. Equipment-capability publication and runtime activation therefore remain unavailable for a release until the complete fail-closed schema/body-layout/occupancy gates exist; no legacy permissive fallback is authority. See [ADR 0127](../../decisions/adr-0127-game-authored-equipment-layouts-with-fail-closed-publication.md).
 
 Platform settings do not duplicate these versioned item and equipment facts. The existing inventory command capability controls whether the standard player inventory family is available for a tenant/game; slots, body layouts, compatibility, and stackability remain release-owned DML data. Future settings belong only to concrete runtime behavior policy that is neither authored content nor a canonical platform contract.
 

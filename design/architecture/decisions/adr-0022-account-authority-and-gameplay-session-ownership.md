@@ -44,7 +44,7 @@ Account Service owns durable issuer/account/tenant and `{accountId, tenantId}` m
 Game Session owns:
 
 - the protocol `LOGIN` and `PLAY` state transitions;
-- the active `{tenantId, gameInstanceId, characterId}` gameplay binding and its bounded Redis indexes;
+- the target active gameplay binding identity `{tenantId, playableStateNamespaceId, playableStateScope, characterId}` and its bounded Redis indexes, with `gameInstanceId` retained as active-runtime fence/value evidence. [ADR 0122](./adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md) owns this later namespace-qualified target; the current implementation remains keyed by `{tenantId, gameInstanceId, characterId}` and does not yet prove the target uniqueness CAS;
 - reconnect, takeover, and gameplay-session lifecycle state; and
 - typed unsigned player execution context for downstream gameplay calls under the trusted workload contract in [ADR 0024](./adr-0024-trusted-gameplay-workload-delegation.md).
 

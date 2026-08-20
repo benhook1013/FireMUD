@@ -10,6 +10,13 @@ The bounded player-access and session paths are implemented across Account, Comm
 
 SEC-04 does not move player session ownership into Logging & Admin. Game Session `/sessions*` lifecycle routes remain current owner-local hooks with direct owner edge exposure denied; the target external operator path forwards from Logging & Admin to Game Session after Account issues the authorization reference and the receiving Game Session redeems that same reference. That target lifecycle family, and other operator mutation families gated by action schemas, shared `mutationDigest/v1` vectors, and the authorization-reference flow, are not currently available to players or operators.
 
+## Packet 4 Status and Proof Gaps
+
+- `AA-2.1` / `AA-2.2` / `AA-3.3`: [ADR 0122](../../architecture/decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md) requires player selection, admission, and reconnect to resolve the durable playable-state namespace together with the active runtime instance. Existing account/session and realm-routing evidence remains partial and does not prove namespace-aware replacement or cleanup behavior.
+- `AA-3.3`: [ADR 0123](../../architecture/decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md) adds the player-visible lifecycle consequence that only an active, admissible realm is exposed; Temporal coordination does not become admission authority. Existing lifecycle and reconnect caveats remain.
+
+These links add decision provenance only; they do not upgrade player-access or session capability status.
+
 ## Capability Status
 
 | Capability | Implementation | Verification | Design | Implementation anchors | Proof anchors | Secondary handoffs | Gap or decision |

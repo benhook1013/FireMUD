@@ -29,7 +29,7 @@ PENDING_REVIEW_FIELDS = {
 }
 STATUS_TO_HUMAN_REVIEW_DISPOSITIONS = {
     PENDING_ADR_STATUS: frozenset({"Pending"}),
-    "Accepted": frozenset({"Accepted", "Revised"}),
+    "Accepted": frozenset({"Accepted", "Revised", "Deferred"}),
     "Superseded": frozenset({"Superseded"}),
     "Withdrawn": frozenset({"Withdrawn"}),
 }
@@ -862,11 +862,6 @@ def checked_reviews(
             )
             is_no_adr = True
 
-        if review.disposition == "Deferred" and outcome_adr_numbers:
-            fail(
-                f"{path}: checked deferred review row at line {line_number} "
-                "must not use exact ADR provenance"
-            )
         if (
             review.disposition in {"Accepted", "Revised", "Superseded", "Withdrawn"}
             and not outcome_adr_numbers
@@ -965,21 +960,14 @@ def validate_withdrawal_rationale(
     number: int,
     status: str,
     fields: dict[str, str],
-    text: str,
 ) -> None:
     if status != "Withdrawn" or number in PRE_FORMAL_REVIEW_RECORDS:
-        return
-    has_supersession = any(
-        re.fullmatch(r"## Supersession[ \t]*", line.text)
-        for line in visible_markdown_lines(text)
-    )
-    if has_supersession:
         return
     rationale = fields.get("Withdrawal rationale", "")
     if not rationale:
         fail(
-            f"{context}: Withdrawn ADR without Supersession requires a "
-            "non-empty normalized 'Withdrawal rationale'"
+            f"{context}: Withdrawn ADR requires a non-empty normalized "
+            "'Withdrawal rationale'"
         )
 
 
@@ -1057,7 +1045,6 @@ def validate(root: Path = ROOT) -> None:
             number,
             normalized_status,
             fields,
-            text,
         )
 
         replacement_number = validate_supersession(
