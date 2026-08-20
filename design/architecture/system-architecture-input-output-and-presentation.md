@@ -1,6 +1,6 @@
 # FireMUD System Architecture: Input, Output, and Presentation
 
-This document defines the canonical model for how FireMUD accepts player input, represents player-visible output, and renders that output across Telnet, generic WebSocket, first-party web, and future MCP-aware clients.
+This document defines the canonical model for how FireMUD accepts player input, represents player-visible output, and renders that output across Telnet, generic WebSocket, first-party web, and future MCP-aware clients. It owns the compact versioned output, bounded semantic reconnect context, and deferred-localization contracts (decision keys `CMD-03`, `CMD-04`, and `CMD-05`).
 
 The goal is to keep gameplay and UX decisions structured until the latest practical layer so the platform can support classic MUD text, richer clients, accessibility modes, and game-specific presentation policy without duplicating gameplay logic.
 
@@ -9,13 +9,13 @@ The goal is to keep gameplay and UX decisions structured until the latest practi
 - Game Session now has the canonical pre-`06` normalized player-output seam: `TextCommandInterpretationResult` carries `PlayerOutput` envelopes instead of only a single raw response string.
 - The first output kinds and payloads are live in code for messages, views, prompts, notices, and errors, with replay policy and brief-policy placeholders on the envelope.
 - `LOGIN`, `PLAY`, room views, movement refresh, and direct communication acknowledgements now all have real structured output paths; the main built-in handlers no longer depend on raw response strings as their canonical internal contract.
-- `LOOK` and `QUICKLOOK` now flow through `LookViewOutput` and `TextPlayerOutputRenderer`; room views carry explicit refresh reasons for `LOOK`, `QUICKLOOK`, movement refresh, and reconnect refresh, plus a bounded brief-rendering hint so movement-style refresh policy no longer depends on renderer inference from `MOVE_REFRESH` alone. Cached/replayed `LOOK` protocol framing is now renderer-owned rather than hand-built in the command handler. Hot reconnect replay stores structured output metadata for new entries while retaining classic rendered text for Telnet/generic WebSocket compatibility and legacy text-only buffer records.
+- `LOOK` and `QUICKLOOK` now flow through `LookViewOutput` and `TextPlayerOutputRenderer`; room views carry explicit refresh reasons for `LOOK`, `QUICKLOOK`, movement refresh, and reconnect refresh, plus a bounded brief-rendering hint so movement-style refresh policy no longer depends on renderer inference from `MOVE_REFRESH` alone. `LOOK` protocol framing, including fresh reconnect reconstruction, is now renderer-owned rather than hand-built in the command handler. Semantic recent-context restoration stores structured output metadata for new entries while retaining classic rendered text for Telnet/generic WebSocket compatibility and legacy text-only records; cached room snapshots are never replayed, and fresh authoritative `LOOK` reconstructs current state.
 - Communication actor and recipient responses now flow through the same late renderer from metadata-only Game Logic delivery views. First-party web now also receives structured command-response, async-player-output, and reconnect-refresh envelopes at the WebSocket edge. Classic transport replay still projects derived text, while canonical durable entries retain structured metadata and replay only replay-eligible outputs rather than whole command responses; first-party replay wraps compatibility text in explicit transcript envelopes instead of falling back to raw text.
 - Prompt output is modeled separately, presentation defaults are now bound from typed properties, and prompt payloads now carry a first minimal structured field list alongside classic prompt text.
 - Prompt output now has the pre-`06` baseline pipeline: prompt coalescing, a narrow per-session prompt-throttling window, reconnect prompt regeneration, and structured first-party prompt delivery are live. Richer burst-end scheduling, broader game-defined composition, and canonical buffered prompt/status replay remain future work.
 - Built-in/system text now has the first usable localization foundation in Game Session: stable keys plus structured variables on built-in message, notice, and error outputs; per-session renderer locale selection; localized login/play/look/move failure rendering; localized room-view labels; and bounded alternate-locale renderer/integration tests.
-- Authored localized content now also has a first bounded model: locale-tagged explicit variants with a required source locale and deterministic exact-locale, language-only, then source-locale fallback. Room prose is live on the authoritative `LOOK` and movement-refresh path by passing a preferred locale through Game Session and Game Logic into World Management snapshot reads, and room snapshots now also localize adjacent exit target room naming before rendering. Broader item/world adoption remains future work.
-- The canonical resume-transcript model is live: replay-eligible structured entries are retained durably as one bounded per-character resume context, while rendered plain text remains a derived cache/compatibility surface rather than transcript source truth. Game Session persists ordered `resume_transcript_entry` rows and uses Redis only as a best-effort hot cache.
+- Authored localized content now also has a first bounded model: locale-tagged explicit variants with a required source locale and deterministic exact-locale, explicitly stored base-language, then source-locale fallback. Room prose is live on the authoritative `LOOK` and movement-refresh path by passing a preferred locale through Game Session and Game Logic into World Management snapshot reads, and room snapshots now also localize adjacent exit target room naming before rendering. Broader item/world adoption remains future work; no arbitrary regional sibling or live provider translation is selected.
+- The semantic recent-context implementation is partial: ordered `resume_transcript_entry` rows and best-effort Redis caching are live, but namespace-key migration to `{tenantId, playableStateNamespaceId, characterId}`, strict complete-envelope byte-bound and oversize omission/marker proof, and first-party post-logout suppression remain incomplete. Rendered plain text remains a derived compatibility surface rather than transcript source truth, and context is not delivery acknowledgement, exact missed-message replay, command-input history, or a complete archive.
 
 ---
 
@@ -127,6 +127,8 @@ The authoritative output abstraction should be structured output objects, not fu
 
 The preferred first canonical representation is not a large family of unrelated output classes. Instead, FireMUD should use a small normalized player-output envelope with a small set of top-level kinds plus presentation tags and delivery/replay policy.
 
+Every supported `PlayerOutput` envelope is compact and versioned: it carries an explicit schema version, a bounded top-level kind, typed payload, presentation tags, and delivery/replay policy. Schema compatibility rules and unsupported-version behavior are part of the supported structured-client contract; internal Java records and an unversioned edge projection are not by themselves that contract. Every envelope must also have a deterministic plain-text projection preserving its essential meaning. Telnet and generic text WebSocket consume that projection; structured clients may consume typed payloads but cannot make text compatibility optional.
+
 These structured outputs are then rendered into the final client-facing form appropriate for the transport and client capability.
 
 ### Preferred output representation
@@ -144,6 +146,7 @@ Most nuance should live in presentation tags and policies rather than exploding 
 In practical terms, the platform should prefer a model like:
 
 - player output envelope
+  - schema version
   - kind
   - audience role
   - structured content
@@ -165,7 +168,7 @@ Messages are scrollback-worthy player-visible narrative lines or blocks such as:
 - combat narration
 - system notices that belong in history
 
-Messages are the main source for reconnect screen-buffer replay.
+Messages are the main source for bounded semantic recent-context restoration.
 
 #### `view`
 
@@ -175,7 +178,7 @@ Views are structured snapshots or redraws such as:
 - `QUICKLOOK`
 - later inventory/equipment views
 
-Views may be cached in narrow built-in view caches and replayed or redrawn on reconnect, but they are not equivalent to ordinary transcript lines.
+Views may be cached in narrow built-in view caches for ordinary hot reads, but cached room snapshots are never replayed on fresh edge reconnect. A fresh authoritative `LOOK` reconstructs current state, and views are not equivalent to ordinary transcript lines.
 
 #### `prompt`
 
@@ -212,7 +215,7 @@ This means FireMUD should usually avoid a blanket rule like "flush all client ou
 
 - ordinary command results and urgent output flush immediately
 - tiny burst coalescing applies only where it reduces prompt or status chatter
-- reconnect restore still ends with one fresh prompt after transcript replay and fresh `LOOK`
+- reconnect restore still ends with one fresh prompt after semantic recent-context rendering and fresh `LOOK`
 - explicit commands like `LOOK` usually still create a prompt opportunity, but the prompt pipeline decides whether to emit immediately, append to a trailing burst, or suppress because one was just emitted moments ago
 - explicit view/boundary commands such as `LOOK` and accepted non-redraw `PLAY` may still force prompt retention inside the small prompt window so classic command-completion behavior stays crisp
 
@@ -238,19 +241,19 @@ If FireMUD later needs richer output composition for configurable games, accessi
 - semantic segments are tagged for styling and suppression
 - multiple renderers consume the same presentation tree
 
-That richer direction is a valid future option, but the first implementation should begin with the smaller output-envelope model rather than jumping immediately to a full presentation document system.
+That richer direction is a valid future option, but adopting a general presentation/document tree requires a separate consequential decision under [ADR 0135](./decisions/adr-0135-compact-versioned-player-output-and-late-rendering.md). The first implementation should begin with the smaller output-envelope model rather than treating the broader tree as already accepted.
 
-### Canonical resume-transcript model
+### Canonical resume-context model
 
-Structured `PlayerOutput` is the live output contract. The canonical resume transcript sits one step below that live envelope:
+Structured `PlayerOutput` is the live output contract. The canonical semantic recent context sits one step below that live envelope:
 
 - replay-eligible `PlayerOutput` values are projected into canonical transcript entries;
-- resume-transcript entries are the durable replay source of truth;
+- resume-context entries are the durable context source of truth;
 - rendered plain text remains a derived compatibility cache for classic text transports.
 
-The canonical resume-transcript unit is one entry carrying:
+The canonical semantic recent-context entry is one entry carrying:
 
-- session/gameplay identity;
+- `{tenantId, playableStateNamespaceId, characterId}` identity;
 - ordering token;
 - output kind;
 - structured payload;
@@ -260,27 +263,28 @@ The canonical resume-transcript unit is one entry carrying:
 
 For the current architecture, that means:
 
-- the durable resume transcript is keyed by the admitted tenant/game, game instance, and character identity;
+- the durable recent context is keyed by the admitted `{tenantId, playableStateNamespaceId, characterId}` identity and follows that durable namespace across replaceable runtime instances;
 - every replay-eligible entry is appended to that durable bounded context, including output that would otherwise fall out of a hot reconnect cache;
 - a resume entry may keep derived rendered text alongside the structured entry so Telnet and generic WebSocket replay remain simple;
 - Redis may cache the current resume window for reconnect speed, but it is not the source of truth and a Redis reset must not discard the retained resume context;
-- after authorized resume or a fresh non-logout admission completes `LOGIN` + `PLAY`, FireMUD replays retained context in ordering-token order, then emits fresh authoritative reconstruction such as `LOOK` and a prompt; explicit gameplay `LOGOUT` terminates the binding and clears or suppresses its private replay, so a later `LOGIN` + `PLAY` does not replay context from that terminated binding;
+- after authorized reconnect completes fresh `LOGIN` + `PLAY`, FireMUD may render retained context in ordering-token order, then obtains a fresh authoritative `LOOK` and emits exactly one current prompt; explicit gameplay `LOGOUT` terminates the binding and suppresses its private replay, so a later `LOGIN` + `PLAY` does not replay context from that terminated binding;
+- context may repeat output already shown or omit output not retained/available; it is not an acknowledgement, exact missed-message list, client-input history, or complete transcript archive;
 - prompt/status output remains outside ordinary transcript persistence unless a future explicit transcript policy says otherwise.
 
 Speech-related transcript storage should preserve canonical structured content and leave room for raw-versus-normalized speech fields where needed. Color, styling, and final transcript formatting stay projection-time concerns and should not be baked into canonical transcript storage.
 
-### Resume-transcript bounds
+### Resume-context bounds
 
-Every game uses the durable resume-transcript model. This is not a player preference and it has no transient-only mode. The effective policy resolves from platform defaults with an optional tenant/game override.
+Every game uses the durable semantic recent-context model. This is not a player preference and it has no transient-only mode. The effective policy resolves from platform defaults with an optional tenant/game override.
 
 The policy defines:
 
 - soft and hard retained-byte ceilings, with message and line floors for the soft ceiling;
 - optional expiry after a character has been inactive for a configured duration, or `never`.
 
-When a byte bound is exceeded, FireMUD evicts complete oldest retained entries. The soft ceiling preserves the configured message and line floors where possible. The hard ceiling then bounds every multi-entry window; when one complete current entry alone exceeds it, FireMUD retains that entry rather than storing a partial or truncated entry. Inactivity expiry removes the whole retained context. A normal multiplayer game may keep a small recent window and expire it after a period such as sixty inactive days; a persistent RPG may retain a larger short window without inactivity expiry. Neither case implies an unbounded archive of all gameplay output.
+When a byte bound is exceeded, FireMUD evicts complete oldest retained entries. The soft ceiling preserves the configured message and line floors where possible. The hard ceiling is absolute for the complete persisted context, including scope and metadata; when one complete entry alone exceeds it, FireMUD omits that entry or stores a bounded omission marker whose own complete persisted size fits within the ceiling. FireMUD never stores a partial or silently truncated semantic entry, and no single entry may bypass the hard ceiling. Inactivity expiry removes the whole retained context. A normal multiplayer game may keep a small recent window and expire it after a period such as sixty inactive days; a persistent RPG may retain a larger short window without inactivity expiry. Neither case implies an unbounded archive of all gameplay output.
 
-The byte bound is deterministic: each retained entry costs the UTF-8 byte length of its complete scope-bound persisted transcript envelope, not only its rendered text. The compact outer JSON envelope has lexically ordered members for `briefRenderPolicy`, `characterId`, `gameInstanceId`, `occurredAt`, `orderingToken`, `outputKind`, `payload`, `payloadType`, `renderedText`, `replayPolicy`, and `tenantId`; every optional outer member is present and absent values are JSON `null`. Outer-envelope strings are normalized to Unicode NFC, timestamps are RFC 3339 UTC with fixed millisecond precision, numbers use their shortest normalized JSON form, and no insignificant whitespace is emitted. The `payload` member preserves the canonical structured-output JSON emitted by the live output encoder. This accounts for entry metadata, structured payload, and the derived rendered-text compatibility projection exactly once in both the durable source of truth and Redis hot cache. FireMUD never separately adds the same payload or rendered text again for transport projections. If one complete entry alone exceeds the hard byte bound, it remains as the valid current window; later appends evict older complete entries first.
+The byte bound is deterministic: each retained entry costs the UTF-8 byte length of its complete scope-bound persisted context envelope, not only its rendered text. The compact outer JSON envelope has lexically ordered members for `briefRenderPolicy`, `characterId`, `occurredAt`, `orderingToken`, `outputKind`, `payload`, `payloadType`, `playableStateNamespaceId`, `renderedText`, `replayPolicy`, `schemaVersion`, and `tenantId`; every optional outer member is present and absent values are JSON `null`. Outer-envelope strings are normalized to Unicode NFC, timestamps are RFC 3339 UTC with fixed millisecond precision, numbers use their shortest normalized JSON form, and no insignificant whitespace is emitted. The `payload` member preserves the canonical structured-output JSON emitted by the live output encoder. This accounts for entry metadata, structured payload, and the derived rendered-text compatibility projection exactly once in both the durable source of truth and Redis hot cache. FireMUD never separately adds the same payload or rendered text again for transport projections. A complete entry or omission marker is retained only when its complete persisted size fits within the hard bound.
 
 ### Separate history features
 
@@ -289,7 +293,7 @@ The resume transcript is not a command-input history or a complete player archiv
 - [`HISTORY [count]`](./system-architecture-player-command-model.md#command-history) is a live, separate optional safe command-input history. It records only successfully accepted safe commands rather than screen output; unknown, malformed, rejected, and secret-bearing input is never history data. The effective tenant/game policy owns its bounded retention and count limits.
 - A future Player Transcript Archive and Export feature may retain the complete player-visible transcript as append-only archive segments for a finite tenant/game-configured period. It must preserve the canonical structured entries with derived rendered text for export, let players obtain an export before FireMUD-side expiry, and remain separate from the small resume context. The first export surface should be a FireMUD-managed downloadable artifact; arbitrary external destinations require later credential, privacy, retry, and deletion design.
 
-The current implementation persists the bounded durable resume transcript in Game Session as ordered `resume_transcript_entry` rows and retains structured replay metadata beside rendered compatibility text. Redis is only a best-effort hot cache. Command history is separate from reconnect retention, and Player Transcript Archive and Export remains later work.
+The current implementation persists the bounded durable semantic recent context in Game Session as ordered `resume_transcript_entry` rows and retains structured replay metadata beside rendered compatibility text. Redis is only a best-effort hot cache. Command history is separate from reconnect retention, and Player Transcript Archive and Export remains later work.
 
 ---
 
@@ -315,7 +319,7 @@ This allows one gameplay outcome to support:
 ### Rendering ownership
 
 Game/domain services should return structured gameplay or communication results.
-Game Session owns the final player-facing transcript/rendering responsibility for gameplay traffic.
+Game Session owns the final player-facing transcript/rendering responsibility for gameplay traffic, including mapping semantic outcomes into versioned `PlayerOutput`, selecting presentation policy, and producing the mandatory deterministic text projection.
 
 That means:
 
@@ -329,6 +333,10 @@ This means the canonical model has two related layers:
 - player-output envelopes and renderers in Game Session
 
 The latter is the player-presentation contract this document standardizes.
+
+### Causal `LOOK` composition
+
+`LOOK` is a composed presentation read and uses the causal-floor contract in [ADR 0059](./decisions/adr-0059-causal-floor-cross-service-presentation-reads.md). Game Session supplies the requested scope and epoch plus a causal floor; World and Entity must each return the same tenant/namespace/region/room scope and epoch, prove `servedThroughTickId >= requestedFloor`, and return their own opaque component version. Game Logic rejects, retries, or fails the composition when scope/epoch or floor evidence is missing or mismatched. Component versions are evidence identifiers only: they are never compared numerically, and numeric version skew or equality is not a correctness fence. A current static scope token may remain useful for scope checks but is not temporal proof.
 
 ---
 
@@ -377,10 +385,11 @@ The first authored-content model should stay small and explicit:
 
 - one canonical source locale is required;
 - localized variants are stored by locale tag;
-- runtime resolves:
-  - exact locale first;
-  - then language-only match where available;
-  - then the source locale text;
+- runtime resolves exactly:
+  1. an exact requested locale tag;
+  2. an explicitly stored base-language variant;
+  3. the bundle's source locale text;
+- an arbitrary regional sibling is never selected merely because its base language matches;
 - the runtime should not synthesize or fetch missing translations on demand during live gameplay.
 
 The first authored-content runtime adoption should stay equally small and explicit:
@@ -390,7 +399,7 @@ The first authored-content runtime adoption should stay equally small and explic
 - World Management should resolve stored localized room variants before returning the authoritative room snapshot;
 - richer item/world/lore adoption can follow the same model later without moving localization onto the live renderer hot path.
 
-For runtime behavior, FireMUD should prefer stored localized variants over live translation calls on the gameplay hot path. The platform should not assume per-message external translation during active gameplay because added network latency and jitter would directly hurt responsiveness.
+For runtime behavior, FireMUD should prefer stored localized variants over live translation calls on the gameplay hot path. There are no live translation-provider calls or provider-selection decisions on that path; added network latency, jitter, outage, privacy, and mutable-output risk would directly hurt responsiveness and semantic stability.
 
 The preferred future AI-enabled model is:
 
@@ -449,7 +458,7 @@ They should still benefit from:
 - color-mode settings
 - `BRIEF` filtering
 - coalesced prompts
-- reconnect screen-buffer restore plus fresh redraw
+- bounded semantic recent-context restoration followed by a fresh authoritative `LOOK` and exactly one prompt
 
 ### First-party web
 

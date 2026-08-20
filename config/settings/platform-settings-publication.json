@@ -37,7 +37,7 @@
       "keyPrefix": "firemud.reconnection",
       "service": "game-session-service",
       "owner": "game-session-service operator defaults",
-      "description": "Reconnect/session recovery and bounded transcript replay defaults surfaced by Game Session.",
+      "description": "Reconnect resume policy and bounded semantic reconnect-context retention/resource defaults surfaced by Game Session; retention never grants resume or replay authority.",
       "referenceDoc": "design/architecture/microservices/game-session-service/configuration.md",
       "runtimeSurface": "/actuator/settings/effective",
       "properties": [
@@ -196,7 +196,7 @@
       "hotReloadable": false,
       "advanced": true,
       "exampleValue": 1800000,
-      "constraints": "integer >= 0 ms; 0 retains the bounded transcript until size eviction"
+      "constraints": "integer >= 0 ms; 0 retains bounded semantic reconnect context until size eviction; retention never grants resume or replay authority"
     },
     "firemud.reconnection.buffer.max-entries": {
       "group": "reconnection.buffer",
@@ -205,7 +205,7 @@
       "hotReloadable": false,
       "advanced": true,
       "exampleValue": 256,
-      "constraints": "integer >= 1 complete entries"
+      "constraints": "integer >= 1 complete persisted entries"
     },
     "firemud.reconnection.buffer.min-messages": {
       "group": "reconnection.buffer",
@@ -214,7 +214,7 @@
       "hotReloadable": false,
       "advanced": true,
       "exampleValue": 8,
-      "constraints": "integer >= 1"
+      "constraints": "integer >= 1; best-effort floor subordinate to the absolute hard byte ceiling"
     },
     "firemud.reconnection.buffer.min-lines": {
       "group": "reconnection.buffer",
@@ -223,7 +223,7 @@
       "hotReloadable": false,
       "advanced": true,
       "exampleValue": 24,
-      "constraints": "integer >= 1"
+      "constraints": "integer >= 1; best-effort floor subordinate to the absolute hard byte ceiling"
     },
     "firemud.reconnection.buffer.soft-max-bytes": {
       "group": "reconnection.buffer",
@@ -232,7 +232,7 @@
       "hotReloadable": false,
       "advanced": true,
       "exampleValue": 16384,
-      "constraints": "integer >= 1 bytes; effective softMaxBytes <= hardMaxBytes"
+      "constraints": "integer >= 1 bytes; subordinate best-effort preference; effective softMaxBytes <= hardMaxBytes"
     },
     "firemud.reconnection.buffer.hard-max-bytes": {
       "group": "reconnection.buffer",
@@ -241,7 +241,7 @@
       "hotReloadable": false,
       "advanced": true,
       "exampleValue": 65536,
-      "constraints": "integer >= 1 bytes; effective hardMaxBytes >= softMaxBytes"
+      "constraints": "integer >= 1 bytes; absolute bound for the complete scope-bound persisted envelope; oversized entries must be omitted or represented by a bounded marker and never partially truncated; effective hardMaxBytes >= softMaxBytes; current runtime oversized-single-entry enforcement remains an implementation/proof gap"
     },
     "firemud.command-history.max-entries": {
       "group": "commandHistory.retention",

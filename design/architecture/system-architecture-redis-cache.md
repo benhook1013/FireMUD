@@ -41,6 +41,8 @@ All other controls (for example, per-tenant heuristics, noisy-tenant detection s
   - Automation and scripting structures on Cache/Rate-Limit Redis (for example `automation:queue:*`, `automation:quota:*`, `automation:tenant-budget:*`, `automation:test:capacity:*`) are explicitly documented as best-effort buffers and counters; they cannot act as authoritative logs or effect ledgers. Durable automation schedules and quotas live in PostgreSQL; cache entries merely accelerate lookups and quota checks.
   - If a new feature appears to need a durable or authoritative log for tick- or session-driven workflows, that log belongs in PostgreSQL (for example as a ledger or follow-up table) or, in rare cases, on Coordination Redis with explicit reset/tail-loss rules—not on Cache/Rate-Limit Redis.
 
+Gameplay session state on Coordination Redis means liveness, binding, and rebind coordination. Durable semantic reconnect context remains Game Session-owned persistence under [ADR 0134](./decisions/adr-0134-bounded-durable-semantic-reconnect-context.md) and [Input, Output, and Presentation](./system-architecture-input-output-and-presentation.md#canonical-resume-context-model); Cache/Rate-Limit Redis may only accelerate or cache that owner-controlled context.
+
 ### Forbidden Patterns (Cache/Rate-Limit Redis)
 
 To keep Cache/Rate-Limit Redis clearly separate from coordination concerns:
@@ -82,12 +84,13 @@ Some derived caches are better understood as a small built-in gameplay view cach
   - transient action acknowledgements such as speech, combat, item transfer confirmations, or admin mutation responses.
 - Ownership:
   - Game Logic (or another authoritative gameplay orchestrator) owns the structured result for the underlying read;
-  - Game Session owns any client-facing rendered transcript cache used for reconnect replay, UI restoration, or short-lived repeated reads.
+  - Game Session owns durable semantic recent-context persistence and its rendering policy; see [ADR 0134](./decisions/adr-0134-bounded-durable-semantic-reconnect-context.md) and [Input, Output, and Presentation](./system-architecture-input-output-and-presentation.md#canonical-resume-context-model). Cache/Rate-Limit Redis may only provide a disposable acceleration/cache for that owner-controlled context.
 - Safety rules:
   - cached view payloads are derived and disposable, never authoritative;
-  - they may improve latency or reconnect redraw experience, but they must not change gameplay semantics;
-  - each cached built-in view must opt in explicitly with a documented key shape, TTL, invalidation source, and replay/use rules rather than inheriting from a generic “all commands are cacheable” framework;
-  - cached room-view payloads should preserve the same top-level structure as the authoritative view contract (for example room prose, exits, occupants, room-ground items, and optional overlays) so reconnect/UI redraw does not invent a second ad hoc shape.
+  - `view:room-look:*` is a disposable presentation/redraw helper only; it is never semantic reconnect context, frame/output replay, a transcript archive, or a delivery ledger;
+  - they may improve latency or presentation/redraw experience, but they must not change gameplay semantics;
+  - each cached built-in view must opt in explicitly with a documented key shape, TTL, invalidation source, and presentation/use rules rather than inheriting from a generic “all commands are cacheable” framework;
+  - cached room-view payloads should preserve the same top-level structure as the authoritative view contract (for example room prose, exits, occupants, room-ground items, and optional overlays) so presentation/UI redraw does not invent a second ad hoc shape.
 
 ## Version-Based Cache Validation
 
@@ -307,6 +310,7 @@ Cached aggregates in Redis should follow structured, namespaced key patterns to 
 
 `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>` is always treated as a **Class B, TTL-only cache** for rendered LOOK-style room views:
 
+- It is a disposable presentation/redraw helper only, never semantic reconnect context, frame/output replay, a transcript archive, or a delivery ledger.
 - It is never a correctness source for combat, pathfinding/movement, or visibility/line-of-sight decisions.
 - The key must be bound to the exact room, viewer/session, and policy context. It must not be reused across rooms, viewers, sessions, authorization/presentation-policy contexts, or incompatible read-fence contexts.
 - Correctness-critical flows must call World Management and Entity Management APIs (and any Class A caches they own), or use separate, explicitly versioned Class A prefixes registered in this catalog.

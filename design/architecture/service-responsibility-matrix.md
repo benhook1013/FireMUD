@@ -58,6 +58,8 @@ The matrix below is the target participation and ownership contract. `Authoritat
 | Owner-local Game Session session-lifecycle routes (`/sessions*`, current internal surface) | | | | ✔ | | | | | | | |
 | External session-lifecycle operator forwarding through Gateway and Logging & Admin (target-only/non-routable until owner contract, action schema, shared digest vectors, and Account authorization issuance/redemption exist; not current route) | | | ✔ | ✔ | | | | | ✔ | | ✔ |
 | Reconnection handling (resume gameplay) | | | | ✔ | | | | | | | |
+| Authoritative owner: bounded durable semantic recent context for reconnect/resume (scoped by `{tenantId, playableStateNamespaceId, characterId}`; ordered PostgreSQL rows are source of truth, Redis is hot cache only; rendered room cache is separate) | | | | ✔ | | | | | | | |
+| Lifecycle-close intent and edge translation (Game Session supplies typed internal lifecycle intent; Gateway owns WebSocket close translation; TCP Proxy owns equivalent Telnet/bridge token mapping; edge close never proves command outcome; see [ADR 0131](./decisions/adr-0131-lifecycle-distinct-gameplay-close-taxonomy.md), [Game Session](../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md), [Gateway](./system-architecture-gateway.md), and [Protocol Bridging](./system-architecture-protocol-bridging.md)) | | | | ✔ | | | | | | ✔ | ✔ |
 | Command queuing and dispatch | | | | ✔ | | | | | | | |
 | Session state storage (volatile, Redis gameplay bindings) | | | | ✔ | | | | | | | |
 | Authoritative owner: Coordination Redis gameplay sessions (`session:game:*`) | | | | ✔ | | | | | | | |

@@ -95,7 +95,7 @@ See [Game Logic Service](../architecture/microservices/game-logic-service/README
 - **WebSockets/TCP-based real-time networking** for player interactions.
 - In-game **chat system, mail messaging, and guild/group communications**.
 - **PvP & cooperative multiplayer support**.
-- **One active session per character**; new logins immediately replace the existing connection to allow seamless device handoff.
+- **One active gameplay controller per `{tenantId, playableStateNamespaceId, characterId}`**; an authorized new login transfers control through one atomic monotonic binding-generation operation, fences new input from the old connection, and preserves the identity of work already admitted before the transfer. `gameInstanceId` is replaceable runtime evidence, not the character-control uniqueness boundary.
 See [Social & Groups Service](../architecture/microservices/social-groups-service/README.md) for chat and guild features.
 
 ### 2.7 Extensibility & Game Customization
@@ -168,10 +168,11 @@ See [Game Design Service](../architecture/microservices/game-design-service/READ
 ### 3.4 Gameplay Session Architecture
 
 - Active gameplay sessions must provide **consistent tick execution and runtime configuration**, with the Game Session ownership and versioning boundaries defined by [Tick System](../architecture/system-architecture-ticks.md) and [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md).
-- Players must be able to **recover gameplay sessions after service or connection disruptions** using current authoritative state and the documented resume-or-reload behavior, without treating transient coordination state as authoritative. See [Reconnection Strategy](../architecture/system-architecture-reconnection.md) and [Redis Architecture](../architecture/system-architecture-redis.md).
+- Players must be able to **recover gameplay sessions after service or connection disruptions** using current authoritative state and the documented resume-or-reload behavior, without replaying client input, transport bytes, or frames and without treating transient coordination state as authoritative. Reconnect context is bounded semantic recent context, followed by a fresh `LOOK` and exactly one prompt; it is not delivery acknowledgement or a complete transcript archive. See [Reconnection Strategy](../architecture/system-architecture-reconnection.md) and [Redis Architecture](../architecture/system-architecture-redis.md).
 - Game execution must support **independently scalable regions** while preserving deterministic action processing and coordination correctness. The exact tick, coordination, and failover contracts are defined by [Tick System](../architecture/system-architecture-ticks.md).
 - Failover and recovery must preserve **gameplay correctness and bounded availability**, including safe reconstruction of volatile coordination from durable state where required. See [Tick Failures & Operations](../architecture/system-architecture-tick-failures-and-operations.md) and [Redis Recovery](../architecture/system-architecture-redis-reset-and-recovery.md).
 - All clients must have a **clear, reliable reconnect path**. Third-party clients must be able to follow the documented flow independently; first-party clients may automate that same flow to reduce user-visible friction. See [Reconnection Strategy](../architecture/system-architecture-reconnection.md).
+- Player-visible outcomes use compact versioned structured output with a mandatory plain-text projection, while Game Session owns late presentation/rendering. Localization is future-compatible stored source-locale/explicit-variant data with deterministic fallback; live provider translation is not a gameplay hot-path dependency. See [Input, Output, and Presentation](../architecture/system-architecture-input-output-and-presentation.md).
 
 ---
 

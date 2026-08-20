@@ -68,5 +68,6 @@ The generated reference carries the current defaults, descriptions, valid values
   - invalidation is bounded/local rather than a distributed push model: readers use a short TTL cache plus explicit per-scope refresh/evict semantics;
   - and there is still no generalized config-distribution fabric.
 
-- Prompt exclusion from reconnect transcript replay remains part of the canonical reconnect/output policy; it is not yet surfaced as an operator-facing `firemud.presentation` setting.
+- Bounded semantic reconnect context, including its retention/resource controls, scope, and non-authority semantics, is owned by [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md#canonical-resume-context-model) and [ADR 0134](../../decisions/adr-0134-bounded-durable-semantic-reconnect-context.md). This service document links that owner rather than duplicating the full contract. Prompt/status output remains excluded from semantic reconnect context unless a future explicit transcript policy says otherwise.
+- The owner documentation records the current implementation/proof gaps for oversized-single-entry handling and namespace/schema-envelope accounting; this service document does not claim strict hard-ceiling enforcement.
 - The older internal reconnect-adjacent rendered-room snapshot helper is no longer part of the surfaced settings model and should not be treated as an authoritative `LOOK` cache.

@@ -4,7 +4,7 @@ This plan documents how the cross-service WebSocket and Telnet tests exercise th
 
 ## Current Implementation
 
-- `LookWebSocketCrossServiceTest` boots Game Session, Game Logic (pointed at stubbed World/Entity servers), Redis, Postgres, and the Gateway stub, then runs `POST /sessions` → `LOGIN` → `LOOK`, validates `LookTestFixtures.canonicalLookText()`, and captures failure metrics/logs when `ROOM_NOT_FOUND` is triggered.
+- `LookWebSocketCrossServiceTest` boots Game Session, Game Logic (pointed at stubbed World/Entity servers), Redis, Postgres, and the Gateway stub, then runs `POST /sessions` → `LOGIN` → `LOOK` and retains the end-to-end assertion of `LookTestFixtures.canonicalLookText()`. Focused proof assigns structured `LookResult` and typed-failure assertions/logs to Game Logic and `PlayerOutput` plus deterministic text-projection assertions/logs to Game Session; failure metrics/logs still cover `ROOM_NOT_FOUND`.
 - `TelnetGatewayGameSessionAccountCrossServiceIntegrationTest` runs the same stack via TCP Proxy/Gateway, drives `WORLDS` / `LOGIN` / `PLAY` / `LOOK`, ensures the Telnet transcript matches the WebSocket output, then triggers a missing-room failure so the instrumentation docs capture `ERROR ROOM_NOT_FOUND`.
 - Each module exposes a `crossServiceTest` task and the root `./gradlew crossServiceTest` aggregates them, so the automation runs only when explicitly requested.
 
@@ -24,8 +24,8 @@ This plan documents how the cross-service WebSocket and Telnet tests exercise th
 ## Implementation notes
 
 - Stub the World and Entity services via lightweight gRPC servers that return the deterministic room snapshot and entity list referenced earlier so the tests control the `LOOK` response and failure modes. Point Game Logic at these stubs (`firemud.services.world-management-service`, `firemud.services.entity-management-service`) and the Game Session service at the sprung-up Game Logic instance (`firemud.services.game-logic-service`). For WebSocket/Telnet runs driven by Testcontainers, expose the stub ports via dynamic properties so each test can create reproducible transcripts.
-- Exercise the full `LOGIN` → `LOOK` flow: authenticate via `AccountService` (stubbed to accept `demo@example.com`/`swordfish`), send the authenticated `LOOK` request through WebSocket or Telnet, and assert both the structured `LookResult` and rendered text match the documented transcript in Section 1. Toggle `game.logic.default-room-id` to a missing room so the failure paths (`ERROR ROOM_NOT_FOUND`, `ERROR WORLD_UNAVAILABLE`, `ERROR ENTITY_UNAVAILABLE`) are also covered.
-- Capture the observability signals before/after each attempt using [LOOK instrumentation](./look-instrumentation.md): hit `/actuator/prometheus` to verify `gamesession.command.look.invocations` increments and `gamesession.command.look.failures{error=<CODE>}` tags the expected code, and tail Game Session/Game Logic logs to ensure `LookCommandHandler`/`LookAggregationService` emit the `Rendered LOOK text`/`LOG WARN LOOK failed <ERROR>` lines.
+- Exercise the full `LOGIN` → `LOOK` flow: authenticate via `AccountService` (stubbed to accept `demo@example.com`/`swordfish`), send the authenticated `LOOK` request through WebSocket or Telnet, and retain the end-to-end assertion that the player-visible text matches the documented transcript in Section 1. In focused service proof, Game Logic logs/asserts the structured `LookResult` and typed failures; Game Session logs/asserts the mapped `PlayerOutput` and deterministic text projection. Toggle `game.logic.default-room-id` to a missing room so the failure paths (`ERROR ROOM_NOT_FOUND`, `ERROR WORLD_UNAVAILABLE`, `ERROR ENTITY_UNAVAILABLE`) are also covered.
+- Capture the observability signals before/after each attempt using [LOOK instrumentation](./look-instrumentation.md): hit `/actuator/prometheus` to verify `gamesession.command.look.invocations` increments and `gamesession.command.look.failures{error=<CODE>}` tags the expected code, and tail Game Session/Game Logic logs for the owner-bound proof. The current Game Logic `Rendered LOOK text`/`LookResultRenderer` fixture diagnostic may remain local evidence; expected player-facing renderer attribution is Game Session's `PlayerOutput`/text projection.
 
 ## WebSocket Test
 
@@ -34,7 +34,7 @@ This plan documents how the cross-service WebSocket and Telnet tests exercise th
 3. Send `LOGIN demo@example.com swordfish` via WebSocket, expect `OK LOGIN`, then `LOOK` and assert the multiline response matches the canonical transcript (room name, descriptions, exits, entities).
 4. Override `game.logic.default-room-id` to a missing room ID and confirm the next `LOOK` yields `ERROR ROOM_NOT_FOUND`.
 5. Capture `gamesession.command.look.*` via `/actuator/prometheus` or Micrometer, asserting `invocations` increments for each attempt and `failures` tags the exact error code.
-6. Optionally tail Game Session/Game Logic logs to verify they include `WorldManagement`/`EntityManagement` labels in the error description.
+6. Optionally tail Game Logic diagnostics for typed `LookResult` failures and source labels, and Game Session logs/proof for the mapped `PlayerOutput` and deterministic text projection. The client-facing assertion remains the canonical text response.
 
 ## Telnet Test
 

@@ -32,7 +32,7 @@ TCP Proxy metrics follow the global Micrometer/OpenTelemetry conventions describ
 - `tcpproxy.disconnect.notify.app_error{code="<code>"}`
 - `grpc_app_error_total{code="<code>"}`
 - `mcp.greeting.mode_conflict` when duplicate MCP greeting ownership is detected
-- `bridge_shutdown_class=planned_drain|upstream_logout|unattributed_failure` as the canonical bounded shutdown attribution
+- `bridge_shutdown_class=planned_drain|upstream_logout|unattributed_failure` as the canonical bounded shutdown attribution. Planned authenticated `service_restart` uses `planned_drain`; any other valid authenticated upstream top-level close uses the existing `upstream_logout` label; absent or invalid top-level close metadata uses `unattributed_failure`.
 
 Bounded labels and naming rules remain canonical. Detailed identifiers such as client IP, `gameInstanceId`, and error detail stay in structured logs and tracing spans rather than in high-cardinality metric labels.
 
@@ -99,7 +99,7 @@ In Prometheus these Micrometer meters appear with the expected naming translatio
 
 The example PromQL and Alertmanager rules in `design/observability/grafana/tcp-proxy-alerts-snippets.md` use these Prometheus-style names; treat this document as the canonical meter owner and the Grafana snippets as reference queries over them.
 
-For operator interpretation, `bridge_shutdown_class=planned_drain` corresponds to a clean internal bridge close such as `1000/logout;subreason=gateway_restart`, while `bridge_shutdown_class=unattributed_failure` corresponds to abrupt bridge loss that ultimately surfaces Telnet-side as `backend_unavailable`.
+For operator interpretation, `bridge_shutdown_class=planned_drain` corresponds to a valid authenticated `1012/service_restart` bridge close and takes precedence over the general lifecycle class. The existing `upstream_logout` label covers every other valid authenticated upstream top-level close, including `logout`, `session_replaced`, `idle_timeout`, `policy_violation`, `internal_error`, and `backend_unavailable`. `unattributed_failure` means the bridge terminated without valid top-level close metadata and therefore surfaces Telnet-side as `backend_unavailable`. These operational classes and optional subreasons never establish command commit or replace Gateway’s external close taxonomy.
 
 ## Manual Endpoint Verification
 

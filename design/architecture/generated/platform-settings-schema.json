@@ -162,7 +162,7 @@
           "name": "firemud.presentation.prompt.emit-after-reconnect-restore",
           "type": "java.lang.Boolean",
           "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties$Prompt",
-          "description": "Whether reconnect restore appends a fresh prompt after replaying recent transcript context and rendering a fresh LOOK.",
+          "description": "Whether reconnect restore appends a fresh prompt after rendering bounded semantic reconnect context and a fresh LOOK.",
           "defaultValue": true,
           "domain": "presentation",
           "group": "prompts.transportPresentation",
@@ -203,7 +203,7 @@
       "keyPrefix": "firemud.reconnection",
       "service": "game-session-service",
       "owner": "game-session-service operator defaults",
-      "description": "Reconnect/session recovery and bounded transcript replay defaults surfaced by Game Session.",
+      "description": "Reconnect resume policy and bounded semantic reconnect-context retention/resource defaults surfaced by Game Session; retention never grants resume or replay authority.",
       "referenceDoc": "design/architecture/microservices/game-session-service/configuration.md",
       "runtimeSurface": "/actuator/settings/effective",
       "properties": [
@@ -249,7 +249,7 @@
           "name": "firemud.reconnection.buffer.ttl-ms",
           "type": "java.lang.Long",
           "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer",
-          "description": "TTL, in milliseconds, for the bounded reconnect transcript screen buffer stored for each player binding.",
+          "description": "TTL, in milliseconds, for bounded semantic reconnect context retained for each canonical playable-character scope `{tenantId, playableStateNamespaceId, characterId}`; retention does not grant resume or replay authority.",
           "defaultValue": 1800000,
           "domain": "reconnection",
           "group": "reconnection.buffer",
@@ -259,13 +259,13 @@
           "advanced": true,
           "exampleValue": 1800000,
           "allowedValues": [],
-          "constraints": "integer >= 0 ms; 0 retains the bounded transcript until size eviction"
+          "constraints": "integer >= 0 ms; 0 retains bounded semantic reconnect context until size eviction; retention never grants resume or replay authority"
         },
         {
           "name": "firemud.reconnection.buffer.max-entries",
           "type": "java.lang.Integer",
           "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer",
-          "description": "Maximum complete entries retained in one durable reconnect transcript before oldest-entry eviction.",
+          "description": "Maximum complete entries retained in one durable bounded semantic reconnect context before oldest-entry eviction; retention does not grant resume or replay authority.",
           "defaultValue": 256,
           "domain": "reconnection",
           "group": "reconnection.buffer",
@@ -275,13 +275,13 @@
           "advanced": true,
           "exampleValue": 256,
           "allowedValues": [],
-          "constraints": "integer >= 1 complete entries"
+          "constraints": "integer >= 1 complete persisted entries"
         },
         {
           "name": "firemud.reconnection.buffer.min-messages",
           "type": "java.lang.Integer",
           "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer",
-          "description": "Minimum message floor retained for reconnect transcript replay before byte ceilings are applied.",
+          "description": "Best-effort minimum message floor for bounded semantic reconnect-context retention; subordinate to the absolute hard byte ceiling and never an override of it.",
           "defaultValue": 8,
           "domain": "reconnection",
           "group": "reconnection.buffer",
@@ -291,13 +291,13 @@
           "advanced": true,
           "exampleValue": 8,
           "allowedValues": [],
-          "constraints": "integer >= 1"
+          "constraints": "integer >= 1; best-effort floor subordinate to the absolute hard byte ceiling"
         },
         {
           "name": "firemud.reconnection.buffer.min-lines",
           "type": "java.lang.Integer",
           "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer",
-          "description": "Minimum line floor retained for reconnect transcript replay before byte ceilings are applied.",
+          "description": "Best-effort minimum line floor for bounded semantic reconnect-context retention; subordinate to the absolute hard byte ceiling and never an override of it.",
           "defaultValue": 24,
           "domain": "reconnection",
           "group": "reconnection.buffer",
@@ -307,13 +307,13 @@
           "advanced": true,
           "exampleValue": 24,
           "allowedValues": [],
-          "constraints": "integer >= 1"
+          "constraints": "integer >= 1; best-effort floor subordinate to the absolute hard byte ceiling"
         },
         {
           "name": "firemud.reconnection.buffer.soft-max-bytes",
           "type": "java.lang.Integer",
           "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer",
-          "description": "Soft byte ceiling for reconnect transcript retention before older entries are trimmed when message and line floors have been satisfied.",
+          "description": "Best-effort soft byte preference for bounded semantic reconnect-context retention; message and line floors may be preserved where possible, but this preference is subordinate to the absolute hard ceiling.",
           "defaultValue": 16384,
           "domain": "reconnection",
           "group": "reconnection.buffer",
@@ -323,13 +323,13 @@
           "advanced": true,
           "exampleValue": 16384,
           "allowedValues": [],
-          "constraints": "integer >= 1 bytes; effective softMaxBytes <= hardMaxBytes"
+          "constraints": "integer >= 1 bytes; subordinate best-effort preference; effective softMaxBytes <= hardMaxBytes"
         },
         {
           "name": "firemud.reconnection.buffer.hard-max-bytes",
           "type": "java.lang.Integer",
           "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer",
-          "description": "Hard byte ceiling for reconnect transcript retention; oldest entries are trimmed to stay within this bound for multi-entry windows, while a complete single entry may exceed it.",
+          "description": "Target hard byte ceiling for bounded semantic reconnect-context retention; it applies to each complete scope-bound persisted envelope and never permits an oversized entry to bypass the bound. Current runtime retains a single oversized entry, so omission/marker enforcement and proof remain implementation gaps.",
           "defaultValue": 65536,
           "domain": "reconnection",
           "group": "reconnection.buffer",
@@ -339,7 +339,7 @@
           "advanced": true,
           "exampleValue": 65536,
           "allowedValues": [],
-          "constraints": "integer >= 1 bytes; effective hardMaxBytes >= softMaxBytes"
+          "constraints": "integer >= 1 bytes; absolute bound for the complete scope-bound persisted envelope; oversized entries must be omitted or represented by a bounded marker and never partially truncated; effective hardMaxBytes >= softMaxBytes; current runtime oversized-single-entry enforcement remains an implementation/proof gap"
         }
       ]
     },

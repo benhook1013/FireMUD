@@ -17,7 +17,7 @@ Unless explicitly described as current behavior, the sections below define the t
 - This route forwards to the Game Session Service session front-end layer; the gateway does not participate in gameplay shard routing or lease-owner selection.
 - Gateway is the edge failure boundary. Fleet-level failover leaves sockets on healthy Gateway instances up, while a socket terminated by the serving instance requires a fresh `/ws/game/**` connection and the client-visible recovery flow in [Reconnection Strategy](../../system-architecture-reconnection.md). Bounded upstream rebind, its elapsed-time limits, and FIFO stall handling are owned by [Gateway architecture](../../system-architecture-gateway.md#backend-unavailable-grace-window) and [Reconnection Strategy](../../system-architecture-reconnection.md#bounded-non-edge-restart-recovery).
 - Telnet clients use the same gameplay route after the TCP Proxy bridge. Their `LOGIN`, conditional `JOIN`, and `PLAY` semantics are owned by [Authentication](../../system-architecture-authentication.md#login-and-session-flow); the TCP Proxy transport procedure is documented in [TCP Proxy protocols](../tcp-proxy-service/protocols.md#recommended-telnet-client-flows). Hidden attach hints remain advisory transport metadata only.
-- Planned Gateway drain must be surfaced by the TCP Proxy as `logout` with `gateway_restart` context when the deterministic bridge-drain signal is received. Unattributed loss of the specific Gateway bridge/socket currently serving a Telnet client is surfaced immediately as `backend_unavailable`; unaffected Telnet sessions routed through other healthy Gateway instances should continue normally.
+- Planned Gateway drain must be surfaced by the TCP Proxy as `service_restart` when the deterministic bridge-drain signal is received. Controller takeover is surfaced as `session_replaced`; terminal logout remains `logout`. Unattributed loss of the specific Gateway bridge/socket currently serving a Telnet client is surfaced immediately as `backend_unavailable`; unaffected Telnet sessions routed through other healthy Gateway instances should continue normally. The Gateway-owned matrix is the authority; bridge subreason is diagnostic only.
 
 ## Trusted TCP Proxy Bridge Admission
 
@@ -39,6 +39,7 @@ Unless explicitly described as current behavior, the sections below define the t
 - A concrete wire-level example remains the `X-Firemud-Handshake-Error-Class` response header paired with matching structured-log fields. Capable non-browser callers and operator tooling may rely on that bounded surface rather than parsing free-form text; browser WebSocket APIs cannot read failed-upgrade headers and use the conservative recovery rule in Gateway architecture instead.
 - The gateway observability contract requires `gateway.websocket.closes{reason,subreason}`, `gateway.websocket.handshake.rejected`, and `gateway.websocket.slow_client_closes`.
 - Close and handshake classifications must remain bounded and stable so reconnect logic, dashboards, and alerting do not depend on free-form strings.
+- Close classes describe transport/session lifecycle only. They never establish the result of an in-flight command; callers with a `commandId` use Game Session's authoritative command-status read.
 
 ## Filter Chain and Admission Behavior
 

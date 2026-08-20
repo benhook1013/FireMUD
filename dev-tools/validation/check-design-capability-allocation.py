@@ -528,6 +528,24 @@ ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/adr-0130-historical-equipment-body-layout-authority.md": adr_allocation(
         "GR-3", "Superseded", "AR-1", "GR-1", "SF-1"
     ),
+    "design/architecture/decisions/adr-0131-lifecycle-distinct-gameplay-close-taxonomy.md": adr_allocation(
+        "PO-2", "Accepted", "AA-2", "GR-1", "PO-4"
+    ),
+    "design/architecture/decisions/adr-0132-namespace-scoped-single-character-controller.md": adr_allocation(
+        "AA-2", "Accepted", "EA-3", "SF-2", "AR-3"
+    ),
+    "design/architecture/decisions/adr-0133-fresh-edge-reconnect-without-client-input-replay.md": adr_allocation(
+        "AA-2", "Accepted", "EA-1", "PO-2", "GR-1", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0134-bounded-durable-semantic-reconnect-context.md": adr_allocation(
+        "EA-1", "Accepted", "AA-2", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0135-compact-versioned-player-output-and-late-rendering.md": adr_allocation(
+        "EA-1", "Accepted", "EA-3", "PO-2", "SF-1"
+    ),
+    "design/architecture/decisions/adr-0136-future-compatible-localization-boundary.md": adr_allocation(
+        "EA-1", "Accepted", "EA-3", "AR-1"
+    ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
     "README.md": "Service overview",

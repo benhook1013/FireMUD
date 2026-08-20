@@ -11,7 +11,7 @@
 
 Gateway Architecture requires the following observability surfaces for gameplay WebSocket behavior:
 
-- `gateway.websocket.closes{reason,subreason}`
+- `gateway.websocket.closes{reason,subreason,bridge_shutdown_class}`, with top-level `reason` drawn from the Gateway-owned `logout`, `session_replaced`, `service_restart`, `idle_timeout`, `policy_violation`, `internal_error`, or `backend_unavailable` taxonomy; `subreason` is optional diagnostic context, not lifecycle authority.
 - `gateway.websocket.handshake.rejected`
 - `gateway.websocket.slow_client_closes`
 

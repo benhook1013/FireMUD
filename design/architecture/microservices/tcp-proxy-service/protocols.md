@@ -57,7 +57,7 @@ Advanced Telnet tools may open more than one window or pane for the same account
 - If the WebSocket bridge drops after the Telnet connection is established, the proxy closes the Telnet socket immediately according to the established-session bridge state machine; it does not keep the client TCP socket open while attempting a hidden gameplay-bridge reattach. The resulting new Telnet connection follows fresh discovery and admission. A fresh gameplay binding requires fresh entitlement and the applicable membership/grant predicates; an entitlement-only outage on this path remains `ENTITLEMENT_UNAVAILABLE`, and a new Telnet transport does not receive the last-known-good exception. Only unchanged public-production binding continuity during an entitlement-only outage, while the Gateway/Game Session edge remains established and all other resume predicates pass, may use bounded last-known-good entitlement.
 - During sustained Gateway gameplay unreachability, proxy admission uses a bridge-availability circuit-breaker model so new Telnet sockets are rejected quickly with `backend_unavailable`. Admission resumes only after `TCP_PROXY_GATEWAY_CIRCUIT_RECOVERY_SUCCESS_COUNT` consecutive successful probe bridge establishments.
 - If upstream backpressure causes the Telnet -> Gateway buffered-line ceiling to be exceeded while upstream is still reachable, the proxy closes the Telnet connection with `policy_violation`, emits `edge_backpressure` context in structured logs and metrics, and increments `tcpproxy.telnet.discarded{reason="gateway_buffer_full"}`. If upstream is already unreachable, `backend_unavailable` takes precedence.
-- If the upstream bridge closes cleanly with `1000/logout` on the authenticated internal bridge, the proxy preserves the Telnet-side disconnect category as `logout` and carries through the bounded subreason. Planned Gateway drain remains the canonical `1000/logout;subreason=gateway_restart` case and should be logged as `bridge_shutdown_class=planned_drain`.
+- The proxy preserves every valid authenticated Gateway top-level close as the same Telnet token: `logout`, `session_replaced`, `service_restart`, `idle_timeout`, `policy_violation`, `internal_error`, or `backend_unavailable`. Planned `service_restart` is attributed as `bridge_shutdown_class=planned_drain`; every other valid authenticated upstream close uses the existing `upstream_logout` attribution. Optional subreasons never redefine the lifecycle class.
 - All gameplay commands, including `LOGIN`, `JOIN` when required, and `PLAY`, are forwarded verbatim over the WebSocket bridge so Spring Cloud Gateway and Game Session see the same protocol lines as native WebSocket clients. Admission semantics remain owned by [Authentication](../../system-architecture-authentication.md#login-and-session-flow).
 
 ## Bridge State Machine (Established Telnet Sessions)
@@ -65,11 +65,13 @@ Advanced Telnet tools may open more than one window or pane for the same account
 For already-established Telnet sessions, the proxy uses an explicit per-connection bridge state machine:
 
 - `healthy` – upstream bridge established and forwarding.
-- `close_due_to_clean_logout` – if the proxy receives `1000/logout` on the authenticated internal bridge, close the Telnet session as `logout` and preserve the bounded subreason.
-- `close_due_to_unreachable` – if the established upstream gameplay WebSocket cannot be maintained for any other reason, close immediately with `backend_unavailable` and treat the loss as `bridge_shutdown_class=unattributed_failure` unless a bounded clean logout class was delivered.
+- `close_due_to_valid_upstream` – if the authenticated bridge supplies any valid Gateway top-level close, preserve the same Telnet token under the translation above. Planned `service_restart` uses `planned_drain`; all other valid classes use `upstream_logout`.
+- `close_due_to_unattributed_failure` – if the established upstream bridge terminates with absent or invalid top-level close metadata, close immediately with `backend_unavailable` and record `bridge_shutdown_class=unattributed_failure`.
 - `close_due_to_edge_backpressure` – if queued lines exceed `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES` while upstream is reachable, close with `policy_violation` and record `edge_backpressure` context.
 
 This state machine is distinct from the proxy-wide open/half-open/closed admission breaker and defines deterministic behavior for active Telnet sockets during upstream loss. Hidden bridge reattachment behind an already-open client TCP socket is not part of the design; after bridge loss, the client opens a fresh socket and follows fresh discovery/admission. A new binding is strict fresh-entitlement admission, while an exact same-binding reconnect on that new transport remains strict and returns `ENTITLEMENT_UNAVAILABLE` when fresh entitlement is unavailable; only an unchanged public-production binding continued on the established edge can use that narrow exception.
+
+Actual client-visible edge loss requires a fresh TCP transport, fresh discovery, `LOGIN`, and `PLAY`; no Telnet input, prior output bytes, WebSocket frames, or MCP state is replayed. A close token reports lifecycle only and never proves whether an in-flight command committed; capable clients reconcile a known `commandId` through the authoritative Game Session status surface.
 
 ## Telnet Disconnect Line Format
 
@@ -79,13 +81,14 @@ When the proxy can write a final player-visible disconnect line before closing t
 DISCONNECT <reason-token> <human-message>\n
 ```
 
-`<reason-token>` is one non-whitespace token from the unified disconnect taxonomy (`logout`, `idle_timeout`, `policy_violation`, `internal_error`, or `backend_unavailable`). When bounded subreason context is available, it is appended to the reason token as `;subreason=<value>`, for example `logout;subreason=gateway_restart` or `policy_violation;subreason=edge_backpressure`. `<human-message>` is advisory display text for people and must not be parsed for retry policy.
+`<reason-token>` is one non-whitespace token from the unified disconnect taxonomy (`logout`, `session_replaced`, `service_restart`, `idle_timeout`, `policy_violation`, `internal_error`, or `backend_unavailable`). When bounded subreason context is available, it may be appended to the reason token as `;subreason=<value>`, for example `policy_violation;subreason=edge_backpressure`; subreason is optional and never lifecycle authority. `<human-message>` is advisory display text for people and must not be parsed for retry policy.
 
 Examples:
 
 ```text
 DISCONNECT backend_unavailable Gateway link dropped; please reconnect\n
-DISCONNECT logout;subreason=takeover Gameplay session ended; please reconnect\n
+DISCONNECT session_replaced This connection was replaced by another controller\n
+DISCONNECT service_restart Gateway maintenance; please reconnect\n
 DISCONNECT policy_violation;subreason=edge_backpressure Gameplay connection closed due to policy violation\n
 ```
 

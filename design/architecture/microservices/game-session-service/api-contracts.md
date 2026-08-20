@@ -1,5 +1,7 @@
 # Game Session Service API Contracts
 
+Player-facing controller binding and takeover are owned by [Session Behavior](../../system-architecture-session-behavior.md#namespace-scoped-controller-transfer-session-02), fresh-edge reconstruction is owned by [Reconnection](../../system-architecture-reconnection.md#client-reconnection-behaviour), and versioned output/late rendering are owned by [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md#output-model). The APIs below record only Game Session's local control-plane and forwarding consequences; they do not duplicate those player-facing contracts.
+
 ## Target Control-Plane Summary
 
 Target state makes Game Session the authoritative owner of region/tick coordination, each instance's exact `(scriptPatchVersion, scriptPinEpoch)`, and append-only script rollout history. Owner mutations are fenced and idempotent; Logging & Admin is the external operator ingress, and session front ends forward region work without writing lease-owned state directly. Authoritative owner reads gate script admission and convergence. See [Scripting Control-Plane API](../../system-architecture-scripting-control-plane-api.md#game-session-patch-pinning).

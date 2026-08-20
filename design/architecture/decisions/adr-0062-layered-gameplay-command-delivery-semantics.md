@@ -51,7 +51,7 @@ Only a feature with an explicit durable-intake and safe-replay contract may use 
 
 ### Server-to-Client Delivery
 
-Raw outbound frames are not replayed after reconnect. Reconnection may restore a bounded transcript or state summary to provide context, but that transcript is not evidence that any exact frame was delivered or observed.
+Raw outbound frames are not replayed after reconnect. Under [ADR 0134](./adr-0134-bounded-durable-semantic-reconnect-context.md), authorized reconnection may restore a bounded semantic recent-context window from Game Session-owned durable persistence. It is not a transcript or archive, delivery ledger, or evidence that any exact frame was delivered or observed.
 
 ### Internal Delivery
 
@@ -63,7 +63,7 @@ Internal events and advisory signals use at-least-once delivery with idempotent 
 - Trusted acceptance gains durable identity and terminal outcome evidence without replaying stale interactive actions.
 - Classic Telnet remains simple, while capable clients gain optional identity-based status correlation.
 - Features that require replay must explicitly prove safe stale-intent semantics and durable intake.
-- Reconnect restores useful context without turning the outbound transcript into a delivery ledger.
+- Reconnect restores useful bounded semantic recent context without turning it into a transcript, archive, or delivery ledger.
 - Internal advisory paths may avoid unnecessary durable dedupe writes when authoritative state makes duplicates harmless.
 
 ## Alternatives Considered
@@ -78,7 +78,7 @@ Allow an acknowledged Game Session command to disappear without durable status. 
 
 ### Replay Raw Outbound Frames
 
-Retain and replay every server frame after reconnect. Rejected because replayed text may be stale, duplicated, or misleading after authoritative state advances. A bounded transcript restores context more honestly.
+Retain and replay every server frame after reconnect. Rejected because replayed text may be stale, duplicated, or misleading after authoritative state advances. A bounded semantic recent-context window restores context more honestly.
 
 ## Implementation and Proof Obligations
 

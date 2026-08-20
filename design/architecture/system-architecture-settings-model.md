@@ -22,6 +22,8 @@ This document defines the canonical FireMUD settings model for operator/bootstra
 - Game Logic exposes the current effective `communication` result at `/actuator/settings/effective/communication`.
 - The shared authority reader now has explicit bounded local cache semantics: normal reads use a short TTL cache, callers may force refresh, and callers may evict one scope locally. Distributed push invalidation, full centralized operator-default/caps resolution, and preset-baseline expansion are still future work.
 - The current reader/proof gap is explicit: short-TTL, force-refresh, and per-scope eviction do not yet prove monotonic revision handling, class-specific stale behavior, or the restrictive-setting fence. The reader applies the canonical per-key/domain freshness maximum once that typed metadata is present; it does not select a local alternative.
+- The target reconnect-settings contract separates `reconnection.policy` resume eligibility from `reconnection.buffer` bounded semantic reconnect-context retention/resource controls. The latter never grants active-session, resume, or replay authority.
+- The current reconnect-context implementation/proof gap is explicit: Game Session retains a single oversized entry above `hardMaxBytes`, and its current key/envelope accounting uses `gameInstanceId` rather than the canonical `playableStateNamespaceId` scope. Complete scope-bound schema-envelope accounting, namespace migration, and omission/marker enforcement remain unproved.
 
 ## Canonical Decisions
 
@@ -139,11 +141,12 @@ Internal transport/framework constants should not be promoted into this model un
 Today, operator defaults still come from service-local typed properties, while tenant/game overrides for the surfaced pre-`06` domains are persisted in the shared Game Design authority. The agreed scope for live domains and the locked target scope for the next domains is:
 
 - `reconnection.policy`
-  - tenant/game-configurable today for resume windows and stale-resume fallback over service-local operator defaults
+  - tenant/game-configurable today for resume windows and stale-resume fallback over service-local operator defaults; these settings govern resume eligibility, not retention
   - operator caps remain future work
 - `reconnection.buffer`
-  - tenant/game-configurable today for durable transcript retention bounds over service-local operator defaults
-  - because the soft and hard byte ceilings form one effective invariant while operator defaults remain service-local, a tenant override that changes either ceiling must persist both values; a game-instance override may set one ceiling only when the tenant layer supplies the complete pair, and tenant mutations validate existing game-instance children against the prospective parent
+  - tenant/game-configurable today for bounded semantic reconnect-context retention/resource bounds over service-local operator defaults; retention never grants resume or replay authority
+  - because the soft and hard byte ceilings form one effective invariant over each complete scope-bound persisted envelope while operator defaults remain service-local, a tenant override that changes either ceiling must persist both values; a game-instance override may set one ceiling only when the tenant layer supplies the complete pair, and tenant mutations validate existing game-instance children against the prospective parent
+  - min-message and min-line floors and the soft ceiling remain subordinate, best-effort retention preferences; none may override the absolute hard ceiling, and an oversized entry must be omitted or represented by a bounded marker rather than partially truncated
   - operator caps remain future work
 - `communication.behavior`
   - tenant/game-configurable today for message limits and whisper observer-metadata policy
@@ -227,6 +230,7 @@ Current practical rule:
 - Game Design owns persisted tenant/game overrides for the currently surfaced pre-`06` settings domains, including standard command capabilities;
 - `common-platform-core` resolves one merged persisted override layer per `{tenantId, optional gameInstanceId}` by applying tenant overrides before game-instance overrides;
 - runtime services consume that shared merged persisted layer and perform only the final merge with their own typed operator defaults for now;
+- resume eligibility and bounded semantic reconnect-context retention/resource controls remain separate; retention never grants active-session, resume, or replay authority;
 - Game Session exposes the resolved `presentation`, `prompts`, `reconnection`, `movement`, `worldTopology`, `commandHistory`, and `commandCapabilities` result through `/actuator/settings/effective`, and also includes normalized subgroup payloads for transcript, movement, and world-topology seams plus the current scoped `communication` override view for the same session or synthesized scope, while Game Logic exposes the fully merged effective `communication` result through `/actuator/settings/effective/communication`;
 - the first authority stays bounded and domain-oriented; it is not a general distributed config platform;
 - cache invalidation remains bounded and local to each runtime process through explicit refresh/evict operations on the shared reader rather than a distributed push fabric;

@@ -30,7 +30,7 @@ Scope-key convention: `{tenantRegionTag}` is the canonical opaque tag for the co
 - **Coordination Redis**
   - Responsibilities:
     - Tick queues, locks, timers, and executor leases.
-    - Gameplay session state and liveness bindings.
+    - Gameplay session liveness, binding, and rebind coordination. Durable semantic reconnect context remains Game Session-owned persistence under [ADR 0134](./decisions/adr-0134-bounded-durable-semantic-reconnect-context.md) and [Input, Output, and Presentation](./system-architecture-input-output-and-presentation.md#canonical-resume-context-model); Redis gameplay session state is not that context.
     - Retry metadata and conflict tracking.
     - Automation coordination structures that participate in tick timelines.
   - Characteristics:
@@ -59,7 +59,7 @@ Scope-key convention: `{tenantRegionTag}` is the canonical opaque tag for the co
     - Schema and TTL policies for cache and rate‑limit prefixes are defined centrally in shared infrastructure libraries rather than per service.
   - Example prefixes:
     - `inventory:<tenantId>:<containerId>`
-    - `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>` (exact room, viewer/session, and policy context bound)
+    - `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>` (disposable presentation/redraw helper; exact room, viewer/session, and policy context bound; never semantic reconnect context, frame/output replay, archive, or delivery ledger)
     - `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>`
     - `ratelimit:<tenantId>:<subjectHash>:<timeWindow>` (one opaque stable subject hash per individual subject)
     - `automation:queue:{tenantInstanceTag}:<entityId>` and automation quota counters.
@@ -162,7 +162,7 @@ The following table summarizes how core services interact with Coordination Redi
 
 | Service | Redis Usage |
 | --- | --- |
-| **Game Session Service** | Owns **Coordination Redis**: tick queues, locks, timers, retry metadata, region leases, and Redis‑backed session state used for reconnection. All tick/coordination key prefixes and their Lua scripts are registered and owned here. |
+| **Game Session Service** | Owns **Coordination Redis**: tick queues, locks, timers, retry metadata, region leases, and Redis-backed session liveness, binding, and rebind coordination. Durable semantic reconnect context remains Game Session-owned persistence rather than Redis session state. All tick/coordination key prefixes and their Lua scripts are registered and owned here. |
 | **Automation & Scripting Service** | Owns automation-specific prefixes such as `automation:queue:{tenantInstanceTag}:*`, `automation:timer:{tenantRegionTag}`, and `script-scheduler:{tenantRegionTag}:lastTickId`, but does **not** own gameplay `tick:*` queues or locks. It reads tick heartbeats via gRPC, uses PostgreSQL as the durable work source of truth, and uses **Cache/Rate‑Limit Redis** for script quotas and best-effort queue projection where documented. |
 | **Spring Cloud Gateway** | Uses **Cache/Rate‑Limit Redis** for token‑bucket rate limiting and best‑effort caches only; it never touches tick/coordination prefixes directly and always connects via the cache profile configured in `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`. |
 | **Other microservices (Game Logic, Entity Management, World Management, Social & Groups, etc.)** | Do not define or own coordination prefixes; they participate in Coordination Redis **only** through shared helpers and Lua descriptors owned by Game Session (for example, `tick:{tenantRegionTag}:lock:<entityId>` for tick locks). Where they cache read‑heavy aggregates, they use **Cache/Rate‑Limit Redis** and the key patterns from the Redis Cache & Rate Limiting design. |
