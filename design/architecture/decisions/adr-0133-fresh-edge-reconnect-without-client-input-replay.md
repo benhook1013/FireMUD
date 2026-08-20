@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The repository implements substantial `LOGIN`/`PLAY`, Redis rebinding, bounded semantic recent context, durable command, TCP Proxy advisory-disconnect, and Gateway rebind seams. It does not yet prove the complete authenticated real-service replacement sequence, configured elapsed recovery bounds, lifecycle classification, presence convergence, or all stalled-input outcomes. The effective disconnected-resume window is resolved but not fully enforced, and explicit first-party logout can currently replay retained context contrary to ADR 0019 and CMD-04.
+
 ## Decision Record
 
 - Human review status: Completed
@@ -37,9 +41,9 @@ Closure of only the Gateway-to-Game-Session upstream is not a client disconnect 
 
 ### Already Admitted Work and Reconstruction
 
-A command already durably admitted before transport loss continues exactly once through its recorded command/effect identity and ordinary fences. FireMUD does not recreate it from client input. Its output may be appended to the authorized bounded resume transcript even while no socket is attached and may appear as recent context after reconnect.
+A command already durably admitted before transport loss continues exactly once through its recorded command/effect identity and ordinary fences. FireMUD does not recreate it from client input. Its output may be appended to the authorized bounded semantic recent context even while no socket is attached and may appear as recent context after reconnect. This bounded semantic recent context is not an archive, delivery ledger, or exact frame replay.
 
-After authorized `LOGIN` and `PLAY`, Game Session may replay bounded semantic context under CMD-04, then emits a fresh authoritative `LOOK` and one current prompt. This is state and narrative reconstruction, not proof of which bytes the old client received. Explicit gameplay `LOGOUT` is terminal and suppresses private replay under ADR 0019. Planned Gateway `service_restart` is a retryable edge loss, not logout. `session_replaced` tells the displaced connection that another controller took over; a later reconnect still uses ordinary admission and may take over again if authorized.
+After authorized `LOGIN` and `PLAY`, Game Session may replay bounded semantic recent context under CMD-04, then obtains a fresh authoritative `LOOK` and emits exactly one reconnect prompt only when both effective `firemud.presentation.prompt.enabled` and `firemud.presentation.prompt.emit-after-reconnect-restore` are enabled; if either is disabled, it emits zero reconnect prompts. When enabled, duplicate-prevention still ensures one prompt. This is state and narrative reconstruction, not proof of which bytes the old client received. Explicit gameplay `LOGOUT` is terminal and suppresses private replay under ADR 0019. Planned Gateway `service_restart` is a retryable edge loss, not logout. `session_replaced` tells the displaced connection that another controller took over; a later reconnect still uses ordinary admission and may take over again if authorized. The setting precedence is owned by [Input, Output, and Presentation](../system-architecture-input-output-and-presentation.md#prompt-behavior).
 
 ## Consequences
 
@@ -62,21 +66,19 @@ Close the client transport whenever Game Session or another non-edge worker chan
 
 ### Fresh Entry Without Context
 
-Require new admission and emit only current state. This is correct and simpler, but produces a materially worse player experience around asynchronous outcomes and short disconnects. The bounded semantic transcript provides context without becoming delivery acknowledgement.
+Require new admission and emit only current state. This is correct and simpler, but produces a materially worse player experience around asynchronous outcomes and short disconnects. The bounded semantic recent context provides context without becoming delivery acknowledgement.
 
 ## Implementation and Proof Obligations
-
-The repository implements substantial `LOGIN`/`PLAY`, Redis rebinding, transcript, durable command, TCP Proxy advisory-disconnect, and Gateway rebind seams. It does not yet prove the complete authenticated real-service replacement sequence, configured elapsed recovery bounds, lifecycle classification, presence convergence, or all stalled-input outcomes. The effective disconnected-resume window is resolved but not fully enforced, and explicit first-party logout can currently replay retained context contrary to ADR 0019 and CMD-04.
 
 Proof must cover Telnet and WebSocket edge loss before admission, during ambiguous delivery, after durable command admission, and after output persistence; fresh token behavior for Web; fresh `LOGIN`/`PLAY`; resume versus fresh binding; durable work completing offline; reconstruction ordering; explicit logout; takeover; planned restart; abrupt no-frame loss; successful hidden upstream rebind; failed rebind cutoff; and absence of client-input, frame, or byte replay.
 
 ## Reversibility and Revisit Triggers
 
-Reconnect automation, backoff, transcript presentation, and token carriers may evolve without changing the visible-edge boundary or no-input-replay rule. Acknowledged command delivery or exact connection resumption requires a separate protocol decision spanning both Telnet and WebSocket clients.
+Reconnect automation, backoff, bounded semantic recent context presentation, and token carriers may evolve without changing the visible-edge boundary or no-input-replay rule. Acknowledged command delivery or exact connection resumption requires a separate protocol decision spanning both Telnet and WebSocket clients.
 
 ## Required Documentation Alignment
 
-- `design/architecture/system-architecture-reconnection.md`
-- `design/architecture/microservices/game-session-service/runtime-and-data.md`
-- `design/architecture/microservices/game-session-service/protocols.md`
-- `design/architecture/system-architecture-input-output-and-presentation.md`
+- [`design/architecture/system-architecture-reconnection.md`](../system-architecture-reconnection.md)
+- [`design/architecture/microservices/game-session-service/runtime-and-data.md`](../microservices/game-session-service/runtime-and-data.md)
+- [`design/architecture/microservices/game-session-service/protocols.md`](../microservices/game-session-service/protocols.md)
+- [`design/architecture/system-architecture-input-output-and-presentation.md`](../system-architecture-input-output-and-presentation.md)

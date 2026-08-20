@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The existing `PlayerOutput`, text renderer, structured WebSocket projector, prompt pipeline, room-view path, and structured reconnect metadata provide partial implementation evidence. They do not prove a supported versioned structured-client schema, an actual browser consumer, schema compatibility, or ADR 0059 temporal `LOOK` evidence.
+
 ## Decision Record
 
 - Human review status: Completed
@@ -80,8 +84,6 @@ World and Entity could continue returning the same room-derived token and treat 
 
 ## Implementation and Proof Obligations
 
-The existing `PlayerOutput`, text renderer, structured WebSocket projector, prompt pipeline, room-view path, and structured reconnect metadata provide partial implementation evidence. They do not prove a supported versioned structured-client schema, an actual browser consumer, schema compatibility, or ADR 0059 temporal `LOOK` evidence.
-
 Proof for the output boundary must cover each supported envelope kind, deterministic Telnet and generic WebSocket text projection, structured-client schema version negotiation or compatibility handling, unsupported-version behavior, localization and presentation policy, replay eligibility, and semantic parity between text and structured projections. A first-party browser capability may be marked implemented only when the browser consumes the supported schema in focused integration or end-to-end proof.
 
 Proof for `LOOK` must cover the causal floor, correct scope and epoch, Entity `servedThroughTickId >= requested floor` evidence, distinct opaque participant component versions, newer-than-floor evidence without numeric skew or version comparison, below-floor rejection, unavailable evidence, retry or explicit failure, and prevention of best-effort mixed-time composition. Static token equality tests remain useful scope checks but do not satisfy temporal proof.
@@ -92,5 +94,5 @@ Envelope fields, kinds, tags, and projections may evolve through explicit schema
 
 ## Required Documentation Alignment
 
-- `design/architecture/system-architecture-input-output-and-presentation.md`
-- `design/architecture/microservices/game-session-service/protocols.md`
+- [`design/architecture/system-architecture-input-output-and-presentation.md`](../system-architecture-input-output-and-presentation.md)
+- [`design/architecture/microservices/game-session-service/protocols.md`](../microservices/game-session-service/protocols.md)

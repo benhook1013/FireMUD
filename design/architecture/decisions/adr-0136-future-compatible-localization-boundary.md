@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+Current implementation is partial. Built-in keyed output and renderer locale selection cover a bounded subset of Game Session behavior. Locale-tagged room prose and adjacent-room naming are present on authoritative room views, with some alternate-locale renderer and integration proof. Broader world and item content, first-party browser consumption, creator review workflows, coverage reporting, publication-wide validation, and external localization-tool integration remain future work.
+
 ## Decision Record
 
 - Human review status: Completed
@@ -80,8 +84,6 @@ FireMUD could avoid locale metadata until a localization project begins. That re
 
 ## Implementation and Proof Reality
 
-Current implementation is partial. Built-in keyed output and renderer locale selection cover a bounded subset of Game Session behavior. Locale-tagged room prose and adjacent-room naming are present on authoritative room views, with some alternate-locale renderer and integration proof. Broader world and item content, first-party browser consumption, creator review workflows, coverage reporting, publication-wide validation, and external localization-tool integration remain future work.
-
 Existing fallback code and tests must be checked during implementation alignment to ensure they accept only an explicit base-language variant and never choose an arbitrary regional sibling. Future proof should distinguish source-locale behavior, exact matches, explicit base-language fallback, missing translations, publication/version association, and deterministic behavior across storage order.
 
 ## Reversibility and Revisit Triggers
@@ -92,4 +94,4 @@ That revisit begins with research into then-current local and remote methods. Pl
 
 ## Required Documentation Alignment
 
-- `design/architecture/system-architecture-input-output-and-presentation.md`
+- [`design/architecture/system-architecture-input-output-and-presentation.md`](../system-architecture-input-output-and-presentation.md)

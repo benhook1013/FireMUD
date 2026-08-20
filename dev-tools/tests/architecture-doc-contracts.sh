@@ -10,6 +10,7 @@ root = pathlib.Path(".")
 obsolete_public_resume_signature = "`resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)`"
 obsolete_gameplay_session_selector = "session:game:{tenantInstanceTag}"
 obsolete_gameplay_character_index = "session:game:index:character:{tenantGameplayTag}:<gameInstanceId>:<characterId>"
+obsolete_gameplay_character_index_with_scope = "session:game:index:character:{tenantGameplayTag}:<playableStateNamespaceId>:<playableStateScope>:<characterId>"
 maintenance_lock_token_syntax = re.compile(r"--maintenance-lock-token(?![A-Za-z0-9_-])")
 maintenance_lock_token_prohibition = re.compile(
     r"(?:"
@@ -446,10 +447,13 @@ def reject_obsolete_gameplay_session_selector(path, text):
 def reject_obsolete_gameplay_character_index(path, text):
     if is_historical_adr_record(path, text):
         return
-    if obsolete_gameplay_character_index in text:
+    if (
+        obsolete_gameplay_character_index in text
+        or obsolete_gameplay_character_index_with_scope in text
+    ):
         raise SystemExit(
             f"{path}: character-session indexes must use the canonical "
-            "playableStateNamespaceId/playableStateScope shape"
+            "playableStateNamespaceId-only controller-key shape"
         )
 
 
@@ -829,6 +833,16 @@ except SystemExit as error:
         raise SystemExit(f"unexpected Accepted ADR character-index diagnostic: {error}")
 else:
     raise SystemExit("Accepted ADR fixture was not checked for obsolete character indexes")
+try:
+    reject_obsolete_gameplay_character_index(
+        accepted_adr_fixture,
+        accepted_adr_fixture_text + obsolete_gameplay_character_index_with_scope,
+    )
+except SystemExit as error:
+    if "character-session indexes" not in str(error):
+        raise SystemExit(f"unexpected Accepted ADR scoped character-index diagnostic: {error}")
+else:
+    raise SystemExit("Accepted ADR fixture was not checked for obsolete scoped character indexes")
 try:
     reject_obsolete_envelope_phrases(
         accepted_adr_fixture,

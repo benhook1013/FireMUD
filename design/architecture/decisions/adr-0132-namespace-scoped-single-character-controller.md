@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+Current implementation uses instance-scoped indexes and does not prove one atomic ABA-safe controller transfer. It deletes and recreates parts of the binding, lacks the target namespace key and durable binding-generation contract end to end, and may emit region-exit lifecycle behavior even though takeover leaves the character in place. These are implementation gaps, not evidence for the old target.
+
 ## Decision Record
 
 - Human review status: Completed
@@ -68,8 +72,6 @@ An additional prompt could prevent accidental device flapping, but adds friction
 
 ## Implementation and Proof Obligations
 
-Current implementation uses instance-scoped indexes and does not prove one atomic ABA-safe controller transfer. It deletes and recreates parts of the binding, lacks the target namespace key and durable binding-generation contract end to end, and may emit region-exit lifecycle behavior even though takeover leaves the character in place. These are implementation gaps, not evidence for the old target.
-
 Proof must cover same-instance takeover, old-to-replacement-instance takeover within one namespace, concurrent competing `PLAY` calls, stale socket input after transfer, Redis restart and retry, failed close delivery, accepted work crossing the boundary, region binding convergence, and simultaneous production plus isolated-playtest control. It must show that takeover does not publish a false character exit or reset entity-owned timers and state.
 
 ## Reversibility and Revisit Triggers
@@ -78,9 +80,9 @@ Key encoding, Redis scripts, close delivery, and notification UX may evolve whil
 
 ## Required Documentation Alignment
 
-- `design/architecture/system-architecture-session-behavior.md`
-- `design/architecture/system-architecture-authentication.md`
-- `design/architecture/system-architecture-redis.md`
-- `design/architecture/system-architecture-reconnection.md`
-- `design/architecture/microservices/game-session-service/runtime-and-data.md`
-- `design/architecture/microservices/game-session-service/protocols.md`
+- [`design/architecture/system-architecture-session-behavior.md`](../system-architecture-session-behavior.md)
+- [`design/architecture/system-architecture-authentication.md`](../system-architecture-authentication.md)
+- [`design/architecture/system-architecture-redis.md`](../system-architecture-redis.md)
+- [`design/architecture/system-architecture-reconnection.md`](../system-architecture-reconnection.md)
+- [`design/architecture/microservices/game-session-service/runtime-and-data.md`](../microservices/game-session-service/runtime-and-data.md)
+- [`design/architecture/microservices/game-session-service/protocols.md`](../microservices/game-session-service/protocols.md)

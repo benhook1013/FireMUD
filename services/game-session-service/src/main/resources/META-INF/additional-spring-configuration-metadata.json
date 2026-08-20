@@ -92,7 +92,7 @@
       "name": "firemud.reconnection.buffer.ttl-ms",
       "type": "java.lang.Long",
       "defaultValue": 1800000,
-      "description": "TTL, in milliseconds, for bounded semantic reconnect context retained for each canonical playable-character scope `{tenantId, playableStateNamespaceId, characterId}`; retention does not grant resume or replay authority.",
+      "description": "TTL, in milliseconds, for bounded semantic reconnect context. The current runtime retains each context under `{tenantId, gameInstanceId, characterId}`; the canonical target scope is `{tenantId, playableStateNamespaceId, characterId}` pending migration. Retention does not grant resume or replay authority.",
       "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
     },
     {
@@ -134,7 +134,7 @@
       "name": "firemud.reconnection.buffer.hard-max-bytes",
       "type": "java.lang.Integer",
       "defaultValue": 65536,
-      "description": "Target hard byte ceiling for bounded semantic reconnect-context retention; it applies to each complete scope-bound persisted envelope and never permits an oversized entry to bypass the bound. Current runtime retains a single oversized entry, so omission/marker enforcement and proof remain implementation gaps.",
+      "description": "Target guarantee: an absolute byte ceiling for each complete scope-bound persisted envelope; an oversized entry must be omitted or represented by a bounded marker and never partially truncated. Current runtime limitation: it may retain one oversized entry and lacks omission/marker enforcement and proof.",
       "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
     },
     {

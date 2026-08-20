@@ -4,6 +4,10 @@
 
 Accepted
 
+## Implementation Status
+
+The current implementation substantially persists replay-eligible structured entries in ordered `resume_transcript_entry` rows and uses Redis only as a best-effort cache. Existing proof covers significant durable retention and replay behavior, including omission of one entry that cannot fit beneath the hard ceiling. It does not yet implement this decision completely: durable context is keyed by `gameInstanceId` rather than `playableStateNamespaceId`, and a first-party explicit logout path can leave private context replayable. Previous documentation contradicted the implemented oversized-entry behavior; this decision resolves the target in favor of a strict ceiling without claiming complete envelope-accounting and marker proof.
+
 ## Decision Record
 
 - Human review status: Completed
@@ -43,7 +47,7 @@ The durable context is scoped by `<tenantId, playableStateNamespaceId, character
 
 FireMUD replays private context only after current authentication and authorization establish access to that exact tenant, playable-state namespace, and character. An explicit gameplay logout, character ownership transfer, or loss of replay authorization clears the context or suppresses its private replay. Retention alone never grants access.
 
-After an authorized reconnect, FireMUD presents the retained semantic context in canonical order, then obtains a fresh authoritative `LOOK` and emits one current prompt. The fresh reconstruction, not the retained window, defines current gameplay state.
+After an authorized reconnect, FireMUD presents the retained semantic context in canonical order, then obtains a fresh authoritative `LOOK` and emits exactly one reconnect prompt only when both effective `firemud.presentation.prompt.enabled` and `firemud.presentation.prompt.emit-after-reconnect-restore` are enabled; if either is disabled, it emits zero reconnect prompts. When enabled, duplicate-prevention still ensures one prompt. The fresh reconstruction, not the retained window, defines current gameplay state. Prompt-setting precedence is owned by [Input, Output, and Presentation](../system-architecture-input-output-and-presentation.md#prompt-behavior).
 
 ### Strict Bounds
 
@@ -61,7 +65,7 @@ A complete Player Transcript Archive and Export remains a separate future featur
 
 - Reconnect remains understandable for Telnet and structured clients without claiming impossible delivery certainty.
 - Recent context survives runtime instance replacement because it follows the durable playable-state namespace.
-- A player may see a repeated line or miss output that was never retained; current state is repaired by fresh `LOOK` and prompt reconstruction.
+- A player may see a repeated line or miss output that was never retained; current state is repaired by fresh `LOOK` and, when both effective reconnect-prompt settings are enabled, exactly one prompt reconstruction.
 - Private replay fails closed after logout, ownership transfer, or lost authorization.
 - The hard byte ceiling is operationally trustworthy even for an unusually large single output.
 - Redis may accelerate replay but cannot be the source of truth for the promised durable window.
@@ -75,7 +79,7 @@ Assign delivery identities to outbound output, require client acknowledgements, 
 
 ### No Retained Context
 
-Reconnect with only a fresh `LOOK` and prompt. This is simpler and avoids replay ambiguity, but players lose useful conversation and action context after an ordinary transport interruption. The bounded semantic window provides substantial UX value without claiming delivery guarantees.
+Reconnect with only a fresh `LOOK` and the effective reconnect-prompt result (exactly one prompt when both prompt settings are enabled, otherwise zero). This is simpler and avoids replay ambiguity, but players lose useful conversation and action context after an ordinary transport interruption. The bounded semantic window provides substantial UX value without claiming delivery guarantees.
 
 ### Complete or Player-Selected Transcript Archive
 
@@ -87,9 +91,7 @@ Key the context by `gameInstanceId`. This mirrors the current implementation but
 
 ## Implementation and Proof Obligations
 
-The current implementation substantially persists replay-eligible structured entries in ordered `resume_transcript_entry` rows and uses Redis only as a best-effort cache. Existing proof covers significant durable retention and replay behavior, including omission of one entry that cannot fit beneath the hard ceiling. It does not yet implement this decision completely: durable context is keyed by `gameInstanceId` rather than `playableStateNamespaceId`, and a first-party explicit logout path can leave private context replayable. Previous documentation contradicted the implemented oversized-entry behavior; this decision resolves the target in favor of a strict ceiling without claiming complete envelope-accounting and marker proof.
-
-Proof must cover runtime instance replacement within one playable-state namespace, isolation between production and playtest namespaces, Redis loss, database restart, ordering, eviction at soft and hard bounds, a single oversized entry, and a bounded omission marker. It must also cover repeated output, unavailable output, context followed by fresh `LOOK` and exactly one current prompt, explicit logout, ownership transfer, authorization loss, cross-tenant and cross-namespace denial, expiry, and rendering for Telnet and structured clients.
+Proof must cover runtime instance replacement within one playable-state namespace, isolation between production and playtest namespaces, Redis loss, database restart, ordering, eviction at soft and hard bounds, a single oversized entry, and a bounded omission marker. It must also cover repeated output, unavailable output, context followed by fresh `LOOK` and exactly one current prompt when both effective reconnect-prompt settings are enabled, zero reconnect prompts when either is disabled, explicit logout, ownership transfer, authorization loss, cross-tenant and cross-namespace denial, expiry, and rendering for Telnet and structured clients.
 
 UX proof must verify that no client labels the context as missed messages or implies delivery acknowledgement. Privacy proof must demonstrate that retained bytes cannot be replayed after authority changes even if physical deletion or cache invalidation is delayed.
 
@@ -99,5 +101,5 @@ Entry schemas, rendering projections, cache shape, byte defaults, expiry default
 
 ## Required Documentation Alignment
 
-- `design/architecture/system-architecture-input-output-and-presentation.md`
-- `design/architecture/system-architecture-reconnection.md`
+- [`design/architecture/system-architecture-input-output-and-presentation.md`](../system-architecture-input-output-and-presentation.md)
+- [`design/architecture/system-architecture-reconnection.md`](../system-architecture-reconnection.md)

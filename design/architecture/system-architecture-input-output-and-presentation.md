@@ -215,7 +215,7 @@ This means FireMUD should usually avoid a blanket rule like "flush all client ou
 
 - ordinary command results and urgent output flush immediately
 - tiny burst coalescing applies only where it reduces prompt or status chatter
-- reconnect restore still ends with one fresh prompt after semantic recent-context rendering and fresh `LOOK`
+- reconnect restore still ends with one fresh prompt after semantic recent-context rendering and fresh `LOOK` when both effective reconnect-prompt settings are enabled; if either is disabled, it emits no reconnect prompt
 - explicit commands like `LOOK` usually still create a prompt opportunity, but the prompt pipeline decides whether to emit immediately, append to a trailing burst, or suppress because one was just emitted moments ago
 - explicit view/boundary commands such as `LOOK` and accepted non-redraw `PLAY` may still force prompt retention inside the small prompt window so classic command-completion behavior stays crisp
 
@@ -267,7 +267,7 @@ For the current architecture, that means:
 - every replay-eligible entry is appended to that durable bounded context, including output that would otherwise fall out of a hot reconnect cache;
 - a resume entry may keep derived rendered text alongside the structured entry so Telnet and generic WebSocket replay remain simple;
 - Redis may cache the current resume window for reconnect speed, but it is not the source of truth and a Redis reset must not discard the retained resume context;
-- after authorized reconnect completes fresh `LOGIN` + `PLAY`, FireMUD may render retained context in ordering-token order, then obtains a fresh authoritative `LOOK` and emits exactly one current prompt; explicit gameplay `LOGOUT` terminates the binding and suppresses its private replay, so a later `LOGIN` + `PLAY` does not replay context from that terminated binding;
+- after authorized reconnect completes fresh `LOGIN` + `PLAY`, FireMUD may render retained context in ordering-token order, then obtains a fresh authoritative `LOOK` and emits exactly one reconnect prompt only when both effective `firemud.presentation.prompt.enabled` and `firemud.presentation.prompt.emit-after-reconnect-restore` are enabled; if either is disabled, it emits zero reconnect prompts. Explicit gameplay `LOGOUT` terminates the binding and suppresses its private replay, so a later `LOGIN` + `PLAY` does not replay context from that terminated binding;
 - context may repeat output already shown or omit output not retained/available; it is not an acknowledgement, exact missed-message list, client-input history, or complete transcript archive;
 - prompt/status output remains outside ordinary transcript persistence unless a future explicit transcript policy says otherwise.
 
@@ -288,7 +288,7 @@ The byte bound is deterministic: each retained entry costs the UTF-8 byte length
 
 ### Separate history features
 
-The resume transcript is not a command-input history or a complete player archive.
+The bounded durable semantic recent context is not a command-input history or a complete player archive.
 
 - [`HISTORY [count]`](./system-architecture-player-command-model.md#command-history) is a live, separate optional safe command-input history. It records only successfully accepted safe commands rather than screen output; unknown, malformed, rejected, and secret-bearing input is never history data. The effective tenant/game policy owns its bounded retention and count limits.
 - A future Player Transcript Archive and Export feature may retain the complete player-visible transcript as append-only archive segments for a finite tenant/game-configured period. It must preserve the canonical structured entries with derived rendered text for export, let players obtain an export before FireMUD-side expiry, and remain separate from the small resume context. The first export surface should be a FireMUD-managed downloadable artifact; arbitrary external destinations require later credential, privacy, retry, and deletion design.
@@ -336,7 +336,7 @@ The latter is the player-presentation contract this document standardizes.
 
 ### Causal `LOOK` composition
 
-`LOOK` is a composed presentation read and uses the causal-floor contract in [ADR 0059](./decisions/adr-0059-causal-floor-cross-service-presentation-reads.md). Game Session supplies the requested scope and epoch plus a causal floor; World and Entity must each return the same tenant/namespace/region/room scope and epoch, prove `servedThroughTickId >= requestedFloor`, and return their own opaque component version. Game Logic rejects, retries, or fails the composition when scope/epoch or floor evidence is missing or mismatched. Component versions are evidence identifiers only: they are never compared numerically, and numeric version skew or equality is not a correctness fence. A current static scope token may remain useful for scope checks but is not temporal proof.
+`LOOK` is a composed presentation read whose target behavior uses the causal-floor contract in [ADR 0059](./decisions/adr-0059-causal-floor-cross-service-presentation-reads.md). The target `CausalReadFence` identity is at least `{tenantId, gameInstanceId, regionId, roomInstanceId, regionEpoch, committedTickId}`. `playableStateNamespaceId` and `playableStateScope` may accompany broader validated request/admission context, but they are not runtime fence identity. Game Session supplies the requested fence; World and Entity must each return the same tenant/game-instance/region/room scope and epoch, prove `servedThroughTickId >= requestedFloor`, and return their own opaque component version. Game Logic rejects, retries, or fails the composition when scope/epoch or floor evidence is missing or mismatched. Component versions are evidence identifiers only: they are never compared numerically, and numeric version skew or equality is not a correctness fence. The current `ResolveLook`/World/Entity request path remains floor-free and returns only deterministic scope markers, so this propagation and participant proof are target behavior rather than current implementation.
 
 ---
 
@@ -436,11 +436,13 @@ Future movement/combat presentation policy may also treat "in combat" as a first
 
 Prompt behavior should be configurable and capability-aware.
 
+Reconnect prompt precedence is an effective-settings rule. After authorized semantic recent-context restoration and a fresh authoritative `LOOK`, the reconnect path emits exactly one reconnect prompt only when both `firemud.presentation.prompt.enabled` and `firemud.presentation.prompt.emit-after-reconnect-restore` resolve to enabled; if either effective setting is disabled, it emits zero reconnect prompts. When enabled, this preserves the existing duplicate-prevention rule. The two settings use the normal layered precedence in the [Settings Model](./system-architecture-settings-model.md); this rule does not change ordinary prompt composition or coalescing.
+
 Canonical default behavior:
 
 - prompts are coalesced after short output bursts
 - prompts are not stored in the reconnect transcript buffer
-- reconnect restores transcript context first, then a fresh gameplay redraw such as `LOOK`, then one fresh prompt
+- reconnect restores transcript context first, then a fresh gameplay redraw such as `LOOK`, then one fresh prompt when both effective reconnect-prompt settings are enabled, or zero reconnect prompts when either is disabled
 - first-party web and MCP-aware clients may consume prompt/state as structured data without showing prompt text in the main transcript
 
 Prompts should also remain compatible with future game-defined and player-configurable prompt composition. Different games may expose different status fields, and players may want to choose which fields appear in their text prompt or first-party UI status display. That future flexibility is another reason prompt/state should remain a structured output type rather than being treated as ordinary transcript text.
@@ -458,7 +460,7 @@ They should still benefit from:
 - color-mode settings
 - `BRIEF` filtering
 - coalesced prompts
-- bounded semantic recent-context restoration followed by a fresh authoritative `LOOK` and exactly one prompt
+- bounded semantic recent-context restoration followed by a fresh authoritative `LOOK` and exactly one prompt when both effective reconnect-prompt settings are enabled, or zero reconnect prompts when either is disabled
 
 ### First-party web
 
