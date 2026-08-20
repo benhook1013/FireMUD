@@ -91,6 +91,14 @@ When changing Redis usage or adding prefixes here, follow the [Redis Design Chec
 - `world_instance_lifecycle_lock`, or equivalent fenced token, enforces single-writer lifecycle transitions per `(tenantId, gameInstanceId)`.
 - `character_location` records the current room for each character, including instance occupancy.
 
+### Replacement cutover hold ownership
+
+World Management also owns a separate durable one-shot cutover hold for replacement routing. The hold is not a `world_instance` lifecycle state and does not transfer lifecycle ownership to Game Session. Its conceptual record binds one opaque `cutoverHoldId` and equality-only `cutoverHoldFence` to `preparedVersionUpgradeId`, the exact `controlPlaneRequestId` and normalized digest, tenant/realm selector, stable `playableStateNamespaceId`, source and target instance/version pairs, exact source and target `ACTIVE` lifecycle state/epochs, expected admission-pointer version, and the authoritative World-DB `expiresAt`. One execution allocates that identity once; retries and owner recovery reuse it.
+
+After target activation, the World local transaction locks source and target lifecycle rows in stable order, checks both exact active epochs and the complete bound identity, rejects a conflicting nonterminal hold, and commits the hold. Source and target termination CAS operations include absence of a nonterminal hold as a World-local predicate. A held instance remains pending/retryable for termination and cannot advance its lifecycle epoch. The hold has its own terminal/reconciliation states, including finalized, safely aborted, and `RECONCILIATION_REQUIRED`, without introducing another lifecycle state.
+
+Game Session binds the hold identity/fence and exact lifecycle proofs into its local pointer/audit/prepared-execution/source-cleanup/drain-fence transaction. World finalizes the hold only after authoritative post-swap Game Session readback proves that transaction committed. Abort requires owner evidence that the pointer transaction did not commit and the prior pointer remains authoritative; contradictory or unavailable evidence keeps the hold unresolved and termination-blocking. `expiresAt` only triggers diagnostics or repair and never auto-releases an unresolved hold. The current implementation has no hold record, coordinated wire/RPC surface, termination predicate, or focused proof; those remain target implementation gaps.
+
 ### Runtime configuration and events
 
 - `generation_rule_template`, or equivalent version-scoped tables, stores publish-affecting procedural-generation inputs keyed by `(tenantId, versionId)` for Draft/Published design data.

@@ -75,12 +75,12 @@ Initial-slice row-family inventory:
 
 Replacement classification rule:
 
-- Every Entity-owned family must be explicitly registered as `S1`, `S2`, or `S3` for the exact namespace/version transition. Unknown, unowned, or unclassified families block cutover; they are never treated as S3 by default.
+- Every Entity-owned family must be explicitly registered as `S1`, `S2`, or `S3` for the exact namespace/scope/version transition. Unknown, unowned, or unclassified families block cutover; they are never treated as S3 by default.
 - Replacement-instance workflows must not infer template remaps from names, display text, or best-effort similarity. A supplied or echoed `remapSetId` is only a reference to resolve; it is not proof that Entity validated the exact source/target mapping or applied it successfully. Only owner-validated and owner-applied mapping evidence may satisfy `S2` compatibility.
 
 Implementation notes:
 
-- The current cutover-validation RPC is `ValidateEntityUpgradeMappings(tenantId, sourceGameInstanceId, targetVersionId, remapSetId?)`; the target contract must additionally bind `playableStateNamespaceId`, active-instance authorization, and the exact source/target versions. The current signature and shallow implementation do not prove the target contract.
+- The current cutover-validation RPC is `ValidateEntityUpgradeMappings(tenantId, sourceGameInstanceId, targetVersionId, remapSetId?)`; the target contract must additionally bind the owner-resolved `playableStateNamespaceId` and `playableStateScope`, active-instance authorization, and the exact source/target versions. Entity validates that scope evidence; it never derives scope from the opaque namespace. The current signature and shallow implementation do not prove the target contract.
 - The live implementation enumerates tenant-surviving families (`character`, `inventory`, `character_equipment`, `character_friend`) plus the currently persisted families requiring holder classification (`room_ground_inventory`, `item_instances`, `item_stacks`, `container_instances`).
 - `item_instances` and `item_stacks` are not table-wide `S3` families: each row follows its holder/container graph. A durable player or durable namespace-backed container holder is `S1` or `S2` according to template-remap requirements; only a synthetic room-ground holder or another explicitly instance-scoped holder is `S3`. Termination cleanup must apply the holder/container and namespace/scope predicate and must not delete all rows in either table by `gameInstanceId` alone. The current table-level enumeration does not yet prove this predicate, so this remains an implementation/proof gap rather than permission to classify durable inventory as `S3`.
 - `character` and `character_friend` rows are supported `S1` survivor state at the current boundary. Their presence does not require a remap set by itself.
@@ -89,22 +89,22 @@ Implementation notes:
 
 Entity upgrade validation minimum contract:
 
-- The service must expose a cutover-validation API that accepts `tenantId`, `playableStateNamespaceId`, `sourceGameInstanceId`, exact `sourceVersionId` and `targetVersionId`, and optional `remapSetId`, and proves that the source instance is the active authorized runtime for that namespace. The target replacement requirements are this namespace/version-bound classification, holder-aware S1/S2/S3 evidence, and owner-validated/applied mapping evidence; they are distinct from the current shallow `ValidateEntityUpgradeMappings` result, which may only enumerate rows and echo a remap id.
+- The service must expose a cutover-validation API that accepts `tenantId`, owner-resolved `playableStateNamespaceId` and `playableStateScope`, `sourceGameInstanceId`, exact `sourceVersionId` and `targetVersionId`, and optional `remapSetId`, and proves that the source instance is the active authorized runtime for that namespace/scope. The target replacement requirements are this namespace/scope/version-bound classification, holder-aware S1/S2/S3 evidence, and owner-validated/applied mapping evidence; they are distinct from the current shallow `ValidateEntityUpgradeMappings` result, which may only enumerate rows and echo a remap id.
 - The response must enumerate the entity-owned row families checked, the referenced template identifiers, and per-family outcomes `COMPATIBLE`, `REQUIRES_MAPPING`, or `INCOMPATIBLE`.
 - If the service currently has no `S2` rows for a given namespace/source instance, it must report that explicitly rather than collapsing the result into a generic success; unknown or unclassified families must produce a blocking result.
 
 Cutover fence contract:
 
-- Replacement-instance validation and migration must run against a durable, fenced snapshot of Entity Management state for the source `playableStateNamespaceId` and active `gameInstanceId`; validating against Redis-staged or partially flushed deferred writes is not allowed.
-- Before invoking entity cutover validation or snapshot/export for a source namespace, Game Session must quiesce gameplay admission and mutation for that namespace's active `gameInstanceId`.
-- Entity Management must then flush all deferred `S1` and `S2` writes for that source namespace to PostgreSQL and return a committed fence token or epoch that identifies the durable state used for validation.
+- Replacement-instance validation and migration must run against a durable, fenced snapshot of Entity Management state for the source `playableStateNamespaceId`, owner-resolved `playableStateScope`, and active `gameInstanceId`; validating against Redis-staged or partially flushed deferred writes is not allowed.
+- Before invoking entity cutover validation or snapshot/export for a source namespace, Game Session must quiesce gameplay admission and mutation for that namespace/scope's active `gameInstanceId`.
+- Entity Management must then flush all deferred `S1` and `S2` writes for that source namespace/scope to PostgreSQL and return a committed fence token or epoch that identifies the durable state used for validation.
 - The validation response must either include that fence token/epoch or be bound to an API contract that makes the same durable fence observable to the caller.
 - `durableFenceToken` is an opaque server-issued value. Callers may persist and compare it for equality/identity, but they must not infer ordering, encode semantics, or generate successor tokens client-side unless a future API explicitly adds those guarantees.
 - If Entity Management cannot flush deferred durable state for the source instance, cutover validation must fail closed rather than validating stale database rows.
 
 Illustrative responses for the current live first slice:
 
-- Current first-cut response with an incomplete, non-authoritative table-level enumeration. The `item_instances` and `item_stacks` entries below mean only rows held by synthetic room-ground containers; they do not classify every row in either table as `S3`.
+- Current first-cut response with an incomplete, non-authoritative table-level enumeration. It intentionally predates the target namespace/scope-bound request and fence fields. The `item_instances` and `item_stacks` entries below mean only rows held by synthetic room-ground containers; they do not classify every row in either table as `S3`.
 
 ```json
 {
@@ -133,6 +133,8 @@ Target-state illustrative responses:
 ```json
 {
   "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
+  "playableStateNamespaceId": "2f1a1b6c-4a7d-4bc0-a7b9-6d4e5f8a9c01",
+  "playableStateScope": "PLAYABLE_STATE_SCOPE_SHARED",
   "sourceGameInstanceId": "2e3ee139-a6e8-44ad-b840-891b22c2255b",
   "targetVersionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
   "durableFenceToken": "8b7e1c4a-2d6f-4c91-a5b8-7e3d9f0a6c12",
@@ -156,6 +158,8 @@ Target-state illustrative responses:
 ```json
 {
   "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
+  "playableStateNamespaceId": "2f1a1b6c-4a7d-4bc0-a7b9-6d4e5f8a9c01",
+  "playableStateScope": "PLAYABLE_STATE_SCOPE_SHARED",
   "sourceGameInstanceId": "2e3ee139-a6e8-44ad-b840-891b22c2255b",
   "targetVersionId": "8e65e4a1-5b49-4c31-9f27-3d0b8c6a1e74",
   "durableFenceToken": "c4a9e6f1-7b2d-4d83-9c15-6e0f2a8b4d77",
@@ -177,6 +181,8 @@ Target-state illustrative responses:
 ```json
 {
   "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
+  "playableStateNamespaceId": "2f1a1b6c-4a7d-4bc0-a7b9-6d4e5f8a9c01",
+  "playableStateScope": "PLAYABLE_STATE_SCOPE_SHARED",
   "sourceGameInstanceId": "2e3ee139-a6e8-44ad-b840-891b22c2255b",
   "targetVersionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
   "durableFenceToken": "f1d6a3c8-9e24-4b70-b5f2-8c1a6d9e3f04",

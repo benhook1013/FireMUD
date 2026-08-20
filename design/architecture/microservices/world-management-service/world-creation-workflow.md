@@ -192,6 +192,12 @@ Activation and termination share one lifecycle fence per `(tenantId, gameInstanc
 - Termination acquires the same fence before committing `PREPARING -> TERMINATING`, `FAILED_PRE_ACTIVATION -> TERMINATING`, or `ACTIVE -> TERMINATING`.
 - If both workflows race, only the storage-level CAS against the current state and epoch may transition lifecycle state; stale-token attempts fail and must retry from fresh state.
 
+## Replacement Cutover Hold and Termination Ordering
+
+Replacement cutover has one additional World-owned coordination record separate from the lifecycle row. After the target `PREPARING -> ACTIVE` CAS commits, World allocates one opaque `cutoverHoldId` and equality-only `cutoverHoldFence` for the execution, or reuses the exact existing pair on retry. It locks source and target lifecycle rows in a stable order, requires the exact source and target `ACTIVE` state/epoch proofs and the complete prepared-upgrade/request/digest/namespace/realm/instance/version/pointer-version identity, rejects a conflicting nonterminal hold, and commits the hold with World-database `expiresAt`. This record is a cutover hold, not a new lifecycle state or an ownership transfer.
+
+Every source or target termination CAS includes absence of a nonterminal cutover hold for that instance. While held, termination is pending/retryable and cannot advance the lifecycle epoch. Game Session binds the hold identity/fence and exact lifecycle proofs into its local pointer, audit, prepared-execution/result, source-cleanup, and drain-fence transaction. World finalizes the hold only after authoritative Game Session post-swap readback proves that transaction committed. A lost response is reconciled by the exact hold identity and owner-local reads; abort is permitted only with proof that the pointer transaction did not commit and the prior pointer remains authoritative. Contradictory or unavailable evidence leaves `RECONCILIATION_REQUIRED`, which continues to block termination. `expiresAt` is diagnostic/repair input only and never auto-releases an unresolved hold. The current workflow lacks this hold record, coordinated wire/RPC surface, and focused proof; no code or schema change is implied here.
+
 ## Version Switching and Instance Data
 
 A `gameInstanceId` is always tied to a single `runtime_version` and the
