@@ -81,7 +81,7 @@ Presentation fields, compatibility relations, and occupancy models may evolve th
 
 ## Required Documentation Alignment
 
-- `design/architecture/microservices/game-design-service/item-equipment-balancing.md`
-- `design/architecture/microservices/game-design-service/world-editing-tools.md`
-- `design/architecture/microservices/entity-management-service/runtime-and-data.md`
-- `design/architecture/microservices/entity-management-service/README.md`
+- [design/architecture/microservices/game-design-service/item-equipment-balancing.md](../microservices/game-design-service/item-equipment-balancing.md)
+- [design/architecture/microservices/game-design-service/world-editing-tools.md](../microservices/game-design-service/world-editing-tools.md)
+- [design/architecture/microservices/entity-management-service/runtime-and-data.md](../microservices/entity-management-service/runtime-and-data.md)
+- [design/architecture/microservices/entity-management-service/README.md](../microservices/entity-management-service/README.md)

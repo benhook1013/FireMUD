@@ -42,7 +42,7 @@ Current `06.3` / item-instance note:
 - eligible stackable items now use holder-local `item_stacks` records with compatibility and stack-family validation; non-stackable item-instance identity remains distinct;
 - non-stackable remains the safe default for ordinary physical items, especially equipment, containers, and other stateful items.
 
-Current equipment-schema note:
+Target equipment-schema requirements:
 
 - slots and body layouts are game-authored versioned concepts, not platform-global enums;
 - item templates use `equipmentSlot` as their default target slot for the current player command loop and may use `equipmentSlotGroupKey` to constrain compatibility against the authored slot definition;

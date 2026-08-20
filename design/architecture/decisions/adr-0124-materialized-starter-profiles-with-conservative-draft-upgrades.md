@@ -105,9 +105,9 @@ Baseline storage format, planner presentation, and asset-specific merge assistan
 
 ## Required Documentation Alignment
 
-- `design/architecture/microservices/game-design-service/game-templates.md`
-- `design/architecture/microservices/game-design-service/version-control.md`
-- `design/architecture/microservices/game-design-service/world-editing-tools.md`
-- `design/architecture/system-architecture-versioning-runtime.md`
-- `design/architecture/decisions/adr-0020-scoped-domain-and-operational-identifiers.md`
-- `design/architecture/decisions/adr-0082-semantic-boundary-for-cross-service-identifier-migration.md`
+- [design/architecture/microservices/game-design-service/game-templates.md](../microservices/game-design-service/game-templates.md)
+- [design/architecture/microservices/game-design-service/version-control.md](../microservices/game-design-service/version-control.md)
+- [design/architecture/microservices/game-design-service/world-editing-tools.md](../microservices/game-design-service/world-editing-tools.md)
+- [design/architecture/system-architecture-versioning-runtime.md](../system-architecture-versioning-runtime.md)
+- [design/architecture/decisions/adr-0020-scoped-domain-and-operational-identifiers.md](adr-0020-scoped-domain-and-operational-identifiers.md)
+- [design/architecture/decisions/adr-0082-semantic-boundary-for-cross-service-identifier-migration.md](adr-0082-semantic-boundary-for-cross-service-identifier-migration.md)
