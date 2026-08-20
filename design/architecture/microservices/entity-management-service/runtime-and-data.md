@@ -138,6 +138,7 @@ Target-state illustrative responses:
   "playableStateNamespaceId": "2f1a1b6c-4a7d-4bc0-a7b9-6d4e5f8a9c01",
   "playableStateScope": "PLAYABLE_STATE_SCOPE_SHARED",
   "sourceGameInstanceId": "2e3ee139-a6e8-44ad-b840-891b22c2255b",
+  "sourceVersionId": "1f6e7a82-3c4d-4b91-8a25-6d0e9f3b7c14",
   "targetVersionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
   "durableFenceToken": "8b7e1c4a-2d6f-4c91-a5b8-7e3d9f0a6c12",
   "checkedFamilies": [
@@ -163,6 +164,7 @@ Target-state illustrative responses:
   "playableStateNamespaceId": "2f1a1b6c-4a7d-4bc0-a7b9-6d4e5f8a9c01",
   "playableStateScope": "PLAYABLE_STATE_SCOPE_SHARED",
   "sourceGameInstanceId": "2e3ee139-a6e8-44ad-b840-891b22c2255b",
+  "sourceVersionId": "1f6e7a82-3c4d-4b91-8a25-6d0e9f3b7c14",
   "targetVersionId": "8e65e4a1-5b49-4c31-9f27-3d0b8c6a1e74",
   "durableFenceToken": "c4a9e6f1-7b2d-4d83-9c15-6e0f2a8b4d77",
   "checkedFamilies": [
@@ -186,6 +188,7 @@ Target-state illustrative responses:
   "playableStateNamespaceId": "2f1a1b6c-4a7d-4bc0-a7b9-6d4e5f8a9c01",
   "playableStateScope": "PLAYABLE_STATE_SCOPE_SHARED",
   "sourceGameInstanceId": "2e3ee139-a6e8-44ad-b840-891b22c2255b",
+  "sourceVersionId": "1f6e7a82-3c4d-4b91-8a25-6d0e9f3b7c14",
   "targetVersionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
   "durableFenceToken": "f1d6a3c8-9e24-4b70-b5f2-8c1a6d9e3f04",
   "checkedFamilies": [

@@ -10,7 +10,7 @@ This tracker is the permanent reader-facing implementation record for world runt
 
 ## Packet 4 Status and Proof Gaps
 
-- `GR-2.1` / `AR-3.1`: [ADR 0122](../../architecture/decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md) requires world runtime state to distinguish the durable playable-state namespace from a disposable instance and to classify owner data before replacement. Current world instance and lifecycle evidence remains partial; no exhaustive S1/S2/S3 mapping or cleanup proof is claimed.
+- `GR-2.1` / `AR-3.1`: [ADR 0122](../../architecture/decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md) requires world runtime state to distinguish the durable playable-state namespace and `playableStateScope` from a disposable instance and to classify owner data before replacement. Current world instance and lifecycle evidence remains partial; no exhaustive S1/S2/S3 mapping or cleanup proof is claimed.
 - `AR-3.1`: [ADR 0123](../../architecture/decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md) records the database lifecycle row/epoch and Temporal coordination boundary. Existing prepare/activate/terminate caveats, including blocking calls and missing stages, remain active gaps.
 
 These links add decision provenance only; they do not upgrade world runtime, lifecycle, or Draft mutation status.

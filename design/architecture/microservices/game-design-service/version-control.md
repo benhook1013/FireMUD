@@ -101,8 +101,11 @@ services as the source of truth for the current Draft template graphs:
   durably applied for that scope. Services may keep revision-level ledgers
   internally, but publish gates and reconciler comparisons must use
   commit-level convergence only. The reconciler updates `designSyncStatus` back
-  to `IN_SYNC` once all participating services report digests matching the
-  commit being published.
+  to `IN_SYNC` only when the durable commit record and synchronized commit fence
+  identify the same commit, every required durable per-owner outcome is
+  `APPLIED` (or an equivalent successful terminal state) for and matches that
+  exact commit and digest, and every participating service reports the matching
+  exact digest for that commit.
 - The `PublishVersion` workflow must verify that `designSyncStatus == IN_SYNC`
   before starting the durable `publish` workflow. Versions that are out of sync cannot be
   published until reconciliation succeeds.
