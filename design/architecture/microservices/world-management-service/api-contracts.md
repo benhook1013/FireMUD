@@ -95,7 +95,7 @@ Target illustrative responses (field names remain conceptual until the coordinat
 ```json
 {
   "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
-  "playableStateNamespaceId": "shared-live",
+  "playableStateNamespaceId": "0d47c2a7-9b3d-4f52-8a11-6e0c4d88b3f7",
   "sourceGameInstanceId": "2e3ee139-a6e8-44ad-b840-891b22c2255b",
   "sourceVersionId": "54ce6198-ccea-4f94-8541-ec8ca322070d",
   "targetGameInstanceId": "4862ba66-fda2-490a-97e9-28358fbd0888",
@@ -122,7 +122,7 @@ Target illustrative responses (field names remain conceptual until the coordinat
 ```json
 {
   "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
-  "playableStateNamespaceId": "shared-live",
+  "playableStateNamespaceId": "0d47c2a7-9b3d-4f52-8a11-6e0c4d88b3f7",
   "sourceGameInstanceId": "2e3ee139-a6e8-44ad-b840-891b22c2255b",
   "sourceVersionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
   "targetGameInstanceId": "f4ba2a7a-ee8f-43eb-af1a-749c07773a3a",

@@ -190,15 +190,17 @@ These checks are enforced via the Lua Script Registry descriptors, generated key
 Session scripts operate only on gameplay session keys that share one `{tenantGameplayTag}` and do **not** run under a region lease. The normal mutating set is:
 
 - `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`
-- `session:game:index:character:{tenantGameplayTag}:<gameInstanceId>:<characterId>`
+- `session:game:index:character:{tenantGameplayTag}:<playableStateNamespaceId>:<playableStateScope>:<characterId>` — the target one-active-character key for `{tenantId, playableStateNamespaceId, playableStateScope, characterId}`; its value/evidence retains `sessionId`, `gameInstanceId`, and `bindingGeneration`. The existing `<gameInstanceId>:<characterId>` index is current implementation drift.
 - canonical tenant-scoped account index: `session:game:index:account-tenant:{tenantGameplayTag}:<accountId>`
 - `session:game:index:tenant:{tenantGameplayTag}`
 
 `session:game:index:account-tenant:{tenantGameplayTag}:<accountId>` is the canonical tenant-scoped account index key. It must not be shortened to `session:game:index:account:<accountId>`; that is a separate cross-tenant discovery index and is never part of a shard-local Lua invocation.
 
+The target one-active-character binding owner and takeover semantics are defined in [Session Behavior](./system-architecture-session-behavior.md#session-and-identity-management); these Lua rules record only the shard-local key and CAS consequences.
+
 These scripts must instead validate session-specific invariants:
 
-- **Session key and binding** – verify that the target session key exists and, where applicable, that it is bound to the expected `characterId`/`tenantId` or token hash provided in `ARGV`.
+- **Session key and binding** – verify that the target session key exists and, where applicable, that it is bound to the expected `{tenantId, playableStateNamespaceId, playableStateScope, characterId}` uniqueness identity plus the value/evidence `{sessionId, gameInstanceId, bindingGeneration}` or token hash provided in `ARGV`. The current runtime's `{tenantId, gameInstanceId, characterId}` identity/index is implementation drift and must not be treated as the target key.
 - **Expiry and logical window** – enforce the logical expiry rules described in the session design (for example, do not revive sessions whose logical expiry timestamp has passed, even if the Redis TTL has not).
 - **Optional CAS fields** – when scripts implement compare-and-set semantics on session payloads (for example, update only if a `version` or `lockToken` field matches), they must:
   - Treat mismatched versions as non-mutating outcomes (for example, `"SESSION_VERSION_MISMATCH"`).

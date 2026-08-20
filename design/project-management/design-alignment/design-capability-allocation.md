@@ -169,7 +169,7 @@ This ledger maps canonical product and architecture sources to the stable capabi
 | `design/architecture/decisions/adr-0120-owner-read-first-control-plane-notifications.md` | `SF-1` | `AS-1`, `AR-3`, `PO-1`, `PO-4`, `SF-2` | Accepted |
 | `design/architecture/decisions/adr-0121-historical-broad-dry-run-semantics.md` | `AS-1` | `PO-1`, `PO-2`, `PO-4` | Superseded |
 | `design/architecture/decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md` | `AR-3` | `GR-2`, `GR-3`, `SF-2`, `PO-1` | Accepted |
-| `design/architecture/decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md` | `AR-3` | `SF-2`, `GR-2`, `PO-1`, `GR-1` | Accepted |
+| `design/architecture/decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md` | `AR-3` | `SF-2`, `GR-2`, `PO-1`, `GR-1`, `AS-1` | Accepted |
 | `design/architecture/decisions/adr-0124-materialized-starter-profiles-with-conservative-draft-upgrades.md` | `AR-2` | `AR-1`, `AR-3`, `GR-4`, `EA-3` | Accepted |
 | `design/architecture/decisions/adr-0125-defer-whole-game-portability-and-external-authoring-formats.md` | `AR-1` | `AR-3`, `PO-3`, `SF-2`, `EA-3` | Accepted; review disposition Deferred |
 | `design/architecture/decisions/adr-0126-untrusted-models-and-scoped-authoring-tools.md` | `AR-1` | `AS-1`, `SF-1`, `EA-3`, `PO-4` | Accepted |

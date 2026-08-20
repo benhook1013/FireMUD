@@ -505,7 +505,7 @@ ADR_ALLOCATION_EXPECTATIONS = {
         "AR-3", "Accepted", "GR-2", "GR-3", "SF-2", "PO-1"
     ),
     "design/architecture/decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md": adr_allocation(
-        "AR-3", "Accepted", "SF-2", "GR-2", "PO-1", "GR-1"
+        "AR-3", "Accepted", "SF-2", "GR-2", "PO-1", "GR-1", "AS-1"
     ),
     "design/architecture/decisions/adr-0124-materialized-starter-profiles-with-conservative-draft-upgrades.md": adr_allocation(
         "AR-2", "Accepted", "AR-1", "AR-3", "GR-4", "EA-3"

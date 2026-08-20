@@ -45,7 +45,7 @@ These gRPC entries are the discoverability index for the control-plane contracts
 The eventual creator-facing proto/OpenAPI shape must expose these semantics without treating a private frontend endpoint as a stable public API by accident:
 
 - submitting or accepting a commit/proposal binds its stable identity to the exact base commit, canonical digest of the complete diff, canonical revision order, and complete affected owner/aggregate/scope epoch set;
-- exact replay returns the existing result, while changed-digest identity reuse fails deterministically;
+- exact replay returns the existing result only when every ADR 0129 binding matches: canonical input/mutation, exact base commit, canonical revision order, canonical digest, complete affected owner/aggregate/scope set, and complete expected epoch set. Reusing the identity with any changed or omitted binding field is rejected deterministically as changed-request reuse, even when the digest happens to match;
 - a creator-visible status read reports the overall coordination state and each required owner's durable apply outcome for the exact commit/digest;
 - normal Draft reads return or require the fully synchronized commit fence and do not expose a partial owner application as current Draft truth;
 - stale affected epochs return a typed conflict containing enough current fence/epoch identity to construct a new proposal, but the service never silently rebases or merges it; and

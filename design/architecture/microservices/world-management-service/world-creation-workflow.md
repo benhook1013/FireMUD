@@ -182,7 +182,7 @@ Instance expiry and operator-driven shutdown must use an explicit cross-service 
 - The current first implementation cut now exposes that contract synchronously through `TerminateWorldInstance(tenantId, gameInstanceId, expectedLifecycleEpoch, terminationRequestId)`, with Game Session reading fresh lifecycle state through `GetWorldInstanceLifecycle` immediately before termination.
 - If cleanup fails after admission is already closed, the world remains `TERMINATING` and the same termination workflow identity must retry to convergence instead of restoring the instance to live admission.
 
-`expires_at` jobs must enqueue this termination workflow; they must not hard-delete world rows for a `gameInstanceId` before cross-service cleanup convergence is confirmed.
+`expires_at` jobs for a complete `world_instance` with its own `gameInstanceId` must enqueue this termination workflow; they must not hard-delete world rows before cross-service cleanup convergence is confirmed. Expiry of a legacy zone-child `instance` requires its separate scoped, idempotent cleanup and must not transition or terminate the parent `world_instance` lifecycle.
 
 ## Activation vs Termination Fencing
 

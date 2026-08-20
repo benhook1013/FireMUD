@@ -46,12 +46,7 @@ Example consequence:
 2. Each change is stored as a **revision** linked to the author's account and
    associated with concrete domain objects (rooms, regions, NPCs, items) via
    stable identifiers defined by the owning domain services.
-3. As revisions are committed, Game Design durably records the exact base commit,
-   canonical request or proposal digest, complete affected aggregates/scopes and
-   expected epochs, revision order, and per-owner apply status before coordinating
-   idempotent owner writes. World Management and Entity Management remain
-   authoritative for their Draft template graphs, while Game Design owns the
-   fully synchronized commit fence.
+3. As revisions are committed, Game Design durably records the exact base commit, canonical request or proposal digest, complete affected aggregates/scopes and expected epochs, revision order, and per-owner apply status before coordinating idempotent owner writes. World Management and Entity Management remain authoritative for their Draft template graphs, while Game Design owns the fully synchronized commit fence.
 4. Revisions are grouped into a **version** and published via the durable workflow
    described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
    At publish time, the workflow validates the Draft templates already stored in
@@ -84,7 +79,7 @@ Initial-slice concurrency contract:
 - World Management and Entity Management design APIs must reject the write with a conflict error if the expected epoch does not match the current Draft aggregate state.
 - Every owner must derive or validate the complete scope set required by its typed mutation and reject an omitted containing scope. Epoch comparison, local mutation, epoch advancement, and exact commit/digest ledger recording must occur in one owner-local storage transaction; a service-layer read followed by an unconditional update is not sufficient.
 - Replays of the same `revisionId` remain idempotent; a duplicate delivery with the same already-applied revision must no-op rather than fail conflict.
-- Reusing a commit, request, proposal, or revision identity with different input or digest is rejected rather than treated as a replay. An owner-local apply does not advance the shared Draft fence until every required owner reports the exact commit and digest.
+- Reusing a commit, request, proposal, or revision identity with a different canonical input or mutation, `baseCommitId`, canonical revision order where applicable, complete affected owner/aggregate/scope set, complete expected epoch set, or digest is rejected rather than treated as a replay. Only a replay whose complete bindings match exactly is idempotent. An owner-local apply does not advance the shared Draft fence until every required owner reports the exact commit and digest.
 - Game Design must surface the conflict to the editor as a Draft-write concurrency failure, not silently overwrite the newer state.
 - Publish reconciliation replays commits in commit order and revision order within the commit. It must not reorder concurrent conflicting edits into a synthetic merged result.
 

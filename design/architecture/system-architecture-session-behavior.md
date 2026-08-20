@@ -38,11 +38,11 @@ For account security events, Account alone advances the durable authority tuple,
 
 ## Replacement-State Continuity
 
-[ADR 0122](./decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md) adds a stable `playableStateNamespaceId` to the session's resolved gameplay context. The current session uniqueness key remains `{tenantId, gameInstanceId, characterId}`; target admission, takeover, and resume must additionally prove that this runtime is the active fenced instance for the resolved namespace and must not treat a stale instance binding as durable character identity. [ADR 0123](./decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md) keeps lifecycle row/epoch and cleanup completion in the owning database; a Temporal workflow or Redis session record cannot independently authorize replacement or termination. Existing implementation and proof gaps remain.
+[ADR 0122](./decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md) adds a stable `playableStateNamespaceId` to the session's resolved gameplay context. Target session uniqueness, admission, takeover, and resume use `{tenantId, playableStateNamespaceId, playableStateScope, characterId}` and must additionally prove that the bound `gameInstanceId` is the active fenced instance for that namespace; they must not treat a stale instance binding as durable character identity. The current implementation remains keyed by `{tenantId, gameInstanceId, characterId}` and does not prove the namespace/scope-qualified uniqueness CAS. [ADR 0123](./decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md) keeps lifecycle row/epoch and cleanup completion in the owning database; a Temporal workflow or Redis session record cannot independently authorize replacement or termination. Existing implementation and proof gaps remain.
 
 ## Multi-Client Behavior and Session Takeover
 
-Each gameplay identity can only be controlled by one session at a time, keyed by `{tenantId, gameInstanceId, characterId}`.
+Each gameplay identity can only be controlled by one session at a time. The target uniqueness and CAS owner key is `{tenantId, playableStateNamespaceId, playableStateScope, characterId}`; `gameInstanceId` is the active-runtime binding carried by the generation-qualified value, not durable character identity.
 
 If a new login is received for the same active uniqueness key:
 
@@ -55,6 +55,8 @@ This enables:
 - Clean device handoff.
 - Forced logins (for example "kick and take over").
 - Session continuity with at-most-once edge delivery semantics. In-flight command loss at disconnect boundaries remains possible.
+
+During replacement, a fresh `PLAY` or reconnect for the same namespace/scope/character may take over on the target only through the existing binding-generation CAS. Game Session first fences further command admission on the source binding, reconciles every command already admitted on that source to its durable terminal or authoritative readback state, and then CAS-switches the uniqueness binding to the target with the next `bindingGeneration`; target commands are admitted only after that switch succeeds. Other source-session identities may continue under the ordinary bounded source-drain deadline. Missing or ambiguous reconciliation or a failed CAS leaves the target waiting or fails it closed. This reuses the session binding fence and does not introduce a replacement lease or shorten the general source-drain policy.
 
 Game Session uses Redis locks only to serialize session rebind and takeover operations. Those locks do not authorize a replacement or select the active runtime: replacement authorization still requires the owner-database admission-pointer expected-version CAS, the authoritative lifecycle row and epoch, and fresh namespace-bound active-instance authorization under [ADR 0122](./decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md) and [ADR 0123](./decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md). See [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding) for the serialization boundary.
 
@@ -145,7 +147,7 @@ FireMUD uses distinct lifetimes and invariants for each session type:
 
 Game Session must also maintain bounded authoritative secondary indexes for gameplay bindings so takeover, reconnect, and revocation do not require scans. There are six physical index families in total. The character family is a tenant-scoped uniqueness index; the other five are bounded cutoff/revocation families. Four families are tenant-scoped and share the shard-local session CAS, while the account family is one untagged account-wide key and the issuer family is a finite set of global-per-issuer partitions; both spanning families use the separate repair protocol below:
 
-- `session:game:index:character:{tenantGameplayTag}:<gameInstanceId>:<characterId>` -> `sessionId`
+- `session:game:index:character:{tenantGameplayTag}:<playableStateNamespaceId>:<playableStateScope>:<characterId>` -> `{sessionId, gameInstanceId, bindingGeneration}`
 - `session:game:index:account:<accountId>` -> generation-safe active tenant-qualified `accountIndexMember` set across all tenants for the account
 - `session:game:index:account-tenant:{tenantGameplayTag}:<accountId>` -> active `sessionId` set
 - `session:game:index:tenant:{tenantGameplayTag}` -> active `sessionId` set

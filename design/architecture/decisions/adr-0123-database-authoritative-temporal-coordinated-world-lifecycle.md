@@ -17,7 +17,7 @@ The current first implementation cut has fenced preparation and activation seams
 - Decision date: 2026-07-20
 - Decision key: `MS-GR-WORLD-LIFECYCLE`
 - Primary capability: `AR-3.1` launch, activation, rollout, rollback, and retirement
-- Affected capabilities: `SF-2.4`, `GR-2.1`, `AR-3.3`, `PO-1.1`
+- Affected capabilities: `SF-2.4`, `GR-2.1`, `AR-3.3`, `PO-1.1`, `AS-1.5`, `AS-1.6`
 - Decision owner: FireMUD human product and architecture owner
 
 ## Consultation

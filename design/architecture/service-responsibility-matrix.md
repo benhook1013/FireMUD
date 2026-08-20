@@ -72,10 +72,10 @@ The matrix below is the target participation and ownership contract. `Authoritat
 | Replacement-instance compatibility preflight (`ValidateInstanceCutoverCompatibility`) | ✔ | ✔ | | ✔ | ✔ | | ✔ | | ✔ | | |
 | Authoritative owner: Multi-Tenancy realm catalog and stable playable-state namespace contract (Game Session serves the resolved runtime contract) | | | | ✔ | | | | | | | |
 | Authoritative owner: Game Session runtime realm-catalog and admission-pointer resolution, persistence, and CAS orchestration | | | | ✔ | | | | | | | |
-| Registered owner participation: replacement state-family S1/S2/S3 classification, mapping application, and cleanup acknowledgement (each domain service only for its registered families) | | ✔ | | ✔ | ✔ | | ✔ | | | | |
+| Registered owner participation: replacement state-family S1/S2/S3 classification, mapping application, and cleanup acknowledgment (each domain service only for its registered families) | | ✔ | | ✔ | ✔ | | ✔ | | | | |
 | Diagnostic reader: replacement state-family and cleanup progress (read-only; no lifecycle or cleanup authority) | | | | | | | | | ✔ | | |
 | Authoritative owner: World Management database lifecycle row, monotonic lifecycle epoch, and lifecycle Temporal coordination | | ✔ | | | | | | | | | |
-| Registered owner participation: lifecycle cleanup acknowledgement (each owner performs only its registered local cleanup) | | ✔ | | ✔ | ✔ | | ✔ | | | | |
+| Registered owner participation: lifecycle cleanup acknowledgment (each owner performs only its registered local cleanup) | | ✔ | | ✔ | ✔ | | ✔ | | | | |
 | Diagnostic reader: lifecycle row/epoch, workflow, and per-owner cleanup progress (read-only; no authority) | | | | | | | | | ✔ | | |
 | Authoritative owner: `versionStateEpoch` CAS enforcement | ✔ | | | | | | | | | | |
 | Version-state CAS API invocation for activation/rollback (`versionStateEpoch`) | ✔ | | | ✔ | | | | | ✔ | | |

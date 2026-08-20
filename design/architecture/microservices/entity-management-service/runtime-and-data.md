@@ -58,6 +58,7 @@ Entity Management must classify its runtime persistence surface for cutover and 
 - `S3` entity-owned ephemeral state:
   - synthetic room-ground containers and their contents keyed by `(tenantId, gameInstanceId, roomInstanceId)`;
   - transient containment, encounter-specific entities, corpses, summons, or equivalent rows whose lifecycle is tied to the source `gameInstanceId`;
+  - `entity_tick_state` watermark rows keyed by `(tenantId, gameInstanceId, playableStateScope, regionId, targetAggregateType, entityId)` for the concrete instance/region timeline;
   - any row family explicitly documented as instance-scoped only.
 
 Initial-slice row-family inventory:
@@ -70,6 +71,7 @@ Initial-slice row-family inventory:
 - Durable inventory or character rows that need an approved template remap to remain valid are `S2`.
 - Synthetic room-ground containers keyed by `(tenantId, gameInstanceId, roomInstanceId)` and their containment rows are `S3`.
 - Encounter-scoped NPCs, corpses, summons, temporary containers, and any containment rows tied only to the source `gameInstanceId` are `S3`.
+- `entity_tick_state` rows are `S3` instance/region timeline projections keyed by `{tenantId, gameInstanceId, playableStateScope, regionId, targetAggregateType, entityId}`. The separately validated `playableStateNamespaceId` authorizes mutation of namespace-backed S1/S2 state but is not watermark identity. Termination cleanup removes these rows with their source instance only after already-admitted source effects are reconciled; it must not delete or substitute for the stable root `EffectId`, typed operation/target guards, and request evidence that provide durable S1/S2 replay safety across replacement.
 
 Replacement classification rule:
 
