@@ -29,7 +29,7 @@ The target traffic-plane shape remains three distinct planes: internal infrastru
 - `player traffic plane` – Player-facing HTTP, WebSocket, and Telnet traffic used for gameplay admission and live play.
 - `playable-state namespace` – The stable namespace for durable player/entity state that survives a runtime replacement; it is distinct from a concrete `gameInstanceId`.
 - `lifecycle epoch` – The monotonic database-owned generation fencing lifecycle transitions and stale workflow activity for a world instance.
-- `Draft commit fence` – The Game Design-owned synchronized visibility fence that makes a multi-owner Draft commit visible only after every required owner has recorded its durable application outcome; owner-local rows record outcomes but do not independently control Draft visibility.
+- `Draft commit fence` – The Game Design-owned synchronized visibility fence advances only after every frozen required owner successfully durably applies the exact commit and digest at its expected fencing units; rejected or failed owner outcomes do not advance Draft visibility, and owner-local rows record outcomes but do not independently control visibility.
 - `game-authored equipment vocabulary` – The complete published slot/body-layout vocabulary supplied by the game, with runtime admission failing closed when its schema or mapping is incomplete.
 
 ## Contract Authority Map

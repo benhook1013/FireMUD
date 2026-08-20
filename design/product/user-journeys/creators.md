@@ -117,7 +117,7 @@ Dynamic behavior is implemented via the [Automation & Scripting Service](../../a
 
 Creators experience embedded scripts as part of their authored game version or script-only patch. A successful design publish is followed by a separate runtime-readiness phase; it does not silently change a running game. Linked plugins use the same behavior language and safety limits; publication establishes an immutable plugin version, while instance activation remains a separate compatibility, preflight, and policy-gated creator-visible outcome.
 
-For optional model-assisted authoring, the creator submits a scoped request and receives a proposal against the selected Draft base. The creator can inspect, edit, accept, or reject it like any other Draft change; a model has no direct live-game or storage access. A stale base or conflicting owner change produces a visible conflict/retry outcome rather than a silent merge.
+For optional model-assisted authoring, the creator submits a scoped request and receives a proposal against the selected Draft base. The creator can inspect, edit, accept, or reject it like any other Draft change; a model has no direct live-game or storage access. A proposal becomes stale only when a newer commit overlaps its complete affected aggregate/scope set, including any required containing scopes; a disjoint-scope commit does not invalidate it. An overlapping change produces a visible conflict/retry outcome rather than a silent merge.
 
 ---
 
