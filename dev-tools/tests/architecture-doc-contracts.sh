@@ -454,7 +454,7 @@ def reject_obsolete_gameplay_character_index(path, text):
 
 
 historical_adr_fixture = decision_history_dir / "adr-9999-history-fixture.md"
-historical_adr_fixture_text = "# ADR 9999: Historical Fixture\n\n## Status\n\nSuperseded by ADR 0001\n\nAccount-issued envelope\nrebind-envelope\nsession:game:{tenantInstanceTag}\n"
+historical_adr_fixture_text = "# ADR 9999: Historical Fixture\n\n## Status\n\nSuperseded by ADR 0001\n\nAccount-issued envelope\nrebind-envelope\nsession:game:{tenantInstanceTag}\n" + obsolete_gameplay_character_index + "\n"
 indented_status_heading_fixture_cases = (
     (
         decision_history_dir / "adr-9990-one-space-status-heading-fixture.md",
@@ -655,6 +655,10 @@ reject_obsolete_redis_rebind_envelope(
     historical_adr_fixture_text,
 )
 reject_obsolete_gameplay_session_selector(
+    historical_adr_fixture,
+    historical_adr_fixture_text,
+)
+reject_obsolete_gameplay_character_index(
     historical_adr_fixture,
     historical_adr_fixture_text,
 )
