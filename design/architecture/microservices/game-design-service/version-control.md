@@ -64,9 +64,11 @@ Game Design owns the durable, creator-visible coordination record for every shar
 
 The Game Design Service tracks a derived `designSyncStatus` for each `(tenantId, versionId)`. It is `IN_SYNC` only when the durable commit record, every required owner result, and the synchronized commit fence agree on the exact commit and digest. The `PublishVersion` workflow must verify this state before starting durable publication. The coordinator may use the canonical durable workflow substrate and transactional outbox delivery where appropriate, but it must not claim cross-database atomicity or expose partial application as accepted Draft state.
 
-### Draft Digest and Reconciliation Details
+### Draft Digest and Reconciliation Details (Target State)
 
 Game Design is the canonical owner of publication coordination, release descriptors, and the final release attestation. Domain services remain the canonical owners of their versioned participant data and participant digests. This owner split implements [ADR 0093](../../decisions/adr-0093-game-design-coordinated-digest-attested-content-publication.md); service-local documents link here for their participant and persistence consequences instead of copying the publication contract.
+
+The following eventual-consistency ordering and replay rules are ADR 0129 target-state requirements, not current live ordering. Current `SaveRevision` ordering and its missing durable-coordinator/deduplication gap are recorded in [Game Design API implementation status](api-contracts.md#implementation-status); this section does not repeat those details.
 
 Because design changes often span multiple domain services (for example World
 Management and Entity Management), the system treats the Game Design Service as

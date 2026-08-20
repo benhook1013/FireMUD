@@ -8,7 +8,7 @@ The complete participant-guard contract described here—root `EffectId`, typed 
 
 The current replacement-validation path is also narrower than the target contract: `ValidateEntityUpgradeMappings` does not yet bind the stable `playableStateNamespaceId`, owner-resolved `playableStateScope`, and active-instance authorization to the exact source/target versions, and the live result may echo a supplied `remapSetId` without locally validating or applying its mapping. This is an implementation/proof gap; the echo is not compatibility or cleanup evidence.
 
-At the live enqueue boundary, the absence of `commandOrdinal` and the complete target child identity means current live processing accepts at most one emitted command per work item. Multi-command work is rejected atomically before admission. `automationDispatchId` alone is not a dedupe key; use the complete Command-Handoff Identity for the target contract.
+At the live enqueue boundary, the current Automation implementation expands each enabled command node over its target entity ids, assigns `commandOrdinal`, and enforces configured bounded per-run and per-entity fan-out with atomic rejection before admission when a bound is exceeded. The current path still does not prove complete durable child/target identity or end-to-end fan-out/replay semantics; the target Command-Handoff Identity and its atomic rejection distinction remain required. `automationDispatchId` alone is not a dedupe key; use the complete Command-Handoff Identity for the target contract.
 
 ## Target Replacement Operations
 

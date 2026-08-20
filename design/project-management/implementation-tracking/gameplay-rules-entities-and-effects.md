@@ -118,7 +118,7 @@ Damage, mitigation, resistances, combat timing, body-region resolution, defeat, 
 - Actor-state proof covers the Entity Management evaluator composition and the separate `STATUS` transport path. The documented service checklists also record successful relevant Entity Management, Game Design, Game Logic, Game Session, and cross-service item validation.
 - LOOK-oriented entity proof covers deterministic empty-room and multi-entity listings. World Management test fixtures define rooms and exits, while Entity Management's `firemud.look.rooms` test configuration supplies stable player, NPC, and item transcript data.
 - Inventory query and mutation proof covers hidden implementation-owned inventory containers, room-ground containers, equipment bindings, basic query filtering, successful audited transfers, failed transfers with no committed audit row, and deterministic retry correlation.
-- Current parcel documentation proof (confirmed by the main thread): `./gradlew linkCheck lintMarkdown` passed with 5,320 total links (5,282 OK, 38 excluded, 0 errors) and 480 Markdown files (0 issues); `bash dev-tools/tests/architecture-doc-contracts.sh` passed 184 tests; and `git diff --check` passed. Runtime/smoke proof is not applicable because this parcel changes documentation only.
+- Current parcel documentation proof (parcel-scope run confirmed on 2026-08-20 Pacific/Auckland (2026-08-20 UTC)): `./gradlew linkCheck lintMarkdown` passed with 5,321 total links (5,283 OK, 38 excluded, 0 errors) and 480 Markdown files (0 issues); `bash dev-tools/tests/architecture-doc-contracts.sh` passed 184 tests; and `git diff --check` passed. Runtime/smoke proof is not applicable because this parcel changes documentation only.
 
 ## Active Gaps
 

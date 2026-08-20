@@ -46,8 +46,8 @@ Each gameplay identity can only be controlled by one session at a time. The targ
 
 If a new login is received for the same active uniqueness key:
 
-- The existing session is terminated.
-- The Redis session is rebound to the new socket.
+- Game Session first fences source command admission and all affected region bindings, reconciles every already-admitted command, completes the applicable repair and lease checks, and performs the final admissible `bindingGeneration` CAS.
+- Only after that CAS succeeds is the existing source session terminated and its Redis binding rebound to the new socket; a failed, incomplete, or ambiguous fence, reconciliation, repair, lease check, or CAS leaves the source session and binding usable while the target waits or fails closed.
 - Tick state, command queues, and timers are preserved.
 
 This enables:
