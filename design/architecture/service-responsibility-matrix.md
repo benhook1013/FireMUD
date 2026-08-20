@@ -70,11 +70,11 @@ The matrix below is the target participation and ownership contract. `Authoritat
 | Gameplay WebSocket route definition and routing (`/ws/game/**` canonical route) | | | | | | | | | | | ✔ |
 | Game version activation at runtime | | | | ✔ | | | | | | | |
 | Replacement-instance compatibility preflight (`ValidateInstanceCutoverCompatibility`) | ✔ | ✔ | | ✔ | ✔ | | ✔ | | ✔ | | |
-| Authoritative owner: Multi-Tenancy realm-catalog schema and stable playable-state namespace semantics/classification under ADR 0122 | | | | ✔ | | | | | | | |
-| Authoritative owner: Game Session runtime realm-catalog/admission-pointer resolution, persistence, expected-version CAS, and orchestration (not namespace semantics) | | | | ✔ | | | | | | | |
+| Cross-cutting ADR authority: ADR 0122 stable playable-state namespace semantics and classification; Multi-Tenancy owns realm-catalog schema and stable namespace records | | | | ✔ | | | | | | | |
+| Authoritative owner: Game Session local runtime realm-catalog/admission-pointer resolution, persistence, expected-version CAS, and orchestration (not namespace semantics or classification) | | | | ✔ | | | | | | | |
 | Registered owner participation: replacement state-family S1/S2/S3 classification, mapping application, and cleanup acknowledgment (each domain service only for its registered families) | | ✔ | | ✔ | ✔ | | ✔ | | | | |
 | Diagnostic reader: replacement state-family and cleanup progress (read-only; no lifecycle or cleanup authority) | | | | | | | | | ✔ | | |
-| Authoritative owner: World Management database lifecycle row, monotonic lifecycle epoch, and lifecycle Temporal coordination | | ✔ | | | | | | | | | |
+| Cross-cutting ADR authority: ADR 0123 lifecycle authority and all-owner cleanup convergence; World Management owns the database lifecycle row, monotonic lifecycle epoch, and lifecycle Temporal coordination | | ✔ | | | | | | | | | |
 | Registered owner participation: lifecycle cleanup acknowledgment (each owner performs only its registered local cleanup) | | ✔ | | ✔ | ✔ | | ✔ | | | | |
 | Diagnostic reader: lifecycle row/epoch, workflow, and per-owner cleanup progress (read-only; no authority) | | | | | | | | | ✔ | | |
 | Authoritative owner: `versionStateEpoch` CAS enforcement | ✔ | | | | | | | | | | |

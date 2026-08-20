@@ -71,7 +71,7 @@ See [Account Service](../architecture/microservices/account-service/README.md) f
 - Support for **multi-room game worlds** with region-based navigation.
 - **Instance-based game spaces** allow separate world states (e.g., public production realms, creator-managed playtest forks, private dungeons, event-based scenarios, or personalized player housing).
 - Game creators can configure **instance rules, expiration, and persistence settings**.
-- A replacement realm is not exposed to players until it is ready. If its state cannot be safely carried forward or cleaned up, the creator sees a blocked/failed cutover and the currently usable realm remains the player-facing target.
+- A replacement realm is not exposed to players until it is ready. If its state cannot be safely carried forward or its pre-activation state-transfer cleanup cannot complete, the creator sees a blocked/failed cutover and the currently usable realm remains the player-facing target; after the replacement is ready and that cleanup succeeds, the route swaps before the old realm is drained or terminated.
 - **World Persistence & Scheduled Events**:
   - The platform must support **persistent world states**, ensuring that world changes **persist beyond player sessions**.
   - **Scheduled events** (e.g., daily resets, seasonal world changes, NPC schedules) should be configurable.
