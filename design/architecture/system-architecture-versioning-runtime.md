@@ -411,8 +411,8 @@ Termination requires ordered handoff across runtime and domain owners:
 2. At the persisted source-drain deadline, Game Session requests that World Management acquire the source lifecycle fence, transition the source to `TERMINATING`, and confirm that new commands or other source work are rejected.
 3. After World Management confirms that fence/rejection, Game Session makes one bounded notice attempt to affected source clients.
 4. Game Session unconditionally closes the affected source sockets after that bounded notice attempt; notice failure or unavailability never keeps sockets open or extends the deadline.
-5. World Management runs `InstanceTermination` with Entity Management cleanup.
-6. World Management freezes the durable instance-data owner set for the cleanup attempt at its ownership-registry revision and commits `TERMINATED` only after every owner in that frozen snapshot confirms cleanup; Entity Management is one required owner, not the complete registry. See [ADR 0123](./decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md).
+5. Before invoking cleanup, World Management freezes the durable instance-data owner set for the cleanup attempt at its ownership-registry revision, then runs `InstanceTermination` against that snapshot with each participant performing its owner-local cleanup; Entity Management performs its own cleanup as one participant.
+6. World Management commits `TERMINATED` only after every owner in that frozen snapshot confirms cleanup; Entity Management is one required owner, not the complete registry. See [ADR 0123](./decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md).
 7. Game Session marks the `game_instances` runtime record terminated/stopped only after step 6.
 
 If any step after step 1 fails, admission remains closed and the same termination workflow identity must retry until convergence.
