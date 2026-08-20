@@ -44,7 +44,7 @@ World data uses two distinct identifier families:
 
 At service boundaries, `roomInstanceId` means the canonical runtime room identity carried through `RoomInstanceRef`, not a database row id. World Management internals may still use numeric room topology/storage keys for joins, but those keys are an internal implementation detail and should not share the public `roomInstanceId` name.
 
-Template/topology data is keyed by `(tenantId, versionId)`, durable playable state by `(tenantId, playableStateNamespaceId)`, and runtime world instances by `(tenantId, gameInstanceId)` with references back to the active `versionId`.
+Template/topology data is keyed by `(tenantId, versionId)`, durable playable state by `(tenantId, playableStateNamespaceId, playableStateScope)`, and runtime world instances by `(tenantId, gameInstanceId)` with references back to the active `versionId`.
 
 See [Identifier Glossary](../../system-architecture-identifier-glossary.md) for naming and scoping rules.
 
