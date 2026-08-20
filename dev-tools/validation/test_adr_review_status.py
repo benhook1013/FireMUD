@@ -208,7 +208,7 @@ def set_review_status(
                 status,
                 int(replacements[-1]),
             )
-    elif disposition == "Withdrawn":
+    if disposition == "Withdrawn":
         text = replace_once(
             text,
             "- Review source: `TEST-01`",
@@ -910,7 +910,56 @@ class AdrReviewStatusTests(unittest.TestCase):
             expect_failure(
                 self,
                 lambda: self.validator.validate(root),
-                "requires a non-empty normalized 'Withdrawal rationale'",
+                "Withdrawn ADR requires a non-empty normalized 'Withdrawal rationale'",
+            )
+
+    def test_formal_withdrawn_record_requires_rationale_when_missing_with_supersession(
+        self,
+    ) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            set_review_status(
+                root,
+                "Withdrawn",
+                "Withdrawn",
+                "- Replacement ADR: [ADR 0013](./adr-0013-pending.md)",
+            )
+            path = root / "design/architecture/decisions/adr-0012-reviewed.md"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(
+                    "- Withdrawal rationale: Withdrawn because the target was not accepted.\n",
+                    "",
+                ),
+                encoding="utf-8",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "Withdrawn ADR requires a non-empty normalized 'Withdrawal rationale'",
+            )
+
+    def test_formal_withdrawn_record_rejects_duplicate_rationale_with_supersession(
+        self,
+    ) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            set_review_status(
+                root,
+                "Withdrawn",
+                "Withdrawn",
+                "- Replacement ADR: [ADR 0013](./adr-0013-pending.md)",
+            )
+            path = root / "design/architecture/decisions/adr-0012-reviewed.md"
+            text = path.read_text(encoding="utf-8")
+            rationale = "- Withdrawal rationale: Withdrawn because the target was not accepted."
+            path.write_text(
+                text.replace(rationale, f"{rationale}\n{rationale}"),
+                encoding="utf-8",
+            )
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "duplicate ADR review field 'Withdrawal rationale'",
             )
 
     def test_formal_withdrawn_record_normalizes_rationale_whitespace(self) -> None:

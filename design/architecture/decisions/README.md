@@ -55,7 +55,7 @@ The `Decision Record` section of a reviewed ADR is machine-readable. A completed
 - `Human review disposition: Accepted`, `Revised`, `Deferred`, `Superseded`, or `Withdrawn` for an ADR provenance record
 - `Review source:` followed by one or more backtick-delimited checked-queue decision keys separated by commas
 
-For a formal `Withdrawn` ADR that omits `## Supersession`, the same `Decision Record` section must also contain exactly one non-empty `Withdrawal rationale:` field. Its value is normalized as single-spaced text by validation and must explain why the proposal was withdrawn.
+For a formal `Withdrawn` ADR, the same `Decision Record` section must also contain exactly one non-empty `Withdrawal rationale:` field, whether or not `## Supersession` is present. Its value is normalized as single-spaced text by validation and must explain why the proposal was withdrawn.
 
 Completed review metadata is distinct from the pending proposal shape: for `Accepted`, `Superseded`, or `Withdrawn` records, and for an `Accepted` record whose reviewed disposition is `Deferred`, `Review source` contains only one or more checked-queue decision keys and must never be `AI-AUTHORED-PENDING`. `AI-AUTHORED-PENDING` is metadata reserved exclusively for an ADR whose status is `Proposed - Pending Human Review` and whose review metadata has the exact pending shape below. It is not a completed review source, checked provenance, or human review evidence.
 

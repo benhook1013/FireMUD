@@ -25,7 +25,7 @@ The matrix below is the target participation and ownership contract. `Authoritat
 | Starter-profile materialization and conservative Draft upgrade lineage | ✔ | | | | | | | | | | |
 | Scoped model-assisted authoring proposal and human publication gate | ✔ | | | | | ✔ | | | | | |
 | Authoritative owner: game-authored equipment vocabulary and publication validation | ✔ | | | | | | | | | | |
-| Service-local plugin provenance under ADR 0111 (no competing trust authority) | ✔ | | | | | ✔ | | | | | |
+| Game Design-local plugin provenance (manifest, signer, attestation, capability, and policy-lifecycle evidence; ADR 0128 owns this service-local provenance, while ADR 0111 owns the unified trust/runtime lifecycle; no competing authority) | ✔ | | | | | ✔ | | | | | |
 | Authoritative owner: durable multi-owner Draft commit fence and commit outcome projection | ✔ | | | | | | | | | | |
 | Authoritative owner: exact script pin and append-only rollout history for each `(tenantId, gameInstanceId)` (`scriptPatchVersion`, `scriptPinEpoch`) — Game Session only | | | | ✔ | | | | | | | |
 | Tenant-scoped patch readiness and instance-scoped observed pin/convergence projections plus projection freshness — Automation & Scripting-owned; non-authoritative and distinct from Game Session's authoritative current-pin/history read. | | | | | | | ✔ | | | | |

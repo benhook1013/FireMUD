@@ -960,21 +960,14 @@ def validate_withdrawal_rationale(
     number: int,
     status: str,
     fields: dict[str, str],
-    text: str,
 ) -> None:
     if status != "Withdrawn" or number in PRE_FORMAL_REVIEW_RECORDS:
-        return
-    has_supersession = any(
-        re.fullmatch(r"## Supersession[ \t]*", line.text)
-        for line in visible_markdown_lines(text)
-    )
-    if has_supersession:
         return
     rationale = fields.get("Withdrawal rationale", "")
     if not rationale:
         fail(
-            f"{context}: Withdrawn ADR without Supersession requires a "
-            "non-empty normalized 'Withdrawal rationale'"
+            f"{context}: Withdrawn ADR requires a non-empty normalized "
+            "'Withdrawal rationale'"
         )
 
 
@@ -1052,7 +1045,6 @@ def validate(root: Path = ROOT) -> None:
             number,
             normalized_status,
             fields,
-            text,
         )
 
         replacement_number = validate_supersession(

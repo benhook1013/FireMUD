@@ -44,7 +44,7 @@ Entity Management maintains a clear separation between template/design data and 
 
 Template identifiers are stable within each version: a given template ID must not be repurposed to represent a different conceptual entity while any non-Retired version still references it. When switching a game instance to a new `runtime_version`, the Game Session Service and Entity Management treat missing or incompatible templates as a fatal configuration error for that launch; the version selection must be corrected rather than silently substituting defaults or partial data.
 
-### Replacement-Instance State Classification
+### Target-State Replacement-Instance State Classification
 
 Entity Management must classify its runtime persistence surface for cutover and migration tooling:
 
@@ -61,7 +61,9 @@ Entity Management must classify its runtime persistence surface for cutover and 
   - `entity_tick_state` watermark rows keyed by `(tenantId, gameInstanceId, playableStateScope, regionId, targetAggregateType, entityId)` for the concrete instance/region timeline;
   - any row family explicitly documented as instance-scoped only.
 
-Initial-slice row-family inventory:
+### Conservative Current Implementation Inventory
+
+The following inventory describes the conservative current implementation boundary, not proof that the target classification contract is complete. In particular, current `inventory` and `character_equipment` rows are treated as `S2` and require an approved remap; the target rules above remain the authority for replacement classification.
 
 - `character` rows are `S1` only within the resolved `(tenantId, playableStateNamespaceId, playableStateScope)` identity. Shared-state realms use the tenant-live namespace, while isolated-state realms use their stable isolated/playtest namespace; a replacement `gameInstanceId` does not create a new durable character identity.
 - Player progression/currency/account-ownership rows attached to `character` and not requiring template remap are `S1` only after the caller proves the same resolved `(tenantId, playableStateNamespaceId, playableStateScope)` target as the character row and the current active `gameInstanceId` fence. Mutation APIs must not update progression/resource-style state by global `characterId` alone.
@@ -303,6 +305,7 @@ Equipment is intentionally not modeled as "just another bag position":
 - Equipment slot definitions are game-configured design data, not fixed platform-wide enums.
 - Body layouts or equivalent runtime configuration determine which slots are available to a particular character/NPC/species.
 - Item definitions declare compatibility through configurable slot groups, attachment rules, or equivalent game-defined constraints rather than through a hardcoded universal slot set.
+- The complete-schema and fail-closed behavior in the following contract is target state, not current implementation; current missing-schema and unknown-layout bootstrap fallback gaps are recorded in the [Entity Management README](./README.md) and [Item & Equipment Balancing Tools](../game-design-service/item-equipment-balancing.md#target-equipment-schema-requirements).
 - Game Design owns the complete published equipment vocabulary/body-layout schema and its digest. Entity Management consumes that exact schema for occupancy and compatibility checks; all missing, partial, or mismatched vocabulary or mapping evidence is rejected and validation fails closed. It does not provide a platform-global slot fallback. Replacement cutover remaps bindings only through the owner-validated mapping contract; profiles materialize authored equipment content rather than supplying runtime defaults. See [ADR 0127](../../decisions/adr-0127-game-authored-equipment-layouts-with-fail-closed-publication.md).
 
 The target inventory/equipment operation context for a durable holder or binding is the complete tuple `{tenantId, playableStateNamespaceId, playableStateScope, gameInstanceId, characterId, itemInstanceId, itemDefinitionId, containerInstanceId?, equipmentBindingId?, slotKey?, roomInstanceId?}`. For namespace-backed S1/S2 inventory, character, and equipment state, durable storage and replay/deduplication identity use `{tenantId, playableStateNamespaceId, playableStateScope, ...}` and omit `gameInstanceId`; the current `gameInstanceId` is validated only as the active-instance fence. Explicitly instance-scoped S3 holders instead include `gameInstanceId` in durable identity. The current proto and OpenAPI surfaces do not yet carry this complete operation context on every inventory/equipment read or mutation, so this is a target contract only: this ADR parcel does not add wire fields, regenerate protos, or change runtime lookup behavior.
