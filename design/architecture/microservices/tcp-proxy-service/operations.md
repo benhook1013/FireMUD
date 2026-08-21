@@ -1,5 +1,9 @@
 # TCP Proxy Service Operations
 
+## Implementation Status
+
+The current `TelnetServerHandler` preserves close reasons only for status `1000` reasons beginning with `logout`, exact `1001`/`idle_timeout`, status `1008` reasons beginning with `policy_violation`, and exact `1011`/`internal_error`; all other or invalid outcomes fall back to `backend_unavailable`. Bridge shutdown classification is `planned_drain` only for `logout;subreason=gateway_restart`, `upstream_logout` for other logout reasons, and `unattributed_failure` otherwise. Broader canonical tokens such as standalone `session_replaced` and `service_restart` remain target behavior where they are not yet recognized.
+
 ## Operational Notes
 
 - Runs as a Kubernetes Deployment, with Docker Compose for local development, and exposes `/actuator/health/readiness` and `/actuator/health/liveness`.

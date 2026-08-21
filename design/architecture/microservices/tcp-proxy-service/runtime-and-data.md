@@ -1,5 +1,9 @@
 # TCP Proxy Service Runtime and Data
 
+## Implementation Status
+
+Immediate closure on established bridge loss and the current close mapping and shutdown classification are implemented as described in [Operations](./operations.md#implementation-status). Preserving every valid authenticated Gateway token, including standalone `session_replaced` and `service_restart`, remains target behavior; see [Bridge Lifecycle Ownership](#bridge-lifecycle-ownership) for the local runtime invariants.
+
 ## Redis Role and Prefixes
 
 - The TCP Proxy Service does **not** access Coordination Redis and never depends on Redis for correctness or session recovery.

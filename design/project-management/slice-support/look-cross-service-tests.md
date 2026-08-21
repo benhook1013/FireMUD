@@ -30,7 +30,7 @@ This plan documents how the cross-service WebSocket and Telnet tests exercise th
 
 ## WebSocket Test
 
-1. Start Testcontainers for Game Session, Game Logic, World Management, Entity Management, Redis, and Postgres (reuse existing service test setup/configs).
+1. Start Testcontainers for the real Game Session, Game Logic, Redis, and Postgres services, and start controlled World and Entity gRPC stub servers (reuse the existing service test setup/configs).
 2. Launch a Gateway stub proxying `ws://localhost:<gateway>/ws/game`.
 3. After the fixture provisions a running instance and the stack is ready, complete the gameplay path `LOGIN demo@example.com swordfish` → `PLAY demo` → `LOOK` (perform `WORLDS` when this scenario uses discovery), and assert the multiline response matches the canonical transcript (room name, descriptions, exits, entities).
 4. After the successful `LOOK`, call the controlled World stub's `worldStub().triggerNotFound()` and confirm the next `LOOK` yields `ERROR ROOM_NOT_FOUND`.
@@ -39,7 +39,7 @@ This plan documents how the cross-service WebSocket and Telnet tests exercise th
 
 ## Telnet Test
 
-1. Start the same service stack plus the TCP Proxy pointing to Game Session and the Gateway pointing to the proxy.
+1. Start the real Game Session, Game Logic, Redis, and Postgres stack plus controlled World and Entity gRPC stub servers, the TCP Proxy pointing to Game Session, and the Gateway stub/flow pointing to the proxy.
 2. Use a raw socket to wait for the documented connection/readiness guidance, perform `WORLDS` where discovery is required, then send:
    - `LOGIN demo@example.com swordfish` → expect `OK LOGIN`.
    - `PLAY demo` → expect `OK PLAY`.

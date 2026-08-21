@@ -426,10 +426,9 @@ Metrics `gamesession.command.look.invocations` and `gamesession.command.look.fai
 - Gameplay commands such as `LOOK`, `SAY`, movement, `BLOCK`, and later combat are tick-driven actions. Game Session validates and normalizes them, emits enqueue metadata, and must not perform gameplay state mutations outside the tick executor.
 - If the interpreter produces both immediate text and enqueue metadata and the enqueue step fails, for example because of a Redis outage, Game Session surfaces a single `ERROR` response and does not report success followed by a dropped action.
 - Every supported `PlayerOutput` envelope has an explicit schema version and a deterministic plain-text projection. Telnet and generic text WebSocket are normal text transports and use that projection directly, not as a silent structured-schema downgrade. A structured client that cannot consume the schema is rejected with `unsupported_schema_version`; supported structured clients may consume typed payloads under the documented version compatibility rules.
-- The classic text response is the mandatory projection: its first line is either `OK <COMMAND>` or `ERROR <CODE> <message>`.
-- Success responses may include additional lines describing the outcome.
-- A blank line terminates the response block so multiple responses can be streamed back-to-back without ambiguity.
-- Asynchronous world events use the same rules but are prefixed with `EVENT <TYPE>` to distinguish them from direct command responses.
+- Synchronous command-response frames in the classic text projection have a first line of either `OK <COMMAND>` or `ERROR <CODE> <message>`.
+- Asynchronous world-event frames are a distinct frame type: their first line is `EVENT <TYPE>`, never `OK` or `ERROR`.
+- Either frame type may include additional lines describing the outcome or event, and a blank line terminates each frame so responses and events can be streamed back-to-back without ambiguity.
 - Unknown commands return `ERROR UNKNOWN_COMMAND <rawLine>`.
 
 Prompt/status remains a separate output class from transcript lines and gameplay views even when plain-text clients receive it on the same socket. Prompt emission should be coalesced, semantic recent-context restoration should exclude prompt lines, and first-party or MCP-aware clients may consume prompt/status as structured state rather than main-transcript text. See [Reconnection Strategy](../../system-architecture-reconnection.md#client-reconnection-behaviour) and [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md).
