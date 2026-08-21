@@ -8,6 +8,8 @@ Accepted
 
 Current implementation is partial. Built-in keyed output and renderer locale selection cover a bounded subset of Game Session behavior. Locale-tagged room prose and adjacent-room naming are present on authoritative room views, with some alternate-locale renderer and integration proof. Broader world and item content, first-party browser consumption, creator review workflows, coverage reporting, publication-wide validation, and external localization-tool integration remain future work.
 
+Strict malformed-tag handling and its focused coverage are not yet proven. The already-recorded implementation drift that can select an arbitrary regional sibling also remains. These are implementation obligations within this ADR's boundary, not new product scope.
+
 ## Decision Record
 
 - Human review status: Completed
@@ -40,6 +42,8 @@ Every authored content bundle declares one required canonical source locale. Add
 3. the bundle's source locale.
 
 Runtime never searches arbitrary regional siblings. For example, `fr-CA` may fall back to an authored `fr` variant, but the presence of `fr-FR` or `fr-BE` alone does not make either one a valid fallback.
+
+Locale tags are validated and canonicalized before storage or comparison, so equivalent case spellings compare identically. Malformed authored source-locale or variant tags are rejected. A malformed requested preference selects no variant and safely uses the bundle's source locale.
 
 The architecture keeps these concerns distinct:
 
