@@ -11,9 +11,12 @@
 
 Gateway Architecture requires the following observability surfaces for gameplay WebSocket behavior:
 
-- `gateway.websocket.closes{reason,subreason,bridge_shutdown_class}`, with top-level `reason` drawn from the Gateway-owned `logout`, `session_replaced`, `service_restart`, `idle_timeout`, `policy_violation`, `internal_error`, or `backend_unavailable` taxonomy; bridge-only `bridge_shutdown_class` is restricted to `planned_drain`, `upstream_logout`, or `unattributed_failure`; `subreason` is optional diagnostic context restricted to `user_logout`, `takeover`, `gateway_restart`, `admin_termination`, `edge_backpressure`, or `none`, and neither field is lifecycle authority. Free-form diagnostic detail belongs only in structured logs, not in metric or wire values.
+- `gateway.websocket.closes{reason,subreason}` for public gameplay WebSockets, with top-level `reason` drawn from the Gateway-owned `logout`, `session_replaced`, `service_restart`, `idle_timeout`, `policy_violation`, `internal_error`, or `backend_unavailable` taxonomy.
+- `gateway.tcp_proxy_bridge.closes{reason,subreason,bridge_shutdown_class}` for authenticated TCP Proxy bridge observations only; bridge-only `bridge_shutdown_class` is restricted to `planned_drain`, `upstream_logout`, or `unattributed_failure`. Public WebSocket close metrics do not emit that label. `subreason` is optional diagnostic context restricted to `user_logout`, `takeover`, `gateway_restart`, `admin_termination`, `edge_backpressure`, or `none`, and neither field is lifecycle authority. Free-form diagnostic detail belongs only in structured logs, not in metric or wire values.
 - `gateway.websocket.handshake.rejected`
 - `gateway.websocket.slow_client_closes`
+
+Implementation gap: the target metric split above is not live yet. Current `GameplayWebSocketObservability` emits `gateway.websocket.closes{reason,subreason,bridge_shutdown_class}` for every gameplay WebSocket close, including public WebSocket closes; `bridge_shutdown_class` remains bridge-only in the target contract, with no `none` or `not_applicable` value.
 
 Non-`101` `/ws/game/**` handshake failures must emit the canonical bounded handshake error class in the gateway response and structured logs so clients and operators can distinguish `CONNECT_TOKEN_REJECTED`, `POLICY_DENY`, `BACKEND_UNAVAILABLE`, `CONNECT_REPLAY_PROTECTION_UNAVAILABLE`, and other documented retry classes. A canonical wire-level surface is the `X-Firemud-Handshake-Error-Class` response header paired with matching structured-log fields.
 

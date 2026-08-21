@@ -32,10 +32,10 @@ Scope-key convention: `{tenantRegionTag}` is the canonical opaque tag for the co
     - Tick queues, locks, timers, and executor leases.
     - Gameplay session liveness, binding, and rebind coordination. Durable semantic reconnect context remains Game Session-owned persistence under [ADR 0134](./decisions/adr-0134-bounded-durable-semantic-reconnect-context.md) and [Input, Output, and Presentation](./system-architecture-input-output-and-presentation.md#canonical-resume-context-model); Redis gameplay session state is not that context.
     - Retry metadata and conflict tracking.
-    - Automation coordination structures that participate in tick timelines.
+    - Automation coordination structures that participate in tick timelines under Automation & Scripting ownership and Game Session enqueue contracts.
   - Characteristics:
     - Treated as a long-running **coordination buffer with bounded tail-loss** in persistent environments; durable history for tick effects and gameplay outcomes lives in PostgreSQL tick effect ledgers and domain stores.
-    - Owned by the **Game Session Service** for gameplay coordination and gameplay session prefixes such as `tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`, the canonical `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` records, and their derived `session:game:index:*` projections, including the separately approved `session:game:auth:issuer-generation:v1:*` consumer projection; Account Service owns the explicit `session:auth:token:*` and `session:auth:generation:*` prefixes; Automation & Scripting Service owns automation-specific coordination prefixes as documented below.
+    - Game Session owns only its tick/session coordination prefixes and registered scripts: gameplay coordination families such as `tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`, the canonical `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` records, and their derived `session:game:index:*` projections, including the separately approved `session:game:auth:issuer-generation:v1:*` consumer projection. Account Service retains ownership of the explicit `session:auth:token:*` and `session:auth:generation:*` prefixes, and Automation & Scripting Service retains ownership of its automation-specific prefixes and scripts as documented below; Game Session invokes those contracts but does not write them.
     - AOF enabled in `dev_local`, `hobby_self_hosted`, and `production_clustered`–like profiles.
     - Subject to tail‑loss SLOs and replay guarantees described in the Redis hub doc.
   - Example prefixes:
@@ -46,7 +46,7 @@ Scope-key convention: `{tenantRegionTag}` is the canonical opaque tag for the co
     - `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`
     - `session:game:index:*` derived gameplay lookup projections
     - `sessionctx:*` bootstrap/session-context keys used by the current Game Session implementation.
-    - Automation coordination prefixes that follow shard‑local rules.
+    - Automation-owned coordination prefixes are documented separately and are not Game Session-owned.
 
 - **Cache/Rate‑Limit Redis**
   - Responsibilities:
@@ -162,7 +162,7 @@ The following table summarizes how core services interact with Coordination Redi
 
 | Service | Redis Usage |
 | --- | --- |
-| **Game Session Service** | Owns **Coordination Redis**: tick queues, locks, timers, retry metadata, region leases, and Redis-backed session liveness, binding, and rebind coordination. Durable semantic reconnect context remains Game Session-owned persistence rather than Redis session state. All tick/coordination key prefixes and their Lua scripts are registered and owned here. |
+| **Game Session Service** | Owns only its **Coordination Redis** tick/session families: tick queues, locks, timers, retry metadata, region leases, and Redis-backed session liveness, binding, and rebind coordination, together with their registered scripts. Durable semantic reconnect context remains Game Session-owned persistence rather than Redis session state. It does not write Account-owned `session:auth:*` prefixes or Automation-owned prefixes/scripts. |
 | **Automation & Scripting Service** | Owns automation-specific prefixes such as `automation:queue:{tenantInstanceTag}:*`, `automation:timer:{tenantRegionTag}`, and `script-scheduler:{tenantRegionTag}:lastTickId`, but does **not** own gameplay `tick:*` queues or locks. It reads tick heartbeats via gRPC, uses PostgreSQL as the durable work source of truth, and uses **Cache/Rate‑Limit Redis** for script quotas and best-effort queue projection where documented. |
 | **Spring Cloud Gateway** | Uses **Cache/Rate‑Limit Redis** for token‑bucket rate limiting and best‑effort caches only; it never touches tick/coordination prefixes directly and always connects via the cache profile configured in `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`. |
 | **Other microservices (Game Logic, Entity Management, World Management, Social & Groups, etc.)** | Do not define or own coordination prefixes; they participate in Coordination Redis **only** through shared helpers and Lua descriptors owned by Game Session (for example, `tick:{tenantRegionTag}:lock:<entityId>` for tick locks). Where they cache read‑heavy aggregates, they use **Cache/Rate‑Limit Redis** and the key patterns from the Redis Cache & Rate Limiting design. |

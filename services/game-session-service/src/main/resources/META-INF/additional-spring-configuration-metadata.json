@@ -57,14 +57,14 @@
       "name": "firemud.presentation.prompt.enabled",
       "type": "java.lang.Boolean",
       "defaultValue": true,
-      "description": "Whether prompt output is enabled by default for text-session rendering.",
+      "description": "Whether prompt output is enabled by default for classic text-session rendering. Current limitation: the first-party structured projector still emits prompt envelopes when this is false; the target conjunction with firemud.presentation.prompt.emit-after-reconnect-restore remains unimplemented there.",
       "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties$Prompt"
     },
     {
       "name": "firemud.presentation.prompt.emit-after-reconnect-restore",
       "type": "java.lang.Boolean",
       "defaultValue": true,
-      "description": "Whether reconnect restore permits a fresh prompt after rendering bounded semantic reconnect context and a fresh LOOK; firemud.presentation.prompt.enabled must also be true.",
+      "description": "Whether reconnect restore permits a fresh prompt after rendering bounded semantic reconnect context and a fresh LOOK. Target behavior also requires firemud.presentation.prompt.enabled to be true; current classic text rendering applies that conjunction, but the first-party structured projector still emits the prompt envelope when enabled is false.",
       "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties$Prompt"
     },
     {
@@ -92,14 +92,14 @@
       "name": "firemud.reconnection.buffer.ttl-ms",
       "type": "java.lang.Long",
       "defaultValue": 1800000,
-      "description": "TTL, in milliseconds, for bounded semantic reconnect context. The current runtime retains each context under `{tenantId, gameInstanceId, characterId}`; the canonical target scope is `{tenantId, playableStateNamespaceId, characterId}` pending migration. Retention does not grant resume or replay authority.",
+      "description": "TTL, in milliseconds, for bounded semantic reconnect context made from replay-eligible PlayerOutput entries; prompts and non-replay status/notice/error output are outside the target context and byte accounting. Current runtime retains each context under `{tenantId, gameInstanceId, characterId}`; the canonical target scope is `{tenantId, playableStateNamespaceId, characterId}` pending migration. Retention does not grant resume or replay authority.",
       "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
     },
     {
       "name": "firemud.reconnection.buffer.max-entries",
       "type": "java.lang.Integer",
       "defaultValue": 256,
-      "description": "Maximum complete entries retained in one durable bounded semantic reconnect context before oldest-entry eviction; retention does not grant resume or replay authority.",
+      "description": "Maximum complete replay-eligible PlayerOutput entries retained in one durable bounded semantic reconnect context before oldest-entry eviction; prompts and non-replay status/notice/error output are outside the target context and byte accounting. Retention does not grant resume or replay authority.",
       "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
     },
     {
@@ -134,7 +134,7 @@
       "name": "firemud.reconnection.buffer.hard-max-bytes",
       "type": "java.lang.Integer",
       "defaultValue": 65536,
-      "description": "Target guarantee: an absolute byte ceiling for each complete scope-bound persisted envelope; an oversized entry must be omitted or represented by a bounded marker and never partially truncated. Current runtime limitation: it may retain one oversized entry and lacks omission/marker enforcement and proof.",
+      "description": "Target guarantee: an absolute byte ceiling for each complete scope-bound persisted envelope for replay-eligible PlayerOutput entries; an oversized entry must be omitted or represented by a bounded marker and never partially truncated. Current runtime computes complete canonical envelope bytes for gameInstanceId-keyed rows but may retain one oversized entry and lacks omission/marker enforcement; canonical playableStateNamespaceId accounting and focused proof remain gaps.",
       "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
     },
     {

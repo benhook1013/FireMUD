@@ -48,6 +48,8 @@ Bounded subreasons may be recorded in logs and metrics and may be sent as option
 
 A close class reports connection/session lifecycle, not whether an in-flight gameplay command committed. Clients and tools reconcile any known `commandId` through the authoritative command-status surface; they do not infer command success or failure from `logout`, `session_replaced`, `service_restart`, `internal_error`, or `backend_unavailable`.
 
+When observations overlap, first apply the existing failure precedence: `policy_violation` > `backend_unavailable` > `internal_error` > `idle_timeout`. Only when no higher-priority failure supersedes a valid explicit lifecycle outcome, apply lifecycle precedence `logout` > `session_replaced` > `service_restart`: a committed terminal logout stays terminal; otherwise a successful controller takeover wins over a concurrent planned drain; otherwise the outcome is planned `service_restart`. This ordering is lifecycle state, not subreason inference.
+
 ## Consequences
 
 - Client reconnect policy no longer depends on optional `gateway_restart` or `takeover` suffixes.

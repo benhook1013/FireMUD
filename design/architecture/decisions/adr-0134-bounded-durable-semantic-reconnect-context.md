@@ -43,7 +43,7 @@ Rendered text may remain a derived compatibility representation for Telnet and g
 
 ### Durable Scope and Authorized Reconstruction
 
-The durable context is scoped by `<tenantId, playableStateNamespaceId, characterId>`. It follows the same character in the same durable playable-state namespace across runtime instance replacement, while production and an isolated playtest remain separate because they use different namespaces.
+The durable context is scoped by `<tenantId, playableStateNamespaceId, characterId>`. It follows the same character in the same durable playable-state namespace across runtime instance replacement, while production and an isolated playtest remain separate because they use different namespaces. Persisted `reconnection.buffer` overrides use the stable `<tenantId, playableStateNamespaceId>` scope, so a replacement `gameInstanceId` inherits the effective bounds without copying or re-keying them.
 
 FireMUD replays private context only after current authentication and authorization establish access to that exact tenant, playable-state namespace, and character. An explicit gameplay logout, character ownership transfer, or loss of replay authorization clears the context or suppresses its private replay. Retention alone never grants access.
 

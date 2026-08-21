@@ -6,6 +6,27 @@ These lightweight scripts document the manual sequence of `LOGIN` → `PLAY` →
 
 Dependencies: `wscat` (npm install -g wscat) or any WebSocket client.
 
+Before opening the socket or sending `LOGIN`, run the canonical readiness gates for the local Gateway flow: Account, Game Logic, Game Session, and Gateway. Each endpoint must return HTTP success with a JSON health body containing `"status":"UP"`; any timeout, transport error, non-success response, or other status is a hard failure and the manual flow must stop (adjust ports only when the local stack overrides them):
+
+```bash
+for endpoint in \
+  http://localhost:8081/actuator/health/readiness \
+  http://localhost:8085/actuator/health/readiness \
+  http://localhost:8086/actuator/health/readiness \
+  http://localhost:8080/actuator/health/readiness; do
+  body=$(curl --fail --silent --show-error --max-time 10 "$endpoint") || {
+    echo "Readiness failed: $endpoint" >&2
+    exit 1
+  }
+  case "$body" in
+    *'"status":"UP"'*) ;;
+    *) echo "Readiness did not report UP: $endpoint" >&2; exit 1 ;;
+  esac
+done
+```
+
+The automated WebSocket helper (`services/game-session-service/websocket-login-look-smoke.sh`) uses the same fail-closed readiness contract and is the canonical non-interactive alternative.
+
 1. Connect to the Gateway stub pointing at the Game Session service:
 
    ```bash
