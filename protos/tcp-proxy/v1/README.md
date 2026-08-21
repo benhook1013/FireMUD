@@ -4,7 +4,11 @@ This directory contains version 1 protocol buffer definitions for the TCP Proxy
 Service. They describe the internal gRPC events used by the service to notify
 the Game Session Service about client disconnects.
 
-## Direct-text gameplay sequence
+## Implementation Status
+
+The current returning-member contract is `LOGIN` -> `PLAY` -> `LOOK`. Discovery/`WORLDS` is optional and is not enforced as a prerequisite, and explicit `JOIN` is unavailable. The target skip-`JOIN` path requires current `ACTIVE` membership, an exact fresh reread of `membershipAuthorityGeneration`/`membershipVersion`, and the applicable realm grant.
+
+## Target Direct-Text Gameplay Sequence
 
 The canonical fresh direct-text/Telnet sequence is ordered as follows:
 

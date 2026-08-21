@@ -14,10 +14,16 @@ for endpoint in \
   http://localhost:8085/actuator/health/readiness \
   http://localhost:8086/actuator/health/readiness \
   http://localhost:8080/actuator/health/readiness; do
-  body=$(curl --fail --silent --show-error --max-time 10 "$endpoint") || {
+  response=$(curl --silent --show-error --max-time 10 --write-out $'\n%{http_code}' "$endpoint") || {
     echo "Readiness failed: $endpoint" >&2
     exit 1
   }
+  http_code=${response##*$'\n'}
+  body=${response%$'\n'*}
+  if [[ "$http_code" -lt 200 || "$http_code" -ge 300 ]]; then
+    echo "Readiness failed: $endpoint (HTTP $http_code)" >&2
+    exit 1
+  fi
   if ! python3 -c '
 import json
 import sys

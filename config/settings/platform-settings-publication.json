@@ -196,7 +196,7 @@
       "hotReloadable": false,
       "advanced": true,
       "exampleValue": 1800000,
-      "constraints": "integer >= 0 ms; 0 retains bounded semantic reconnect context until size eviction; retention never grants resume or replay authority"
+      "constraints": "integer >= 0 ms; 0 means no inactivity expiry and retains bounded semantic reconnect context until size eviction; binding-scoped replay-revocation marker remains durable until all associated context is physically evicted/deleted; retention never grants resume or replay authority"
     },
     "firemud.reconnection.buffer.max-entries": {
       "group": "reconnection.buffer",
@@ -241,7 +241,7 @@
       "hotReloadable": false,
       "advanced": true,
       "exampleValue": 65536,
-      "constraints": "integer >= 1 bytes; absolute bound for the complete scope-bound persisted envelope; oversized entries must be omitted or represented by a bounded marker and never partially truncated; effective hardMaxBytes >= softMaxBytes; current runtime oversized-single-entry enforcement remains an implementation/proof gap"
+      "constraints": "Current accepted input: integer >= 1 bytes; effective hardMaxBytes >= softMaxBytes. Target absolute complete-envelope guarantee: each complete scope-bound persisted envelope is bounded, with oversized entries omitted or represented by a bounded marker and never partially truncated. Current oversized-single-entry omission/marker enforcement remains an implementation/proof gap, so the configured value is not yet proof of that target guarantee"
     },
     "firemud.command-history.max-entries": {
       "group": "commandHistory.retention",
