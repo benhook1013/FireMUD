@@ -23,7 +23,7 @@ The target automation handoff also requires the complete Trigger Identity, inclu
 
 ## Redis Roles and Usage Patterns
 
-FireMUD runs two logical Redis roles in all non‑trivial environments:
+FireMUD runs two logical Redis roles in all non-ephemeral environments:
 
 Scope-key convention: `{tenantRegionTag}` is the canonical opaque tag for the complete `<tenantId, gameInstanceId, regionId>` scope, while `{tenantInstanceTag}` is the canonical opaque tag for `<tenantId, gameInstanceId>`. Region-scoped coordination metadata keys therefore carry `gameInstanceId` through `{tenantRegionTag}`; callers must not substitute a tenant-only or region-only tag.
 
@@ -64,7 +64,7 @@ Scope-key convention: `{tenantRegionTag}` is the canonical opaque tag for the co
     - `ratelimit:<tenantId>:<subjectHash>:<timeWindow>` (one opaque stable subject hash per individual subject)
     - `automation:queue:{tenantInstanceTag}:<entityId>` and automation quota counters.
 
-Coordination Redis and Cache/Rate‑Limit Redis are treated as **separate deployments** in all persistent, player-facing environments so cache eviction/pressure cannot silently impact coordination SLOs. The only supported exception is explicitly ephemeral test/CI stacks that opt out of tail-loss and role-separation guarantees; those stacks may collapse roles temporarily, but must be clearly labelled as ephemeral and must not be used to validate coordination behavior or SLOs. See [Environment Profiles and Mappings](#environment-profiles-and-mappings) for details.
+Coordination Redis and Cache/Rate‑Limit Redis are treated as **separate deployments** in all non-ephemeral environments so cache eviction/pressure cannot silently impact coordination SLOs. The only supported exception is explicitly ephemeral test/CI stacks that opt out of tail-loss and role-separation guarantees; those stacks may collapse roles temporarily, but must be clearly labelled as ephemeral and must not be used to validate coordination behavior or SLOs. See [Environment Profiles and Mappings](#environment-profiles-and-mappings) for details.
 
 New prefixes must declare:
 

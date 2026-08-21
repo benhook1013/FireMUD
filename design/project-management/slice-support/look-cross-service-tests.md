@@ -2,6 +2,10 @@
 
 This plan documents how the cross-service WebSocket and Telnet tests exercise the data-driven `LOOK` path end-to-end. See [LOOK and communication regressions](./look-and-say-regressions.md) for the shared LOOK/SAY regression catalog and metrics notes.
 
+## Target-State Contract
+
+The cross-service suite is target-state proof of the player-visible `LOOK` contract across Game Session, Game Logic, World, and Entity for WebSocket and Telnet. Each scenario performs the required readiness and discovery steps, authenticates and binds gameplay, verifies the canonical transcript, and records bounded `LOOK` metrics. Controlled participant failures must produce the canonical error without an unintended transport close and must prove recovery where the scenario requires it. Game Logic owns structured aggregation and Game Session owns player-facing output; local diagnostics are supplementary and do not become cross-service authority.
+
 ## Current Implementation
 
 - `LookWebSocketCrossServiceTest` boots Game Session, Game Logic (pointed at stubbed World/Entity servers), Redis, Postgres, and the Gateway stub. Its fixture provisions a running game instance directly; the gameplay path is `LOGIN` → `PLAY` → `LOOK`, with the required readiness wait and `WORLDS` discovery step where that scenario uses discovery. It retains the end-to-end assertion of `LookTestFixtures.canonicalLookText()`. Structured `LookResult`, typed-failure, `PlayerOutput`, and text-projection records are optional owner-local diagnostics; the cross-service assertion is the player-visible transcript and, for the controlled `ROOM_NOT_FOUND` case, connection continuity with a follow-up command.

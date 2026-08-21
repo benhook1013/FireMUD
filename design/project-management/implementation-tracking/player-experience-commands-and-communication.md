@@ -76,9 +76,9 @@ The current admission gaps are explicit `JOIN`, realm-scoped discovery/character
 
 ### Validation and Proof
 
-- **Historical local validation (2026-07-31):** `./gradlew linkCheck lintMarkdown` completed successfully: 3,496 total links, 0 errors; Markdown covered 407 files, 0 issues. Recorded focused evidence covers parser/interpreter and registry behavior, capability gates, HELP/HISTORY, WebSocket/Telnet parity, LOOK, prompts, localization, transcript/reconnect, social/presence/privacy, communication, moderation, and frontend baseline behavior. Prior recorded successful checks include `spotlessApply`, focused service checks, and locked full checks for touched services. No hosted artifact URL is claimed.
+- **Current-revision validation record:** The required documentation checks are `./gradlew linkCheck lintMarkdown`; their outcome for the current revision must be recorded from the applicable validation run. This tracker does not claim a current result until that run is completed. Recorded focused evidence covers parser/interpreter and registry behavior, capability gates, HELP/HISTORY, WebSocket/Telnet parity, LOOK, prompts, localization, transcript/reconnect, social/presence/privacy, communication, moderation, and frontend baseline behavior. No hosted artifact URL is claimed.
 - **Partial:** Capability rows marked `drift-found` or naming remaining proof gaps retain only the bounded evidence stated in those rows; that evidence does not prove the unresolved boundary.
-- **Unrun:** No additional repository-wide validation result is recorded beyond the checks above.
+- **Unrun:** The current revision's repository-wide documentation checks and any additional focused validation are not claimed here until run; historical results are not treated as current evidence.
 - **Unavailable:** A repository-wide `check` was blocked by the local native Docker CLI. This is a validation limitation, not a product behavior claim.
 
 ## Active Gaps
