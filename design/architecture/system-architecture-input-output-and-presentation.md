@@ -256,6 +256,7 @@ The namespace, complete-envelope bound, omission-marker, and logout-revocation r
 The canonical semantic recent-context entry is one entry carrying:
 
 - `{tenantId, playableStateNamespaceId, characterId}` identity;
+- exact positive `bindingGeneration` as the authorization/privacy episode fence (not a fourth durable scope key);
 - ordering token;
 - output kind;
 - structured payload;
@@ -266,6 +267,7 @@ The canonical semantic recent-context entry is one entry carrying:
 For the target architecture, that means:
 
 - the durable recent context is keyed by the admitted `{tenantId, playableStateNamespaceId, characterId}` identity and follows that durable namespace across replaceable runtime instances;
+- every entry and cache envelope carries the exact current `bindingGeneration`; append, read, restore, and Redis cache fill/rebuild/mutation require the current generation and durable non-termination evidence. `LOGOUT` commits termination/generation evidence before acknowledgement, and stale in-flight work must refuse or invalidate rather than repopulate replayable context. The complete episode/fence decision is owned by [ADR 0134](./decisions/adr-0134-bounded-durable-semantic-reconnect-context.md); this document owns its output-entry and cache-envelope representation;
 - persisted `reconnection.buffer` overrides are resolved for the stable `{tenantId, playableStateNamespaceId}` scope, so replacement runtime instances inherit the effective bounds without copying the override;
 - every replay-eligible entry is appended to that durable bounded context, including output that would otherwise fall out of a hot reconnect cache;
 - after authorized reconnect, structured entries are re-rendered under the current session and presentation policy; every complete structured retained entry includes `renderedText` as a derived compatibility projection that never replaces its structured content, while legacy text-only records fall back to their stored text;
