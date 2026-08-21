@@ -13,7 +13,10 @@ This file intentionally owns the allocation validation history; do not duplicate
 - Previous canonical validator evidence dated 2026-08-13: `design capability allocation passed: 267 sources (264 allocated, 3 explicit exemptions)`.
 - Historical canonical validator evidence dated 2026-08-14 Pacific/Auckland (2026-08-13 UTC): `design capability allocation passed: 277 sources (274 allocated, 3 explicit exemptions)`.
 - Historical allocation-validation evidence recorded for calendar date 2026-08-15 Pacific/Auckland; exact command execution timestamp is not retained: `design capability allocation passed: 284 sources (281 allocated, 3 explicit exemptions)`.
-- Current allocation-validation record on 2026-08-22 Pacific/Auckland (2026-08-21 UTC): the allocation validator confirms `309` sources (`306` allocated, `3` explicit exemptions), and `git diff --check` is clean. The six Packet 5 connection/output ADR records are allocated below. This records allocation coverage and file-format validation only; it does not claim implementation or runtime proof.
+- Allocation-validation record on 2026-08-22 Pacific/Auckland (2026-08-21 UTC): the allocation validator confirmed `309` sources (`306` allocated, `3` explicit exemptions), and `git diff --check` was clean. The six Packet 5 connection/output ADR records were allocated below. This records allocation coverage and file-format validation only; it does not claim implementation or runtime proof.
+- Historical Markdown/link validation on 2026-08-14 Pacific/Auckland (2026-08-13 UTC): `linkCheck` checked 4,574 links (4,536 OK, 0 errors, 38 excluded); `lintMarkdown` checked 454 files with 0 issues. The architecture contract suite and `git diff --check` also passed with no errors.
+- Historical canonical proof evidence recorded for calendar date 2026-08-15 Pacific/Auckland; exact command execution timestamp is not retained: `design capability allocation passed: 284 sources (281 allocated, 3 explicit exemptions)`; `linkCheck` checked 4,769 links (4,731 OK, 0 errors, 38 excluded); `lintMarkdown` checked 461 files with 0 issues; the architecture contract suite passed 184 tests; and `git diff --check` passed with no errors.
+- Prior validation record on 2026-08-21 (Pacific/Auckland), before this ADR allocation import: ADR review `123` reviewed / `11` pre-formal; architecture contracts `184` tests; link check `5,475` links (`5,437` OK, `38` excluded, `0` errors); Markdown lint `486` files (`0` issues); `git diff --check` clean; allocation validator reported `309` sources (`306` allocated, `3` explicit exemptions`). This six-file import has not run validation; consolidated validation is deferred to the root thread. The four Packet 5 playtest/lifecycle/player-entry ADR records are allocated below.
 - Runtime proof is not applicable to this documentation-only allocation change.
 - Implementation and verification evidence do not belong in this allocation ledger. The initial cross-capability baseline is preserved in the frozen [capability implementation reconciliation snapshot](./capability-implementation-reconciliation.md); live status and focused-proof anchors are maintained in the permanent implementation trackers.
 
@@ -32,16 +35,16 @@ This file intentionally owns the allocation validation history; do not duplicate
 | Infrastructure | 6 | 6 | 0 | 100% classified |
 | Generated references | 2 | 2 | 0 | 100% classified |
 | Microservice architecture | 76 | 74 | 0; 2 explicit governance/template exemptions | 100% classified |
-| Architecture decisions | 135 | 134 | 0; 1 registry exemption | 100% classified |
+| Architecture decisions | 139 | 138 | 0; 1 registry exemption | 100% classified |
 | Product documentation | 7 | 7 | 0 | 100% classified |
-| **Total** | **309** | **306** | **0; 3 explicit exemptions** | **100% classified** |
+| **Total** | **313** | **310** | **0; 3 explicit exemptions** | **100% classified** |
 
 ## Allocation Ledger
 
 | Design source | Heading or scope | Primary capability | Secondary handoffs | Source class | Notes or gap |
 | --- | --- | --- | --- | --- | --- |
 | [Microservice architecture allocation](./design-capability-allocation-microservices.md) | All 76 files under `design/architecture/microservices/**` | Per-source allocation | Per-source handoffs | Service design, contract, runtime/data, configuration, operations, and reference sources | All 76 files are accounted for as 74 allocated sources plus 2 exempt governance/template files: `service-documentation-structure.md` and `service-template.md`; complete path-set coverage |
-| [Architecture decision registry](../../architecture/decisions/README.md) | Registry plus 134 ADRs | Per-record allocation | Per-record affected capabilities | Decision record | The registry is an index; accepted, superseded, and withdrawn records remain distinguishable |
+| [Architecture decision registry](../../architecture/decisions/README.md) | Registry plus 138 ADRs | Per-record allocation | Per-record affected capabilities | Decision record | The registry is an index; accepted, superseded, and withdrawn records remain distinguishable |
 | [System architecture allocation](./design-capability-allocation-system.md) | All 83 direct architecture, 6 infrastructure, and 2 generated sources | Per-source allocation | Per-source handoffs | Normative design, runbook, reference, index, and generated sources | Complete path-set coverage |
 | [Product documentation](../../product/README.md#canonical-sources) | All 7 files under `design/product/**` | Per-source allocation | Per-source product behavior scope | Requirements, taxonomy, index, and observable product behavior | Complete path-set coverage |
 
@@ -184,6 +187,10 @@ This file intentionally owns the allocation validation history; do not duplicate
 | `design/architecture/decisions/adr-0134-bounded-durable-semantic-reconnect-context.md` | `EA-1` | `AA-2`, `SF-2` | Accepted |
 | `design/architecture/decisions/adr-0135-compact-versioned-player-output-and-late-rendering.md` | `EA-1` | `EA-3`, `PO-2`, `SF-1` | Accepted |
 | `design/architecture/decisions/adr-0136-future-compatible-localization-boundary.md` | `EA-1` | `EA-3`, `AR-1` | Accepted |
+| `design/architecture/decisions/adr-0137-isolated-playtest-state-modes-and-reset.md` | `AR-3` | `AA-3`, `GR-2`, `GR-3`, `AA-1` | Accepted |
+| `design/architecture/decisions/adr-0138-expiring-playtest-grants-with-bounded-active-revocation.md` | `AR-3` | `AA-3`, `AA-2`, `PO-1`, `EA-3` | Accepted |
+| `design/architecture/decisions/adr-0139-tenant-owned-runtime-lifecycle-with-audited-break-glass.md` | `AR-3` | `AA-1`, `PO-1` | Accepted |
+| `design/architecture/decisions/adr-0140-realm-authored-controllable-actor-entry.md` | `AA-2` | `AA-3`, `GR-3`, `EA-3` | Accepted |
 
 ADR 0121 is superseded by [ADR 0114](../../architecture/decisions/adr-0114-command-plan-preview-dry-run-isolation.md); its historical capability allocation remains recorded above.
 

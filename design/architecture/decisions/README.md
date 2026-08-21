@@ -231,6 +231,10 @@ Validation precedence is fixed: first parse every checked queue row and validate
 | [ADR 0134](./adr-0134-bounded-durable-semantic-reconnect-context.md) | Accepted | `EA-1.3` | `AA-2.2`, `EA-1.2`, `SF-2.1`, `SF-2.3` | Namespace-scoped bounded durable semantic reconnect context with strict byte ceiling |
 | [ADR 0135](./adr-0135-compact-versioned-player-output-and-late-rendering.md) | Accepted | `EA-1.2` | `EA-1.1`, `EA-3.1`, `PO-2.2`, `SF-1.1`, `SF-1.2` | Compact versioned player output, late rendering, mandatory text projection, and causal-floor LOOK proof |
 | [ADR 0136](./adr-0136-future-compatible-localization-boundary.md) | Accepted | `EA-1.2` | `EA-3.1`, `AR-1.1`, `EA-3.4` | Future-compatible locale variants with deterministic fallback and deferred tooling selection |
+| [ADR 0137](./adr-0137-isolated-playtest-state-modes-and-reset.md) | Accepted | `AR-3.4` | `AA-3.2`, `GR-2.1`, `GR-3.1`, `GR-3.2`, `AA-1.2`, `AR-3.3` | Explicit fresh, seeded, and snapshot playtest initialization with namespace-replacement reset and no merge-back |
+| [ADR 0138](./adr-0138-expiring-playtest-grants-with-bounded-active-revocation.md) | Accepted | `AR-3.4` | `AA-3.2`, `AA-2.2`, `PO-1.2`, `EA-3.3` | Expiring Account-owned playtest grants with monotonic mutation and bounded active revocation |
+| [ADR 0139](./adr-0139-tenant-owned-runtime-lifecycle-with-audited-break-glass.md) | Accepted | `AR-3.1` | `AA-1.5`, `PO-1.1`, `AR-3.3` | Tenant-owned routine runtime lifecycle with composed gates and audited platform break-glass |
+| [ADR 0140](./adr-0140-realm-authored-controllable-actor-entry.md) | Accepted | `AA-2.1` | `AA-3.2`, `GR-3.1`, `EA-3.1` | Realm-authored entry into one persisted generic controllable actor |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../../product/capability-taxonomy.md).
 

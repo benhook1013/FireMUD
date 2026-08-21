@@ -266,12 +266,22 @@ See [Versioning & Runtime Configuration](../../system-architecture-versioning-ru
 - Character location and instance membership are stored by the World Management Service rather than this service, but all item instances and inventories remain owned and persisted here.
 - Entity graphs cache inventory relationships for fast lookups.
 
+### Persisted actor and realm-entry identity
+
+Under [ADR 0140](../../decisions/adr-0140-realm-authored-controllable-actor-entry.md), Entity Management is the persistence authority for the generic primary controllable actor. It allocates canonical `characterId` values and stores the association `{accountId, tenantId, playableStateNamespaceId, characterId}`. The durable identity is scoped by `{tenantId, playableStateNamespaceId}`; `playableStateScope` is server-derived policy/routing evidence and `gameInstanceId` is only the current active-runtime fence for namespace-backed writes.
+
+The published realm catalog supplies exactly one `PLAYER_CREATED`, `PRESEEDED_ONLY`, or `AUTO_PROVISIONED` entry policy plus its exact versioned descriptor/template identity. Entity validates that policy and version before creating or listing actors. Auto-provision uses an idempotency key scoped to `{accountId, playableStateNamespaceId}` and returns the existing persisted actor on an exact retry or concurrent duplicate. `CHARS`-equivalent reads return only persisted actors valid for the account, tenant, realm namespace, and published policy; the response carries policy and descriptor/template version so callers do not infer policy from row count. Zero actors therefore means create, provision, or deny according to policy; one may be selected automatically; many require explicit selection.
+
+Copies into an isolated playtest namespace allocate a new fork-local `characterId`. An optional `sourceCharacterId` is immutable provenance only: it is never a live reference or authority for ownership, mutation, controller uniqueness, reconnect, or merge-back. Game-specific RPG or non-RPG state is authored component data tied to the published descriptor/template and is not mandatory platform schema.
+
+The current implementation remains partial: legacy creation and actor rows still expose fixed RPG-oriented fields, policy/descriptor/template resolution and auto-provision idempotency are incomplete, and synthetic-ID/fork-copy proof gaps remain. These target rules do not claim runtime convergence.
+
 ### Runtime Actor Identity
 
 Entity Management owns one persisted runtime actor for every active gameplay being. `actorId` is an opaque canonical gameplay-facing identity; services must not substitute composite reference strings such as `PLAYER:<characterId>` or re-derive different player/NPC identity forms at each boundary.
 
 - The actor core carries `tenantId`, `gameInstanceId`, the resolved `playableStateNamespaceId` and `playableStateScope` when it represents durable playable state, `actorKind`, display name, and presence state. It does not persist universal targetability or visibility fields.
-- A `PLAYER` actor is an instance-scoped runtime actor unique for `{tenantId, gameInstanceId, characterId}`; it represents, but does not replace, the canonical gameplay binding identity `{tenantId, playableStateNamespaceId, playableStateScope, characterId}` and links to namespace-backed durable character state resolved under that identity. `gameInstanceId` remains the runtime target/fence, and this S3 actor row remains instance-owned. Disconnect/reconnect changes presence on that actor rather than creating a replacement durable identity; replacing the runtime may create a new runtime actor while preserving the namespace-backed character.
+- A `PLAYER` actor is a runtime projection of the persisted actor and is unique for the active `{tenantId, gameInstanceId, characterId}` execution context; it does not replace the canonical durable identity `{tenantId, playableStateNamespaceId, characterId}`. `gameInstanceId` remains the runtime target/fence, and this S3 projection may be recreated during replacement while preserving the namespace-backed character. Disconnect/reconnect changes presence on the projection rather than creating a replacement durable identity.
 - An `NPC` actor links to one NPC runtime instance. An authored NPC definition may create many concurrent runtime NPC actors and is not itself actor identity.
 - `PET` and `SUMMON` extend the same core when implemented. God/admin behavior is a capability and authorized presentation overlay on a `PLAYER` actor, not a separate actor kind.
 

@@ -218,7 +218,7 @@ Short synchronous sagas are used for **non-tick, multi-service workflows** invol
 
 | Use Case | Description |
 | --- | --- |
-| **Account Creation** | Create account → provision default character → initialize baseline state when the caller can synchronously own retry/failure behavior |
+| **Realm entry and actor provisioning** | After explicit realm entry, resolve the realm's published versioned entry policy and generic descriptor/template, then invoke Entity-owned actor creation/provisioning only for the policy-declared outcome when the caller can synchronously own retry/failure behavior |
 | **Short admin remediation** | Limited control-plane actions that touch more than one service but still complete in a single caller-driven request/worker pass |
 | **Tick-adjacent outbox follow-through** | Background orchestration around an outbox event when the work is still synchronous and restart-safe continuation is not required |
 

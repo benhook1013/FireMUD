@@ -18,6 +18,12 @@ This doc set is the authoritative source for:
 - links to the canonical shared contracts for reconnectable bindings and text-protocol framing;
 - the service's control-plane, runtime, configuration, and operator contracts.
 
+### PLAYER-01 local boundary
+
+Entity Management owns persisted actor identity and the `{accountId, tenantId, playableStateNamespaceId, characterId}` association; see its [API contract](../entity-management-service/api-contracts.md) and [runtime/data contract](../entity-management-service/runtime-and-data.md). Account supplies identity, membership, grants, and profile authority but does not own character rows. Game Session resolves the realm target, performs local `CHARS`/`PLAY` sequencing, rejects admission without a persisted realm-valid actor, and owns only the active attachment/controller fence keyed by `{tenantId, playableStateNamespaceId, characterId}`. `playableStateScope` and `gameInstanceId` remain server-derived routing/fence evidence.
+
+The local consequence of the realm policy is to present Entity's policy-specific roster/creation/provision result and to select a fork-local playtest `characterId`; Game Session does not allocate actors or treat `sourceCharacterId` as authority. Current per-instance binding and unresolved-character behavior remain implementation/proof gaps tracked in the player-access tracker.
+
 ## Target Control-Plane Summary
 
 Target state makes Game Session the authoritative owner of region/tick coordination, each instance's exact `(scriptPatchVersion, scriptPinEpoch)`, and append-only script rollout history. Owner mutations are fenced and idempotent; Logging & Admin is the external operator ingress, and session front ends forward region work without writing lease-owned state directly. See [Scripting Control-Plane API](../../system-architecture-scripting-control-plane-api.md#game-session-patch-pinning).

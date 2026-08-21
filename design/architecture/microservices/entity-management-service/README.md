@@ -19,13 +19,11 @@ The [ADR 0127](../../decisions/adr-0127-game-authored-equipment-layouts-with-fai
 
 Inventory and equipment mutations are also intended to be auditable through a canonical transfer log so item duplication or invalid movement bugs can be investigated later.
 
-Character ownership is tenant-scoped, but Entity Management must support both tenant-shared and instance-local playable state depending on the resolved realm policy. In practice this means a character may remain owned by the same `{accountId, tenantId}` while some associated gameplay state, such as copied fork-local progression, seeded/sample-state inventory, or fresh standalone realm-local records, is isolated to a specific `gameInstanceId`.
+### PLAYER-01 actor and realm-entry ownership
 
-Character discovery/creation contract consequence:
+[ADR 0140](../../decisions/adr-0140-realm-authored-controllable-actor-entry.md) is the canonical actor-entry contract; the detailed allocation, persistence, policy, descriptor/template, and copy rules live in [API Contracts](./api-contracts.md) and [Runtime and Data](./runtime-and-data.md). Entity Management owns persisted `characterId` and the `{accountId, tenantId, playableStateNamespaceId, characterId}` association. Account owns identity, membership, grants, and profiles; Game Session owns active attachment/controller fencing. The service must reject synthetic identity and retain game-authored actor components, while playtest copies receive fork-local identity with provenance-only `sourceCharacterId`.
 
-- For a resolved `{tenantId, gameInstanceId}` target, Entity Management must surface one realm-local roster plus explicit creation policy to admission/discovery callers.
-- It must not require callers to infer whether fresh creation is allowed by comparing isolated-state rows against the tenant's shared roster.
-- Character-state mutations that affect progression, resources, login/activity markers, or later loadout-style state must carry the same resolved `{tenantId, gameInstanceId, playableStateScope}` target and validate it against the stored character row before mutating. This keeps isolated-realm progression/resource updates from accidentally applying to the tenant's shared live character row.
+Current implementation remains partial: persisted rows and realm-aware listing exist, but synthetic-ID paths, fixed RPG columns, published entry-policy/descriptor/template resolution, policy-specific roster handling, namespace-idempotent auto-provision, and fork-local copy proof remain gaps.
 
 ### Responsibilities
 
@@ -46,8 +44,8 @@ For canonical naming and scoping rules, see [Identifier Glossary](../../system-a
 - Item storage and inventory handling
 - Experience and level tracking
 - NPC respawn scheduling with configurable delays
-- Character creation templates pulled from the Game Design Service
-- Support for both tenant-shared character state and isolated realm-local character state, depending on the resolved realm/runtime contract
+- Realm-authored, versioned actor creation descriptors and auto-provision templates supplied by the Game Design/realm catalog contract
+- Support for stable tenant-shared and isolated/playtest namespaces, depending on the resolved realm policy
 - Supports instance-based spaces in conjunction with the World Management Service so characters can enter private dungeons or personalized housing without affecting the shared world state
 - Crafting recipe management with validation
 - Cross-game character listing via account linkage

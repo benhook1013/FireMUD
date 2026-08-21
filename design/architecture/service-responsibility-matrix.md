@@ -88,6 +88,11 @@ The matrix below is the target participation and ownership contract. `Authoritat
 | Tick & coordination health metrics (diagnostic scope: `<tenantId, gameInstanceId, regionId>`) | | | | ✔ | | | | | | | |
 | Causal-read fence allocation and composite room-view composition (target-state only; current proto/request paths remain floor-free and implementation/proof are unimplemented; see [world-runtime-and-movement tracker](../project-management/implementation-tracking/world-runtime-and-movement.md); Game Session allocates `CausalReadFence`, Game Logic composes, and World Management/Entity Management provide participants) | | ✔ | | ✔ | ✔ | ✔ | | | | | |
 | Entity definition and persistence | | | | | ✔ | | | | | | |
+| Persisted primary controllable actor identity and `{accountId, tenantId, playableStateNamespaceId, characterId}` association; canonical `characterId` allocation | | | | | ✔ | | | | | | |
+| Published realm actor-entry policy and exact descriptor/template version consumption | ✔ | | | | ✔ | | | | | | |
+| Realm-local `CHARS` actor roster and policy-specific creation/provisioning result | | | | ✔ | ✔ | | | | | | |
+| Active gameplay attachment and namespace-scoped single-controller fence | | | | ✔ | | | | | | | |
+| Account identity, membership, grants, and profiles (not character rows) | | | ✔ | | | | | | | | |
 | NPC state, inventory, and stats | | | | | ✔ | | | | | | |
 | Player inventory and stats | | | | | ✔ | ✔ | | | | | |
 | Item definitions and crafting data | | | | | ✔ | | | | | | |

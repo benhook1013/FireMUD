@@ -546,6 +546,18 @@ ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/adr-0136-future-compatible-localization-boundary.md": adr_allocation(
         "EA-1", "Accepted", "EA-3", "AR-1"
     ),
+    "design/architecture/decisions/adr-0137-isolated-playtest-state-modes-and-reset.md": adr_allocation(
+        "AR-3", "Accepted", "AA-3", "GR-2", "GR-3", "AA-1"
+    ),
+    "design/architecture/decisions/adr-0138-expiring-playtest-grants-with-bounded-active-revocation.md": adr_allocation(
+        "AR-3", "Accepted", "AA-3", "AA-2", "PO-1", "EA-3"
+    ),
+    "design/architecture/decisions/adr-0139-tenant-owned-runtime-lifecycle-with-audited-break-glass.md": adr_allocation(
+        "AR-3", "Accepted", "AA-1", "PO-1"
+    ),
+    "design/architecture/decisions/adr-0140-realm-authored-controllable-actor-entry.md": adr_allocation(
+        "AA-2", "Accepted", "AA-3", "GR-3", "EA-3"
+    ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
     "README.md": "Service overview",

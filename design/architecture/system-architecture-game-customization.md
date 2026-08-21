@@ -73,6 +73,12 @@ Target-state content-addressed `manifest.json` example for the production `versi
 
 ## World Configuration
 
+### Realm-authored actor entry
+
+Realm actor entry is authored release data consumed through the [Entity Management actor-entry contract](./microservices/entity-management-service/api-contracts.md). Creators supply the realm's descriptor/template and game-specific actor components; players see the resulting policy-specific `CHARS`/creation/provision UX. Entity allocates persisted identity, Game Session attaches it, and playtest copies use fork-local IDs with provenance-only `sourceCharacterId`.
+
+The current actor schema and entry surfaces remain partially RPG-shaped and do not yet prove the Entity contract's policy resolution, descriptor/template validation, synthetic-ID rejection, or namespace-idempotent provisioning.
+
 - A default world is available, but creators can define custom worlds entirely through the **Game Design Service**. They add rooms, items, and NPCs through the [world editing tools](./microservices/game-design-service/world-editing-tools.md) and canonical service-owned design APIs. Any package transport must validate and apply through the same versioned authoring contracts rather than becoming a filesystem or second data authority.
 - Target-only starter profiles and ordered packs materialize ordinary game-owned entities/scripts into an editable Draft with baseline/source mapping and deletion/detachment lineage; they never remain runtime inheritance or hidden fallback. Local edits, broken references, and semantic identity changes require explicit creator resolution under [ADR 0124](./decisions/adr-0124-materialized-starter-profiles-with-conservative-draft-upgrades.md).
 - Additional design-time utilities like the [ability & action tools](./microservices/game-design-service/ability-action-tools.md) and [item & equipment balancing](./microservices/game-design-service/item-equipment-balancing.md) help tune gameplay without code changes.

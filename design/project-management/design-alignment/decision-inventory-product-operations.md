@@ -303,20 +303,20 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 #### `LIFE-01` - Tenant-owned routine lifecycle with platform break-glass
 
 - **Capability:** Primary `AR-3.1` Runtime instance launch, lifecycle, and termination. Secondary `AA-1.5`, `PO-1.1`, and `AR-3.3`.
-- **Decision / status / importance:** `tenantAdmin` owns routine game-instance launch, fork, patch pinning, cutover, and rollback within billing and entitlement controls. `platformAdmin` is reserved for break-glass intervention; a creator cannot bypass paid or safety gates merely by owning content. Status `needs-human-review`; `H/hard`.
+- **Decision / status / importance:** `tenantAdmin` owns routine game-instance launch, fork, patch pinning, cutover, and rollback within billing and entitlement controls. `platformAdmin` is reserved for distinct, reasoned, audited break-glass intervention; a creator cannot bypass publication, paid, compatibility, readiness, quota, or safety gates merely by owning content. Recovery, closure, cleanup, billing repair, and audit remain available when start or expansion is blocked. Status `accepted-explicit`; `H/hard`; current tenant-scoped surfaces, action-class gates, and break-glass proof remain incomplete.
 - **Sources / headings:** [creators.md](../../product/user-journeys/creators.md) `§ 1. Game Creation`, `§ 4. Publish and Start a Game Instance`, `§ 5. Patch and Update a Live Game`, and `§ 7. Playtesting & Analytics`; [operators.md](../../product/user-journeys/operators.md) `§ 2. Operator Recovery Journeys` and `§ 4. Deployment & Environment Configuration`.
 - **Strongest alternative:** Make platform operators own every launch and cutover, or let tenant admins launch without billing, entitlement, or safety enforcement.
-- **ADR recommendation:** Yes. Align lifecycle authority, paid-state behavior, and break-glass auditability with `AUTH-07`, `ADMIT-01`, and `OPS-05`.
-- **Human consultation:** Yes; product, finance, platform, and creator owners must approve the authority split.
+- **ADR recommendation:** [ADR 0139](../../architecture/decisions/adr-0139-tenant-owned-runtime-lifecycle-with-audited-break-glass.md) records the revised authority, gate, recovery, and deferred-delegation decision; canonical architecture remains the technical owner.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20 with Revised disposition; implementation and proof remain separate.
 
-#### `PLAYTEST-01` - Explicit, expiring playtest grants with forward-looking revocation
+#### `PLAYTEST-01` - Explicit, expiring playtest grants with bounded active revocation
 
 - **Capability:** Primary `AR-3.4` Playtest forks, reset, expiry, and isolation. Secondary `AA-3.2`, `AA-2.2`, `PO-1.2`, and `EA-3.3`.
-- **Decision / status / importance:** A playtest fork requires an explicit grant, may carry `expiresAt`, and has isolated state with no merge-back. Revocation stops future visibility and admission; existing sessions may drain rather than being implicitly ejected, unless a separate safety or incident action says otherwise. Status `needs-human-review`; `H/med`.
+- **Decision / status / importance:** A playtest fork requires an explicit Account-owned grant with a bounded expiry no later than the fork expiry. Effective expiry or explicit revocation hides discovery, denies new admission and reconnect, fences new commands, and terminates affected active bindings within the bounded revocation contract; scheduled close-and-drain is separate. Grants are monotonic, request-idempotent, and tombstoned, and playtest state remains isolated with no merge-back. Status `accepted-explicit`; `H/hard`; expiry, tombstones, tenant-scoped management, and end-to-end revocation proof remain incomplete.
 - **Sources / headings:** [creators.md](../../product/user-journeys/creators.md) `§ 4. Publish and Start a Game Instance` and `§ 7. Playtesting & Analytics`; [operators.md](../../product/user-journeys/operators.md) `§ 2. Operator Recovery Journeys`; [deployment-environments.md](../../architecture/infrastructure/deployment-environments.md) `§ Staging Environment for Playtesting`.
 - **Strongest alternative:** Use implicit membership, eject all current sessions on revocation, allow indefinite grants, or merge playtest state back into production.
-- **ADR recommendation:** Yes. Define grant ownership, expiry, revocation timing, drain behavior, and the exception for safety enforcement alongside `TENANT-03`.
-- **Human consultation:** Yes; product, moderation, creator, and player-support owners must decide the session and data semantics.
+- **ADR recommendation:** [ADR 0138](../../architecture/decisions/adr-0138-expiring-playtest-grants-with-bounded-active-revocation.md) records the revised grant authority, expiry, ordering, revocation, scheduled-drain, and isolation decision; [ADR 0137](../../architecture/decisions/adr-0137-isolated-playtest-state-modes-and-reset.md) owns namespace and fork preparation.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20 with Revised disposition; implementation and proof remain separate.
 
 #### `EQUIP-01` - Equipment vocabulary is game-authored and runtime-validated
 
@@ -327,14 +327,14 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 - **ADR recommendation:** [ADR 0127](../../architecture/decisions/adr-0127-game-authored-equipment-layouts-with-fail-closed-publication.md) records the revised human decision; the historical body-layout proposal is [ADR 0130](../../architecture/decisions/adr-0130-historical-equipment-body-layout-authority.md), superseded by ADR 0127.
 - **Human consultation:** Completed through human-led adversarial review; game designers, gameplay, and client owners remain implementation/proof participants.
 
-#### `PLAYER-01` - Character selection is explicit and realm-local
+#### `PLAYER-01` - Realm-authored entry uses one persisted controllable actor
 
 - **Capability:** Primary `AA-2.1` Gameplay login, character selection, and session binding. Secondary `AA-3.2`, `GR-3.1`, and `EA-3.1`.
-- **Decision / status / importance:** Character rosters and selection are scoped to the selected game realm; an account has no implicit default character across realms. Login requires explicit character selection or an explicit creation path, and character identity/state remains isolated per realm. Status `needs-human-review`; `H/hard`.
+- **Decision / status / importance:** Every normal session binds to one persisted, realm-valid generic controllable actor owned by Entity Management. Each published realm declares `PLAYER_CREATED`, `PRESEEDED_ONLY`, or `AUTO_PROVISIONED` entry policy with an exact versioned descriptor/template; zero/one/many rosters follow that policy, no identity is synthesized from account/name/hash, and isolated copies receive new fork-local identity. Status `accepted-explicit`; `H/hard`; policy resolution, descriptor/template validation, removal of synthetic fallbacks, and fork-copy proof remain incomplete.
 - **Sources / headings:** [players.md](../../product/user-journeys/players.md) `§ 2. Join a Game for the First Time`, `§ 3. Character Creation & Selection`, `§ 4. Player Login and Gameplay`, and `§ 8. Switch Games or Manage Multiple Games`; [system-architecture-frontend.md](../../architecture/system-architecture-frontend.md) `§ Authentication and Session Handling`.
 - **Strongest alternative:** Maintain a tenant-wide roster, choose an account-wide default character, or auto-create/select a character on first entry.
-- **ADR recommendation:** Yes. Define character-creation descriptors, missing-descriptor behavior, realm-local data, and the session-binding contract with `AUTH-01` and `SESSION-02`.
-- **Human consultation:** Yes; product, game-design, and player-support owners must approve the creation and selection experience.
+- **ADR recommendation:** [ADR 0140](../../architecture/decisions/adr-0140-realm-authored-controllable-actor-entry.md) records the revised persisted identity, entry-policy, authored-state, isolated-copy, and deferred-session-shape decision; canonical Entity and session architecture remain technical owners.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20 with Revised disposition; implementation and proof remain separate.
 
 #### `SAFETY-01` - Moderation outcomes are scoped by enforcement category and owner
 

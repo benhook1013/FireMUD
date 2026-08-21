@@ -18,6 +18,7 @@ Manages user accounts and authentication for the platform. It stores profile dat
   - receiver-specific private player-delegation JWTs only where an approved workload must carry Account authority, currently `game-session-account-delegation` for Account Service; workload-only gRPC uses mTLS without a bearer token
 - Issuing first-party player bootstrap tokens and gameplay connect tokens for `/ws/game/**` admission.
 - Tracking tenant-scoped profiles and achievements.
+- Maintaining Account-side relationship/projection references for Entity-owned actor discovery; Entity Management owns persisted actor rows and gameplay state.
 - Managing subscription status and ban enforcement.
 - Self-service account recovery for compromised or lost credentials.
 - Account-selected `PASSWORD` and verified-email `EMAIL_OTP` login modes.
@@ -30,7 +31,7 @@ Manages user accounts and authentication for the platform. It stores profile dat
 - Password reset and verification flows.
 - Subscription tracking with ban management.
 - Handles payment processing via **Stripe** for one-time purchases and recurring subscriptions.
-- Link accounts to player characters for ownership and permissions.
+- Expose Account relationship/projection data for actor discovery and access checks; do not create or own persisted gameplay actors.
 - gRPC APIs cover authentication, account lifecycle, export/delete, runtime/admission, membership, realm-grant, entitlement, profile, and payment operations. The canonical API inventory is [API Contracts](./api-contracts.md).
 
 ## Document Map
