@@ -51,7 +51,7 @@ Only a feature with an explicit durable-intake and safe-replay contract may use 
 
 ### Server-to-Client Delivery
 
-Raw outbound frames are not replayed after reconnect. Under [ADR 0134](./adr-0134-bounded-durable-semantic-reconnect-context.md), authorized reconnection may restore a bounded semantic recent-context window from Game Session-owned durable persistence. It is not a transcript or archive, delivery ledger, or evidence that any exact frame was delivered or observed.
+Raw outbound frames are not replayed after reconnect. When reconnect authorization succeeds and an eligible `CMD-04` window exists, authorized reconnection restores bounded semantic recent context from Game Session-owned durable persistence under [ADR 0134](./adr-0134-bounded-durable-semantic-reconnect-context.md); when reconnect is ineligible or no eligible window exists, it restores no semantic context. This restoration is distinct from delivery or frame replay, a delivery ledger, and transcript or archive data, and is not evidence that any exact frame was delivered or observed.
 
 ### Internal Delivery
 

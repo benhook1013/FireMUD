@@ -8,6 +8,8 @@ Accepted
 
 The current Gateway and TCP Proxy implementation and focused tests prove the displaced mapping: planned Gateway drain uses `1000/logout;subreason=gateway_restart`, takeover uses `1000/logout;subreason=takeover`, and TCP Proxy preserves those as Telnet `logout` outcomes. This ADR records a target-state change and does not claim that code or proof has been aligned.
 
+The target bounded typed Game Session → Gateway lifecycle-intent contract is not yet versioned or implemented. Current behavior infers lifecycle intent from upstream close/error behavior; this ADR does not invent a new wire protocol or claim that the target intent contract is available.
+
 Existing liveness gaps remain separate implementation obligations: the configured backend-unavailable limit must be enforced as a continuous elapsed-time cutoff no greater than 30 seconds, retry cadence must be bounded and jittered, recovery hysteresis and ping/pong behavior need focused proof, and stalled-input buffer exhaustion must produce an explicit `backend_unavailable` close rather than a silent drop. Current Gateway code instead uses a fixed attempt count/delay and can log a failed inbound buffer emission without closing the apparently healthy downstream connection.
 
 ## Decision Record

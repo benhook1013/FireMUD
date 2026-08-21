@@ -137,8 +137,6 @@ The focused admission proofs cover fresh acceptance, same-IP replacement reserva
 
 Account authority proof covers account-first tenantless bootstrap authentication and account-scoped session state, the current membership seam, Account-owned non-public realm grant denial, cross-tenant membership enforcement, and account-owned export/delete/recovery boundaries including active-subscription deletion guards. Explicit `JOIN`/`Join & Play`, transactional join authority, the connect-token membership-authority-generation reread, and canonical tenant-role, lifecycle-state, and authority-generation follow-through remain partial or unproved.
 
-On 2026-08-21, this PR locally confirmed `./gradlew linkCheck lintMarkdown verifyPlatformSettingsDocs`: 5,456 links / 0 errors and 486 Markdown files / 0 issues. This result covers Markdown/link and platform-settings validation only; it does not claim broader runtime or service proof. Broader checks and runtime proof remain deferred to the applicable validation workflow and PR/CI records.
-
 ## Active Gaps
 
 - Account authentication has no stable attempt identity or replayable result contract. Game Session now avoids automatically retrying an ambiguous credential-consuming transport failure, but Account still needs durable request identity and idempotent result lookup before authentication itself is safely retryable.

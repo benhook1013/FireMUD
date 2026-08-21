@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The current implementation substantially persists replay-eligible structured entries in ordered `resume_transcript_entry` rows and uses Redis only as a best-effort cache. Existing proof covers significant durable retention and replay behavior, including omission of one entry that cannot fit beneath the hard ceiling. It does not yet implement this decision completely: durable context is keyed by `gameInstanceId` rather than `playableStateNamespaceId`, and a first-party explicit logout path can leave private context replayable. Previous documentation contradicted the implemented oversized-entry behavior; this decision resolves the target in favor of a strict ceiling without claiming complete envelope-accounting and marker proof.
+The current implementation substantially persists replay-eligible structured entries in ordered `resume_transcript_entry` rows and uses Redis only as a best-effort cache. Existing proof covers significant durable retention and replay behavior, but it does not prove oversized-entry omission or omission-marker behavior; the current runtime may retain an oversized entry. It does not yet implement this decision completely: durable context is keyed by `gameInstanceId` rather than `playableStateNamespaceId`, and a first-party explicit logout path can leave private context replayable. Previous documentation contradicted the implemented oversized-entry behavior; this decision resolves the target in favor of a strict ceiling without claiming complete envelope-accounting and marker proof.
 
 ## Decision Record
 
