@@ -110,7 +110,7 @@ MCP state is **strictly per TCP connection** and does not survive reconnects on 
 - Hidden MCP metadata is likewise per TCP connection. Advanced clients that rely on future MCP-carried attach hints must resend that metadata on reconnect if they want those hints to apply again, even when the underlying gameplay session resumes from Redis.
 - The TCP Proxy Service never attempts to “reattach” a new TCP socket to prior MCP negotiation state; each TCP connection is treated as a fresh transport, even when it leads to a resumed gameplay session in Game Session.
 
-From the gameplay perspective, reconnection and resume behavior follow the rules in [Reconnection Strategy](./system-architecture-reconnection.md): clients always send a fresh `LOGIN` after any disconnect and then re-establish gameplay scope via the lobby commands (`WORLDS` / `CHARS` / `PLAY`). Game Session uses Redis-backed state to decide whether the selected world/character can resume an existing gameplay session or must start a new one. MCP may provide additional structure and hidden smart-client metadata on top of that flow but never replaces the core text protocol, Redis session state, or the canonical authorization and entitlement checks as the source of truth.
+From the gameplay perspective, reconnection and resume behavior follow the fresh-admission rules in [Reconnection Strategy](./system-architecture-reconnection.md): after a new connection, clients complete fresh public `WORLDS` discovery, credential-bearing `LOGIN`, authenticated `REALMS`, conditional `JOIN`/`Join & Play` when public-production membership requires repair, realm-scoped `CHARS` or allowed character creation when no valid character is already selected, `PLAY`, and then a fresh `LOOK`. Current text runtime may stop with `JOIN_REQUIRED` when explicit join is unavailable, but it must not create membership implicitly. Game Session uses Redis-backed state to decide whether the selected world/character can resume an existing gameplay session or must start a new one. MCP negotiation, package activation, cords, and hidden attach metadata are orthogonal transport features: they may be repeated around this sequence but never replace or bypass membership, entitlement, realm-grant, character, or gameplay-admission checks, the core text protocol, Redis session state, or canonical authorization.
 
 For MCP, a new TCP connection repeats negotiation and resends any MCP-carried attach metadata. Close classification and Telnet translation remain owned by [Gateway Architecture](./system-architecture-gateway.md#canonical-close-translation-matrix) and [Protocol Bridging](./system-architecture-protocol-bridging.md#telnet-disconnect-reasons); fresh transport and session recovery remain owned by [Reconnection Strategy](./system-architecture-reconnection.md#client-reconnection-behaviour).
 
@@ -120,7 +120,7 @@ Prompt/status handling should evolve toward MCP or other structured client data 
 
 - classic Telnet clients may still render prompts as text;
 - first-party web clients will often suppress textual prompts in the main scrollback and instead bind the same state to dedicated UI widgets;
-- reconnect transcript restoration should therefore exclude prompt lines and rely on one fresh regenerated prompt or structured MCP status update after the transcript window and fresh `LOOK`.
+- semantic reconnect-context restoration should therefore exclude prompt lines and rely on one fresh regenerated prompt or structured MCP status update after the context window and fresh `LOOK`.
 
 ## Example Workflow
 

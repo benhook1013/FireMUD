@@ -82,5 +82,5 @@ Numeric WebSocket codes, reason-token spellings, optional diagnostic labels, and
 
 ## Required Documentation Alignment
 
-- `design/architecture/system-architecture-gateway.md`
-- `design/architecture/system-architecture-protocol-bridging.md`
+- [Gateway](../system-architecture-gateway.md)
+- [Protocol Bridging](../system-architecture-protocol-bridging.md)

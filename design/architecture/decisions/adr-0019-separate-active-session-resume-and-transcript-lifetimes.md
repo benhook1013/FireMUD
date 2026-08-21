@@ -1,4 +1,4 @@
-# ADR 0019: Separate Active Session, Resume, and Transcript Lifetimes
+# ADR 0019: Separate Lifetimes for Active Sessions, Resume Eligibility, and Semantic Reconnect-Context Retention
 
 ## Status
 

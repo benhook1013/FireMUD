@@ -146,7 +146,7 @@ Today, operator defaults still come from service-local typed properties, while t
 - `reconnection.buffer`
   - tenant/game-configurable today for bounded semantic reconnect-context retention/resource bounds over service-local operator defaults; retention never grants resume or replay authority
   - because the soft and hard byte ceilings form one effective invariant over each complete scope-bound persisted envelope while operator defaults remain service-local, a tenant override that changes either ceiling must persist both values; a game-instance override may set one ceiling only when the tenant layer supplies the complete pair, and tenant mutations validate existing game-instance children against the prospective parent
-  - min-message and min-line floors and the soft ceiling remain subordinate, best-effort retention preferences; none may override the target absolute hard ceiling, under which an oversized entry must be omitted or represented by a bounded marker rather than partially truncated. The current Game Session runtime can retain one oversized entry, so complete-envelope omission/marker enforcement and proof remain gaps.
+  - min-message and min-line floors and the soft ceiling remain subordinate, best-effort retention preferences; none may override the target absolute hard ceiling, and a complete scope-bound persisted envelope exceeding it must be omitted or represented by a bounded marker rather than partially truncated. The current Game Session runtime can retain one oversized entry, so complete-envelope omission/marker enforcement and proof remain gaps.
   - operator caps remain future work
 - `communication.behavior`
   - tenant/game-configurable today for message limits and whisper observer-metadata policy
