@@ -75,7 +75,7 @@ Entry format:
   - Observation: the harness slot limit requires a different recovery path from a model-capacity failure.
   - Expected pattern: route thread exhaustion through the [AI Delegation And Review](../developer-workflows/ai-delegation-and-review.md) status/close-out path; reserve delayed same-tier retries for actual model-capacity failures.
 
-- `2026-08-21`: Reconnect context and connection coordination have distinct Redis authority
+- `2026-08-21`: Reconnect context and connection coordination have distinct ownership
   - Context: consolidating the durable semantic reconnect-context contract exposed a recurring temptation to treat all reconnect-related Redis data as one authority family.
   - Observation: Coordination Redis owns connection liveness, bindings, and rebind state; Game Session persistence owns semantic reconnect context, and Cache/Rate-Limit Redis may only accelerate that persisted context.
   - Expected pattern: keep connection coordination and semantic context as separate ownership families, and require semantic context to rebuild from Game Session persistence after cache loss.
