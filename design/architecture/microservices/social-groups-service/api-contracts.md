@@ -8,7 +8,7 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 
 The friend-presence slice currently implements non-pageable friend-roster and presence reads over tenant-scoped mutually accepted reciprocal links whose two directed rows are both `active`. One-way links, inactive reciprocal links, and links stored under another tenant are not endpoint-visible; focused integration proof covers those boundaries in [SocialGroupsApplicationIntegrationTest.java](../../../../services/social-groups-service/src/test/java/integration/net/firedevops/firemud/socialgroups/SocialGroupsApplicationIntegrationTest.java). The current endpoint path has no block-state model or block revalidation. It does not create snapshots, continuations, or paginated bulk pages. Snapshot-bound continuation, continuation-time relationship and block revalidation, bounded paginated bulk reads, and the failure-precedence contract below remain target behavior; this document does not claim that the current implementation or existing tests prove those target obligations.
 
-Social & Groups is the enforcement owner for `chat_mute` and `chat_ban`. Its local indexed restriction state is evaluated before chat persistence/publication and at participation/history reads; the complete category, revision, command, notice, and appeal-outcome contract is [Moderation Policies](../logging-admin-service/moderation-policies.md). Current `EvaluateModerationPolicy` consumption and chat tests do not prove owner-local durable restrictions, essential notices, independent stacking, expiry/reordering, or appeal handling.
+Social & Groups is the enforcement owner for `chat_mute` and `chat_ban`. Its local indexed restriction state is evaluated before chat persistence/publication and at participation/history reads; the complete category, revision, command, notice, and appeal-outcome contract is [Moderation Policies](../logging-admin-service/moderation-policies.md). Current `EvaluateModerationPolicy` consumption and chat tests do not prove owner-local durable restrictions, essential notices, independent stacking, expiry/reordering, or appeal handling. The REST `/chat` path is unavailable as a supported player API until it traverses the same restriction gate as `SendMessage`; the current supported communication path is the gated `SendMessage` contract below.
 
 ## REST APIs
 
@@ -24,7 +24,7 @@ Social & Groups is the enforcement owner for `chat_mute` and `chat_ban`. Its loc
 | `POST` | `/guilds/members` | Add a guild member |
 | `POST` | `/guilds/members/role` | Update a guild member's role |
 | `POST` | `/guilds/members/remove` | Remove a guild member |
-| `POST` | `/chat` | Send a chat message filtered for profanity |
+| `POST` | `/chat` | **Unavailable as a supported player API:** target REST chat must apply the same owner-local `chat_mute`/`chat_ban` restriction gate as `SendMessage` before persistence/publication |
 | `POST` | `/voice/token` | Issue a temporary WebRTC token for voice chat; the gateway relays media between participants |
 
 Example health check:
@@ -33,7 +33,7 @@ Example health check:
 curl http://localhost:8080/ping
 ```
 
-Example chat request:
+Target-only chat request (unavailable until the restriction gate is present):
 
 ```bash
 curl -X POST http://localhost:8080/chat \

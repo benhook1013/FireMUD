@@ -35,7 +35,7 @@ The current grant row also has no expiry, request-replay record, scoped tenant-a
 
 Account Service is the sole grant writer and read authority for non-public realms. `tenantAdmin` routinely creates, extends, lists, and revokes tester grants only within the exact tenant it administers. `platformAdmin` may perform the same operation only through a distinct reasoned and audited break-glass path. A grant mutation validates the exact tenant, world, realm, account, current fork lifecycle, and caller authority; a realm slug or caller-supplied tenant identifier is not sufficient proof.
 
-The normal playtest access record is scoped by `{accountId, tenantId, worldSlug, realmSlug}`. It carries its active or revoked state, monotonic `grantRevision`, grantor and audit metadata, `requestId`, and explicit `grantExpiresAt`. Account remains the authority for this record; Game Session and client surfaces consume its result and do not maintain independent grant stores.
+The normal playtest access record is scoped by the canonical `{accountId, tenantId, worldSlug, realmSlug}` plus immutable `playtestLifecycleId`. The lifecycle ID is part of the durable grant identity and every revision/tombstone; a later fork lifecycle or realm reuse cannot address this grant. It carries its active or revoked state, monotonic `grantRevision`, grantor and audit metadata, `requestId`, and explicit `grantExpiresAt`. Account remains the authority for this record; Game Session and client surfaces consume its result and do not maintain independent grant stores. Every discovery, lookup, mutation, and admission check supplies and validates that same lifecycle ID; a tenant-global `realmSlug` lookup is insufficient.
 
 ### Expiry Is Bounded and Explicit
 
@@ -51,7 +51,7 @@ At or beyond effective expiry the grant is not valid for discovery, connect-toke
 
 ### Monotonic Idempotent Mutation
 
-Create, extend, revoke, and deliberate re-grant commands are idempotent by stable `requestId` and ordered by a monotonic revision for the grant scope. Repeating a completed request returns the same semantic outcome. Older or duplicate commands cannot replace newer state.
+Create, extend, revoke, and deliberate re-grant commands are idempotent by stable `requestId` and ordered by a monotonic revision for the grant scope. Account computes and persists a canonical versioned command digest over the normalized operation, complete grant target (including `accountId`, tenant/world/realm, and `playtestLifecycleId`), and requested expiry. Repeating a completed request replays the stored semantic outcome only when the `requestId` and digest are identical. Reusing a `requestId` with a changed operation, target, lifecycle, or expiry returns `IDEMPOTENCY_CONFLICT` before any mutation; it never reinterprets or retargets the original command. Older or duplicate commands cannot replace newer state.
 
 Revocation records a tombstone with its revision rather than immediately deleting the authority history. A late retry of the earlier grant or extension cannot resurrect access. A later intentional re-grant is a new authorized command that observes the latest tombstone, advances beyond it, and supplies a new bounded expiry. Tombstone compaction is allowed only after the retention and deduplication horizons make stale mutation replay impossible.
 
@@ -101,11 +101,11 @@ Delete the grant row and treat absence as denial. This is easy to query, but an 
 
 ## Implementation and Proof Obligations
 
-The current implementation is partial. Account persists and reads explicit grants, and admission paths can deny a missing grant. It does not provide grant expiry or effective fork-expiry evaluation, tenant-scoped role enforcement on creator management APIs, request-replay idempotency, durable revocation tombstones, or an end-to-end active-binding ejection path. Current mutation is exposed only through a globally privileged internal surface, revocation deletes the row, and creator-facing account search, list, extension, and expiry UX are absent.
+The current implementation is partial. Account persists and reads explicit grants, and admission paths can deny a missing grant. It does not provide grant expiry or effective fork-expiry evaluation, tenant-scoped role enforcement on creator management APIs, lifecycle-bound grant identity on every route/read, request-replay digest enforcement, durable revocation tombstones, or an end-to-end active-binding ejection path. Current mutation is exposed only through a globally privileged internal surface, revocation deletes the row, and creator-facing account search, list, extension, and expiry UX are absent.
 
 Implementation must add monotonic persisted grant state, explicit bounded expiry, idempotent mutation outcomes, retained tombstones, exact realm and tenant validation, tenant-admin and audited break-glass surfaces, authority-change delivery, and targeted Game Session termination using the established active-binding indexes and reconciliation bound. Grant reads and all discovery/admission surfaces must agree on the effective expiry and latest revision.
 
-Proof must cover grant, extension, expiry, explicit revocation, deliberate re-grant, duplicate and reordered commands, delayed create after revoke, concurrent extension and revoke, fork expiry and extension, wrong tenant/realm/caller, tenant-admin versus platform break-glass authority, discovery hiding, connect-token and `PLAY` denial, active command fencing, already-admitted work completion, targeted socket termination, missed-event reconciliation, authority outage, reconnect denial, scheduled close-and-drain, reset isolation, and absence of production merge-back.
+Proof must cover grant, extension, expiry, explicit revocation, deliberate re-grant, duplicate and reordered commands, changed-digest `requestId` reuse, delayed create after revoke, concurrent extension and revoke, fork expiry and extension, wrong tenant/world/realm/lifecycle/caller, tenant-admin versus platform break-glass authority, discovery hiding, connect-token and `PLAY` denial, active command fencing, already-admitted work completion, targeted socket termination, missed-event reconciliation, authority outage, reconnect denial, scheduled close-and-drain, reset isolation, and absence of production merge-back.
 
 ## Reversibility and Revisit Triggers
 

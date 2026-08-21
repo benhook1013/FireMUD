@@ -83,7 +83,20 @@ A BFF requires a separate accepted decision justified by at least one concrete n
 
 The Telnet `LOGIN -> PLAY -> LOOK` hosted proof is achieved and remains useful protocol evidence. Frontend completion now requires a bounded automated browser journey against the deployed public topology: load the released application, authenticate through Account, discover and select an admissible realm/character, obtain the browser connect-token cookie, open `/ws/game/**`, complete `LOGIN -> PLAY -> LOOK`, recover once through the fresh-connect-token reconnect flow, explicitly log out, and prove the revoked or cleared authority is not reusable.
 
-Focused proof must also cover SPA fallback without capturing reserved paths, cache and compression behavior, CSP/security headers, non-secret runtime configuration, unprivileged container execution, health, and independent frontend rollback. Sensitive-action UI work additionally proves browser reauthentication and required step-up at the owning API boundary.
+Focused proof must also cover SPA fallback without capturing reserved paths, cache and compression behavior, CSP/security headers, non-secret runtime configuration, unprivileged container execution, health, and independent frontend rollback. The browser proof must promote and roll back a frontend-only artifact while the backend release remains unchanged, exercising the same bounded compatibility matrix below. Sensitive-action UI work additionally proves browser reauthentication and required step-up at the owning API boundary.
+
+### Bounded Compatibility Matrix for Independent Frontend Releases
+
+A frontend artifact is independently promotable or rollbackable only when its declared compatibility remains within these bounded contracts:
+
+| Boundary | Compatibility required for the frontend artifact | Proof boundary |
+| --- | --- | --- |
+| Artifact and API | The artifact uses only the deployed, supported browser-facing Account, Gateway, and domain API contracts; publishing or rolling back compatible frontend files does not require a backend release. | The browser journey succeeds against the unchanged backend release, and an incompatible API change is not hidden by the static host. |
+| Artifact and runtime configuration | The artifact accepts only the documented non-secret public runtime configuration and preserves the `index.html`/configuration freshness rules; configuration never supplies authority or secrets. | The promoted and rolled-back artifact loads the intended release identity and public configuration, while missing, malformed, or secret-bearing configuration is rejected by the frontend/host contract. |
+| Artifact and gameplay connect-token | The artifact uses the accepted browser bootstrap and narrow HttpOnly gameplay connect-token carrier; Account and Gateway remain responsible for issuance, validation, replay, expiry, and admission context. | The browser obtains and consumes a fresh connect-token cookie for `/ws/game/**` during both frontend-only release states without treating frontend state or configuration as token authority. |
+| Artifact and `PlayerOutput` | The artifact consumes the explicitly supported versioned first-party `PlayerOutput` projection; its structured envelope is not replaced by generic JSON handling or made a universal classic-client contract. | The browser proof exercises the supported `PlayerOutput` version through `LOGIN -> PLAY -> LOOK` and fails the release proof for an unsupported projection rather than silently treating it as compatible. |
+
+This matrix bounds frontend-only promotion and rollback. It does not authorize API, runtime-configuration, connect-token, or `PlayerOutput` contract changes; those remain owned by their canonical services and require their own compatibility and proof decisions.
 
 This decision supports a first-party browser application. It does not promise a native mobile application, mobile release channel, or mobile-specific compatibility contract.
 

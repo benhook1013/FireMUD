@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-This decision is not implemented. Plain-text gameplay remains the baseline, while classic-client extension research, Game Session semantic ownership, and exact interoperability proof remain outstanding.
+This decision is not implemented. Plain-text gameplay remains the baseline, while classic-client extension research, Game Session semantic ownership, and exact interoperability proof remain outstanding. The current TCP Proxy still recognizes MCP-looking markers and, when its `TCP_PROXY_MCP_ENABLED` flag is enabled, can emit an `#$#mcp version:2.1` greeting. That code path is implementation drift against this decision: supported deployments must keep it disabled, unadvertised, and fail closed, and it must not be treated as an adapter until a Game Session-owned adapter is accepted and proven end to end.
 
 ## Decision Record
 
@@ -59,7 +59,7 @@ If later research selects MCP, Game Session is the sole owner of:
 - FireMUD package schemas and mapping from `PlayerOutput`;
 - extension failure, fallback, and reconnect behavior.
 
-TCP Proxy remains an opaque transport and safety boundary. It may enforce generic line-size limits and an opaque marker-line rate limit before forwarding, but it does not emit an MCP greeting, decide whether negotiation succeeded, parse packages, validate authentication keys, count active cords or data tags, reassemble multiline values, or maintain a duplicate semantic state machine. Recognizing a reserved marker for bounded rate protection is not protocol negotiation or package support.
+TCP Proxy remains an opaque transport and safety boundary. It may enforce generic line-size limits and an opaque marker-line rate limit before forwarding, but it does not emit an MCP greeting, decide whether negotiation succeeded, parse packages, validate authentication keys, count active cords or data tags, reassemble multiline values, or maintain a duplicate semantic state machine. Recognizing a reserved marker for bounded rate protection is not protocol negotiation or package support. If accepted opaque input exceeds a generic limit or cannot be forwarded under backpressure, the proxy emits an explicit bounded error/close rather than keeping the connection open after silently discarding it; neither TCP Proxy nor Gateway interprets extension semantics.
 
 ### Authentication Keys Are Correlation Only
 
@@ -100,7 +100,7 @@ MCP is already named in the repository and has useful line-oriented properties, 
 
 ### Put Negotiation and Resource State in TCP Proxy
 
-The proxy is close to the Telnet transport and can cheaply recognize marker lines, but owning greetings, packages, cords, or tags there would split presentation semantics from Game Session and duplicate state across the bridge. Only generic line-size and opaque marker-rate protection remain at the proxy.
+The proxy is close to the Telnet transport and can cheaply recognize marker lines, but owning greetings, packages, cords, or tags there would split presentation semantics from Game Session and duplicate state across the bridge. Only generic line-size and opaque marker-rate protection remain at the proxy, with an explicit error/close for accepted input that exceeds those limits or is blocked by backpressure rather than a keep-open silent discard.
 
 ### Make Structured Extension Messages Canonical
 
@@ -108,7 +108,7 @@ This could simplify rich-client output at the cost of requiring classic clients 
 
 ## Implementation and Proof Obligations
 
-Current implementation evidence is insufficient for any classic-client extension support claim. TCP Proxy has disabled-by-default MCP-looking marker recognition, a greeting path, and focused tests. Game Session does not own or prove a compliant MCP or GMCP negotiation, semantic parser, package registry, correlation-key validation, cord lifecycle, data-tag reassembly, or stable FireMUD package mapping. There is no current-client compatibility matrix or end-to-end proof that a supported client negotiates an advertised package and receives semantically equivalent text and structured output.
+Current implementation evidence is insufficient for any classic-client extension support claim. TCP Proxy has disabled-by-default MCP-looking marker recognition, a `TCP_PROXY_MCP_ENABLED` greeting path, and focused tests. Game Session does not own or prove a compliant MCP or GMCP negotiation, semantic parser, package registry, correlation-key validation, cord lifecycle, data-tag reassembly, or stable FireMUD package mapping. There is no current-client compatibility matrix or end-to-end proof that a supported client negotiates an advertised package and receives semantically equivalent text and structured output. The proxy greeting/flag seam remains implementation drift and must stay disabled, unadvertised, and fail closed until a Game Session-owned adapter is accepted and that proof exists.
 
 The existing proxy marker/greeting seam is an implementation gap against the selected ownership boundary, not partial proof of compliant MCP negotiation. A later implementation must remove semantic negotiation from TCP Proxy, implement the selected adapter in Game Session, and keep the adapter disabled and unadvertised until proof is complete.
 

@@ -59,6 +59,7 @@ This document outlines the **core functional and non-functional requirements** f
 - Role-based access control (RBAC) for **admins, moderators, and players**.
 - Users should be able to **create and manage multiple characters per game**.
 - Sessions should support **persistent logins and reconnection handling**.
+- Account must support a protective `account_security_lock` for verified or high-confidence compromise. The Account-owned lock revokes ordinary account/bootstrap authority and is cleared only through Account security recovery; it is not a punitive moderation category.
 - First-party web and mobile clients must support world, realm, and character selection before gameplay begins.
 - **Expanded Account Features**:
   - Players should be able to **link external accounts** (Google, Discord, Steam) for login.
@@ -116,12 +117,12 @@ See [Game Design Service](../architecture/microservices/game-design-service/READ
 ### 2.8 Moderation, Administration & Monetization
 
 - **Admin dashboard** for monitoring and moderating hosted games.
-- **In-game reporting & fixed-category safety system** for handling violations. The categories are `account_security_lock`, `platform_access_ban`, `gameplay_ban`, `chat_mute`, and `chat_ban`, with independent lifecycles and owner-local enforcement.
+- **In-game reporting & fixed-category safety system** for handling violations. Reportable punitive categories are `platform_access_ban`, `gameplay_ban`, `chat_mute`, and `chat_ban`, with independent lifecycles and owner-local enforcement. The protective `account_security_lock` is handled only by Account security recovery, not by in-game reports.
 - **Bounded moderation appeals** for eligible severe or long-lived restrictions. Logging & Admin owns the case, evidence references, jurisdiction, review, and audit; Account authenticates the player and provides the browser handoff; Account, Game Session, and Social & Groups remain enforcement owners. Filing does not stay enforcement.
 - **Moderation policy definitions** including profanity filters.
 - **Central analytics dashboards and logging** for tracking player activity and game performance.
 - Operators and authorized game administrators can manage **tenant-scoped runtime feature flags** through audited controls. See [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md) for the ownership and activation contract.
-- **V1 Hosting Billing**: Account integrates Stripe as the sole supported provider for FireMUD hosting plans and platform subscriptions. Account owns provider lifecycle/reconciliation state and tenant entitlement/availability outcomes; lifecycle and admission consumers use those outcomes without copying provider logic. Billing-safe management remains reachable when gameplay is denied for billing reasons.
+- **V1 Hosting Billing**: Account integrates Stripe as the sole supported provider for FireMUD hosting-plan subscriptions. Account owns provider lifecycle/reconciliation state and hosting-plan/resource entitlement/availability outcomes; lifecycle and admission consumers use those outcomes without copying provider logic. Marketplace/player-purchase entitlements require a later accepted product/settlement decision. Billing-safe management remains reachable when gameplay is denied for billing reasons.
 - **Deferred creator/player monetization**: player purchases, paid game subscriptions, creator donations/tips, platform fees on creator transactions, revenue sharing, payouts, and settlement are not v1 product commitments. A separate marketplace/settlement decision is required before enabling them; off-platform receipts do not create FireMUD entitlements.
 - **External payment methods are not allowed** within FireMUD-managed v1 hosting billing.
 - **High-resource features** (e.g., AI, scripting) may be premium hosting plan options, subject to Account entitlements.

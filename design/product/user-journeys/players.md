@@ -226,9 +226,9 @@ Players communicate and coordinate through the [Social & Groups Service](../../a
 3. **Moderation Hooks** – Social & Groups enforces its owner-local chat restrictions at communication boundaries; policy, cases, evidence, and audit use the [Logging & Admin Service](../../architecture/microservices/logging-admin-service/README.md). See [Monitoring and Moderation](./operators.md#1-monitoring-and-moderation) for operator flows.
 
 4. **Chat Validation** – In-game chat commands (say, tell, guild chat, mail) enter the [Game Logic Service](../../architecture/microservices/game-logic-service/README.md) first for gameplay/world semantics, then Social & Groups applies local checks (`chat_mute` at send; `chat_ban` at send, participation, and history) before persistence or publication. World and entity context comes from the [World Management Service](../../architecture/microservices/world-management-service/README.md) and [Entity Management Service](../../architecture/microservices/entity-management-service/README.md).
-5. **Profanity & Friends** – The Social & Groups Service performs profanity checks, logs communication, and delivers messages. Account-level friends automatically appear in-game when the feature is enabled.
+5. **Profanity & Friends** – The Social & Groups Service performs profanity checks, logs communication, and delivers messages. When moderation applies, the required Logging & Admin records are policy intent, case/evidence references, and audit; retaining a message as evidence is a separate optional signal. Account-level friends automatically appear in-game when the feature is enabled.
 6. **Player Reporting** – Players can submit caller-bound reports with the affected game scope and supporting context for operator review. A report is evidence and does not automatically restrict another player. Current availability is summarized in [Implementation Status](#implementation-status).
-7. **Moderation Outcomes** – Moderation actions surface as specific player-visible outcomes rather than a generic "ban" message:
+7. **Moderation Outcomes and Account Safety** – Punitive moderation actions surface as specific player-visible outcomes rather than a generic "ban" message. The protective `account_security_lock` is a separate Account security/recovery outcome, not an in-game reportable moderation action:
    - `account_security_lock` blocks ordinary account/bootstrap access until Account security recovery; `platform_access_ban` blocks ordinary platform access and survives credential recovery.
    - `gameplay_ban` blocks `PLAY` and new gameplay admission for the affected tenant/realm scope; already-admitted durable work follows the Game Session owner contract.
    - `chat_mute` blocks sending while ordinary receipt remains available; `chat_ban` blocks ordinary participation, sending, and history while essential notices remain deliverable.
@@ -244,14 +244,16 @@ Canonical player-facing examples:
 The target communication model differentiates speech mode from audience scope so game rules can support target-limited whispers, directed tells, and topology-aware shouts or announcements across an area, region, map, continent, or configured channel. Current availability is summarized in [Implementation Status](#implementation-status).
 
 ```plaintext
-Player → Game Session Service → Social & Groups Service (optional evidence/audit to Logging & Admin)
+Player → Game Session Service → Game Logic Service → Social & Groups Service
+Moderation policy/case/evidence/audit records → Logging & Admin Service (required)
+Message evidence → Logging & Admin Service (optional)
 ```
 
 ---
 
 ## 6. Purchases and Subscriptions
 
-1. **Hosting Billing** – The [Account Service](../../architecture/microservices/account-service/README.md) owns the sole supported v1 Stripe integration for FireMUD hosting plans and platform subscriptions, including provider lifecycle/reconciliation state and tenant entitlement outcomes.
+1. **Hosting Billing** – The [Account Service](../../architecture/microservices/account-service/README.md) owns the sole supported v1 Stripe integration for FireMUD hosting-plan subscriptions, including provider lifecycle/reconciliation state and hosting-plan entitlement outcomes.
 2. **Consumer Boundary** – Game Session, World Management, and lifecycle/admission consumers use Account billing outcomes; they do not call Stripe or copy provider logic. A payment attempt, redirect, or receipt is not entitlement authority.
 3. **Deferred Commerce** – Player purchases, paid game subscriptions, creator donations/tips, platform fees on creator transactions, revenue sharing, payouts, and settlement are deferred and are not supported player journeys. Existing generic payment/refund code does not widen this scope.
 4. **Tenant Availability & Limits** – Whether a game can start instances or accept new gameplay bindings depends on Account’s subscription state and plan entitlements as described in the [Subscription Management Design](../../architecture/microservices/account-service/subscription-management.md) and [Multi-Tenancy](../../architecture/system-architecture-multi-tenancy.md#tenant-configuration--scaling). When a tenant is suspended for billing, players see a clear tenant-scoped unavailability outcome.

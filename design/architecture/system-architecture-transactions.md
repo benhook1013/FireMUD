@@ -324,13 +324,13 @@ This library is intentionally not FireMUD's durable workflow engine. World lifec
 ### Fluent API Example
 
 ```java
-sagaBuilder("accountCreation")
+sagaBuilder("explicitRealmEntry")
     .step(
-        "createAccount",
-        accountClient::createAccount,
-        accountClient::deleteAccount)
-    .step("provisionCharacter", entityClient::createPlayer)
-    .step("assignStartingRoom", worldClient::placeInWorld)
+        "authorizeRealmEntry",
+        accountClient::authorizeRealmEntry,
+        accountClient::abortRealmEntry)
+    .step("provisionRealmActor", entityClient::provisionRealmActor,
+        entityClient::cancelRealmActorProvisioning)
     .run();
 ```
 

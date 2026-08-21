@@ -73,7 +73,7 @@ The current admission gaps are explicit `JOIN`, realm-scoped discovery/character
 
 ### First-Party Frontend
 
-- Current implementation: `web-client` is a React/Vite/MUI/TanStack Query baseline with a generic WebSocket envelope/JSON consumer that parses payloads as `unknown`, plus local feature/form state. Semantic structured `PlayerOutput` consumption, the complete admitted runtime-bundle asset bootstrap, independent immutable frontend artifact/release metadata, unprivileged static host, richer player UX, admin/design-tool integration, and end-to-end browser proof are not implemented. The frontend has no durable gameplay or backend authority; classic-client semantic negotiation remains deferred under MCP-01.
+- Current implementation: `web-client` is a React/Vite/MUI/TanStack Query baseline with a generic WebSocket envelope/JSON consumer that parses payloads as `unknown`, plus local feature/form state. Semantic structured `PlayerOutput` consumption, the complete admitted runtime-bundle asset bootstrap, independent immutable frontend artifact/release metadata, unprivileged static host, richer player UX, admin/design-tool integration, and end-to-end browser proof are not implemented. The target boundary and independent-release proof requirements remain in [FRONT-01](../../architecture/decisions/adr-0144-stateless-first-party-frontend-application-boundary.md).
 
 ### Validation and Proof
 
@@ -90,7 +90,7 @@ The current admission gaps are explicit `JOIN`, realm-scoped discovery/character
 - Localization is live for active built-in renderer outputs and room/exit prose; see the canonical [Input, output, and presentation](../../architecture/system-architecture-input-output-and-presentation.md#localization-and-translation) owner. Item, lore, and broader world-content adoption and locale-specific speech policy remain incomplete. Stored authored variants follow exact locale -> explicitly stored base language -> source locale; arbitrary regional sibling fallback and live provider translation remain out of scope, and no broader creator workflow/provider has been selected.
 - Presentation still lacks combat-state-driven brief-on-move behavior, richer configurable prompt composition, broader prompt scheduling, and broader smart-client presentation policy.
 - Presence and social surfaces have a bounded canonical runtime/read model, but broader activity-engine consumers, richer recent-presence policy, broader social consumers, and operator visibility and staff-capability enforcement remain incomplete.
-- The independently released first-party static artifact, unprivileged static asset-hosting boundary, independent rollback, and richer browser product surface remain incomplete under FRONT-01; the frontend is not a durable gameplay or backend authority.
+- The independently released first-party static artifact, unprivileged static asset-hosting boundary, independent rollback, and richer browser product surface remain incomplete under [FRONT-01](../../architecture/decisions/adr-0144-stateless-first-party-frontend-application-boundary.md).
 - Manual QA still needs to confirm that normal Telnet and generic WebSocket clients follow the same optional-browse, `LOGIN`, `PLAY`, in-game progression and that the first-party browser reaches the same gameplay binding semantics.
 
 ## To Discuss
@@ -118,6 +118,6 @@ Resolve the remaining design choices in the canonical [player command model](../
 | World Management | Current room snapshots and localized room/exit source content | LOOK/world-read contracts |
 | Game Design and settings authority | Effective command capability, presentation, communication, and prompt policy; tenant/game overrides | Shared settings precedence and Game Session effective-settings readback |
 | Logging & Admin | Privileged built-in alias validation and operator diagnostics | Canonical control-plane readback |
-| First-party frontend | Independently released static presentation artifact, browser state, and API/first-party WebSocket consumer; no durable gameplay, session, or domain authority | Static web-client artifact/host; FRONT-01 boundary remains incomplete |
+| First-party frontend | `web-client` presentation artifact and browser API/WebSocket consumer remain partial; independent artifact/host and browser proof remain incomplete | [FRONT-01](../../architecture/decisions/adr-0144-stateless-first-party-frontend-application-boundary.md) |
 
 The service boundaries above are the current ownership contract. Game Session is the player-facing policy/rendering and runtime-presence owner; Game Logic is the gameplay/action and communication-resolution owner; Social Groups is the social policy/history/fanout owner; World Management is the authoritative room-content owner; Account is the profile-policy source; and Logging & Admin consumes canonical control-plane diagnostics.
