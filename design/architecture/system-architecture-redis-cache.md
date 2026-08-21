@@ -218,8 +218,7 @@ Memory and eviction behavior for cache and rate-limit workloads must not comprom
 For **all non-ephemeral deployments**, including local development:
 
 - Coordination and cache/rate-limit roles run on **separate Redis deployments** (for example, two containers/pods on the same host or separate processes), even when serving a single developer or tenant.
-- Docker Compose and Helm charts provide two services by default (for example `redis-coord` and `redis-cache`) so developers and operators never need to share a single Redis instance for both roles.
-- This two-role split is intentionally kept **lightweight**: it mirrors larger clustered deployments while only adding configuration complexity, not additional infrastructure primitives, so hobby and self-hosted operators can follow the same patterns as production with minimal overhead.
+- Deployment mechanisms vary by environment: local Docker Compose provides both `redis-coord` and `redis-cache`; the umbrella Helm chart's `k8s/helm/firemud/values.yaml` defaults `previewStack.enabled=false` and therefore does not render its in-chart Redis services by default; the hosted overlay enables both in-chart Redis services; and production Terraform provisions separate Redis releases. These are local deployment consequences of the two-role requirement, not a second role policy.
 - Explicitly marked ephemeral CI/test stacks may collapse roles into a single Redis instance only when tests are reset-tolerant, do not exercise coordination tail-loss or replay guarantees, the environment is labelled `ephemeral / single-Redis`, and configuration/metrics surface the shared endpoint. These stacks are outside coordination tail-loss, replay, and SLO validation and must not be used for QA, staging, production, or any player-facing game instance.
 
 Operational dashboards track `used_memory`, `maxmemory`, and eviction counters for each deployment. In addition:

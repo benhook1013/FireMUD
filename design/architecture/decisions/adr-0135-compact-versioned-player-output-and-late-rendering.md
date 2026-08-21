@@ -51,7 +51,7 @@ Richer bounded payload fields and tags may be added when concrete presentation r
 
 The canonical same-fence `LOOK` requirement remains. It is satisfied through the causal-floor model in [ADR 0059](./adr-0059-causal-floor-cross-service-presentation-reads.md), not by equality between unrelated component versions or static scope-derived tokens.
 
-World Management must return the temporal read requirement that anchors the composition, including the requested scope and epoch plus a committed-tick floor. Entity Management must match that same scope and epoch, prove `servedThroughTickId >= requested floor`, and return its own opaque actual component version. Game Logic rejects, retries, or fails the room view when that evidence is missing or below the requested floor.
+Game Session allocates the complete causal read fence before calling `ResolveLook`, including the requested scope, epoch, and committed-tick floor. Game Logic propagates that fence unchanged to World Management and Entity Management; each participant validates the same scope and epoch, proves `servedThroughTickId >= requested floor`, and returns its own opaque component version plus served-through evidence. Game Logic rejects, retries, or fails the room view when that evidence is missing or below the requested floor.
 
 A participant may be newer than the requested floor, but this ADR makes no numeric bounded-newer-skew promise and component-version values are opaque: they are not compared numerically or for equality across components. Exact historical same-instant snapshots are not required for ordinary presentation unless a later feature adopts the separate coordinated historical-snapshot contract described by ADR 0059.
 

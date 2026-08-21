@@ -12,6 +12,8 @@ For bootstrap-backed direct-text `LOGIN` and first-party `/ws/game/**`, the [Gat
 
 Unless explicitly described as current behavior, this document defines the target protocol. The target direct-text flow is public `WORLDS` discovery -> credential-bearing `LOGIN` -> authenticated `REALMS` -> conditional `JOIN` -> conditional `CHARS`/character creation -> `PLAY`. It requires explicit `JOIN`/`Join & Play` for first public-production entry, while an existing durable `membershipLifecycleState=ACTIVE` membership permits direct `PLAY` and a grant-backed non-public path may proceed only when that same `ACTIVE` membership already exists. A grant never creates or substitutes membership. `JOIN` and first-party `Join & Play` are not yet implemented as explicit commands/actions. Current text `PLAY` may return non-actionable `JOIN_REQUIRED` for an eligible public-production target when `membershipExists=false`, without creating or restoring membership; current text `PLAY` enforces the applicable non-public realm grant, while current connect-token issuance does not validate that grant and retains its existing Account rejection mapping. Current consumers decide from `membershipExists`, `gameplayAdmissionAllowed`, `membershipVersion`, and `evaluatedAt` plus the text `PLAY` grant check; Account does not yet expose `membershipLifecycleState`, so an `ACTIVE` or `INACTIVE` classification is target-only until Account exposes that field. Current non-public membership/admission denial remains `WORLD_ACCESS_DENIED`; target-only `NON_PUBLIC_ENROLLMENT_REQUIRED` is defined separately. The missing membership-authority-generation reread and target non-public grant check at connect-token issuance remain gaps.
 
+Target communication framing uses terminated sender `OK <COMMAND>` response frames and recipient `EVENT <TYPE>` event frames, with common `PlayerOutput` schema-version negotiation and `unsupported_schema_version` rejection. These framing and compatibility behaviors are target behavior and remain unimplemented or unproved in full; current generic and first-party projections are narrower. The owner contract is [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md#output-model).
+
 ### Reset and Recovery Consequence
 
 The canonical [Redis Reset & Recovery](../../system-architecture-redis-reset-and-recovery.md#coordination-reset-model) policy applies to Game Session coordination state. Any target region- or tenant-scoped reset must carry exactly one explicit gameplay-session policy, `--preserve-sessions` or `--invalidate-sessions`; no preserve default is allowed. Cluster-scoped reset requires `--invalidate-sessions`, and `sessionctx:*` pre-auth transport context is always invalidated or rebuilt and never preserved. The current runtime has no supported scoped-reset protocol; current clients therefore follow the existing fail-closed pause/status and reconnect behavior rather than treating reset as implicit session preservation.
@@ -280,7 +282,7 @@ Later game-defined prompt composition should plug in ahead of rendering: upstrea
 
 The text protocol remains the canonical wire format for Telnet and generic text WebSocket clients, but it should not be treated as the deepest platform abstraction. FireMUD should preserve structured gameplay views, communication results, action presentation events, prompt/status snapshots, and command errors until the latest practical rendering step so player settings such as color mode and `BRIEF`, plus first-party web and future MCP-aware clients, can apply presentation policy without rewriting gameplay logic. Game Session renders and delivers `GameplayPresentationEvent` data from Game Logic; it must not reconstruct action success or remote-leg state from durable command rows. See [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md).
 
-The first live communication modes now emit canonical actor prose directly for the initiating player. After successful commands, the sender receives separate terminated response frames:
+The target communication projection emits canonical actor prose directly for the initiating player. After successful commands, the sender receives separate terminated response frames:
 
 ```text
 OK SAY
@@ -425,7 +427,7 @@ Metrics `gamesession.command.look.invocations` and `gamesession.command.look.fai
 - System commands such as `LOGIN`, `LOGON`, `PING`, and lightweight state queries are allowed to produce synchronous responses without enqueuing gameplay actions. Their side effects stay limited to session binding, health checks, or read-only projections.
 - Gameplay commands such as `LOOK`, `SAY`, movement, `BLOCK`, and later combat are tick-driven actions. Game Session validates and normalizes them, emits enqueue metadata, and must not perform gameplay state mutations outside the tick executor.
 - If the interpreter produces both immediate text and enqueue metadata and the enqueue step fails, for example because of a Redis outage, Game Session surfaces a single `ERROR` response and does not report success followed by a dropped action.
-- `PlayerOutput` schema/version compatibility and its deterministic text projection are canonical in [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md#output-model). Telnet and generic text WebSocket use that projection directly; an unsupported structured schema is rejected with `unsupported_schema_version`, never treated as a silent downgrade.
+- `PlayerOutput` schema/version compatibility and its deterministic text projection are canonical in [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md#output-model). The target common schema-version negotiation rejects an unsupported structured schema with `unsupported_schema_version`, never treating it as a silent downgrade; current generic and first-party projections are narrower and do not yet prove the complete target behavior.
 - Synchronous command-response frames in the classic text projection have a first line of either `OK <COMMAND>` or `ERROR <CODE> <message>`.
 - Asynchronous world-event frames are a distinct frame type: their first line is `EVENT <TYPE>`, never `OK` or `ERROR`.
 - Either frame type may include additional lines describing the outcome or event, and a blank line terminates each frame so responses and events can be streamed back-to-back without ambiguity.
@@ -435,7 +437,7 @@ Prompt/status remains a separate output class from transcript lines and gameplay
 
 Examples:
 
-Communication output is shown as separate terminated sender and listener frames. For the command `SAY Hello travelers`, the sender receives this synchronous response and actor line:
+Target communication output is shown as separate terminated sender and listener frames. For the command `SAY Hello travelers`, the sender receives this synchronous response and actor line:
 
 ```text
 OK SAY
