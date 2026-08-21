@@ -1,8 +1,20 @@
 # FireMUD System Architecture: Frontend Architecture
 
-This document describes the structure and tooling for FireMUD's browser-based user interfaces. The `web-client` module houses the player-facing React application built with **Vite** and **TypeScript**. FireMUD's target architecture is a dedicated first-party web application service that owns browser asset hosting and first-party web bootstrap concerns rather than treating Spring Cloud Gateway as the long-term home for frontend assets or product-specific browser logic. The first practical version of that service may be a terminal-style browser client before richer web UX is added. Additional React modules for the admin tools and Game Design interface are available.
+This document describes the structure and tooling for FireMUD's browser-based user interfaces. The `web-client` module houses the first-party React application built with **Vite** and **TypeScript**. Under [FRONT-01](./decisions/adr-0144-stateless-first-party-frontend-application-boundary.md), that application is an independently released static presentation artifact with its own immutable release identity and static-host lifecycle. Spring Cloud Gateway remains the sole public API and gameplay ingress; it does not serve frontend files or absorb product-specific browser orchestration. Additional React modules for the admin tools and Game Design interface are available.
 
 Other UIs include a role-based admin interface and a game design editor. See [Role-Based Admin UI](./microservices/logging-admin-service/admin-ui.md) and [Web-Based Visual Design Interface](./microservices/game-design-service/web-visual-interface.md).
+
+## Canonical First-Party Frontend Boundary (FRONT-01)
+
+The first-party frontend is a separately released static application boundary. Its release contains `index.html`, content-hashed JavaScript/CSS, fonts, icons, application-owned images, non-secret runtime configuration, and the browser security/header policy. Preview and hobby/self-hosted deployments use an unprivileged static-file `Deployment` and `Service`; production may place the same immutable artifact behind a CDN or object-store origin without changing the artifact, route, cache, rollback, or security contract.
+
+The static host owns file serving, SPA fallback for non-reserved browser routes, content types/compression, bounded freshness for `index.html` and public runtime configuration, immutable caching for content-hashed files, CSP/security headers, and liveness/readiness for file serving. It owns no PostgreSQL or Redis data, secret material, server-held browser session, refresh-token store, cookie-session authority, authentication, authorization, API aggregation, domain logic, or gameplay execution. A future stateful BFF, SSR tier, or server-held browser session requires a separate accepted decision.
+
+The public site routing layer sends frontend documents and application files to the static host, `/auth/**` and `/api/**` to Gateway, `/ws/game/**` to Gateway for gameplay admission and WebSocket routing, and `/assets/**` to the approved published-asset origin. Gateway remains API/gameplay ingress and Account/domain services retain authentication, admission, authorization, business, and data authority.
+
+Browser bearer tokens are short-lived and memory-only. The frontend never writes them to `localStorage`, `sessionStorage`, IndexedDB, service-worker caches, URLs, logs, or runtime configuration. The gameplay connect token remains the narrow secure HttpOnly cookie used by the `/ws/game/**` handshake; it does not make the static host a session owner. The frontend clears in-memory authority on expiry/revocation and invokes owner-defined logout flows; it does not perform account, gameplay, or domain authorization itself.
+
+The first-party browser consumes the existing Account/Gateway APIs and the versioned `PlayerOutput` WebSocket projection when that consumer is implemented. It is a presentation consumer, not gameplay authority or a substitute for Game Session, Account, Gateway, or domain services. The combined browser journey, independent artifact/rollback, static-host security/cache behavior, and semantic `PlayerOutput` consumer remain implementation/proof gaps recorded below and in the implementation tracker.
 
 ## Implementation Status
 
@@ -80,7 +92,7 @@ This is deliberate. Large server-backed world or admin datasets are not automati
 Frontend flows are split between **player gameplay sessions** and **admin/creator tools** so that gameplay auth remains simple while control-plane operations use JWTs:
 
 - **Player UI (gameplay)**  
-  - First-party browser clients are expected to be hosted by the dedicated first-party web application service, even when the first version is only a terminal-style browser client. Spring Cloud Gateway remains the public gameplay/API edge, but it should not become the long-term host for the player web application itself.  
+  - First-party browser clients are served by the independently released static frontend boundary described above. The static host serves files and browser presentation only; Spring Cloud Gateway remains the public API/gameplay edge and does not host the application.
   - Target first-party clients use one of two explicit gameplay flows:
     - **Returning member:** `POST /auth/player-bootstrap` -> bootstrap discovery -> bootstrap-authenticated character discovery/creation -> `POST /auth/connect-token` with the discovery-provided `connectScopeId` -> `/ws/game/**` -> bare `LOGIN` -> `PLAY`. This flow requires the selected existing caller-bound membership and does not call `/auth/bootstrap/join`.
     - **First join:** `POST /auth/player-bootstrap` -> public-production discovery -> `POST /auth/bootstrap/join` -> rerun public-production realm discovery -> use the new complete `{connectScopeId, tenantId, worldSlug, realmSlug, playableStateNamespaceId, playableStateScope, gameInstanceId, catalogRevision, pointerVersion, evaluatedAt, connectScopeExpiresAt}` snapshot for bootstrap-authenticated character discovery/creation -> `POST /auth/connect-token` with that new snapshot's `connectScopeId` -> `/ws/game/**` -> bare `LOGIN` -> `PLAY`. `/auth/bootstrap/join` may create missing membership or restore `INACTIVE` membership and must commit it against the exact `{catalogRevision, pointerVersion}` pair before the post-join discovery, character discovery, character creation, or connect-token issuance; no later step may create membership implicitly. The join transition emits one audit/outbox event for create or restore; an `ACTIVE` retry is event-free.
@@ -227,18 +239,11 @@ All API communication should be handled by **TanStack Query**-backed fetch/mutat
 
 WebSocket interactions for real-time gameplay are handled by `src/websocket.ts`, which manages the connection lifecycle and message routing. Query-backed browser state should react to socket events through targeted cache updates or invalidation rather than an assumed global Redux store.
 
-## Hosting Direction
+## Hosting and Release Boundary
 
-FireMUD has two different priorities in this area:
+The first-party static frontend boundary is required in the supported baseline now. Preview and hobby/self-hosted deployments serve the immutable `web-client` artifact from an unprivileged static host; production may use that host directly or place an approved CDN/object-store origin in front of the same artifact. The public site router keeps frontend file requests separate from Gateway's `/auth/**`, `/api/**`, and `/ws/game/**` ingress and the published `/assets/**` family.
 
-- The first reviewer-usable preview proof path should be **TCP/Telnet first**, because that is the lowest-friction manual proof path for core MUD play and does not require browser-bootstrap work before hosted validation is possible.
-- The long-term first-party browser direction should still be a **dedicated first-party web application service**, not product-specific frontend/helper logic embedded permanently in Spring Cloud Gateway.
-
-This means the intended sequence is:
-
-1. Hosted preview deployment supports manual `LOGIN -> PLAY -> LOOK` proof over the TCP Proxy Service.
-2. A dedicated first-party web application service is introduced after that preview proof path is working.
-3. The first UI hosted by that service may simply be a terminal-style browser client, with richer first-party UI following later.
+The Telnet `LOGIN -> PLAY -> LOOK` hosted proof remains useful protocol evidence, but it is not a reason to defer the frontend boundary. The browser journey, static-host health/security/cache checks, independent frontend rollback, and versioned `PlayerOutput` consumer are separate implementation/proof obligations. A browser application may begin as a terminal-style client and grow richer UX without changing the static-host authority boundary.
 
 ## Build Tooling
 
@@ -293,4 +298,4 @@ The React client uses **react-i18next** to load first-party browser UI translati
 
 ---
 
-This architecture keeps the web client modular and maintainable while aligning with the backend microservices. Additional frontend services or features should follow the same separation of concerns: browser assets and first-party web bootstrap belong in the dedicated web application service, while Spring Cloud Gateway remains the public API/gameplay edge.
+This architecture keeps the web client modular and maintainable while aligning with the backend microservices. Additional frontend features should preserve the FRONT-01 separation: static files and browser presentation belong to the independently released frontend artifact/host, while Spring Cloud Gateway remains the public API/gameplay edge and Account/domain services retain their authorities.

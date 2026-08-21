@@ -8,6 +8,8 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 
 The friend-presence slice currently implements non-pageable friend-roster and presence reads over tenant-scoped mutually accepted reciprocal links whose two directed rows are both `active`. One-way links, inactive reciprocal links, and links stored under another tenant are not endpoint-visible; focused integration proof covers those boundaries in [SocialGroupsApplicationIntegrationTest.java](../../../../services/social-groups-service/src/test/java/integration/net/firedevops/firemud/socialgroups/SocialGroupsApplicationIntegrationTest.java). The current endpoint path has no block-state model or block revalidation. It does not create snapshots, continuations, or paginated bulk pages. Snapshot-bound continuation, continuation-time relationship and block revalidation, bounded paginated bulk reads, and the failure-precedence contract below remain target behavior; this document does not claim that the current implementation or existing tests prove those target obligations.
 
+Social & Groups is the enforcement owner for `chat_mute` and `chat_ban`. Its local indexed restriction state is evaluated before chat persistence/publication and at participation/history reads; the complete category, revision, command, notice, and appeal-outcome contract is [Moderation Policies](../logging-admin-service/moderation-policies.md). Current `EvaluateModerationPolicy` consumption and chat tests do not prove owner-local durable restrictions, essential notices, independent stacking, expiry/reordering, or appeal handling.
+
 ## REST APIs
 
 | Method | Path | Description |
@@ -50,7 +52,7 @@ curl -X POST http://localhost:8080/voice/token \
 ## gRPC APIs
 
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in `social_groups_service.proto`
-- `SendMessage` – publishes a chat message to an in-game channel or player
+- `SendMessage` – validates the caller's exact tenant/realm/channel scope and owner-local `chat_mute`/`chat_ban` state before publishing; `chat_mute` rejects sending but permits ordinary receipt, while `chat_ban` rejects ordinary participation/send/history but permits essential moderation/system notices. The current implementation does not yet prove the complete local restriction contract.
 - `CreateGuild` – establishes a new guild with an owner account
 - `AddFriend` – adds a friend relationship at the game or account level
 - `ListFriendPresence` – returns the bounded account-scoped projection defined by the [Friend Presence Privacy Contract](#friend-presence-privacy-contract). Social & Groups retains the local transport consequence: raw presence is obtained from Game Session and profile policy through bounded internal bulk reads; the current endpoint remains non-pageable as noted in implementation status.

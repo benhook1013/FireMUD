@@ -10,7 +10,7 @@ Provides chat, guild, and social networking features across games. Basic REST an
 - Synchronize guild and friend lists in real time
 - Manage guild creation, membership, and roles
 - Maintain friend lists and cross-game social graphs
-- Store chat logs locally; profanity events generate moderation reports via the Logging & Admin Service
+- Store chat logs locally and enforce owner-local `chat_mute`/`chat_ban` restrictions; profanity events remain evidence/report input to Logging & Admin
 
 ## Key Features
 
@@ -23,6 +23,7 @@ Provides chat, guild, and social networking features across games. Basic REST an
 - In-game social chat plus account-to-account direct messaging
 - Presence indicators notify when friends come online
 - Game creators can broadcast announcements and send out-of-game emails
+- Enforce fixed-category communication restrictions at send, participation, history, and essential-notice boundaries without making Logging & Admin a routine hot-path dependency
 
 ### Presence Scope Note
 
@@ -44,9 +45,9 @@ The gameplay `WHO` command is intentionally a current-game-instance presence vie
 ## Document Map
 
 - [API Contracts](./api-contracts.md)
-  - chat/guild/friends/mail API surfaces, delivery contracts, and proto/OpenAPI ownership.
+  - chat/guild/friends/mail API surfaces, delivery contracts, and local restriction consequences.
 - [Runtime and Data](./runtime-and-data.md)
-  - social-data ownership, Redis/cache behavior, and real-time delivery invariants.
+  - social-data ownership, owner-local restriction state, Redis/cache behavior, and real-time delivery invariants.
 - [Operations](./operations.md)
   - readiness/liveness, moderation/delivery operational notes, and local verification guidance.
 - [Configuration](./configuration.md)

@@ -2,7 +2,7 @@
 
 ## Normative Target Contract
 
-The target Telnet flow is optional non-discovery `HELP`, then mandatory anonymous `WORLDS` discovery -> credential-bearing `LOGIN` -> authenticated `REALMS` -> conditional `JOIN` -> conditional `CHARS`/character creation -> `PLAY`. `HELP` never replaces `WORLDS`; `REALMS` and `CHARS` are never anonymous discovery. The proxy forwards player-facing selectors only; Game Session resolves the target and derives `playableStateScope` server-side from the exact realm catalog/pointer snapshot. No Telnet command or join request carries `playableStateScope`, storage keys, `tenantId`, `gameInstanceId`, or `PlayerExecutionContext` as caller authority.
+The target Telnet flow is optional non-discovery `HELP`, then mandatory anonymous `WORLDS` discovery -> credential-bearing `LOGIN` -> authenticated `REALMS` -> conditional `JOIN` -> conditional `CHARS`/character creation -> `PLAY`. `HELP` never replaces `WORLDS`; `REALMS` and `CHARS` are never anonymous discovery. Plain text is the universal gameplay protocol. The proxy forwards player-facing selectors only; Game Session resolves the target and derives `playableStateScope` server-side from the exact realm catalog/pointer snapshot. No Telnet command or join request carries `playableStateScope`, storage keys, `tenantId`, `gameInstanceId`, or `PlayerExecutionContext` as caller authority. Optional classic-client semantic negotiation is deferred under [MCP-01](../../decisions/adr-0145-plain-text-gameplay-and-deferred-classic-client-extensions.md); TCP Proxy remains a generic bounded bridge and does not promise Telnet parity for or translate an independent semantic protocol.
 
 ## Implementation Status
 
@@ -33,9 +33,8 @@ These flows describe how Telnet traffic is forwarded into the shared login/sessi
   - The Telnet wire never carries `connectScopeId`, `PlayerExecutionContext`, `playableStateScope`, or storage keys. Game Session retains any target-bound scope locally and derives `playableStateScope` for the character query from the exact server-side realm snapshot; Account separately validates the authenticated caller context, and the proxy only forwards the player-facing selectors and commands.
   - Send gameplay commands (`LOOK`, `SAY`, movement, and so on) as normal.
   - The proxy forwards all lines verbatim to Spring Cloud Gateway; the Game Session Service creates or binds the gameplay session exactly as it does for native WebSocket clients.
-- **Future smart-client flow**
-  - If advanced attach hints return, they should travel through hidden MCP metadata rather than a typed `SESSION` gameplay line.
-  - Those hints remain advisory only and must not replace the normal human-facing `WORLDS` -> `LOGIN` -> `REALMS` -> Authentication-owned conditional `JOIN` -> conditional `CHARS`/character creation -> `PLAY` flow; current public-production admission may return non-actionable `JOIN_REQUIRED` only for an otherwise eligible response with `membershipExists=false`, while an existing response with `gameplayAdmissionAllowed=false` retains its established denial. Current private/playtest missing or non-admitting membership returns `WORLD_ACCESS_DENIED`; target private/playtest admission requires existing `ACTIVE` membership plus the exact current realm grant and never uses `allowPublicJoin`.
+  - **Future smart-client flow**
+    - No typed `SESSION` gameplay line or proxy-owned semantic extension is part of the current contract. If a later adapter is selected, Game Session owns its semantics and any attach hint remains advisory input that cannot replace the normal human-facing `WORLDS` -> `LOGIN` -> `REALMS` -> Authentication-owned conditional `JOIN` -> conditional `CHARS`/character creation -> `PLAY` flow.
 
 ## Advanced Multi-Connection Scenarios
 
@@ -72,7 +71,7 @@ For already-established Telnet sessions, the proxy uses an explicit per-connecti
 
 This state machine is distinct from the proxy-wide open/half-open/closed admission breaker and defines deterministic behavior for active Telnet sockets during upstream loss. Hidden bridge reattachment behind an already-open client TCP socket is not part of the design; after bridge loss, the client opens a fresh socket and follows fresh discovery/admission. A new binding is strict fresh-entitlement admission, while an exact same-binding reconnect on that new transport remains strict and returns `ENTITLEMENT_UNAVAILABLE` when fresh entitlement is unavailable; only an unchanged public-production binding continued on the established edge can use that narrow exception.
 
-Actual client-visible edge loss requires a fresh TCP transport and the complete owner-defined [fresh direct-text discovery and admission flow](../../system-architecture-authentication.md#login-and-session-flow); no Telnet input, prior output bytes, WebSocket frames, or MCP state is replayed. A close token reports lifecycle only and never proves whether an in-flight command committed; capable clients reconcile a known `{tenantId, gameInstanceId, commandId}` through the authoritative Game Session status surface.
+Actual client-visible edge loss requires a fresh TCP transport and the complete owner-defined [fresh direct-text discovery and admission flow](../../system-architecture-authentication.md#login-and-session-flow); no Telnet input, prior output bytes, WebSocket frames, or optional semantic-extension state is replayed. A close token reports lifecycle only and never proves whether an in-flight command committed; capable clients reconcile a known `{tenantId, gameInstanceId, commandId}` through the authoritative Game Session status surface.
 
 ## Telnet Disconnect Line Format
 
@@ -95,17 +94,17 @@ DISCONNECT policy_violation;subreason=edge_backpressure Gameplay connection clos
 
 The proxy writes this line best-effort and then closes the TCP connection. If the transport drops before the line is received, clients must treat the event as abnormal transport loss and use the reconnection policy in [Reconnection Strategy](../../system-architecture-reconnection.md).
 
-## Hidden Attach Metadata
+## Transport Metadata and Semantic Extension Boundary
 
-Typed `SESSION` gameplay lines are no longer part of the Telnet contract. If advanced smart clients need attach hints in the future, those hints should travel through hidden MCP metadata rather than through visible player input.
+Typed `SESSION` gameplay lines are no longer part of the Telnet contract. TCP Proxy may carry server-owned bridge metadata needed to establish the trusted Proxy -> Gateway hop, but it does not define or interpret an independent semantic gameplay protocol. Plain text remains universal. If a future classic-client adapter is selected, Game Session owns its greeting, negotiation, package semantics, correlation, mapping, and per-connection state as defined by [MCP-01](../../decisions/adr-0145-plain-text-gameplay-and-deferred-classic-client-extensions.md); TCP Proxy remains an opaque bounded bridge.
 
 Current rules:
 
 - current Telnet runtime uses hidden default routing and the abbreviated `LOGIN` -> `PLAY` -> `LOOK` path for existing members. It fails closed with non-actionable `JOIN_REQUIRED` when an otherwise eligible public-production response reports `membershipExists=false`; the current adapter cannot distinguish `INACTIVE` from another existing non-admitting result, and an existing `gameplayAdmissionAllowed=false` response retains its established denial. Current private/playtest text `PLAY` maps missing or non-admitting membership to `WORLD_ACCESS_DENIED` and checks the current realm grant; the full `WORLDS` -> `LOGIN` -> `REALMS` -> conditional `JOIN` -> conditional `CHARS`/character creation -> `PLAY` flow remains target-only;
 - the proxy bootstraps hidden default gameplay instance and tenant metadata for the connection;
 - current proxy behavior forwards `WORLDS` but also bootstraps hidden default routing and does not enforce the discovery command, so the fresh-discovery requirement remains a target gap;
-- typed attach hints do not exist on the player-facing wire contract;
-- future MCP-carried attach hints must remain advisory and must not bypass either the current abbreviated `LOGIN` -> `PLAY` -> `LOOK` fail-closed path or the target `WORLDS` -> `LOGIN` -> `REALMS` -> conditional `JOIN` -> conditional `CHARS`/character creation -> `PLAY` flow; returning members still skip target `JOIN`.
+- typed attach hints and semantic extension negotiation do not exist on the player-facing wire contract;
+- any future adapter-carried attach hint must remain advisory and must not bypass either the current abbreviated `LOGIN` -> `PLAY` -> `LOOK` fail-closed path or the target `WORLDS` -> `LOGIN` -> `REALMS` -> conditional `JOIN` -> conditional `CHARS`/character creation -> `PLAY` flow; returning members still skip target `JOIN`.
 - PROXY protocol trust follows [Security](../../system-architecture-security.md#telnet-command-handling-and-controls): on the internal-only PROXY listener, the edge-to-TCP Proxy channel must be authenticated and cryptographically protected before the recovered address can drive per-IP connection caps, rate limits, abuse controls, or admission decisions. Malformed or truncated PROXY headers remain a hard failure, and the canonical discard signal is `tcpproxy.telnet.discarded{reason="proxy_protocol"}`.
 - PROXY parsing must never be enabled on the public Telnet listener. Accepting PROXY headers directly from the Internet would allow client-IP spoofing.
 - Public Telnet must use either edge TLS termination with the authenticated internal PROXY listener or direct TCP Proxy TLS without a PROXY header; the two modes are mutually exclusive. Both modes continue through the same Proxy -> Gateway WebSocket bridge. Current Telnet runtime does not implement the target full sequence because explicit `JOIN` is unavailable, hidden default routing is bootstrapped instead, and existing members may use the abbreviated current `LOGIN` -> `PLAY` -> `LOOK` path; the target sequence is owned by [Authentication](../../system-architecture-authentication.md#login-and-session-flow).
@@ -123,7 +122,7 @@ Detailed identifiers such as `gameInstanceId` and client IP are captured in stru
 
 ## Telnet Command Handling
 
-The proxy sanitizes incoming bytes and allows only a safe subset of Telnet protocol commands. Mud Client Protocol (MCP) 2.1 negotiation and messages are carried over the line-based text channel and are not affected by the low-level Telnet command whitelist.
+The proxy sanitizes incoming bytes and allows only a safe subset of Telnet protocol commands. Optional classic-client semantic extensions are deferred and, if selected later, are carried opaquely through this bounded bridge under Game Session ownership; the proxy does not negotiate or parse them.
 
 Allowed Telnet commands:
 
@@ -145,30 +144,14 @@ Hard abuse signals include:
 - line-length floods or repeated lines exceeding `TCP_PROXY_MAX_LINE_BYTES`; and
 - excessive connection churn from the same IP that collides with global connection-limit policy.
 
-Diagnostic-only signals include unknown or malformed MCP control lines.
+Diagnostic-only signals include unknown or malformed opaque extension/control lines.
 
 ### Compatibility Notes
 
 - Classic MUD clients that rely only on standard text I/O and basic Telnet negotiation are expected to work without special configuration.
 - Clients that depend on advanced Telnet options should treat those features as best-effort.
-- MCP-aware clients should assume that MCP negotiation and messages are the primary extensibility mechanism, including any future hidden smart-client attach metadata.
+- Classic clients should rely on plain-text gameplay. No MCP, GMCP, or FireMUD package/version is currently advertised or supported; a future adapter must be explicitly selected, owned by Game Session, and proven against an exact client matrix before advertisement.
 
-## MCP Resource Limits and Abuse Budgets
+## Generic Transport Limits and Deferred Semantics
 
-The TCP Proxy Service enforces MCP-specific budgets in addition to generic Telnet connection and line limits:
-
-- Each connection has a bounded number of active cords and concurrent `_data-tag` continuations.
-- MCP control-line volume is subject to a per-connection MCP control-line rate budget.
-- MCP line size still participates in the generic `TCP_PROXY_MAX_LINE_BYTES` and `TCP_PROXY_MAX_OVERSIZE_LINES` limits.
-
-Metrics and diagnostics for these budgets integrate with the existing observability surface:
-
-- `tcpproxy.telnet.discarded{reason="mcp_budget"}`
-- `tcpproxy.mcp.negotiation_failures`
-- `tcpproxy.mcp.control_lines`
-- `tcpproxy.mcp.discarded`
-- `tcpproxy.mcp.active_cords`
-
-Once MCP negotiation failures exceed `TCP_PROXY_MCP_NEGOTIATION_FAILURE_MAX` within `TCP_PROXY_MCP_NEGOTIATION_FAILURE_WINDOW_MS`, the connection closes with `policy_violation`.
-
-Normal Telnet abuse detection remains focused on Telnet control bytes, connection churn, and generic line-size limits. MCP parsing errors and unknown MCP packages are diagnostic-only and must not, on their own, cause connections to be hard-closed.
+The TCP Proxy Service applies the generic `TCP_PROXY_MAX_LINE_BYTES`, buffered-line, connection, idle, and per-connection/per-IP abuse limits to all transported input. Opaque extension/control markers may be subject to a bounded marker-rate guard and diagnostic counters, but the proxy does not count packages, cords, data tags, or semantic negotiation failures and does not claim a package compatibility contract. Gameplay text lines are never silently discarded while the connection remains open; a hard transport limit closes with the canonical policy or backend outcome. A later semantic adapter must define any package-local limits in Game Session and preserve plain-text fallback.

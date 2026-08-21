@@ -558,6 +558,21 @@ ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/adr-0140-realm-authored-controllable-actor-entry.md": adr_allocation(
         "AA-2", "Accepted", "AA-3", "GR-3", "EA-3"
     ),
+    "design/architecture/decisions/adr-0141-fixed-safety-restriction-categories-and-independent-lifecycles.md": adr_allocation(
+        "EA-2", "Accepted", "PO-1", "AA-1"
+    ),
+    "design/architecture/decisions/adr-0142-bounded-moderation-appeal-cases.md": adr_allocation(
+        "PO-1", "Accepted", "EA-2", "AA-1"
+    ),
+    "design/architecture/decisions/adr-0143-stripe-v1-hosting-billing-and-deferred-creator-monetization.md": adr_allocation(
+        "AA-1", "Accepted", "PO-1", "EA-3"
+    ),
+    "design/architecture/decisions/adr-0144-stateless-first-party-frontend-application-boundary.md": adr_allocation(
+        "EA-3", "Accepted", "PO-3", "PO-2"
+    ),
+    "design/architecture/decisions/adr-0145-plain-text-gameplay-and-deferred-classic-client-extensions.md": adr_allocation(
+        "PO-2", "Accepted", "EA-1"
+    ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
     "README.md": "Service overview",

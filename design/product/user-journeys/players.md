@@ -45,6 +45,8 @@ The target journeys below are primary. Current runtime status is concise: explic
 
 Current gameplay supports room views, movement, foundational inventory/container/equipment commands, and room-local `SAY`, `WHISPER`, and `TELL`. The shared communication path includes metadata-only whisper observers and recipient-side delivery for generic WebSocket and Telnet clients; broader audible scopes and first-party/MCP-aware presentation remain gaps. Public player report submission is not currently available; only the internal service-to-service report persistence seam exists.
 
+Fixed-category restriction enforcement, safe notices, and bounded moderation appeals are target behavior and are not complete in the current runtime. Account, Game Session, and Social & Groups owner-local enforcement and the Logging & Admin case workflow remain partial/unavailable; this journey records player-visible consequences only.
+
 The exact membership lifecycle, authorization, session, API, and retention semantics remain in their owning sources: [Multi-Tenancy](../../architecture/system-architecture-multi-tenancy.md#account-to-game-relationships), [Authentication & Authorization](../../architecture/system-architecture-authentication.md#login-and-session-flow), [Account Service API Contracts](../../architecture/microservices/account-service/api-contracts.md#subject-binding-rules-normative), [ADR 0022](../../architecture/decisions/adr-0022-account-authority-and-gameplay-session-ownership.md#decision), [ADR 0030](../../architecture/decisions/adr-0030-risk-based-active-session-revocation.md#decision), and [ADR 0035](../../architecture/decisions/adr-0035-single-record-issued-token-registry.md#decision).
 
 ---
@@ -56,7 +58,7 @@ The exact membership lifecycle, authorization, session, API, and retention seman
 - [Character Creation & Selection](#3-character-creation--selection) – Create and choose characters for the selected game and realm target.
 - [Player Login and Gameplay](#4-player-login-and-gameplay) – Connect to running realms and play.
 - [Social Interaction & Safety](#5-social-interaction--safety) – Chat, groups, and moderation outcomes.
-- [Purchases and Subscriptions](#6-purchases-and-subscriptions) – Manage subscriptions and in-game purchases.
+- [Purchases and Subscriptions](#6-purchases-and-subscriptions) – Manage hosting subscriptions.
 - [Password Resets & Account Recovery](#7-password-resets--account-recovery) – Recover access when credentials are lost.
 - [Switch Games or Manage Multiple Games](#8-switch-games-or-manage-multiple-games) – Move between games under one account.
 - [Account Data Export](#9-account-data-export) – Request a durable asynchronous account export.
@@ -221,41 +223,42 @@ Players communicate and coordinate through the [Social & Groups Service](../../a
 
 1. **Chat Channels** – Global, zone, and group chat messages are routed through the Social & Groups Service.
 2. **Friends and Guilds** – Friend lists and guild memberships are scoped per game (`tenantId`), as outlined in [Multi-Tenancy](../../architecture/system-architecture-multi-tenancy.md).
-3. **Moderation Hooks** – Messages and social actions may be subject to moderation and logging via the [Logging & Admin Service](../../architecture/microservices/logging-admin-service/README.md). See [Monitoring and Moderation](./operators.md#1-monitoring-and-moderation) for operator flows.
+3. **Moderation Hooks** – Social & Groups enforces its owner-local chat restrictions at communication boundaries; policy, cases, evidence, and audit use the [Logging & Admin Service](../../architecture/microservices/logging-admin-service/README.md). See [Monitoring and Moderation](./operators.md#1-monitoring-and-moderation) for operator flows.
 
-4. **Chat Validation** – In-game chat commands (say, tell, guild chat, mail) are first validated by the [Game Logic Service](../../architecture/microservices/game-logic-service/README.md) against the [World Management Service](../../architecture/microservices/world-management-service/README.md) and [Entity Management Service](../../architecture/microservices/entity-management-service/README.md) to ensure they respect world and entity state.
+4. **Chat Validation** – In-game chat commands (say, tell, guild chat, mail) enter the [Game Logic Service](../../architecture/microservices/game-logic-service/README.md) first for gameplay/world semantics, then Social & Groups applies local checks (`chat_mute` at send; `chat_ban` at send, participation, and history) before persistence or publication. World and entity context comes from the [World Management Service](../../architecture/microservices/world-management-service/README.md) and [Entity Management Service](../../architecture/microservices/entity-management-service/README.md).
 5. **Profanity & Friends** – The Social & Groups Service performs profanity checks, logs communication, and delivers messages. Account-level friends automatically appear in-game when the feature is enabled.
-6. **Player Reporting** – Players can submit caller-bound reports with the affected game scope and supporting context for operator review. Current availability is summarized in [Implementation Status](#implementation-status).
+6. **Player Reporting** – Players can submit caller-bound reports with the affected game scope and supporting context for operator review. A report is evidence and does not automatically restrict another player. Current availability is summarized in [Implementation Status](#implementation-status).
 7. **Moderation Outcomes** – Moderation actions surface as specific player-visible outcomes rather than a generic "ban" message:
-   - `account_security_ban` blocks account authentication and recovery to the normal account-security path.
-   - `gameplay_ban` blocks `PLAY` for the affected tenant/realm scope with a canonical gameplay denial.
-   - `chat_mute` / `chat_ban` allow gameplay to continue but reject affected messaging commands with canonical chat errors.
+   - `account_security_lock` blocks ordinary account/bootstrap access until Account security recovery; `platform_access_ban` blocks ordinary platform access and survives credential recovery.
+   - `gameplay_ban` blocks `PLAY` and new gameplay admission for the affected tenant/realm scope; already-admitted durable work follows the Game Session owner contract.
+   - `chat_mute` blocks sending while ordinary receipt remains available; `chat_ban` blocks ordinary participation, sending, and history while essential notices remain deliverable.
+   - Eligible severe or long-lived restrictions expose an opaque HTTPS appeal/status handoff. Filing does not suspend enforcement; only a later review outcome can issue a newer owner command.
 
 Canonical player-facing examples:
 
-- `account_security_ban` – `ERROR ACCOUNT_LOCKED Contact support to recover this account.`
+- `account_security_lock` – `ERROR ACCOUNT_LOCKED Contact support to recover this account.`
+- `platform_access_ban` – `ERROR PLATFORM_ACCESS_BANNED Platform access is restricted. Follow the provided support or appeal guidance.`
 - `gameplay_ban` – `ERROR GAMEPLAY_BANNED You cannot enter this realm.`
 - `chat_mute` / `chat_ban` – `ERROR CHAT_RESTRICTED You cannot send messages in this realm.`
 
 The target communication model differentiates speech mode from audience scope so game rules can support target-limited whispers, directed tells, and topology-aware shouts or announcements across an area, region, map, continent, or configured channel. Current availability is summarized in [Implementation Status](#implementation-status).
 
 ```plaintext
-Player → Game Session Service → Social & Groups Service → Logging & Admin Service
+Player → Game Session Service → Social & Groups Service (optional evidence/audit to Logging & Admin)
 ```
 
 ---
 
 ## 6. Purchases and Subscriptions
 
-1. **Payment Processing** – The [Account Service](../../architecture/microservices/account-service/README.md) handles subscriptions, one-time purchases, and optional donations via Stripe.
-2. **Platform Fee & Restrictions** – A small platform fee applies to each transaction and external payment methods are not allowed, per the [Product Requirements](../../product/requirements.md#28-moderation-administration--monetization).
-3. **One-Time Purchase Entitlements** – One-time purchases that grant ongoing value create Account Service-owned purchase entitlements after Stripe success; refunds revoke those entitlements unless the product was explicitly consumed under a non-revocable product contract.
-4. **Audit and Compliance** – Transactions are logged through the [Logging & Admin Service](../../architecture/microservices/logging-admin-service/README.md) for reporting and refunds.
-5. **Tenant Availability & Limits** – Whether a game can start new instances or accept new logins depends on the tenant’s subscription state and plan entitlements as described in the [Subscription Management Design](../../architecture/microservices/account-service/subscription-management.md) and [Multi-Tenancy](../../architecture/system-architecture-multi-tenancy.md#tenant-configuration--scaling). When a tenant is suspended for billing, login attempts fail with clear errors until billing is resolved.
-6. **Billing Recovery** – Billing-safe management actions stay reachable even when gameplay is suspended so creators can resolve payment issues without operator intervention. Players see tenant-scoped unavailability errors until the creator restores service.
+1. **Hosting Billing** – The [Account Service](../../architecture/microservices/account-service/README.md) owns the sole supported v1 Stripe integration for FireMUD hosting plans and platform subscriptions, including provider lifecycle/reconciliation state and tenant entitlement outcomes.
+2. **Consumer Boundary** – Game Session, World Management, and lifecycle/admission consumers use Account billing outcomes; they do not call Stripe or copy provider logic. A payment attempt, redirect, or receipt is not entitlement authority.
+3. **Deferred Commerce** – Player purchases, paid game subscriptions, creator donations/tips, platform fees on creator transactions, revenue sharing, payouts, and settlement are deferred and are not supported player journeys. Existing generic payment/refund code does not widen this scope.
+4. **Tenant Availability & Limits** – Whether a game can start instances or accept new gameplay bindings depends on Account’s subscription state and plan entitlements as described in the [Subscription Management Design](../../architecture/microservices/account-service/subscription-management.md) and [Multi-Tenancy](../../architecture/system-architecture-multi-tenancy.md#tenant-configuration--scaling). When a tenant is suspended for billing, players see a clear tenant-scoped unavailability outcome.
+5. **Billing Recovery** – Billing-safe management actions stay reachable even when gameplay is suspended so the authorized billing owner can resolve payment issues without gameplay authority or operator intervention. The current provider lifecycle and enforcement proof remains partial.
 
 ```plaintext
-Player → Account Service → Logging & Admin Service
+Player → Account Service → Stripe-hosted billing flow
 ```
 
 ---

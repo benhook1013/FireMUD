@@ -39,6 +39,16 @@ Game Session does not persist or allocate the primary actor. It resolves the rea
 
 The local runtime stores only active attachment, protocol state, presence, and controller-fence data. A playtest copy is selected by its new fork-local `characterId`; `sourceCharacterId` is not used as authority. Current per-instance lookup, unresolved-character fallback, and complete cross-service proof remain gaps.
 
+## Owner-Local Gameplay Restrictions
+
+Game Session is the sole runtime enforcement owner for `gameplay_ban`, while Logging & Admin owns fixed-category policy intent, cases, appeals, and audit. The complete category and command contract is [Moderation Policies](../logging-admin-service/moderation-policies.md); this section records Game Session's local state and decision consequences.
+
+Game Session persists an indexed restriction projection keyed by the exact subject, `tenantId`, optional `realmId`, category, monotonic owner revision/enforcement epoch, effective/expiry times, source case/request identity, payload digest, and player-safe notice. Each create, extension, expiry, removal, correction, or appeal outcome is a new digest-bound owner command. The owner atomically commits the revision, current projection, and idempotent result; same identity/same digest replays, conflicting digest is rejected, and delayed or reordered commands cannot resurrect older state. A missing or unreadable local restriction projection fails closed.
+
+At `PLAY`, Game Session evaluates all applicable Account authority and local `gameplay_ban` records for the exact tenant/realm scope. A newly effective ban denies `PLAY`, fences new gameplay command admission, and closes active covered bindings. Work already durably admitted before the effective transition may finish idempotently; it is not partially unwound. A broader tenant ban may dominate a realm request without deleting a narrower realm record. Routine `PLAY` and command admission never synchronously query Logging & Admin.
+
+Player responses expose only the safe category/scope and permitted next step. A modified or overturned moderation appeal arrives as a newer owner command and cannot erase a later unrelated restriction. Current code does not yet provide the complete local restriction table, owner command/idempotency path, active-binding containment, expiry/reordering behavior, safe notices, or focused proof; existing synchronous `EvaluateModerationPolicy` consumption remains an implementation seam rather than completion evidence.
+
 ## Registered Durable Families and Lifecycle Participation
 
 Multi-Tenancy owns the realm catalog and stable `playableStateNamespaceId` contract. Game Session is the sole runtime resolver, persister, and compare-and-set orchestrator for the resolved realm catalog and admission pointer; it does not become the owner of the cross-cutting namespace policy. World Management remains the sole owner of the database lifecycle row, lifecycle epoch, and Temporal lifecycle coordination. Game Session consumes that lifecycle authority and participates in registered cleanup; it does not infer lifecycle authority from Temporal status or own the lifecycle epoch.

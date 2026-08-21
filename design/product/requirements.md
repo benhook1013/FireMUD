@@ -116,16 +116,15 @@ See [Game Design Service](../architecture/microservices/game-design-service/READ
 ### 2.8 Moderation, Administration & Monetization
 
 - **Admin dashboard** for monitoring and moderating hosted games.
-- **In-game reporting & ban system** for handling violations.
+- **In-game reporting & fixed-category safety system** for handling violations. The categories are `account_security_lock`, `platform_access_ban`, `gameplay_ban`, `chat_mute`, and `chat_ban`, with independent lifecycles and owner-local enforcement.
+- **Bounded moderation appeals** for eligible severe or long-lived restrictions. Logging & Admin owns the case, evidence references, jurisdiction, review, and audit; Account authenticates the player and provides the browser handoff; Account, Game Session, and Social & Groups remain enforcement owners. Filing does not stay enforcement.
 - **Moderation policy definitions** including profanity filters.
 - **Central analytics dashboards and logging** for tracking player activity and game performance.
 - Operators and authorized game administrators can manage **tenant-scoped runtime feature flags** through audited controls. See [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md) for the ownership and activation contract.
-- **Monetization & Payment System**:
-  - The platform integrates **Stripe or similar services** for in-game purchases.
-  - Game creators can offer **subscriptions, one-time purchases, and donations**.
-  - A **platform fee** applies to all transactions.
-  - **External payment methods are not allowed** to ensure security and compliance.
-  - **High-resource features** (e.g., AI, scripting) may be **premium hosting options**.
+- **V1 Hosting Billing**: Account integrates Stripe as the sole supported provider for FireMUD hosting plans and platform subscriptions. Account owns provider lifecycle/reconciliation state and tenant entitlement/availability outcomes; lifecycle and admission consumers use those outcomes without copying provider logic. Billing-safe management remains reachable when gameplay is denied for billing reasons.
+- **Deferred creator/player monetization**: player purchases, paid game subscriptions, creator donations/tips, platform fees on creator transactions, revenue sharing, payouts, and settlement are not v1 product commitments. A separate marketplace/settlement decision is required before enabling them; off-platform receipts do not create FireMUD entitlements.
+- **External payment methods are not allowed** within FireMUD-managed v1 hosting billing.
+- **High-resource features** (e.g., AI, scripting) may be premium hosting plan options, subject to Account entitlements.
 See [Logging & Admin Service](../architecture/microservices/logging-admin-service/README.md) for moderation features and [Account Service](../architecture/microservices/account-service/README.md) for payment processing.
 
 ---

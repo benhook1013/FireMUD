@@ -114,14 +114,14 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 
 ### Frontend, Protocol, Authoring, And Observability
 
-#### `FRONT-01` - Dedicated first-party web application after the Telnet-first proof
+#### `FRONT-01` - Independently released stateless first-party frontend
 
 - **Capability:** Primary `EA-3.1` Player web/mobile applications. Secondary `PO-3.1`, `PO-2.2`, and `EA-3.4`.
-- **Decision / status / importance:** The long-term player browser is a dedicated first-party web application rather than a web surface hosted by Gateway. The first hosted proof is the TCP/Telnet `LOGIN -> PLAY -> LOOK` path; browser discovery, bootstrap, and reconnect are sequenced after that proof. Status `proposed/deferred`; `H/med`.
+- **Decision / status / importance:** FireMUD requires one independently released stateless first-party frontend boundary now. The supported preview/self-hosted baseline is an unprivileged static container/Service under one public site, with CDN/object-store delivery an optional later optimization of the same artifact. Gateway remains the sole API/gameplay ingress and owns no UI. Browser bearer tokens remain short-lived and memory-only; no stateful BFF is accepted without a separate server-session, SSR, or measured aggregation decision. Telnet-first proof is complete; native mobile is not promised. Status `accepted-explicit`; `H/med`.
 - **Sources / headings:** [system-architecture-frontend.md](../../architecture/system-architecture-frontend.md) `§ Hosting Direction`, `§ Build Tooling`, and `§ End-to-End Testing`; [deployment-environments.md](../../architecture/infrastructure/deployment-environments.md) `§ PR Preview Environment` and `§ Staging Environment for Playtesting`; [players.md](../../product/user-journeys/players.md) `§ 2. Join a Game for the First Time` and `§ 4. Player Login and Gameplay`.
-- **Strongest alternative:** Make the browser the first end-to-end proof or keep player web rendering inside Gateway as a permanent architecture.
-- **ADR recommendation:** Yes before committing hosted web routing, preview ownership, or browser-specific release guarantees; otherwise cross-reference `OPS-06`.
-- **Human consultation:** Yes; product, frontend, and operations owners must agree on sequencing and hosting ownership.
+- **Strongest alternative:** Serve the SPA from Gateway, require external CDN/object storage from the first deployment, or introduce a stateful BFF now. These respectively couple releases, burden hobby deployment, or add a new browser-session and availability boundary without a current need.
+- **ADR:** [ADR 0144](../../architecture/decisions/adr-0144-stateless-first-party-frontend-application-boundary.md) records the accepted artifact, static-host, public-route, browser-token, BFF, and browser-proof contract.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `revised`. The Vite starter exists, but no production image, deployment, route split, release/rollback, runtime config, security/cache proof, or complete browser journey does.
 
 #### `LLM-01` - Human-controlled, sandboxed, draft-only authoring assistance
 
@@ -186,14 +186,14 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 - **ADR recommendation:** Yes if this becomes a deployment gate; otherwise keep it as a target-state evidence check linked to `OPS-06`.
 - **Human consultation:** Yes; operations must choose the queryability SLO and evidence retention cost.
 
-#### `MCP-01` - Optional structured protocol extension with plain-text fallback
+#### `MCP-01` - Plain-text gameplay with classic-client extensions deferred
 
 - **Capability:** Primary `PO-2.3` Client protocol negotiation and structured protocol extensions. Secondary `PO-2.2`, `EA-1.2`, and `PO-2.4`.
-- **Decision / status / importance:** MCP is optional and negotiated per connection; plain text remains canonical, unknown packages are ignored, malformed packages are dropped, and MCP is never gameplay-critical. Budgets for active cords, data tags, control lines, and negotiation failures are per connection/auth key/cord state. Status `accepted-implicit`; `M/med`.
+- **Decision / status / importance:** Plain text is the universal classic-client gameplay contract, while the first-party WebSocket uses the separate versioned `PlayerOutput` contract. MCP, GMCP, and other classic-client extensions are currently experimental, disabled, unadvertised, and unimplemented until current-client research selects a bounded adapter and proves it end to end. If MCP is selected, Game Session alone owns negotiation and semantic state; TCP Proxy retains only generic transport limits. MCP authentication keys are correlation values, never identity or gameplay authority. Status `accepted-explicit`; `M/med`.
 - **Sources / headings:** [system-architecture-mud-client-protocol.md](../../architecture/system-architecture-mud-client-protocol.md) `§ Protocol Handshake`, `§ Message Format`, `§ Optional Packages`, `§ Interaction with abuse heuristics`, `§ MCP resource limits & abuse budgets`, and `§ Reconnection & Session Recovery`; [system-architecture-protocol-bridging.md](../../architecture/system-architecture-protocol-bridging.md) `§ Ordering & Delivery Invariants` and `§ Backpressure & Slow Clients`.
-- **Strongest alternative:** Make structured MCP messages required, use them as the canonical gameplay representation, or silently reconnect and reattach negotiated state.
-- **ADR recommendation:** No new ADR while MCP remains optional. Yes before making MCP gameplay-critical or promising a compatibility-stable package/limit contract.
-- **Human consultation:** Yes before a client-compatibility promise; otherwise the current optional boundary is sufficient.
+- **Strongest alternative:** Promote the existing TCP Proxy marker/greeting seam into supported MCP 2.1, commit to MCP before comparing current clients, or make a structured extension the universal gameplay protocol.
+- **ADR:** [ADR 0145](../../architecture/decisions/adr-0145-plain-text-gameplay-and-deferred-classic-client-extensions.md) records the universal plain-text baseline, research gate, Game Session ownership, non-authoritative correlation keys, fresh negotiation, and exact evidence-gated compatibility claims.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `revised`. Current proxy marker/greeting recognition is explicitly not MCP support, and classic-client extension implementation remains deferred until research and exact public-path interoperability proof exist.
 
 ### Procedural Generation And Runtime Authoring
 
@@ -339,20 +339,20 @@ Status meanings are `accepted-explicit`, `accepted-implicit`, `proposed/deferred
 #### `SAFETY-01` - Moderation outcomes are scoped by enforcement category and owner
 
 - **Capability:** Primary `EA-2.4` Player blocking, reporting, and safety controls. Secondary `PO-1.2`, `AA-1.3`, and `PO-1.3`.
-- **Decision / status / importance:** Distinguish `account_security_ban`, `gameplay_ban`, `chat_mute`, and `chat_ban`; route the decision through Logging/Admin while the owning service enforces the resulting scope. Do not collapse all moderation into a generic account ban. Status `accepted-implicit`; `H/hard`.
+- **Decision / status / importance:** Use five fixed independently stacked categories: protective `account_security_lock`, punitive `platform_access_ban`, scoped `gameplay_ban`, send-only `chat_mute`, and participation/history `chat_ban` with essential notices. Account, Game Session, and Social own their enforcement records under the owner-local moderation contract; exact monotonic revisions and scopes replace generic ban strings. Reports and player blocks remain separate. Status `accepted-explicit`; `H/hard`.
 - **Sources / headings:** [players.md](../../product/user-journeys/players.md) `§ 5. Social Interaction & Safety`; [operators.md](../../product/user-journeys/operators.md) `§ 1. Monitoring and Moderation`; [system-architecture-player-experience-incident-runbook.md](../../architecture/system-architecture-player-experience-incident-runbook.md) `§ Incident Types`.
-- **Strongest alternative:** Use one generic ban state or let each enforcement service invent incompatible moderation outcomes.
-- **ADR recommendation:** Yes. Define category scope, precedence, appeal/audit records, and enforcement ownership alongside existing `SEC-04` and the moderation policy boundary.
-- **Human consultation:** Yes; trust-and-safety, legal, support, and game operations owners must approve policy meaning and appeals.
+- **Strongest alternative:** Use one generic ban or a configurable denied-capability set compiled into owner commands. The latter is more extensible but permits unsafe combinations and expands policy/proof complexity without a concrete need.
+- **ADR:** [ADR 0141](../../architecture/decisions/adr-0141-fixed-safety-restriction-categories-and-independent-lifecycles.md) records the category, scope, stacking, revision, notice, and owner-local enforcement contract.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `revised`. Generic action rows, legacy aliases, synchronous policy reads, missing owner-local records/fencing, Account-wide lifecycle separation, player notices, reports, block/ignore, and complete proof remain gaps.
 
-#### `COMMERCE-01` - Stripe-only payments with explicit fee and entitlement reversal semantics
+#### `COMMERCE-01` - Stripe-only v1 hosting billing with creator monetization deferred
 
 - **Capability:** Primary `AA-1.4` Commerce, subscriptions, purchases, donations, and platform fees. Secondary `AA-1.5`, `PO-1.3`, and `EA-3.3`.
-- **Decision / status / importance:** Use Stripe as the payment provider in the journey, disallow external payment methods for the product path, apply the stated platform fee, and model refunds as entitlement revocations while keeping billing-safe management reachable when gameplay is unavailable. Status `needs-human-review`; `H/hard`.
+- **Decision / status / importance:** Stripe is the sole supported v1 processor for FireMUD hosting plans and platform subscriptions, without a speculative provider-neutral abstraction. Creator monetization, player purchases/subscriptions, donations, revenue sharing, platform fees, and payouts are deferred behind a marketplace/settlement decision. Off-platform evidence cannot create entitlements, and future refunds must distinguish reversible access/value from consumed or transferred value. Billing-safe management remains reachable. Status `accepted-explicit`; `H/hard`.
 - **Sources / headings:** [players.md](../../product/user-journeys/players.md) `§ 6. Purchases and Subscriptions`; [creators.md](../../product/user-journeys/creators.md) `§ 1. Game Creation` and `§ 4. Publish and Start a Game Instance`; [operators.md](../../product/user-journeys/operators.md) `§ 1. Monitoring and Moderation`.
-- **Strongest alternative:** Support multiple providers or external payment links, use no platform fee, or make purchased entitlements irreversible after refund.
-- **ADR recommendation:** Yes. Record provider ownership, fee policy, entitlement state transitions, refund/revocation behavior, and billing-safe availability.
-- **Human consultation:** Yes; finance, legal, product, creator, and support owners must approve this commercial boundary.
+- **Strongest alternative:** Build a provider-neutral core now and launch creator monetization on the existing PaymentIntent surface. That increases provider flexibility but assumes unsettled merchant-of-record, KYC/tax, payout, dispute, fraud, and entitlement semantics.
+- **ADR:** [ADR 0143](../../architecture/decisions/adr-0143-stripe-v1-hosting-billing-and-deferred-creator-monetization.md) records the accepted hosting-billing scope and the marketplace/settlement adoption gate.
+- **Human consultation:** Completed through human-led adversarial review on 2026-07-20; `revised`. PaymentIntent/refund/5%-share arithmetic exists, but verified webhooks, reconciliation, hosting-subscription convergence, entitlements, payouts, settlement, and end-to-end proof remain absent or partial.
 
 #### `DATA-01` - Export and terminal erasure follow ADR 0043 billing gates and ADR 0050 finite retention
 
