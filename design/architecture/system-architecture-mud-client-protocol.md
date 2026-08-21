@@ -125,7 +125,7 @@ Prompt/status handling should evolve toward MCP or other structured client data 
 
 - classic Telnet clients may still render prompts as text;
 - first-party web clients will often suppress textual prompts in the main scrollback and instead bind the same state to dedicated UI widgets;
-- semantic reconnect-context restoration should therefore exclude prompt lines. After retained context and a fresh `LOOK`, emit exactly one reconnect prompt only when both effective `firemud.presentation.prompt.enabled` and `firemud.presentation.prompt.emit-after-reconnect-restore` settings are enabled; emit zero reconnect prompts when either is disabled. A structured MCP status update may carry the equivalent state only when the specific status package (for example, `firemud-status-panel`) was advertised successfully and its `mcp-negotiate-end` completed on that connection; base MCP negotiation alone is insufficient. If that package is inactive, emit no structured MCP status.
+- semantic reconnect-context restoration should therefore exclude prompt lines. After retained context and a fresh `LOOK`, emit exactly one reconnect prompt only when both effective `firemud.presentation.prompt.enabled` and `firemud.presentation.prompt.emit-after-reconnect-restore` settings are enabled; emit zero reconnect prompts when either is disabled. A structured MCP status update may carry the equivalent state only after both sides have sent `mcp-negotiate-can` for the specific status package (for example, `firemud-status-panel`) and both have sent `mcp-negotiate-end` on that connection; base MCP negotiation alone is insufficient. If that package is inactive, emit no structured MCP status.
 
 ## Example Workflow
 
