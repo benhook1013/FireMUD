@@ -302,16 +302,16 @@ Cached aggregates in Redis should follow structured, namespaced key patterns to 
 - `character-cache:<tenantId>:<characterId>` – cached character graphs for hot reads.
 - `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>` – cached room-level dynamic state used in correctness-critical world decisions.
 - `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` – cached room snapshots/topology slices used for LOOK/navigation, scoped to a running instance.
-- `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>` – cached rendered or pre-assembled room view data bound to the exact room, viewer/session, and policy context.
+- `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>:<readFenceHash>` – cached rendered or pre-assembled room view data bound to the exact room, viewer/session, policy context, and applicable causal read fence.
 - `chat:city:<tenantId>:<cityId>` – cached short-lived windows of city chat history.
 
 #### Usage Restrictions for `view:room-look:*`
 
-`view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>` is always treated as a **Class B, TTL-only cache** for rendered LOOK-style room views:
+`view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>:<readFenceHash>` is always treated as a **Class B, TTL-only cache** for rendered LOOK-style room views:
 
 - It is a disposable presentation/redraw helper only, never semantic reconnect context, frame/output replay, a transcript archive, or a delivery ledger.
 - It is never a correctness source for combat, pathfinding/movement, or visibility/line-of-sight decisions.
-- The key must be bound to the exact room, viewer/session, and policy context. It must not be reused across rooms, viewers, sessions, authorization/presentation-policy contexts, or incompatible read-fence contexts.
+- The key must be bound to the exact room, viewer/session, policy context, and applicable read-fence context. `policyContextHash` remains the presentation/authorization policy context. `readFenceHash` is a stable collision-resistant digest over the canonical normalized complete applicable `CausalReadFence` identity. A cache read or write is forbidden when the complete applicable fence is unavailable; callers must serve the uncached authoritative `ResolveLook` result instead. Any change to the complete fence changes `readFenceHash` and prevents reuse. This hash is only a Class-B presentation-cache key component: it is not authority/currentness proof and does not replace served-through validation.
 - Correctness-critical flows must call World Management and Entity Management APIs (and any Class A caches they own), or use separate, explicitly versioned Class A prefixes registered in this catalog.
 - Helper APIs that expose `view:room-look:*` should be scoped to Game Session’s view pipeline and other presentation-only consumers; Game Logic and similar subsystems should continue to consume authoritative LOOK results via gRPC, not by reading this prefix directly.
 
@@ -319,7 +319,7 @@ Cached aggregates in Redis should follow structured, namespaced key patterns to 
 
 `view:room-look:*` is a target-only Game Session presentation cache. The current implementation does not prove these bounds or ownership rules; until it does, callers must use the authoritative `ResolveLook` result without treating Redis as a required path.
 
-- Game Session is the sole writer and invalidation owner. The cache is keyed by the exact room, viewer/session, policy context, and applicable read-fence context, and a room, viewer, session, policy, or read-fence change prevents reuse.
+- Game Session is the sole writer and invalidation owner. The cache uses the complete key shape above; a room, viewer, session, policy, or read-fence change prevents reuse. The `readFenceHash` derivation and unavailable-fence fallback are defined by the preceding usage restriction.
 - Each entry has a TTL of at most 5 seconds, a payload of at most 64 KiB, and at most four simultaneously live variants per admitted session. Admission or write refusal falls back to the uncached authoritative `ResolveLook` result.
 - Cache loss, a miss, an oversize result, variant-budget exhaustion, or Redis failure recomputes or serves the uncached authoritative `LOOK`; none may block gameplay. TTL is the correctness-independent expiry; deletion is optional cleanup, not correctness proof.
 - Metrics must expose hits/misses, recomputes, write-skip reason, oversize results, active keys/variant-budget use, and Redis failures. Reset and recovery behavior follows [Redis reset and recovery](./system-architecture-redis-reset-and-recovery.md), not this presentation-cache contract.

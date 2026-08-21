@@ -204,10 +204,10 @@ The main inventory remains the compact control crosswalk. These aliases preserve
 
 | Decision keys | Assertion requiring rationale | Missing question |
 | --- | --- | --- |
-| `SESSION-02`, `SESSION-03`, `SESSION-04`, `SESSION-06` | Single-session takeover, no transport replay, bounded durable semantic reconnect context with explicit entry and byte bounds, fire-and-forget commands, and bounded invisible non-edge recovery. | What loss, multi-device, and availability guarantees are actually promised? |
+| `SESSION-04`, `SESSION-06` | Bounded invisible non-edge recovery and layered command-delivery semantics remain implementation/proof obligations even though the accepted boundaries are explicit. | What recovery and delivery proof is required to demonstrate the accepted availability and no-duplicate guarantees? |
 | `TICK-01`, `TICK-03`, `TICK-07` | Separate actor-action and passive/inbound-effect lanes, no global ACID, bounded timer catch-up, and timer skipping. | Which gameplay fairness and recovery requirements make these semantics correct? |
 | `TENANT-02`, `TENANT-03` | Shared infrastructure and no playtest merge-back. | What isolation, cost, creator workflow, and player-data tradeoffs were accepted? |
-| `CMD-04`, `CMD-05`, `CONTENT-04` | Durable semantic reconnect-context entry and byte bounds, no live translation, and editable starter DML. | What UX, localization, and creator-product requirements set the defaults? |
+| `CONTENT-04` | Starter profiles materialize editable game-owned content and conservative upgrades remain implementation/proof obligations even though the accepted creator-product boundary is explicit. | What focused creator workflow and upgrade proof is required to demonstrate the accepted materialization and lineage guarantees? |
 | `OPS-02`, `OPS-03` | Current implementation has no canary/auto-rollback and performs a 15-minute online dump; ADR 0015 accepts the online environment-wide snapshot and non-restored Redis/cold-start recovery boundary as the target, while complete proof and the remaining RPO/operational choice are still open. | What deployment, RPO, and operational burdens remain for human acceptance? |
 
 ### Choices Likely Requiring Product Consultation

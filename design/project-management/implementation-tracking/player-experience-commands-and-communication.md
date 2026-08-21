@@ -76,9 +76,9 @@ The current admission gaps are explicit `JOIN`, realm-scoped discovery/character
 
 ### Validation and Proof
 
-- **Validation record:** Required current documentation, contract, settings-generation, allocation, ADR, and `git diff --check` gates are recorded in the canonical [Validation And Proof References](../design-alignment/design-capability-allocation.md#validation-and-proof-references). Runtime proof is not applicable to this documentation-only change.
-- **Partial:** Capability rows marked `drift-found` or naming remaining proof gaps retain only the bounded evidence stated in those rows; that evidence does not prove the unresolved boundary.
-- **Unrun:** No additional focused validation is claimed beyond the current-revision documentation and contract checks above.
+- **Confirmed:** Required current documentation, contract, settings-generation, allocation, ADR, and `git diff --check` gates passed as recorded in the canonical [Validation And Proof References](../design-alignment/design-capability-allocation.md#validation-and-proof-references). `./gradlew :game-session-service:test` also passed, providing focused service proof for the implemented Game Session boundary.
+- **Partial:** Capability rows marked `drift-found` or naming remaining proof gaps retain only the bounded evidence stated in those rows; neither that evidence nor the focused service test proves the unresolved cross-service or runtime boundary.
+- **Unrun:** Broader cross-service runtime, manual client gameplay, and hosted gameplay proof were not run for this documentation change.
 
 ## Active Gaps
 
@@ -86,7 +86,7 @@ The current admission gaps are explicit `JOIN`, realm-scoped discovery/character
 - The bounded stored game-authored HELP path is live, but rich authoring UI, localization-aware content, fuzzy or semantic search, related-topic behavior, stage-aware indexes, moderation/versioning, and broader dynamic command-discovery integration are not implemented.
 - Structured recent transcript retention is bounded and is not a complete player archive/export facility. Player-controlled export, long-term history/search, and final raw-versus-normalized speech storage policy remain separate work.
 - Communication has no offline `TELL`, `SHOUT`, configurable topology propagation, richer partial/full interception, game-configurable observer policy, distinct observer moderation ledger, or first-party/MCP-aware recipient presentation.
-- Localization is live for active built-in renderer outputs and room/exit prose, but item, lore, and broader world-content adoption and locale-specific speech policy remain incomplete. Stored authored variants follow exact locale -> explicitly stored base language -> source locale; arbitrary regional sibling fallback and live provider translation remain out of scope, and no broader creator workflow/provider has been selected.
+- Localization is live for active built-in renderer outputs and room/exit prose; the canonical [Input, output, and presentation](../../architecture/system-architecture-input-output-and-presentation.md#localization-and-translation) owner defines live fallback behavior. Item, lore, and broader world-content adoption, locale-specific speech policy, and a broader creator workflow/provider remain incomplete; live provider translation remains out of scope.
 - Presentation still lacks combat-state-driven brief-on-move behavior, richer configurable prompt composition, broader prompt scheduling, and broader smart-client presentation policy.
 - Presence and social surfaces have a bounded canonical runtime/read model, but broader activity-engine consumers, richer recent-presence policy, broader social consumers, and operator visibility and staff-capability enforcement remain incomplete.
 - The dedicated first-party web application service, permanent browser asset-hosting boundary, and richer browser product surface remain planned.

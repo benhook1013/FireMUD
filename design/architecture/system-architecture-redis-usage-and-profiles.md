@@ -59,7 +59,7 @@ Scope-key convention: `{tenantRegionTag}` is the canonical opaque tag for the co
     - Schema and TTL policies for cache and rate‑limit prefixes are defined centrally in shared infrastructure libraries rather than per service.
   - Example prefixes:
     - `inventory:<tenantId>:<containerId>`
-    - `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>` (disposable presentation/redraw helper; exact room, viewer/session, and policy context bound; never semantic reconnect context, frame/output replay, archive, or delivery ledger)
+    - `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>:<readFenceHash>` (disposable presentation/redraw helper; exact room, viewer/session, policy context, and applicable read-fence context bound; see the [canonical Class-B contract](./system-architecture-redis-cache.md#canonical-viewroom-look-class-b-contract); never semantic reconnect context, frame/output replay, archive, or delivery ledger)
     - `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>`
     - `ratelimit:<tenantId>:<subjectHash>:<timeWindow>` (one opaque stable subject hash per individual subject)
     - `automation:queue:{tenantInstanceTag}:<entityId>` and automation quota counters.
