@@ -32,10 +32,10 @@ All other controls (for example, per-tenant heuristics, noisy-tenant detection s
 - Dynamic runtime state (inventories, room occupants, transient effects, in-progress combat) changes frequently and must use careful invalidation rules and short-lived caches, if cached at all.
 - Purpose-driven caching only. Objects should be cached because they are expensive to compute or fetch and appear on hot paths, not “just in case.” Profiling and production telemetry will drive what actually lands in Redis.
 - Coordination workload isolation:
-  - All environments, including local development and small self-hosted setups, run **at least two Redis roles**:
+  - All non-ephemeral environments, including local development and small self-hosted setups, run **at least two Redis roles**:
     - A **Coordination Redis** deployment dedicated to ticks, locks, timers, sessions, and other gameplay-critical coordination state.
     - A **Cache/Rate-Limit Redis** deployment dedicated to read-side caches and gateway rate limits.
-  - Coordination Redis must not host large, eviction-driven caches under any profile. Even in development and hobby/self-hosted profiles, caches and rate limits are pointed at the separate Cache/Rate-Limit deployment so eviction and OOM behavior cannot silently affect coordination keys. The only supported exceptions are explicitly ephemeral test stacks that opt out of tail-loss and role-separation guarantees; see `system-architecture-redis-usage-and-profiles.md` for environment profiles and mappings.
+  - Coordination Redis must not host large, eviction-driven caches under any profile. Even in development and hobby/self-hosted profiles, caches and rate limits are pointed at the separate Cache/Rate-Limit deployment so eviction and OOM behavior cannot silently affect coordination keys. The only supported exception is an explicitly marked ephemeral CI/test stack whose tests are reset-tolerant, do not exercise coordination tail-loss or replay guarantees, and surface the shared endpoint; such a stack is outside coordination SLO validation. See `system-architecture-redis-usage-and-profiles.md` for environment profiles and mappings.
 - No soft coordination logs on Cache/Rate-Limit Redis:
   - Tick ordering, tick idempotency, and any correctness or fairness invariants for gameplay **must not** depend on cache or rate-limit keys. Cache/Rate-Limit Redis may only influence latency and load, never “what happened” or “in which order” from the tick engine’s perspective.
   - Automation and scripting structures on Cache/Rate-Limit Redis (for example `automation:queue:*`, `automation:quota:*`, `automation:tenant-budget:*`, `automation:test:capacity:*`) are explicitly documented as best-effort buffers and counters; they cannot act as authoritative logs or effect ledgers. Durable automation schedules and quotas live in PostgreSQL; cache entries merely accelerate lookups and quota checks.
@@ -215,12 +215,12 @@ Memory and eviction behavior for cache and rate-limit workloads must not comprom
   - May use an eviction policy such as `allkeys-lru` or `volatile-lru`, since entries are recomputable or best-effort.
   - Enforces strict limits on value size and TTL so cache growth does not starve rate limiting or degrade performance.
 
-For **all deployments**, including local development:
+For **all non-ephemeral deployments**, including local development:
 
 - Coordination and cache/rate-limit roles run on **separate Redis deployments** (for example, two containers/pods on the same host or separate processes), even when serving a single developer or tenant.
 - Docker Compose and Helm charts provide two services by default (for example `redis-coord` and `redis-cache`) so developers and operators never need to share a single Redis instance for both roles.
 - This two-role split is intentionally kept **lightweight**: it mirrors larger clustered deployments while only adding configuration complexity, not additional infrastructure primitives, so hobby and self-hosted operators can follow the same patterns as production with minimal overhead.
-- Any ad-hoc experiments that deliberately collapse roles into a single Redis instance are considered **unsupported** and outside the guarantees in this document; they must not be used for QA, staging, production, or any player-facing game instances.
+- Explicitly marked ephemeral CI/test stacks may collapse roles into a single Redis instance only when tests are reset-tolerant, do not exercise coordination tail-loss or replay guarantees, the environment is labelled `ephemeral / single-Redis`, and configuration/metrics surface the shared endpoint. These stacks are outside coordination tail-loss, replay, and SLO validation and must not be used for QA, staging, production, or any player-facing game instance.
 
 Operational dashboards track `used_memory`, `maxmemory`, and eviction counters for each deployment. In addition:
 

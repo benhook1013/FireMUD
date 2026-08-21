@@ -204,10 +204,10 @@ The main inventory remains the compact control crosswalk. These aliases preserve
 
 | Decision keys | Assertion requiring rationale | Missing question |
 | --- | --- | --- |
-| `SESSION-02`, `SESSION-03`, `SESSION-04`, `SESSION-06` | Single-session takeover, no transport replay, bounded transcript, fire-and-forget commands, and bounded invisible non-edge recovery. | What loss, multi-device, and availability guarantees are actually promised? |
+| `SESSION-02`, `SESSION-03`, `SESSION-04`, `SESSION-06` | Single-session takeover, no transport replay, bounded durable semantic reconnect context with explicit entry and byte bounds, fire-and-forget commands, and bounded invisible non-edge recovery. | What loss, multi-device, and availability guarantees are actually promised? |
 | `TICK-01`, `TICK-03`, `TICK-07` | Separate actor-action and passive/inbound-effect lanes, no global ACID, bounded timer catch-up, and timer skipping. | Which gameplay fairness and recovery requirements make these semantics correct? |
 | `TENANT-02`, `TENANT-03` | Shared infrastructure and no playtest merge-back. | What isolation, cost, creator workflow, and player-data tradeoffs were accepted? |
-| `CMD-04`, `CMD-05`, `CONTENT-04` | Durable transcript bounds, no live translation, and editable starter DML. | What UX, localization, and creator-product requirements set the defaults? |
+| `CMD-04`, `CMD-05`, `CONTENT-04` | Durable semantic reconnect-context entry and byte bounds, no live translation, and editable starter DML. | What UX, localization, and creator-product requirements set the defaults? |
 | `OPS-02`, `OPS-03` | Current implementation has no canary/auto-rollback and performs a 15-minute online dump; ADR 0015 accepts the online environment-wide snapshot and non-restored Redis/cold-start recovery boundary as the target, while complete proof and the remaining RPO/operational choice are still open. | What deployment, RPO, and operational burdens remain for human acceptance? |
 
 ### Choices Likely Requiring Product Consultation
@@ -244,5 +244,5 @@ These questions preserve the priority model used by the completed human review. 
 | `P0` | `GR-1.2`, `GR-1.4`, `GR-2.1`, `GR-2.2`, `PO-1.1`, `PO-1.2`, `SF-2.3` | `ADMIN-01`, `HOTPATH-01`, `MOD-01`, `RECON-01`, `TICK-03..07` | Do bounded hot-path orchestration, movement fail-closed behavior, durable operator forwarding, versioned moderation enforcement, and spatial backlog ownership converge without partial writes or stale policy? |
 | `P1` | `GR-1.2`, `GR-1.4`, `GR-2.1`, `SF-2.3`, `AS-1.4` | `HOTPATH-01`, `RECON-01`, `TICK-01`, `TICK-03..07`, `AUTO-01..03` | Are fairness, timer loss, cross-region follow-ups, outbox recovery, and at-least-once dedupe correct under crashes and topology changes? |
 | `P1` | `AR-1.2`, `AR-1.5`, `AR-3.3`, `AS-1.2`, `GR-4.1` | `CONTENT-01..05`, `CMD-02` | Can publication, version pinning, asset attestation, import/export, and authored effects avoid mixed or unsafe runtime state? |
-| `P1` | `EA-1.2`, `EA-1.3`, `AA-2.2`, `PO-2.2` | `CMD-03..05`, `SESSION-03` | Do transcript bounds, prompts, localization fallback, and Telnet/WebSocket recovery match the player-visible promise? |
+| `P1` | `EA-1.2`, `EA-1.3`, `AA-2.2`, `PO-2.2` | `CMD-03..05`, `SESSION-03` | Do durable semantic reconnect-context entry and byte bounds, prompts, localization fallback, and Telnet/WebSocket recovery match the player-visible promise? |
 | `P2` | `PO-1.1`, `PO-1.2`, `PO-2.1`, `PO-2.4`, `PO-3.1`, `PO-3.2`, `PO-4.4`, `SF-1.3` | `ADMIN-01`, `EDGE-01..06`, `MOD-01`, `OPS-01..06`, `SEC-05` | Do edge trust, carrier/replay/route controls, liveness/close taxonomy, operator backing, moderation propagation, brute-force controls, single-cluster assumptions, digest promotion, rollback, preview proof, and operator-only deployment remain verifiable at scale? |

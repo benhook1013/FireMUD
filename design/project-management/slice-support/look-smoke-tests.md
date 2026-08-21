@@ -2,6 +2,10 @@
 
 These lightweight scripts document the manual sequence of `LOGIN` → `PLAY` → `LOOK` commands for both WebSocket and Telnet transports so developers can verify the LOOK capability alongside the automated cross-service tests and the canonical service-local smoke executables. World supplies snapshot facts for Game Logic's typed `LookResult`; Game Session maps accepted outcomes to compact versioned `PlayerOutput` and owns final prose/rendering/delivery. The current implementation boundary is recorded in `design/project-management/implementation-tracking/player-experience-commands-and-communication.md`; the protocol contract remains canonical in `design/architecture/microservices/game-session-service/protocols.md`.
 
+## Implementation Status
+
+The canonical service-local WebSocket and Telnet executables reuse the shared `dev-tools/smoke` library. Current implementation caveat: `dev-tools/smoke/smoke_common.py` accepts readiness when HTTP status is below 500 and a whitespace-normalized `"status":"UP"` substring appears anywhere in the body, including nested JSON; it retries readiness only, not the complete `WORLDS` → `LOGIN` → `PLAY` → `LOOK` flow. Therefore these helpers are not proof of the canonical exact-2xx/top-level-JSON readiness predicate or of the full flow until that implementation gap is fixed. Each helper must wait for the canonical readiness endpoints for the path under test and fail if readiness does not converge; it must not mask startup races by timing out and continuing or by rerunning the full smoke until the stack eventually stabilizes.
+
 Prerequisites: Bash, `curl`, `python3`, and a WebSocket client (`wscat` or equivalent). The Telnet path additionally requires `telnet` or `nc`.
 
 ## 1. WebSocket smoke script
@@ -46,7 +50,7 @@ if not isinstance(payload, dict) or payload.get("status") != "UP":
 done
 ```
 
-The canonical service-local WebSocket executable (`services/game-session-service/websocket-login-look-smoke.sh`) reuses the shared `dev-tools/smoke` library and is the canonical non-interactive alternative. Current implementation caveat: `dev-tools/smoke/smoke_common.py` accepts readiness when HTTP status is below 500 and a whitespace-normalized `"status":"UP"` substring appears anywhere in the body, including nested JSON; it retries readiness only, not the complete `WORLDS` → `LOGIN` → `PLAY` → `LOOK` flow. Therefore the helper is not proof of the canonical exact-2xx/top-level-JSON readiness predicate or of the full flow until that implementation gap is fixed.
+The canonical service-local WebSocket executable (`services/game-session-service/websocket-login-look-smoke.sh`) reuses the shared `dev-tools/smoke` library and is the canonical non-interactive alternative.
 
 1. Connect to the Gateway stub pointing at the Game Session service:
 
@@ -80,7 +84,7 @@ Prerequisites: the TCP Proxy + Gateway stack running locally (see `services/tcp-
 
 Document every command/response pair so reproducible cross-service logs can be referenced in regression notes. Treat the Game Session protocol, the LOOK implementation record, and the named service-local smoke executables as the current source of truth rather than committed transcript artifacts. The service-local executables reuse the shared `dev-tools/smoke` library; hosted runs may use `dev-tools/hosted/shared/hosted-login-look-smoke.sh` as their wrapper.
 
-For a non-interactive Telnet smoke check that performs `WORLDS` → `LOGIN` → `PLAY` → `LOOK` via the TCP Proxy and asserts `OK LOGIN`, `OK PLAY`, and `OK LOOK` appear in the responses, use the canonical service-local executable `services/tcp-proxy-service/telnet-login-look-smoke.sh`. It reuses the shared `dev-tools/smoke` library and is designed to complement the manual steps above; it can be wired into CI or run locally after starting the full Telnet → Gateway → Game Session stack. The same shared `smoke_common.py` readiness-predicate caveat described above applies: readiness retries are bounded, but the helper currently accepts HTTP `<500` with a whitespace-normalized `"status":"UP"` substring (including nested JSON) and does not retry the full flow, so it is not proof of the canonical readiness predicate until fixed. The helper must wait for the canonical readiness endpoints for the path under test and fail if readiness does not converge; it should not mask startup races by timing out and continuing anyway or by re-running the full smoke until the stack eventually stabilizes.
+For a non-interactive Telnet smoke check that performs `WORLDS` → `LOGIN` → `PLAY` → `LOOK` via the TCP Proxy and asserts `OK LOGIN`, `OK PLAY`, and `OK LOOK` appear in the responses, use the canonical service-local executable `services/tcp-proxy-service/telnet-login-look-smoke.sh`. It reuses the shared `dev-tools/smoke` library and is designed to complement the manual steps above; it can be wired into CI or run locally after starting the full Telnet → Gateway → Game Session stack.
 
 ## 3. Notes
 
