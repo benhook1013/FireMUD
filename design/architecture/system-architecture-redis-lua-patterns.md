@@ -193,6 +193,7 @@ Session scripts operate only on gameplay session keys that share one `{tenantGam
 - `session:game:index:character:{tenantGameplayTag}:<playableStateNamespaceId>:<characterId>` — the target one-active-character key for controller identity `{tenantId, playableStateNamespaceId, characterId}`; server-derived `playableStateScope` remains binding/routing evidence, and its value/evidence retains `sessionId`, `gameInstanceId`, and `bindingGeneration`. The existing `<gameInstanceId>:<characterId>` index is current implementation drift.
 - canonical tenant-scoped account index: `session:game:index:account-tenant:{tenantGameplayTag}:<accountId>`
 - `session:game:index:tenant:{tenantGameplayTag}`
+- `session:game:index:realm-grant:{tenantGameplayTag}:<worldSlug>:<realmSlug>:<accountId>` when the binding is grant-gated
 
 `session:game:index:account-tenant:{tenantGameplayTag}:<accountId>` is the canonical tenant-scoped account index key. It must not be shortened to `session:game:index:account:<accountId>`; that is a separate cross-tenant discovery index and is never part of a shard-local Lua invocation.
 

@@ -423,6 +423,20 @@ Prompt/status remains a separate output class from transcript lines and gameplay
 
 Examples:
 
+Communication output is shown as separate sender and listener projections. The sender receives the synchronous response and actor line:
+
+```text
+SAY Hello travelers
+OK SAY
+You say, "Hello travelers."
+```
+
+A listener such as Emberline separately receives the projected text push:
+
+```text
+Emberline says, "Hello travelers."
+```
+
 ```text
 LOGIN demo@example.com swordfish
 OK LOGIN Logged in as demo@example.com
@@ -439,11 +453,6 @@ Exits: NORTH (arched passage toward the cavern mouth), EAST (narrow fissure desc
 Entities:
 - NPC "Kobold Scout" (alert, leaning on the eastern balustrade)
 - Player "Sora" (half-hidden in the shadowed niche)
-
-SAY Hello travelers
-OK SAY
-You say, "Hello travelers."
-Emberline says, "Hello travelers."
 
 WHISPER Sora Keep quiet
 OK WHISPER

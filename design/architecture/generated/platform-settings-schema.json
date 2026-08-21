@@ -162,7 +162,7 @@
           "name": "firemud.presentation.prompt.emit-after-reconnect-restore",
           "type": "java.lang.Boolean",
           "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties$Prompt",
-          "description": "Whether reconnect restore appends a fresh prompt after rendering bounded semantic reconnect context and a fresh LOOK.",
+          "description": "Whether reconnect restore permits a fresh prompt after rendering bounded semantic reconnect context and a fresh LOOK; firemud.presentation.prompt.enabled must also be true.",
           "defaultValue": true,
           "domain": "presentation",
           "group": "prompts.transportPresentation",

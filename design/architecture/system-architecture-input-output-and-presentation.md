@@ -194,7 +194,7 @@ Prompts are not ordinary transcript output.
 It should usually be:
 
 - coalesced rather than emitted after every single output event
-- regenerated fresh rather than stored in the reconnect transcript buffer
+- regenerated fresh rather than stored in the semantic recent-context buffer
 - consumable as structured data by first-party web or MCP-aware clients
 
 Future game-defined prompt composition should extend this model by separating:
@@ -247,9 +247,11 @@ That richer direction is a valid future option, but adopting a general presentat
 
 Structured `PlayerOutput` is the live output contract. The canonical semantic recent context sits one step below that live envelope:
 
-- replay-eligible `PlayerOutput` values are projected into canonical transcript entries;
-- resume-context entries are the durable context source of truth;
+- replay-eligible `PlayerOutput` values are projected into canonical semantic-context entries;
+- semantic-context entries are the durable context source of truth;
 - rendered plain text remains a derived compatibility cache for classic text transports.
+
+The namespace, complete-envelope bound, omission-marker, and logout-revocation rules below are target behavior; implemented ordered-row persistence and its current proof gaps are recorded in [Implemented Status](#implemented-status) above.
 
 The canonical semantic recent-context entry is one entry carrying:
 
@@ -261,15 +263,15 @@ The canonical semantic recent-context entry is one entry carrying:
 - derived rendered compatibility text;
 - timestamp metadata.
 
-For the current architecture, that means:
+For the target architecture, that means:
 
 - the durable recent context is keyed by the admitted `{tenantId, playableStateNamespaceId, characterId}` identity and follows that durable namespace across replaceable runtime instances;
 - every replay-eligible entry is appended to that durable bounded context, including output that would otherwise fall out of a hot reconnect cache;
-- a resume entry may keep derived rendered text alongside the structured entry so Telnet and generic WebSocket replay remain simple;
+- after authorized reconnect, structured entries are re-rendered under the current session and presentation policy; any persisted `renderedText` is compatibility-only for legacy text-only records and never replaces the structured entry;
 - Redis may cache the current resume window for reconnect speed, but it is not the source of truth and a Redis reset must not discard the retained resume context;
-- after authorized reconnect completes fresh `LOGIN` + `PLAY`, FireMUD may render retained context in ordering-token order, then obtains a fresh authoritative `LOOK` and emits exactly one reconnect prompt only when both effective `firemud.presentation.prompt.enabled` and `firemud.presentation.prompt.emit-after-reconnect-restore` are enabled; if either is disabled, it emits zero reconnect prompts. Explicit gameplay `LOGOUT` terminates the binding and suppresses its private replay, so a later `LOGIN` + `PLAY` does not replay context from that terminated binding;
+- after authorized reconnect completes fresh `LOGIN` + `PLAY`, target behavior renders retained context in ordering-token order, then obtains a fresh authoritative `LOOK` and emits exactly one reconnect prompt only when both effective `firemud.presentation.prompt.enabled` and `firemud.presentation.prompt.emit-after-reconnect-restore` are enabled; if either is disabled, it emits zero reconnect prompts. Explicit gameplay `LOGOUT` terminates the binding and suppresses its private replay, so a later `LOGIN` + `PLAY` does not replay context from that terminated binding;
 - context may repeat output already shown or omit output not retained/available; it is not an acknowledgement, exact missed-message list, client-input history, or complete transcript archive;
-- prompt/status output remains outside ordinary transcript persistence unless a future explicit transcript policy says otherwise.
+- prompt/status output remains outside ordinary semantic recent-context persistence unless a future explicit transcript policy says otherwise.
 
 Speech-related transcript storage should preserve canonical structured content and leave room for raw-versus-normalized speech fields where needed. Color, styling, and final transcript formatting stay projection-time concerns and should not be baked into canonical transcript storage.
 
@@ -282,9 +284,9 @@ The policy defines:
 - soft and hard retained-byte ceilings, with message and line floors for the soft ceiling;
 - optional expiry after a character has been inactive for a configured duration, or `never`.
 
-When a byte bound is exceeded, FireMUD evicts complete oldest retained entries. The soft ceiling preserves the configured message and line floors where possible. The hard ceiling is absolute for the complete persisted context, including scope and metadata; when one complete entry alone exceeds it, FireMUD omits that entry or stores a bounded omission marker whose own complete persisted size fits within the ceiling. FireMUD never stores a partial or silently truncated semantic entry, and no single entry may bypass the hard ceiling. Inactivity expiry removes the whole retained context. A normal multiplayer game may keep a small recent window and expire it after a period such as sixty inactive days; a persistent RPG may retain a larger short window without inactivity expiry. Neither case implies an unbounded archive of all gameplay output.
+Target behavior: when a byte bound is exceeded, FireMUD evicts complete oldest retained entries. The soft ceiling preserves the configured message and line floors where possible. The hard ceiling is absolute for the complete persisted context, including scope and metadata; when one complete entry alone exceeds it, FireMUD omits that entry or stores a bounded omission marker whose own complete persisted size fits within the ceiling. FireMUD never stores a partial or silently truncated semantic entry, and no single entry may bypass the hard ceiling. Inactivity expiry removes the whole retained context. A normal multiplayer game may keep a small recent window and expire it after a period such as sixty inactive days; a persistent RPG may retain a larger short window without inactivity expiry. Neither case implies an unbounded archive of all gameplay output.
 
-The byte bound is deterministic: each retained entry costs the UTF-8 byte length of its complete scope-bound persisted context envelope, not only its rendered text. The compact outer JSON envelope has lexically ordered members for `briefRenderPolicy`, `characterId`, `occurredAt`, `orderingToken`, `outputKind`, `payload`, `payloadType`, `playableStateNamespaceId`, `renderedText`, `replayPolicy`, `schemaVersion`, and `tenantId`; every optional outer member is present and absent values are JSON `null`. Outer-envelope strings are normalized to Unicode NFC, timestamps are RFC 3339 UTC with fixed millisecond precision, numbers use their shortest normalized JSON form, and no insignificant whitespace is emitted. The `payload` member preserves the canonical structured-output JSON emitted by the live output encoder. This accounts for entry metadata, structured payload, and the derived rendered-text compatibility projection exactly once in both the durable source of truth and Redis hot cache. FireMUD never separately adds the same payload or rendered text again for transport projections. A complete entry or omission marker is retained only when its complete persisted size fits within the hard bound.
+Target hard-bound accounting is deterministic: each retained entry costs the UTF-8 byte length of its complete scope-bound persisted context envelope, not only its rendered text. The compact outer JSON envelope has lexically ordered members for `briefRenderPolicy`, `characterId`, `occurredAt`, `orderingToken`, `outputKind`, `payload`, `payloadType`, `playableStateNamespaceId`, `renderedText`, `replayPolicy`, `schemaVersion`, and `tenantId`; every optional outer member is present and absent values are JSON `null`. Outer-envelope strings are normalized to Unicode NFC, timestamps are RFC 3339 UTC with fixed millisecond precision, numbers use their shortest normalized JSON form, and no insignificant whitespace is emitted. The `payload` member preserves the canonical structured-output JSON emitted by the live output encoder. This accounts for entry metadata, structured payload, and the derived rendered-text compatibility projection exactly once in both the durable source of truth and Redis hot cache. FireMUD never separately adds the same payload or rendered text again for transport projections. A complete entry or omission marker is retained only when its complete persisted size fits within the hard bound.
 
 ### Separate history features
 
@@ -441,8 +443,8 @@ Reconnect prompt precedence is an effective-settings rule. After authorized sema
 Canonical default behavior:
 
 - prompts are coalesced after short output bursts
-- prompts are not stored in the reconnect transcript buffer
-- reconnect restores transcript context first, then a fresh gameplay redraw such as `LOOK`, then one fresh prompt when both effective reconnect-prompt settings are enabled, or zero reconnect prompts when either is disabled
+- prompts are not stored in the semantic recent-context buffer
+- reconnect restores semantic recent context first, then a fresh gameplay redraw such as `LOOK`, then one fresh prompt when both effective reconnect-prompt settings are enabled, or zero reconnect prompts when either is disabled
 - first-party web and MCP-aware clients may consume prompt/state as structured data without showing prompt text in the main transcript
 
 Prompts should also remain compatible with future game-defined and player-configurable prompt composition. Different games may expose different status fields, and players may want to choose which fields appear in their text prompt or first-party UI status display. That future flexibility is another reason prompt/state should remain a structured output type rather than being treated as ordinary transcript text.

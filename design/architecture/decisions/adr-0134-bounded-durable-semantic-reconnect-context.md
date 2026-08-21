@@ -67,7 +67,7 @@ A complete Player Transcript Archive and Export remains a separate future featur
 - Recent context survives runtime instance replacement because it follows the durable playable-state namespace.
 - A player may see a repeated line or miss output that was never retained; current state is repaired by fresh `LOOK` and, when both effective reconnect-prompt settings are enabled, exactly one prompt reconstruction.
 - Private replay fails closed after logout, ownership transfer, or lost authorization.
-- The hard byte ceiling is operationally trustworthy even for an unusually large single output.
+- Target/post-implementation consequence: the hard byte ceiling is operationally trustworthy even for an unusually large single output; current complete-envelope accounting and omission-marker proof remain implementation gaps.
 - Redis may accelerate replay but cannot be the source of truth for the promised durable window.
 - A future exact resumable protocol or complete archive must be designed explicitly rather than growing accidentally out of reconnect storage.
 

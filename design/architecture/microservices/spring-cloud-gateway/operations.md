@@ -11,7 +11,7 @@
 
 Gateway Architecture requires the following observability surfaces for gameplay WebSocket behavior:
 
-- `gateway.websocket.closes{reason,subreason,bridge_shutdown_class}`, with top-level `reason` drawn from the Gateway-owned `logout`, `session_replaced`, `service_restart`, `idle_timeout`, `policy_violation`, `internal_error`, or `backend_unavailable` taxonomy; `subreason` is optional diagnostic context restricted to `user_logout`, `takeover`, `gateway_restart`, `admin_termination`, `edge_backpressure`, or `none`, not lifecycle authority. Free-form diagnostic detail belongs only in structured logs, not in the metric or wire value.
+- `gateway.websocket.closes{reason,subreason,bridge_shutdown_class}`, with top-level `reason` drawn from the Gateway-owned `logout`, `session_replaced`, `service_restart`, `idle_timeout`, `policy_violation`, `internal_error`, or `backend_unavailable` taxonomy; bridge-only `bridge_shutdown_class` is restricted to `planned_drain`, `upstream_logout`, or `unattributed_failure`; `subreason` is optional diagnostic context restricted to `user_logout`, `takeover`, `gateway_restart`, `admin_termination`, `edge_backpressure`, or `none`, and neither field is lifecycle authority. Free-form diagnostic detail belongs only in structured logs, not in metric or wire values.
 - `gateway.websocket.handshake.rejected`
 - `gateway.websocket.slow_client_closes`
 
