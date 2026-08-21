@@ -15,8 +15,8 @@ Define alerts for sustained drops in `gamesession.command.look.invocations` or s
 
 ## Logs and proof
 
-- **Game Logic**: `LookAggregationService` is the structured-result boundary. Focused proof logs/asserts the composed `LookResult` and typed failure outcomes, while downstream gRPC failures retain `WorldManagement` or `EntityManagement` source labels. The current `LookResultRenderer` `Rendered LOOK text` DEBUG/fixture path remains local diagnostic evidence only; it does not transfer player-facing renderer ownership to Game Logic.
-- **Game Session**: `LookCommandHandler` logs `redis.session.lookup` entries at DEBUG, maps accepted outcomes to compact versioned `PlayerOutput`, and emits warnings such as `LOG WARN LOOK failed for tenantId=<tenantId> error=<ERROR>` whenever it maps a gRPC error to a protocol response. Focused proof logs/asserts the `PlayerOutput` and its deterministic text projection before delivery.
+- **Game Logic**: `LookAggregationService` is the structured-result boundary. Optional diagnostics may record the composed `LookResult` and typed failure outcomes, while downstream gRPC failures retain `WorldManagement` or `EntityManagement` source labels. The current `LookResultRenderer` `Rendered LOOK text` DEBUG/fixture path remains local diagnostic evidence only; it does not transfer player-facing renderer ownership to Game Logic or constitute automated cross-service proof.
+- **Game Session**: `LookCommandHandler` logs `redis.session.lookup` entries at DEBUG, maps accepted outcomes to compact versioned `PlayerOutput`, and emits warnings such as `LOG WARN LOOK failed for tenantId=<tenantId> error=<ERROR>` whenever it maps a gRPC error to a protocol response. Optional diagnostics may record the `PlayerOutput` and deterministic text projection before delivery; automated cross-service proof remains the player-visible response and transport continuity assertions.
 
 ## Correlation & Tracing
 
@@ -30,5 +30,5 @@ Define alerts for sustained drops in `gamesession.command.look.invocations` or s
 
 ## Regression verification
 
-- Run `./gradlew crossServiceTest` to exercise the WebSocket and Telnet regression suites; they emit the `gamesession.command.look.*` meters and preserve the owner-bound structured-result and `PlayerOutput`/text-projection proof described above so the automation also validates instrumentation coverage.
-- The cross-service target captures the same metrics/log tags documented here, while its end-to-end assertions retain the canonical player-visible text projection for both transports.
+- Run `./gradlew crossServiceTest` to exercise the WebSocket and Telnet regression suites; they emit the `gamesession.command.look.*` meters and retain the canonical player-visible text and transport-continuity assertions. Optional structured-result/`PlayerOutput` diagnostics may be collected during those runs but are not automated cross-service proof.
+- The cross-service target captures the same metrics/log tags documented here for operational diagnosis, while its end-to-end assertions retain the canonical player-visible text projection for both transports.
