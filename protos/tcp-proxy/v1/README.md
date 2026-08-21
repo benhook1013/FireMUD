@@ -6,7 +6,7 @@ the Game Session Service about client disconnects.
 
 ## Implementation Status
 
-The current returning-member contract is `LOGIN` -> `PLAY` -> `LOOK`. Discovery/`WORLDS` is optional and is not enforced as a prerequisite, and explicit `JOIN` is unavailable. The target skip-`JOIN` path requires current `ACTIVE` membership, an exact fresh reread of `membershipAuthorityGeneration`/`membershipVersion`, and the applicable realm grant.
+The current returning-member contract is `LOGIN` -> `PLAY` -> `LOOK`. Discovery/`WORLDS` is optional and is not enforced as a prerequisite, and explicit `JOIN` is unavailable. The target skip-`JOIN` path requires current `ACTIVE` membership, an exact fresh reread of `membershipAuthorityGeneration`/`membershipVersion`, and the applicable realm grant. The target fresh direct-text sequence below requires `WORLDS`; that requirement is not current returning-member runtime behavior, where discovery remains optional.
 
 ## Target Direct-Text Gameplay Sequence
 

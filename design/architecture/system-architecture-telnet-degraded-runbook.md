@@ -128,7 +128,8 @@ Quick operator guide (current runtime; target-only rows are marked):
 | `policy_violation` | Usually client misuse, malformed protocol, or trust/policy failure; non-retriable by default | Check client behavior, malformed input, and TLS/trust-policy logs before treating it as platform outage |
 | `backend_unavailable` | Core gameplay outage or edge-to-gateway bridge failure | Check Gateway, Game Session, and Redis health first |
 | `idle_timeout` | Normal inactivity expiry; not an incident by itself | Verify the configured idle policy and expected inactivity before incident treatment |
-| `logout` | Terminal user/admin/security session end, not an outage | Confirm logout or termination activity before treating it as network instability |
+| `logout` (except `logout;subreason=gateway_restart`) | Terminal user/admin/security session end, not an outage | Confirm logout or termination activity before treating it as network instability |
+| `logout;subreason=gateway_restart` | Current `planned_drain` Gateway drain/restart signal, not a generic terminal logout | Confirm the deployment and drain timeline |
 | `internal_error` | Unexpected server-side failure; not an outage by itself until correlated | Check TCP Proxy, Gateway, and Game Session error logs and restart timelines |
 | **Target-only** `policy_violation;subreason=edge_backpressure` | Edge buffer pressure or slow-client enforcement; remains `policy_violation` for retry/lifecycle purposes | Check `tcpproxy.telnet.discarded{reason="gateway_buffer_full"}` and related backpressure metrics before changing limits or policy settings |
 | **Target-only** `session_replaced` | Old transport displaced by another active controller | Confirm takeover activity; do not classify the gameplay identity as logged out |
