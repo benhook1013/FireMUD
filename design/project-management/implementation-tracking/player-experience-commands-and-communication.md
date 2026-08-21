@@ -6,7 +6,7 @@ This is a non-normative implementation tracker for player-facing commands, commu
 
 ## Current Status
 
-This tracker is the permanent reader-facing implementation record for player-facing commands, admission, presentation, communication, presence, and client behavior. Most bounded capabilities are live, including the stored game-authored HELP path; broader command interpretation, rich help authoring/discovery, elevated staff behavior, richer communication, and the dedicated browser-service boundary remain explicitly incomplete. The output/reconnect lane remains partial where explicit structured schema versioning, strict complete-byte context bounds, first-party post-logout suppression, and broader client consumption are not yet proven.
+This tracker is the permanent reader-facing implementation record for player-facing commands, admission, presentation, communication, presence, and client behavior. Most bounded capabilities are live, including the stored game-authored HELP path; broader command interpretation, rich help authoring/discovery, elevated staff behavior, richer communication, and the dedicated browser-service boundary remain explicitly incomplete. The output/reconnect lane remains partial where explicit structured schema versioning, strict complete-byte context bounds, first-party post-logout suppression, and broader client consumption are not yet proven. Deliberate-`LOGOUT` replay suppression remains an unimplemented blocker requiring focused `LOGOUT` → `LOGIN` → `PLAY` proof that no private context is replayed; this tracker does not claim the runtime fix.
 
 ## Current Gaps
 
@@ -76,10 +76,9 @@ The current admission gaps are explicit `JOIN`, realm-scoped discovery/character
 
 ### Validation and Proof
 
-- **Current-revision validation record:** The required documentation checks are `./gradlew linkCheck lintMarkdown`; their outcome for the current revision must be recorded from the applicable validation run. This tracker does not claim a current result until that run is completed. Recorded focused evidence covers parser/interpreter and registry behavior, capability gates, HELP/HISTORY, WebSocket/Telnet parity, LOOK, prompts, localization, transcript/reconnect, social/presence/privacy, communication, moderation, and frontend baseline behavior. No hosted artifact URL is claimed.
+- **Validation record:** Required current documentation, contract, settings-generation, allocation, ADR, and `git diff --check` gates are recorded in the canonical [Validation And Proof References](../design-alignment/design-capability-allocation.md#validation-and-proof-references). Runtime proof is not applicable to this documentation-only change.
 - **Partial:** Capability rows marked `drift-found` or naming remaining proof gaps retain only the bounded evidence stated in those rows; that evidence does not prove the unresolved boundary.
-- **Unrun:** The current revision's repository-wide documentation checks and any additional focused validation are not claimed here until run; historical results are not treated as current evidence.
-- **Unavailable:** A repository-wide `check` was blocked by the local native Docker CLI. This is a validation limitation, not a product behavior claim.
+- **Unrun:** No additional focused validation is claimed beyond the current-revision documentation and contract checks above.
 
 ## Active Gaps
 

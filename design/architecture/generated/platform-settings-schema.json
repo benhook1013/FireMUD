@@ -275,7 +275,7 @@
           "advanced": true,
           "exampleValue": 256,
           "allowedValues": [],
-          "constraints": "integer >= 1 complete persisted entries"
+          "constraints": "integer >= 1; maximum count of complete persisted entries"
         },
         {
           "name": "firemud.reconnection.buffer.min-messages",

@@ -19,8 +19,8 @@ The current `instance` table models legacy temporary zone copies for dungeons or
 
 ## Current LOOK Slice Status
 
-- **Live:** `GetRoomSnapshot` returns room metadata, descriptions, and exit labels as World-owned facts for Game Logic to combine with Entity data into a typed `LookResult`. Game Session maps accepted outcomes to compact versioned `PlayerOutput` and owns the final player-facing prose, rendering, and delivery; telemetry for this pipeline is documented in [`look-instrumentation.md`](../../../project-management/slice-support/look-instrumentation.md).
-- **Stubbed:** Current snapshot data comes from the deterministic LOOK test fixtures so scripted room events, line-of-sight lighting, and procedural text remain deterministic for regression tests. Game Logic's local `LookResultRenderer` remains a fixture/diagnostic aid; it is not the player-facing renderer owner.
+- **Implemented RPC / current data:** `GetRoomSnapshot` is implemented and returns room metadata, descriptions, and exit labels as World-owned facts for Game Logic to combine with Entity data into a typed `LookResult`; its current response data is fixture-backed rather than production room data. Game Session maps accepted outcomes to compact versioned `PlayerOutput` and owns the final player-facing prose, rendering, and delivery; telemetry for this pipeline is documented in [`look-instrumentation.md`](../../../project-management/slice-support/look-instrumentation.md).
+- **Stubbed test behavior:** Deterministic LOOK fixtures keep scripted room events, line-of-sight lighting, and procedural text stable for regression tests. Game Logic's local `LookResultRenderer` remains a fixture/diagnostic aid; it is not the player-facing renderer owner.
 - **Deferred:** Future work will push live snapshot updates through `/ws/game/**` so Gateway and TCP Proxy clients can react to world changes as soon as they happen.
 
 ## Temporal Participation

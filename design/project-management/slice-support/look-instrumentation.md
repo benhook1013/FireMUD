@@ -38,5 +38,5 @@ Define alerts for sustained drops in `gamesession.command.look.invocations` or s
 
 ## Regression verification
 
-- Run `./gradlew crossServiceTest` to exercise the WebSocket and Telnet regression suites; they emit the `gamesession.command.look.*` meters and retain the canonical player-visible text and transport-continuity assertions. Optional structured-result/`PlayerOutput` diagnostics may be collected during those runs but are not automated cross-service proof.
+- Run `./gradlew crossServiceTest` to exercise the WebSocket and Telnet regression suites; they emit the `gamesession.command.look.*` meters and retain the canonical player-visible transcript proof for both transports. The controlled transport-continuity assertion is currently WebSocket-only; Telnet continuity/failure proof remains future coverage. Optional structured-result/`PlayerOutput` diagnostics may be collected during those runs but are not automated cross-service proof.
 - The cross-service target captures the same metrics/log tags documented here for operational diagnosis, while its end-to-end assertions retain the canonical player-visible text projection for both transports.

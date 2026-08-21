@@ -83,7 +83,7 @@ Before opening the Telnet socket, run the shared fail-closed readiness gate from
    telnet localhost 4000
    ```
 
-2. Send `LOGIN demo@example.com swordfish` and expect the same `OK LOGIN` line as the WebSocket script; this is the baseline flow and does not require a `SESSION` envelope.
+2. For a fresh direct-text flow, issue `WORLDS` and wait for its successful discovery response before `LOGIN`; local runs with a preselected target may intentionally skip discovery. Send `LOGIN demo@example.com swordfish` and expect the same `OK LOGIN` line as the WebSocket script; this is the baseline flow and does not require a `SESSION` envelope.
 3. Continue with `PLAY demo` after `LOGIN`; typed attach metadata is not part of the Telnet contract.
 4. Send `LOOK` and copy the multiline response, verifying the text (room name/desc/exits/entities) matches the WebSocket transcript.
 5. Telnet missing-room proof is not currently implemented. Keep this failure scenario deferred to a future isolated controlled World-stub case, as described in the [Telnet cross-service test](./look-cross-service-tests.md#telnet-test); when added, assert that the proxy relays the exact `ERROR ROOM_NOT_FOUND`, keeps the connection open, and retains the final transcript as `look-telnet-<timestamp>.log`.

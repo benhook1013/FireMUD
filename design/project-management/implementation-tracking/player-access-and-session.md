@@ -137,6 +137,8 @@ The focused admission proofs cover fresh acceptance, same-IP replacement reserva
 
 Account authority proof covers account-first tenantless bootstrap authentication and account-scoped session state, the current membership seam, Account-owned non-public realm grant denial, cross-tenant membership enforcement, and account-owned export/delete/recovery boundaries including active-subscription deletion guards. Explicit `JOIN`/`Join & Play`, transactional join authority, the connect-token membership-authority-generation reread, and canonical tenant-role, lifecycle-state, and authority-generation follow-through remain partial or unproved.
 
+- **Validation record:** Required current documentation, contract, settings-generation, allocation, ADR, and `git diff --check` gates are recorded in the canonical [Validation And Proof References](../design-alignment/design-capability-allocation.md#validation-and-proof-references). Runtime proof is not applicable to this documentation-only change.
+
 ## Active Gaps
 
 - Account authentication has no stable attempt identity or replayable result contract. Game Session now avoids automatically retrying an ambiguous credential-consuming transport failure, but Account still needs durable request identity and idempotent result lookup before authentication itself is safely retryable.

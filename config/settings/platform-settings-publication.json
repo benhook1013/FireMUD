@@ -205,7 +205,7 @@
       "hotReloadable": false,
       "advanced": true,
       "exampleValue": 256,
-      "constraints": "integer >= 1 complete persisted entries"
+      "constraints": "integer >= 1; maximum count of complete persisted entries"
     },
     "firemud.reconnection.buffer.min-messages": {
       "group": "reconnection.buffer",
