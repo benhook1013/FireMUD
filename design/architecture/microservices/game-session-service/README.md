@@ -8,6 +8,8 @@ Orchestrates live game sessions, including tick execution, player input validati
 
 Meaningful gameplay-session and tick-coordination state is externalized into Redis and PostgreSQL rather than kept as authoritative process-local memory. The target state therefore treats Game Session instances as replaceable workers: a new instance of the same service type should be able to resume session-front-end or lease-owner responsibility from shared state. Hidden same-type recovery is not a current availability guarantee; its implementation and proof remain a gap, and any user-visible reconnect caused solely by a non-edge Game Session restart remains implementation/proof debt rather than target behavior.
 
+Current live Redis storage has two distinct record families: `session:game:*` authenticated gameplay-session records and `sessionctx:*` bootstrap or implementation-local context/index records. The `session:game:*` records together with the region-binding contract remain authoritative for current authenticated gameplay semantics; `sessionctx:*` records do not authorize gameplay. Their ownership and storage details are defined in [runtime and data](./runtime-and-data.md#redis-ownership-and-coordination-rules).
+
 This doc set is the authoritative source for:
 
 - Game Session's local API, storage, and runtime consequences for gameplay-session ownership and front-door responsibilities;
