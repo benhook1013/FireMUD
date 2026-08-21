@@ -1,5 +1,13 @@
 # TCP Proxy Service API Contracts
 
+## Target Reconnect Contract
+
+After actual edge loss, a new Telnet transport performs public `WORLDS` discovery, credential-bearing `LOGIN`, authenticated `REALMS`, conditional `JOIN` when public-production membership is missing or `INACTIVE`, conditional `CHARS`/allowed character creation when no valid selected character is resolved, and `PLAY`. The proxy does not replay input, frames, bytes, or MCP traffic onto the new transport. Gateway owns the top-level close taxonomy, and a close reason never proves whether a command committed.
+
+## Implementation Status
+
+Current proxy routing and receiving-service behavior support an abbreviated returning-member `LOGIN` -> `PLAY` path when current membership and character gates pass. Current proxy routing still bootstraps a hidden default and does not enforce `WORLDS` as a prerequisite; the live Account adapter does not expose lifecycle state, so missing and `INACTIVE` membership cannot be distinguished by the current implementation. `NotifyDisconnect` remains a best-effort, at-least-once advisory signal as described below.
+
 ## Service Interactions
 
 The proxy does not expose a public client API. Instead it emits a gRPC event for internal coordination:
@@ -8,7 +16,7 @@ The proxy does not expose a public client API. Instead it emits a gRPC event for
 
 These events let the Game Session Service resume suspended sessions and resume processing of any Redis-backed gameplay command queues it owns. They do not authorize replay of prior outbound transport bytes onto a new client socket. The TCP Proxy never replays Telnet input after a disconnect; connection-local buffers are cleared as soon as the TCP session closes. `NotifyDisconnect` is therefore a best-effort, at-least-once lifecycle signal keyed by `{proxyConnectionId, disconnectSequence}` rather than a request to re-run gameplay commands.
 
-The proxy is an edge component, not the owner of resumable gameplay state or external close translation. Under [ADR 0013](../../decisions/adr-0013-bounded-invisible-non-edge-restart-recovery.md), Gateway may retain the proxy's established WebSocket and rebind its own Game Session upstream while the Telnet TCP socket remains healthy; successful bounded rebind is invisible to the Telnet client. The proxy preserves no authoritative gameplay state for that recovery. If safe backend recovery cannot complete within the 30-second hard window, Gateway closes with `backend_unavailable` and the proxy surfaces the corresponding explicit Telnet disconnect rather than keeping an indefinitely stalled TCP session. After actual edge loss, a fresh TCP transport starts public `WORLDS` discovery before `LOGIN`; after authenticated `LOGIN`, the client uses `REALMS`, then conditional `JOIN` for missing or inactive public-production membership and conditional `CHARS`/allowed character creation when no valid selected character is resolved, followed by `PLAY`. The current returning-member compatibility shortcut may abbreviate this to `LOGIN` -> `PLAY` after the receiving service confirms current membership and character gates; that shortcut is not the full fresh-discovery target flow. No input, frame, byte, or MCP replay occurs. Gateway owns the top-level close taxonomy, and a close reason never proves whether a command committed.
+The proxy is an edge component, not the owner of resumable gameplay state or external close translation. Under [ADR 0013](../../decisions/adr-0013-bounded-invisible-non-edge-restart-recovery.md), Gateway may retain the proxy's established WebSocket and rebind its own Game Session upstream while the Telnet TCP socket remains healthy; successful bounded rebind is invisible to the Telnet client. The proxy preserves no authoritative gameplay state for that recovery. If safe backend recovery cannot complete within the 30-second hard window, Gateway closes with `backend_unavailable` and the proxy surfaces the corresponding explicit Telnet disconnect rather than keeping an indefinitely stalled TCP session. No input, frame, byte, or MCP replay occurs. Gateway owns the top-level close taxonomy, and a close reason never proves whether a command committed.
 
 When a `NotifyDisconnect` call fails with a transport-level error, the proxy retries it with a short, bounded exponential backoff window:
 

@@ -10,10 +10,10 @@ Meaningful gameplay-session and tick-coordination state is externalized into Red
 
 This doc set is the authoritative source for:
 
-- gameplay session ownership and front-door responsibilities;
+- Game Session's local API, storage, and runtime consequences for gameplay-session ownership and front-door responsibilities;
 - the split between session front-end pods and region lease owners;
-- Game Session's ownership of tick execution, reconnectable gameplay bindings, and pinned runtime/script state;
-- the minimal text command protocol and world-selection flow used by the initial gameplay slice; and
+- Game Session's local tick, runtime/script, connection-handling, and world-selection consequences; and
+- links to the canonical shared contracts for reconnectable bindings and text-protocol framing;
 - the service's control-plane, runtime, configuration, and operator contracts.
 
 ## Target Control-Plane Summary

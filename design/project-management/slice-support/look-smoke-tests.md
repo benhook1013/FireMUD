@@ -4,7 +4,7 @@ These lightweight scripts document the manual sequence of `LOGIN` → `PLAY` →
 
 ## 1. WebSocket smoke script
 
-Dependencies: `wscat` (npm install -g wscat) or any WebSocket client.
+Dependencies: `wscat` (npm install -g wscat) or any WebSocket client, plus `python3` for readiness-response JSON parsing.
 
 Before opening the socket or sending `LOGIN`, run the canonical readiness gates for the local Gateway flow: Account, Game Logic, Game Session, and Gateway. Each endpoint must return HTTP success with a JSON health body containing `"status":"UP"`; any timeout, transport error, non-success response, or other status is a hard failure and the manual flow must stop (adjust ports only when the local stack overrides them):
 
@@ -18,10 +18,23 @@ for endpoint in \
     echo "Readiness failed: $endpoint" >&2
     exit 1
   }
-  case "$body" in
-    *'"status":"UP"'*) ;;
-    *) echo "Readiness did not report UP: $endpoint" >&2; exit 1 ;;
-  esac
+  if ! python3 -c '
+import json
+import sys
+
+try:
+    payload = json.load(sys.stdin)
+except json.JSONDecodeError as exc:
+    print(f"Readiness returned invalid JSON: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+
+if not isinstance(payload, dict) or payload.get("status") != "UP":
+    print("Readiness JSON top-level status is not UP", file=sys.stderr)
+    raise SystemExit(1)
+' <<<"$body"; then
+    echo "Readiness did not report top-level status UP: $endpoint" >&2
+    exit 1
+  fi
 done
 ```
 
@@ -55,7 +68,7 @@ Prerequisites: the TCP Proxy + Gateway stack running locally (see `services/tcp-
 2. Send `LOGIN demo@example.com swordfish` and expect the same `OK LOGIN` line as the WebSocket script; this is the baseline flow and does not require a `SESSION` envelope.
 3. Continue with `PLAY demo` after `LOGIN`; typed attach metadata is not part of the Telnet contract.
 4. Send `LOOK` and copy the multiline response, verifying the text (room name/desc/exits/entities) matches the WebSocket transcript.
-5. To test failure handling, request `LOOK` with a missing room id (by instructing Game Logic to look at a non seeded room). The proxy should relay `ERROR ROOM_NOT_FOUND` or the appropriate downstream error without dropping the connection. Include the final transcript as `look-telnet-<timestamp>.log`.
+5. Telnet missing-room proof is not currently implemented. Keep this failure scenario deferred to a future isolated controlled World-stub case, as described in the [LOOK cross-service test plan](./look-cross-service-tests.md); when added, assert that the proxy relays `ERROR ROOM_NOT_FOUND` or the appropriate downstream error without dropping the connection, and include the final transcript as `look-telnet-<timestamp>.log`.
 
 Document every command/response pair so reproducible cross-service logs can be referenced in regression notes. Treat the Game Session protocol, the LOOK implementation record, and the canonical smoke scripts under `dev-tools/` as the current source of truth rather than committed transcript artifacts.
 

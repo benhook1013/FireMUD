@@ -280,13 +280,26 @@ Later game-defined prompt composition should plug in ahead of rendering: upstrea
 
 The text protocol remains the canonical wire format for Telnet and generic text WebSocket clients, but it should not be treated as the deepest platform abstraction. FireMUD should preserve structured gameplay views, communication results, action presentation events, prompt/status snapshots, and command errors until the latest practical rendering step so player settings such as color mode and `BRIEF`, plus first-party web and future MCP-aware clients, can apply presentation policy without rewriting gameplay logic. Game Session renders and delivers `GameplayPresentationEvent` data from Game Logic; it must not reconstruct action success or remote-leg state from durable command rows. See [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md).
 
-The first live communication modes now emit canonical actor prose directly for the initiating player. After a successful command the server responds with text such as:
+The first live communication modes now emit canonical actor prose directly for the initiating player. After successful commands, the sender receives separate terminated response frames:
 
 ```text
+OK SAY
 You say, "Hello travelers."
-Emberline says, "Hello travelers."
+
+OK WHISPER
 You whisper to Sora, "Keep quiet."
+
+OK TELL
 You tell Sora, "Meet me at the forge."
+
+```
+
+Listeners receive their own asynchronous event projections, separately from the sender's response:
+
+```text
+EVENT SAY
+Emberline says, "Hello travelers."
+
 ```
 
 Explicit type, recipient, and delivery metadata still exists on the shared downstream communication path for deterministic tests, logging, and later fanout behavior, but that metadata is no longer exposed as the canonical user-facing success transcript.
@@ -423,18 +436,20 @@ Prompt/status remains a separate output class from transcript lines and gameplay
 
 Examples:
 
-Communication output is shown as separate sender and listener projections. The sender receives the synchronous response and actor line:
+Communication output is shown as separate terminated sender and listener frames. For the command `SAY Hello travelers`, the sender receives this synchronous response and actor line:
 
 ```text
-SAY Hello travelers
 OK SAY
 You say, "Hello travelers."
+
 ```
 
-A listener such as Emberline separately receives the projected text push:
+A blank line terminates that sender response. A listener such as Emberline separately receives the projected asynchronous text push as an `EVENT SAY` frame:
 
 ```text
+EVENT SAY
 Emberline says, "Hello travelers."
+
 ```
 
 ```text
