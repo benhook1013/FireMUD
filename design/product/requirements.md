@@ -95,7 +95,7 @@ See [Game Logic Service](../architecture/microservices/game-logic-service/README
 - **WebSockets/TCP-based real-time networking** for player interactions.
 - In-game **chat system, mail messaging, and guild/group communications**.
 - **PvP & cooperative multiplayer support**.
-- **One active gameplay controller per `{tenantId, playableStateNamespaceId, characterId}`**; an authorized new login transfers control through one atomic monotonic binding-generation operation, fences new input from the old connection, and preserves the identity of work already admitted before the transfer. `gameInstanceId` is replaceable runtime evidence, not the character-control uniqueness boundary.
+- **One active gameplay controller per `{tenantId, playableStateNamespaceId, characterId}`**; an authorized `PLAY` transfers control through one atomic monotonic binding-generation operation, fences new input from the old connection, and preserves the identity of work already admitted before the transfer. `gameInstanceId` is replaceable runtime evidence, not the character-control uniqueness boundary.
 See [Social & Groups Service](../architecture/microservices/social-groups-service/README.md) for chat and guild features.
 
 ### 2.7 Extensibility & Game Customization

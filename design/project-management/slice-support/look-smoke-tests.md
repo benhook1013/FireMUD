@@ -59,7 +59,7 @@ The canonical service-local WebSocket executable (`services/game-session-service
 4. Send `PLAY demo` and expect `OK PLAY`.
 5. Send `LOOK`. The response should match the canonical Game Session protocol and the current LOOK implementation record (`OK LOOK`, room/exit/entity lines). Save the transcript (command + response) as `look-ws-<timestamp>.log`.
 6. (Optional) After the test, poll `/actuator/prometheus` or the Micrometer endpoint and confirm `gamesession.command.look.invocations` incremented once and any failure scenario incremented `gamesession.command.look.failures{error="..."}`.
-7. If the room does not exist or downstream services fail, verify the response matches one of the documented error codes (`ERROR ROOM_NOT_FOUND`, `ERROR WORLD_UNAVAILABLE`, `ERROR ENTITY_UNAVAILABLE`, `ERROR LOOK_UNAVAILABLE`).
+7. Do not treat this manual path as reproducible failure proof. The controlled WebSocket World-stub `ROOM_NOT_FOUND` case is defined in the [WebSocket cross-service test](./look-cross-service-tests.md#websocket-test); `WORLD_UNAVAILABLE` and `ENTITY_UNAVAILABLE` remain unit/target mappings, and the Telnet missing-room case is deferred to the [Telnet cross-service test](./look-cross-service-tests.md#telnet-test).
 
 Save the full transcript (commands + responses) to a file for regression comparison.
 
@@ -76,7 +76,7 @@ Prerequisites: the TCP Proxy + Gateway stack running locally (see `services/tcp-
 2. Send `LOGIN demo@example.com swordfish` and expect the same `OK LOGIN` line as the WebSocket script; this is the baseline flow and does not require a `SESSION` envelope.
 3. Continue with `PLAY demo` after `LOGIN`; typed attach metadata is not part of the Telnet contract.
 4. Send `LOOK` and copy the multiline response, verifying the text (room name/desc/exits/entities) matches the WebSocket transcript.
-5. Telnet missing-room proof is not currently implemented. Keep this failure scenario deferred to a future isolated controlled World-stub case, as described in the [LOOK cross-service test plan](./look-cross-service-tests.md); when added, assert that the proxy relays `ERROR ROOM_NOT_FOUND` or the appropriate downstream error without dropping the connection, and include the final transcript as `look-telnet-<timestamp>.log`.
+5. Telnet missing-room proof is not currently implemented. Keep this failure scenario deferred to a future isolated controlled World-stub case, as described in the [Telnet cross-service test](./look-cross-service-tests.md#telnet-test); when added, assert that the proxy relays `ERROR ROOM_NOT_FOUND` or the appropriate downstream error without dropping the connection, and include the final transcript as `look-telnet-<timestamp>.log`.
 
 Document every command/response pair so reproducible cross-service logs can be referenced in regression notes. Treat the Game Session protocol, the LOOK implementation record, and the named service-local smoke executables as the current source of truth rather than committed transcript artifacts. The service-local executables reuse the shared `dev-tools/smoke` library; hosted runs may use `dev-tools/hosted/shared/hosted-login-look-smoke.sh` as their wrapper.
 
