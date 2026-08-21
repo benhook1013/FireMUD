@@ -1,6 +1,6 @@
 # LOOK Smoke Tests
 
-These lightweight scripts document the manual sequence of `LOGIN` → `PLAY` → `LOOK` commands for both WebSocket and Telnet transports so developers can verify the LOOK capability alongside the automated cross-service tests and canonical smoke helpers. World supplies snapshot facts for Game Logic's typed `LookResult`; Game Session maps accepted outcomes to compact versioned `PlayerOutput` and owns final prose/rendering/delivery. The current implementation boundary is recorded in `design/project-management/implementation-tracking/player-experience-commands-and-communication.md`; the protocol contract remains canonical in `design/architecture/microservices/game-session-service/protocols.md`.
+These lightweight scripts document the manual sequence of `LOGIN` → `PLAY` → `LOOK` commands for both WebSocket and Telnet transports so developers can verify the LOOK capability alongside the automated cross-service tests and the canonical service-local smoke executables. World supplies snapshot facts for Game Logic's typed `LookResult`; Game Session maps accepted outcomes to compact versioned `PlayerOutput` and owns final prose/rendering/delivery. The current implementation boundary is recorded in `design/project-management/implementation-tracking/player-experience-commands-and-communication.md`; the protocol contract remains canonical in `design/architecture/microservices/game-session-service/protocols.md`.
 
 ## 1. WebSocket smoke script
 
@@ -38,7 +38,7 @@ if not isinstance(payload, dict) or payload.get("status") != "UP":
 done
 ```
 
-The automated WebSocket helper (`services/game-session-service/websocket-login-look-smoke.sh`) uses the same fail-closed readiness contract and is the canonical non-interactive alternative.
+The canonical service-local WebSocket executable (`services/game-session-service/websocket-login-look-smoke.sh`) uses the same fail-closed readiness contract and reuses the shared `dev-tools/smoke` library; it is the canonical non-interactive alternative.
 
 1. Connect to the Gateway stub pointing at the Game Session service:
 
@@ -70,9 +70,9 @@ Prerequisites: the TCP Proxy + Gateway stack running locally (see `services/tcp-
 4. Send `LOOK` and copy the multiline response, verifying the text (room name/desc/exits/entities) matches the WebSocket transcript.
 5. Telnet missing-room proof is not currently implemented. Keep this failure scenario deferred to a future isolated controlled World-stub case, as described in the [LOOK cross-service test plan](./look-cross-service-tests.md); when added, assert that the proxy relays `ERROR ROOM_NOT_FOUND` or the appropriate downstream error without dropping the connection, and include the final transcript as `look-telnet-<timestamp>.log`.
 
-Document every command/response pair so reproducible cross-service logs can be referenced in regression notes. Treat the Game Session protocol, the LOOK implementation record, and the canonical smoke scripts under `dev-tools/` as the current source of truth rather than committed transcript artifacts.
+Document every command/response pair so reproducible cross-service logs can be referenced in regression notes. Treat the Game Session protocol, the LOOK implementation record, and the named service-local smoke executables as the current source of truth rather than committed transcript artifacts. The service-local executables reuse the shared `dev-tools/smoke` library; hosted runs may use `dev-tools/hosted/shared/hosted-login-look-smoke.sh` as their wrapper.
 
-For a non-interactive Telnet smoke check that performs `WORLDS` → `LOGIN` → `PLAY` → `LOOK` via the TCP Proxy and asserts `OK LOGIN`, `OK PLAY`, and `OK LOOK` appear in the responses, use the helper script in `services/tcp-proxy-service/telnet-login-look-smoke.sh`. This script is designed to complement the manual steps above and can be wired into CI or run locally after starting the full Telnet → Gateway → Game Session stack. The helper must wait for the canonical readiness endpoints for the path under test and fail if readiness does not converge; it should not mask startup races by timing out and continuing anyway or by re-running the full smoke until the stack eventually stabilizes.
+For a non-interactive Telnet smoke check that performs `WORLDS` → `LOGIN` → `PLAY` → `LOOK` via the TCP Proxy and asserts `OK LOGIN`, `OK PLAY`, and `OK LOOK` appear in the responses, use the canonical service-local executable `services/tcp-proxy-service/telnet-login-look-smoke.sh`. It reuses the shared `dev-tools/smoke` library and is designed to complement the manual steps above; it can be wired into CI or run locally after starting the full Telnet → Gateway → Game Session stack. The helper must wait for the canonical readiness endpoints for the path under test and fail if readiness does not converge; it should not mask startup races by timing out and continuing anyway or by re-running the full smoke until the stack eventually stabilizes.
 
 ## 3. Notes
 

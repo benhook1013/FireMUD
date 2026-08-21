@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The existing `PlayerOutput`, text renderer, structured WebSocket projector, prompt pipeline, room-view path, and structured reconnect metadata provide partial implementation evidence. They do not prove a supported versioned structured-client schema, an actual browser consumer, schema compatibility, or ADR 0059 temporal `LOOK` evidence.
+The existing `PlayerOutput`, text renderer, structured WebSocket projector, prompt pipeline, room-view path, and structured reconnect metadata provide partial implementation evidence. They do not prove a supported versioned structured-client schema, an actual browser consumer, schema compatibility, or ADR 0059 temporal `LOOK` evidence. The current unversioned projection does not yet implement or enforce the version negotiation contract below.
 
 ## Decision Record
 
@@ -43,7 +43,7 @@ This is an authority split, not a requirement that every domain and output featu
 
 Every supported output envelope must define a deterministic plain-text projection that preserves its essential meaning. Telnet and generic text WebSocket clients are normal supported text transports and consume that projection directly; they are not a silent downgrade path for structured schema incompatibility. A structured client that cannot consume the envelope's schema version is rejected explicitly with the error token `unsupported_schema_version` rather than receiving an unrequested or lossy structured substitute. Structured clients may consume typed payloads under documented compatibility rules, but text compatibility remains part of the contract rather than a best-effort fallback.
 
-A structured first-party client contract must carry an explicit schema version and documented compatibility rules before it is described as supported. Internal Java records and the current unversioned WebSocket projection may evolve while they remain internal. The current edge projection is partial implementation; first-party browser consumption remains unimplemented until a browser application actually consumes and proves the supported versioned contract.
+A supported structured first-party client contract carries an explicit schema version and documented compatibility rules. Its bootstrap/handshake advertises a bounded, nonempty set of supported `PlayerOutput` schema versions; the server selects one mutually supported `PlayerOutput` schema version for the transport/session, or rejects the connection before structured output with `unsupported_schema_version` when no mutual version exists. Compatibility is explicit for each version, and a breaking semantic change allocates a new schema version. Internal Java records and the current unversioned WebSocket projection may evolve while they remain internal. The current edge projection is partial implementation and does not yet perform or enforce this negotiation; first-party browser consumption remains unimplemented until a browser application actually consumes and proves the supported versioned contract.
 
 Richer bounded payload fields and tags may be added when concrete presentation requirements need them. A general presentation-document language requires a separate consequential decision with demonstrated client value and explicit complexity and compatibility limits.
 
