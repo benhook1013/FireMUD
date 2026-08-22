@@ -230,7 +230,6 @@ These rows retain unresolved product or operations acceptance or applied-provena
 
 | Priority | Decision keys | Consultation topic |
 | --- | --- | --- |
-| `P1` | `TENANT-03` | Playtest isolation and merge-back expectations. |
 | `P1` | `OPS-02`, `OPS-03` | Deployment blast radius, RPO, and production readiness. |
 
 ## Coverage By Exact Capability

@@ -39,7 +39,7 @@ Account, Game Session, and Social & Groups continue to own their applicable rest
 
 Every moderation restriction policy declares whether and when the outcome is appealable. Severe or long-lived punitive restrictions require an appeal path. A brief automatically expiring mute may be ineligible for a full case when the policy supplies clear notice and expiry. Ineligibility returns a stable caller-safe result rather than creating an empty case.
 
-Filing an appeal never stays enforcement. A separately authorized moderation action may change a restriction while review is pending, but appeal submission itself grants no gameplay, communication, or authentication authority.
+Filing an appeal never changes, suspends, or stays enforcement. A separately authorized moderation action may change a restriction while review is pending, but appeal submission itself grants no gameplay, communication, or authentication authority.
 
 ### Minimal Case Lifecycle
 
@@ -59,6 +59,8 @@ The terminal decision is `UPHELD`, `MODIFIED`, or `OVERTURNED`. The case records
 - resulting owner command identity/digest/revision when modification or reversal applies.
 
 An upheld decision creates no enforcement mutation. A modified or overturned decision sends a new command referencing the appeal case and exact appealed restriction. The owner applies it as a newer ordered transition and must not erase a later unrelated restriction. Original action, restriction, evidence, appeal transition, and review decision histories remain append-only.
+
+`DECIDED` is the terminal case/review fact; it is not proof that a `MODIFIED` or `OVERTURNED` owner command completed. That resulting command has its own distinct, appeal-linked `controlPlaneRequestId` and digest identity and uses the phase-qualified states from [ADR 0048](./adr-0048-durable-idempotent-operator-write-execution.md): `ACCOUNT_AUTHORIZATION/RESERVED`, `ACCOUNT_AUTHORIZATION/AUTHORIZATION_PENDING`, `ACCOUNT_AUTHORIZATION/AUTHORIZED`, or `ACCOUNT_AUTHORIZATION/NOT_EXECUTED_BEFORE_AUTHORIZATION`, followed by `OWNER_EXECUTION/OWNER_EXECUTION_PENDING`, `OWNER_EXECUTION/FENCE_REJECTED`, `OWNER_EXECUTION/COMMITTED`, `OWNER_EXECUTION/FAILED`, or `OWNER_EXECUTION/NOT_EXECUTED_AFTER_AUTHORIZATION`. A caller-facing accepted decision may report the case decision together with phase-qualified owner execution as pending, committed, failed, or not executed, or provide poll/retry guidance. `RETRYABLE` is guidance to poll or retry reconciliation of the same owner-command identity/digest; it is never a persisted case or owner state, a rearm state, or permission to issue another command. A lost acknowledgement is reconciled read-only using that same owner-command identity/digest; a replacement command requires a new explicit action and fresh authorization.
 
 ### Jurisdiction and Access
 

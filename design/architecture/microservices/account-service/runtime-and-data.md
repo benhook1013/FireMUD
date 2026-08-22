@@ -242,7 +242,7 @@ Runtime and data consequences remain local to this document: `payment_transactio
 
 ### Deferred Creator Monetization
 
-Creator-directed player purchases, donations/tips, platform fees, revenue sharing, payouts, and settlement are deferred. Existing `currency_balance`, donation, creator-share, and generic payment code is implementation substrate only; it is not a supported v1 commerce contract and cannot create gameplay entitlements. A future marketplace decision must define merchant of record, creator onboarding/KYC/tax, reserves, fraud, refunds/chargebacks, negative balances, fulfillment, and entitlement ownership before any such path is enabled.
+Creator-directed player purchases, donations/tips, platform fees, revenue sharing, payouts, and settlement are deferred. Existing `currency_balance`, donation, creator-share, and generic payment code is implementation substrate only; it is not a supported v1 commerce contract and cannot create gameplay entitlements. The current generic PaymentIntent/refund/donation-shaped RPC substrate is not proven exact-method-authorized; until removed or converged, it is internal-only behind exact authenticated mTLS workload/method allowlisting, with no bearer-token variant, and must fail closed on missing or contradictory trusted Account context. See [Stripe Integration Design](./stripe-integration.md). A future marketplace decision must define merchant of record, creator onboarding/KYC/tax, reserves, fraud, refunds/chargebacks, negative balances, fulfillment, and entitlement ownership before any such path is enabled.
 
 ### V1 Hosting Billing
 

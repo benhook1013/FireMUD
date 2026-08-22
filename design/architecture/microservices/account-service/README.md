@@ -30,7 +30,7 @@ Manages user accounts and authentication for the platform. It stores profile dat
 - Profiles store a display name, bio, game history, and achievements.
 - Password reset and verification flows.
 - Subscription tracking with ban management.
-- Handles payment processing via **Stripe** for one-time purchases and recurring subscriptions.
+- Owns the target **Stripe** hosting-plan billing and recurring hosting-subscription boundary; current provider lifecycle and entitlement proof remain partial. Generic one-time-purchase and donation surfaces remain unsupported substrate rather than advertised product paths.
 - Expose Account relationship/projection data for actor discovery and access checks; do not create or own persisted gameplay actors.
 - gRPC APIs cover authentication, account lifecycle, export/delete, runtime/admission, membership, realm-grant, entitlement, profile, and payment operations. The canonical API inventory is [API Contracts](./api-contracts.md).
 

@@ -14,15 +14,21 @@ This document defines the Social & Groups Service runtime model, persistent data
 - APIs require authenticated JWTs from the Account Service for role checks; these tokens are exchanged only between services, and all inter-service communication is encrypted via mutual TLS following the [Security Architecture](../../system-architecture-security.md)
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics
 
+## Implementation Status
+
+The current live moderation seam is the synchronous `EvaluateModerationPolicy` read consumed by `SendMessage` at `CHAT_SEND`; it fails closed when required policy evidence is unavailable or stale. Owner-local restriction tables, commands, durable revisions, notices, and bounded appeal outcomes for `chat_mute`/`chat_ban` are target-only/partial and are not current persisted controls. Social & Groups owns only local communication consequences; Logging & Admin remains the policy-input, case, evidence, and audit owner and is not a routine hot-path dependency.
+
+The target player-safe outcomes are distinct: `CHAT_MUTE_SEND_DENIED` denies sending while ordinary receipt remains available; `CHAT_BAN_PARTICIPATION_DENIED` denies ordinary participation, sending, and history while essential system and moderation notices remain deliverable. These codes describe the target local enforcement projection, not proof that the current read seam has converged.
+
 ## Owner-Local Communication Restrictions
 
 Social & Groups is the sole enforcement owner for `chat_mute` and `chat_ban`. Logging & Admin owns policy intent, moderation cases, bounded appeals, and audit; the complete fixed-category and digest-bound command contract is [Moderation Policies](../logging-admin-service/moderation-policies.md). Routine communication does not synchronously call Logging & Admin.
 
 The target local projection is indexed by exact subject and normalized tenant/realm/channel scope, category, monotonic owner revision/enforcement epoch, effective/expiry times, source case/request identity, payload digest, and player-safe notice. Every create, extension, expiry, removal, correction, or appeal outcome is a new owner command. Social & Groups atomically commits the revision, current projection, and idempotent result; same identity/same digest replays, conflicting digest is rejected, and delayed/reordered commands cannot erase newer state or resurrect older state. Missing or unreadable required local state fails closed.
 
-At send, participation, and history boundaries, `chat_mute` blocks sending while ordinary receipt remains available. `chat_ban` blocks ordinary participation, sending, and history access, while essential system and moderation notices remain deliverable so the player can receive the restriction and appeal/support guidance. A broader restriction may deny a request without deleting narrower scope records; removing one category or scope never changes another. Appeal filing itself does not change enforcement; a modified or overturned decision is a newer command and must not erase a later unrelated restriction.
+At send, participation, and history boundaries, `chat_mute` blocks sending while ordinary receipt remains available and returns the safe outcome `CHAT_MUTE_SEND_DENIED`. `chat_ban` blocks ordinary participation, sending, and history access and returns `CHAT_BAN_PARTICIPATION_DENIED`, while essential system and moderation notices remain deliverable so the player can receive the restriction and appeal/support guidance. A broader restriction may deny a request without deleting narrower scope records; removing one category or scope never changes another. Appeal filing itself does not change enforcement; a modified or overturned decision is a newer command and must not erase a later unrelated restriction.
 
-The current chat path and policy read remain partial and do not prove the durable local restriction table, owner command/idempotency, expiry/reordering, essential notices, owner-read failure behavior, or bounded appeal outcome handling.
+The current chat path and policy read remain partial as recorded in [Implementation Status](#implementation-status) and do not prove the durable local restriction table, owner command/idempotency, expiry/reordering, essential notices, owner-read failure behavior, or bounded appeal outcome handling.
 
 ## Data Model
 

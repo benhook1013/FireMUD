@@ -110,7 +110,7 @@ The full `WORLDS` -> `LOGIN` -> `REALMS` -> conditional `JOIN` -> conditional `C
 - Pointer state and audit event commit together, but `ExecutePreparedVersionCutover` marks the prepared upgrade executed afterward. A crash in that interval lacks the target atomic retry/reconciliation behavior; the target drain work item, acknowledgement, and readback must each remain bound to the exact `sourceGameInstanceId` as well as `sourceDrainId`.
 - The pointer migration's unique index is `(world_slug, realm_slug)` rather than the canonical tenant-qualified key, so cross-tenant duplicate world/realm selectors are not schema-safe even though repository reads include `tenant_id`.
 - The canonical grant record permits expiry and calls for tenant-admin management; the current Account grant row and internal-only grant endpoints do not implement that follow-through.
-- The aggregate realm-routing documentation checkpoint records that `./gradlew linkCheck lintMarkdown` was invoked but does not retain a passing completion result. That proof limitation does not make the bounded implemented capabilities above incomplete.
+- The current documentation-only slice passed `./gradlew linkCheck lintMarkdown`. Validation and runtime-proof selection follows the [validation and runtime-proof workflow](../../developer-workflows/validation-and-runtime-proof.md); runtime proof is not applicable to this documentation-only checkpoint.
 
 ## To Discuss
 

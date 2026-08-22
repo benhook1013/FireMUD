@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-This decision is not implemented. Plain-text gameplay remains the baseline, while classic-client extension research, Game Session semantic ownership, and exact interoperability proof remain outstanding. The current TCP Proxy still recognizes MCP-looking markers and, when its `TCP_PROXY_MCP_ENABLED` flag is enabled, can emit an `#$#mcp version:2.1` greeting. That code path is implementation drift against this decision: supported deployments must keep it disabled, unadvertised, and fail closed, and it must not be treated as an adapter until a Game Session-owned adapter is accepted and proven end to end.
+This decision is not implemented. Plain-text gameplay remains the baseline, while classic-client extension research, Game Session semantic ownership, and exact interoperability proof remain outstanding. The current TCP Proxy still recognizes MCP-looking markers and, when its `TCP_PROXY_MCP_ENABLED` flag is enabled, can emit an `#$#mcp version:2.1` greeting. That code path is implementation drift against this decision: supported deployments must keep it disabled, unadvertised, and fail closed, and it must not be treated as an adapter until a Game Session-owned adapter is accepted and proven end-to-end.
 
 ## Decision Record
 

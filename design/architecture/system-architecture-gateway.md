@@ -468,9 +468,9 @@ If gameplay execution is sharded across multiple Game Session instances, that sh
   - `X-Proxy-Game-Instance-Id` / `X-Proxy-Tenant-Id` inputs on the TCP Proxy → Gateway hop when the proxy supplies server-owned bootstrap metadata or future explicitly selected transport hints. The gateway strips raw `X-Proxy-*` names before downstream forwarding and only generates/forwards canonical `X-Game-Instance-Id` / `X-Tenant-Id` after authenticating the TCP Proxy identity (see [Header Trust Model](#header-trust-model)).
   - Session and tenant context inferred by the Game Session Service from the `LOGIN` flow and Redis session keys.
 - Spring Cloud Gateway strips bridge-only raw `X-Proxy-*` inputs, generates and forwards only gateway-owned canonical headers after trust checks, and does not derive tenant authority or route from untrusted values:
-  - Derive `tenantId` from hostnames or URL paths.
-  - Treat forwarded tenant/session hints as trusted without validation by the owning service (for example, Game Session validating tenant/session context against Redis).
-  - Apply tenant-aware authorization rules on behalf of backend services.
+  - Must not derive `tenantId` from hostnames or URL paths.
+  - Must not treat forwarded tenant/session hints as trusted without validation by the owning service (for example, Game Session validating tenant/session context against Redis).
+  - Must not apply tenant-aware authorization rules on behalf of backend services.
 - All tenant isolation, quotas, and policy enforcement (for example, per-tenant session limits or resource quotas) are implemented in domain services such as the Game Session Service and Account Service, following the rules in [Multi-Tenancy](./system-architecture-multi-tenancy.md).
 
 ## TLS Termination for Gateway

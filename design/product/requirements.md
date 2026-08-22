@@ -118,7 +118,7 @@ See [Game Design Service](../architecture/microservices/game-design-service/READ
 
 - **Admin dashboard** for monitoring and moderating hosted games.
 - **In-game reporting & fixed-category safety system** for handling violations. Reportable punitive categories are `platform_access_ban`, `gameplay_ban`, `chat_mute`, and `chat_ban`, with independent lifecycles and owner-local enforcement. The protective `account_security_lock` is handled only by Account security recovery, not by in-game reports.
-- **Bounded moderation appeals** for eligible severe or long-lived restrictions. Logging & Admin owns the case, evidence references, jurisdiction, review, and audit; Account authenticates the player and provides the browser handoff; Account, Game Session, and Social & Groups remain enforcement owners. Filing does not stay enforcement.
+- **Bounded moderation appeals** for eligible severe or long-lived restrictions. Logging & Admin owns the case, evidence references, jurisdiction, review, and audit; Account authenticates the player and provides the browser handoff; Account, Game Session, and Social & Groups remain enforcement owners. Filing does not suspend enforcement.
 - **Moderation policy definitions** including profanity filters.
 - **Central analytics dashboards and logging** for tracking player activity and game performance.
 - Operators and authorized game administrators can manage **tenant-scoped runtime feature flags** through audited controls. See [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md) for the ownership and activation contract.

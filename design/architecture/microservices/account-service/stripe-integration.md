@@ -105,6 +105,8 @@ Hosting charges, saved-instrument changes, hosting subscriptions, hosting refund
 
 The following mechanics are illustrative future substrate only. They are not a supported v1 route, do not authorize player gameplay value, and cannot be enabled until a separately accepted marketplace, settlement, and revenue-sharing decision defines the product and entitlement contract.
 
+The current generic PaymentIntent/refund/donation-shaped RPC substrate outside the accepted hosting-billing route is unsupported and is not proven exact-method-authorized. Until it is removed or converged, any internal-only call must authenticate an exact workload identity with mTLS and an exact method allowlist; a bearer token alone is insufficient. Account must derive the authoritative account and billing owner plus product, price, currency, and donation bounds from trusted server context/catalog rather than caller fields, reject missing or contradictory context, and fail closed. These surfaces cannot create FireMUD entitlements, and this containment does not make creator or player purchases/donations a supported v1 route.
+
 The `CreatePaymentIntent` contract has disjoint request variants:
 
 - A fixed product purchase supplies an immutable `product_code`; it does not accept caller-authoritative `amount_cents` or currency. Account resolves the active product, price, currency, and catalog revision from the server-side Stripe product catalog. The resolved values are immutable inputs to the purchase digest and durable `purchase_operation`, and the same values are used for the Stripe `PaymentIntent`, checkout binding, webhook correlation, and reconciliation.

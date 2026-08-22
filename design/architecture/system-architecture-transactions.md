@@ -218,7 +218,7 @@ Short synchronous sagas are used for **non-tick, multi-service workflows** invol
 
 | Use Case | Description |
 | --- | --- |
-| **Realm entry and actor provisioning** | After explicit realm entry, resolve and durably bind the realm's exact published versioned entry policy, generic descriptor/template identity, and published version into the saga request/step digest before invoking Entity-owned actor creation/provisioning only for the policy-declared outcome. Forward and compensation retries reuse that unchanged bound resolution and never re-resolve the latest policy; policy semantics remain owned by [ADR 0140](./decisions/adr-0140-realm-authored-controllable-actor-entry.md) |
+| **Realm entry and actor provisioning** | After explicit realm entry, bind one immutable discovered-entry object and digest to the exact catalog revision, admission pointer, namespace/scope, descriptor or template identity/version, and policy outcome before invoking Entity-owned actor creation/provisioning. Retries reuse that unchanged bound resolution and never re-resolve the latest policy; policy semantics remain owned by [ADR 0140](./decisions/adr-0140-realm-authored-controllable-actor-entry.md) |
 | **Short admin remediation** | Limited control-plane actions that touch more than one service but still complete in a single caller-driven request/worker pass |
 | **Tick-adjacent outbox follow-through** | Background orchestration around an outbox event when the work is still synchronous and restart-safe continuation is not required |
 
@@ -227,6 +227,8 @@ These workflows:
 - Happen **outside the tick loop**
 - Modify **persistent storage (PostgreSQL)** across multiple services
 - Require compensation and persisted step status, but not durable workflow execution
+
+For `explicitRealmEntry`, the accepted policy outcomes are exactly `PLAYER_CREATED`, `AUTO_PROVISIONED`, and `PRESEEDED_ONLY`; the discovered-entry object/digest carries the selected outcome without duplicating its semantics. Catalog and admission-pointer authority remains in [Multi-Tenancy](./system-architecture-multi-tenancy.md), while descriptor/template and actor-creation authority remains in [ADR 0140](./decisions/adr-0140-realm-authored-controllable-actor-entry.md).
 
 If a workflow needs restart-safe continuation, durable waits/timers, or operator-visible in-flight state that survives one service lifetime, it should use the shared Temporal substrate described in [Temporal Control-Plane Workflows](./system-architecture-temporal-workflows.md) instead of extending `SagaRunner` toward durable workflow behavior.
 

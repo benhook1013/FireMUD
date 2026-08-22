@@ -574,7 +574,7 @@ Key principles:
     - `session:game:index:character:{tenantGameplayTag}:<playableStateNamespaceId>:<characterId>`
     - `session:game:index:account-tenant:{tenantGameplayTag}:<accountId>`
     - `session:game:index:tenant:{tenantGameplayTag}`
-    - `session:game:index:realm-grant:{tenantGameplayTag}:<worldSlug>:<realmSlug>:<accountId>`
+    - `session:game:index:realm-grant:{tenantGameplayTag}:<worldSlug>:<realmSlug>:<playtestLifecycleId>:<accountId>`
 
 - **`{issuerIndexLayoutTag}` hash tag**
   - Issuer active-binding index partitions use the canonical opaque hash tag `{issuerIndexLayoutTag}` derived from `(issuerIndexLayoutVersion, issuerId, partitionId)`. Each partition is independently readable and writable; issuer partitions are not mixed with `{tenantGameplayTag}` keys in a shard-local Lua invocation.
@@ -622,7 +622,7 @@ This table lists representative coordination keys and their responsibilities. Fu
 | `session:game:index:account:<accountId>` | Untagged global account-wide set projected by Game Session. The index and its repair/reconciliation protocol are owned by [Session Behavior](./system-architecture-session-behavior.md#global-account-active-binding-index); it is a deliberate cross-tenant exception for account-wide revocation and repair, not an authorization source and never a tenant-local Lua/CAS key. |
 | `session:game:index:account-tenant:{tenantGameplayTag}:<accountId>` | Tenant-scoped account reverse index used for bounded revocation, reconnect, and inspection without wildcard scans. |
 | `session:game:index:tenant:{tenantGameplayTag}` | Tenant-scoped reverse index used for bounded revocation, reconnect, and inspection without wildcard scans. |
-| `session:game:index:realm-grant:{tenantGameplayTag}:<worldSlug>:<realmSlug>:<accountId>` | Tenant-scoped grant-gated realm index used for bounded realm admission and revocation; Account-owned grant state remains authoritative. |
+| `session:game:index:realm-grant:{tenantGameplayTag}:<worldSlug>:<realmSlug>:<playtestLifecycleId>:<accountId>` | Tenant-scoped lifecycle-bound private/playtest grant index used for bounded realm admission and revocation; Account-owned grant state remains authoritative. Public-production and unscoped bindings have no entry. |
 | `session:game:index:issuer:{issuerIndexLayoutTag}:<issuerId>:<partitionId>` | Global-per-issuer bounded hash of active/provisional binding references and captured issuer generations across tenants, maintained by Game Session through the versioned-layout repair/CAS and durable coverage-ack protocol and swept across the finite configured partition range for issuer cutoffs. |
 | `retry:{tenantRegionTag}` | Retry queue for failed actions, keyed by `next_eligible_tick_id` on the target region timeline (not wall-clock due time). |
 | `tick-executor-lease:{tenantRegionTag}` | Redis-local liveness key for the active tick executor. Its value is an opaque token checked by lease Lua; durable ownership and handoff semantics are owned by [Tick System: Region Authority and Tick Executor](./system-architecture-ticks.md#region-authority-and-tick-executor). |

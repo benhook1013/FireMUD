@@ -21,6 +21,8 @@ Platform operations records the operator-facing consequence of the script transi
 
 These links add decision provenance only; they do not upgrade operator implementation or verification state.
 
+For moderation specifically, the current synchronous `EvaluateModerationPolicy` reads at Game Session and Social & Groups boundaries are only fail-closed policy lookups, not owner-local restriction state. The target owner-local enforcement, cases/appeals, and cross-service proof remain unimplemented or unproven under [ADR 0141](../../architecture/decisions/adr-0141-fixed-safety-restriction-categories-and-independent-lifecycles.md) and [ADR 0142](../../architecture/decisions/adr-0142-bounded-moderation-appeal-cases.md).
+
 ## Capability Status
 
 | Capability | Implementation | Verification | Design | Implementation anchors | Proof anchors | Secondary handoffs | Gap or decision |
