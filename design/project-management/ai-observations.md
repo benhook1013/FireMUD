@@ -77,5 +77,5 @@ Entry format:
 
 - `2026-08-21`: Reconnect context and connection coordination have distinct ownership
   - Context: consolidating the durable semantic reconnect-context contract exposed a recurring temptation to treat all reconnect-related Redis data as one authority family.
-  - Observation: Coordination Redis owns connection liveness, bindings, and rebind state; Game Session persistence owns semantic reconnect context, and Cache/Rate-Limit Redis may only accelerate that persisted context.
-  - Expected pattern: keep connection coordination and semantic context as separate ownership families, and require semantic context to rebuild from Game Session persistence after cache loss.
+  - Observation: Cache/Rate-Limit Redis holds only a derived semantic-context cache; Coordination Redis owns live connection liveness, gameplay bindings, and rebind coordination; Game Session persistence owns durable `PENDING` rebind attempts and semantic reconnect context.
+  - Expected pattern: keep these ownership families separate and rebuild semantic context from Game Session persistence after cache loss.
