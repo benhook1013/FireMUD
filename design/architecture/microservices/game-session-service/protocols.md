@@ -151,7 +151,7 @@ PLAY 1 production 2
 OK PLAY Entered world: Demo World / Live Realm as Sora
 ```
 
-The same resolution rules apply to `PLAY demo production 2`, where `demo` is the one-world tenant shorthand. `PLAY demo/main production 2` is also valid under `PLAY <world> [realm] [character]`: `demo/main` is one qualified world-selector token (`tenantSlug/worldSlug`), `production` is the realm selector, and `2` is a response-local character index. `PLAY 1 1 Sora` likewise uses response-local menu indices and a character name to identify the same player-facing choices. Game Session resolves the current admissible runtime target and stable namespace, then binds the internal session to the durable controller identity `{tenantId, playableStateNamespaceId, characterId}` while retaining the authenticated `accountId` as binding-owner evidence, `playableStateScope` as server-derived scope context, and `{gameInstanceId, regionId, regionEpoch}` as the current runtime fence where applicable; the player never selects `gameInstanceId`, `playableStateScope`, or a storage namespace directly.
+The same resolution rules apply to `PLAY demo/main production 2`: `demo/main` is one qualified world-selector token (`tenantSlug/worldSlug`), `production` is the realm selector, and `2` is a response-local character index. `PLAY 1 1 Sora` likewise uses response-local menu indices and a character name to identify the same player-facing choices. Game Session resolves the current admissible runtime target and stable namespace, then binds the internal session to the durable controller identity `{tenantId, playableStateNamespaceId, characterId}` while retaining the authenticated `accountId` as binding-owner evidence, `playableStateScope` as server-derived scope context, and `{gameInstanceId, regionId, regionEpoch}` as the current runtime fence where applicable; the player never selects `gameInstanceId`, `playableStateScope`, or a storage namespace directly.
 
 The Account Service returns canonical `AUTH_*` error codes such as `AUTH_INVALID_CREDENTIALS`, `AUTH_RETRY_LATER`, `AUTH_ACCOUNT_LOCKED`, and `AUTH_UNAVAILABLE`. Game Session translates them into protocol-level responses such as `ERROR INVALID_CREDENTIALS`, `ERROR RETRY_LATER`, and `ERROR AUTH_UNAVAILABLE` so Telnet and WebSocket clients can rely on stable error semantics while the human-readable message remains flexible. `AUTH_ACCOUNT_LOCKED` is reserved for verified compromise or an explicit account-security policy after sufficient identity proof; ordinary failed-login throttling uses `AUTH_RETRY_LATER`.
 
@@ -330,13 +330,13 @@ The built-in communication parser enforces that `SAY`, `WHISPER`, and `TELL` inc
 
 Canonical baseline prose for the built-in communication modes is:
 
-- `say` sender view: `You say, "Hello travelers"`
-- `say` listener view: `Emberline says, "Hello travelers"`
-- `whisper` sender view: `You whisper to Sora, "Keep quiet"`
-- `whisper` target view: `Emberline whispers to you, "Keep quiet"`
+- `say` sender view: `You say, "Hello travelers."`
+- `say` listener view: `Emberline says, "Hello travelers."`
+- `whisper` sender view: `You whisper to Sora, "Keep quiet."`
+- `whisper` target view: `Emberline whispers to you, "Keep quiet."`
 - `whisper` metadata-only observer view: `Emberline whispers something to Sora.`
-- `tell` sender view: `You tell Sora, "Meet me at the forge"`
-- `tell` target view: `Emberline tells you, "Meet me at the forge"`
+- `tell` sender view: `You tell Sora, "Meet me at the forge."`
+- `tell` target view: `Emberline tells you, "Meet me at the forge."`
 
 Baseline failure mapping for the target-directed modes is:
 
@@ -397,7 +397,7 @@ The protocol should not frame these cases primarily as backend or world-state fa
 1. Game Session validates that the caller has completed `LOGIN` and `PLAY` and has a valid Redis-backed gameplay session context. If the caller is still in the login/menu stages, it returns a stage-aware `LOGIN_REQUIRED` or `PLAY_REQUIRED` error rather than a generic gameplay-auth failure.
 2. Authenticated `LOOK` commands call Game Logic's `ResolveLook` with the validated gameplay context and the target causal-read evidence defined by [ADR 0059](../../decisions/adr-0059-causal-floor-cross-service-presentation-reads.md) and [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md#look-and-quicklook). The current `ResolveLook` request/proto remains floor-free, so this propagation is not current behavior.
 3. Game Logic returns a structured `LookResult` only when the owner contract's composition checks succeed; otherwise it rejects or retries the request. Game Session renders an accepted result into the `OK LOOK` text projection and emits `gamesession.command.look.*` metrics/logs. Current adapters still return only deterministic scope markers, so the target causal-read proof remains an implementation gap.
-4. Reconnecting Telnet or WebSocket clients do not receive buffered command/input/frame replay. In the target flow, after successful `LOGIN` and `PLAY`, Game Session renders authorized retained semantic context before obtaining a fresh authoritative `LOOK` when that context is nonempty, unexpired, and replayable; empty, expired, or non-replayable context emits no retained-context output. Game Session then applies the local reconnect projection, including the owner-defined exact one-or-zero prompt consequence and structured-versus-classic text projection. See [Reconnection Strategy](../../system-architecture-reconnection.md#client-reconnection-behaviour) and [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md#canonical-resume-context-model).
+4. Reconnecting Telnet or WebSocket clients do not receive buffered command/input/frame replay. In the target flow, after successful `LOGIN` and `PLAY`, Game Session first renders authorized retained semantic context only when it is nonempty, unexpired, and replayable; empty, expired, or non-replayable context emits no retained-context output. Game Session obtains a fresh authoritative `LOOK` after every successful authorized reconstruction regardless of whether retained context was rendered, then applies the local reconnect projection, including the owner-defined exact one-or-zero prompt consequence and structured-versus-classic text projection. See [Reconnection Strategy](../../system-architecture-reconnection.md#client-reconnection-behaviour) and [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md#canonical-resume-context-model).
 
 ### LOOK error mapping and metrics
 

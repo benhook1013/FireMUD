@@ -54,7 +54,7 @@ if not isinstance(payload, dict) or payload.get("status") != "UP":
 done
 ```
 
-Use the service-local WebSocket convenience executable (`services/game-session-service/websocket-login-look-smoke.sh`) as the non-interactive local alternative; the Implementation Status above applies.
+Use the service-local WebSocket convenience executable (`services/game-session-service/websocket-login-look-smoke.sh`) as the non-interactive local alternative; the Implementation Status above applies. The direct `wscat` steps below exercise only the current local compatibility path: they bypass target discovery and admission prerequisites and therefore do not prove target discovery or admission under the [Target-State Contract](#target-state-contract).
 
 1. Connect to the Gateway stub pointing at the Game Session service:
 

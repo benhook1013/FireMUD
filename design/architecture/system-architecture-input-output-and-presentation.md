@@ -1,6 +1,6 @@
 # FireMUD System Architecture: Input, Output, and Presentation
 
-This document defines the canonical model for how FireMUD accepts player input, represents player-visible output, and renders that output across Telnet, generic WebSocket, first-party web, and future MCP-aware clients. It owns the compact versioned output, bounded semantic reconnect context, and deferred-localization contracts (decision keys `CMD-03`, `CMD-04`, and `CMD-05`).
+This document defines the canonical model for how FireMUD accepts player input, represents player-visible output, and renders that output across Telnet, generic WebSocket, first-party web, and future MCP-aware clients. It owns the compact versioned output and deferred-localization contracts plus the Game Session entry, cache, and presentation consequences of bounded semantic reconnect context (decision keys `CMD-03`, `CMD-04`, and `CMD-05`). [Reconnection](./system-architecture-reconnection.md) owns that context's lifecycle, replay eligibility, and authorization invalidation.
 
 The goal is to keep gameplay and UX decisions structured until the latest practical layer so the platform can support classic MUD text, richer clients, accessibility modes, and game-specific presentation policy without duplicating gameplay logic.
 

@@ -1,5 +1,7 @@
 # TCP Proxy Service Runtime and Data
 
+The target runtime/data contract keeps TCP Proxy stateless at the gameplay boundary: it owns transport-local buffering and bridge lifecycle consequences, while Game Session owns gameplay and session authority. Implementation status below records current convergence against that ownership split.
+
 ## Implementation Status
 
 Immediate closure on established bridge loss and the current close mapping and shutdown classification are implemented as described in [Operations](./operations.md#implementation-status). Preserving every valid authenticated Gateway token, including standalone `session_replaced` and `service_restart`, remains target-only behavior; current handler mapping and classification remain the Operations implementation status. See [Bridge Lifecycle Ownership](#bridge-lifecycle-ownership) for the local runtime invariants.

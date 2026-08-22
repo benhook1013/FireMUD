@@ -1,6 +1,6 @@
 # Game Logic Service API Contracts
 
-This document defines the Game Logic Service REST and gRPC surfaces, exposure class, and command-specific contracts for the current gameplay slice. Game Logic owns gameplay/domain outcomes and causal-read participant checks; it does not own player-facing rendering or reconnect context. Those local consequences follow [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md) and [Reconnection](../../system-architecture-reconnection.md).
+This document defines the Game Logic Service REST and gRPC surfaces, exposure class, and command-specific contracts for the current gameplay slice. Game Logic owns gameplay/domain outcomes and causal-read orchestration and proof acceptance; each participant owner validates its own local proof. Game Logic does not own player-facing rendering or reconnect context. Those local consequences follow [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md) and [Reconnection](../../system-architecture-reconnection.md).
 
 ## Implementation Status
 

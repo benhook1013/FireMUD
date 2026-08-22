@@ -1,5 +1,7 @@
 # TCP Proxy Service Operations
 
+The target operational contract covers safe admission and readiness for new Telnet sessions, plus exact lifecycle and close attribution for established bridges. TCP Proxy remains the transport-edge operator surface; implementation status below records current convergence against those target concerns.
+
 ## Implementation Status
 
 The current `TelnetServerHandler` preserves close reasons only for status `1000` reasons beginning with `logout`, exact `1001`/`idle_timeout`, status `1008` reasons beginning with `policy_violation`, and exact `1011`/`internal_error`; all other outcomes fall back to `backend_unavailable`. The two prefix checks are current implementation drift from the canonical delimiter-bound grammar: they incorrectly accept and forward arbitrary undelimited suffixes such as `logoutgarbage` and `policy_violationgarbage`, instead of requiring the exact top-level token optionally followed by one `;subreason=<bounded-value>` suffix and validating the complete code/reason pair. Bridge shutdown classification is `planned_drain` only for exact `logout;subreason=gateway_restart`, `upstream_logout` for every other currently prefix-accepted logout reason, and `unattributed_failure` otherwise. Broader canonical tokens such as standalone `session_replaced` and `service_restart`, complete token/subreason validation, and invalid-prefix fallback remain target behavior where they are not yet recognized.
@@ -86,8 +88,9 @@ When wiring alerts and runbooks for the TCP Proxy Service, focus on a small set 
   - Alert on sustained `tcpproxy.gateway.handshake.failures{reason!="timeout"}` and on long tails in `tcpproxy.websocket.reconnect.delay`.
   - Cross-check these alerts with Gateway health and TLS/mTLS metrics so incidents are triaged at the correct layer.
 - **NotifyDisconnect health**
-  - Monitor `tcpproxy_disconnect_notify_transport_failure_total` and `grpc_app_error_total{code="<code>"}` for spikes in `UNAVAILABLE` or `DEADLINE_EXCEEDED`.
-  - Treat sustained increases in permanent error codes as configuration or contract issues rather than transient incidents.
+  - Monitor `tcpproxy_disconnect_notify_transport_failure_total{status="<grpc_status>"}` for transport statuses such as `UNAVAILABLE` and `DEADLINE_EXCEEDED`.
+  - Monitor canonical response/application errors in `grpc_app_error_total{service="tcp-proxy-service",code="<code>"}`. When present, `tcpproxy_disconnect_notify_app_error_total{code="<code>"}` is only a supplementary caller-side/local breakdown, not the canonical producer application-error meter.
+  - Treat sustained increases in permanent response/application error codes as configuration or contract issues rather than transient incidents.
   - Treat `RESOURCE_EXHAUSTED` spikes as consumer-side overload and check Game Session saturation before changing retry settings.
 
 ## Metrics and Tracing

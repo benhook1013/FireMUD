@@ -28,9 +28,9 @@ The previously reconciled target separated the policies but described `gameplayS
 
 ## Decision
 
-JWT validity, active gameplay authorization, continuity-binding eligibility, disconnected-resume eligibility, physical storage, and semantic reconnect-context retention are separate authorities.
+JWT validity, active gameplay authorization, continuity-binding eligibility, disconnected-resume eligibility, physical storage, and semantic reconnect-context retention are separate concerns with distinct authority, policy, eligibility, and retention lifetimes.
 
-Active-session authority is the authoritative gameplay binding plus current account, membership, entitlement, revocation, fencing, and lease state. It is not an inference from an expiring Redis key, reconnect cache, or retained semantic context. The continuity binding and its Redis representation are a bounded recovery projection for a disconnected episode: cache refresh can never extend active-session or resume authority, and cache expiry or loss can only make the binding non-resumable; it cannot create, extend, or revoke an otherwise authoritative connected session.
+Active-session authorization derives from the authoritative gameplay binding plus current account, membership, entitlement, revocation, fencing, and lease state. It is not an inference from an expiring Redis key, reconnect cache, or retained semantic context. The continuity binding and its Redis representation are a bounded recovery projection for a disconnected episode: cache refresh can never extend active-session authorization or resume eligibility, and cache expiry or loss can only make the binding non-resumable; it cannot create, extend, or revoke an otherwise authoritative connected session.
 
 ### Active Gameplay
 
