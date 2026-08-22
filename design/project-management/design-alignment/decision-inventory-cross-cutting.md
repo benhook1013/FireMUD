@@ -212,13 +212,13 @@ The main inventory remains the compact control crosswalk. These aliases preserve
 
 ### Choices Likely Requiring Product Consultation
 
-No source proves who made these choices; the flag means that product/security/operations approval was not visible in the reviewed corpus.
+For the remaining rows below, no applied review provenance proves who made the choices; the flag means that product/security/operations approval is not yet visible in canonical repository state.
 
 | Priority | Decision keys | Consultation topic |
 | --- | --- | --- |
-| `P1` | `SESSION-02`, `SESSION-03`, `SESSION-04`, `TENANT-03` | Takeover, reconnect loss, restart visibility, playtest isolation, and merge-back expectations. |
+| `P1` | `SESSION-04`, `TENANT-03` | Restart visibility, playtest isolation, and merge-back expectations. |
 | `P1` | `OPS-02`, `OPS-03` | Deployment blast radius, RPO, and production readiness. |
-| `P2` | `CMD-05`, `CONTENT-04`, `TICK-01`, `TICK-07` | Localization, starter profiles, action fairness, and missed-timer gameplay semantics. |
+| `P2` | `CONTENT-04`, `TICK-01`, `TICK-07` | Starter profiles, action fairness, and missed-timer gameplay semantics. |
 
 ## Coverage By Exact Capability
 

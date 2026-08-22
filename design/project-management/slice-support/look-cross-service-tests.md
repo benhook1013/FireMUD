@@ -4,7 +4,7 @@ This plan documents how the cross-service WebSocket and Telnet tests exercise th
 
 ## Target-State Contract
 
-The cross-service suite is target-state proof of the player-visible `LOOK` contract across Game Session, Game Logic, World, and Entity for WebSocket and Telnet. Each scenario performs the required readiness and discovery steps, authenticates and binds gameplay, verifies the canonical transcript, and records bounded `LOOK` metrics. Controlled participant failures must produce the canonical error without an unintended transport close and must prove recovery where the scenario requires it. Game Logic owns structured aggregation and Game Session owns player-facing output; local diagnostics are supplementary and do not become cross-service authority.
+The target cross-service suite must prove the player-visible `LOOK` contract across Game Session, Game Logic, World, and Entity for WebSocket and Telnet. Each target scenario performs the required readiness and discovery steps, authenticates and binds gameplay, verifies the canonical transcript, and records bounded `LOOK` metrics. Controlled participant failures must produce the canonical error without an unintended transport close and must prove recovery where the scenario requires it. Game Logic owns structured aggregation and Game Session owns player-facing output; local diagnostics are supplementary and do not become cross-service authority.
 
 ## Current Implementation
 
@@ -14,7 +14,7 @@ The cross-service suite is target-state proof of the player-visible `LOOK` contr
 
 ## Goals
 
-1. Verify `LOGIN` → `PLAY` → `LOOK` across Game Session → Game Logic → World / Entity using the shared TLS-enabled gRPC endpoints.
+1. Target: verify `LOGIN` → `PLAY` → `LOOK` across Game Session → Game Logic → World / Entity using the shared TLS-enabled gRPC endpoints. Current in-process stub coverage uses the explicit plaintext test override and does not prove the TLS transport path.
 2. Confirm the successful path and the WebSocket-controlled missing-room failure surface the documented transcripts (`OK LOOK` and `ERROR ROOM_NOT_FOUND`); Telnet currently proves successful transcript parity only, with an isolated missing-room Telnet case remaining future coverage. Retain `WORLD_UNAVAILABLE` and `ENTITY_UNAVAILABLE` as unit/target mappings until distinct stub-`UNAVAILABLE` cross-service cases exist.
 3. Ensure `gamesession.command.look.invocations` and `.failures` metrics increment during the flows, with failures tagged by bounded error code.
 4. Keep tests runnable via the dedicated `crossServiceTest` Gradle target so they can be executed without slowing down the default suite.
@@ -23,7 +23,7 @@ The cross-service suite is target-state proof of the player-visible `LOOK` contr
 
 - Provide the sample world and entities through dedicated test fixtures or stub gRPC servers so room `R-1021` and NPCs like `Kobold Scout` exist.
 - Capture the normal `LOGIN` → `PLAY` → `LOOK` flow in both WebSocket and Telnet variants, including the required readiness wait and `WORLDS` discovery step where the transport scenario uses it. Typed attach metadata is not part of the cross-service parity contract.
-- TLS is the canonical/default mode for shared gRPC endpoints. Tests and local execution may use plaintext only as an explicit override; the current cross-service harness does so with `firemud.grpc.plaintext=true` because its in-process stub endpoints are plaintext. Do not treat that test override as the shared endpoint default.
+- TLS is the canonical/default mode for shared gRPC endpoints. Tests and local execution may use plaintext only as an explicit override; the current cross-service harness does so with `firemud.grpc.plaintext=true` because its in-process stub endpoints are plaintext. This coverage proves the application flow against controlled plaintext stubs, not shared-endpoint TLS negotiation or certificate behavior, and the override is not the shared endpoint default.
 
 ## Implementation notes
 

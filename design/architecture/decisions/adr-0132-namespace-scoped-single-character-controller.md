@@ -35,6 +35,8 @@ Exactly one active gameplay controller is permitted for `<tenantId, playableStat
 
 A successfully authorized `PLAY` for an occupied uniqueness key performs automatic takeover through one atomic controller-transfer compare-and-set. The transfer advances a monotonic `bindingGeneration`, installs the new binding, and makes the previous binding non-admitting at one linearization point. Delete-then-create sequences that expose an unowned or dual-owned interval are not the target contract.
 
+Source-input and affected-region fences used to prepare that compare-and-set are temporary, transfer-identity-bound coordination fences, not an earlier authority change. The existing binding remains the controller until the final compare-and-set commits. A definitive pre-commit abort or timeout rolls those preparation fences back idempotently before reporting failure so the source remains usable; an ambiguous result stays under the same fenced reconciliation operation until it proves either the committed transfer or complete rollback and cannot strand an orphan source fence.
+
 Input submitted by the displaced transport after the committed transfer is rejected. Work durably admitted before that boundary retains its existing command and effect identity and follows the ordinary durable execution contract; takeover neither recreates it from client input nor blindly cancels it. Tick state, timers, cooldowns, and character state belong to the gameplay entity or namespace rather than the socket and continue under their owning contracts.
 
 Closing the displaced transport is best-effort cleanup after the authority transfer. The edge uses the canonical `session_replaced` outcome. Failure to deliver a close frame does not restore authority to the old binding because command admission checks the current binding generation.
@@ -72,7 +74,7 @@ An additional prompt could prevent accidental device flapping, but adds friction
 
 ## Implementation and Proof Obligations
 
-Proof must cover same-instance takeover, old-to-replacement-instance takeover within one namespace, concurrent competing `PLAY` calls, stale socket input after transfer, Redis restart and retry, failed close delivery, accepted work crossing the boundary, region binding convergence, and simultaneous production plus isolated-playtest control. It must show that takeover does not publish a false character exit or reset entity-owned timers and state.
+Proof must cover same-instance takeover, old-to-replacement-instance takeover within one namespace, concurrent competing `PLAY` calls, stale socket input after transfer, Redis restart and retry, failed close delivery, accepted work crossing the boundary, region binding convergence, and simultaneous production plus isolated-playtest control. It must show that takeover does not publish a false character exit or reset entity-owned timers and state. It must also inject failure, timeout, and ambiguous responses after source-input and region preparation fences but before the final compare-and-set, proving idempotent rollback for a definitive abort, same-operation reconciliation for an ambiguous result, continued source usability after rollback, and no target admission before commit.
 
 ## Reversibility and Revisit Triggers
 

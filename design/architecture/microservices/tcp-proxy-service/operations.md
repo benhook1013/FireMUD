@@ -2,7 +2,7 @@
 
 ## Implementation Status
 
-The current `TelnetServerHandler` preserves close reasons only for status `1000` reasons beginning with `logout`, exact `1001`/`idle_timeout`, status `1008` reasons beginning with `policy_violation`, and exact `1011`/`internal_error`; all other or invalid outcomes fall back to `backend_unavailable`. Bridge shutdown classification is `planned_drain` only for `logout;subreason=gateway_restart`, `upstream_logout` for other logout reasons, and `unattributed_failure` otherwise. Broader canonical tokens such as standalone `session_replaced` and `service_restart` remain target behavior where they are not yet recognized.
+The current `TelnetServerHandler` preserves close reasons only for status `1000` reasons beginning with `logout`, exact `1001`/`idle_timeout`, status `1008` reasons beginning with `policy_violation`, and exact `1011`/`internal_error`; all other outcomes fall back to `backend_unavailable`. The two prefix checks are current implementation drift from the canonical delimiter-bound grammar: they incorrectly accept and forward arbitrary undelimited suffixes such as `logoutgarbage` and `policy_violationgarbage`, instead of requiring the exact top-level token optionally followed by one `;subreason=<bounded-value>` suffix and validating the complete code/reason pair. Bridge shutdown classification is `planned_drain` only for exact `logout;subreason=gateway_restart`, `upstream_logout` for every other currently prefix-accepted logout reason, and `unattributed_failure` otherwise. Broader canonical tokens such as standalone `session_replaced` and `service_restart`, complete token/subreason validation, and invalid-prefix fallback remain target behavior where they are not yet recognized.
 
 ## Operational Notes
 
@@ -36,7 +36,7 @@ TCP Proxy metrics follow the global Micrometer/OpenTelemetry conventions describ
 - `tcpproxy.disconnect.notify.app_error{code="<code>"}`
 - `grpc_app_error_total{code="<code>"}`
 - `mcp.greeting.mode_conflict` when duplicate MCP greeting ownership is detected
-- `bridge_shutdown_class=planned_drain|upstream_logout|unattributed_failure` as bridge-only operational metadata, never lifecycle authority. Current close recognition and fallback mapping are defined in [Implementation Status](#implementation-status) above; standalone `session_replaced` and `1012/service_restart` remain target-only until that boundary converges. See [Gateway Architecture](../../system-architecture-gateway.md) and [Protocol Bridging](../../system-architecture-protocol-bridging.md#telnet-disconnect-reasons).
+- Target `bridge_shutdown_class=planned_drain|valid_upstream_close|unattributed_failure` is bridge-only operational metadata, never lifecycle authority. Current close recognition and its legacy `upstream_logout` classification are defined in [Implementation Status](#implementation-status) above; standalone `session_replaced`, `1012/service_restart`, and the neutral valid-close class remain target-only until that boundary converges. See [Gateway Architecture](../../system-architecture-gateway.md) and [Protocol Bridging](../../system-architecture-protocol-bridging.md#telnet-disconnect-reasons).
 
 Bounded labels and naming rules remain canonical. Detailed identifiers such as client IP, `gameInstanceId`, and error detail stay in structured logs and tracing spans rather than in high-cardinality metric labels.
 
