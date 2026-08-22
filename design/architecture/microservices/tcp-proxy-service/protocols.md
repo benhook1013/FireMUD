@@ -124,6 +124,8 @@ Detailed identifiers such as `gameInstanceId` and client IP are captured in stru
 
 The proxy sanitizes incoming bytes and allows only a safe subset of Telnet protocol commands. Optional classic-client semantic extensions are deferred and, if selected later, are carried opaquely through this bounded bridge under Game Session ownership; the proxy does not negotiate or parse them.
 
+After Telnet-control filtering, each resulting sanitized gameplay line is forwarded unchanged over the TCP Proxy → Gateway WebSocket bridge; optional semantic-extension data remains opaque and unparsed, and generic limits still produce an explicit close rather than a keep-open discard.
+
 Allowed Telnet commands:
 
 | Command / Option | Byte | Purpose |

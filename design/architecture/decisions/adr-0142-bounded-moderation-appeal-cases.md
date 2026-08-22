@@ -51,7 +51,7 @@ SUBMITTED -> UNDER_REVIEW -> DECIDED
 
 The terminal decision is `UPHELD`, `MODIFIED`, or `OVERTURNED`. The case records at minimum:
 
-- `appealCaseId`, appellant and submission/request identity;
+- `appealCaseId`, appellant, submission/request identity, and its persisted canonical normalized submission digest;
 - enforcement owner, restriction type, subject and exact tenant/platform scope;
 - exact appealed enforcement revision and payload digest plus originating moderation action/case linkage;
 - jurisdiction, eligibility policy version, safe player submission, and bounded evidence references;
@@ -74,7 +74,7 @@ The URL carries no account secret, case evidence, reporter identity, or completi
 
 ### Rate Limits and Data Lifecycle
 
-Submission is idempotent by stable request identity, and only one active appeal may exist for the exact account and restriction revision. Bounded account-, tenant-, and status-polling limits return retry guidance without revealing another subject's case. Policies may set stricter limits for abuse while preserving the required appeal path for eligible restrictions.
+Submission is idempotent by stable request identity, and only one active appeal may exist for the exact account and restriction revision. The appeal owner persists the canonical normalized submission digest with that request identity, using the existing digest-bound workflow/idempotency construction in [ADR 0078](./adr-0078-digest-bound-workflow-and-step-retry-identities.md) and [ADR 0048](./adr-0048-durable-idempotent-operator-write-execution.md). An exact request identity with the same digest replays its stored semantic result; reuse with a different appellant, restriction revision, action, or normalized payload returns `IDEMPOTENCY_CONFLICT` before any case mutation. Bounded account-, tenant-, and status-polling limits return retry guidance without revealing another subject's case. Policies may set stricter limits for abuse while preserving the required appeal path for eligible restrictions.
 
 Each appeal policy declares finite case and evidence-reference retention, authorized readers, redaction, legal-hold handling, export treatment, and terminal erasure or minimization. Legal hold is a separately authorized exception with recorded scope and review, not an indefinite default. A player's export may include their submission and safe decision summary; it excludes protected evidence and reporter identity unless a separate legal entitlement explicitly requires disclosure.
 
@@ -119,7 +119,7 @@ No complete moderation appeal implementation or proof currently exists. There is
 
 Implementation must add the bounded case schema and transitions, exact immutable restriction linkage, caller- and jurisdiction-bound APIs, opaque Account handoff, protected notification projection, evidence-reference authorization, append-only decisions, ADR-0048-compatible outcome commands, owner acknowledgement, rate limits, and declared data lifecycle.
 
-Proof must cover eligible and ineligible restrictions; duplicate, concurrent, and rate-limited submission; exact caller and restriction binding; stale or unknown revisions; tenant/platform jurisdiction and cross-tenant denial; safe Telnet/browser handoff; protected evidence and reporter redaction; upheld, modified, and overturned decisions; owner crash/lost acknowledgement/retry; a newer unrelated restriction; no automatic stay; Account security recovery separation; essential notice delivery during `chat_ban`; finite expiry/minimization, legal hold, export, erasure, and absence of a general evidence-disclosure path.
+Proof must cover eligible and ineligible restrictions; duplicate, concurrent, same-request-ID conflict/replay, and rate-limited submission, including changed appellant, restriction revision, action, and normalized payload; exact caller and restriction binding; stale or unknown revisions; tenant/platform jurisdiction and cross-tenant denial; safe Telnet/browser handoff; protected evidence and reporter redaction; upheld, modified, and overturned decisions; owner crash/lost acknowledgement/retry; a newer unrelated restriction; no automatic stay; Account security recovery separation; essential notice delivery during `chat_ban`; finite expiry/minimization, legal hold, export, erasure, and absence of a general evidence-disclosure path.
 
 ## Reversibility and Revisit Triggers
 

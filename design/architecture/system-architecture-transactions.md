@@ -218,7 +218,7 @@ Short synchronous sagas are used for **non-tick, multi-service workflows** invol
 
 | Use Case | Description |
 | --- | --- |
-| **Realm entry and actor provisioning** | After explicit realm entry, resolve the realm's published versioned entry policy and generic descriptor/template, then invoke Entity-owned actor creation/provisioning only for the policy-declared outcome when the caller can synchronously own retry/failure behavior |
+| **Realm entry and actor provisioning** | After explicit realm entry, resolve and durably bind the realm's exact published versioned entry policy, generic descriptor/template identity, and published version into the saga request/step digest before invoking Entity-owned actor creation/provisioning only for the policy-declared outcome. Forward and compensation retries reuse that unchanged bound resolution and never re-resolve the latest policy; policy semantics remain owned by [ADR 0140](./decisions/adr-0140-realm-authored-controllable-actor-entry.md) |
 | **Short admin remediation** | Limited control-plane actions that touch more than one service but still complete in a single caller-driven request/worker pass |
 | **Tick-adjacent outbox follow-through** | Background orchestration around an outbox event when the work is still synchronous and restart-safe continuation is not required |
 

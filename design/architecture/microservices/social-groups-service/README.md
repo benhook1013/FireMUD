@@ -10,7 +10,7 @@ Provides chat, guild, and social networking features across games. Basic REST an
 - Synchronize guild and friend lists in real time
 - Manage guild creation, membership, and roles
 - Maintain friend lists and cross-game social graphs
-- Store chat logs locally and enforce owner-local `chat_mute`/`chat_ban` restrictions; profanity events remain evidence/report input to Logging & Admin
+- **Target state:** Store chat logs locally and enforce owner-local `chat_mute`/`chat_ban` restrictions. **Current:** `SendMessage` only consumes the live `EvaluateModerationPolicy` read for restriction decisions; durable local restriction state and enforcement proof remain outstanding. Profanity events remain evidence/report input to Logging & Admin.
 
 ## Key Features
 

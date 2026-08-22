@@ -227,7 +227,7 @@ Creators extend gameplay using external editors and runtime plugins:
 2. **Modding Framework** – Plugins packaged through the [Game Design Service](../../architecture/microservices/game-design-service/modding-framework.md) inject custom logic at runtime. The [Automation & Scripting Service](../../architecture/microservices/automation-scripting-service/README.md) executes them in a sandbox.
 
 ```plaintext
-Plain-text client → TCP Proxy Service → Game Session Service and other backend services
+Plain-text client → TCP Proxy Service → Spring Cloud Gateway → Game Session Service → other backend services
 ```
 
 ---
