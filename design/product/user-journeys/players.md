@@ -107,7 +107,7 @@ Player → Account bootstrap/discovery → [Join & Play when public membership i
        → connect-token issuance → Gateway WebSocket handshake → bare LOGIN → PLAY
 ```
 
-Example text-client transcript:
+Target-state example text-client transcript (explicit `JOIN` is not implemented in the current runtime):
 
 ```text
 WORLDS
@@ -136,7 +136,7 @@ LOGIN
 PLAY <world> [realm] [character]
 ```
 
-Example first-time public production join:
+Target-state example first-time public production join (explicit `JOIN`/`Join & Play`, including `POST /auth/bootstrap/join`, is not implemented in the current runtime):
 
 ```text
 POST /auth/player-bootstrap { accountIdentifier=player@example.com, secret=<redacted> }
