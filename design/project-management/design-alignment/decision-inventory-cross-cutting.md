@@ -200,32 +200,29 @@ The main inventory remains the compact control crosswalk. These aliases preserve
 | `OPS-04` implementation and proof gap | **Current implementation/proof** does not yet provide player-facing quarantine, empty-Redis proof, environment-wide convergence, or controller-gated reopen. **Accepted target** is ADR 0015's online environment-wide backup and cold-start-only player-facing restore; the durable recovery controller is the runtime authority, while checked-in evidence is only a finalized projection. | Artifact lineage, enforced quarantine, empty-Redis proof, participant/external reconciliation, compatibility classification, durable-controller gating, and controlled-reopen validation are not implemented or proved. |
 | Historical ADRs | ADR-0004 and ADR-0006 retain obsolete `reroute` material but explicitly declare supersession/withdrawal by ADR-0007. | Search-based implementers can select obsolete behavior unless historical status is prominent. |
 
-### Accepted Follow-Up And Remaining Rationale Gaps
-
-| Decision keys | Current status | Follow-up question |
-| --- | --- | --- |
-| `SESSION-04`, `SESSION-06` | Bounded invisible non-edge recovery and layered command-delivery semantics remain implementation/proof obligations even though the accepted boundaries are explicit. | What recovery and delivery proof is required to demonstrate the accepted availability and no-duplicate guarantees? |
-| `TICK-01`, `TICK-03`, `TICK-07` | The accepted separate-lane, local-transaction, and class-specific timer-recovery contracts have applied provenance; implementation and focused proof remain incomplete. | What focused proof is required to demonstrate the accepted fairness, transaction, and recovery guarantees? |
-| `TENANT-02`, `TENANT-03` | Shared infrastructure and no playtest merge-back. | What isolation, cost, creator workflow, and player-data tradeoffs were accepted? |
-| `CONTENT-04` | Starter profiles materialize editable game-owned content and conservative upgrades remain implementation/proof obligations even though the accepted creator-product boundary is explicit. | What focused creator workflow and upgrade proof is required to demonstrate the accepted materialization and lineage guarantees? |
-| `OPS-02`, `OPS-03` | Current implementation has no canary/auto-rollback and performs a 15-minute online dump; ADR 0015 accepts the online environment-wide snapshot and non-restored Redis/cold-start recovery boundary as the target, while complete proof and the remaining RPO/operational choice are still open. | What deployment, RPO, and operational burdens remain for human acceptance? |
-
 ### Applied Decisions Requiring Implementation Or Proof Follow-Up
 
-The decisions below already have applied human-review provenance. They do not remain product-consultation questions; only their implementation and focused-proof obligations remain open.
+The decisions below have applied human-review provenance. They are not pending product-consultation questions; only the listed implementation and focused-proof obligations remain open.
 
 | Decision keys | Applied authority | Remaining follow-up |
 | --- | --- | --- |
 | `SESSION-04` | [ADR 0013](../../architecture/decisions/adr-0013-bounded-invisible-non-edge-restart-recovery.md) | Complete authenticated replacement, lifecycle, authority, buffer, and elapsed-time proof. |
 | `SESSION-06` | [ADR 0062](../../architecture/decisions/adr-0062-layered-gameplay-command-delivery-semantics.md) | Layered edge, trusted-acceptance, and internal-delivery implementation and focused proof. |
+| `TENANT-02` | [ADR 0041](../../architecture/decisions/adr-0041-shared-tenant-infrastructure-with-full-environment-isolation-gate.md) | Preserve and demonstrate logical tenant scoping, authorization, quotas, service ownership, and the accepted environment-wide incident/recovery isolation gate. |
 | `CONTENT-04` | [ADR 0124](../../architecture/decisions/adr-0124-materialized-starter-profiles-with-conservative-draft-upgrades.md) | Materialization, creator upgrade workflow, lineage, and focused proof. |
 | `TICK-01` | [ADR 0051](../../architecture/decisions/adr-0051-separate-actor-action-and-effect-lanes.md) | Separate-lane scheduling implementation and fairness proof. |
 | `TICK-03` | [ADR 0053](../../architecture/decisions/adr-0053-command-atomicity-by-invariant-class.md) | Command-family classification and focused proof. |
 | `TICK-07` | [ADR 0072](../../architecture/decisions/adr-0072-class-specific-timer-durability-and-recovery.md) | Class-specific timer recovery implementation and proof. |
+| `EDGE-05` | [ADR 0131](../../architecture/decisions/adr-0131-lifecycle-distinct-gameplay-close-taxonomy.md) | Converge the external taxonomy and prove elapsed-cutoff, hysteresis, ping/pong, and stalled-input obligations. |
+| `SESSION-02` | [ADR 0132](../../architecture/decisions/adr-0132-namespace-scoped-single-character-controller.md) | Implement namespace-aware indexes, atomic ABA-safe transfer, old-input fencing, and lifecycle proof. |
+| `SESSION-03` | [ADR 0133](../../architecture/decisions/adr-0133-fresh-edge-reconnect-without-client-input-replay.md) | Complete elapsed rebind proof, resume-window enforcement, presence convergence, stalled-input handling, and explicit-logout replay cleanup. |
+| `CMD-04` | [ADR 0134](../../architecture/decisions/adr-0134-bounded-durable-semantic-reconnect-context.md) | Complete durable persistence, namespace migration, explicit-logout/authority cleanup, and oversized-entry omission/marker enforcement proof. |
+| `CMD-03` | [ADR 0135](../../architecture/decisions/adr-0135-compact-versioned-player-output-and-late-rendering.md) | Complete the browser consumer and supported schema lifecycle; replace static scope-token comparison with temporal snapshot proof. |
+| `CMD-05` | [ADR 0136](../../architecture/decisions/adr-0136-future-compatible-localization-boundary.md) | Complete deterministic explicit-base fallback and future creator workflow/tooling; existing keyed output and room variants remain partial groundwork. |
 
-### Choices Likely Requiring Product Consultation
+### Pending Decisions Requiring Product Or Operations Consultation
 
-For the remaining rows below, no applied review provenance proves who made the choices; product or operations approval is not yet visible in canonical repository state.
+The rows below remain genuinely pending: no applied review provenance proves who made the choices, so product or operations approval is not yet visible in canonical repository state. They are intentionally excluded from the applied follow-up table above.
 
 | Priority | Decision keys | Consultation topic |
 | --- | --- | --- |

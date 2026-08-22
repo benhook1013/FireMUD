@@ -320,7 +320,7 @@ Cached aggregates in Redis should follow structured, namespaced key patterns to 
 `view:room-look:*` is a target-only Game Session presentation cache. The current implementation does not prove these bounds or ownership rules; until it does, callers must use the authoritative `ResolveLook` result without treating Redis as a required path.
 
 - Game Session is the sole writer and invalidation owner. The cache uses the complete key shape above; a room, viewer, session, policy, or read-fence change prevents reuse. The `readFenceHash` derivation and unavailable-fence fallback are defined by the preceding usage restriction.
-- Each entry has a TTL of at most 5 seconds, a payload of at most 64 KiB, and at most four simultaneously live variants per admitted session. Admission or write refusal falls back to the uncached authoritative `ResolveLook` result.
+- Each entry has a TTL of at most 5 seconds, a payload of at most 32 KiB, and at most four simultaneously live variants per admitted session. Admission or write refusal falls back to the uncached authoritative `ResolveLook` result.
 - Cache loss, a miss, an oversize result, variant-budget exhaustion, or Redis failure recomputes or serves the uncached authoritative `LOOK`; none may block gameplay. TTL is the correctness-independent expiry; deletion is optional cleanup, not correctness proof.
 - Metrics must expose hits/misses, recomputes, write-skip reason, oversize results, active keys/variant-budget use, and Redis failures. Reset and recovery behavior follows [Redis reset and recovery](./system-architecture-redis-reset-and-recovery.md), not this presentation-cache contract.
 

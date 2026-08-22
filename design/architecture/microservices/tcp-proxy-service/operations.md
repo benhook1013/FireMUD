@@ -35,8 +35,9 @@ TCP Proxy metrics follow the global Micrometer/OpenTelemetry conventions describ
 - `tcpproxy.tls.misconfig` and `tcpproxy.gateway.handshake.failures{reason="..."}`
 - `tcpproxy.telnet.discarded`
 - `tcpproxy.disconnect.notify.transport_failure{status="<grpc_status>"}`
-- `tcpproxy.disconnect.notify.app_error{code="<code>"}`
-- `grpc_app_error_total{code="<code>"}`
+- `tcpproxy.disconnect.notify.app_error{code="<code>"}` – supplementary caller-side/local application-error breakdown
+- `grpc_app_error_total{service="tcp-proxy-service",code="<code>"}` – supplementary caller-side generic application-error count recorded while normalizing the Game Session response
+- `grpc_app_error_total{service="game-session-service",code="<code>"}` – canonical Game Session producer application-error meter
 - `mcp.greeting.mode_conflict` when duplicate MCP greeting ownership is detected
 - Target `bridge_shutdown_class=planned_drain|valid_upstream_close|unattributed_failure` is bridge-only operational metadata, never lifecycle authority. Current close recognition and its legacy `upstream_logout` classification are defined in [Implementation Status](#implementation-status) above; standalone `session_replaced`, `1012/service_restart`, and the neutral valid-close class remain target-only until that boundary converges. See [Gateway Architecture](../../system-architecture-gateway.md) and [Protocol Bridging](../../system-architecture-protocol-bridging.md#telnet-disconnect-reasons).
 
@@ -89,7 +90,7 @@ When wiring alerts and runbooks for the TCP Proxy Service, focus on a small set 
   - Cross-check these alerts with Gateway health and TLS/mTLS metrics so incidents are triaged at the correct layer.
 - **NotifyDisconnect health**
   - Monitor `tcpproxy_disconnect_notify_transport_failure_total{status="<grpc_status>"}` for transport statuses such as `UNAVAILABLE` and `DEADLINE_EXCEEDED`.
-  - Monitor canonical response/application errors in `grpc_app_error_total{service="tcp-proxy-service",code="<code>"}`. When present, `tcpproxy_disconnect_notify_app_error_total{code="<code>"}` is only a supplementary caller-side/local breakdown, not the canonical producer application-error meter.
+  - Monitor canonical response/application errors in `grpc_app_error_total{service="game-session-service",code="<code>"}`. The caller-side `grpc_app_error_total{service="tcp-proxy-service",code="<code>"}` and `tcpproxy_disconnect_notify_app_error_total{code="<code>"}` series are supplementary local normalization/breakdown signals, not the canonical producer application-error meter.
   - Treat sustained increases in permanent response/application error codes as configuration or contract issues rather than transient incidents.
   - Treat `RESOURCE_EXHAUSTED` spikes as consumer-side overload and check Game Session saturation before changing retry settings.
 

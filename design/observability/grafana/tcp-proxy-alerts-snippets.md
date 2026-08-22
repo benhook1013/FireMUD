@@ -97,9 +97,10 @@ groups:
           summary: "TCP Proxy NotifyDisconnect failures observed"
           description: |
             The TCP Proxy is seeing sustained failures when calling the Game Session
-            Service NotifyDisconnect event sink. Inspect grpc_app_error_total{code=...}
-            and Game Session logs to distinguish transient transport issues from
-            contract or authorization errors.
+            Service NotifyDisconnect event sink. Inspect
+            grpc_app_error_total{service="game-session-service",code=...} and Game
+            Session logs to distinguish transient transport issues from contract or
+            authorization errors.
 
       - alert: TcpProxyNotifyDisconnectAppErrors
         expr: sum by (code) (rate(tcpproxy_disconnect_notify_app_error_total[5m])) > 0
@@ -127,10 +128,11 @@ groups:
         annotations:
           summary: "Spike in gRPC app errors on TCP Proxy paths"
           description: |
-            Application-level gRPC errors are elevated for one or more codes on
-            TCP Proxy related RPCs (such as NotifyDisconnect). Use the TCP Proxy
-            dashboard grpc_app_error_total panel and correlated Game Session logs to
-            identify misconfigurations or schema/contract issues.
+            The supplementary caller-side gRPC application-error count is elevated
+            for one or more codes on TCP Proxy related RPCs (such as NotifyDisconnect).
+            Correlate it with the canonical producer series
+            grpc_app_error_total{service="game-session-service",code=...} and Game
+            Session logs to identify misconfigurations or schema/contract issues.
 ```
 
-These expressions assume that Micrometer has exported the TCP Proxy meters using the default naming conventions (for counters, Prometheus appends `_total`) (e.g., `tcpproxy.connections.active` → `tcpproxy_connections_active`, `tcpproxy.disconnect.notify.transport_failure` → `tcpproxy_disconnect_notify_transport_failure_total`, `tcpproxy.disconnect.notify.app_error` → `tcpproxy_disconnect_notify_app_error_total`, `grpc.app_error` → `grpc_app_error_total`). Adjust names if your Prometheus setup uses different naming rules or additional labels.
+These expressions assume that Micrometer has exported the TCP Proxy meters using the default naming conventions (for counters, Prometheus appends `_total`) (e.g., `tcpproxy.connections.active` → `tcpproxy_connections_active`, `tcpproxy.disconnect.notify.transport_failure` → `tcpproxy_disconnect_notify_transport_failure_total`, `tcpproxy.disconnect.notify.app_error` → `tcpproxy_disconnect_notify_app_error_total`, `grpc.app_error` → `grpc_app_error_total`). The `service="tcp-proxy-service"` query above is the supplementary caller-side count; the canonical application-error producer query for `NotifyDisconnect` uses `service="game-session-service"`. Adjust names if your Prometheus setup uses different naming rules or additional labels.

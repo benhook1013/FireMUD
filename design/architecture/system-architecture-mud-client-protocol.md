@@ -10,7 +10,7 @@ This document outlines how FireMUD incorporates the Mud Client Protocol (MCP) to
 
 ## MCP Basics
 
-The MCP 2.1 specification defines a simple, 7-bit ASCII, line-based protocol for sending out-of-band messages on the same channel as normal Telnet traffic. Lines are delimited with `\r\n` and there is no fixed line-length limit in the spec. FireMUD does impose a transport limit at the TCP Proxy Service: each Telnet/MCP line must fit within `TCP_PROXY_MAX_LINE_BYTES` (default `4096`) as documented in the TCP Proxy Service design. MCP-aware clients should split large payloads across MCP multiline continuation lines (`#$#* ...`) rather than sending a single oversized line. Both connection endpoints are treated symmetrically, and the protocol itself maintains no state; higher-level packages define application behavior. Message names and keywords are case-insensitive, while authentication keys and data tags must preserve their exact case. Lines beginning with the `#$#` marker are interpreted as MCP messages, while other lines remain in-band for legacy clients. Each session uses an authentication key supplied by the client; although the key travels in cleartext, implementations must reject any message with an unexpected key to guard against spoofing.
+The MCP 2.1 specification defines a simple, 7-bit ASCII, line-based protocol for sending out-of-band messages on the same channel as normal Telnet traffic. Lines are delimited with `\r\n` and there is no fixed line-length limit in the spec. FireMUD does impose a transport limit at the TCP Proxy Service: each Telnet/MCP line must fit within `TCP_PROXY_MAX_LINE_BYTES` (default `4096`) as documented in the TCP Proxy Service design. MCP-aware clients should split large payloads across MCP multiline continuation lines (`#$#* ...`) rather than sending a single oversized line. Both connection endpoints are treated symmetrically, and the protocol itself maintains no state; higher-level packages define application behavior. Message names and keywords are case-insensitive, while authentication keys and data tags must preserve their exact case. Lines beginning with the `#$#` marker are interpreted as MCP messages, while other lines remain in-band for legacy clients. Each session uses an authentication key supplied by the client; although the key travels in cleartext, implementations must reject any normal MCP message with an unexpected key to guard against spoofing. Multiline continuation and message-end frames carry the active data tag instead.
 
 ## Overview
 
@@ -24,29 +24,29 @@ MCP negotiation in FireMUD is role-specific:
 
 - **Canonical mode:** Game Session is the MCP server endpoint and sends the initial server greeting (`#$#mcp version: ...`); the client responds with its `#$#mcp authentication-key: ...` line.
 
-In both modes, FireMUD and MCP-capable clients agree on the highest overlapping version and use the client-supplied `authentication-key` for all subsequent MCP messages. If no overlap exists, MCP cannot be used and the connection must fall back to plain text or close.
+In canonical mode, FireMUD and MCP-capable clients agree on the highest overlapping version and use the client-supplied `authentication-key` for all subsequent normal MCP messages; multiline continuation and message-end frames use the active data tag instead. If no overlap exists, MCP cannot be used and the connection must fall back to plain text or close.
 
 Greeting ownership must be singular per connection. Game Session emits the initial MCP greeting and the proxy forwards it transparently. Clients should treat any duplicate server greeting as a server bug and fall back to plain text or disconnect cleanly; the platform owns preventing duplicate greetings.
 
 On the Telnet path, MCP is the planned channel for any future hidden smart-client metadata. Those hints remain advisory transport metadata only: they must never become visible player commands and must never bypass `LOGIN` + `PLAY`.
 
-Each endpoint then advertises its capabilities using `mcp-negotiate-can package: <name> min-version: <x> max-version: <y>` messages and finishes with `mcp-negotiate-end`. FireMUD uses version 2.0 of the `mcp-negotiate` package, so the package must be advertised explicitly and `mcp-negotiate-end` terminates negotiation. A package is considered active only after both sides have sent `mcp-negotiate-can` for it and both have sent `mcp-negotiate-end`. Implementations may defer using a package until receipt of the other side’s `mcp-negotiate-end`. Unknown packages are ignored so legacy clients remain unaffected.
+Each endpoint then advertises its capabilities using `mcp-negotiate-can <authentication-key> package: <name> min-version: <x> max-version: <y>` messages and finishes with `mcp-negotiate-end <authentication-key>`. FireMUD uses version 2.0 of the `mcp-negotiate` package, so the package must be advertised explicitly and `mcp-negotiate-end` terminates negotiation. A package is considered active only after both sides have sent `mcp-negotiate-can` for it and both have sent `mcp-negotiate-end`. Implementations may defer using a package until receipt of the other side’s `mcp-negotiate-end`. Unknown packages are ignored so legacy clients remain unaffected.
 
-No other MCP traffic should be sent until both sides have exchanged their initial `mcp` lines and completed negotiation. Every subsequent message must include the agreed `authentication-key`.
+No other MCP traffic should be sent until both sides have exchanged their initial `mcp` lines and completed negotiation. Every subsequent normal MCP message must include the agreed `authentication-key`; MCP multiline continuation (`#$#* <data-tag> ...`) and message-end (`#$#: <data-tag>`) frames are exceptions and carry only the active data tag, as shown in the multiline example below.
 
-Example handshake:
+Example handshake excerpt (canonical server greeting plus the client’s outbound negotiation fragment; this is not a complete bilateral transcript, so the peer’s corresponding capability and end messages are omitted):
 
 ```text
 #$#mcp version: 2.1 to: 2.1
 #$#mcp authentication-key: 18972163558 version: 2.1 to: 2.1
-#$#mcp-negotiate-can package: mcp-negotiate min-version: 1.0 max-version: 2.0
-#$#mcp-negotiate-can package: mcp-cord min-version: 1.0 max-version: 1.0
-#$#mcp-negotiate-end
+#$#mcp-negotiate-can 18972163558 package: mcp-negotiate min-version: 1.0 max-version: 2.0
+#$#mcp-negotiate-can 18972163558 package: mcp-cord min-version: 1.0 max-version: 1.0
+#$#mcp-negotiate-end 18972163558
 ```
 
 ## Message Format
 
-MCP treats any line starting with `#$#` as an out-of-band message. Other lines remain in-band Telnet traffic. Lines beginning with `#$#` or `#$"` must be quoted with the prefix `#$"` to preserve their literal content. Each message contains a case-insensitive name, the session’s authentication key, and case-insensitive keywords. Authentication keys and data tags are case-sensitive. Simple values that include spaces, quotes, backslashes, colons, or asterisks must be enclosed in double quotes, escaping `\"` and `\\` as needed. Multiline values append `*` to the keyword and include an `_data-tag` argument whose value is echoed on subsequent `* datatag keyword:` lines and closed with `#: datatag`. Continuation lines may be interleaved with other traffic but must arrive in order for a given data tag. MCP relies on the underlying session for ordering and reliability. Malformed or unrecognized messages are silently discarded, allowing traditional Telnet clients to coexist with MCP-aware tooling.
+MCP treats any line starting with `#$#` as an out-of-band message. Other lines remain in-band Telnet traffic. Lines beginning with `#$#` or `#$"` must be quoted with the prefix `#$"` to preserve their literal content. Each normal message contains a case-insensitive name, the session’s authentication key, and case-insensitive keywords. Authentication keys and data tags are case-sensitive. Simple values that include spaces, quotes, backslashes, colons, or asterisks must be enclosed in double quotes, escaping `\"` and `\\` as needed. Multiline values append `*` to the keyword and include an `_data-tag` argument whose value is echoed on subsequent `#$#* <data-tag> <keyword>:` lines and closed with `#$#: <data-tag>`. Continuation lines may be interleaved with other traffic but must arrive in order for a given data tag. MCP relies on the underlying session for ordering and reliability. Malformed or unrecognized messages are silently discarded, allowing traditional Telnet clients to coexist with MCP-aware tooling.
 
 Example multiline message:
 
@@ -62,9 +62,9 @@ Example multiline message:
 
 FireMUD supports the `mcp-cord` package (version 1.0) to multiplex additional channels over the same connection. The package defines:
 
-- `mcp-cord-open _id: <token> _type: <name>` to create a new cord identified by a unique `_id` and a descriptive `_type`.
-- `mcp-cord _id: <token> _message: <name> ...` to send messages scoped to that cord, with additional arguments defined by the message.
-- `mcp-cord-closed _id: <token>` to signal cord termination. Either side may send this, and it is safe to receive more than once.
+- `mcp-cord-open <authentication-key> _id: <token> _type: <name>` to create a new cord identified by a unique `_id` and a descriptive `_type`.
+- `mcp-cord <authentication-key> _id: <token> _message: <name> ...` to send messages scoped to that cord, with additional arguments defined by the message.
+- `mcp-cord-closed <authentication-key> _id: <token>` to signal cord termination. Either side may send this, and it is safe to receive more than once.
 
 These primitives let stateful conversations—such as dedicated chat tabs, map views, or status panels—be tied to specific client windows. Additional packages can be negotiated as needed.
 
