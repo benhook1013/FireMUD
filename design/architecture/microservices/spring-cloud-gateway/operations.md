@@ -1,16 +1,5 @@
 # Spring Cloud Gateway Operations
 
-## Implementation Status
-
-The target metric split below is not live yet. Current `GameplayWebSocketObservability` emits `gateway.websocket.closes{reason,subreason,bridge_shutdown_class}` for every gameplay WebSocket close, including public WebSocket closes. Its legacy mapping keeps the top-level `logout` class for every currently recognized clean `1000` close: exact `logout;subreason=gateway_restart` is `planned_drain`, while other recognized logout forms (including `logout` with no or `none` subreason and takeover context) are `upstream_logout`; unrecognized or otherwise invalid closes use bridge shutdown class `unattributed_failure`. The target mapping removes `bridge_shutdown_class` from public `gateway.websocket.closes`, emits it only on authenticated `gateway.tcp_proxy_bridge.closes`, maps terminal logout to `logout`, displaced-controller takeover to `session_replaced` with `valid_upstream_close`, planned Gateway drain to `service_restart` with `planned_drain`, and every other valid authenticated top-level pair to `valid_upstream_close`; only missing or invalid top-level bridge metadata is `unattributed_failure` and surfaces `backend_unavailable` to Telnet. Required proof is a focused Gateway observability test for those metric shapes and mappings plus cross-service proof of Telnet parity, including malformed, duplicate, or conflicting optional subreason metadata normalizing to `none`. A temporary dashboard compatibility window is rollout policy rather than an ADR 0131 proof obligation; target convergence must not preserve `upstream_logout` as a permanent class. `bridge_shutdown_class` has no `none` or `not_applicable` value in the target contract.
-
-## Operational Notes
-
-- Spring Cloud Gateway runs as a Kubernetes Deployment and also supports Docker Compose for local development.
-- Health probes use `/actuator/health/readiness` and `/actuator/health/liveness`.
-- Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
-- gRPC endpoints use `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` for consistent observability.
-
 ## Metrics and Observability Contract
 
 Gateway Architecture requires the following observability surfaces for gameplay WebSocket behavior:
@@ -27,6 +16,17 @@ Readiness transition observability follows the shared contract from [Deployment 
 - `firemud.readiness.current`
 - `firemud.readiness.transitions`
 - Structured logs keyed by `gameplayRoute`
+
+## Implementation Status
+
+The target metric split above is not live yet. Current `GameplayWebSocketObservability` emits `gateway.websocket.closes{reason,subreason,bridge_shutdown_class}` for every gameplay WebSocket close, including public WebSocket closes. Its legacy mapping keeps the top-level `logout` class for every currently recognized clean `1000` close: exact `logout;subreason=gateway_restart` is `planned_drain`, while other recognized logout forms (including `logout` with no or `none` subreason and takeover context) are `upstream_logout`; unrecognized or otherwise invalid closes use bridge shutdown class `unattributed_failure`. The target mapping removes `bridge_shutdown_class` from public `gateway.websocket.closes`, emits it only on authenticated `gateway.tcp_proxy_bridge.closes`, maps terminal logout to `logout`, displaced-controller takeover to `session_replaced` with `valid_upstream_close`, planned Gateway drain to `service_restart` with `planned_drain`, and every other valid authenticated top-level pair to `valid_upstream_close`; only missing or invalid top-level bridge metadata is `unattributed_failure` and surfaces `backend_unavailable` to Telnet. Required proof is a focused Gateway observability test for those metric shapes and mappings plus cross-service proof of Telnet parity, including malformed, duplicate, or conflicting optional subreason metadata normalizing to `none`. A temporary dashboard compatibility window is rollout policy rather than an ADR 0131 proof obligation; target convergence must not preserve `upstream_logout` as a permanent class. `bridge_shutdown_class` has no `none` or `not_applicable` value in the target contract.
+
+## Operational Notes
+
+- Spring Cloud Gateway runs as a Kubernetes Deployment and also supports Docker Compose for local development.
+- Health probes use `/actuator/health/readiness` and `/actuator/health/liveness`.
+- Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
+- gRPC endpoints use `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` for consistent observability.
 
 ## Dynamic Route Operational Guardrails
 

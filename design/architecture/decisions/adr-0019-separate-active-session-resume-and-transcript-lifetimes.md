@@ -98,6 +98,8 @@ Fresh admission after every disconnect is simpler and more conservative but mate
 
 ## Implementation and Proof Obligations
 
+Validation and runtime-proof selection follows [Validation and Runtime Proof](../../developer-workflows/validation-and-runtime-proof.md); execution results remain in PR/CI records or implementation trackers.
+
 - Persist immutable `continuityBindingExpiresAt` plus one immutable `disconnectAt`/`resumeDeadline` pair per disconnection episode, consume that episode on successful resume, and enforce the current pair in `PLAY` admission.
 - Prove token refresh and healthy uninterrupted play independently of the continuity anchor.
 - Prove bounded retry while the receiver token remains valid, the `AUTH_TOKEN_EXPIRED` outcome when no replacement exists by `exp`, the `AUTH_SESSION_REVOKED` outcome for rejected authority, socket termination, and fresh `LOGIN`/`PLAY` reconnect or resume behavior.
