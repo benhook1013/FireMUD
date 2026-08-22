@@ -7,6 +7,14 @@ For the design of the Telnet and protocol-bridging path, see:
 - `design/architecture/system-architecture-mud-client-protocol.md`
 - `design/architecture/system-architecture-protocol-bridging.md`
 
+## Current implementation boundary
+
+The [TCP Proxy Service Operations](./microservices/tcp-proxy-service/operations.md#implementation-status) status is the current operator boundary; the taxonomy linked above remains target-state guidance:
+
+- `TelnetServerHandler` currently preserves `1000` reasons beginning with `logout` (`logout;subreason=gateway_restart` becomes `planned_drain`, other logout reasons become `upstream_logout`), exact `1001/idle_timeout`, any trimmed `1008` reason beginning with `policy_violation` (including `policy_violation;subreason=edge_backpressure` and unknown suffixes), and exact `1011/internal_error`. It does not validate the target-bounded `subreason` taxonomy.
+- Other or invalid established-connection close outcomes currently fall back to minimal Telnet text (`backend_unavailable`) and bridge `unattributed_failure`; pre-session trust failures remain separately classified as `policy_violation`. Standalone `session_replaced`/`service_restart` remain target-only lifecycle classes until runtime and focused proof converge; opaque `policy_violation` suffix preservation is current behavior, not proof of bounded subreason validation.
+- **Convergence gate:** do not report a target-only lifecycle row below as a current observation until `TelnetServerHandler` and focused tests/proof recognize and validate that class; current opaque `policy_violation` suffix preservation does not establish bounded subreason validation.
+
 ## Symptoms
 
 - Players using Telnet cannot connect or experience frequent disconnects.
@@ -104,31 +112,32 @@ The TCP Proxy Service and WebSocket path enforce backpressure rather than silent
 When inspecting Telnet-side disconnects, prefer reasoning in terms of the standard Telnet disconnect reasons defined in [Protocol Bridging](./system-architecture-protocol-bridging.md#telnet-disconnect-reasons) rather than ad-hoc message strings. In particular:
 
 - Treat `policy_violation` closes as `policy_violation_non_retriable` by default (stop auto-retry or use very long backoff); they usually indicate client behaviour that must change (scripts, bots, abusive traffic) rather than platform outages.
-- Exception: when client-visible disconnect metadata explicitly includes `edge_backpressure` context (for example WebSocket close `1008/policy_violation;subreason=edge_backpressure` or Telnet `policy_violation;subreason=edge_backpressure`), treat it as retriable backend pressure and use backend-unavailable backoff. If that context is absent, keep `policy_violation_non_retriable` as the default.
-- Treat trust-boundary handshake failures (for example `tcpproxy.gateway.handshake.failures{reason="cert_validation"}` or policy deny outcomes) as `policy_violation`, not `backend_unavailable`; fix certificate/identity/configuration before retrying.
+- Use WebSocket close `1008/policy_violation;subreason=edge_backpressure` as current correlation guidance for diagnostic edge buffer-pressure enforcement, not a backend outage; it does not change the top-level retry or lifecycle classification. Telnet currently preserves `policy_violation;subreason=edge_backpressure` and unknown `policy_violation` suffixes as `policy_violation` for operator correlation, while exact bounded `subreason` validation remains target-only and unproved. Other unsupported or invalid Telnet outcomes continue to use the `backend_unavailable` fallback above. Check `tcpproxy.telnet.discarded{reason="gateway_buffer_full"}` before changing limits or policy settings.
+- Treat trust-boundary handshake failures (for example `tcpproxy.gateway.handshake.failures{reason="cert_validation"}` or policy-deny outcomes) as the pre-session bridge-admission classification `policy_violation`, not `backend_unavailable`; they do not override `TelnetServerHandler` translation of an established connection's close reason. Fix certificate/identity/configuration before retrying. Unsupported or invalid close outcomes after a connection is established retain the current `backend_unavailable` fallback.
 - Treat `backend_unavailable` closes as indicators of core gameplay outages or edge-to-gateway bridge failures, comparable to WebSocket `1013` (`backend_unavailable`) from the gateway, and prioritise checking Game Session, Redis, and Gateway health before tuning Telnet limits. For established Telnet sessions, any unattributed loss of the gameplay bridge is expected to surface immediately as `backend_unavailable`; there is no hidden bridge-recovery window behind the same client TCP socket.
-- Treat `policy_violation` with `edge_backpressure` context (from structured logs/metrics such as `tcpproxy.telnet.discarded{reason="gateway_buffer_full"}`) as edge buffer-pressure enforcement, not as backend outage.
-- Treat `idle_timeout` and `logout` as expected lifecycle noise rather than indicators of incidents unless volumes spike unexpectedly.
-- If correlating with WebSocket dashboards, use the bounded WebSocket `subreason` taxonomy from Gateway Architecture (`user_logout`, `takeover`, `gateway_restart`, `admin_termination`, `edge_backpressure`, `none`) so planned edge restarts are not misclassified as player-driven logout volume.
-- For bridge-level shutdown attribution, reason in the bounded structured classes `planned_drain`, `upstream_logout`, and `unattributed_failure` rather than treating every non-`backend_unavailable` close as the same kind of event:
-  - `planned_drain` means the authenticated bridge delivered a machine-parseable drain signal such as `1000/logout;subreason=gateway_restart`.
-  - `upstream_logout` means the authenticated bridge delivered a clean session-end logout such as `1000/logout;subreason=takeover`, `user_logout`, `admin_termination`, or `none`.
-  - `unattributed_failure` means the bridge dropped without a clean authenticated logout signal and established Telnet sessions therefore surface `backend_unavailable`.
+- Treat current `idle_timeout` and terminal `logout` as distinct expected lifecycle classes rather than incidents unless volumes spike unexpectedly. Standalone `session_replaced` and `service_restart` remain target-only lifecycle classes until convergence; the current runtime boundary is listed above.
+- If correlating with WebSocket dashboards, use the bounded WebSocket `subreason` taxonomy from Gateway Architecture (`user_logout`, `takeover`, `gateway_restart`, `admin_termination`, `edge_backpressure`, `none`) only for operations correlation; top-level reason remains lifecycle authority.
+- For target bridge-level shutdown attribution, use the bridge-only structured classes `planned_drain`, `valid_upstream_close`, and `unattributed_failure` as described by [Gateway Architecture](./system-architecture-gateway.md) and [TCP Proxy Service Operations](./microservices/tcp-proxy-service/operations.md); they never replace lifecycle authority. Current runtime still maps `logout;subreason=gateway_restart` to `planned_drain`, other logout reasons to legacy `upstream_logout`, and other or non-clean outcomes to `unattributed_failure`. Target convergence maps clean `1012/service_restart` to `planned_drain`, every other valid authenticated top-level close to `valid_upstream_close`, and reserves `unattributed_failure` for absent, invalid, or otherwise unattributable close metadata. The top-level reason remains authoritative, and only absent or invalid close metadata uses observation-specific `backend_unavailable` for the Telnet client.
 - If `gamesession.notifydisconnect.dedupe.capacity_reached` is sustained during a broad outage, treat it as pressure on the disconnect-dedupe path and verify durable dedupe-store health and partition saturation before changing retry/retention guarantees.
+- Do not infer whether an in-flight gameplay command committed from a close token or bridge-shutdown class. Reconcile a known `{tenantId, gameInstanceId, commandId}` through Game Session’s authoritative command-status surface; classic Telnet clients must treat the outcome as unknown until fresh state is reconstructed.
 
-Quick operator guide:
+Quick operator guide (current runtime; target-only rows are marked):
 
 | Observed disconnect | Interpretation | First operator action |
 | --- | --- | --- |
 | `policy_violation` | Usually client misuse, malformed protocol, or trust/policy failure; non-retriable by default | Check client behavior, malformed input, and TLS/trust-policy logs before treating it as platform outage |
-| `policy_violation;subreason=edge_backpressure` | Edge buffer pressure or slow-client enforcement; retriable with outage-style backoff | Check `tcpproxy.telnet.discarded{reason="gateway_buffer_full"}` and related backpressure metrics before changing backend outage settings |
 | `backend_unavailable` | Core gameplay outage or edge-to-gateway bridge failure | Check Gateway, Game Session, and Redis health first |
-| `logout;subreason=takeover` or `logout;subreason=admin_termination` | Clean upstream session end, not an outage | Confirm takeover/admin activity before treating it as network instability |
-| `logout;subreason=gateway_restart` | Planned Gateway drain / restart path | Treat as expected lifecycle behavior and confirm deploy/drain timeline before opening an outage incident |
+| `idle_timeout` | Normal inactivity expiry; not an incident by itself | Verify the configured idle policy and expected inactivity before incident treatment |
+| Current raw `logout*` reason (including `logout;subreason=...`; bridge metric `upstream_logout`, except the exact gateway-restart form) | Legacy clean-`1000` upstream logout-shaped mapping; `upstream_logout` is an internal bridge classification, not a Telnet reason token or outage class | Inspect the raw `DISCONNECT` token and confirm logout/termination activity; do not infer `backend_unavailable` from the metric label or human message |
+| Current raw `logout;subreason=gateway_restart` (bridge metric `planned_drain`) | Legacy planned-drain signal; target convergence is valid `1012/service_restart` with `planned_drain` | Confirm the deployment and Gateway drain timeline |
+| `internal_error` | Unexpected server-side failure; not an outage by itself until correlated | Check TCP Proxy, Gateway, and Game Session error logs and restart timelines |
+| `policy_violation;subreason=edge_backpressure` (or another `policy_violation` suffix) | Current Telnet preserves the trimmed reason as top-level `policy_violation`; exact bounded subreason validation remains target-only/unproved | Check `tcpproxy.telnet.discarded{reason="gateway_buffer_full"}` and related backpressure metrics before changing limits or policy settings |
+| **Target-only** `session_replaced` | Old transport displaced by another active controller | Confirm takeover activity; do not classify the gameplay identity as logged out |
+| **Target-only** `service_restart` | Planned Gateway drain / restart path | Treat as expected retryable maintenance and confirm the deploy/drain timeline |
 
 Unattributed bridge-loss example:
 
-- If the authenticated Proxy → Gateway bridge drops without `1000/logout;subreason=gateway_restart`, treat the event as `bridge_shutdown_class=unattributed_failure`.
+- If the authenticated Proxy → Gateway bridge drops without any valid top-level close, treat the event as `bridge_shutdown_class=unattributed_failure`.
 - For already-established Telnet sessions, expect an immediate `backend_unavailable` disconnect rather than a grace window or hidden bridge recovery attempt.
 - Investigate Gateway/Game Session/process crash timelines before tuning Telnet-side limits.
 

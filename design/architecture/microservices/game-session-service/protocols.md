@@ -1,16 +1,12 @@
 # Game Session Service Protocols
 
-This document defines Game Session transport framing and service-level protocol behavior. The canonical standard command catalog, command stages, capability policy, and game-authored command extension rules live in [Player Command Model](../../system-architecture-player-command-model.md).
+This document defines Game Session transport framing and service-level protocol behavior. The canonical standard command catalog, command stages, capability policy, and game-authored command extension rules live in [Player Command Model](../../system-architecture-player-command-model.md). Session/reconnect authority is owned by [Session Behavior](../../system-architecture-session-behavior.md) and [Reconnection](../../system-architecture-reconnection.md); output/versioning and localization authority is owned by [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md).
 
 ## Normative Target Contract
 
 The target direct-text flow is anonymous `WORLDS` discovery -> credential-bearing `LOGIN` -> authenticated `REALMS` -> conditional `JOIN` -> conditional `CHARS`/character creation -> `PLAY`. `HELP` is available as non-discovery help and never replaces `WORLDS`; `REALMS` and `CHARS` require successful `LOGIN`. Explicit `JOIN`/`Join & Play` is the sole public-production membership writer, while `PLAY`, character creation, and connect-token issuance require existing caller-bound `ACTIVE` membership and never create or restore membership implicitly. Direct-text `CHARS` and creation apply the existing canonical realm-snapshot resolver also used by the REST bootstrap producer; clients never select or send the resulting projection as join input. Missing or mismatched cross-path proof is implementation drift.
 
 For bootstrap-backed direct-text `LOGIN` and first-party `/ws/game/**`, the [Gateway signed-context contract](../../system-architecture-gateway.md#tenant-aware-edge-connect-token-gameplay-handshake) and [JWT/token contract](../../system-architecture-jwt-and-token-contracts.md) own source validation and context schema. Before using any context field for `LOGIN`, `PLAY`, or scope comparison, Game Session must validate the complete signed context: signature, declared type, alteration/integrity, expiry, audience, recipient, and binding to the selected target and source artifact. Missing, wrong-typed, altered, expired, incorrectly audience-bound, recipient-mismatched, or otherwise unbound context fails closed. The trusted TCP Proxy exception remains the only positive non-context exception.
-
-## Implementation Status
-
-Unless explicitly described as current behavior, this document defines the target protocol. The target direct-text flow is public `WORLDS` discovery -> credential-bearing `LOGIN` -> authenticated `REALMS` -> conditional `JOIN` -> conditional `CHARS`/character creation -> `PLAY`. It requires explicit `JOIN`/`Join & Play` for first public-production entry, while an existing durable `membershipLifecycleState=ACTIVE` membership permits direct `PLAY` and a grant-backed non-public path may proceed only when that same `ACTIVE` membership already exists. A grant never creates or substitutes membership. `JOIN` and first-party `Join & Play` are not yet implemented as explicit commands/actions. Current text `PLAY` may return non-actionable `JOIN_REQUIRED` for an eligible public-production target when `membershipExists=false`, without creating or restoring membership; current text `PLAY` enforces the applicable non-public realm grant, while current connect-token issuance does not validate that grant and retains its existing Account rejection mapping. Current consumers decide from `membershipExists`, `gameplayAdmissionAllowed`, `membershipVersion`, and `evaluatedAt` plus the text `PLAY` grant check; Account does not yet expose `membershipLifecycleState`, so an `ACTIVE` or `INACTIVE` classification is target-only until Account exposes that field. Current non-public membership/admission denial remains `WORLD_ACCESS_DENIED`; target-only `NON_PUBLIC_ENROLLMENT_REQUIRED` is defined separately. The missing membership-authority-generation reread and target non-public grant check at connect-token issuance remain gaps.
 
 ### Reset and Recovery Consequence
 
@@ -74,6 +70,12 @@ For direct text/Telnet, `HELP` is non-discovery, `WORLDS` is the sole anonymous 
 
 Selector rules for `PLAY` match the lobby helpers. `WORLDS` returns both `tenantSlug` and tenant-scoped `worldSlug`; the canonical textual `<world>` form is `tenantSlug/worldSlug`, while a bare `tenantSlug` is shorthand only when that tenant exposes exactly one visible authored world. A bare `worldSlug` is never resolved across tenants. `<world>` may instead be a menu index from the exact `WORLDS` browse snapshot, `[realm]` accepts a `realmSlug` under the resolved world or an index from its exact `REALMS` snapshot, and `[character]` is an optional name or response-local index. If a selector is ambiguous or stale, the response guides the player toward `WORLDS`, `REALMS`, `CHARS`, or a more specific `PLAY` form rather than guessing or returning a backend-flavored error.
 
+## Implementation Status
+
+Unless explicitly described as current behavior, this document defines the target protocol. The target direct-text flow is public `WORLDS` discovery -> credential-bearing `LOGIN` -> authenticated `REALMS` -> conditional `JOIN` -> conditional `CHARS`/character creation -> `PLAY`. It requires explicit `JOIN`/`Join & Play` for first public-production entry, while an existing durable `membershipLifecycleState=ACTIVE` membership permits direct `PLAY` and a grant-backed non-public path may proceed only when that same `ACTIVE` membership already exists. A grant never creates or substitutes membership. `JOIN` and first-party `Join & Play` are not yet implemented as explicit commands/actions. Current text `PLAY` may return non-actionable `JOIN_REQUIRED` for an eligible public-production target when `membershipExists=false`, without creating or restoring membership; current text `PLAY` enforces the applicable non-public realm grant, while current connect-token issuance does not validate that grant and retains its existing Account rejection mapping. Current consumers decide from `membershipExists`, `gameplayAdmissionAllowed`, `membershipVersion`, and `evaluatedAt` plus the text `PLAY` grant check; Account does not yet expose `membershipLifecycleState`, so an `ACTIVE` or `INACTIVE` classification is target-only until Account exposes that field. Current non-public membership/admission denial remains `WORLD_ACCESS_DENIED`; target-only `NON_PUBLIC_ENROLLMENT_REQUIRED` is defined separately. The missing membership-authority-generation reread and target non-public grant check at connect-token issuance remain gaps.
+
+Target communication framing uses terminated sender `OK <COMMAND>` response frames and recipient `EVENT <TYPE>` event frames, with structured-client `PlayerOutput` schema-version negotiation and `unsupported_schema_version` rejection. Telnet and generic text WebSocket clients consume the deterministic text projection without schema negotiation. These framing and compatibility behaviors are target behavior and remain unimplemented or unproved in full; current generic and first-party projections are narrower. The owner contract is [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md#output-model).
+
 ### JOIN Translation and Status
 
 The canonical JOIN and membership-admission contract is defined in [Authentication & Authorization](../../system-architecture-authentication.md#normative-target-contract); this section keeps only Game Session's protocol translation and local handling.
@@ -108,9 +110,9 @@ Canonical first-party `PLAY` scope errors on `/ws/game/**`:
 - `CONNECT_CONTEXT_INVALID` – required gateway-signed connect context is missing or failed validation because of a missing field, wrong field type, altered or unbound claim, signature/key, expiry, audience, or recipient failure. Its bounded protocol subreasons are `missing_field`, `wrong_field_type`, `altered_claim`, `unbound_claim`, `invalid_signature`, `unknown_kid`, `expired`, `audience_mismatch`, and `recipient_mismatch`; this uses the existing gameplay protocol surface rather than a browser-specific handshake taxonomy.
 - `CONNECT_SCOPE_MISMATCH` – validated connect context does not match the server-resolved runtime scope for the requested stable world/realm selector.
 
-Target-only resume/admission rule: Game Session first resolves the current authoritative `{tenantId, playableStateNamespaceId, playableStateScope, gameInstanceId}` from the selected realm/pointer snapshot, then looks up a resumable binding by the durable `{accountId, tenantId, playableStateNamespaceId, playableStateScope, characterId}` identity. The current `gameInstanceId` and applicable `{regionId, regionEpoch}` runtime fence are separate fresh authorization checks, not lookup identity; replacement rebinds that runtime evidence through the existing `bindingGeneration` CAS. A binding is eligible only when its stored authenticated `accountId` matches the current authenticated account, its character ownership is authoritative for that account, and every durable identity component exactly matches the fresh resolution; the current target instance and region fence must also be current and valid. A stale or caller-replayed namespace/instance is not a lookup fallback. If a gameplay session already exists for that durable identity and its `membershipLifecycleState=ACTIVE` membership, TTL, current membership authority, current revocation state, and current runtime fence are all valid, `PLAY` resumes it and rebinds the new socket to the existing session. On successful resume, Game Session also rebinds the session to a fresh backend token for subsequent internal calls rather than depending on the previous token to remain valid. A fresh gameplay binding requires fresh applicable entitlement; private/playtest admission additionally requires existing caller-bound membership and the current realm grant. The only last-known-good exception is unchanged public-production binding continuity during an entitlement-only outage after the other resume predicates pass; an old binding record alone cannot authorize fresh admission. If no resumable session exists, target `PLAY` may fall back to fresh gameplay only after `membershipLifecycleState=ACTIVE` membership and every ordinary admission check succeed. A first-time public-production player without membership receives `JOIN_REQUIRED`; `PLAY` never creates that membership. Even after reconnect, the client must still send an explicit `PLAY` so the platform never guesses which tenant or character to resume.
+Target-only resume/admission rule: after resolving the current server-authoritative realm target, Game Session looks up the resumable controller key `{tenantId, playableStateNamespaceId, characterId}`, verifies the authenticated `accountId` separately as binding-owner evidence, retains server-derived `playableStateScope` as binding context, and validates the current runtime/region fence before admitting the binding. A stale or caller-replayed namespace or instance is never a lookup fallback. Authorized takeover applies the atomic monotonic `bindingGeneration` transfer owned by [Session Behavior](../../system-architecture-session-behavior.md#namespace-scoped-controller-transfer-session-02). A newly opened transport still requires explicit `PLAY`; after eligible admission, Game Session exposes only the semantic-context and fresh-state reconstruction owned by [Reconnection](../../system-architecture-reconnection.md#client-reconnection-behaviour).
 
-Current runtime does not expose `membershipLifecycleState`, so it uses the four-field Account adapter response (`membershipExists`, `gameplayAdmissionAllowed`, `membershipVersion`, and `evaluatedAt`) and cannot classify `ACTIVE` or `INACTIVE`. Current text `PLAY` may return non-actionable `JOIN_REQUIRED` for an otherwise eligible public-production request with `membershipExists=false`; current non-public missing or non-admitting membership remains `WORLD_ACCESS_DENIED`. A fresh Telnet admission requires current entitlement, and current text `PLAY` checks the applicable private/playtest grant; current connect-token grant validation remains a gap.
+Current runtime still uses the per-instance controller lookup and does not prove the namespace-key binding CAS. It also does not expose `membershipLifecycleState`, so it uses the four-field Account adapter response (`membershipExists`, `gameplayAdmissionAllowed`, `membershipVersion`, and `evaluatedAt`) and cannot classify `ACTIVE` or `INACTIVE`. Current text `PLAY` may return non-actionable `JOIN_REQUIRED` for an otherwise eligible public-production request with `membershipExists=false`; current non-public missing or non-admitting membership remains `WORLD_ACCESS_DENIED`. A fresh Telnet admission requires current entitlement, and current text `PLAY` checks the applicable private/playtest grant; current connect-token grant validation remains a gap.
 
 If a client attempts gameplay commands before `LOGIN` succeeds, the service should return a stage-aware response such as `ERROR LOGIN_REQUIRED Use LOGIN <email> [secret]`. If a client is logged in but has not yet completed `PLAY`, the service should return a stage-aware response such as `ERROR PLAY_REQUIRED Use PLAY <world> [realm] [character]`. These are menu/progression mistakes, not gameplay-mechanics failures.
 
@@ -149,7 +151,7 @@ PLAY 1 production 2
 OK PLAY Entered world: Demo World / Live Realm as Sora
 ```
 
-The same resolution rules apply to `PLAY demo production 2`, where `demo` is the one-world tenant shorthand, `PLAY demo/main production 2`, or `PLAY 1 1 Sora`: response-local menu indices and stable qualified slug selectors identify the same player-facing choices. Game Session resolves the current admissible runtime target and stable namespace, then binds the internal session to the durable `{accountId, tenantId, playableStateNamespaceId, playableStateScope, characterId}` identity while retaining the current runtime fence `{gameInstanceId, regionId, regionEpoch}` where applicable; the player never selects `gameInstanceId`, `playableStateScope`, or a storage namespace directly.
+The same resolution rules apply to `PLAY demo/main production 2`: `demo/main` is one qualified world-selector token (`tenantSlug/worldSlug`), `production` is the realm selector, and `2` is a response-local character index. `PLAY 1 1 Sora` likewise uses response-local menu indices and a character name to identify the same player-facing choices. Game Session resolves the current admissible runtime target and stable namespace, then binds the internal session to the durable controller identity `{tenantId, playableStateNamespaceId, characterId}` while retaining the authenticated `accountId` as binding-owner evidence, `playableStateScope` as server-derived scope context, and `{gameInstanceId, regionId, regionEpoch}` as the current runtime fence where applicable; the player never selects `gameInstanceId`, `playableStateScope`, or a storage namespace directly.
 
 The Account Service returns canonical `AUTH_*` error codes such as `AUTH_INVALID_CREDENTIALS`, `AUTH_RETRY_LATER`, `AUTH_ACCOUNT_LOCKED`, and `AUTH_UNAVAILABLE`. Game Session translates them into protocol-level responses such as `ERROR INVALID_CREDENTIALS`, `ERROR RETRY_LATER`, and `ERROR AUTH_UNAVAILABLE` so Telnet and WebSocket clients can rely on stable error semantics while the human-readable message remains flexible. `AUTH_ACCOUNT_LOCKED` is reserved for verified compromise or an explicit account-security policy after sufficient identity proof; ordinary failed-login throttling uses `AUTH_RETRY_LATER`.
 
@@ -280,13 +282,26 @@ Later game-defined prompt composition should plug in ahead of rendering: upstrea
 
 The text protocol remains the canonical wire format for Telnet and generic text WebSocket clients, but it should not be treated as the deepest platform abstraction. FireMUD should preserve structured gameplay views, communication results, action presentation events, prompt/status snapshots, and command errors until the latest practical rendering step so player settings such as color mode and `BRIEF`, plus first-party web and future MCP-aware clients, can apply presentation policy without rewriting gameplay logic. Game Session renders and delivers `GameplayPresentationEvent` data from Game Logic; it must not reconstruct action success or remote-leg state from durable command rows. See [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md).
 
-The first live communication modes now emit canonical actor prose directly for the initiating player. After a successful command the server responds with text such as:
+The target communication projection emits canonical actor prose directly for the initiating player. After successful commands, the sender receives separate terminated response frames:
 
 ```text
+OK SAY
 You say, "Hello travelers."
-Emberline says, "Hello travelers."
+
+OK WHISPER
 You whisper to Sora, "Keep quiet."
+
+OK TELL
 You tell Sora, "Meet me at the forge."
+
+```
+
+Listeners receive their own asynchronous event projections, separately from the sender's response:
+
+```text
+EVENT SAY
+Emberline says, "Hello travelers."
+
 ```
 
 Explicit type, recipient, and delivery metadata still exists on the shared downstream communication path for deterministic tests, logging, and later fanout behavior, but that metadata is no longer exposed as the canonical user-facing success transcript.
@@ -315,13 +330,13 @@ The built-in communication parser enforces that `SAY`, `WHISPER`, and `TELL` inc
 
 Canonical baseline prose for the built-in communication modes is:
 
-- `say` sender view: `You say, "Hello travelers"`
-- `say` listener view: `Emberline says, "Hello travelers"`
-- `whisper` sender view: `You whisper to Sora, "Keep quiet"`
-- `whisper` target view: `Emberline whispers to you, "Keep quiet"`
+- `say` sender view: `You say, "Hello travelers."`
+- `say` listener view: `Emberline says, "Hello travelers."`
+- `whisper` sender view: `You whisper to Sora, "Keep quiet."`
+- `whisper` target view: `Emberline whispers to you, "Keep quiet."`
 - `whisper` metadata-only observer view: `Emberline whispers something to Sora.`
-- `tell` sender view: `You tell Sora, "Meet me at the forge"`
-- `tell` target view: `Emberline tells you, "Meet me at the forge"`
+- `tell` sender view: `You tell Sora, "Meet me at the forge."`
+- `tell` target view: `Emberline tells you, "Meet me at the forge."`
 
 Baseline failure mapping for the target-directed modes is:
 
@@ -380,9 +395,9 @@ The protocol should not frame these cases primarily as backend or world-state fa
 ### LOOK request flow
 
 1. Game Session validates that the caller has completed `LOGIN` and `PLAY` and has a valid Redis-backed gameplay session context. If the caller is still in the login/menu stages, it returns a stage-aware `LOGIN_REQUIRED` or `PLAY_REQUIRED` error rather than a generic gameplay-auth failure.
-2. Authenticated `LOOK` commands call Game Logic's `ResolveLook`, passing `tenantId`, `gameInstanceId`, `sessionId`, `characterId`, and `roomInstanceId`.
-3. Game Logic returns a structured `LookResult`, which Game Session renders into the `OK LOOK` text response and emits `gamesession.command.look.*` metrics/logs.
-4. Reconnecting Telnet or WebSocket clients do not receive buffered command replay. Instead, after successful `LOGIN` and `PLAY`, Game Session may replay the bounded per-player transcript/screen buffer and then emits a fresh authoritative `LOOK` so current room state wins over any stale context. New buffer entries preserve structured `PlayerOutput` replay metadata alongside rendered protocol text; first-party web clients receive typed `transcript_entry` replay events when that metadata exists, while older text-only buffer entries and classic clients continue to use transcript chunks/plain text.
+2. Authenticated `LOOK` commands call Game Logic's `ResolveLook` with the validated gameplay context and the target causal-read evidence defined by [ADR 0059](../../decisions/adr-0059-causal-floor-cross-service-presentation-reads.md) and [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md#look-and-quicklook). The current `ResolveLook` request/proto remains floor-free, so this propagation is not current behavior.
+3. Game Logic returns a structured `LookResult` only when the owner contract's composition checks succeed; otherwise it rejects or retries the request. Game Session renders an accepted result into the `OK LOOK` text projection and emits `gamesession.command.look.*` metrics/logs. Current adapters still return only deterministic scope markers, so the target causal-read proof remains an implementation gap.
+4. Reconnecting Telnet or WebSocket clients do not receive buffered command/input/frame replay. This reconstruction applies only after a fresh client-facing edge transport has completed `LOGIN` and `PLAY`; a retained-edge Gateway-to-Game-Session same-type upstream rebind is not a client reconnect, repeats neither `LOGIN` nor `PLAY`, and triggers no fresh reconnect-context or `LOOK` reconstruction. In the fresh-edge target flow, Game Session first renders authorized retained semantic context only when it is nonempty, unexpired, and replayable; empty, expired, or non-replayable context emits no retained-context output. Game Session obtains a fresh authoritative `LOOK` after every successful authorized reconstruction regardless of whether retained context was rendered, then applies the local reconnect projection, including the owner-defined exact one-or-zero prompt consequence and structured-versus-classic text projection. See [Reconnection Strategy](../../system-architecture-reconnection.md#client-reconnection-behaviour) and [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md#canonical-resume-context-model).
 
 ### LOOK error mapping and metrics
 
@@ -399,7 +414,7 @@ Metrics `gamesession.command.look.invocations` and `gamesession.command.look.fai
 ### Communication request flow
 
 1. Game Session validates the same admitted gameplay session context leveraged by `LOOK`; callers still in the login/menu stages receive stage-aware `LOGIN_REQUIRED` or `PLAY_REQUIRED` guidance rather than a generic protocol-auth failure.
-2. Authenticated `SAY`, `WHISPER`, and `TELL` commands route through `CommunicationCommandHandler`, which packages `tenantId`, `gameInstanceId`, `sessionId`, `characterId`, `speakerName`, `roomInstanceId`, normalized text, and target metadata into a `SendCommunication` gRPC request to Game Logic.
+2. **Target:** Authenticated `SAY`, `WHISPER`, and `TELL` commands route through `CommunicationCommandHandler` with the complete validated typed `PlayerExecutionContext`, which Game Logic forwards unchanged to downstream delivery. **Current:** the live `SendCommunication` request remains flat (`tenantId`, `gameInstanceId`, `sessionId`, `characterId`, `accountId`, `speakerName`, `roomInstance`, normalized text, target metadata, and `effectId`) plus legacy `session_attestation`; the current proto does not yet carry typed `playableStateNamespaceId`, `playableStateScope`, region/epoch, pointer, or admitted-bundle fields.
 3. Game Logic resolves the communication type and target/scope, validates message constraints, and produces the baseline delivery metadata:
    - `say` targets the current room;
    - `whisper` targets one character in the current room;
@@ -412,15 +427,31 @@ Metrics `gamesession.command.look.invocations` and `gamesession.command.look.fai
 - System commands such as `LOGIN`, `LOGON`, `PING`, and lightweight state queries are allowed to produce synchronous responses without enqueuing gameplay actions. Their side effects stay limited to session binding, health checks, or read-only projections.
 - Gameplay commands such as `LOOK`, `SAY`, movement, `BLOCK`, and later combat are tick-driven actions. Game Session validates and normalizes them, emits enqueue metadata, and must not perform gameplay state mutations outside the tick executor.
 - If the interpreter produces both immediate text and enqueue metadata and the enqueue step fails, for example because of a Redis outage, Game Session surfaces a single `ERROR` response and does not report success followed by a dropped action.
-- Every response is plain text. The first line is either `OK <COMMAND>` or `ERROR <CODE> <message>`.
-- Success responses may include additional lines describing the outcome.
-- A blank line terminates the response block so multiple responses can be streamed back-to-back without ambiguity.
-- Asynchronous world events use the same rules but are prefixed with `EVENT <TYPE>` to distinguish them from direct command responses.
+- `PlayerOutput` schema/version compatibility and its deterministic text projection are canonical in [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md#output-model). The target structured-client schema-version negotiation rejects an unsupported structured schema with `unsupported_schema_version`, never treating it as a silent downgrade; Telnet and generic text WebSocket clients consume the deterministic text projection without schema negotiation. Current generic and first-party projections are narrower and do not yet prove the complete target behavior.
+- Synchronous command-response frames in the classic text projection have a first line of either `OK <COMMAND>` or `ERROR <CODE> <message>`.
+- Asynchronous world-event frames are a distinct frame type: their first line is `EVENT <TYPE>`, never `OK` or `ERROR`.
+- Either frame type may include additional lines describing the outcome or event, and a blank line terminates each frame so responses and events can be streamed back-to-back without ambiguity.
 - Unknown commands return `ERROR UNKNOWN_COMMAND <rawLine>`.
 
-Prompt/status remains a separate output class from transcript lines and gameplay views even when plain-text clients receive it on the same socket. Prompt emission should be coalesced, reconnect transcript replay should exclude prompt lines, and first-party or MCP-aware clients may consume prompt/status as structured state rather than main-transcript text. See [Reconnection Strategy](../../system-architecture-reconnection.md#client-reconnection-behaviour) and [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md).
+Prompt/status remains a separate output class from transcript lines and gameplay views even when plain-text clients receive it on the same socket. Prompt emission should be coalesced, semantic recent-context restoration should exclude prompt lines, and first-party or MCP-aware clients may consume prompt/status as structured state rather than main-transcript text. See [Reconnection Strategy](../../system-architecture-reconnection.md#client-reconnection-behaviour) and [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md).
 
 Examples:
+
+Target communication output is shown as separate terminated sender and listener frames. For the command `SAY Hello travelers`, the sender receives this synchronous response and actor line:
+
+```text
+OK SAY
+You say, "Hello travelers."
+
+```
+
+A blank line terminates that sender response. A listener such as Emberline separately receives the projected asynchronous text push as an `EVENT SAY` frame:
+
+```text
+EVENT SAY
+Emberline says, "Hello travelers."
+
+```
 
 ```text
 LOGIN demo@example.com swordfish
@@ -439,14 +470,12 @@ Entities:
 - NPC "Kobold Scout" (alert, leaning on the eastern balustrade)
 - Player "Sora" (half-hidden in the shadowed niche)
 
-SAY Hello travelers
-You say, "Hello travelers."
-Emberline says, "Hello travelers."
-
 WHISPER Sora Keep quiet
+OK WHISPER
 You whisper to Sora, "Keep quiet."
 
 TELL Sora Meet me at the forge
+OK TELL
 You tell Sora, "Meet me at the forge."
 
 DANCE

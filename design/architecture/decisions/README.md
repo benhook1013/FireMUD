@@ -225,6 +225,12 @@ Validation precedence is fixed: first parse every checked queue row and validate
 | [ADR 0128](./adr-0128-game-design-plugin-trust-provenance.md) | Accepted | `AR-1.3` | `AS-1.2`, `AS-1.6`, `SF-1.3`, `AR-3.3` | Game Design plugin-trust provenance under ADR 0111's canonical lifecycle |
 | [ADR 0129](./adr-0129-durable-fenced-multi-owner-draft-commits.md) | Accepted | `AR-1.1` | `AR-1.5`, `AR-1.2`, `AR-3.4`, `SF-2.1`, `EA-3.2` | Durable fenced multi-owner Draft commits with synchronized visibility and no silent merge |
 | [ADR 0130](./adr-0130-historical-equipment-body-layout-authority.md) | Superseded | `GR-3.3` | `GR-3.2`, `AR-1.1`, `AR-1.5`, `SF-1.2` | Historical equipment/body-layout authority proposal retained for provenance only |
+| [ADR 0131](./adr-0131-lifecycle-distinct-gameplay-close-taxonomy.md) | Accepted | `PO-2.4` | `PO-2.2`, `GR-1.1`, `AA-2.2`, `PO-4.2` | Lifecycle-distinct Gateway close taxonomy with explicit logout, takeover, and planned restart outcomes |
+| [ADR 0132](./adr-0132-namespace-scoped-single-character-controller.md) | Accepted | `AA-2.3` | `AA-2.1`, `AA-2.2`, `EA-3.1`, `SF-2.2`, `AR-3.3` | Namespace-scoped single-character controller with atomic monotonic takeover |
+| [ADR 0133](./adr-0133-fresh-edge-reconnect-without-client-input-replay.md) | Accepted | `AA-2.2` | `AA-2.1`, `EA-1.3`, `PO-2.2`, `GR-1.4`, `SF-2.3` | Fresh edge reconnect with no client-input, frame, or byte replay |
+| [ADR 0134](./adr-0134-bounded-durable-semantic-reconnect-context.md) | Accepted | `EA-1.3` | `AA-2.2`, `EA-1.2`, `SF-2.1`, `SF-2.3` | Namespace-scoped bounded durable semantic reconnect context with strict byte ceiling |
+| [ADR 0135](./adr-0135-compact-versioned-player-output-and-late-rendering.md) | Accepted | `EA-1.2` | `EA-1.1`, `EA-3.1`, `PO-2.2`, `SF-1.1`, `SF-1.2` | Compact versioned player output, late rendering, mandatory text projection, and causal-floor LOOK proof |
+| [ADR 0136](./adr-0136-future-compatible-localization-boundary.md) | Accepted | `EA-1.2` | `EA-3.1`, `AR-1.1`, `EA-3.4` | Future-compatible locale variants with deterministic fallback and deferred tooling selection |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../../product/capability-taxonomy.md).
 

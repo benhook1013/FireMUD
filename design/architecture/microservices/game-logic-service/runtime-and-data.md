@@ -8,6 +8,8 @@ The sections below define the target-state runtime contract. Current implementat
 
 - The current implementation attests an empty owned-rule manifest and returns synthetic `appliedCommitId = "version:<versionId>"` because Game Logic does not yet own version-scoped draft rule tables. The empty-manifest digest is intentional and does not represent hidden service state.
 - Same-type Game Logic takeover behind an existing edge connection is target behavior, but suppression of a client-visible reconnect after an ordinary qualifying Game Logic restart remains implementation or proof debt under ADR 0013.
+- Target: `SendCommunication` and every other player-delegated gameplay RPC propagate one complete, validated typed `PlayerExecutionContext` from Game Session through Game Logic and onward. Game Logic validates the context against request and owner evidence, never treats caller-supplied identifiers as authority, remains stateless, and owns semantic gameplay outcomes; Game Session owns session, reconnect, and presentation state. This is the ADR 0024 target contract.
+- Current implementation gap: the live `SendCommunicationRequest` is still a flat schema with tenant/session/character/account, communication/text and target metadata, room, game-instance, speaker, and effect fields plus legacy `session_attestation`; its current proto does not carry typed `playableStateNamespaceId`, `playableStateScope`, region/epoch, pointer, or admitted-bundle fields. Complete typed-context propagation is therefore not current behavior or proof.
 
 ## Runtime Notes
 
@@ -20,7 +22,7 @@ The sections below define the target-state runtime contract. Current implementat
 - Gameplay rules are read from this service's own versioned data when a version is activated; the runtime service does not query design or admin databases.
 - Integrates with the tick system described in [Tick System and Runtime Design](../../system-architecture-ticks.md) to preserve deterministic command ordering.
 - Cross-service combat or trade operations run within ticks and rely on Redis-based rollback, not sagas. See [Transaction Strategies](../../system-architecture-transactions.md).
-- All commands are scoped by `tenantId` so rules execute only against data for the active game instance.
+- The target runtime contract is that every player-delegated gameplay RPC carries the complete validated typed `PlayerExecutionContext`, including `tenantId`, `playableStateNamespaceId`, server-derived `playableStateScope`, active `gameInstanceId`, and applicable region/epoch or executor fences. The live per-RPC schemas, including `SendCommunication` and its legacy `session_attestation`, remain an implementation gap; see the [PlayerExecutionContext contract](../../system-architecture-authentication.md#gameplay-player-execution-context-contract-normative).
 - Gameplay gRPC requests do not include JWTs. Game Session provides player identity from Redis via `SessionContext`, may refresh a JWT from Account Service if roles change, and does not validate tokens for gameplay. Service-to-service traffic still uses mutual TLS as described in the [Security Architecture](../../system-architecture-security.md).
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 - Flyway is enabled for consistency with other services, but the initial migration is empty because no tables are required.

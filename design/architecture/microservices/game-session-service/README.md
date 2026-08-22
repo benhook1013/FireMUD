@@ -1,17 +1,21 @@
 # Game Session Service
 
+The canonical owner contracts for this service's connection/session lane are [Session Behavior](../../system-architecture-session-behavior.md#namespace-scoped-controller-transfer-session-02), [Reconnection](../../system-architecture-reconnection.md#client-reconnection-behaviour), and [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md#output-model). This service document records only Game Session API, storage, and runtime consequences; it does not reproduce those decisions.
+
 ## Overview
 
 Orchestrates live game sessions, including tick execution, player input validation, and runtime feature toggles. It is the gameplay session front door for both Telnet and `/ws/game/**` clients and the lease-owning tick executor for each active `<tenantId, gameInstanceId, regionId>` region scope.
 
 Meaningful gameplay-session and tick-coordination state is externalized into Redis and PostgreSQL rather than kept as authoritative process-local memory. The target state therefore treats Game Session instances as replaceable workers: a new instance of the same service type should be able to resume session-front-end or lease-owner responsibility from shared state. Hidden same-type recovery is not a current availability guarantee; its implementation and proof remain a gap, and any user-visible reconnect caused solely by a non-edge Game Session restart remains implementation/proof debt rather than target behavior.
 
+Current live Redis storage has two distinct record families: `session:game:*` authenticated gameplay-session records and `sessionctx:*` bootstrap or implementation-local context/index records. The `session:game:*` records together with the region-binding contract remain authoritative for current authenticated gameplay semantics; `sessionctx:*` records do not authorize gameplay. Their ownership and storage details are defined in [runtime and data](./runtime-and-data.md#redis-ownership-and-coordination-rules).
+
 This doc set is the authoritative source for:
 
-- gameplay session ownership and front-door responsibilities;
+- Game Session's local API, storage, and runtime consequences for gameplay-session ownership and front-door responsibilities;
 - the split between session front-end pods and region lease owners;
-- Game Session's ownership of tick execution, reconnectable gameplay bindings, and pinned runtime/script state;
-- the minimal text command protocol and world-selection flow used by the initial gameplay slice; and
+- Game Session's local tick, runtime/script, connection-handling, and world-selection consequences; and
+- links to the canonical shared contracts for reconnectable bindings and text-protocol framing;
 - the service's control-plane, runtime, configuration, and operator contracts.
 
 ## Target Control-Plane Summary
@@ -28,7 +32,7 @@ Current seams are narrower: patch/request convergence reads, instance-scoped pau
 - **Game instance** – a specific, replaceable running instance of a tenant’s world, identified by an opaque internal `gameInstanceId` in the database and runtime APIs as described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md#version-activation--rollback). It is not the durable identity of playable state; [ADR 0122](../../decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md) assigns that role to `playableStateNamespaceId`.
 - **Playable-state namespace** – the stable `playableStateNamespaceId` resolved for a realm/playtest lifecycle. Game Session carries it in admission and routing bundles, while the active `gameInstanceId` remains the execution target. A replacement retains the namespace; a new playtest receives a new one.
 - **Character identity** – gameplay identity keyed by `characterId`.
-- **Player gameplay session** – a single player’s live connection and gameplay context bound to the complete durable gameplay-binding identity `{accountId, tenantId, playableStateNamespaceId, playableStateScope, characterId}` and the current, replaceable runtime fence `{gameInstanceId, regionId, regionEpoch}` where applicable. Resume resolves by the durable identity and separately validates that current runtime fence; `gameInstanceId` is not the character’s durable identity. Gameplay sessions are stored in Redis under `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` and are purged when the session ends. The canonical identity and takeover contract is defined by [Session Behavior](../../system-architecture-session-behavior.md#multi-client-behavior-and-session-takeover) and the [Identifier Glossary](../../system-architecture-identifier-glossary.md#core-identifiers).
+- **Player gameplay session** – the target-only namespace controller/CAS identity is `{tenantId, playableStateNamespaceId, characterId}`, with the authenticated `accountId` verified separately as binding-owner evidence. Current implementation drift remains per-instance and uses `{tenantId, gameInstanceId, characterId}`. Server-derived `playableStateScope` and current, replaceable runtime fence `{gameInstanceId, regionId, regionEpoch}` are carried as separate binding evidence where applicable. Target resume resolves by the durable controller key and separately validates owner and runtime-fence evidence; current gameplay sessions are stored in Redis under `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` and are purged when the session ends. The canonical target identity and takeover/CAS contract is defined by [Session Behavior](../../system-architecture-session-behavior.md#namespace-scoped-controller-transfer-session-02) and the [Identifier Glossary](../../system-architecture-identifier-glossary.md#core-identifiers).
 - **Region / region shard** – a subdivision of a running game instance's world used for tick execution and scaling. Tick coordination keys are scoped per `<tenantId, gameInstanceId, regionId>` and do not follow individual player session lifecycles.
 
 ## Responsibilities

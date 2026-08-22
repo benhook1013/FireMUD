@@ -1,5 +1,11 @@
 # TCP Proxy Service Operations
 
+The target operational contract covers safe admission and readiness for new Telnet sessions, plus exact lifecycle and close attribution for established bridges. TCP Proxy remains the transport-edge operator surface; implementation status below records current convergence against those target concerns.
+
+## Implementation Status
+
+The current `TelnetServerHandler` preserves close reasons only for status `1000` reasons beginning with `logout`, exact `1001`/`idle_timeout`, status `1008` reasons beginning with `policy_violation`, and exact `1011`/`internal_error`; all other outcomes fall back to `backend_unavailable`. The two prefix checks are current implementation drift from the canonical delimiter-bound grammar: they incorrectly accept and forward arbitrary undelimited suffixes such as `logoutgarbage` and `policy_violationgarbage`, instead of requiring the exact top-level token optionally followed by one `;subreason=<bounded-value>` suffix and validating the complete code/reason pair. Bridge shutdown classification is `planned_drain` only for exact `logout;subreason=gateway_restart`, `upstream_logout` for every other currently prefix-accepted logout reason, and `unattributed_failure` otherwise. Broader canonical tokens such as standalone `session_replaced` and `service_restart`, complete token/subreason validation, and invalid-prefix fallback remain target behavior where they are not yet recognized.
+
 ## Operational Notes
 
 - Runs as a Kubernetes Deployment, with Docker Compose for local development, and exposes `/actuator/health/readiness` and `/actuator/health/liveness`.
@@ -29,10 +35,11 @@ TCP Proxy metrics follow the global Micrometer/OpenTelemetry conventions describ
 - `tcpproxy.tls.misconfig` and `tcpproxy.gateway.handshake.failures{reason="..."}`
 - `tcpproxy.telnet.discarded`
 - `tcpproxy.disconnect.notify.transport_failure{status="<grpc_status>"}`
-- `tcpproxy.disconnect.notify.app_error{code="<code>"}`
-- `grpc_app_error_total{code="<code>"}`
+- `tcpproxy.disconnect.notify.app_error{code="<code>"}` – supplementary caller-side/local application-error breakdown
+- `grpc_app_error_total{service="tcp-proxy-service",code="<code>"}` – supplementary caller-side generic application-error count recorded while normalizing the Game Session response
+- `grpc_app_error_total{service="game-session-service",code="<code>"}` – canonical Game Session producer application-error meter
 - `mcp.greeting.mode_conflict` when duplicate MCP greeting ownership is detected
-- `bridge_shutdown_class=planned_drain|upstream_logout|unattributed_failure` as the canonical bounded shutdown attribution
+- Target `bridge_shutdown_class=planned_drain|valid_upstream_close|unattributed_failure` is bridge-only operational metadata, never lifecycle authority. Current close recognition and its legacy `upstream_logout` classification are defined in [Implementation Status](#implementation-status) above; standalone `session_replaced`, `1012/service_restart`, and the neutral valid-close class remain target-only until that boundary converges. See [Gateway Architecture](../../system-architecture-gateway.md) and [Protocol Bridging](../../system-architecture-protocol-bridging.md#telnet-disconnect-reasons).
 
 Bounded labels and naming rules remain canonical. Detailed identifiers such as client IP, `gameInstanceId`, and error detail stay in structured logs and tracing spans rather than in high-cardinality metric labels.
 
@@ -82,8 +89,9 @@ When wiring alerts and runbooks for the TCP Proxy Service, focus on a small set 
   - Alert on sustained `tcpproxy.gateway.handshake.failures{reason!="timeout"}` and on long tails in `tcpproxy.websocket.reconnect.delay`.
   - Cross-check these alerts with Gateway health and TLS/mTLS metrics so incidents are triaged at the correct layer.
 - **NotifyDisconnect health**
-  - Monitor `tcpproxy_disconnect_notify_transport_failure_total` and `grpc_app_error_total{code="<code>"}` for spikes in `UNAVAILABLE` or `DEADLINE_EXCEEDED`.
-  - Treat sustained increases in permanent error codes as configuration or contract issues rather than transient incidents.
+  - Monitor `tcpproxy_disconnect_notify_transport_failure_total{status="<grpc_status>"}` for transport statuses such as `UNAVAILABLE` and `DEADLINE_EXCEEDED`.
+  - Monitor canonical response/application errors in `grpc_app_error_total{service="game-session-service",code="<code>"}`. The caller-side `grpc_app_error_total{service="tcp-proxy-service",code="<code>"}` and `tcpproxy_disconnect_notify_app_error_total{code="<code>"}` series are supplementary local normalization/breakdown signals, not the canonical producer application-error meter.
+  - Treat sustained increases in permanent response/application error codes as configuration or contract issues rather than transient incidents.
   - Treat `RESOURCE_EXHAUSTED` spikes as consumer-side overload and check Game Session saturation before changing retry settings.
 
 ## Metrics and Tracing
@@ -99,7 +107,7 @@ In Prometheus these Micrometer meters appear with the expected naming translatio
 
 The example PromQL and Alertmanager rules in `design/observability/grafana/tcp-proxy-alerts-snippets.md` use these Prometheus-style names; treat this document as the canonical meter owner and the Grafana snippets as reference queries over them.
 
-For operator interpretation, `bridge_shutdown_class=planned_drain` corresponds to a clean internal bridge close such as `1000/logout;subreason=gateway_restart`, while `bridge_shutdown_class=unattributed_failure` corresponds to abrupt bridge loss that ultimately surfaces Telnet-side as `backend_unavailable`.
+For operator interpretation, `bridge_shutdown_class` is bridge-only correlation metadata and never replaces Gateway’s external close taxonomy. Use the current close recognition and fallback mapping in [Implementation Status](#implementation-status); standalone `session_replaced` and `1012/service_restart` are target-only until that boundary converges. These operational classes and optional subreasons never establish command commit or change lifecycle/retry behavior. See [Gateway Architecture](../../system-architecture-gateway.md) and [Protocol Bridging](../../system-architecture-protocol-bridging.md#telnet-disconnect-reasons).
 
 ## Manual Endpoint Verification
 

@@ -105,11 +105,13 @@ Games may extend standard behavior only through explicitly documented extension 
 
 The platform default is `10` entries and the platform maximum is `20`. A tenant/game may configure its own effective default and maximum within those platform limits. A supplied `count` returns the newest requested subset, bounded by the effective maximum.
 
-Its storage and retention are independent of the durable resume transcript. See [Input, Output, and Presentation](./system-architecture-input-output-and-presentation.md#separate-history-features).
+Its storage and retention are independent of the bounded durable semantic reconnect context. That durable context stores bounded structured semantic entries; after reconnect, Game Session renders a derived recent-context presentation from those entries. It is not client command-input history, a delivery acknowledgement, or a complete Player Transcript Archive and Export. See [Input, Output, and Presentation](./system-architecture-input-output-and-presentation.md#separate-history-features) and [ADR 0134](./decisions/adr-0134-bounded-durable-semantic-reconnect-context.md).
+
+The local output consequence is that domain services return typed semantic outcomes; Game Session maps them to compact, versioned `PlayerOutput` envelopes plus deterministic text and prompt projections. First-party WebSocket responses and recipient pushes deliver the structured envelope; Telnet and generic text WebSocket deliver its deterministic text projection. Transport writers only deliver the projection assigned to their branch. [ADR 0135](./decisions/adr-0135-compact-versioned-player-output-and-late-rendering.md) and [Input, Output, and Presentation](./system-architecture-input-output-and-presentation.md#rendering-ownership) own the output boundary; [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants) owns transport delivery.
 
 ## Related Contracts
 
 - [Game Session Protocols](./microservices/game-session-service/protocols.md) defines text transport framing, stage-aware response format, and protocol examples.
-- [Input, Output, and Presentation](./system-architecture-input-output-and-presentation.md) defines structured player output, durable resume transcripts, command-history separation, and future archive/export behavior.
-- [Reconnection Strategy](./system-architecture-reconnection.md) defines reconnect restoration from the durable resume transcript.
+- [Input, Output, and Presentation](./system-architecture-input-output-and-presentation.md) defines structured player output, bounded durable semantic reconnect context, command-history separation, and future archive/export behavior.
+- [Reconnection Strategy](./system-architecture-reconnection.md) defines reconnect restoration from bounded semantic recent context.
 - [Game Customization](./system-architecture-game-customization.md) and Game Design architecture documents define tenant/game-authored behavior and content ownership.

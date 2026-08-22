@@ -1,23 +1,12 @@
 # Spring Cloud Gateway Client Behavior
 
-## Implementation Status
-
-Unless explicitly described as current behavior, the sections below define the target Gateway contract. Current implementation facts and gaps are:
-
-- Java `CanonicalGatewayRoutesConfiguration` is the current route authority, with environment overrides; the target route catalog and deny-by-default exposure rules still require convergence proof.
-- The current edge implements bounded connect-token handshake classes and replay handling, but this does not prove the complete target replay durability, rotation, or reconnect contract.
-- **Current drift:** the protected admin `JwtAuthFilter` parses shared-HMAC JWTs through `JwtUtil`. This is current implementation behavior only, is not a player-facing asymmetric-validation capability, and must not be confused with the target receiving-service boundary.
-- **Target boundary:** On protected admin routes, Gateway requires an `Authorization` header at ingress and forwards it without parsing or validating ordinary JWT contents; consuming services own asymmetric JWKS validation under [JWT and Token Contracts](../../system-architecture-jwt-and-token-contracts.md).
-- The current public `/api/session/**` inventory is limited to `GET /api/session/ping`; internal `/sessions*` mutations remain non-public.
-- The current route catalog blocks the documented internal subtrees, and `HeaderTrustFilter` owns trusted-header promotion; deployment-level drain, failover, and live readiness evidence remain separate proof obligations.
-
 ## Gameplay Route Behavior
 
 - The canonical gameplay WebSocket route is `/ws/game/**`.
 - This route forwards to the Game Session Service session front-end layer; the gateway does not participate in gameplay shard routing or lease-owner selection.
 - Gateway is the edge failure boundary. Fleet-level failover leaves sockets on healthy Gateway instances up, while a socket terminated by the serving instance requires a fresh `/ws/game/**` connection and the client-visible recovery flow in [Reconnection Strategy](../../system-architecture-reconnection.md). Bounded upstream rebind, its elapsed-time limits, and FIFO stall handling are owned by [Gateway architecture](../../system-architecture-gateway.md#backend-unavailable-grace-window) and [Reconnection Strategy](../../system-architecture-reconnection.md#bounded-non-edge-restart-recovery).
 - Telnet clients use the same gameplay route after the TCP Proxy bridge. Their `LOGIN`, conditional `JOIN`, and `PLAY` semantics are owned by [Authentication](../../system-architecture-authentication.md#login-and-session-flow); the TCP Proxy transport procedure is documented in [TCP Proxy protocols](../tcp-proxy-service/protocols.md#recommended-telnet-client-flows). Hidden attach hints remain advisory transport metadata only.
-- Planned Gateway drain must be surfaced by the TCP Proxy as `logout` with `gateway_restart` context when the deterministic bridge-drain signal is received. Unattributed loss of the specific Gateway bridge/socket currently serving a Telnet client is surfaced immediately as `backend_unavailable`; unaffected Telnet sessions routed through other healthy Gateway instances should continue normally.
+- Planned Gateway drain must be surfaced by the TCP Proxy as `service_restart` when the deterministic bridge-drain signal is received. Controller takeover is surfaced as `session_replaced`; terminal logout remains `logout`. Unattributed loss of the specific Gateway bridge/socket currently serving a Telnet client is surfaced immediately as `backend_unavailable`; unaffected Telnet sessions routed through other healthy Gateway instances should continue normally. The Gateway-owned matrix is the authority; bridge subreason is diagnostic only.
 
 ## Trusted TCP Proxy Bridge Admission
 
@@ -39,6 +28,18 @@ Unless explicitly described as current behavior, the sections below define the t
 - A concrete wire-level example remains the `X-Firemud-Handshake-Error-Class` response header paired with matching structured-log fields. Capable non-browser callers and operator tooling may rely on that bounded surface rather than parsing free-form text; browser WebSocket APIs cannot read failed-upgrade headers and use the conservative recovery rule in Gateway architecture instead.
 - The gateway observability contract requires `gateway.websocket.closes{reason,subreason}`, `gateway.websocket.handshake.rejected`, and `gateway.websocket.slow_client_closes`.
 - Close and handshake classifications must remain bounded and stable so reconnect logic, dashboards, and alerting do not depend on free-form strings.
+- Close classes describe transport/session lifecycle only. They never establish the result of an in-flight command. The current durable `GetGameplayCommandStatus` lookup uses `{tenantId, gameInstanceId, commandId}`; target automation lookup and replay use the authoritative complete Command-Handoff Identity defined by the [Game Session API owner](../game-session-service/api-contracts.md#grpc-apis), not the current tuple or a Gateway-owned copy. Close or rebind does not imply completion, and durable status may be `LOST_BEFORE_STAGING`; see [ADR 0016](../../decisions/adr-0016-canonical-gameplay-command-status-lifecycle.md).
+
+## Implementation Status
+
+Unless explicitly described as current behavior, the sections below define the target Gateway contract. Current implementation facts and gaps are:
+
+- Java `CanonicalGatewayRoutesConfiguration` is the current route authority, with environment overrides; the target route catalog and deny-by-default exposure rules still require convergence proof.
+- The current edge implements bounded connect-token handshake classes and replay handling, but this does not prove the complete target replay durability, rotation, or reconnect contract.
+- **Current drift:** the protected admin `JwtAuthFilter` parses shared-HMAC JWTs through `JwtUtil`. This is current implementation behavior only, is not a player-facing asymmetric-validation capability, and must not be confused with the target receiving-service boundary.
+- **Target boundary:** On protected admin routes, Gateway requires an `Authorization` header at ingress and forwards it without parsing or validating ordinary JWT contents; consuming services own asymmetric JWKS validation under [JWT and Token Contracts](../../system-architecture-jwt-and-token-contracts.md).
+- The current public `/api/session/**` inventory is limited to `GET /api/session/ping`; internal `/sessions*` mutations remain non-public.
+- The current route catalog blocks the documented internal subtrees, and `HeaderTrustFilter` owns trusted-header promotion; deployment-level drain, failover, and live readiness evidence remain separate proof obligations.
 
 ## Filter Chain and Admission Behavior
 

@@ -23,19 +23,19 @@ The target automation handoff also requires the complete Trigger Identity, inclu
 
 ## Redis Roles and Usage Patterns
 
-FireMUD runs two logical Redis roles in all non‑trivial environments:
+FireMUD runs two logical Redis roles in all non-ephemeral environments:
 
 Scope-key convention: `{tenantRegionTag}` is the canonical opaque tag for the complete `<tenantId, gameInstanceId, regionId>` scope, while `{tenantInstanceTag}` is the canonical opaque tag for `<tenantId, gameInstanceId>`. Region-scoped coordination metadata keys therefore carry `gameInstanceId` through `{tenantRegionTag}`; callers must not substitute a tenant-only or region-only tag.
 
 - **Coordination Redis**
   - Responsibilities:
     - Tick queues, locks, timers, and executor leases.
-    - Gameplay session state and liveness bindings.
+    - Gameplay session liveness, binding, and rebind coordination. Durable semantic reconnect context remains Game Session-owned persistence under [ADR 0134](./decisions/adr-0134-bounded-durable-semantic-reconnect-context.md) and [Input, Output, and Presentation](./system-architecture-input-output-and-presentation.md#canonical-resume-context-model); Redis gameplay session state is not that context.
     - Retry metadata and conflict tracking.
-    - Automation coordination structures that participate in tick timelines.
+    - Automation coordination structures that participate in tick timelines under Automation & Scripting ownership and Game Session enqueue contracts.
   - Characteristics:
     - Treated as a long-running **coordination buffer with bounded tail-loss** in persistent environments; durable history for tick effects and gameplay outcomes lives in PostgreSQL tick effect ledgers and domain stores.
-    - Owned by the **Game Session Service** for gameplay coordination and gameplay session prefixes such as `tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`, the canonical `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` records, and their derived `session:game:index:*` projections, including the separately approved `session:game:auth:issuer-generation:v1:*` consumer projection; Account Service owns the explicit `session:auth:token:*` and `session:auth:generation:*` prefixes; Automation & Scripting Service owns automation-specific coordination prefixes as documented below.
+    - Game Session owns only its tick/session coordination prefixes and registered scripts: gameplay coordination families such as `tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`, the canonical `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>` records, and their derived `session:game:index:*` projections, including the separately approved `session:game:auth:issuer-generation:v1:*` consumer projection. Account Service retains ownership of the explicit `session:auth:token:*` and `session:auth:generation:*` prefixes, and Automation & Scripting Service retains ownership of its automation-specific prefixes and scripts as documented below; Game Session invokes those contracts but does not write them.
     - AOF enabled in `dev_local`, `hobby_self_hosted`, and `production_clustered`–like profiles.
     - Subject to tail‑loss SLOs and replay guarantees described in the Redis hub doc.
   - Example prefixes:
@@ -46,7 +46,7 @@ Scope-key convention: `{tenantRegionTag}` is the canonical opaque tag for the co
     - `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`
     - `session:game:index:*` derived gameplay lookup projections
     - `sessionctx:*` bootstrap/session-context keys used by the current Game Session implementation.
-    - Automation coordination prefixes that follow shard‑local rules.
+    - Automation-owned coordination prefixes are documented separately and are not Game Session-owned.
 
 - **Cache/Rate‑Limit Redis**
   - Responsibilities:
@@ -56,15 +56,15 @@ Scope-key convention: `{tenantRegionTag}` is the canonical opaque tag for the co
   - Characteristics:
     - Treated as **non‑authoritative** and fully reset‑tolerant.
     - Eviction and TTL are part of normal behavior; designs must tolerate cold caches.
-    - Schema and TTL policies for cache and rate‑limit prefixes are defined centrally in shared infrastructure libraries rather than per service.
+    - Shared infrastructure libraries enforce the default cache schema and TTL policies (including serialization/TTL validation and global size/pressure envelopes), but they do not own each cache's semantic contract. The owning service and the canonical cache catalog retain per-prefix choices, including the `view:room-look:*` TTL, size, invalidation, metrics, and reset contract owned by Game Session.
   - Example prefixes:
     - `inventory:<tenantId>:<containerId>`
-    - `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>` (exact room, viewer/session, and policy context bound)
+    - `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>:<readFenceHash>` (target-only Game Session disposable presentation/redraw helper; exact room, viewer/session, policy context, and applicable read-fence context bound. Current `ResolveLook` behavior is uncached; cache misses, unavailable or untrusted cache/fence evidence, and write refusal fall back to the authoritative uncached `ResolveLook` result. See the [canonical Class-B contract](./system-architecture-redis-cache.md#canonical-viewroom-look-class-b-contract); never semantic reconnect context, frame/output replay, archive, or delivery ledger.)
     - `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>`
     - `ratelimit:<tenantId>:<subjectHash>:<timeWindow>` (one opaque stable subject hash per individual subject)
     - `automation:queue:{tenantInstanceTag}:<entityId>` and automation quota counters.
 
-Coordination Redis and Cache/Rate‑Limit Redis are treated as **separate deployments** in all persistent, player-facing environments so cache eviction/pressure cannot silently impact coordination SLOs. The only supported exception is explicitly ephemeral test/CI stacks that opt out of tail-loss and role-separation guarantees; those stacks may collapse roles temporarily, but must be clearly labelled as ephemeral and must not be used to validate coordination behavior or SLOs. See [Environment Profiles and Mappings](#environment-profiles-and-mappings) for details.
+Coordination Redis and Cache/Rate‑Limit Redis are treated as **separate deployments** in all non-ephemeral environments so cache eviction/pressure cannot silently impact coordination SLOs. The only supported exception is explicitly ephemeral test/CI stacks that opt out of tail-loss and role-separation guarantees; those stacks may collapse roles temporarily, but must be clearly labelled as ephemeral and must not be used to validate coordination behavior or SLOs. See [Environment Profiles and Mappings](#environment-profiles-and-mappings) for details.
 
 New prefixes must declare:
 
@@ -162,9 +162,9 @@ The following table summarizes how core services interact with Coordination Redi
 
 | Service | Redis Usage |
 | --- | --- |
-| **Game Session Service** | Owns **Coordination Redis**: tick queues, locks, timers, retry metadata, region leases, and Redis‑backed session state used for reconnection. All tick/coordination key prefixes and their Lua scripts are registered and owned here. |
+| **Game Session Service** | Owns only its **Coordination Redis** tick/session families: tick queues, locks, timers, retry metadata, region leases, and Redis-backed session liveness, binding, and rebind coordination, together with their registered scripts. It also has sole read/write ownership of the **Cache/Rate‑Limit Redis** `view:room-look:*` disposable presentation/redraw helper; other services do not read or write that prefix directly. Game Session owns that prefix's presentation semantics, while the canonical [cache catalog](./system-architecture-redis-cache-reference.md) records its TTL, size, invalidation, metrics, and reset contract; shared libraries enforce defaults and guardrails without taking ownership. Durable semantic reconnect context remains Game Session-owned persistence rather than Redis session state. It does not write Account-owned `session:auth:*` prefixes or Automation-owned prefixes/scripts. |
 | **Automation & Scripting Service** | Owns automation-specific prefixes such as `automation:queue:{tenantInstanceTag}:*`, `automation:timer:{tenantRegionTag}`, and `script-scheduler:{tenantRegionTag}:lastTickId`, but does **not** own gameplay `tick:*` queues or locks. It reads tick heartbeats via gRPC, uses PostgreSQL as the durable work source of truth, and uses **Cache/Rate‑Limit Redis** for script quotas and best-effort queue projection where documented. |
-| **Spring Cloud Gateway** | Uses **Cache/Rate‑Limit Redis** for token‑bucket rate limiting and best‑effort caches only; it never touches tick/coordination prefixes directly and always connects via the cache profile configured in `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`. |
+| **Spring Cloud Gateway** | Uses **Cache/Rate‑Limit Redis** for token‑bucket rate limiting and best‑effort caches, while its only **Coordination Redis** ownership/connection is the one-use connect-token replay marker `gateway:connect-token:jti:<jti>` and the associated `replayAdmissionFence`; it never touches tick, session, or other gameplay-coordination prefixes. The cache path connects via `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`. |
 | **Other microservices (Game Logic, Entity Management, World Management, Social & Groups, etc.)** | Do not define or own coordination prefixes; they participate in Coordination Redis **only** through shared helpers and Lua descriptors owned by Game Session (for example, `tick:{tenantRegionTag}:lock:<entityId>` for tick locks). Where they cache read‑heavy aggregates, they use **Cache/Rate‑Limit Redis** and the key patterns from the Redis Cache & Rate Limiting design. |
 
 These boundaries are part of the **Redis Coordination Invariants** described in `system-architecture-redis.md` and are enforced via shared key helpers, the Lua script registry, and CI tooling.

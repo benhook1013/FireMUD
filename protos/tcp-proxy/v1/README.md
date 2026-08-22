@@ -1,11 +1,12 @@
 # Tcp-proxy Service Proto (v1)
 
-This directory contains version 1 protocol buffer definitions for the TCP Proxy
-Service. They describe the internal gRPC events used by the service to notify
-the Game Session Service about client disconnects. The TCP Proxy’s own input
-buffers are strictly connection-local and cleared on disconnect; any
-reconnection and command replay behaviour is governed by the Game Session
-Service using Redis-backed state as described in the central design docs.
+This directory contains version 1 protocol buffer definitions for the TCP Proxy Service. They describe the internal gRPC events used by the service to notify the Game Session Service about client disconnects.
+
+## Scope and transport reconnect mechanics
+
+This package carries internal `NotifyDisconnect` events only; it is not the player-facing command or admission contract. Game Session owns command-front-door handling, command acceptance, gameplay binding, and gameplay commands such as `LOOK`; Authentication owns credential, membership, entitlement, target-admission, and `LOGIN`/`JOIN`/`PLAY` semantics. TCP Proxy owns transport framing, connection-local buffering, transport reconnect mechanics, and disconnect notification only; it does not own admission, replay eligibility, or semantic context restoration. The transport/event mechanics are described by [TCP Proxy protocols](../../../design/architecture/microservices/tcp-proxy-service/protocols.md), while the player-command contract is owned by [Game Session protocols](../../../design/architecture/microservices/game-session-service/protocols.md) and the admission rules by [Authentication](../../../design/architecture/system-architecture-authentication.md#login-and-session-flow).
+
+The TCP Proxy’s own input buffers are strictly connection-local and clear only on an actual client disconnect; a retained-edge upstream rebind does not clear them, is not a fresh reconnect, and does not repeat `LOGIN`/`JOIN`/`PLAY`. A fresh reconnect repeats the owner-defined admission sequence; the proxy emits no positive reconnect event and never replays client input, TCP or WebSocket frames, MCP state, unsent Telnet output, or other raw transport bytes. TCP Proxy neither authorizes nor restores retained semantic context. Game Session's current first-party post-logout suppression remains incomplete, while Redis may only cache or accelerate eligible context. [Reconnection Strategy](../../../design/architecture/system-architecture-reconnection.md) owns replay eligibility, episode termination/generation fencing, and fresh-`LOOK` sequencing; [Input, Output, and Presentation](../../../design/architecture/system-architecture-input-output-and-presentation.md) owns the entry, cache, and presentation consequences. The [Player Access and Session tracker](../../../design/project-management/implementation-tracking/player-access-and-session.md#reconnect-and-continuity) records current status and focused proof gaps.
 
 Generate Java stubs with `./gradlew generateProto` from the repository root.
 For details see the [design docs](../../../design/architecture/microservices/tcp-proxy-service/README.md).

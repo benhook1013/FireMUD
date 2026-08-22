@@ -74,3 +74,13 @@ Entry format:
   - Context: autonomous delegation encountered `agent thread limit reached`.
   - Observation: the harness slot limit requires a different recovery path from a model-capacity failure.
   - Expected pattern: route thread exhaustion through the [AI Delegation And Review](../developer-workflows/ai-delegation-and-review.md) status/close-out path; reserve delayed same-tier retries for actual model-capacity failures.
+
+- `2026-08-21`: Reconnect context and connection coordination have distinct ownership
+  - Context: consolidating the durable semantic reconnect-context contract exposed a recurring temptation to treat all reconnect-related Redis data as one authority family.
+  - Observation: Cache/Rate-Limit Redis holds only a derived semantic-context cache; Coordination Redis owns live connection liveness, gameplay bindings, and rebind coordination; Game Session persistence owns durable `PENDING` rebind attempts and semantic reconnect context.
+  - Expected pattern: keep these ownership families separate and rebuild semantic context from Game Session persistence after cache loss.
+
+- `2026-08-22`: Selective ADR import must preserve reviewed provenance and consolidate authority locally
+  - Context: Packet 5 imported one reviewed connection/output family while later packet decisions remained intentionally pending.
+  - Observation: treating an ADR packet as a bulk copy either loses exact checked decision provenance or spreads normative detail into secondary documents before the family is ready.
+  - Expected pattern: import only the selected reviewed family, preserve its exact checked disposition and source keys, consolidate normative detail at the canonical owner with links and local consequences elsewhere, and defer broad residual drift to the planned whole-corpus authority review.

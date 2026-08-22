@@ -15,18 +15,6 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 >
 > Other docs should summarize behavior and link back here instead of redefining gateway-specific contracts.
 
-## Implementation Status
-
-This document describes the behaviour of Spring Cloud Gateway in its target architecture. Where implementation is still catching up, treat this doc set and the linked cross-service architecture docs as the source of truth and reconcile code/tests accordingly.
-
-| Area | Target behaviour | Current status |
-| --- | --- | --- |
-| Baseline route authority | The released declarative route catalog is the single player-facing route authority and is imported at startup. | Not converged: current baseline routes are Java-owned in `CanonicalGatewayRoutesConfiguration`; the target `routes.yml` resource and import do not exist yet. |
-| Dynamic route management | REST and gRPC route mutation APIs are dev/test-only overrides on top of the released route catalog. Player-facing environments reject dynamic mutation configuration at startup; production operators have diagnostics only, and route changes use the separately accepted declarative deployment workflow. Any future production runtime route-control plane requires a new architecture decision and must remain consistent with the [canonical authorization route matrix](../../system-architecture-authz-route-matrix.md). | Not converged: mutation components are currently unconditional and lack the required profile isolation, startup rejection, protected-route validation, and destination/predicate/filter allowlists. |
-| Rate limiting and Redis wiring | Gateway rate limiting uses Spring Cloud Gateway `RequestRateLimiter` backed by the Cache/Rate-Limit Redis role, with gameplay abuse policy split across Gateway, TCP Proxy, and Game Session. | Implemented. |
-| TCP Proxy bridge admission | Traffic from the TCP Proxy Service always targets `/ws/game/**`, and the proxy -> gateway hop is mTLS-authenticated in player-facing environments. | Implemented. |
-| WebSocket close and handshake observability | Gateway emits bounded close, handshake-rejection, and slow-client metrics/log classifications; bridge closes include `bridge_shutdown_class=planned_drain\|upstream_logout\|unattributed_failure` alongside the bounded reason/subreason fields. | Partially implemented at the current bridge and first-party handshake boundary. ADR 0013's elapsed-time cutoff, bounded input stall/rebind path, and terminal-versus-rebindable upstream classification remain gaps. |
-
 ## Responsibilities
 
 - Enforce the presence of an `Authorization` header for protected admin routes while leaving JWT parsing and validation to downstream services.
@@ -36,6 +24,7 @@ This document describes the behaviour of Spring Cloud Gateway in its target arch
 - Relay gameplay and admin traffic to the correct backend services.
 - Expose internal-only diagnostic gRPC management endpoints such as `Ping` on port `6565` over mTLS-authenticated internal network surfaces; route-mutation methods remain dev/test-only and are absent or disabled in player-facing environments.
 - Fail readiness for new gameplay traffic when the `/ws/game/**` route is not safe to admit.
+- Translate typed upstream lifecycle outcomes into the canonical external close taxonomy; TCP Proxy applies the equivalent Telnet token and does not invent a second mapping.
 
 ## Readiness and Liveness
 
@@ -46,6 +35,18 @@ This document describes the behaviour of Spring Cloud Gateway in its target arch
 - The gameplay-route canary is bounded and operation-shaped. It validates the actual `/ws/game/**` upgrade path with an explicit short timeout rather than relying on unrelated ping-style checks or long retry budgets. In player-facing environments, connect-token replay protection is part of admission safety; if the replay-protection store is unavailable and the route would fail closed with `CONNECT_REPLAY_PROTECTION_UNAVAILABLE`, the gameplay route is not ready.
 - Retry filters are resilience mechanisms, not readiness compensation. A gateway that still needs startup retries to survive ordinary new gameplay admission is not ready.
 - Readiness transition observability uses the shared contract from [Deployment Environments](../../infrastructure/deployment-environments.md): `firemud.readiness.current`, `firemud.readiness.transitions`, and structured logs keyed by the curated dependency name `gameplayRoute`.
+
+## Implementation Status
+
+This document describes the behaviour of Spring Cloud Gateway in its target architecture. Where implementation is still catching up, treat this doc set and the linked cross-service architecture docs as the source of truth and reconcile code/tests accordingly.
+
+| Area | Target behaviour | Current status |
+| --- | --- | --- |
+| Baseline route authority | The released declarative route catalog is the single player-facing route authority and is imported at startup. | Not converged: current baseline routes are Java-owned in `CanonicalGatewayRoutesConfiguration`; the target `routes.yml` resource and import do not exist yet. |
+| Dynamic route management | REST and gRPC route mutation APIs are dev/test-only overrides on top of the released route catalog. Player-facing environments reject dynamic mutation configuration at startup; production operators have diagnostics only, and route changes use the separately accepted declarative deployment workflow. Any future production runtime route-control plane requires a new architecture decision and must remain consistent with the [canonical authorization route matrix](../../system-architecture-authz-route-matrix.md). | Not converged: mutation components are currently unconditional and lack the required profile isolation, startup rejection, protected-route validation, and destination/predicate/filter allowlists. |
+| Rate limiting and Redis wiring | Gateway rate limiting uses Spring Cloud Gateway `RequestRateLimiter` backed by the Cache/Rate-Limit Redis role, with gameplay abuse policy split across Gateway, TCP Proxy, and Game Session. | Implemented. |
+| TCP Proxy bridge admission | Traffic from the TCP Proxy Service always targets `/ws/game/**`, and the proxy -> gateway hop is mTLS-authenticated in player-facing environments. | Implemented. |
+| WebSocket close and handshake observability | Target-only typed Game Session → Gateway lifecycle intent feeds Gateway’s sole external WebSocket close-translation owner: `logout`, `session_replaced`, `service_restart`, `idle_timeout`, `policy_violation`, `internal_error`, and `backend_unavailable` are bounded top-level classes; bridge closes also carry `bridge_shutdown_class=planned_drain\|valid_upstream_close\|unattributed_failure` and optional diagnostic subreason. | Partially implemented at the current bridge and first-party handshake boundary. The typed lifecycle-intent contract is not implemented or versioned; unknown or absent intent must fail closed as `internal_error` at the public WebSocket boundary. `session_replaced`/`service_restart` convergence, neutral valid-upstream attribution, ADR 0013's elapsed-time cutoff, bounded input stall/rebind path, and terminal-versus-rebindable upstream classification remain gaps. See [Gateway Architecture](../../system-architecture-gateway.md#canonical-close-translation-matrix). |
 
 ## Documentation Map
 

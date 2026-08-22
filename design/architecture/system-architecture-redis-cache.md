@@ -32,14 +32,16 @@ All other controls (for example, per-tenant heuristics, noisy-tenant detection s
 - Dynamic runtime state (inventories, room occupants, transient effects, in-progress combat) changes frequently and must use careful invalidation rules and short-lived caches, if cached at all.
 - Purpose-driven caching only. Objects should be cached because they are expensive to compute or fetch and appear on hot paths, not “just in case.” Profiling and production telemetry will drive what actually lands in Redis.
 - Coordination workload isolation:
-  - All environments, including local development and small self-hosted setups, run **at least two Redis roles**:
+  - All non-ephemeral environments, including local development and small self-hosted setups, run **at least two Redis roles**:
     - A **Coordination Redis** deployment dedicated to ticks, locks, timers, sessions, and other gameplay-critical coordination state.
     - A **Cache/Rate-Limit Redis** deployment dedicated to read-side caches and gateway rate limits.
-  - Coordination Redis must not host large, eviction-driven caches under any profile. Even in development and hobby/self-hosted profiles, caches and rate limits are pointed at the separate Cache/Rate-Limit deployment so eviction and OOM behavior cannot silently affect coordination keys. The only supported exceptions are explicitly ephemeral test stacks that opt out of tail-loss and role-separation guarantees; see `system-architecture-redis-usage-and-profiles.md` for environment profiles and mappings.
+  - Coordination Redis must not host large, eviction-driven caches under any profile. Even in development and hobby/self-hosted profiles, caches and rate limits are pointed at the separate Cache/Rate-Limit deployment so eviction and OOM behavior cannot silently affect coordination keys. The only supported exception is an explicitly marked ephemeral CI/test stack whose tests are reset-tolerant, do not exercise coordination tail-loss or replay guarantees, and surface the shared endpoint; such a stack is outside coordination SLO validation. See `system-architecture-redis-usage-and-profiles.md` for environment profiles and mappings.
 - No soft coordination logs on Cache/Rate-Limit Redis:
   - Tick ordering, tick idempotency, and any correctness or fairness invariants for gameplay **must not** depend on cache or rate-limit keys. Cache/Rate-Limit Redis may only influence latency and load, never “what happened” or “in which order” from the tick engine’s perspective.
   - Automation and scripting structures on Cache/Rate-Limit Redis (for example `automation:queue:*`, `automation:quota:*`, `automation:tenant-budget:*`, `automation:test:capacity:*`) are explicitly documented as best-effort buffers and counters; they cannot act as authoritative logs or effect ledgers. Durable automation schedules and quotas live in PostgreSQL; cache entries merely accelerate lookups and quota checks.
   - If a new feature appears to need a durable or authoritative log for tick- or session-driven workflows, that log belongs in PostgreSQL (for example as a ledger or follow-up table) or, in rare cases, on Coordination Redis with explicit reset/tail-loss rules—not on Cache/Rate-Limit Redis.
+
+Gameplay session state on Coordination Redis means liveness, binding, and rebind coordination. Durable semantic reconnect context remains Game Session-owned persistence under [ADR 0134](./decisions/adr-0134-bounded-durable-semantic-reconnect-context.md) and [Input, Output, and Presentation](./system-architecture-input-output-and-presentation.md#canonical-resume-context-model); Cache/Rate-Limit Redis may only accelerate or cache that owner-controlled context.
 
 ### Forbidden Patterns (Cache/Rate-Limit Redis)
 
@@ -82,12 +84,14 @@ Some derived caches are better understood as a small built-in gameplay view cach
   - transient action acknowledgements such as speech, combat, item transfer confirmations, or admin mutation responses.
 - Ownership:
   - Game Logic (or another authoritative gameplay orchestrator) owns the structured result for the underlying read;
-  - Game Session owns any client-facing rendered transcript cache used for reconnect replay, UI restoration, or short-lived repeated reads.
+  - Game Session owns durable semantic recent-context persistence and its rendering policy; see [ADR 0134](./decisions/adr-0134-bounded-durable-semantic-reconnect-context.md) and [Input, Output, and Presentation](./system-architecture-input-output-and-presentation.md#canonical-resume-context-model). Cache/Rate-Limit Redis may only provide a disposable acceleration/cache for that owner-controlled context.
 - Safety rules:
   - cached view payloads are derived and disposable, never authoritative;
-  - they may improve latency or reconnect redraw experience, but they must not change gameplay semantics;
-  - each cached built-in view must opt in explicitly with a documented key shape, TTL, invalidation source, and replay/use rules rather than inheriting from a generic “all commands are cacheable” framework;
-  - cached room-view payloads should preserve the same top-level structure as the authoritative view contract (for example room prose, exits, occupants, room-ground items, and optional overlays) so reconnect/UI redraw does not invent a second ad hoc shape.
+  - `view:room-look:*` is a disposable presentation/redraw helper only; it is never semantic reconnect context, frame/output replay, a transcript archive, or a delivery ledger;
+  - `screenbuffer:*` is a separate disposable reconnect-context acceleration/cache family; it is distinct from `view:room-look:*` and never semantic authority;
+  - they may improve latency or presentation/redraw experience, but they must not change gameplay semantics;
+  - each cached built-in view must opt in explicitly with a documented key shape, TTL, invalidation source, and presentation/use rules rather than inheriting from a generic “all commands are cacheable” framework;
+  - cached room-view payloads should preserve the same top-level structure as the authoritative view contract (for example room prose, exits, occupants, room-ground items, and optional overlays) so presentation/UI redraw does not invent a second ad hoc shape.
 
 ## Version-Based Cache Validation
 
@@ -184,7 +188,7 @@ From a correctness perspective, cache usage falls into two broad classes:
 
 To avoid noisy-neighbor effects on coordination workloads, cache writers must also enforce **per-value size limits** and avoid unbounded lists or blobs in Redis:
 
-- Cap serialized values to a practical ceiling (for example, roughly 32 KB or two protobuf pages) before writing them to Redis. If an aggregate such as a current room view would exceed that size, split it into chunked entries under the same exact room, viewer/session, and policy-context binding rather than storing a multi-megabyte blob.
+- Cap serialized values to a practical ceiling (for example, roughly 32 KB or two protobuf pages) before writing them to Redis. A cache family may split an oversized aggregate into chunked entries only when its owning contract explicitly defines chunking and the complete scope binding for those chunks. `view:room-look:*` is not chunked: when its rendered LOOK payload exceeds the canonical 32 KiB limit, skip the cache write and serve the uncached authoritative `ResolveLook` result as specified below.
 - CI or static checks should exercise representative payloads to keep them within these limits, and reviewers must explicitly justify any intentional exception.
 - Large or streaming-style responses stay in PostgreSQL/object storage or behind dedicated APIs rather than being replicated wholesale into Redis, even on the Cache/Rate-Limit cluster.
 
@@ -212,12 +216,11 @@ Memory and eviction behavior for cache and rate-limit workloads must not comprom
   - May use an eviction policy such as `allkeys-lru` or `volatile-lru`, since entries are recomputable or best-effort.
   - Enforces strict limits on value size and TTL so cache growth does not starve rate limiting or degrade performance.
 
-For **all deployments**, including local development:
+For **all non-ephemeral deployments**, including local development:
 
 - Coordination and cache/rate-limit roles run on **separate Redis deployments** (for example, two containers/pods on the same host or separate processes), even when serving a single developer or tenant.
-- Docker Compose and Helm charts provide two services by default (for example `redis-coord` and `redis-cache`) so developers and operators never need to share a single Redis instance for both roles.
-- This two-role split is intentionally kept **lightweight**: it mirrors larger clustered deployments while only adding configuration complexity, not additional infrastructure primitives, so hobby and self-hosted operators can follow the same patterns as production with minimal overhead.
-- Any ad-hoc experiments that deliberately collapse roles into a single Redis instance are considered **unsupported** and outside the guarantees in this document; they must not be used for QA, staging, production, or any player-facing game instances.
+- Deployment mechanisms vary by environment: local Docker Compose provides both `redis-coord` and `redis-cache`; the umbrella Helm chart's `k8s/helm/firemud/values.yaml` defaults `previewStack.enabled=false` and therefore does not render its in-chart Redis services by default; the hosted overlay enables both in-chart Redis services; and production Terraform provisions separate Redis releases. These are local deployment consequences of the two-role requirement, not a second role policy.
+- Explicitly marked ephemeral CI/test stacks may collapse roles into a single Redis instance only when tests are reset-tolerant, do not exercise coordination tail-loss or replay guarantees, the environment is labelled `ephemeral / single-Redis`, and configuration/metrics surface the shared endpoint. These stacks are outside coordination tail-loss, replay, and SLO validation and must not be used for QA, staging, production, or any player-facing game instance.
 
 Operational dashboards track `used_memory`, `maxmemory`, and eviction counters for each deployment. In addition:
 
@@ -300,17 +303,27 @@ Cached aggregates in Redis should follow structured, namespaced key patterns to 
 - `character-cache:<tenantId>:<characterId>` – cached character graphs for hot reads.
 - `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>` – cached room-level dynamic state used in correctness-critical world decisions.
 - `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` – cached room snapshots/topology slices used for LOOK/navigation, scoped to a running instance.
-- `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>` – cached rendered or pre-assembled room view data bound to the exact room, viewer/session, and policy context.
+- `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>:<readFenceHash>` – cached rendered or pre-assembled room view data bound to the exact room, viewer/session, policy context, and applicable causal read fence.
 - `chat:city:<tenantId>:<cityId>` – cached short-lived windows of city chat history.
 
 #### Usage Restrictions for `view:room-look:*`
 
-`view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>` is always treated as a **Class B, TTL-only cache** for rendered LOOK-style room views:
+`view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>:<readFenceHash>` is always treated as a **Class B, TTL-only cache** for rendered LOOK-style room views:
 
+- It is a disposable presentation/redraw helper only, never semantic reconnect context, frame/output replay, a transcript archive, or a delivery ledger.
 - It is never a correctness source for combat, pathfinding/movement, or visibility/line-of-sight decisions.
-- The key must be bound to the exact room, viewer/session, and policy context. It must not be reused across rooms, viewers, sessions, authorization/presentation-policy contexts, or incompatible read-fence contexts.
+- The key must be bound to the exact room, viewer/session, policy context, and applicable read-fence context. `policyContextHash` remains the presentation/authorization policy context. `readFenceHash` is a stable collision-resistant digest over the canonical normalized complete applicable `CausalReadFence` identity. A cache read or write is forbidden when the complete applicable fence is unavailable; callers must serve the uncached authoritative `ResolveLook` result instead. Any change to the complete fence changes `readFenceHash` and prevents reuse. This hash is only a Class-B presentation-cache key component: it is not authority/currentness proof and does not replace served-through validation.
 - Correctness-critical flows must call World Management and Entity Management APIs (and any Class A caches they own), or use separate, explicitly versioned Class A prefixes registered in this catalog.
 - Helper APIs that expose `view:room-look:*` should be scoped to Game Session’s view pipeline and other presentation-only consumers; Game Logic and similar subsystems should continue to consume authoritative LOOK results via gRPC, not by reading this prefix directly.
+
+### Canonical `view:room-look:*` Class-B Contract
+
+`view:room-look:*` is a target-only Game Session presentation cache. The current implementation does not prove these bounds or ownership rules; until it does, callers must use the authoritative `ResolveLook` result without treating Redis as a required path.
+
+- Game Session is the sole writer and invalidation owner. The cache uses the complete key shape above; a room, viewer, session, policy, or read-fence change prevents reuse. The `readFenceHash` derivation and unavailable-fence fallback are defined by the preceding usage restriction.
+- Each entry has a TTL of at most 5 seconds, a payload of at most 32 KiB, and at most four simultaneously live variants per admitted session. Admission or write refusal falls back to the uncached authoritative `ResolveLook` result.
+- Cache loss, a miss, an oversize result, variant-budget exhaustion, or Redis failure recomputes or serves the uncached authoritative `LOOK`; none may block gameplay. TTL is the correctness-independent expiry; deletion is optional cleanup, not correctness proof.
+- Metrics must expose hits/misses, recomputes, write-skip reason, oversize results, active keys/variant-budget use, and Redis failures. Reset and recovery behavior follows [Redis reset and recovery](./system-architecture-redis-reset-and-recovery.md), not this presentation-cache contract.
 
 ## Related Documentation
 

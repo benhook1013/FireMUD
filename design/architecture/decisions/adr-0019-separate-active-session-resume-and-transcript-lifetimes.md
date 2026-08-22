@@ -1,4 +1,4 @@
-# ADR 0019: Separate Active Session, Resume, and Transcript Lifetimes
+# ADR 0019: Separate Lifetimes for Active Sessions, Resume Eligibility, and Semantic Reconnect-Context Retention
 
 ## Status
 
@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The decision is accepted; implementation and proof remain partial. Durable bounded transcript storage and Redis caching exist, but immutable continuity/resume anchors, deadline enforcement in `PLAY`, token-refresh independence, repeated-episode behavior, and explicit-logout replay suppression remain incomplete or unproved. The target `FIREMUD_AUTH_SESSION_EXPIRATION_MS` default is `300000` ms with an inclusive valid range of `1..300000` ms; current Game Session code still defaults it to one hour (`3600000` ms) and does not enforce that range. Acceptance records the target decision, not completion; the obligations below define the remaining proof.
+The decision is accepted; implementation and proof remain partial. Durable bounded semantic reconnect-context storage and Redis caching exist, but immutable continuity/resume anchors, deadline enforcement in `PLAY`, token-refresh independence, repeated-episode behavior, and explicit-logout replay suppression remain incomplete or unproved. Strict complete-envelope byte-ceiling enforcement, including oversized-entry omission or bounded-marker behavior, also remains unproved; the current runtime may retain an oversized semantic entry. The target `FIREMUD_AUTH_SESSION_EXPIRATION_MS` default is `300000` ms with an inclusive valid range of `1..300000` ms; current Game Session code still defaults it to one hour (`3600000` ms) and does not enforce that range. Acceptance records the target decision, not completion; the obligations below define the remaining proof.
 
 ## Decision Record
 
@@ -28,9 +28,9 @@ The previously reconciled target separated the policies but described `gameplayS
 
 ## Decision
 
-JWT validity, active gameplay authorization, continuity-binding eligibility, disconnected-resume eligibility, physical storage, and transcript retention are separate authorities.
+JWT validity, active gameplay authorization, continuity-binding eligibility, disconnected-resume eligibility, physical storage, and semantic reconnect-context retention are separate concerns with distinct authority, policy, eligibility, and retention lifetimes.
 
-Active-session authority is the authoritative gameplay binding plus current account, membership, entitlement, revocation, fencing, and lease state. It is not an inference from an expiring Redis key, reconnect cache, or retained transcript. The continuity binding and its Redis representation are a bounded recovery projection for a disconnected episode: cache refresh can never extend active-session or resume authority, and cache expiry or loss can only make the binding non-resumable; it cannot create, extend, or revoke an otherwise authoritative connected session.
+Active-session authorization derives from the authoritative gameplay binding plus current account, membership, entitlement, revocation, fencing, and lease state. It is not an inference from an expiring Redis key, reconnect cache, or retained semantic context. The continuity binding and its Redis representation are a bounded recovery projection for a disconnected episode: cache refresh can never extend active-session authorization or resume eligibility, and cache expiry or loss can only make the binding non-resumable; it cannot create, extend, or revoke an otherwise authoritative connected session.
 
 ### Active Gameplay
 
@@ -55,26 +55,27 @@ Each connected-to-disconnected transition starts one immutable disconnection epi
 `resumeDeadline = min(continuityBindingExpiresAt, disconnectAt + effective resume-window-ms)`
 
 - Resume requires the current time to be before both limits and requires current, fail-closed identity, membership, revocation, uniqueness, lease, and gameplay-scope checks. Entitlement freshness is governed by ADR 0028: an eligible positive last-known-good entitlement may supply the entitlement input only for the exact same still-resumable binding and only when the recovery is non-expanding; fresh entitlement remains required for new commitments, fresh admission, changed realm/target bindings, or any other operation covered by ADR 0028's strict class.
-- `disconnectAt` and `resumeDeadline` are immutable within that episode. Failed reconnect attempts, token rotation, takeover attempts, Redis TTL refresh, and transcript retention cannot move them.
+- `disconnectAt` and `resumeDeadline` are immutable within that episode. Failed reconnect attempts, token rotation, takeover attempts, Redis TTL refresh, and semantic reconnect-context retention cannot move them.
 - A successful resume consumes the current disconnection episode and returns the binding to connected state. A later genuine transport loss starts a new episode with a new `disconnectAt` and `resumeDeadline`, still capped by the binding's original immutable `continuityBindingExpiresAt`.
 - After either limit, the old binding is non-resumable even if data remains. A successful current `LOGIN` and `PLAY` may perform fresh admission and create a new binding; that is not continuation of the expired binding.
 
 ADR 0028 is authoritative when this decision's resume rules and entitlement-freshness policy intersect. That precedence changes only the entitlement input permitted for bounded same-binding continuity; it does not relax the current identity, membership, revocation, uniqueness, lease, or gameplay-scope checks required to resume.
 
-### Storage, Transcript, and Logout
+### Storage, Semantic Reconnect Context, and Logout
 
 - Redis TTL is physical cleanup metadata. Every gameplay-binding refresh must atomically preserve the earliest of the existing physical expiry, the requested refresh deadline, and `continuityBindingExpiresAt`; a plain `PEXPIREAT` or relative `PEXPIRE` is insufficient because it can extend an already earlier cleanup deadline. The compare-and-set/server-side update must not recreate a missing or expired binding. The effective physical deadline may therefore be earlier, but no retry, concurrent update, or failover replay may move it later, set it after `continuityBindingExpiresAt`, or create a sliding deadline. Key presence never grants resume authority, and early key loss makes the binding non-resumable rather than reconstructing authority from other projections.
-- Resume transcript retention is an independent bounded presentation policy. Transcript existence cannot prove identity or extend active or resume authority.
-- Explicit gameplay `LOGOUT` immediately terminates continuity/resume authority and must durably commit a binding-scoped replay-revocation marker, including a monotonic termination fence, in Game Session's authoritative durable session/transcript store before acknowledging logout. Replay/restore must check that marker before using any Redis binding or transcript cache, including after Redis loss or restart; marker retention must cover the maximum replay/transcript horizon. A missing or ambiguous marker for a binding claiming logout fails closed. Physical deletion of transcript rows or cache entries may complete asynchronously. After a fresh non-logout `LOGIN` and `PLAY`, retained transcript context may replay only when it belongs to a different, currently authorized continuity episode; the terminated binding's logged-out context must never replay, even when its rows or cache entries remain and even when the new admission uses the same account, character, or realm.
+- Semantic reconnect-context retention is an independent bounded presentation policy. Context existence cannot prove identity or extend active or resume authority.
+- [ADR 0134](./adr-0134-bounded-durable-semantic-reconnect-context.md) clarifies the settings vocabulary without changing this ADR's lifetime or authority ownership: `firemud.reconnection.policy.*` governs resume eligibility, while `firemud.reconnection.buffer.*` governs only bounded semantic reconnect-context retention/resource controls. Its hard ceiling is absolute over the complete scope-bound persisted envelope; message/line floors and the soft ceiling are subordinate best-effort preferences, and retention never grants resume or replay authority. Current oversized-single-entry and namespace/schema-envelope enforcement remain implementation/proof gaps.
+- Explicit gameplay `LOGOUT` immediately terminates continuity/resume authority and must durably commit a binding-scoped replay-revocation marker, including a monotonic termination fence, in Game Session's authoritative durable session/reconnect-context store before acknowledging logout. Replay/restore must check that marker before using any Redis binding or reconnect-context cache, including after Redis loss or restart; marker retention must cover the maximum reconnect-context horizon. A missing or ambiguous marker for a binding claiming logout fails closed. Physical deletion of reconnect-context rows or cache entries may complete asynchronously. After a fresh non-logout `LOGIN` and `PLAY`, retained semantic context may replay only when it belongs to a different, currently authorized continuity episode; the terminated binding's logged-out context must never replay, even when its rows or cache entries remain and even when the new admission uses the same account, character, or realm.
 - The logout transition is one authoritative compare-and-set/transaction: binding state moves out of `connected`, the termination fence advances, and the replay-revocation marker is committed together before success is acknowledged. In-flight authorization, refresh, resume, and replay operations carry the expected binding/fence identity and lose the race when logout advances it; an unavailable or ambiguous authoritative store fails logout and all dependent operations closed rather than allowing a post-logout action.
 
 ## Consequences
 
 - Long uninterrupted play is not coupled to the one-hour private player-delegation token default.
-- Short disconnected-resume windows still bound unattended continuity risk, and stale Redis or transcript data cannot revive a binding.
+- Short disconnected-resume windows still bound unattended continuity risk, and stale Redis or semantic reconnect-context data cannot revive a binding.
 - Fresh admission provides a player-friendly fallback after continuity expiry without pretending that old transient state resumed.
 - The runtime must persist and evaluate additional logical timestamps independently of Redis expiration.
-- Operations and tests must distinguish active-token refresh, continuity expiry, resume expiry, fresh-entry fallback, logout, and transcript cleanup.
+- Operations and tests must distinguish active-token refresh, continuity expiry, resume expiry, fresh-entry fallback, logout, and semantic reconnect-context cleanup.
 - The independent continuity horizon is bounded separately from JWT configuration and no longer changes uninterrupted active-session duration.
 
 ## Alternatives Considered
@@ -97,6 +98,8 @@ Fresh admission after every disconnect is simpler and more conservative but mate
 
 ## Implementation and Proof Obligations
 
+Validation and runtime-proof selection follows [Validation and Runtime Proof](../../developer-workflows/validation-and-runtime-proof.md); execution results remain in PR/CI records or implementation trackers.
+
 - Persist immutable `continuityBindingExpiresAt` plus one immutable `disconnectAt`/`resumeDeadline` pair per disconnection episode, consume that episode on successful resume, and enforce the current pair in `PLAY` admission.
 - Prove token refresh and healthy uninterrupted play independently of the continuity anchor.
 - Prove bounded retry while the receiver token remains valid, the `AUTH_TOKEN_EXPIRED` outcome when no replacement exists by `exp`, the `AUTH_SESSION_REVOKED` outcome for rejected authority, socket termination, and fresh `LOGIN`/`PLAY` reconnect or resume behavior.
@@ -105,7 +108,7 @@ Fresh admission after every disconnect is simpler and more conservative but mate
 - Prove Redis saves, `PEXPIREAT` or an atomic equivalent capped at `continuityBindingExpiresAt`, restart, failover, and stale-key recovery cannot move or bypass logical deadlines.
 - Prove current subject, membership, revocation, uniqueness, lease, and gameplay-scope checks on every resume, and prove that entitlement input follows ADR 0028: eligible positive last-known-good state is accepted only for exact same-binding non-expanding continuity, while fresh entitlement is required for new commitments, fresh admission, changed bindings, and unsafe or expired continuity.
 - Prove stale bindings fall through to fresh admission only after full current authorization and receive a new identity and anchor.
-- Prove transcript bounds independently and prove the durable explicit-logout replay-revocation marker survives Redis loss/restart and is checked before later private replay from the terminated binding, without requiring physical transcript deletion to complete synchronously. Prove that audit/diagnostic evidence distinguishes active-binding authority, continuity-cache state, and termination fences without treating transcript contents as authority.
+- Prove semantic reconnect-context bounds independently and prove the durable explicit-logout replay-revocation marker survives Redis loss/restart and is checked before later private replay from the terminated binding, without requiring physical reconnect-context deletion to complete synchronously. Prove that audit/diagnostic evidence distinguishes active-binding authority, continuity-cache state, and termination fences without treating context contents as authority.
 - Prove concurrent `LOGOUT` versus `PLAY`, token refresh, resume, and replay: once the termination fence wins, no in-flight operation can authorize or recreate the binding, and authoritative-store loss fails closed.
 
 ## Reversibility and Revisit Triggers

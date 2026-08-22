@@ -1,5 +1,11 @@
 # TCP Proxy Service Runtime and Data
 
+The target runtime/data contract keeps TCP Proxy stateless at the gameplay boundary: it owns transport-local buffering and bridge lifecycle consequences, while Game Session owns gameplay and session authority. Implementation status below records current convergence against that ownership split.
+
+## Implementation Status
+
+Immediate closure on established bridge loss and the current close mapping and shutdown classification are implemented as described in [Operations](./operations.md#implementation-status). Preserving every valid authenticated Gateway token, including standalone `session_replaced` and `service_restart`, remains target-only behavior; current handler mapping and classification remain the Operations implementation status. See [Bridge Lifecycle Ownership](#bridge-lifecycle-ownership) for the local runtime invariants.
+
 ## Redis Role and Prefixes
 
 - The TCP Proxy Service does **not** access Coordination Redis and never depends on Redis for correctness or session recovery.
@@ -36,13 +42,13 @@ These trust surfaces are related but not interchangeable. In very small local or
 
 ## Bridge Lifecycle Ownership
 
-The canonical bridge lifecycle and disconnect-behavior contract lives in [`protocols.md`](./protocols.md#data-flow) and [`protocols.md`](./protocols.md#bridge-state-machine-established-telnet-sessions). The minimum runtime invariants are:
+[Gateway Architecture](../../system-architecture-gateway.md#canonical-close-translation-matrix) owns the top-level close taxonomy, [Protocol Bridging](../../system-architecture-protocol-bridging.md#telnet-disconnect-reasons) owns WebSocket-to-Telnet translation, and local [`protocols.md`](./protocols.md#bridge-state-machine-established-telnet-sessions) records this service's bridge state-machine consequences. The minimum runtime invariants are:
 
 - the proxy must establish the Gateway bridge before forwarding the first gameplay or MCP line;
 - pre-admission bridge failures distinguish `backend_unavailable` from `policy_violation`;
 - established-session bridge loss closes the Telnet socket immediately, with no hidden bridge reattach;
-- clean `1000/logout` closures preserve bounded logout semantics; and
-- edge backpressure and unattributed bridge loss follow the bounded disconnect taxonomy defined in `protocols.md`.
+- target-only lifecycle behavior preserves every valid authenticated Gateway top-level close (`logout`, `session_replaced`, `service_restart`, `idle_timeout`, `policy_violation`, `internal_error`, or `backend_unavailable`) as its corresponding Telnet token; absent or invalid top-level attribution alone falls back to `backend_unavailable`. Current handler mapping and classification remain as recorded in [Operations Implementation Status](./operations.md#implementation-status).
+- edge backpressure and unattributed bridge loss follow the bounded disconnect taxonomy defined by [Protocol Bridging](../../system-architecture-protocol-bridging.md#telnet-disconnect-reasons).
 
 See:
 

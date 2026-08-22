@@ -57,14 +57,14 @@
       "name": "firemud.presentation.prompt.enabled",
       "type": "java.lang.Boolean",
       "defaultValue": true,
-      "description": "Whether prompt output is enabled by default for text-session rendering.",
+      "description": "Whether prompt output is enabled by default for classic text-session rendering. Current limitation: the first-party structured projector still emits prompt envelopes when this is false; the target conjunction with firemud.presentation.prompt.emit-after-reconnect-restore remains unimplemented there.",
       "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties$Prompt"
     },
     {
       "name": "firemud.presentation.prompt.emit-after-reconnect-restore",
       "type": "java.lang.Boolean",
       "defaultValue": true,
-      "description": "Whether reconnect restore appends a fresh prompt after replaying recent transcript context and rendering a fresh LOOK.",
+      "description": "Whether reconnect restore permits a fresh prompt after rendering bounded semantic reconnect context and a fresh LOOK. Target behavior also requires firemud.presentation.prompt.enabled to be true; current classic text rendering applies that conjunction, but the first-party structured projector still emits the prompt envelope when enabled is false.",
       "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties$Prompt"
     },
     {
@@ -92,49 +92,49 @@
       "name": "firemud.reconnection.buffer.ttl-ms",
       "type": "java.lang.Long",
       "defaultValue": 1800000,
-      "description": "TTL, in milliseconds, for the bounded reconnect transcript screen buffer stored for each player binding.",
+      "description": "TTL, in milliseconds, for bounded semantic reconnect context made from replay-eligible PlayerOutput entries; prompts and non-replay status/notice/error output are outside the target context and byte accounting. Current runtime retains each context under `{tenantId, gameInstanceId, characterId}`; the canonical target scope is `{tenantId, playableStateNamespaceId, characterId}` pending migration. Retention does not grant resume or replay authority.",
       "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
     },
     {
       "name": "firemud.reconnection.buffer.max-entries",
       "type": "java.lang.Integer",
       "defaultValue": 256,
-      "description": "Maximum complete entries retained in one durable reconnect transcript before oldest-entry eviction.",
+      "description": "Maximum complete replay-eligible PlayerOutput entries retained in one durable bounded semantic reconnect context before oldest-entry eviction; prompts and non-replay status/notice/error output are outside the target context and byte accounting. Retention does not grant resume or replay authority.",
       "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
     },
     {
       "name": "firemud.reconnection.buffer.expiry-sweep.enabled",
       "type": "java.lang.Boolean",
       "defaultValue": true,
-      "description": "Whether Game Session periodically removes expired durable reconnect transcript entries.",
+      "description": "Whether Game Session periodically removes expired durable semantic reconnect-context entries.",
       "sourceType": "net.firedevops.firemud.gamesession.service.DurableResumeTranscriptExpiryJob"
     },
     {
       "name": "firemud.reconnection.buffer.min-messages",
       "type": "java.lang.Integer",
       "defaultValue": 8,
-      "description": "Minimum message floor retained for reconnect transcript replay before byte ceilings are applied.",
+      "description": "Best-effort minimum message floor for bounded semantic reconnect-context retention; subordinate to the absolute hard byte ceiling and never an override of it.",
       "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
     },
     {
       "name": "firemud.reconnection.buffer.min-lines",
       "type": "java.lang.Integer",
       "defaultValue": 24,
-      "description": "Minimum line floor retained for reconnect transcript replay before byte ceilings are applied.",
+      "description": "Best-effort minimum line floor for bounded semantic reconnect-context retention; subordinate to the absolute hard byte ceiling and never an override of it.",
       "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
     },
     {
       "name": "firemud.reconnection.buffer.soft-max-bytes",
       "type": "java.lang.Integer",
       "defaultValue": 16384,
-      "description": "Soft byte ceiling for reconnect transcript retention before older entries are trimmed when message and line floors have been satisfied.",
+      "description": "Best-effort soft byte preference for bounded semantic reconnect-context retention; message and line floors may be preserved where possible, but this preference is subordinate to the absolute hard ceiling.",
       "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
     },
     {
       "name": "firemud.reconnection.buffer.hard-max-bytes",
       "type": "java.lang.Integer",
       "defaultValue": 65536,
-      "description": "Hard byte ceiling for reconnect transcript retention; oldest entries are trimmed to stay within this bound for multi-entry windows, while a complete single entry may exceed it.",
+      "description": "Target guarantee: an absolute byte ceiling for each complete scope-bound persisted envelope for replay-eligible PlayerOutput entries; an oversized entry must be omitted or represented by a bounded marker and never partially truncated. Current runtime computes complete canonical envelope bytes for gameInstanceId-keyed rows but may retain one oversized entry and lacks omission/marker enforcement; canonical playableStateNamespaceId accounting and focused proof remain gaps.",
       "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
     },
     {
