@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The decision is accepted; implementation and proof remain partial. Durable bounded semantic reconnect-context storage and Redis caching exist, but immutable continuity/resume anchors, deadline enforcement in `PLAY`, token-refresh independence, repeated-episode behavior, and explicit-logout replay suppression remain incomplete or unproved. The target `FIREMUD_AUTH_SESSION_EXPIRATION_MS` default is `300000` ms with an inclusive valid range of `1..300000` ms; current Game Session code still defaults it to one hour (`3600000` ms) and does not enforce that range. Acceptance records the target decision, not completion; the obligations below define the remaining proof.
+The decision is accepted; implementation and proof remain partial. Durable bounded semantic reconnect-context storage and Redis caching exist, but immutable continuity/resume anchors, deadline enforcement in `PLAY`, token-refresh independence, repeated-episode behavior, and explicit-logout replay suppression remain incomplete or unproved. Strict complete-envelope byte-ceiling enforcement, including oversized-entry omission or bounded-marker behavior, also remains unproved; the current runtime may retain an oversized semantic entry. The target `FIREMUD_AUTH_SESSION_EXPIRATION_MS` default is `300000` ms with an inclusive valid range of `1..300000` ms; current Game Session code still defaults it to one hour (`3600000` ms) and does not enforce that range. Acceptance records the target decision, not completion; the obligations below define the remaining proof.
 
 ## Decision Record
 
