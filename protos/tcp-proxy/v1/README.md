@@ -1,8 +1,6 @@
 # Tcp-proxy Service Proto (v1)
 
-This directory contains version 1 protocol buffer definitions for the TCP Proxy
-Service. They describe the internal gRPC events used by the service to notify
-the Game Session Service about client disconnects.
+This directory contains version 1 protocol buffer definitions for the TCP Proxy Service. They describe the internal gRPC events used by the service to notify the Game Session Service about client disconnects.
 
 ## Scope and reconnect consequence
 
