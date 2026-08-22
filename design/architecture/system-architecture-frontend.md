@@ -6,11 +6,11 @@ Other UIs include a role-based admin interface and a game design editor. See [Ro
 
 ## Canonical First-Party Frontend Boundary (FRONT-01)
 
-The first-party frontend is a separately released static application boundary. Its release contains `index.html`, content-hashed JavaScript/CSS, fonts, icons, application-owned images, non-secret runtime configuration, and the browser security/header policy. Preview and hobby/self-hosted deployments use an unprivileged static-file `Deployment` and `Service`; production may place the same immutable artifact behind a CDN or object-store origin without changing the artifact, route, cache, rollback, or security contract.
+The first-party frontend is a separately released static application boundary. Its release contains `index.html`, content-hashed JavaScript/CSS, fonts, icons, application-owned images, non-secret runtime configuration, and the browser security/header policy. Compiled frontend files use the reserved `/frontend-assets/**` prefix; published game assets use the separate `/assets/**` prefix. Preview and hobby/self-hosted deployments use an unprivileged static-file `Deployment` and `Service`; production may place the same immutable artifact behind a CDN or object-store origin without changing the artifact, route, cache, rollback, or security contract.
 
 The static host owns file serving, SPA fallback for non-reserved browser routes, content types/compression, bounded freshness for `index.html` and public runtime configuration, immutable caching for content-hashed files, CSP/security headers, and liveness/readiness for file serving. It owns no PostgreSQL or Redis data, secret material, server-held browser session, refresh-token store, cookie-session authority, authentication, authorization, API aggregation, domain logic, or gameplay execution. A future stateful BFF, SSR tier, or server-held browser session requires a separate accepted decision.
 
-The public site routing layer sends frontend documents and application files to the static host, `/auth/**` and `/api/**` to Gateway, `/ws/game/**` to Gateway for gameplay admission and WebSocket routing, and `/assets/**` to the approved published-asset origin. Gateway remains API/gameplay ingress and Account/domain services retain authentication, admission, authorization, business, and data authority.
+The public site routing layer sends frontend documents and non-reserved client routes plus `/frontend-assets/**` to the static host, `/auth/**` and `/api/**` to Gateway, `/ws/game/**` to Gateway for gameplay admission and WebSocket routing, and `/assets/**` to the approved published-asset origin. `/frontend-assets/**` never SPA-fallbacks and is not in Gateway's route catalog. The static frontend host and published-asset origin must not serve each other's path family. Gateway remains API/gameplay ingress and Account/domain services retain authentication, admission, authorization, business, and data authority.
 
 Browser bearer tokens are short-lived and memory-only. The frontend never writes them to `localStorage`, `sessionStorage`, IndexedDB, service-worker caches, URLs, logs, or runtime configuration. The gameplay connect token remains the narrow secure HttpOnly cookie used by the `/ws/game/**` handshake; it does not make the static host a session owner. The frontend clears in-memory authority on expiry/revocation and invokes owner-defined logout flows; it does not perform account, gameplay, or domain authorization itself.
 
@@ -241,7 +241,7 @@ WebSocket interactions for real-time gameplay are handled by `src/websocket.ts`,
 
 ## Hosting and Release Boundary
 
-The first-party static frontend boundary is required in the supported baseline now. Preview and hobby/self-hosted deployments serve the immutable `web-client` artifact from an unprivileged static host; production may use that host directly or place an approved CDN/object-store origin in front of the same artifact. The public site router keeps frontend file requests separate from Gateway's `/auth/**`, `/api/**`, and `/ws/game/**` ingress and the published `/assets/**` family.
+The first-party static frontend boundary is required in the supported baseline now. Preview and hobby/self-hosted deployments serve the immutable `web-client` artifact from an unprivileged static host; production may use that host directly or place an approved CDN/object-store origin in front of the same artifact. The public site router keeps frontend documents and `/frontend-assets/**` separate from Gateway's `/auth/**`, `/api/**`, and `/ws/game/**` ingress and the published `/assets/**` family; the reserved compiled-asset prefix does not SPA-fallback.
 
 The Telnet `LOGIN -> PLAY -> LOOK` hosted proof remains useful protocol evidence, but it is not a reason to defer the frontend boundary. The browser journey, static-host health/security/cache checks, independent frontend rollback, and versioned `PlayerOutput` consumer are separate implementation/proof obligations. A browser application may begin as a terminal-style client and grow richer UX without changing the static-host authority boundary.
 
@@ -250,7 +250,7 @@ The Telnet `LOGIN -> PLAY -> LOOK` hosted proof remains useful protocol evidence
 The frontend uses **Vite** for fast development and production builds:
 
 - `npm run dev` starts the local development server with hot module replacement.
-- `npm run build` produces an optimized bundle under `dist/`.
+- `npm run build` produces an optimized bundle under `dist/`, with compiled assets under `dist/frontend-assets/` and the existing public base preserved in generated references.
 - `npm run preview` serves the production bundle locally for verification.
 - `npm run test` runs unit tests with Jest and React Testing Library. The script runs the test suite.
 - `npm run lint` and `npm run format` ensure consistent code style.
@@ -281,9 +281,10 @@ FireMUD aims to let each hosted game supply its own UI styling and layout tweaks
   bundle identity (`versionId`, optional `scriptPatchVersion`, and manifest
   location/hash or equivalent), and the client must swap theme assets whenever
   that resolved bundle changes.
-- Assets are loaded directly from the CDN or via the gateway's `/assets/**`
-  route when a self-hosted MinIO instance is used; the Game Design Service is
-  never queried during gameplay.
+- Published game assets are loaded directly from the CDN or via the gateway's
+  `/assets/**` route when a self-hosted MinIO instance is used; the Game Design
+  Service is never queried during gameplay. The published-asset origin does not
+  serve frontend documents or `/frontend-assets/**`.
 - If the manifest omits an asset, the default platform styling is used.
 - Core components remain shared so feature updates reach all games without
   forks.

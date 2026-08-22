@@ -214,7 +214,7 @@ Common fork use cases:
 
 Fork lifecycle choices:
 
-- **Reset an existing fork** – Reuse the same playtest realm identity, but begin a new playtest lifecycle with a fresh playable-state namespace and replace its fork-local gameplay state with a fresh application of the chosen source snapshot. Use this when the same tester group and fork purpose remain valid across iterations; the realm identity is reused, but the lifecycle namespace is not.
+- **Reset an existing fork** – Reuse the same playtest lifecycle and realm identity, but begin a new playtest-state generation with a fresh playable-state namespace and replace its fork-local gameplay state with the selected `fresh`, `seeded`, or `snapshot` input. Use this when the same tester group and fork purpose remain valid across iterations; the realm identity is reused, but the playable-state namespace is replaced.
 - **Create a new fork** – Create a new playtest realm with a new identity and fresh visibility/access configuration. Use this when the next test cycle needs a separate audience, separate audit history, or side-by-side comparison with another fork.
 
 ---

@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-This decision is not implemented. The independently released static artifact/host, deployment topology, public route split, security/runtime configuration, rollback, and bounded browser journey remain gaps.
+The Vite artifact seam is partially implemented: compiled assets are emitted under the reserved `frontend-assets` directory while the existing public base remains unchanged. The independently released static host, deployment topology, public route split, security/runtime configuration, rollback, and bounded browser journey remain gaps.
 
 ## Decision Record
 
@@ -47,19 +47,21 @@ Production may use the same container directly, place a CDN in front of it, or l
 
 One coherent public site and path-routing layer exposes the browser experience:
 
-- frontend document and application-file requests, including client-side routes, go to the first-party frontend host;
+- frontend document and non-reserved application-route requests go to the first-party frontend host and may use its SPA fallback;
+- `/frontend-assets/**` is reserved exclusively for compiled first-party frontend assets and goes to the first-party frontend host without SPA fallback; this family is not a Gateway route;
 - `/auth/**` and `/api/**` go to Spring Cloud Gateway and then to the allowlisted authoritative service;
 - `/ws/game/**` goes to Spring Cloud Gateway for gameplay admission and WebSocket routing;
-- `/assets/**` remains the separate read-only published game-asset delivery family and goes to its approved object-store, CDN, or Gateway-backed asset origin.
+- `/assets/**` remains reserved exclusively for read-only published game assets and goes to its approved object-store, CDN, or Gateway-backed asset origin.
 
-The site router may be an environment load balancer, Kubernetes Ingress, or later CDN routing layer. Spring Cloud Gateway remains the sole public API and gameplay ingress. It contains no frontend HTML, JavaScript, CSS, SPA fallback, UI runtime configuration, UI release lifecycle, or product-specific browser orchestration.
+The site router may be an environment load balancer, Kubernetes Ingress, or later CDN routing layer. Spring Cloud Gateway remains the sole public API and gameplay ingress. It contains no frontend HTML, JavaScript, CSS, SPA fallback, UI runtime configuration, UI release lifecycle, or product-specific browser orchestration. The frontend host must not serve `/assets/**`, and the published-asset origin must not serve frontend documents or `/frontend-assets/**`; neither reserved family may be captured by the other's fallback.
 
 ### Static-Host Responsibilities Are Deliberately Narrow
 
 The frontend boundary owns:
 
 - `index.html`, compiled JavaScript and CSS, fonts, icons, and application-owned images;
-- SPA fallback for non-reserved browser routes;
+- `/frontend-assets/**` as the compiled first-party asset prefix, with missing reserved assets failing as file misses rather than falling back to `index.html`;
+- SPA fallback for non-reserved browser routes only;
 - correct content types, compression, and cache policy, with immutable caching for content-hashed files and bounded freshness for `index.html` and public runtime configuration;
 - a strict Content Security Policy and the other document-level browser security headers;
 - public non-secret runtime configuration such as the API, gameplay WebSocket, and published-asset base paths plus frontend build identity;
@@ -93,7 +95,7 @@ A frontend artifact is independently promotable or rollbackable only when its de
 | --- | --- | --- |
 | Artifact and API | The artifact uses only the deployed, supported browser-facing Account, Gateway, and domain API contracts; publishing or rolling back compatible frontend files does not require a backend release. | The browser journey succeeds against the unchanged backend release, and an incompatible API change is not hidden by the static host. |
 | Artifact and runtime configuration | The artifact accepts only the documented non-secret public runtime configuration and preserves the `index.html`/configuration freshness rules; configuration never supplies authority or secrets. | The promoted and rolled-back artifact loads the intended release identity and public configuration, while missing, malformed, or secret-bearing configuration is rejected by the frontend/host contract. |
-| Artifact and gameplay connect-token | The artifact uses the accepted browser bootstrap and narrow HttpOnly gameplay connect-token carrier; Account and Gateway remain responsible for issuance, validation, replay, expiry, and admission context. | The browser obtains and consumes a fresh connect-token cookie for `/ws/game/**` during both frontend-only release states without treating frontend state or configuration as token authority. |
+| Artifact and gameplay connect-token | The artifact uses the accepted browser bootstrap and narrow HttpOnly gameplay connect-token carrier; Account and Gateway remain responsible for issuance, validation, replay, expiry, and admission context. | The browser receives and automatically sends a fresh HttpOnly connect-token cookie when it opens `/ws/game/**` during both frontend-only release states; Gateway validates and atomically consumes it for replay, expiry, and edge/handshake admission, while Game Session retains `LOGIN`/`PLAY` gameplay admission, without treating frontend state or configuration as token authority. |
 | Artifact and `PlayerOutput` | The artifact consumes the explicitly supported versioned first-party `PlayerOutput` projection; its structured envelope is not replaced by generic JSON handling or made a universal classic-client contract. | The browser proof exercises the supported `PlayerOutput` version through `LOGIN -> PLAY -> LOOK` and fails the release proof for an unsupported projection rather than silently treating it as compatible. |
 
 This matrix bounds frontend-only promotion and rollback. It does not authorize API, runtime-configuration, connect-token, or `PlayerOutput` contract changes; those remain owned by their canonical services and require their own compatibility and proof decisions.
@@ -129,7 +131,7 @@ This could isolate release cadences later, but the current product has one `web-
 
 ## Implementation and Proof Obligations
 
-The repository has a Vite/React `web-client`, typed-query foundations, browser bootstrap/connect-token contracts, and Telnet-first hosted proof. It does not yet demonstrate the required independently versioned frontend artifact and release metadata, unprivileged static container, preview or hobby `Deployment`/`Service`, public reserved-path routing, frontend health contract, runtime configuration, cache/compression/CSP behavior, independent rollback, or the bounded deployed browser journey.
+The repository has a Vite/React `web-client`, typed-query foundations, browser bootstrap/connect-token contracts, and Telnet-first hosted proof. The Vite build now establishes the `frontend-assets` artifact seam, but the repository does not yet demonstrate the required independently versioned frontend artifact and release metadata, unprivileged static container, preview or hobby `Deployment`/`Service`, public reserved-path routing, frontend health contract, runtime configuration, cache/compression/CSP behavior, independent rollback, or the bounded deployed browser journey.
 
 The current frontend UX, admin UI, and Game Design editor are partial. Their presence does not prove the combined browser journey, production readiness, accessibility, or sensitive-action step-up. Existing backend browser APIs remain authoritative and are not reimplemented in the static host.
 

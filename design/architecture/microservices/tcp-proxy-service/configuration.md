@@ -55,9 +55,9 @@ The full variable list is the canonical source of defaults and behavior for `TCP
 | `TCP_PROXY_PORT` | TCP port the proxy listens on; this is the public TLS listener in `DIRECT_TLS` mode and must remain unbound or private in `EDGE_PROXY` mode | `2323` |
 | `TCP_PROXY_PROXY_PROTOCOL_PORT` | TCP port for the edge-termination mode's PROXY-protocol Telnet listener; internal-only and reachable only from the Telnet edge proxy | `2325` |
 | `GATEWAY_WS_URL` | WebSocket URL for forwarding to the gateway; local Docker and test environments may use a plaintext `ws://` endpoint, but player-facing environments must set an explicit `wss://.../ws/game` target | *(none)* |
-| `TCP_PROXY_DEFAULT_WORLD_SLUG` | Explicit local/bootstrap world slug forwarded when the proxy is configured to seed hidden gameplay bridge metadata instead of waiting for first-party connect-token admission | *(empty)* |
-| `TCP_PROXY_DEFAULT_REALM_SLUG` | Explicit local/bootstrap realm slug paired with the seeded world slug when hidden gameplay bridge metadata is preconfigured | *(empty)* |
-| `TCP_PROXY_DEFAULT_POINTER_VERSION` | Explicit local/bootstrap admission-pointer freshness token paired with the seeded world/realm target when hidden gameplay bridge metadata is preconfigured | *(empty)* |
+| `TCP_PROXY_DEFAULT_WORLD_SLUG` | Explicit local/bootstrap world slug forwarded as server-owned default advisory bridge metadata when configured instead of waiting for first-party connect-token admission; it cannot alter authentication, canonical routing, or gameplay-admission authority | *(empty)* |
+| `TCP_PROXY_DEFAULT_REALM_SLUG` | Explicit local/bootstrap realm slug paired with the server-owned default advisory world metadata; it cannot alter authentication, canonical routing, or gameplay-admission authority | *(empty)* |
+| `TCP_PROXY_DEFAULT_POINTER_VERSION` | Explicit local/bootstrap admission-pointer freshness token paired with the server-owned default advisory world/realm metadata; it cannot alter authentication, canonical routing, or gameplay-admission authority | *(empty)* |
 | `TCP_PROXY_TLS_ENABLED` | Enable direct TCP Proxy Telnet-over-TLS termination; required with `DIRECT_TLS` and rejected with `EDGE_PROXY` | `false` |
 | `TCP_PROXY_TLS_CERT` | Path to the Telnet listener TLS certificate | *(empty)* |
 | `TCP_PROXY_TLS_KEY` | Path to the Telnet listener TLS private key | *(empty)* |
@@ -84,7 +84,7 @@ The full variable list is the canonical source of defaults and behavior for `TCP
 | `FIREMUD_GRPC_CA_CERT_PATH` | CA bundle path for verifying gRPC peers | `certs/ca.crt` |
 | `OTEL_ENDPOINT` | OpenTelemetry collector endpoint | `http://otel-collector:4317` |
 
-When any `TCP_PROXY_DEFAULT_*` bootstrap routing variables are used together, they must describe one coherent admitted routing bundle: `worldSlug`, `realmSlug`, resolved `tenantId`, resolved `gameInstanceId`, and `pointerVersion`. Do not configure only the runtime ids while omitting the visible world/realm identity or pointer freshness, because that would recreate the partial routing shortcut that `09.1` explicitly removes elsewhere.
+When any `TCP_PROXY_DEFAULT_*` bootstrap variables are used together, they must describe one coherent server-owned advisory bridge-metadata bundle: `worldSlug`, `realmSlug`, resolved `tenantId`, resolved `gameInstanceId`, and `pointerVersion`. These values cannot replace or alter canonical authentication, routing, or gameplay-admission authority. Do not configure only the runtime ids while omitting the visible world/realm identity or pointer freshness, because that would recreate the partial routing shortcut that `09.1` explicitly removes elsewhere.
 
 ## WebSocket mTLS to Spring Cloud Gateway
 

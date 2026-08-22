@@ -18,7 +18,7 @@ Unless otherwise noted, this document describes target-state gateway behavior. C
 
 ## Gateway Pattern
 
-**Spring Cloud Gateway** serves as the **single HTTP(S) and WebSocket entry point** into the FireMUD system for all **external client traffic** that speaks HTTP or WebSocket. Traditional Telnet/TCP clients enter via the dedicated TCP Proxy Service as described in [Protocol Bridging](./system-architecture-protocol-bridging.md); together, Spring Cloud Gateway (for HTTP and WebSocket) and the TCP Proxy Service (for Telnet/TCP) form the public edge of the platform. The behaviour of this edge – including ordering guarantees, backpressure, and reconnection semantics for gameplay command streams – is defined canonically in [Protocol Bridging](./system-architecture-protocol-bridging.md); this document focuses on gateway responsibilities and defers to that design for detailed client-path invariants.
+**Spring Cloud Gateway** serves as the **single HTTP(S) and WebSocket ingress for external API, admin, and gameplay traffic**. The public site router sends frontend documents and application files to the independently released static frontend host and published game assets to their approved asset origin; traditional Telnet/TCP clients enter via the dedicated TCP Proxy Service as described in [Protocol Bridging](./system-architecture-protocol-bridging.md). Together, the public site router/static frontend host, Spring Cloud Gateway (for API, admin, and gameplay HTTP/WebSocket traffic), the published-asset origin, and the TCP Proxy Service (for Telnet/TCP) form the public edge of the platform. The behaviour of this edge – including ordering guarantees, backpressure, and reconnection semantics for gameplay command streams – is defined canonically in [Protocol Bridging](./system-architecture-protocol-bridging.md); this document focuses on gateway responsibilities and defers to that design for detailed client-path invariants.
 
 - Built as a Spring Boot microservice
 - Handles **client** request routing, filtering, CORS, rate limiting, retries, and monitoring
@@ -50,12 +50,13 @@ The public site router keeps these families distinct:
 
 | Request family | Canonical target | Gateway responsibility |
 | --- | --- | --- |
-| Frontend documents and application files, including non-reserved client routes | First-party static frontend host | No API/gameplay authority; Gateway is not a fallback host. |
+| Frontend documents and non-reserved client routes | First-party static frontend host | No API/gameplay authority; Gateway is not a fallback host. |
+| `/frontend-assets/**` | First-party static frontend host | Reserved compiled first-party asset family; not a Gateway route and never an SPA fallback. |
 | `/auth/**` and `/api/**` | Spring Cloud Gateway and the allowlisted authoritative service | API ingress, coarse route policy, and forwarding; consuming services retain auth/domain authority. |
 | `/ws/game/**` | Spring Cloud Gateway and Game Session | Gameplay connect-token admission, WebSocket routing, and edge lifecycle/close translation. |
-| `/assets/**` | Approved published asset origin (object store/CDN or Gateway-backed asset route) | Separate read-only published-asset family; never a frontend release or design-time mutation surface. |
+| `/assets/**` | Approved published asset origin (object store/CDN or Gateway-backed asset route) | Separate read-only published game-asset family; never a frontend release or design-time mutation surface. |
 
-The frontend route contract must preserve reserved API, gameplay, and asset paths when applying SPA fallback. A static-host release, rollback, cache policy, CSP, runtime configuration, and health contract remain independent of Gateway's API/gameplay release lifecycle.
+The frontend route contract must preserve reserved API, gameplay, compiled-asset, and published-asset paths when applying SPA fallback. The frontend host must not serve `/assets/**`, and the published-asset origin must not serve frontend documents or `/frontend-assets/**`. A static-host release, rollback, cache policy, CSP, runtime configuration, and health contract remain independent of Gateway's API/gameplay release lifecycle. The `/frontend-assets/**` family is intentionally absent from the Java Gateway route catalog and any future Gateway route catalog.
 
 For the Telnet-to-WebSocket bridge – including the `GATEWAY_WS_URL` contract, Proxy → Gateway mutual TLS, and how gameplay traffic is normalized through `/ws/game/**` – treat [Protocol Bridging](./system-architecture-protocol-bridging.md) as the **canonical specification**. This document summarizes the gateway’s routing and configuration responsibilities and defers to the protocol-bridging design for detailed edge semantics.
 

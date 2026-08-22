@@ -2,7 +2,7 @@
 
 ## Overview
 
-Provides chat, guild, and social networking features across games. Basic REST and gRPC APIs are implemented for guilds, friends, chat, and mail. Real-time WebSocket delivery is available.
+Provides chat, guild, and social networking features across games. Basic REST APIs are implemented for guilds, friends, and mail; the current supported chat path is gated gRPC `SendMessage`, while REST `/chat` remains target-only and unavailable as documented by [API Contracts](./api-contracts.md). Real-time WebSocket delivery is available.
 
 ## Implementation Status
 

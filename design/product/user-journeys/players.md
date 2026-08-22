@@ -223,13 +223,13 @@ Player → TCP Proxy / Gateway → Game Session Service → Backend Services
 
 Players communicate and coordinate through the [Social & Groups Service](../../architecture/microservices/social-groups-service/README.md):
 
-1. **Chat Channels** – Global, zone, and group chat messages are routed through the Social & Groups Service.
+1. **Target Chat Channels** – Global, zone, and group chat messages are intended to route through the Social & Groups Service; current player runtime supports only room-local `SAY`, `WHISPER`, and `TELL` as described below, while broader audible scopes remain deferred.
 2. **Friends and Guilds** – Friend lists and guild memberships are scoped per game (`tenantId`), as outlined in [Multi-Tenancy](../../architecture/system-architecture-multi-tenancy.md).
 3. **Moderation Hooks** – Target behavior has Social & Groups enforce owner-local chat restrictions at communication boundaries; the current synchronous policy-read seam is described below. Policy, cases, evidence, and audit use the [Logging & Admin Service](../../architecture/microservices/logging-admin-service/README.md). See [Monitoring and Moderation](./operators.md#1-monitoring-and-moderation) for operator flows.
 
 4. **Chat Validation** – The current player chat-validation flow covers room-local `SAY`, `WHISPER`, and `TELL`: commands enter the [Game Logic Service](../../architecture/microservices/game-logic-service/README.md) first for gameplay/world semantics, then Social & Groups synchronously consumes Logging & Admin's `EvaluateModerationPolicy` read at `CHAT_SEND`, failing closed when required policy evidence is stale or unavailable. Target behavior uses Social-owned local `chat_mute`/`chat_ban` projections before persistence or publication, without making Logging & Admin a routine hot-path dependency; that owner-local enforcement remains partial. Guild chat and mail remain deferred target behavior; their future flow will use the same owner boundaries but is not current runtime proof. World and entity context comes from the [World Management Service](../../architecture/microservices/world-management-service/README.md) and [Entity Management Service](../../architecture/microservices/entity-management-service/README.md).
 5. **Profanity & Friends** – The Social & Groups Service performs profanity checks, logs communication, and delivers messages. When moderation applies, the required Logging & Admin records are policy intent, case/evidence references, and audit; retaining a message as evidence is a separate optional signal. Account-level friends automatically appear in-game when the feature is enabled.
-6. **Player Reporting** – Players can submit caller-bound reports with the affected game scope and supporting context for operator review. A report is evidence and does not automatically restrict another player. Current availability is summarized in [Implementation Status](#implementation-status).
+6. **Player Reporting** – Target behavior allows players to submit caller-bound reports with the affected game scope and supporting context for operator review. A report is evidence and does not automatically restrict another player. Current runtime exposes only the internal service-to-service report persistence seam; public player report submission is not currently available.
 7. **Moderation Outcomes and Account Safety** – Punitive moderation actions surface as specific player-visible outcomes rather than a generic "ban" message. The protective `account_security_lock` is a separate Account security/recovery outcome, not an in-game reportable moderation action:
    - `account_security_lock` blocks ordinary account/bootstrap access until Account security recovery; `platform_access_ban` blocks ordinary platform access and survives credential recovery.
    - `gameplay_ban` blocks `PLAY` and new gameplay admission for the affected tenant/realm scope; already-admitted durable work follows the Game Session owner contract.
@@ -292,7 +292,7 @@ Switching now follows the same lobby contract used during onboarding:
 4. `PLAY <world> [realm] [character]` revalidates the selected actor through Entity Management, then rebinds the Game Session controller to the new target.
 
 ```plaintext
-Account Service → Game Design Service (select tenant) → Entity Management Service (select/validate actor) → Game Session Service (attach controller)
+Account Service (select/resolve tenant) → Entity Management Service (select/validate actor) → Game Session Service (attach controller)
 ```
 
 ---

@@ -108,7 +108,7 @@ Do not configure both modes on one public path, and do not treat an edge-termina
 
 The proxy establishes the Proxy → Gateway gameplay WebSocket lazily for each Telnet connection:
 
-- The bridge is opened before the first forwarded gameplay line.
+- The bridge is opened before the first forwarded protocol line, including discovery, authentication, admission, gameplay, and any opaque line from an explicitly selected future transport adapter.
 - The proxy may include server-owned advisory bootstrap metadata on the authenticated Proxy → Gateway handshake when local defaults or an explicitly selected future transport adapter provides it.
 - Those hints must never bypass fresh `WORLDS` discovery, `LOGIN`, authenticated `REALMS`/`CHARS` discovery, conditional `JOIN`, the realm-scoped character gate, or `PLAY`, and must never retroactively alter an already-established gameplay binding.
 

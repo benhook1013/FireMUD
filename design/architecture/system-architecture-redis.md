@@ -30,6 +30,7 @@ Durable asynchronous control-plane and business flows do not use Redis as an eve
 - [How to Use This Hub](#how-to-use-this-hub)
 - [Implementation Status](#implementation-status)
 - [Redis Coordination Invariants](#redis-coordination-invariants)
+- [Canonical Grant Authority-Stream Scope Codec](#canonical-grant-authority-stream-scope-codec)
 - [Redis Profiles](#redis-profiles)
 - [Redis as a Volatile State Layer](#redis-as-a-volatile-state-layer)
 - [Atomicity and Concurrency Control](#atomicity-and-concurrency-control)
@@ -96,6 +97,30 @@ Redis coordination keys form a long-running, measured-exposure **coordination bu
 - An empty Game Session issuer projection is an uninstalled and quarantined state, not an implicit zero-authority state and not permission to consume live events. Game Session, not Account, must install `session:game:auth:issuer-generation:v1:<issuerId>` from one Account-owned authoritative snapshot/reconciliation transaction for the exact `issuer/<issuerId>` scope and read back that installed derived projection. That transaction returns the exact checkpoint: `outboxStreamKey = account:auth-authority:v1:issuer/<issuerId>`, `lastAppliedSourceOutboxSequence` equal to the Account checkpoint's exact latest `outboxSequence`, and source `issuerAuthGeneration` from the same snapshot. For a nonzero sequence it also returns the exact source `eventId` and `eventDigest`; for sequence `0`, permitted only when the stream has no committed event, `lastAppliedSourceEventId` and `lastAppliedSourceEventDigest` are absent, and the Account-owned zero-sequence checkpoint itself is the evidence. The result also carries the source transaction or immutable bundle version, the exact checkpoint evidence, and the reconciliation operation identity; Game Session must not invent bootstrap event IDs, digests, sequences, or authority values locally. Before consuming events, Game Session atomically persists that complete checkpoint with the exact `issuerAuthGeneration` mapped to canonical persisted `lastAppliedIssuerGeneration`, stores matching `{outboxStreamKey, outboxSequence, eventId, eventDigest}` duplicate evidence only for a nonzero checkpoint, and reads back the installed projection. For a zero-sequence baseline, duplicate evidence is empty and the first consumable event must be sequence `1`; for a nonzero baseline, the next consumable event must be exactly `lastAppliedSourceOutboxSequence + 1`. Until the atomic installation and exact readback succeed, or if any applicable snapshot, source-checkpoint, event-identity/digest, or authority value is missing, stale, regressed, contradictory, or ambiguous, the projection remains quarantined and issuer-gated admission, reconnect, and revocation consumption fail closed.
 - Canonical issuer snapshot mapping is exact across bootstrap, persistence, readback, replay, and recovery: Account's authoritative snapshot field `issuerAuthGeneration` maps one-to-one to the projection field `lastAppliedIssuerGeneration`. The latter is the only persisted projection field used for comparison and replay advancement; `issuerAuthGeneration` is the source snapshot/authority name and is not a second persisted alias or a local fallback. Every bootstrap install, event replay, exact readback, set-if-greater repair decision, and recovery acknowledgement must compare the mapped value together with the exact `outboxStreamKey`, `lastAppliedSourceOutboxSequence`, source event evidence, and operation/checkpoint evidence.
 - Spring Cloud Gateway has one narrow Coordination Redis authority: one-use connect-token replay consumption under `gateway:connect-token:jti:*` plus its replay-readiness fence. The Gateway fails closed when that replay authority is unavailable, owns the key TTL and reset contract, and must not expand this exception into ownership of gameplay sessions, Account auth state, or general coordination policy.
+
+### Canonical Grant Authority-Stream Scope Codec
+
+Account's playtest-grant authority stream uses one versioned codec for the grant `scopeId`, `outboxStreamKey`, and event `sourceScope`. The semantic five-field grant identity is owned by [Account API Contracts](./microservices/account-service/api-contracts.md#account-owned-playtest-grant-contract) and [ADR 0138](./decisions/adr-0138-expiring-playtest-grants-with-bounded-active-revocation.md); this subsection owns the shared byte encoding and parsing mechanics.
+
+```text
+segment(bytes) = ascii(canonical_decimal_count(byte_length(bytes))) + ":" + bytes
+grantScopeBytes =
+  segment(utf8("grantScope/v1"))
+  + segment(utf8(accountId))
+  + segment(utf8(tenantId))
+  + segment(utf8(worldSlug))
+  + segment(utf8(realmSlug))
+  + segment(utf8(playtestLifecycleId))
+scopeId = "grant/v1/" + base64url_without_padding(grantScopeBytes)
+outboxStreamKey = "account:auth-authority:v1:" + scopeId
+sourceScope = scopeId
+```
+
+`canonical_decimal_count(n)` is the existing unsigned ASCII base-10 byte-length grammar: zero is `0`, positive values have no leading zero, and no sign, decimal point, exponent, or whitespace. Every encoded and decoded field must be a non-empty valid UTF-8 byte sequence and must match the exact owner-issued canonical bytes for that field; `accountId` and `tenantId` must also match their existing canonical UUID strings. The codec performs no trimming, case-folding, Unicode normalization (including NFC), mutation-digest/input normalization, or alternate serialization. Byte-distinct owner-issued identifiers remain distinct scope identities.
+
+The scope parser accepts only the exact `grant/v1/` prefix and canonical unpadded base64url payload. Its decoder accepts only the exact `grantScope/v1` marker followed by exactly five field segments, consumes every encoded byte, and requires the re-encoded value to be byte-for-byte canonical. It rejects unknown versions, malformed or noncanonical lengths, invalid UTF-8, empty fields, truncated or trailing bytes, missing fields, a missing lifecycle ID, transformed or noncanonical field bytes, noncanonical or padded/base64-standard encodings, and the legacy four-field form. `sourceScope` must equal the codec-derived `scopeId`, and `outboxStreamKey` must equal the fixed prefix plus that same `scopeId`; grant-stream producers and consumers, stream-key projections and watermark ledgers, and reconciliation use the same helper rather than raw concatenation.
+
+The codec invariants are `decode(encode(tuple)) == tuple` and distinct canonical tuples produce distinct `scopeId` values and distinct stream keys. Changing any tuple field therefore changes the scope, stream, and per-stream watermark identity; no consumer may merge or fall back across those identities.
 
 - **Coordination timeline = epoch-scoped `(region_epoch, tickId)`**
 - The identity definitions, ownership protocol, takeover reconciliation, outage behavior, and reset-versus-handoff rules are owned by [Tick System: Region Authority and Tick Executor](./system-architecture-ticks.md#region-authority-and-tick-executor). This Redis document records only the local key, token, script, and reset consequences.

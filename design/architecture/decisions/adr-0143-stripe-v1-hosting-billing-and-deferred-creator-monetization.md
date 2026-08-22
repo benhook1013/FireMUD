@@ -33,7 +33,7 @@ Raw payment success is not sufficient entitlement authority. Provider callbacks 
 
 ### Stripe Is the Sole Supported V1 Provider
 
-Stripe is the sole supported processor for FireMUD's own hosting-plan and platform-subscription billing in v1. Account owns the integration, provider identifiers, billing state, audit correlation, and reconciliation boundary. FireMUD does not build a speculative multi-provider abstraction.
+Stripe is the sole supported processor for FireMUD's own hosting-plan billing in v1. Account owns the integration, provider identifiers, billing state, audit correlation, and reconciliation boundary. FireMUD does not build a speculative multi-provider abstraction.
 
 A future provider is possible, but it requires a reviewed integration that defines its lifecycle, idempotency, security, reconciliation, operational, and migration behavior. It is not enabled by swapping an implementation behind a prematurely generic interface.
 
@@ -42,6 +42,8 @@ A future provider is possible, but it requires a reviewed integration that defin
 The accepted v1 product scope is the billing relationship between FireMUD and the account that pays to host a tenant. Hosting plans may govern tenant availability and resource entitlements. New charges, subscription changes, payment-instrument management, refunds, and billing-owner changes complete through HTTPS account/control-plane and provider-hosted flows.
 
 Billing-safe management remains reachable when tenant gameplay is denied for billing reasons. Gameplay denial must not prevent an authorized billing owner from inspecting status, updating payment details, resolving a failed payment, exporting billing-safe tenant data, or canceling or transferring billing ownership. These routes remain account and tenant authorized, audited, and isolated from gameplay authority.
+
+Hosting billing follows the generic Account handoff authorization-linearization contract in [ADR 0045](./adr-0045-ordinary-login-factors-and-https-sensitive-action-step-up.md) and the hosting-specific Stripe provider and reconciliation contract in [Stripe Integration Design](../microservices/account-service/stripe-integration.md); a provider result alone never authorizes an active hosting entitlement or billing outcome.
 
 ### Creator Monetization Is Deferred
 

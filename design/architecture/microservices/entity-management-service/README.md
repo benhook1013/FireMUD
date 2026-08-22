@@ -46,8 +46,8 @@ For canonical naming and scoping rules, see [Identifier Glossary](../../system-a
 - Item storage and inventory handling
 - Experience and level tracking
 - NPC respawn scheduling with configurable delays
-- Realm-authored, versioned actor creation descriptors and auto-provision templates supplied by the Game Design/realm catalog contract
-- Support for stable tenant-shared and isolated/playtest namespaces, depending on the resolved realm policy
+- **Target state:** Realm-authored, versioned actor creation descriptors and auto-provision templates supplied by the Game Design/realm catalog contract
+- **Target state:** Support for stable tenant-shared and isolated/playtest namespaces, depending on the resolved realm policy
 - Supports instance-based spaces in conjunction with the World Management Service so characters can enter private dungeons or personalized housing without affecting the shared world state
 - Crafting recipe management with validation
 - Cross-game character listing via account linkage

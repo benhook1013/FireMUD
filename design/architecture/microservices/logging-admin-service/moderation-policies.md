@@ -4,15 +4,15 @@ This document is the canonical Logging & Admin owner contract for safety policy 
 
 ## Implementation Status
 
-- `POST /moderation/actions` and `ApplyModerationAction` are gated/unavailable. They currently persist neither the `moderation_actions` policy-input/audit record nor owner enforcement state.
+- `POST /moderation/actions` and `ApplyModerationAction` are gated/unavailable. They currently persist only the generic legacy `ModerationAction` row in `moderation_actions`; separate fixed-category policy-input/audit evidence, owner forwarding or Account-reference redemption, and owner enforcement are absent. The legacy row is not target fixed-category proof.
 - `EvaluateModerationPolicy` remains a live internal read consumed at the Game Session `GAMEPLAY_ADMISSION` and Social & Groups `CHAT_SEND` boundaries. It is not an operator mutation and does not make the target owner-local command workflow complete.
 - Complete fixed-category persistence, digest-bound owner commands, monotonic owner projections, bounded appeals, and player-facing notices are not implemented or proved. Current code and tests must not be read as proof of these target obligations.
 
-Target behavior, once the mutation gate is complete, is for the gated policy-input/audit path to durably record policy intent/case/audit evidence and redeem its one Account reference exactly once for that local persistence; it never forwards or reuses that reference. A separate future typed digest-bound owner-enforcement command receives its own Account reference, which the receiving owner redeems/authorizes before committing local enforcement. Current behavior is the gated/unavailable action path: it performs no moderation persistence, owner forwarding, redemption, or enforcement. The live `EvaluateModerationPolicy` read is the only current moderation decision seam and carries no mutation authorization reference.
+Target behavior, once the mutation gate is complete, is for the gated policy-input/audit path to durably record policy intent/case/audit evidence and redeem its one Account reference exactly once for that local persistence; it never forwards or reuses that reference. A separate future typed, digest-bound owner-enforcement command receives its own Account reference, which the receiving owner redeems/authorizes before committing local enforcement. Current behavior is the gated/unavailable action path: it performs no fixed-category policy/audit persistence, owner forwarding or Account-reference redemption, or owner enforcement; the generic legacy row is not target fixed-category proof. The live `EvaluateModerationPolicy` read is the only current moderation decision seam and carries no mutation authorization reference.
 
 ## Fixed Safety Categories
 
-FireMUD accepts exactly these five categories at this boundary:
+FireMUD's fixed safety vocabulary has exactly these five categories. The `/moderation/actions` mutation ingress accepts only the four punitive categories—`platform_access_ban`, `gameplay_ban`, `chat_mute`, and `chat_ban`. The protective `account_security_lock` is Account-only security ingress and is rejected by this mutation path before persistence or reference redemption:
 
 | Category | Purpose | Enforcement owner | Scope and effect |
 | --- | --- | --- | --- |
