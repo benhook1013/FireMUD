@@ -4,6 +4,10 @@
 
 Handles player characters, NPCs, runtime actor identity, items, and all inventory/containment. Provides CRUD operations for entities and exposes them to other services. This includes player inventories and equipment, container contents (chests, corpses, banks, bags), and items on the ground in rooms (room/ground inventory) modeled as items inside dedicated room-ground container entities keyed by `(tenantId, gameInstanceId, roomInstanceId)` (a `RoomInstanceRef`) rather than being stored in the World Management Service.
 
+## Implementation Status
+
+Persisted rows and realm-aware listing exist, but synthetic-ID paths, fixed RPG columns, published entry-policy/descriptor/template resolution, policy-specific roster handling, namespace-idempotent auto-provision, and fork-local copy proof remain gaps.
+
 The target-state model is container-first:
 
 - character and NPC inventories are hidden containers owned by that runtime entity;
@@ -22,8 +26,6 @@ Inventory and equipment mutations are also intended to be auditable through a ca
 ### PLAYER-01 actor and realm-entry ownership
 
 [ADR 0140](../../decisions/adr-0140-realm-authored-controllable-actor-entry.md) is the canonical actor-entry contract; the detailed allocation, persistence, policy, descriptor/template, and copy rules live in [API Contracts](./api-contracts.md) and [Runtime and Data](./runtime-and-data.md). Entity Management owns persisted `characterId` and the `{accountId, tenantId, playableStateNamespaceId, characterId}` association. Account owns identity, membership, grants, and profiles; Game Session owns active attachment/controller fencing. The service must reject synthetic identity and retain game-authored actor components, while playtest copies receive fork-local identity with provenance-only `sourceCharacterId`.
-
-Current implementation remains partial: persisted rows and realm-aware listing exist, but synthetic-ID paths, fixed RPG columns, published entry-policy/descriptor/template resolution, policy-specific roster handling, namespace-idempotent auto-provision, and fork-local copy proof remain gaps.
 
 ### Responsibilities
 

@@ -61,6 +61,8 @@ Global and tenant account profiles remain separate from realm actor identity and
 
 When seeded or snapshot playtest preparation copies a controllable actor into a fresh playtest namespace, Entity Management allocates a distinct fork-local `characterId`. The copy may retain `sourceCharacterId` as audit or diagnostic provenance. That field is never a live cross-namespace identity, ownership, mutation, controller, reconnect, or merge link. [ADR 0137](./adr-0137-isolated-playtest-state-modes-and-reset.md)'s isolation and no-merge-back rules remain unchanged.
 
+Retained actor rows and any convergence from legacy controller or index identity must pass the existing [legacy controller-index migration gate](../system-architecture-session-behavior.md#legacy-controller-index-migration-gate) before namespace-qualified admission is enabled. This decision does not define a general compatibility or mapping layer: an exact typed mapping may be used only when it is unambiguous; unresolved or ambiguous legacy or fallback identity is quarantined and fails closed, never synthesized as an alias. Active sessions must be fenced or invalidated and then rebound under the converged identity before cutover.
+
 ### Deferred Session Shapes
 
 Truly characterless gameplay and simultaneous control of multiple primary actors are deferred until a concrete game requires them. They need deliberate command routing, presence, takeover, reconnect, authorization, and state-fencing semantics rather than an ambiguous empty or repeated `characterId`. Secondary controlled entities, pets, summons, units, or indirect nation assets can exist under the one primary-controller model without deciding those future session shapes.

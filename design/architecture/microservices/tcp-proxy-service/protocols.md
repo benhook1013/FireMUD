@@ -151,7 +151,7 @@ Diagnostic-only signals include unknown or malformed opaque extension/control li
 ### Compatibility Notes
 
 - Classic MUD clients that rely only on standard text I/O and basic Telnet negotiation are expected to work without special configuration.
-- Clients that depend on advanced Telnet options should treat those features as best-effort.
+- Clients that require Telnet options outside this explicit basic subset are unsupported and have no compatibility guarantee; advanced options are not best-effort features.
 - Classic clients should rely on plain-text gameplay. No MCP, GMCP, or FireMUD package/version is currently advertised or supported; a future adapter must be explicitly selected, owned by Game Session, and proven against an exact client matrix before advertisement.
 
 ## Generic Transport Limits and Deferred Semantics

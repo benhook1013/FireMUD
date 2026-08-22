@@ -37,6 +37,8 @@ Account Service is the sole grant writer and read authority for non-public realm
 
 The normal playtest access record is scoped by the canonical `{accountId, tenantId, worldSlug, realmSlug}` plus immutable `playtestLifecycleId`. The lifecycle ID is part of the durable grant identity and every revision/tombstone; a later fork lifecycle or realm reuse cannot address this grant. It carries its active or revoked state, monotonic `grantRevision`, grantor and audit metadata, `requestId`, and explicit `grantExpiresAt`. Account remains the authority for this record; Game Session and client surfaces consume its result and do not maintain independent grant stores. Every discovery, lookup, mutation, and admission check supplies and validates that same lifecycle ID; a tenant-global `realmSlug` lookup is insufficient.
 
+Pre-v1 migration is a direct cutover to this five-field grant identity. A legacy four-field grant record or token that lacks `playtestLifecycleId` is not accepted through a dual-format path: absent objective retained-data proof, it fails closed and is invalidated, requiring deliberate regrant and token reissue under the exact lifecycle. Account may map retained legacy data only when objective retained-data evidence proves one unambiguous current lifecycle; a mapped grant still requires lifecycle-bound token reissue. Ambiguous, missing, or contradictory evidence is quarantined and denied until reconciled. No runtime alias or four-field fallback is permitted.
+
 ### Expiry Is Bounded and Explicit
 
 Every playtest fork has an expiry, and every tester grant has an explicit expiry no later than the fork's then-current expiry. Effective access ends at:
