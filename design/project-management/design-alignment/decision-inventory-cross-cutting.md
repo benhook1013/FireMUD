@@ -222,7 +222,7 @@ The decisions below have applied human-review provenance. They are not pending p
 
 ### Pending Decisions Requiring Product Or Operations Consultation
 
-The rows below remain genuinely pending: no applied review provenance proves who made the choices, so product or operations approval is not yet visible in canonical repository state. They are intentionally excluded from the applied follow-up table above.
+These rows retain unresolved product or operations acceptance or applied-provenance gaps for the named decision or its remaining portions. Existing canonical ADR/design authority for already-settled boundaries remains in force and does not establish acceptance for the unresolved portions. They are intentionally excluded from the applied follow-up table above.
 
 | Priority | Decision keys | Consultation topic |
 | --- | --- | --- |

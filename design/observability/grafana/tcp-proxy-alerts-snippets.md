@@ -98,7 +98,7 @@ groups:
           description: |
             The TCP Proxy is seeing sustained failures when calling the Game Session
             Service NotifyDisconnect event sink. Inspect
-            grpc_app_error_total{service="game-session-service",code=...} and Game
+            grpc_app_error_total{service="game-session-service",code="<code>"} and Game
             Session logs to distinguish transient transport issues from contract or
             authorization errors.
 
@@ -131,7 +131,7 @@ groups:
             The supplementary caller-side gRPC application-error count is elevated
             for one or more codes on TCP Proxy related RPCs (such as NotifyDisconnect).
             Correlate it with the canonical producer series
-            grpc_app_error_total{service="game-session-service",code=...} and Game
+            grpc_app_error_total{service="game-session-service",code="<code>"} and Game
             Session logs to identify misconfigurations or schema/contract issues.
 ```
 
