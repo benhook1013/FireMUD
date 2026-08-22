@@ -88,6 +88,7 @@ Some derived caches are better understood as a small built-in gameplay view cach
 - Safety rules:
   - cached view payloads are derived and disposable, never authoritative;
   - `view:room-look:*` is a disposable presentation/redraw helper only; it is never semantic reconnect context, frame/output replay, a transcript archive, or a delivery ledger;
+  - `screenbuffer:*` is a separate disposable reconnect-context acceleration/cache family; it is distinct from `view:room-look:*` and never semantic authority;
   - they may improve latency or presentation/redraw experience, but they must not change gameplay semantics;
   - each cached built-in view must opt in explicitly with a documented key shape, TTL, invalidation source, and presentation/use rules rather than inheriting from a generic “all commands are cacheable” framework;
   - cached room-view payloads should preserve the same top-level structure as the authoritative view contract (for example room prose, exits, occupants, room-ground items, and optional overlays) so presentation/UI redraw does not invent a second ad hoc shape.
@@ -187,7 +188,7 @@ From a correctness perspective, cache usage falls into two broad classes:
 
 To avoid noisy-neighbor effects on coordination workloads, cache writers must also enforce **per-value size limits** and avoid unbounded lists or blobs in Redis:
 
-- Cap serialized values to a practical ceiling (for example, roughly 32 KB or two protobuf pages) before writing them to Redis. If an aggregate such as a current room view would exceed that size, split it into chunked entries under the same exact room, viewer/session, and policy-context binding rather than storing a multi-megabyte blob.
+- Cap serialized values to a practical ceiling (for example, roughly 32 KB or two protobuf pages) before writing them to Redis. A cache family may split an oversized aggregate into chunked entries only when its owning contract explicitly defines chunking and the complete scope binding for those chunks. `view:room-look:*` is not chunked: when its rendered LOOK payload exceeds the canonical 32 KiB limit, skip the cache write and serve the uncached authoritative `ResolveLook` result as specified below.
 - CI or static checks should exercise representative payloads to keep them within these limits, and reviewers must explicitly justify any intentional exception.
 - Large or streaming-style responses stay in PostgreSQL/object storage or behind dedicated APIs rather than being replicated wholesale into Redis, even on the Cache/Rate-Limit cluster.
 
