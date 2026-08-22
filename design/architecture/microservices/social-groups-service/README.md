@@ -6,7 +6,7 @@ Provides chat, guild, and social networking features across games. Basic REST an
 
 ## Implementation Status
 
-The current live moderation seam is `SendMessage` consuming the synchronous `EvaluateModerationPolicy` read at `CHAT_SEND`; it fails closed when required policy evidence is unavailable or stale. Owner-local `chat_mute`/`chat_ban` restriction tables, commands, durable revisions, notices, and bounded appeal outcomes are target-only/partial and are not current persisted controls. Logging & Admin remains the policy-input, case, evidence, and audit owner rather than a routine chat hot-path dependency.
+The current live moderation seam is `SendMessage` consuming the synchronous `EvaluateModerationPolicy` read at `CHAT_SEND`; it fails closed when required policy evidence is unavailable or stale. Target owner-local `chat_mute`/`chat_ban` restriction tables, commands, durable revisions, notices, and bounded appeal outcomes are target-only/partial and are not current persisted controls. The target owner-local enforcement model avoids making Logging & Admin a routine chat hot-path dependency; until that target model is implemented, the current `CHAT_SEND` path depends synchronously on the `EvaluateModerationPolicy` read. Logging & Admin remains the policy-input, case, evidence, and audit owner.
 
 Target player-safe outcomes remain distinct: `CHAT_MUTE_SEND_DENIED` denies sending while ordinary receipt remains available; `CHAT_BAN_PARTICIPATION_DENIED` denies ordinary participation, sending, and history while essential system and moderation notices remain deliverable. These target codes do not claim that the current read seam has converged on durable owner-local enforcement.
 
@@ -29,7 +29,7 @@ Target player-safe outcomes remain distinct: `CHAT_MUTE_SEND_DENIED` denies send
 - In-game social chat plus account-to-account direct messaging
 - Presence indicators notify when friends come online
 - Game creators can broadcast announcements and send out-of-game emails
-- Enforce fixed-category communication restrictions at send, participation, history, and essential-notice boundaries without making Logging & Admin a routine hot-path dependency
+- **Target state:** Enforce fixed-category communication restrictions at send, participation, history, and essential-notice boundaries from owner-local state without making Logging & Admin a routine hot-path dependency; the current `CHAT_SEND` seam remains the synchronous `EvaluateModerationPolicy` read described above.
 
 ### Presence Scope Note
 
