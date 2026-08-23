@@ -133,7 +133,7 @@ Ownership is split between the Game Design Service and domain services:
   - References from revisions/versions to assets, scripts, and templates via stable identifiers.
 - Domain services such as World Management, Entity Management, Game Logic, and others are the canonical stores for:
   - Versioned template/config graphs and snapshots read by `(tenantId, versionId)` for the selected runtime version (world topology, entity templates, balance records, etc.).
-  - Durable playable state keyed by `(tenantId, playableStateNamespaceId, playableStateScope)` and explicit S3 instance-scoped runtime state keyed by `(tenantId, gameInstanceId)`, as defined by [ADR 0122](./decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md).
+  - Durable playable state keyed by `(tenantId, playableStateNamespaceId)` plus the applicable owning-domain object identity, and explicit S3 instance-scoped runtime state keyed by `(tenantId, gameInstanceId)`, as defined by [ADR 0122](./decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md). `playableStateScope` remains immutable server-derived policy/routing/authorization evidence carried and validated with the namespace and active instance; it is not a durable-key or uniqueness dimension.
 
 Domain services must not persist their own commit histories; they expose only the current and historical template snapshots keyed by `(tenantId, versionId)`. Game Design Service must not maintain a second, divergent copy of world or entity template graphs; it references domain templates via stable IDs and version metadata.
 
@@ -186,7 +186,7 @@ Published versions are immutable from the perspective of domain templates:
 - The Game Design Service is the source of truth for version state (`Draft`, `Published`, `Active`, `Failed`, `Retired`).
 - Domain services such as World Management and Entity Management expose **design APIs** that create or update template rows only for Draft versions keyed by `(tenantId, versionId)`. Authoring tools call these APIs incrementally as revisions are saved so Draft template graphs in domain services always reflect the latest committed design state for that version.
 - Once a version reaches the Published state, template tables in domain services must treat rows for that `(tenantId, versionId)` as read-only. Any attempt to modify templates for a Published, Active, or Failed version should fail fast at the design API boundary and be surfaced as a validation error in the Game Design UI.
-- Runtime gameplay flows (ticks, world-lifecycle workflows, etc.) never mutate template tables. They only read templates for the active `runtime_version`; writes use `(tenantId, playableStateNamespaceId, playableStateScope)` for durable playable state and `(tenantId, gameInstanceId)` only for explicitly instance-scoped runtime state.
+- Runtime gameplay flows (ticks, world-lifecycle workflows, etc.) never mutate template tables. They only read templates for the active `runtime_version`; writes use `(tenantId, playableStateNamespaceId)` plus the applicable owning-domain object identity for durable playable state, with `playableStateScope` carried and validated as server-derived policy/routing/authorization evidence, and `(tenantId, gameInstanceId)` only for explicitly instance-scoped runtime state.
 
 At a high level, each `(tenantId, versionId)` template graph in a domain service follows this lifecycle:
 

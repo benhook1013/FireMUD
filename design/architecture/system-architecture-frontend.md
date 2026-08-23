@@ -281,10 +281,12 @@ FireMUD aims to let each hosted game supply its own UI styling and layout tweaks
   bundle identity (`versionId`, optional `scriptPatchVersion`, and manifest
   location/hash or equivalent), and the client must swap theme assets whenever
   that resolved bundle changes.
-- Published game assets are loaded directly from the CDN or via the gateway's
-  `/assets/**` route when a self-hosted MinIO instance is used; the Game Design
-  Service is never queried during gameplay. The published-asset origin does not
-  serve frontend documents or `/frontend-assets/**`.
+- Published game assets are loaded directly from an approved public CDN or
+  published-asset origin; the target Gateway `/assets/**` route remains pending
+  a separate approved public origin/provisioner, and private MinIO is not public
+  delivery. The Game Design Service is never queried during gameplay. The
+  published-asset origin does not serve frontend documents or
+  `/frontend-assets/**`.
 - If the manifest omits an asset, the default platform styling is used.
 - Core components remain shared so feature updates reach all games without
   forks.
