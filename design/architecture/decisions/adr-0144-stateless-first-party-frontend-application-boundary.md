@@ -143,7 +143,7 @@ The static serving implementation, container image, web server, cache durations,
 
 ## Required Documentation Alignment
 
-- `design/architecture/system-architecture-frontend.md`
-- `design/architecture/system-architecture-gateway.md`
-- `design/architecture/infrastructure/deployment-environments.md`
-- `design/architecture/microservices/game-design-service/web-visual-interface.md`
+- [Frontend architecture](../system-architecture-frontend.md)
+- [Gateway architecture](../system-architecture-gateway.md)
+- [Deployment environments](../infrastructure/deployment-environments.md)
+- [Game Design web visual interface](../microservices/game-design-service/web-visual-interface.md)

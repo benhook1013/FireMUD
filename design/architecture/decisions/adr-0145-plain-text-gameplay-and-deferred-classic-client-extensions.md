@@ -122,7 +122,7 @@ Revisit the protocol choice when current-client research identifies a concrete t
 
 ## Required Documentation Alignment
 
-- `design/architecture/system-architecture-mud-client-protocol.md`
-- `design/architecture/system-architecture-protocol-bridging.md`
-- `design/architecture/microservices/tcp-proxy-service/README.md`
-- `design/architecture/microservices/tcp-proxy-service/protocols.md`
+- [MUD client protocol and classic-client extensions](../system-architecture-mud-client-protocol.md)
+- [Protocol bridging](../system-architecture-protocol-bridging.md)
+- [TCP Proxy Service](../microservices/tcp-proxy-service/README.md)
+- [TCP Proxy protocols](../microservices/tcp-proxy-service/protocols.md)

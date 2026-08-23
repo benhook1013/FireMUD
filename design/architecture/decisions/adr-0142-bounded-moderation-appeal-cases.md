@@ -132,8 +132,8 @@ UI, case schema details, rate limits, retention periods, reviewer workflow, and 
 
 ## Required Documentation Alignment
 
-- `design/architecture/microservices/logging-admin-service/moderation-policies.md`
-- `design/architecture/microservices/logging-admin-service/api-contracts.md`
-- `design/architecture/microservices/logging-admin-service/runtime-and-data.md`
-- `design/architecture/microservices/account-service/api-contracts.md`
-- `design/architecture/decisions/adr-0048-durable-idempotent-operator-write-execution.md`
+- [Moderation policies](../microservices/logging-admin-service/moderation-policies.md)
+- [Logging & Admin API contracts](../microservices/logging-admin-service/api-contracts.md)
+- [Logging & Admin runtime and data](../microservices/logging-admin-service/runtime-and-data.md)
+- [Account API contracts](../microservices/account-service/api-contracts.md)
+- [ADR 0048 durable idempotent operator-write execution](./adr-0048-durable-idempotent-operator-write-execution.md)

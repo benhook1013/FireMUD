@@ -147,7 +147,7 @@ Storage schemas, safe reason vocabularies, indexes, cache implementation, and op
 
 ## Required Documentation Alignment
 
-- `design/architecture/system-architecture-overview.md`
-- `design/architecture/microservices/logging-admin-service/moderation-policies.md`
-- `design/product/user-journeys/players.md`
-- `design/product/user-journeys/operators.md`
+- [System architecture overview](../system-architecture-overview.md)
+- [Moderation policies](../microservices/logging-admin-service/moderation-policies.md)
+- [Player user journeys](../../product/user-journeys/players.md)
+- [Operator user journeys](../../product/user-journeys/operators.md)

@@ -52,7 +52,7 @@ curl -X POST http://localhost:8080/voice/token \
 ## gRPC APIs
 
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in `social_groups_service.proto`
-- `SendMessage` – validates the caller's exact tenant/realm/channel scope and owner-local `chat_mute`/`chat_ban` state before publishing; `chat_mute` rejects sending but permits ordinary receipt, while `chat_ban` rejects ordinary participation/send/history but permits essential moderation/system notices. The current implementation does not yet prove the complete local restriction contract.
+- `SendMessage` – **Target state:** validates the caller's exact tenant/realm/channel scope and owner-local `chat_mute`/`chat_ban` state before publishing; `chat_mute` rejects sending but permits ordinary receipt, while `chat_ban` rejects ordinary participation/send/history but permits essential moderation/system notices. **Current state:** `SendMessage` consumes the synchronous `EvaluateModerationPolicy` seam at `CHAT_SEND`; owner-local durable restriction state and the complete local restriction contract are not yet implemented or proved.
 - `CreateGuild` – establishes a new guild with an owner account
 - `AddFriend` – adds a friend relationship at the game or account level
 - `ListFriendPresence` – returns the bounded account-scoped projection defined by the [Friend Presence Privacy Contract](#friend-presence-privacy-contract). Social & Groups retains the local transport consequence: raw presence is obtained from Game Session and profile policy through bounded internal bulk reads; the current endpoint remains non-pageable as noted in implementation status.

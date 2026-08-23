@@ -128,7 +128,7 @@ Stripe-specific implementation details may evolve without changing this decision
 
 ## Required Documentation Alignment
 
-- `design/product/requirements.md`
-- `design/product/user-journeys/players.md`
-- `design/architecture/microservices/account-service/stripe-integration.md`
-- `design/architecture/microservices/account-service/runtime-and-data.md`
+- [Product requirements](../../product/requirements.md)
+- [Player user journeys](../../product/user-journeys/players.md)
+- [Account Stripe integration](../microservices/account-service/stripe-integration.md)
+- [Account runtime and data](../microservices/account-service/runtime-and-data.md)

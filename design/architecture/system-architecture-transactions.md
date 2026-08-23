@@ -228,7 +228,7 @@ These workflows:
 - Modify **persistent storage (PostgreSQL)** across multiple services
 - Require compensation and persisted step status, but not durable workflow execution
 
-For `explicitRealmEntry`, the accepted policy outcomes are exactly `PLAYER_CREATED`, `AUTO_PROVISIONED`, and `PRESEEDED_ONLY`; the discovered-entry object/digest carries the selected outcome without duplicating its semantics. The saga branches on that unchanged bound outcome: `PLAYER_CREATED` uses Entity's `ListCharactersByAccount` against the unchanged bound target. A nonzero roster selects an existing actor read-only; a zero roster with no creation input offers/requires creation without mutation; a submitted creation input with absent required fields, malformed data, or failure to validate against the exact realm-published descriptor and version bound in the discovered-entry object fails closed; and only valid submitted input calls `CreateCharacter` with the unchanged discovered-entry object/digest plus that input. `AUTO_PROVISIONED` calls `AutoProvisionCharacter` with those same immutable inputs after explicit entry, allowing its owner-defined idempotent existing-actor result. `PRESEEDED_ONLY` calls `ListCharactersByAccount` as a lookup: zero actors returns the pre-seeded-only denial, while a nonzero roster selects an existing actor without actor mutation. No branch re-resolves policy or substitutes a different descriptor/template, namespace, scope, or digest. Catalog and admission-pointer authority remains in [Multi-Tenancy](./system-architecture-multi-tenancy.md), while descriptor/template and actor-creation authority remains in [ADR 0140](./decisions/adr-0140-realm-authored-controllable-actor-entry.md). The Entity API contract names these target surfaces, but the current proto, implementation, and focused proof do not establish this saga.
+For `explicitRealmEntry`, the accepted policy outcomes are exactly `PLAYER_CREATED`, `AUTO_PROVISIONED`, and `PRESEEDED_ONLY`; the immutable discovered-entry request may carry an optional `selectedCharacterId`, and its digest covers that selection without duplicating policy semantics. The saga branches on that unchanged bound outcome: `PLAYER_CREATED` uses Entity's `ListCharactersByAccount` against the unchanged bound target. An exactly-one roster auto-selects its actor; if the request supplies `selectedCharacterId`, it must equal that one actor. A multiple-actor roster requires an explicit `selectedCharacterId` that belongs to the unchanged roster/snapshot; missing or invalid selection fails before binding. A zero roster with no creation input offers/requires creation without mutation, and zero-roster creation never accepts a caller-selected character ID. A submitted creation input with absent required fields, malformed data, or failure to validate against the exact realm-published descriptor and version bound in the discovered-entry object fails closed; and only valid submitted input calls `CreateCharacter` with the unchanged discovered-entry object/digest plus that input. `AUTO_PROVISIONED` calls `AutoProvisionCharacter` with those same immutable inputs after explicit entry, allowing its owner-defined idempotent existing-actor result. `PRESEEDED_ONLY` calls `ListCharactersByAccount` as a lookup: zero actors returns the pre-seeded-only denial, while a nonzero roster applies the same exact-one-versus-many selection rule without actor mutation. No branch re-resolves policy or substitutes a different descriptor/template, namespace, scope, roster, or digest. Catalog and admission-pointer authority remains in [Multi-Tenancy](./system-architecture-multi-tenancy.md), while descriptor/template and actor-creation authority remains in [ADR 0140](./decisions/adr-0140-realm-authored-controllable-actor-entry.md). The Entity API contract names these target surfaces, but the current proto, implementation, and focused proof do not establish this saga.
 
 If a workflow needs restart-safe continuation, durable waits/timers, or operator-visible in-flight state that survives one service lifetime, it should use the shared Temporal substrate described in [Temporal Control-Plane Workflows](./system-architecture-temporal-workflows.md) instead of extending `SagaRunner` toward durable workflow behavior.
 
@@ -331,8 +331,14 @@ explicitRealmEntry(discoveredEntry, discoveredEntryDigest):
   switch discoveredEntry.policyOutcome:
     PLAYER_CREATED:
       roster = Entity.ListCharactersByAccount(discoveredEntry, discoveredEntryDigest)
-      if roster is nonzero:
-        select existing actor  # lookup/selection only; no actor mutation
+      if roster has exactly one actor:
+        require no selectedCharacterId or selectedCharacterId == roster[0].characterId
+        select roster[0]  # lookup/selection only; no actor mutation
+      else if roster has multiple actors:
+        require selectedCharacterId belongs to unchanged roster/snapshot
+        select selectedCharacterId  # lookup/selection only; no actor mutation
+      else if selectedCharacterId is present:
+        fail closed  # an empty roster cannot validate a caller-selected actor
       else if creation input is absent:
         offer/require creation  # no actor mutation
       else if creation input is malformed or fails exact bound descriptor/version validation:
@@ -345,8 +351,12 @@ explicitRealmEntry(discoveredEntry, discoveredEntryDigest):
       roster = Entity.ListCharactersByAccount(discoveredEntry, discoveredEntryDigest)
       if roster is zero:
         return pre-seeded-only denial
+      else if roster has exactly one actor:
+        require no selectedCharacterId or selectedCharacterId == roster[0].characterId
+        select roster[0]  # lookup/selection only; no actor mutation
       else:
-        select existing actor  # lookup/selection only; no actor mutation
+        require selectedCharacterId belongs to unchanged roster/snapshot
+        select selectedCharacterId  # lookup/selection only; no actor mutation
   retries reuse the same discoveredEntry and discoveredEntryDigest
 ```
 

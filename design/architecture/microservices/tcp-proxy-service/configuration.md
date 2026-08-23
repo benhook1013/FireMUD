@@ -73,7 +73,7 @@ The full variable list is the canonical source of defaults and behavior for `TCP
 | `TCP_PROXY_GATEWAY_CIRCUIT_HALF_OPEN_MAX_PROBES` | Maximum concurrent bridge probes while half-open | `3` |
 | `TCP_PROXY_GATEWAY_CIRCUIT_RECOVERY_SUCCESS_COUNT` | Consecutive successful probes required to recover admission | `3` |
 | `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES` | Maximum buffered Telnet lines waiting to be forwarded | `64` |
-| `TCP_PROXY_MCP_ENABLED` | Deprecated implementation-drift marker/greeting flag; supported deployments must keep it disabled and unadvertised; not a supported semantic-extension toggle | `false` |
+| `TCP_PROXY_MCP_ENABLED` | Deprecated implementation-drift marker/greeting flag; target startup accepts `true` only in explicit local/development/test profiles and rejects it in shared, player-facing, and prod-like profiles; the default remains `false`, disabled, and unadvertised; not a supported semantic-extension toggle | `false` |
 | `TCP_PROXY_MCP_NEGOTIATION_FAILURE_MAX` | Dormant target-only MCP budget; not consumed by the current runtime | `5` |
 | `TCP_PROXY_MCP_NEGOTIATION_FAILURE_WINDOW_MS` | Dormant target-only MCP budget window; not consumed by the current runtime | `60000` |
 | `TCP_PROXY_MCP_MAX_ACTIVE_CORDS` | Dormant target-only MCP cord budget; not consumed by the current runtime | `16` |
@@ -131,7 +131,7 @@ The proxy’s connection caps, idle timeouts, and buffer depth limits are hard c
 
 The connection limits exposed via `TCP_PROXY_MAX_CONNECTIONS` and `TCP_PROXY_MAX_CONNECTIONS_PER_IP` are intended to be tuned per environment.
 
-The listed `TCP_PROXY_MCP_*` budgets are dormant target-only settings and are not consumed by the current runtime. Marker-looking lines are treated as opaque generic input and forwarded subject only to the proxy's live generic line-size, connection, idle, buffer, and per-IP connection limits; no MCP-specific budget/rate-limit enforcement or `reason="mcp_budget"` discard is live. The deprecated `TCP_PROXY_MCP_ENABLED` flag can trigger the implementation-drift greeting when enabled, but supported deployments must keep it `false` and unadvertised.
+The listed `TCP_PROXY_MCP_*` budgets are dormant target-only settings and are not consumed by the current runtime. Marker-looking lines are treated as opaque generic input and forwarded subject only to the proxy's live generic line-size, connection, idle, buffer, and per-IP connection limits; no MCP-specific budget/rate-limit enforcement or `reason="mcp_budget"` discard is live. The deprecated `TCP_PROXY_MCP_ENABLED` flag can trigger the implementation-drift greeting when enabled, but the **target** configuration/startup contract accepts `true` only in explicit local/development/test profiles and rejects it in shared, player-facing, and prod-like profiles; it remains `false`, disabled, and unadvertised by default. Focused profile-startup proof is required for this boundary; the current runtime does not yet prove the profile rejection.
 
 The initial Proxy -> Gateway WebSocket bridge retry budget and input buffer depth (`TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` and `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES`) should be sized to match expected gateway availability characteristics and typical player command rates.
 
