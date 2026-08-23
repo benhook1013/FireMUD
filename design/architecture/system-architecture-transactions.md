@@ -228,9 +228,9 @@ These workflows:
 - Modify **persistent storage (PostgreSQL)** across multiple services
 - Require compensation and persisted step status, but not durable workflow execution
 
-For `explicitRealmEntry`, the accepted policy outcomes are exactly `PLAYER_CREATED`, `AUTO_PROVISIONED`, and `PRESEEDED_ONLY`; the immutable discovered-entry request may carry an optional `selectedCharacterId`, and its digest covers that selection without duplicating policy semantics. The saga branches on that unchanged bound outcome: `PLAYER_CREATED` first uses Entity's `ListCharactersByAccount` against the unchanged bound target, then evaluates any supplied creation input against that roster. An exactly-one roster auto-selects its actor; if the request supplies `selectedCharacterId`, it must equal that one actor. A multiple-actor roster requires an explicit `selectedCharacterId` that belongs to the unchanged roster/snapshot; missing or invalid selection fails before binding. Any supplied creation input is valid only for a zero-roster `PLAYER_CREATED` branch; after the roster lookup, a nonempty `PLAYER_CREATED` roster rejects its presence before selection, binding, or mutation, while `AUTO_PROVISIONED` and `PRESEEDED_ONLY` reject it before their branch-specific lookup or mutation. A zero roster with no creation input offers/requires creation without mutation, and zero-roster creation never accepts a caller-selected character ID. A submitted creation input with absent required fields, malformed data, or failure to validate against the exact realm-published descriptor and version bound in the discovered-entry object fails closed; and only valid submitted input calls `CreateCharacter` with the unchanged discovered-entry object/digest plus that input. The preliminary roster read is discovery and selection evidence, not concurrency authority; the Entity-owned `CreateCharacter` contract serializes and rereads the zero-roster boundary before allocation. Each mutating branch carries a caller-stable operation request identity derived from its durable forward saga-step identity (`createCharacterRequestId` for `PLAYER_CREATED`, `autoProvisionRequestId` for `AUTO_PROVISIONED`) and a `mutationDigest` over the trusted target, exact descriptor or template identity/version, and canonical `creationInput`; the auto-provision branch uses an explicit absent-input marker. Entity recomputes and binds the digest and operation identity, while `discoveredEntryDigest` remains admission/discovery evidence rather than actor-write identity. A retry reuses the same operation identity, digest, and canonical input and replays the original result; changed target, descriptor/template/version, or input fails closed as an idempotency conflict.
+For `explicitRealmEntry`, the accepted policy outcomes are exactly `PLAYER_CREATED`, `AUTO_PROVISIONED`, and `PRESEEDED_ONLY`; the immutable discovered-entry request may carry an optional `selectedCharacterId`, and its digest covers that selection without duplicating policy semantics. For any branch that reads a roster, the durable saga step binds the selected policy branch, Entity-returned roster snapshot identity/digest, and resolved selected character when one exists; retries reuse those applicable values rather than silently following a changed roster. The saga branches on that unchanged bound outcome: `PLAYER_CREATED` first uses Entity's `ListCharactersByAccount` against the unchanged bound target, then evaluates any supplied creation input against that roster. An exactly-one roster auto-selects its actor; if the request supplies `selectedCharacterId`, it must equal that one actor. A multiple-actor roster requires an explicit `selectedCharacterId` that belongs to the unchanged roster/snapshot; missing or invalid selection fails before binding. Any supplied creation input is valid only for a zero-roster `PLAYER_CREATED` branch; after the roster lookup, a nonempty `PLAYER_CREATED` roster rejects its presence before selection, binding, or mutation, while `AUTO_PROVISIONED` and `PRESEEDED_ONLY` reject it before their branch-specific lookup or mutation. A zero roster with no creation input offers/requires creation without mutation, and zero-roster creation never accepts a caller-selected character ID. A submitted creation input with absent required fields, malformed data, or failure to validate against the exact realm-published descriptor and version bound in the discovered-entry object fails closed; and only valid submitted input calls `CreateCharacter` with the unchanged discovered-entry object/digest plus that input. The preliminary roster read is discovery and selection evidence, not concurrency authority; the Entity-owned `CreateCharacter` contract serializes and rereads the zero-roster boundary before allocation. If a durable saga step has already entered `CreateCharacter`, a retry calls Entity with the stored request identity, digest, and canonical input before any fresh roster rejection so a committed operation with a lost response replays its original result. Each mutating branch carries a caller-stable operation request identity derived from its durable forward saga-step identity (`createCharacterRequestId` for `PLAYER_CREATED`, `autoProvisionRequestId` for `AUTO_PROVISIONED`) and a `mutationDigest` over the trusted target, exact descriptor or template identity/version, and canonical `creationInput`; the auto-provision branch uses the explicit absent-input marker defined by [ADR 0140](./decisions/adr-0140-realm-authored-controllable-actor-entry.md). Entity recomputes and binds the digest and operation identity, while `discoveredEntryDigest` remains admission/discovery evidence rather than actor-write identity. A retry reuses the same operation identity, digest, and canonical input and replays the original result; changed target, descriptor/template/version, or input fails closed as an idempotency conflict.
 
-`AUTO_PROVISIONED` requires `selectedCharacterId` to be absent; any supplied selection fails closed before the provisioning call. It calls `AutoProvisionCharacter` with the same immutable discovered-entry inputs plus its stable `autoProvisionRequestId`, `mutationDigest`, and canonical absent-input marker after explicit entry, allowing its owner-defined idempotent existing-actor result. `PRESEEDED_ONLY` calls `ListCharactersByAccount` as a lookup: zero actors returns the pre-seeded-only denial, while a nonzero roster applies the same exact-one-versus-many selection rule without actor mutation. No branch re-resolves policy or substitutes a different descriptor/template, namespace, scope, roster, or digest. Catalog and admission-pointer authority remains in [Multi-Tenancy](./system-architecture-multi-tenancy.md), while descriptor/template and actor-creation authority remains in [ADR 0140](./decisions/adr-0140-realm-authored-controllable-actor-entry.md). The Entity API contract names these target surfaces, but the current proto, implementation, and focused proof do not establish this saga.
+`AUTO_PROVISIONED` requires `selectedCharacterId` to be absent; any supplied selection fails closed before the provisioning call. It calls `AutoProvisionCharacter` with the same immutable discovered-entry inputs plus its stable `autoProvisionRequestId`, `mutationDigest`, and canonical absent-input marker after explicit entry, allowing its owner-defined idempotent existing-actor result. `PRESEEDED_ONLY` calls `ListCharactersByAccount` as a lookup: zero actors returns the pre-seeded-only denial, while a nonzero roster applies the same exact-one-versus-many selection rule without actor mutation. Its durable selection step binds the returned roster snapshot identity/digest and selected character; a retry must validate that exact snapshot and selection and fails closed if the roster changed rather than silently selecting another actor. No branch re-resolves policy or substitutes a different descriptor/template, namespace, scope, roster, or digest. Catalog and admission-pointer authority remains in [Multi-Tenancy](./system-architecture-multi-tenancy.md), while descriptor/template and actor-creation authority remains in [ADR 0140](./decisions/adr-0140-realm-authored-controllable-actor-entry.md). The Entity API contract names these target surfaces, but the current proto, implementation, and focused proof do not establish this saga.
 
 If a workflow needs restart-safe continuation, durable waits/timers, or operator-visible in-flight state that survives one service lifetime, it should use the shared Temporal substrate described in [Temporal Control-Plane Workflows](./system-architecture-temporal-workflows.md) instead of extending `SagaRunner` toward durable workflow behavior.
 
@@ -332,15 +332,28 @@ explicitRealmEntry(discoveredEntry, discoveredEntryDigest):
   authorizeRealmEntry(discoveredEntry, discoveredEntryDigest)
   switch discoveredEntry.policyOutcome:
     PLAYER_CREATED:
-      roster = Entity.ListCharactersByAccount(discoveredEntry, discoveredEntryDigest)
+      if create-character step is already entered:
+        Entity.CreateCharacter(boundDiscoveredEntry, boundDiscoveredEntryDigest,
+          boundCreateCharacterRequestId, boundMutationDigest,
+          boundCanonicalCreationInput)  # replay before fresh-roster rejection
+        return stored-or-replayed result
+      rosterSnapshot = Entity.ListCharactersByAccount(discoveredEntry, discoveredEntryDigest)
+      if retrying roster-selection step:
+        require rosterSnapshot.identity == boundRosterSnapshot.identity
+        require rosterSnapshot.digest == boundRosterSnapshot.digest
+      else:
+        bind rosterSnapshot.identity, rosterSnapshot.digest, and branch to sagaStep
+      roster = rosterSnapshot.roster
       if roster is nonempty and creation input is present:
         fail closed  # only zero-roster PLAYER_CREATED may accept creation input
       else if roster has exactly one actor:
         require no selectedCharacterId or selectedCharacterId == roster[0].characterId
+        bind roster[0].characterId as selectedCharacterId to sagaStep
         select roster[0]  # lookup/selection only; no actor mutation
       else if roster has multiple actors:
-        require selectedCharacterId belongs to unchanged roster/snapshot
-        select selectedCharacterId  # lookup/selection only; no actor mutation
+        resolvedSelectedCharacter = require actor matching selectedCharacterId in unchanged roster/snapshot
+        bind resolvedSelectedCharacter.characterId to sagaStep
+        select resolvedSelectedCharacter  # lookup/selection only; no actor mutation
       else if selectedCharacterId is present:
         fail closed  # an empty roster cannot validate a caller-selected actor
       else if creation input is absent:
@@ -361,16 +374,24 @@ explicitRealmEntry(discoveredEntry, discoveredEntryDigest):
       Entity.AutoProvisionCharacter(discoveredEntry, discoveredEntryDigest, autoProvisionRequestId, mutationDigest, canonicalCreationInput)
     PRESEEDED_ONLY:
       require creation input is absent
-      roster = Entity.ListCharactersByAccount(discoveredEntry, discoveredEntryDigest)
+      rosterSnapshot = Entity.ListCharactersByAccount(discoveredEntry, discoveredEntryDigest)
+      if retrying selection step:
+        require rosterSnapshot.identity == boundRosterSnapshot.identity
+        require rosterSnapshot.digest == boundRosterSnapshot.digest
+      else:
+        bind rosterSnapshot.identity and rosterSnapshot.digest to sagaStep
+      roster = rosterSnapshot.roster
       if roster is zero:
         return pre-seeded-only denial
       else if roster has exactly one actor:
         require no selectedCharacterId or selectedCharacterId == roster[0].characterId
+        bind roster[0].characterId as selectedCharacterId to sagaStep
         select roster[0]  # lookup/selection only; no actor mutation
       else:
-        require selectedCharacterId belongs to unchanged roster/snapshot
-        select selectedCharacterId  # lookup/selection only; no actor mutation
-  retries reuse the same discoveredEntry and discoveredEntryDigest; each actor mutation also reuses its operation request identity, mutationDigest, and canonicalCreationInput, while a changed input fails closed
+        resolvedSelectedCharacter = require actor matching selectedCharacterId in unchanged roster/snapshot
+        bind resolvedSelectedCharacter.characterId to sagaStep
+        select resolvedSelectedCharacter  # lookup/selection only; no actor mutation
+  retries reuse the same discoveredEntry, discoveredEntryDigest, branch, applicable roster snapshot identity/digest, and resolved selectedCharacterId; an entered PLAYER_CREATED create step replays Entity before any fresh roster rejection, and each actor mutation reuses its operation request identity, mutationDigest, and canonicalCreationInput, while a changed input or roster snapshot fails closed
 ```
 
 This is a target-state branch illustration, not current implementation or proof. Compensation applies only to the selected mutating branch; the `PRESEEDED_ONLY` lookup has no actor mutation to compensate.

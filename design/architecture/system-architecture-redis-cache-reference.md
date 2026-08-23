@@ -24,7 +24,7 @@ When introducing or changing a cache/rate-limit prefix, designs must answer the 
 
 This example shows a correctness-critical cache owned by Entity Management.
 
-- Prefix: `inventory:<tenantId>:<containerId>`.
+- Prefix: `inventory:<tenantId>:<playableStateNamespaceId>:<containerId>`.
 - Source of truth: PostgreSQL tables for entities, items, and containment.
 - Version source: the container’s authoritative `version` or `lastModified` field exposed by Entity Management.
 - Cache payload: `containerId`, `tenantId`, the version field, and the item records required for hot reads.
@@ -67,8 +67,8 @@ Cache/Rate-Limit Redis hosts prefixes that are not part of the coordination log 
 
 | Prefix | Role | Correctness Class | Reset Tolerance | Owner / Semantics |
 | --- | --- | --- | --- | --- |
-| `inventory:<tenantId>:<containerId>` | Cache | Versioned (Class A) | Reset-tolerant | Entity Management cached inventory/container aggregates. |
-| `character-cache:<tenantId>:<characterId>` | Cache | Versioned (Class A) | Reset-tolerant | Entity Management cached character graphs for hot reads. |
+| `inventory:<tenantId>:<playableStateNamespaceId>:<containerId>` | Cache | Versioned (Class A) | Reset-tolerant | Entity Management cached inventory/container aggregates. |
+| `character-cache:<tenantId>:<playableStateNamespaceId>:<characterId>` | Cache | Versioned (Class A) | Reset-tolerant | Entity Management cached character graphs for hot reads. |
 | `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>` | Cache | Versioned (Class A) | Reset-tolerant | World Management room-scoped dynamic-state cache. |
 | `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` | Cache | Versioned (Class A) | Reset-tolerant | World Management correctness-critical room snapshot cache; payload stores and validates owner `regionId`/`regionEpoch` with the opaque component version, atomically with refresh/TTL, and invalidates on epoch change. |
 | `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>:<readFenceHash>` | Cache | TTL-only (Class B) | Reset-tolerant | Target-only Game Session-owned disposable presentation/redraw helper; see the [canonical Class-B contract](./system-architecture-redis-cache.md#canonical-viewroom-look-class-b-contract). Current `ResolveLook` behavior is uncached and no focused proof establishes this prefix. The cache remains non-authoritative and disposable: unavailable or untrusted cache/fence evidence falls back to authoritative uncached `ResolveLook`, and it is never semantic reconnect context, frame/output replay, a transcript archive, or a delivery ledger. |
@@ -87,8 +87,8 @@ CI and code review checks are expected to:
 
 | Prefix / Aggregate | Example Key | Policy | Notes |
 | --- | --- | --- | --- |
-| Inventory/container views | `inventory:<tenantId>:<containerId>` | Versioned | Validated against a container or aggregate `version`/`lastModified` field in PostgreSQL. |
-| Character graphs | `character-cache:<tenantId>:<characterId>` | Versioned | Backed by character graph rows with explicit versioning. |
+| Inventory/container views | `inventory:<tenantId>:<playableStateNamespaceId>:<containerId>` | Versioned | Validated against a container or aggregate `version`/`lastModified` field in PostgreSQL. |
+| Character graphs | `character-cache:<tenantId>:<playableStateNamespaceId>:<characterId>` | Versioned | Backed by character graph rows with explicit versioning. |
 | Dynamic world aggregates | `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>` | Versioned | Backed by authoritative room-instance dynamic-state rows with `roomDynamicVersion`; invalidated on dynamic-state writes and relevant instance lifecycle changes. |
 | Room topology snapshots | `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` | Versioned | Target-only cached room snapshots carry owner `regionId`/`regionEpoch` alongside the opaque World-owned component version; refresh/TTL is atomic, epoch changes invalidate, and current readers use authoritative reads when scope/version proof is unavailable. |
 | Room LOOK views | `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>:<readFenceHash>` | TTL-only | See the [canonical Class-B contract](./system-architecture-redis-cache.md#canonical-viewroom-look-class-b-contract): target-only Game Session ownership, complete read-fence keying and unavailable-fence fallback, at most 5-second TTL, 32 KiB payload, four live variants per admitted session, exact-context invalidation, and uncached authoritative `ResolveLook` fallback. |

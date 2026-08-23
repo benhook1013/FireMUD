@@ -14,7 +14,7 @@ The editor's current implementation and browser proof remain partial; this docum
 
 ## Implementation Outline
 
-1. The React single-page application is built under `web-client` into an immutable, version-identified artifact and served by the first-party unprivileged static host. Gateway remains the `/auth/**`, `/api/**`, and `/ws/game/**` ingress and does not serve frontend files or SPA fallback.
+1. The target React single-page application is built under `web-client` into an immutable, version-identified artifact. When the static-host boundary is implemented, that artifact is served by the first-party unprivileged static host. Gateway remains the `/auth/**`, explicitly allowlisted `/api/design/**` (within the `/api/{service}/**` family), and `/ws/game/**` ingress and does not serve frontend files or SPA fallback.
 2. Drag-and-drop editors render rooms, NPCs and items on a canvas. Gateway-backed Game Design APIs persist changes through the owner’s `SaveRevision` gRPC contract.
 3. The visual scripting editor represents nodes and connections in JSON which maps directly to the Automation & Scripting Service DSL.
 4. Authentication uses the Account-owned browser token contracts through Gateway. Short-lived browser bearer tokens remain memory-only; they are not persisted in browser storage, URLs, logs, or frontend runtime configuration. Requests use authenticated caller/tenant context, and the frontend does not become an authorization, domain, or data authority.

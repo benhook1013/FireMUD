@@ -50,9 +50,9 @@ When using a self-hosted MinIO cluster as the asset store:
      '
    ```
 
-3. **Keep the bucket private and configure CORS only for an approved public delivery origin**
+3. **Keep the bucket private; the approved public delivery origin owns browser CORS**
 
-   The current first slice has no public asset route or provisioner, so do not run this CORS step as part of the current deployment. After a separate approved public `/assets/**` origin/provisioner exists, set `ASSET_STORE_CORS_ORIGIN` to the exact browser origin that is authorized to consume that delivery path and run the bootstrap below. This configures browser-origin policy only; it does not make MinIO public and must not be replaced with anonymous bucket access.
+   The current first slice has no public asset route or provisioner, so do not run this CORS step as part of the current deployment. After a separate approved public `/assets/**` origin/provisioner exists, Platform Operations must configure that public delivery origin, or its Gateway/CDN forwarder, to emit or forward the exact CORS response for the approved browser origin. `ASSET_STORE_CORS_ORIGIN` and the bootstrap below may configure supporting MinIO bucket CORS only when MinIO participates behind that separately approved public delivery path; they never authorize direct browser use of the private storage endpoint. Private-bucket CORS alone is not public delivery authority, does not make MinIO public, and must not be replaced with anonymous bucket access.
 
    ```bash
    if [[ -z "${ASSET_STORE_CORS_ORIGIN:-}" || "$ASSET_STORE_CORS_ORIGIN" == *"*"* || "$ASSET_STORE_CORS_ORIGIN" == *"?"* || "$ASSET_STORE_CORS_ORIGIN" == *"["* || "$ASSET_STORE_CORS_ORIGIN" == *"]"* ]]; then

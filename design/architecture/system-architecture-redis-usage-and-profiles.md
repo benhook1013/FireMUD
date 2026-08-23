@@ -58,7 +58,7 @@ Scope-key convention: `{tenantRegionTag}` is the canonical opaque tag for the co
     - Eviction and TTL are part of normal behavior; designs must tolerate cold caches.
     - Shared infrastructure libraries enforce the default cache schema and TTL policies (including serialization/TTL validation and global size/pressure envelopes), but they do not own each cache's semantic contract. The owning service and the canonical cache catalog retain per-prefix choices, including the `view:room-look:*` TTL, size, invalidation, metrics, and reset contract owned by Game Session.
   - Example prefixes:
-    - `inventory:<tenantId>:<containerId>`
+    - `inventory:<tenantId>:<playableStateNamespaceId>:<containerId>`
     - `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>:<readFenceHash>` (target-only Game Session disposable presentation/redraw helper; exact room, viewer/session, policy context, and applicable read-fence context bound. Current `ResolveLook` behavior is uncached; cache misses, unavailable or untrusted cache/fence evidence, and write refusal fall back to the authoritative uncached `ResolveLook` result. See the [canonical Class-B contract](./system-architecture-redis-cache.md#canonical-viewroom-look-class-b-contract); never semantic reconnect context, frame/output replay, archive, or delivery ledger.)
     - `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>`
     - `ratelimit:<tenantId>:<subjectHash>:<timeWindow>` (one opaque stable subject hash per individual subject)
