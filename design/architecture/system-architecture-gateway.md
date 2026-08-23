@@ -280,6 +280,8 @@ Spring Cloud Gateway applies a small grace window before closing WebSocket sessi
 
 Gateway-to-Game-Session close handling uses a bounded internal classification that distinguishes rebindable backend lifecycle or transport loss from session outcomes such as terminal logout, controller takeover (`session_replaced`), policy rejection, revocation, and loss of current authorization. A rebindable internal close is not forwarded to the client when recovery succeeds. This classification does not add a public close category; exhausted recovery still maps to `1013/backend_unavailable`.
 
+Validation and runtime-proof selection follows [Validation and Runtime Proof](../developer-workflows/validation-and-runtime-proof.md); execution evidence remains in PR/CI records or implementation trackers, not this normative contract.
+
 ### Gateway Restart Semantics
 
 Gateway restarts can be planned (for example, rolling deploys) or unplanned (for example, crashes or infrastructure failures). To keep client behaviour and operational signals consistent:
