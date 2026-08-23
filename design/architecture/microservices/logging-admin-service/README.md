@@ -2,7 +2,7 @@
 
 ## Overview
 
-Centralized logging and administration tools for the platform. The service collects log data from all services, provides fixed-category moderation policy, case, bounded-appeal, and audit capabilities for game operators, embeds shared observability tools, and acts as the operator-facing coordinator for coordination-health monitoring. Runtime restriction state remains owned by Account, Game Session, or Social & Groups. Per-instance tick pause/resume forwarding is implemented but unavailable as a supported operator mutation until the owner-side variant of the [Operator Mutation Support Gate](./admin-ui.md#implementation-status) is complete.
+Centralized logging and administration tools for the platform. The service collects log data from all services, defines the target fixed-category moderation policy, case, bounded-appeal, and audit contracts for game operators, embeds shared observability tools, and acts as the operator-facing coordinator for coordination-health monitoring. Runtime restriction state remains owned by Account, Game Session, or Social & Groups. Per-instance tick pause/resume forwarding is implemented but unavailable as a supported operator mutation until the owner-side variant of the [Operator Mutation Support Gate](./admin-ui.md#implementation-status) is complete.
 
 ## Script-transition audit and observability boundary (target state; complete composition unavailable)
 
@@ -16,7 +16,7 @@ Logging & Admin owns fixed safety policy intent, moderation cases, bounded appea
 
 - Aggregate logs from every microservice via Fluent Bit sidecars and expose search APIs.
 - Offer dashboards and search for operators and moderators by embedding Kibana and Grafana views.
-- Define the fixed safety policy vocabulary, retain moderation cases and bounded appeals/evidence, and keep append-only auditable policy/review records; do not own runtime restriction state.
+- **Target-state responsibility:** Define the fixed safety policy vocabulary, retain moderation cases and bounded appeals/evidence, and keep append-only auditable policy/review records; do not own runtime restriction state.
 - Record live audit trails for account events and target/operator-intent audit for feature-flag override requests; intent does not prove a runtime feature-flag mutation.
 - Monitor coordination and tick health across tenant and region scopes. Automated per-instance `<tenantId, gameInstanceId>` `PauseTicksForScope`/`ResumeTicksForScope` forwarding exists but remains unavailable pending the owner-side variant of the Operator Mutation Support Gate; Logging & Admin forwards the opaque reference and does not redeem it. Regional pause/resume, regional reset, and broader/general remediation remain target-only.
 

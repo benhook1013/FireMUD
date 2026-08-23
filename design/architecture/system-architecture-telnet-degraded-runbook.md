@@ -37,7 +37,7 @@ The [TCP Proxy Service Operations](./microservices/tcp-proxy-service/operations.
      - `tcpproxy.websocket.reconnects` and `tcpproxy.websocket.reconnect.delay` for repeated Proxy → Gateway WebSocket bridge establishment/retry attempts and backoff delays. Treat these as admission-time or re-probe bridge behavior metrics, not evidence of hidden transport-preserving recovery for already-established Telnet sessions.
      - Circuit-breaker/open-admission indicators for sustained Gateway unreachability (for example counters of quick rejects with `backend_unavailable`) to distinguish intentional protective rejects from random network churn.
      - `tcpproxy.tls.misconfig` and `tcpproxy.gateway.handshake.failures{reason=...}` for TLS/mTLS configuration issues.
-     - MCP protection indicators for negotiation loops and control-line floods (for example `tcpproxy.telnet.discarded{reason="mcp_budget"}` and MCP negotiation failure counters) to distinguish protocol-tooling regressions from generic Telnet instability.
+     - No MCP-specific budget or negotiation-failure indicators are live in the supported runtime. Treat `reason="mcp_budget"` and MCP-specific dashboard panels as target-only; current opaque marker-looking input is covered only by the generic line-size, connection, idle, buffer, and per-IP limit indicators above.
      - If Telnet client IP preservation relies on PROXY protocol, verify that `tcpproxy.telnet.discarded{reason="proxy_protocol"}` is not elevated; sustained `proxy_protocol` discard reasons often indicate a misconfigured Telnet edge proxy (for example PROXY headers sent to the wrong listener or malformed headers).
 4. **Compare Telnet vs WebSocket flows**
    - Pick a specific `{gameInstanceId, tenantId}` (or user) when available and:

@@ -6,7 +6,7 @@ This document defines the Social & Groups Service runtime model, persistent data
 
 - Uses WebSocket channels for chat delivery
 - Stores guild and friend relationships in PostgreSQL
-- Integrates with Logging & Admin for moderation evidence, policy intent, and owner-command outcomes; it does not depend on that service for routine chat enforcement
+- **Target state:** Integrates with Logging & Admin for moderation evidence, policy intent, and owner-command outcomes; target owner-local chat enforcement does not depend on that service for routine chat enforcement
 - Chat profanity may generate a gRPC evidence/report call to Logging & Admin; the report does not itself create a `chat_mute` or `chat_ban`
 - Guild creation and membership changes may participate in short synchronous saga workflows so other services remain consistent; see [Transaction Strategies](../../system-architecture-transactions.md)
 - Chat history and guild data are stored with a `tenantId` so conversations are isolated per game; Redis list keys also include this prefix, as described in [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
@@ -22,7 +22,7 @@ The target player-safe outcomes are distinct: `CHAT_MUTE_SEND_DENIED` denies sen
 
 ## Owner-Local Communication Restrictions
 
-Social & Groups is the sole enforcement owner for `chat_mute` and `chat_ban`. Logging & Admin owns policy intent, moderation cases, bounded appeals, and audit; the complete fixed-category and digest-bound command contract is [Moderation Policies](../logging-admin-service/moderation-policies.md). Routine communication does not synchronously call Logging & Admin.
+**Target state:** Social & Groups is the sole enforcement owner for `chat_mute` and `chat_ban`. Logging & Admin owns policy intent, moderation cases, bounded appeals, and audit; the complete fixed-category and digest-bound command contract is [Moderation Policies](../logging-admin-service/moderation-policies.md). Routine communication does not synchronously call Logging & Admin.
 
 The target local projection is indexed by exact subject and normalized tenant/realm/channel scope, category, monotonic owner revision/enforcement epoch, effective/expiry times, source case/request identity, payload digest, and player-safe notice. Every create, extension, expiry, removal, correction, or modified/overturned appeal outcome is a new owner command; an upheld appeal creates no owner command. Social & Groups atomically commits the revision, current projection, and idempotent result; same identity/same digest replays, conflicting digest is rejected, and delayed/reordered commands cannot erase newer state or resurrect older state. Missing or unreadable required local state fails closed.
 

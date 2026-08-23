@@ -134,4 +134,3 @@ UI, case schema details, rate limits, retention periods, reviewer workflow, and 
 - `design/architecture/microservices/logging-admin-service/runtime-and-data.md`
 - `design/architecture/microservices/account-service/api-contracts.md`
 - `design/architecture/decisions/adr-0048-durable-idempotent-operator-write-execution.md`
-- `design/architecture/microservices/logging-admin-service/moderation-policies.md`
