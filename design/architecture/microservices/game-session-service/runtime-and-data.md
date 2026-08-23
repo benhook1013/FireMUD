@@ -1,5 +1,11 @@
 # Game Session Service Runtime and Data
 
+## Runtime Model
+
+Game Session coordinates with Redis to store volatile session state and command queues and with PostgreSQL to persist durable game-instance control-plane metadata. It provides a single point of truth for current tick and world time while exposing gameplay-session state to the protocol front door.
+
+The service runtime model assumes replaceable workers, not authoritative in-process state.
+
 ## Implementation Status
 
 The sections below define the target-state runtime contract. Current implementation and proof status is:
@@ -15,11 +21,7 @@ The sections below define the target-state runtime contract. Current implementat
 - Current Game Session Redis-backed per-session rate limiting under the legacy `ratelimit:<sessionId>` key remains implementation drift from ADR 0034's target in-process ordinary gameplay limiter; its Cache/Rate-Limit role isolation, eviction behavior, and loss semantics are not yet proved. Migration must stop legacy writers and drain the maximum key TTL before unversioned target helpers consume `ratelimit:*`, or use a distinct versioned namespace.
 - Bounded durable semantic reconnect-context persistence is partial: ordered `resume_transcript_entry` rows and best-effort Redis caching are live, while namespace-key migration to `{tenantId, playableStateNamespaceId, characterId}`, the distinct durable `resumeContextGeneration` episode fence and termination protocol, complete-envelope hard-bound accounting and omission-marker convergence, and post-logout replay suppression remain implementation/proof gaps.
 
-## Runtime Model
-
-Game Session coordinates with Redis to store volatile session state and command queues and with PostgreSQL to persist durable game-instance control-plane metadata. It provides a single point of truth for current tick and world time while exposing gameplay-session state to the protocol front door.
-
-The service runtime model assumes replaceable workers, not authoritative in-process state:
+## Runtime Details
 
 - Redis and PostgreSQL hold the meaningful gameplay-session, tick-coordination, and control-plane state needed for takeover.
 - A Game Session instance may cache or buffer transient transport-local details while it is healthy, but those details must never be the sole source of truth for reconnect, tick ownership, or gameplay admission.

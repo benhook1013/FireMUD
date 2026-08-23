@@ -42,6 +42,8 @@ Current implementation evidence is insufficient for any classic-client extension
 
 The existing first-party `PlayerOutput` seam and text renderer remain separate proof obligations. A generic browser JSON consumer does not prove semantic `PlayerOutput` consumption, and a future classic-client adapter does not prove browser structured-output compatibility. Focused proof for the selected future adapter would need exact client/version coverage, successful and rejected negotiation, malformed/unknown/timeout paths, correlation mismatch without authority use, resource and line limits, reconnect reset, plain-text fallback, semantic parity, and public Telnet operation. Until that evidence exists, documentation and deployment must not advertise the adapter.
 
+Apply the repository's [Validation and Runtime Proof workflow](../developer-workflows/validation-and-runtime-proof.md) when selecting and reporting this focused proof.
+
 ## Related Documentation
 
 - [Protocol Bridging](./system-architecture-protocol-bridging.md)

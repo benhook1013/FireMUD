@@ -56,7 +56,8 @@ The matrix below is the target participation and ownership contract. `Authoritat
 | Login throttling, lockout, password reset, and email verification | | | ✔ | | | | | | | | |
 | WebSocket transport connection lifecycle (upgrade, routing, DMZ edges) | | | | | | | | | | ✔ | ✔ |
 | Gameplay session lifecycle (login, resume, takeover) | | | | ✔ | | | | | | | |
-| Universal plain-text gameplay protocol and deterministic text projection (first-party WebSocket, generic text WebSocket, and Telnet/bridge carriage) | | | | ✔ | | | | | | ✔ | ✔ |
+| Authoritative owner: universal plain-text gameplay representation and deterministic text projection (first-party WebSocket, generic text WebSocket, and Telnet/bridge) | | | | ✔ | | | | | | | |
+| Plain-text gameplay carriage and transport participation (first-party WebSocket, generic text WebSocket, and Telnet/bridge) | | | | ✔ | | | | | | ✔ | ✔ |
 | Versioned `PlayerOutput` projection and fresh `LOOK`/reconnect presentation (Game Session-owned semantics; first-party frontend consumes when implemented) | | | | ✔ | | | | | | | |
 | Classic-client semantic negotiation (deferred; if selected Game Session is sole semantic owner, TCP Proxy remains generic bridge and does not promise Telnet parity or translate an independent semantic protocol) | | | | ✔ | | | | | | | |
 | Owner-local Game Session session-lifecycle routes (`/sessions*`, current internal surface) | | | | ✔ | | | | | | | |

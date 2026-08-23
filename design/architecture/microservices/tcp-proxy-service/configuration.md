@@ -57,6 +57,8 @@ The full variable list is the canonical source of defaults and behavior for `TCP
 | `GATEWAY_WS_URL` | WebSocket URL for forwarding to the gateway; local Docker and test environments may use a plaintext `ws://` endpoint, but player-facing environments must set an explicit `wss://.../ws/game` target | *(none)* |
 | `TCP_PROXY_DEFAULT_WORLD_SLUG` | Explicit local/bootstrap world slug forwarded as server-owned default advisory bridge metadata when configured instead of waiting for first-party connect-token admission; it cannot alter authentication, canonical routing, or gameplay-admission authority | *(empty)* |
 | `TCP_PROXY_DEFAULT_REALM_SLUG` | Explicit local/bootstrap realm slug paired with the server-owned default advisory world metadata; it cannot alter authentication, canonical routing, or gameplay-admission authority | *(empty)* |
+| `TCP_PROXY_DEFAULT_GAME_INSTANCE_ID` | Explicit local/bootstrap game-instance id forwarded as server-owned default advisory bridge metadata; TCP Proxy does not resolve or authorize it | *(empty)* |
+| `TCP_PROXY_DEFAULT_TENANT_ID` | Explicit local/bootstrap tenant id forwarded as server-owned default advisory bridge metadata; TCP Proxy does not resolve or authorize it | *(empty)* |
 | `TCP_PROXY_DEFAULT_POINTER_VERSION` | Explicit local/bootstrap admission-pointer freshness token paired with the server-owned default advisory world/realm metadata; it cannot alter authentication, canonical routing, or gameplay-admission authority | *(empty)* |
 | `TCP_PROXY_TLS_ENABLED` | Enable direct TCP Proxy Telnet-over-TLS termination; required with `DIRECT_TLS` and rejected with `EDGE_PROXY` | `false` |
 | `TCP_PROXY_TLS_CERT` | Path to the Telnet listener TLS certificate | *(empty)* |
@@ -85,7 +87,7 @@ The full variable list is the canonical source of defaults and behavior for `TCP
 | `FIREMUD_GRPC_CA_CERT_PATH` | CA bundle path for verifying gRPC peers | `certs/ca.crt` |
 | `OTEL_ENDPOINT` | OpenTelemetry collector endpoint | `http://otel-collector:4317` |
 
-When any `TCP_PROXY_DEFAULT_*` bootstrap variables are used together, they must describe one coherent server-owned advisory bridge-metadata bundle: `worldSlug`, `realmSlug`, resolved `tenantId`, resolved `gameInstanceId`, and `pointerVersion`. These values cannot replace or alter canonical authentication, routing, or gameplay-admission authority. Do not configure only the runtime ids while omitting the visible world/realm identity or pointer freshness, because that would recreate the partial routing shortcut that `09.1` explicitly removes elsewhere.
+When any `TCP_PROXY_DEFAULT_*` bootstrap variables are used together, local/bootstrap profiles must supply one coherent server-owned advisory bridge-metadata bundle: `worldSlug`, `realmSlug`, explicit `tenantId`, explicit `gameInstanceId`, and `pointerVersion`. These direct environment values are local/bootstrap inputs only: TCP Proxy neither resolves nor authorizes tenant or game-instance identity. Shared and player-facing deployments must obtain matching canonical gameplay-admission evidence and fail closed when that evidence is absent, malformed, stale, or inconsistent; forwarded metadata remains advisory and cannot replace or alter canonical authentication, routing, or gameplay-admission authority. Do not configure only the runtime ids while omitting the visible world/realm identity or pointer freshness, because that would recreate the partial routing shortcut that `09.1` explicitly removes elsewhere.
 
 ## WebSocket mTLS to Spring Cloud Gateway
 

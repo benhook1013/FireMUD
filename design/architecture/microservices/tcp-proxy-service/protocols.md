@@ -122,9 +122,9 @@ Detailed identifiers such as `gameInstanceId` and client IP are captured in stru
 
 ## Telnet Command Handling
 
-The proxy sanitizes incoming bytes and allows only a safe subset of Telnet protocol commands. Optional classic-client semantic extensions are deferred and, if selected later, are carried opaquely through this bounded bridge under Game Session ownership; the proxy does not negotiate or parse them.
+The proxy sanitizes incoming bytes and allows only a safe subset of Telnet protocol commands. Optional classic-client semantic extensions are deferred and, if selected later, must use a line-oriented or otherwise sanitization-compatible opaque representation through this bounded bridge under Game Session ownership; the proxy does not negotiate or parse them. Unsupported Telnet options and subnegotiation blocks remain consumed/discarded. A separately accepted transport change could explicitly permit selected frames through under generic limits without TCP Proxy semantic parsing, but no such exception is part of the current contract.
 
-After Telnet-control filtering, each resulting sanitized gameplay line is forwarded unchanged over the TCP Proxy → Gateway WebSocket bridge; optional semantic-extension data remains opaque and unparsed, and generic limits still produce an explicit close rather than a keep-open discard.
+After Telnet-control filtering, each resulting sanitized gameplay line is forwarded unchanged over the TCP Proxy → Gateway WebSocket bridge; future semantic-extension data remains opaque and unparsed only when its representation survives that filtering, and generic limits still produce an explicit close rather than a keep-open discard.
 
 Allowed Telnet commands:
 
@@ -139,7 +139,7 @@ Allowed Telnet commands:
 | `DONT` | `254` | Negotiation: client requests that the server disable an option. |
 
 Options outside this subset are silently discarded by the sanitization layer. For Telnet subnegotiation (`IAC SB ... IAC SE`), the proxy consumes the entire subnegotiation block up to the matching `SE` and does not surface any of its bytes as gameplay text when the option is unsupported.
-Malformed or truncated subnegotiations may increment diagnostic counters, but they must not leak partial control bytes into the line-oriented gameplay stream.
+Malformed or truncated subnegotiations may increment diagnostic counters, but they must not leak partial control bytes into the line-oriented gameplay stream. A future adapter cannot rely on unsupported option or subnegotiation carriage unless a separately accepted transport change explicitly permits selected frames through under generic limits without TCP Proxy semantic parsing.
 
 Hard abuse signals include:
 
