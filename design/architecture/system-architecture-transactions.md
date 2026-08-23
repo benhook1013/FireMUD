@@ -218,7 +218,7 @@ Short synchronous sagas are used for **non-tick, multi-service workflows** invol
 
 | Use Case | Description |
 | --- | --- |
-| **Realm entry and actor provisioning** | After explicit realm entry, bind one immutable discovered-entry object and digest to the exact catalog revision, admission pointer, namespace/scope, descriptor or template identity/version, and policy outcome before invoking Entity-owned actor creation/provisioning. Retries reuse that unchanged bound resolution and never re-resolve the latest policy; policy semantics remain owned by [ADR 0140](./decisions/adr-0140-realm-authored-controllable-actor-entry.md) |
+| **Realm entry and actor provisioning** | After explicit realm entry, bind one immutable discovered-entry object and digest to the exact catalog revision, admission pointer, namespace/scope, descriptor or template identity/version, and policy outcome before selecting the Entity-owned policy branch. Retries reuse that unchanged bound resolution and never re-resolve the latest policy; policy semantics remain owned by [ADR 0140](./decisions/adr-0140-realm-authored-controllable-actor-entry.md) |
 | **Short admin remediation** | Limited control-plane actions that touch more than one service but still complete in a single caller-driven request/worker pass |
 | **Tick-adjacent outbox follow-through** | Background orchestration around an outbox event when the work is still synchronous and restart-safe continuation is not required |
 
@@ -228,7 +228,7 @@ These workflows:
 - Modify **persistent storage (PostgreSQL)** across multiple services
 - Require compensation and persisted step status, but not durable workflow execution
 
-For `explicitRealmEntry`, the accepted policy outcomes are exactly `PLAYER_CREATED`, `AUTO_PROVISIONED`, and `PRESEEDED_ONLY`; the discovered-entry object/digest carries the selected outcome without duplicating its semantics. Catalog and admission-pointer authority remains in [Multi-Tenancy](./system-architecture-multi-tenancy.md), while descriptor/template and actor-creation authority remains in [ADR 0140](./decisions/adr-0140-realm-authored-controllable-actor-entry.md).
+For `explicitRealmEntry`, the accepted policy outcomes are exactly `PLAYER_CREATED`, `AUTO_PROVISIONED`, and `PRESEEDED_ONLY`; the discovered-entry object/digest carries the selected outcome without duplicating its semantics. The saga branches on that unchanged bound outcome: `PLAYER_CREATED` uses Entity's `ListCharactersByAccount` against the unchanged bound target. A nonzero roster selects an existing actor read-only; a zero roster with no creation input offers/requires creation without mutation; a submitted creation input with absent required fields, malformed data, or failure to validate against the exact realm-published descriptor and version bound in the discovered-entry object fails closed; and only valid submitted input calls `CreateCharacter` with the unchanged discovered-entry object/digest plus that input. `AUTO_PROVISIONED` calls `AutoProvisionCharacter` with those same immutable inputs after explicit entry, allowing its owner-defined idempotent existing-actor result. `PRESEEDED_ONLY` calls `ListCharactersByAccount` as a lookup: zero actors returns the pre-seeded-only denial, while a nonzero roster selects an existing actor without actor mutation. No branch re-resolves policy or substitutes a different descriptor/template, namespace, scope, or digest. Catalog and admission-pointer authority remains in [Multi-Tenancy](./system-architecture-multi-tenancy.md), while descriptor/template and actor-creation authority remains in [ADR 0140](./decisions/adr-0140-realm-authored-controllable-actor-entry.md). The Entity API contract names these target surfaces, but the current proto, implementation, and focused proof do not establish this saga.
 
 If a workflow needs restart-safe continuation, durable waits/timers, or operator-visible in-flight state that survives one service lifetime, it should use the shared Temporal substrate described in [Temporal Control-Plane Workflows](./system-architecture-temporal-workflows.md) instead of extending `SagaRunner` toward durable workflow behavior.
 
@@ -325,16 +325,32 @@ This library is intentionally not FireMUD's durable workflow engine. World lifec
 
 ### Fluent API Example
 
-```java
-sagaBuilder("explicitRealmEntry")
-    .step(
-        "authorizeRealmEntry",
-        accountClient::authorizeRealmEntry,
-        accountClient::abortRealmEntry)
-    .step("provisionRealmActor", entityClient::provisionRealmActor,
-        entityClient::cancelRealmActorProvisioning)
-    .run();
+```text
+explicitRealmEntry(discoveredEntry, discoveredEntryDigest):
+  authorizeRealmEntry(discoveredEntry, discoveredEntryDigest)
+  switch discoveredEntry.policyOutcome:
+    PLAYER_CREATED:
+      roster = Entity.ListCharactersByAccount(discoveredEntry, discoveredEntryDigest)
+      if roster is nonzero:
+        select existing actor  # lookup/selection only; no actor mutation
+      else if creation input is absent:
+        offer/require creation  # no actor mutation
+      else if creation input is malformed or fails exact bound descriptor/version validation:
+        fail closed
+      else:
+        Entity.CreateCharacter(discoveredEntry, discoveredEntryDigest, creationInput)
+    AUTO_PROVISIONED:
+      Entity.AutoProvisionCharacter(discoveredEntry, discoveredEntryDigest)
+    PRESEEDED_ONLY:
+      roster = Entity.ListCharactersByAccount(discoveredEntry, discoveredEntryDigest)
+      if roster is zero:
+        return pre-seeded-only denial
+      else:
+        select existing actor  # lookup/selection only; no actor mutation
+  retries reuse the same discoveredEntry and discoveredEntryDigest
 ```
+
+This is a target-state branch illustration, not current implementation or proof. Compensation applies only to the selected mutating branch; the `PRESEEDED_ONLY` lookup has no actor mutation to compensate.
 
 This design centralizes logic, improves visibility, and avoids coupling orchestration directly into gameplay services.
 The `common-saga` module provides a `SagaBuilder` class implementing this pattern. See [Shared Libraries Overview](./system-architecture-shared-libraries.md) for additional details.

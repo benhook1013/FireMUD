@@ -25,7 +25,7 @@ Inventory and equipment mutations are also intended to be auditable through a ca
 
 ### PLAYER-01 actor and realm-entry ownership
 
-[ADR 0140](../../decisions/adr-0140-realm-authored-controllable-actor-entry.md) is the canonical actor-entry contract; the detailed allocation, persistence, policy, descriptor/template, and copy rules live in [API Contracts](./api-contracts.md) and [Runtime and Data](./runtime-and-data.md). Entity Management owns persisted `characterId` and the `{accountId, tenantId, playableStateNamespaceId, characterId}` association. Account owns identity, membership, grants, and profiles; Game Session owns active attachment/controller fencing. The service must reject synthetic identity and retain game-authored actor components, while playtest copies receive fork-local identity with provenance-only `sourceCharacterId`.
+[ADR 0140](../../decisions/adr-0140-realm-authored-controllable-actor-entry.md) is the canonical actor-entry contract; the detailed allocation, persistence, policy, descriptor/template, and copy rules live in [API Contracts](./api-contracts.md) and [Runtime and Data](./runtime-and-data.md). Entity Management owns persisted `characterId` and the `{accountId, tenantId, playableStateNamespaceId, characterId}` association. Account owns identity, membership, grants, and profiles; Game Session owns active attachment/controller fencing. The service must reject synthetic identity and retain game-authored actor components, while playtest copies receive fork-local identity and, when `sourceCharacterId` is retained, its immutable `{sourceTenantId, sourcePlayableStateNamespaceId}` binding as provenance-only non-authoritative context.
 
 ### Responsibilities
 
