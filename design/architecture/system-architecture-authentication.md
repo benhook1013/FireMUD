@@ -290,9 +290,7 @@ Target protocol behavior:
 
 Current implementation and target-only endpoint gaps are consolidated in [Implementation Status](#implementation-status). The local consequence is that multi-line prompt exchange is not part of the current text-client capability, while first-party browser/mobile `LOGIN` consumes the validated bootstrap/connect context without credential replay.
 
-Telnet-specific smart-client attach hints, if they return later, should travel through hidden MCP metadata rather than a typed `SESSION` gameplay line. Those hints remain advisory transport metadata only, are not authentication material, and never bypass the canonical `LOGIN` + `PLAY` authorization and entitlement checks. The TCP Proxy Service and Spring Cloud Gateway docs describe only their **transport responsibilities** and defer to this section for `LOGIN`/`LOGON` semantics and example transcripts.
-
-Any future hidden attach hints may include a target `{gameInstanceId, tenantId}` for advanced clients, but the canonical source of gameplay target selection remains the authenticated lobby/admission flow. Clients must not rely on unauthenticated transport hints to bypass membership, entitlement, or world-visibility checks.
+If a future client adapter is selected, any Game Session-owned attach hint is advisory input only. It is not authentication material or auth/routing authority, cannot replace the normal lobby and admission flow, and must not be represented as a typed `SESSION` gameplay line, a proxy-owned semantic extension, or a hidden MCP transport contract. The TCP Proxy Service and Spring Cloud Gateway docs describe only their **transport responsibilities** and defer to this section for `LOGIN`/`LOGON` semantics and example transcripts.
 
 Admission-routing convergence rule:
 

@@ -2,7 +2,6 @@ package net.firedevops.firemud.springcloudgateway.config;
 
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasMethod;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasPath;
-import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasStripPrefix;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasStripPrefixTwo;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertNoConfiguredPathStartsWith;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.route;
@@ -57,8 +56,7 @@ class GatewayRoutesConfigurationTest {
           "social-guilds",
           "social-mail",
           "social-ping",
-          "social-voice-token",
-          "asset-store-public");
+          "social-voice-token");
 
   @Autowired private GatewayProperties gatewayProperties;
 
@@ -95,6 +93,13 @@ class GatewayRoutesConfigurationTest {
   @Test
   void publicReportsRouteIsNotConfigured() {
     assertNoConfiguredPathStartsWith(gatewayProperties, "/api/admin/reports");
+  }
+
+  @Test
+  void publishedAssetDeliveryRouteIsNotConfigured() {
+    assertNoConfiguredPathStartsWith(gatewayProperties, "/assets/");
+    assertThat(gatewayProperties.getRoutes().stream().map(RouteDefinition::getId))
+        .doesNotContain("asset-store-public");
   }
 
   @Test
@@ -145,8 +150,5 @@ class GatewayRoutesConfigurationTest {
     assertHasStripPrefixTwo(gatewayProperties, "social-mail");
     assertHasStripPrefixTwo(gatewayProperties, "social-ping");
     assertHasStripPrefixTwo(gatewayProperties, "social-voice-token");
-
-    assertHasPath(gatewayProperties, "asset-store-public", "/assets/**");
-    assertHasStripPrefix(gatewayProperties, "asset-store-public", "1");
   }
 }

@@ -34,7 +34,7 @@
 
 Unless explicitly described as current behavior, the sections below define the target Gateway contract. Current implementation facts and gaps are:
 
-- Java `CanonicalGatewayRoutesConfiguration` is the current route authority, with environment overrides; the target route catalog and deny-by-default exposure rules still require convergence proof.
+- Java `CanonicalGatewayRoutesConfiguration` is the current route authority, with environment overrides; the target route catalog and deny-by-default exposure rules still require convergence proof. It currently has no `/assets/**` route or asset-store route ID; published asset delivery remains target-only pending a separate approved public origin/provisioner, and private MinIO is not public delivery.
 - The current edge implements bounded connect-token handshake classes and replay handling, but this does not prove the complete target replay durability, rotation, or reconnect contract.
 - **Current drift:** the protected admin `JwtAuthFilter` parses shared-HMAC JWTs through `JwtUtil`. This is current implementation behavior only, is not a player-facing asymmetric-validation capability, and must not be confused with the target receiving-service boundary.
 - **Target boundary:** On protected admin routes, Gateway requires an `Authorization` header at ingress and forwards it without parsing or validating ordinary JWT contents; consuming services own asymmetric JWKS validation under [JWT and Token Contracts](../../system-architecture-jwt-and-token-contracts.md).
@@ -60,10 +60,11 @@ Unless explicitly described as current behavior, the sections below define the t
 - `/api/account/**` -> Account Service.
 - `/api/session/**` -> Game Session Service HTTP control-plane family.
 - `/api/social/**` -> Social Groups Service.
+- `/assets/**` -> target-only approved published asset origin; not a current Gateway route and separate from `/frontend-assets/**`.
 
 The canonical external allowlist stops there. World Management, Entity Management, Game Logic, and Automation & Scripting do not expose direct Gateway-routed external APIs in the base architecture unless a dedicated design update extends the allowlist.
 
-Gateway routes strip the first two path segments before forwarding these REST families to their owning services. For example, `GET /api/admin/admission-pointers` is forwarded to Logging & Admin as `/admission-pointers`, and `/api/account/auth/login` is forwarded to Account as `/auth/login`. The admission-pointer route is GET-only, so mutation, preparation, and prepared-cutover writes are not forwarded. `/api/session/ping` is forwarded as the current public HTTP control-plane route, while `/ws/game/**` remains the separate gameplay WebSocket path. The `/assets/**` object-store route keeps its dedicated single-prefix strip behavior.
+Gateway routes strip the first two path segments before forwarding these REST families to their owning services. For example, `GET /api/admin/admission-pointers` is forwarded to Logging & Admin as `/admission-pointers`, and `/api/account/auth/login` is forwarded to Account as `/auth/login`. The admission-pointer route is GET-only, so mutation, preparation, and prepared-cutover writes are not forwarded. `/api/session/ping` is forwarded as the current public HTTP control-plane route, while `/ws/game/**` remains the separate gameplay WebSocket path. Published `/assets/**` delivery is target-only pending a separate approved public origin/provisioner; the current Gateway has no route for it, and private MinIO is not public delivery.
 
 These public prefixes are route families, not blanket permission to expose every service-local path under the same subtree:
 

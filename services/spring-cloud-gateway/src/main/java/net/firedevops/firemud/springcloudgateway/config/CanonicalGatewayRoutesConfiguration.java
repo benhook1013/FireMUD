@@ -140,13 +140,7 @@ public class CanonicalGatewayRoutesConfiguration {
                 environment.getProperty(
                     "FIREMUD_GATEWAY_ROUTE_SOCIAL_URI", "http://social-groups-service:8080"),
                 "/api/social/voice/token/**",
-                2),
-            route(
-                "asset-store-public",
-                environment.getProperty(
-                    "FIREMUD_GATEWAY_ROUTE_ASSET_STORE_URI", "http://minio:9000"),
-                "/assets/**",
-                1)));
+                2)));
     return properties;
   }
 

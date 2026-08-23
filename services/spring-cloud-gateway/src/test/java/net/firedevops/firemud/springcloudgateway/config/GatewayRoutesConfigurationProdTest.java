@@ -2,7 +2,6 @@ package net.firedevops.firemud.springcloudgateway.config;
 
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasMethod;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasPath;
-import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasStripPrefix;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasStripPrefixTwo;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertNoConfiguredPathStartsWith;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.route;
@@ -58,8 +57,7 @@ class GatewayRoutesConfigurationProdTest {
           "social-guilds",
           "social-mail",
           "social-ping",
-          "social-voice-token",
-          "asset-store-public");
+          "social-voice-token");
 
   @Autowired private GatewayProperties gatewayProperties;
 
@@ -99,6 +97,13 @@ class GatewayRoutesConfigurationProdTest {
   }
 
   @Test
+  void publishedAssetDeliveryRouteIsNotConfigured() {
+    assertNoConfiguredPathStartsWith(gatewayProperties, "/assets/");
+    assertThat(gatewayProperties.getRoutes().stream().map(RouteDefinition::getId))
+        .doesNotContain("asset-store-public");
+  }
+
+  @Test
   void restEdgeRoutesStripExternalServicePrefixBeforeForwarding() {
     assertHasPath(gatewayProperties, "admin-ping", "/api/admin/ping");
     assertHasPath(
@@ -110,8 +115,6 @@ class GatewayRoutesConfigurationProdTest {
     assertHasPath(gatewayProperties, "design", "/api/design/**");
     assertHasPath(gatewayProperties, "account-auth", "/api/account/auth/**");
     assertHasPath(gatewayProperties, "social-chat", "/api/social/chat/**");
-    assertHasPath(gatewayProperties, "asset-store-public", "/assets/**");
-
     assertHasStripPrefixTwo(gatewayProperties, "admin-ping");
     assertHasStripPrefixTwo(gatewayProperties, "admin-admission-pointers");
     assertHasStripPrefixTwo(gatewayProperties, "admin-remote-followups");
@@ -119,6 +122,5 @@ class GatewayRoutesConfigurationProdTest {
     assertHasStripPrefixTwo(gatewayProperties, "design");
     assertHasStripPrefixTwo(gatewayProperties, "account-auth");
     assertHasStripPrefixTwo(gatewayProperties, "social-chat");
-    assertHasStripPrefix(gatewayProperties, "asset-store-public", "1");
   }
 }
