@@ -100,7 +100,7 @@ Current implementation is materially partial and drifted. Entity Management has 
 
 Implementation must remove synthetic ID fallbacks, make Entity allocation and account association mandatory, add explicit published entry-policy resolution, idempotent auto-provisioning, versioned descriptor validation, policy-specific zero/one/many roster handling, and distinct fork-local copy identity with optional provenance. Fixed legacy RPG columns must not remain mandatory platform semantics; implementation may migrate them into authored component state as the actor model converges.
 
-Proof must cover all three policies; missing, stale, wrong-version, and malformed descriptors/templates; exact account, tenant, realm, and namespace association; zero, one, and multiple actor rosters; duplicate and concurrent auto-provision; repeated creation; actor selection by another account; synthetic-ID rejection; non-RPG components; shared versus isolated realms; fork-copy identity and source-provenance non-authority; reconnect and takeover using persisted identity; and absence of cross-namespace mutation or merge-back.
+Proof must cover all three policies; missing, stale, wrong-version, and malformed descriptors/templates; exact account, tenant, realm, and namespace association; zero, one, and multiple actor rosters; duplicate and concurrent auto-provision; repeated creation and concurrent distinct-request `PLAYER_CREATED` attempts against the same zero roster; actor selection by another account; synthetic-ID rejection; non-RPG components; shared versus isolated realms; fork-copy identity and source-provenance non-authority; reconnect and takeover using persisted identity; and absence of cross-namespace mutation or merge-back.
 
 ## Reversibility and Revisit Triggers
 
