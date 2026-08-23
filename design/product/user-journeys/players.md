@@ -154,7 +154,7 @@ PLAY emberfall production Mara
 OK PLAY Entered Emberfall / Live Realm as Mara
 ```
 
-The creation request uses the descriptor identity/version bound to the exact discovery response and a caller-stable `createCharacterRequestId`. Repeating that same ID with the same canonical input returns the original character result without allocating another actor; reusing it with changed input returns `IDEMPOTENCY_CONFLICT` before allocation. Account derives tenant, namespace/scope, and other authority fields from that bound server context rather than accepting caller-supplied authority text.
+The creation request uses the descriptor identity/version bound to the exact discovery response and a caller-stable `createCharacterRequestId`. Repeating that same ID with the same canonical input returns the original character result without allocating another actor; reusing it with changed input returns `IDEMPOTENCY_CONFLICT` before allocation. Account forwards the authenticated tenant and immutable server-bound discovery context; it does not derive namespace/scope or other gameplay authority from player input. Game Session resolves the playable-state namespace/scope and runtime target from the authoritative catalog/admission-pointer snapshot, while Entity validates that evidence and owns the roster, descriptor, creation-policy validation, and character allocation.
 
 After this first successful join, the player's account has normal `player` membership for Emberfall, so later discovery no longer depends on public-production visibility alone. Character creation remains bound to the selected admissible realm and presents the exact versioned, game-authored descriptor for that realm; it may contain RPG choices or an entirely different actor model. Current descriptor availability is summarized in [Implementation Status](#implementation-status).
 Any non-production realm shown in fork/playtest examples is assumed to already be grant-visible to that caller; non-public realms are not publicly discoverable by default.
@@ -167,9 +167,10 @@ Character selection is resolved against the specific realm the player is trying 
 
 Behind the scenes:
 
-- **Account authority** – The [Account Service](../../architecture/microservices/account-service/README.md) verifies identity, membership, and grants; it does not write character rows.
+- **Account authority** – The [Account Service](../../architecture/microservices/account-service/README.md) verifies identity, membership, and grants, then forwards the authenticated tenant and immutable server-bound discovery context; it does not derive namespace/scope or other gameplay authority or write character rows.
 - **Player sequence** – `CHARS` presents the Entity-backed roster and policy result; creation/provisioning, when offered, completes before `PLAY`, and ambiguous rosters require explicit selection.
-- **Session attachment** – [Game Session](../../architecture/microservices/game-session-service/README.md) coordinates local discovery, selection, attachment, and controller fencing after Entity validates the actor.
+- **Session attachment** – [Game Session](../../architecture/microservices/game-session-service/README.md) resolves the playable-state namespace/scope and runtime target from the authoritative catalog/admission-pointer snapshot, then coordinates local discovery, selection, attachment, and controller fencing after Entity validates the actor.
+- **Entity authority** – [Entity Management](../../architecture/microservices/entity-management-service/README.md) validates the supplied namespace/scope evidence and owns the roster, descriptor, creation-policy validation, and character allocation.
 
 ---
 

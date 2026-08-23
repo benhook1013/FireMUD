@@ -324,6 +324,8 @@ For `gameplay-connect`, the complete issuance contract is the Account `IssueConn
 | `gameInstanceId` | Not required | Not required | Required | Not required | Server-resolved gameplay-connect runtime target |
 | `worldSlug` | Not required | Not required | Required | Not required | Stable gameplay-connect world selector |
 | `realmSlug` | Not required | Not required | Required | Not required | Stable gameplay-connect realm selector |
+| `playtestLifecycleId` | Not required | Not required | Required for a non-public target; absent for public production | Not required | Must equal the selected-realm `authorityTuple.privateRealmGrantVersions` lifecycle and the admission-pointer snapshot exactly |
+| `playtestStateGeneration` | Not required | Not required | Required and positive for a non-public target; absent for public production | Not required | Exact lifecycle-reset generation from the admission-pointer snapshot; distinct from `pointerVersion` |
 | `pointerVersion` | Not required | Not required | Required | Not required | Gameplay-connect routing-freshness fence |
 | `catalogRevision` | Not required | Not required | Required | Not required | Exact gameplay-connect discovery-catalog revision bound to the selected target |
 | `connectScopeId` | Not required | Not required | Required | Not required | Opaque discovery scope used for issuance |
