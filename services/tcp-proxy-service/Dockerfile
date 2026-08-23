@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=ghcr.io/benhook1013/firemud-base:latest@sha256:56f2800b1548e0844b63477fec3fb4e044e19bbfc35aed531c8640b62cf1d295
+ARG BASE_IMAGE=ghcr.io/benhook1013/firemud-base:latest@sha256:64a20240e098e4cd9ba4d72acb7a111e2c3d6242ae81898b4618ae7bf02c5235
 FROM ${BASE_IMAGE}
 WORKDIR /app
 COPY --chown=firemud:firemud --chmod=644 *.jar app.jar
