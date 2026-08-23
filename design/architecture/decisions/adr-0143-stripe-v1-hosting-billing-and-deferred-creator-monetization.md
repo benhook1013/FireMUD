@@ -41,7 +41,7 @@ A future provider is possible, but it requires a reviewed integration that defin
 
 The accepted v1 product scope is the billing relationship between FireMUD and the account that pays to host a tenant. Hosting plans may govern tenant availability and resource entitlements. New charges, subscription changes, payment-instrument management, refunds, and billing-owner changes complete through HTTPS account/control-plane and provider-hosted flows.
 
-Billing-safe management remains reachable when tenant gameplay is denied for billing reasons. Gameplay denial must not prevent an authorized billing owner from inspecting status, updating payment details, resolving a failed payment, exporting billing-safe tenant data, or canceling or transferring billing ownership. These routes remain account and tenant authorized, audited, and isolated from gameplay authority.
+Billing-safe management remains reachable when tenant gameplay is denied for billing reasons. Gameplay denial must not prevent an authorized billing owner from inspecting status, updating payment details, resolving a failed payment, exporting billing-safe tenant data, or canceling or transferring billing ownership. These routes remain account- and tenant-authorized, audited, and isolated from gameplay authority.
 
 Hosting billing follows the generic Account handoff authorization-linearization contract in [ADR 0045](./adr-0045-ordinary-login-factors-and-https-sensitive-action-step-up.md) and the hosting-specific Stripe provider and reconciliation contract in [Stripe Integration Design](../microservices/account-service/stripe-integration.md); a provider result alone never authorizes an active hosting entitlement or billing outcome.
 

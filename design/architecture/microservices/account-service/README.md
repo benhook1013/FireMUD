@@ -30,14 +30,14 @@ Manages user accounts and authentication for the platform. It stores profile dat
 - Profiles store a display name, bio, game history, and achievements.
 - Password reset and verification flows.
 - Subscription tracking with ban management.
-- Owns the target **Stripe** hosting-plan billing and recurring hosting-subscription boundary; current provider lifecycle and entitlement proof remain partial. Generic one-time-purchase and donation surfaces remain unsupported substrate rather than advertised product paths.
+- Owns the target **Stripe** hosting-plan billing and recurring hosting-subscription boundary; current provider lifecycle and entitlement proof remain partial. Generic PaymentIntent, refund, donation, and creator-share surfaces are unsupported implementation drift and must reject before any provider mutation rather than becoming advertised product paths.
 - Expose Account relationship/projection data for actor discovery and access checks; do not create or own persisted gameplay actors.
-- gRPC APIs cover authentication, account lifecycle, export/delete, runtime/admission, membership, realm-grant, entitlement, profile, and payment operations. The canonical API inventory is [API Contracts](./api-contracts.md).
+- gRPC APIs cover authentication, account lifecycle, export/delete, runtime/admission, membership, realm-grant, entitlement, profile, and hosting-billing operations; generic payment scaffolds do not widen that capability boundary. The canonical API inventory is [API Contracts](./api-contracts.md).
 
 ## Document Map
 
 - [API Contracts](./api-contracts.md)
-  - public and internal auth/account/payment surfaces, canonical errors, and proto/OpenAPI ownership.
+  - public and internal auth/account/hosting-billing surfaces, gated legacy payment scaffolds, canonical errors, and proto/OpenAPI ownership.
 - [Runtime and Data](./runtime-and-data.md)
   - JWT issuance, session-related data ownership, PostgreSQL/Redis boundaries, and account-state invariants.
 - [Operations](./operations.md)

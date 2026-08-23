@@ -11,7 +11,7 @@ This document defines the Social & Groups Service runtime model, persistent data
 - Guild creation and membership changes may participate in short synchronous saga workflows so other services remain consistent; see [Transaction Strategies](../../system-architecture-transactions.md)
 - Chat history and guild data are stored with a `tenantId` so conversations are isolated per game; Redis list keys also include this prefix, as described in [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
 - Cross-service calls always forward the `tenantId` so features remain isolated; see [Multi-Tenancy](../../system-architecture-multi-tenancy.md) for details
-- APIs require authenticated JWTs from the Account Service for role checks; these tokens are exchanged only between services, and all inter-service communication is encrypted via mutual TLS following the [Security Architecture](../../system-architecture-security.md)
+- External HTTP APIs consume the end-user Account JWT authorization context forwarded unchanged by Gateway and validate its role/tenant claims locally. Direct internal gRPC callers authenticate with the exact workload mTLS/service identity required by the method contract; any current bearer or delegation metadata remains authorization context and never substitutes for that caller identity. Inter-service transport follows the [Security Architecture](../../system-architecture-security.md).
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics
 
 ## Implementation Status

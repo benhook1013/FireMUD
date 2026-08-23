@@ -119,6 +119,8 @@ Rejected as the only mechanism because an explicit, bound handoff preserves the 
 
 ## Implementation and Proof Obligations
 
+Validation and runtime-proof selection follows [Validation and Runtime Proof](../../developer-workflows/validation-and-runtime-proof.md); execution results remain in PR or CI records and implementation trackers rather than a duplicate ADR-local validation ledger.
+
 Focused contract and integration proof must demonstrate that:
 
 - ordinary Telnet and HTTPS login honor the account-enabled `PASSWORD` and/or verified `EMAIL_OTP` primary-login policy, with either one valid secret sufficient when both are enabled and no sequential-MFA or `BOTH` interpretation;

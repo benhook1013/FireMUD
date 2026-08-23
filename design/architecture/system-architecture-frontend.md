@@ -24,7 +24,7 @@ The explicit `JOIN`/`Join & Play` action and the independent `membershipVersion`
 
 ### Persisted actor entry UX boundary (PLAYER-01)
 
-The frontend renders the policy/descriptor/template result from [Entity Management](./microservices/entity-management-service/api-contracts.md), rather than defining a second entry form. It presents the valid `CHARS` roster, the policy-specific next action, and a fork-local playtest `characterId`; it does not infer policy from an empty roster, impose platform RPG fields, or expose `sourceCharacterId` as an actionable identity. Account remains identity/membership/grant authority and Game Session remains attachment authority. Current descriptor/policy and actor-id proof gaps remain.
+The frontend renders the policy/descriptor/template result from [Entity Management](./microservices/entity-management-service/api-contracts.md), rather than defining a second entry form. It presents the valid `CHARS` roster and policy-specific next action using server-provided actor display data and response-local menu labels. It retains `characterId`, including a fork-local playtest value, only as an opaque server-resolved internal selection value and never displays it or accepts it as a user-entered selector or authority. The frontend does not infer policy from an empty roster, impose platform RPG fields, or expose `sourceCharacterId` as an actionable identity. Account remains identity/membership/grant authority and Game Session remains attachment authority. Current descriptor/policy and actor-id proof gaps remain.
 
 ## Canonical Gameplay Enablement Gate
 
