@@ -146,7 +146,7 @@ GET /auth/bootstrap/worlds
 GET /auth/bootstrap/worlds/emberfall/realms
 POST /auth/bootstrap/join { connectScopeId=cs_emberfall_production_v1, requestId=req-join-1 }
 GET /auth/bootstrap/worlds/emberfall/realms/production/characters?connectScopeId=cs_emberfall_production_v1
-POST /auth/bootstrap/worlds/emberfall/realms/production/characters { connectScopeId=cs_emberfall_production_v1, name=Mara, descriptorId=emberfall-human-fighter, descriptorVersion=17 }
+POST /auth/bootstrap/worlds/emberfall/realms/production/characters { connectScopeId=cs_emberfall_production_v1, createCharacterRequestId=char-create-1, name=Mara, descriptorId=emberfall-human-fighter, descriptorVersion=17 }
 POST /auth/connect-token { connectScopeId=cs_emberfall_production_v1, requestId=req-connect-1 }
 GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
 LOGIN
@@ -154,7 +154,7 @@ PLAY emberfall production Mara
 OK PLAY Entered Emberfall / Live Realm as Mara
 ```
 
-The creation request uses the descriptor identity/version bound to the exact discovery response. Account derives tenant, namespace/scope, and other authority fields from that bound server context rather than accepting caller-supplied authority text.
+The creation request uses the descriptor identity/version bound to the exact discovery response and a caller-stable `createCharacterRequestId`. Repeating that same ID with the same canonical input returns the original character result without allocating another actor; reusing it with changed input returns `IDEMPOTENCY_CONFLICT` before allocation. Account derives tenant, namespace/scope, and other authority fields from that bound server context rather than accepting caller-supplied authority text.
 
 After this first successful join, the player's account has normal `player` membership for Emberfall, so later discovery no longer depends on public-production visibility alone. Character creation remains bound to the selected admissible realm and presents the exact versioned, game-authored descriptor for that realm; it may contain RPG choices or an entirely different actor model. Current descriptor availability is summarized in [Implementation Status](#implementation-status).
 Any non-production realm shown in fork/playtest examples is assumed to already be grant-visible to that caller; non-public realms are not publicly discoverable by default.

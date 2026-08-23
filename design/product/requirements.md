@@ -60,7 +60,7 @@ This document outlines the **core functional and non-functional requirements** f
 - Users should be able to **create and manage multiple characters per game**.
 - Sessions should support **persistent logins and reconnection handling**.
 - Account must support a protective `account_security_lock` for verified or high-confidence compromise. The Account-owned lock revokes ordinary account/bootstrap authority and is cleared only through Account security recovery; it is not a punitive moderation category.
-- First-party web and mobile clients must support world, realm, and character selection before gameplay begins.
+- First-party browser clients must support world, realm, and character selection before gameplay begins. Native mobile requires a later product and compatibility decision.
 - **Expanded Account Features**:
   - Players should be able to **link external accounts** (Google, Discord, Steam) for login.
   - Profiles should include **game history, achievements, and social features**.

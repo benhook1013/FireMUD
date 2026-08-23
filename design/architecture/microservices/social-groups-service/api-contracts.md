@@ -8,7 +8,11 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 
 The friend-presence slice currently implements non-pageable friend-roster and presence reads over tenant-scoped mutually accepted reciprocal links whose two directed rows are both `active`. One-way links, inactive reciprocal links, and links stored under another tenant are not endpoint-visible; focused integration proof covers those boundaries in [SocialGroupsApplicationIntegrationTest.java](../../../../services/social-groups-service/src/test/java/integration/net/firedevops/firemud/socialgroups/SocialGroupsApplicationIntegrationTest.java). The current endpoint path has no block-state model or block revalidation. It does not create snapshots, continuations, or paginated bulk pages. Snapshot-bound continuation, continuation-time relationship and block revalidation, bounded paginated bulk reads, and the failure-precedence contract below remain target behavior; this document does not claim that the current implementation or existing tests prove those target obligations.
 
-**Target state:** Social & Groups is the enforcement owner for `chat_mute` and `chat_ban`. Its local indexed restriction state is evaluated before chat persistence/publication and at participation/history reads; the complete category, revision, command, notice, and appeal-outcome contract is [Moderation Policies](../logging-admin-service/moderation-policies.md). For Social & Groups, the synchronous `EvaluateModerationPolicy` read consumed by `SendMessage` at `CHAT_SEND` is the sole current chat-moderation seam until owner-local enforcement exists; it remains a Logging & Admin hot-path dependency, and current consumption and chat tests do not prove owner-local durable restrictions, essential notices, independent stacking, expiry/reordering, or appeal handling. The REST `/chat` path is unavailable as a supported player API until it traverses the same restriction gate as `SendMessage`; the current supported communication path is the gated `SendMessage` contract below.
+**Target state:** Social & Groups is the enforcement owner for `chat_mute` and `chat_ban`. Its local indexed restriction state is evaluated before chat persistence/publication and at participation/history reads; the complete category, revision, command, notice, and appeal-outcome contract is [Moderation Policies](../logging-admin-service/moderation-policies.md). Every REST and gRPC chat write must traverse that same owner-local restriction boundary before persistence or publication. For Social & Groups, the synchronous `EvaluateModerationPolicy` read consumed by `SendMessage` at `CHAT_SEND` is the sole current chat-moderation seam until owner-local enforcement exists; it remains a Logging & Admin hot-path dependency, and current consumption and chat tests do not prove owner-local durable restrictions, essential notices, independent stacking, expiry/reordering, or appeal handling. The REST `/chat` path is implemented and routed through Gateway today, but its current caller binding and moderation behavior remain limited as described below; the target owner-local gate is not yet proven.
+
+### Chat request identity and replay
+
+The target chat write contract binds the stable `effectId` to the authenticated `senderAccountId` and a canonical full-request digest (`mutationDigest/v1` over the normalized request, including the complete tenant, channel, recipient, content, and effect identity). An exact retry with the same authenticated caller, effect ID, and digest may replay the stored outcome. Reusing an effect ID with a different caller or digest rejects with `IDEMPOTENCY_CONFLICT` without disclosing the original request DTO or outcome. The current implementation is a known gap: replay storage and lookup use only `{tenantId,effectId}`, and `ChatService` replays that row before it evaluates moderation policy, with no authenticated-caller or request-digest binding.
 
 ## REST APIs
 
@@ -24,7 +28,7 @@ The friend-presence slice currently implements non-pageable friend-roster and pr
 | `POST` | `/guilds/members` | Add a guild member |
 | `POST` | `/guilds/members/role` | Update a guild member's role |
 | `POST` | `/guilds/members/remove` | Remove a guild member |
-| `POST` | `/chat` | **Unavailable as a supported player API:** target REST chat must apply the same owner-local `chat_mute`/`chat_ban` restriction gate as `SendMessage` before persistence/publication |
+| `POST` | `/chat` | Current implemented and Gateway-routed chat write. The current controller checks `senderAccountId` through the Social access guard (current-account or tenant access) and the shared service applies the synchronous `EvaluateModerationPolicy` seam only for a new send; effect replay is currently tenant/effect-only and occurs before that policy check. Target behavior requires the same owner-local `chat_mute`/`chat_ban` gate as `SendMessage` before persistence/publication. |
 | `POST` | `/voice/token` | Issue a temporary WebRTC token for voice chat; the gateway relays media between participants |
 
 Example health check:
@@ -33,7 +37,7 @@ Example health check:
 curl http://localhost:8080/ping
 ```
 
-Target-only chat request (unavailable until the restriction gate is present):
+Current chat request (the route is implemented; target owner-local restriction enforcement remains incomplete):
 
 ```bash
 curl -X POST http://localhost:8080/chat \
@@ -52,7 +56,7 @@ curl -X POST http://localhost:8080/voice/token \
 ## gRPC APIs
 
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in `social_groups_service.proto`
-- `SendMessage` – **Target state:** validates the caller's exact tenant/realm/channel scope and owner-local `chat_mute`/`chat_ban` state before publishing; `chat_mute` rejects sending but permits ordinary receipt, while `chat_ban` rejects ordinary participation/send/history but permits essential moderation/system notices. **Current state:** `SendMessage` consumes the synchronous `EvaluateModerationPolicy` seam at `CHAT_SEND`; owner-local durable restriction state and the complete local restriction contract are not yet implemented or proved.
+- `SendMessage` – **Target state:** validates the caller's exact tenant/realm/channel scope, caller-bound chat request identity, and owner-local `chat_mute`/`chat_ban` state before persistence/publication; `chat_mute` rejects sending but permits ordinary receipt, while `chat_ban` rejects ordinary participation/send/history but permits essential moderation/system notices. **Current state:** the REST and gRPC write path uses the request's `senderAccountId` with the current Social access guard, consumes the synchronous `EvaluateModerationPolicy` seam at `CHAT_SEND` only after a cache/replay miss, and has no authenticated-caller/digest-bound replay or owner-local durable restriction state; the complete local restriction contract is not yet implemented or proved.
 - `CreateGuild` – establishes a new guild with an owner account
 - `AddFriend` – adds a friend relationship at the game or account level
 - `ListFriendPresence` – returns the bounded account-scoped projection defined by the [Friend Presence Privacy Contract](#friend-presence-privacy-contract). Social & Groups retains the local transport consequence: raw presence is obtained from Game Session and profile policy through bounded internal bulk reads; the current endpoint remains non-pageable as noted in implementation status.

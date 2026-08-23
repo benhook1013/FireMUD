@@ -46,29 +46,35 @@ published game assets.
 
    These manifests deploy MinIO only; they do not provision the `firemud-assets-writer` identity or its bucket-scoped policy. No trusted identity/policy provisioner is included in this repository, so the shown deployment remains incomplete and Game Design is blocked until an approved trusted bootstrap provisions that identity and policy and materializes the writer Secret. Do not use `minio-credentials` as the Game Design writer credential.
 
-4. Create the bucket and configure its private policy and gateway CORS. This is bucket/CORS bootstrap only; it does not provision the `firemud-assets-writer` identity or policy. The `mc` pod receives credentials from the Kubernetes Secret as environment variables; the values are never supplied as command-line arguments:
+4. Create the bucket and keep its policy private. This is bucket bootstrap only; it does not provision the `firemud-assets-writer` identity or policy. The private default deliberately leaves CORS unset. Only an approved public-origin provisioner may supply `ASSET_STORE_CORS_ORIGIN` to enable the optional CORS step below; that setting does not create a public asset route. The `mc` pod receives credentials from the Kubernetes Secret as environment variables; the values are never supplied as command-line arguments:
 
    ```bash
-   if [[ -z "${GATEWAY_ORIGIN:-}" || "$GATEWAY_ORIGIN" == *"*"* || "$GATEWAY_ORIGIN" == *"?"* || "$GATEWAY_ORIGIN" == *"["* || "$GATEWAY_ORIGIN" == *"]"* ]]; then
-     echo "GATEWAY_ORIGIN must be set to a specific, non-wildcard origin" >&2
-     exit 1
-   fi
-   if [[ ! "$GATEWAY_ORIGIN" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ && ! "$GATEWAY_ORIGIN" =~ ^http://localhost:[0-9]+$ ]]; then
-     echo "GATEWAY_ORIGIN must use https, except for a local localhost origin" >&2
-     exit 1
+   if [[ -n "${ASSET_STORE_CORS_ORIGIN:-}" ]]; then
+     if [[ "$ASSET_STORE_CORS_ORIGIN" == *"*"* || "$ASSET_STORE_CORS_ORIGIN" == *"?"* || "$ASSET_STORE_CORS_ORIGIN" == *"["* || "$ASSET_STORE_CORS_ORIGIN" == *"]"* ]]; then
+       echo "ASSET_STORE_CORS_ORIGIN must be a specific, non-wildcard https origin" >&2
+       exit 1
+     fi
+     if [[ ! "$ASSET_STORE_CORS_ORIGIN" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then
+       echo "ASSET_STORE_CORS_ORIGIN must use https and include one specific origin" >&2
+       exit 1
+     fi
    fi
 
    kubectl run mc --rm -it --restart=Never \
      --image=minio/mc:RELEASE.2024-05-09T17-04-24Z@sha256:3e9666a093d0a8fcbbac606346c415ae9277a0ca96989a6bdddd3d03e90a21b4 \
-     --overrides="{\"spec\":{\"containers\":[{\"name\":\"mc\",\"env\":[{\"name\":\"MINIO_ACCESS_KEY\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"minio-credentials\",\"key\":\"accessKey\"}}},{\"name\":\"MINIO_SECRET_KEY\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"minio-credentials\",\"key\":\"secretKey\"}}},{\"name\":\"GATEWAY_ORIGIN\",\"value\":\"${GATEWAY_ORIGIN}\"}]}]}}" \
+     --overrides="{\"spec\":{\"containers\":[{\"name\":\"mc\",\"env\":[{\"name\":\"MINIO_ACCESS_KEY\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"minio-credentials\",\"key\":\"accessKey\"}}},{\"name\":\"MINIO_SECRET_KEY\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"minio-credentials\",\"key\":\"secretKey\"}}},{\"name\":\"ASSET_STORE_CORS_ORIGIN\",\"value\":\"${ASSET_STORE_CORS_ORIGIN:-}\"}]}]}}" \
      --command -- sh -c '
        export MC_HOST_local="http://${MINIO_ACCESS_KEY}:${MINIO_SECRET_KEY}@minio:9000" &&
        mc mb --ignore-existing local/firemud-assets &&
        mc anonymous set private local/firemud-assets &&
+       if [ -z "${ASSET_STORE_CORS_ORIGIN:-}" ]; then
+         echo "Skipping MinIO CORS setup: no approved public origin supplied"
+         exit 0
+       fi
        printf "%s\\n" \
          "<CORSConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">" \
          "  <CORSRule>" \
-         "    <AllowedOrigin>${GATEWAY_ORIGIN}</AllowedOrigin>" \
+         "    <AllowedOrigin>${ASSET_STORE_CORS_ORIGIN}</AllowedOrigin>" \
          "    <AllowedMethod>GET</AllowedMethod>" \
          "    <AllowedHeader>*</AllowedHeader>" \
          "  </CORSRule>" \
