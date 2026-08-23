@@ -51,7 +51,7 @@ The provider-ID history mapping is immutable and separate from the current subsc
 
 - `purchase_entitlement`  
   - Reserved for a future separately accepted marketplace path. It is not created by v1 hosting-plan billing or by a raw PaymentIntent.
-  - If later accepted, it would carry immutable purchase/grant identity, account and optional actor reference `{tenantId, playableStateNamespaceId, characterId}`, product code, grant lifecycle, provider evidence, and explicit value-consumption/refund state. `playableStateScope` remains separately validated routing/authorization evidence rather than an actor key. No v1 hosting-billing PaymentIntent or receipt creates this record.
+  - If later accepted, it would carry immutable purchase/grant identity, account, an optional independent `tenantId` binding for tenant-scoped grants, an optional actor reference `{tenantId, playableStateNamespaceId, characterId}`, product code, grant lifecycle, provider evidence, and explicit value-consumption/refund state. Account-scoped grants omit the independent tenant binding, while an actor reference does not replace it. `playableStateScope` remains separately validated routing/authorization evidence rather than an actor key. No v1 hosting-billing PaymentIntent or receipt creates this record.
   - Fulfillment uniqueness is enforced only on the immutable `(purchase_operation_id, product_grant_key)` pair. `provider_event_id` is retained as Stripe audit/evidence and webhook-correlation data; it is not an entitlement identity and cannot create a second grant.
   - A future marketplace would make this table the entitlement authority for its own grants. `payment_transaction` remains financial/provider evidence and must not be treated as proof that gameplay value is active.
 

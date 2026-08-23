@@ -2268,24 +2268,41 @@ routes:
     caller_binding: authenticated_tenant_admin_exact_tenant_role
     required_live_checks: [issuer_generation, account_generation, current_operator_roles, membership, membership_generation, membership_version, tenant_generation, playtest_lifecycle, idempotency]
     required_fields: [tenant_id, world_slug, realm_slug, playtest_lifecycle_id, account_id, operation, grant_expires_at, request_id]
+    conditional_fields: [expected_grant_revision]
     operation_contract:
       field: operation
       allowed: [CREATE, EXTEND]
       regrant: forbidden
+      expected_grant_revision:
+        CREATE: absent_grant_and_tombstone_precondition
+        EXTEND: required_current_active_grant_revision
       revoke_route: DELETE /tenant-admin/tenants/{tenantId}/realm-access-grants/{worldSlug}/{realmSlug}/{playtestLifecycleId}/{accountId}
     idempotency_contract:
       key: request_id
-      digest: account_computed_versioned_request_digest
+      digest: mutationDigest/v1
+      digest_fields: [action_family_schema_id, action_family_schema_version, scope, target, expected_version, mutation, audit_reason]
+      digest_mapping:
+        expected_version: expected_grant_revision_presence_and_value
+        mutation: normalized_operation_and_requested_expiry_presence_and_value
+        audit_reason: schema_declared_presence_and_value
       exact_retry: same_authenticated_caller_request_id_and_digest_returns_stored_outcome
       changed_digest: IDEMPOTENCY_CONFLICT
       changed_request_id: distinct_operation
+    revision_contract:
+      compare: operation_specific_expected_revision_or_absent_grant_and_tombstone
+      commit: next_grant_revision_tombstone_result_and_event_atomically
+      mismatch: GRANT_REVISION_CONFLICT_without_mutation
+      precedence: same_request_id_changed_digest_or_expected_revision_is_IDEMPOTENCY_CONFLICT_before_revision_CAS
+      proof:
+        concurrent_same_expected_revision: exactly_one_commit_other_conflict_without_mutation
+        exact_retry: replay_stored_result_without_second_revision_or_event
     tombstone_contract: retained_revocation_tombstone_blocks_delayed_create_extend_and_requires_revision_advance_for_regrant
     mutation_contract: owner_atomic_idempotent_grant_create_or_extend_with_durable_result
     operator_authorization_reference: forbidden
     roles:
       any_of: [tenantAdmin]
     canonical_errors:
-      any_of: [IDEMPOTENCY_CONFLICT]
+      any_of: [IDEMPOTENCY_CONFLICT, GRANT_REVISION_CONFLICT]
   - service: account-service
     route: DELETE /tenant-admin/tenants/{tenantId}/realm-access-grants/{worldSlug}/{realmSlug}/{playtestLifecycleId}/{accountId}
     scope: tenant
@@ -2306,20 +2323,34 @@ routes:
     membership_version_applies: true
     caller_binding: authenticated_tenant_admin_exact_tenant_role
     required_live_checks: [issuer_generation, account_generation, current_operator_roles, membership, membership_generation, membership_version, tenant_generation, playtest_lifecycle, idempotency]
-    required_fields: [tenant_id, world_slug, realm_slug, playtest_lifecycle_id, account_id, request_id]
+    required_fields: [tenant_id, world_slug, realm_slug, playtest_lifecycle_id, account_id, request_id, expected_grant_revision]
     idempotency_contract:
       key: request_id
-      digest: account_computed_versioned_request_digest
+      digest: mutationDigest/v1
+      digest_fields: [action_family_schema_id, action_family_schema_version, scope, target, expected_version, mutation, audit_reason]
+      digest_mapping:
+        expected_version: expected_grant_revision_presence_and_value
+        mutation: normalized_REVOKE_and_absent_requested_expiry
+        audit_reason: schema_declared_presence_and_value
       exact_retry: same_authenticated_caller_request_id_and_digest_returns_stored_outcome
       changed_digest: IDEMPOTENCY_CONFLICT
       changed_request_id: distinct_operation
+    revision_contract:
+      expected_grant_revision: required_current_active_grant_revision
+      compare: current_active_grant_revision
+      commit: next_grant_revision_tombstone_result_and_event_atomically
+      mismatch: GRANT_REVISION_CONFLICT_without_mutation
+      precedence: same_request_id_changed_digest_or_expected_revision_is_IDEMPOTENCY_CONFLICT_before_revision_CAS
+      proof:
+        concurrent_same_expected_revision: exactly_one_commit_other_conflict_without_mutation
+        exact_retry: replay_stored_result_without_second_revision_or_event
     tombstone_contract: revoke_retains_lifecycle_bound_tombstone_and_advances_grant_revision
     mutation_contract: owner_atomic_idempotent_grant_revoke_with_durable_result
     operator_authorization_reference: forbidden
     roles:
       any_of: [tenantAdmin]
     canonical_errors:
-      any_of: [IDEMPOTENCY_CONFLICT]
+      any_of: [IDEMPOTENCY_CONFLICT, GRANT_REVISION_CONFLICT]
   - service: account-service
     route: GET /tenant-admin/tenants/{tenantId}/realm-access-grants/{worldSlug}/{realmSlug}/{playtestLifecycleId}
     scope: tenant
@@ -2376,12 +2407,20 @@ routes:
     required_live_checks: [current_operator_authorization, current_global_role, role_appropriate_assurance, target_tenant_generation, playtest_lifecycle, idempotency]
     target_binding: exact_path_and_body_account_tenant_world_realm_lifecycle
     required_fields: [account_id, tenant_id, world_slug, realm_slug, playtest_lifecycle_id, request_id, operator_authorization_reference, authorization_reference_fingerprint, control_plane_request_id, reservation_owner_id, reservation_claim_fence, post_authorization_execution_tuple, action, mutation_digest, reason]
+    conditional_fields: [expected_grant_revision]
     action_contract:
       allowed: [CREATE, EXTEND, REVOKE, REGRANT]
       grant_expires_at: required_for_create_extend_regrant
+      expected_grant_revision:
+        CREATE: absent_grant_and_tombstone_precondition
+        EXTEND: required_current_active_grant_revision
+        REVOKE: required_current_active_grant_revision
+        REGRANT: required_current_grant_or_tombstone_revision
     reference_redemption:
       owner: account-service
-      exact_compare: [operator_authorization_reference, authorization_reference_fingerprint, request_id, control_plane_request_id, reservation_owner_id, reservation_claim_fence, post_authorization_execution_tuple, action, target, mutation_digest]
+      pre_authorization_tuple_expected_version: expected_grant_revision_presence_and_value
+      post_authorization_execution_tuple_expected_version: expected_grant_revision_presence_and_value
+      exact_compare: [operator_authorization_reference, authorization_reference_fingerprint, request_id, control_plane_request_id, reservation_owner_id, reservation_claim_fence, post_authorization_execution_tuple, action, target, expected_grant_revision, mutation_digest]
       live_authority: platformAdmin_and_privileged_control_with_target_tenant_generation
       consumption: atomic_on_success
       same_tuple_retry: replay_durable_redemption_or_mutation_outcome
@@ -2389,16 +2428,30 @@ routes:
     idempotency_contract:
       key: request_id
       digest: mutationDigest/v1
+      digest_fields: [action_family_schema_id, action_family_schema_version, scope, target, expected_version, mutation, audit_reason]
+      digest_mapping:
+        expected_version: expected_grant_revision_presence_and_value
+        mutation: normalized_action_and_requested_expiry_presence_and_value
+        audit_reason: explicit_reason
       exact_retry: same_request_id_and_digest_returns_stored_outcome
       changed_digest: IDEMPOTENCY_CONFLICT
       control_plane_request_id: separate_correlation_bound_into_authorization_reference
+    revision_contract:
+      compare: operation_specific_expected_revision_or_absent_grant_and_tombstone_after_exact_tuple_redemption
+      commit: next_grant_revision_tombstone_result_and_event_atomically
+      mismatch: GRANT_REVISION_CONFLICT_without_mutation
+      precedence: same_request_id_changed_digest_or_expected_revision_is_IDEMPOTENCY_CONFLICT_before_revision_CAS
+      proof:
+        concurrent_same_expected_revision: exactly_one_commit_other_conflict_without_mutation
+        stale_redemption: deterministic_conflict_before_mutation
+        exact_retry: replay_stored_result_without_second_revision_or_event
     tombstone_contract: same_grant_revision_and_retained_revocation_tombstone_rules_as_tenant_admin_mutations
     mutation_contract: durable_intent_then_account_redeemed_owner_idempotent_grant_mutation
     roles:
       any_of: [platformAdmin]
     tenant_admin_authority: forbidden
     canonical_errors:
-      any_of: [IDEMPOTENCY_CONFLICT]
+      any_of: [IDEMPOTENCY_CONFLICT, GRANT_REVISION_CONFLICT]
   - service: account-service
     route: GetRealmAccessGrant
     scope: tenant

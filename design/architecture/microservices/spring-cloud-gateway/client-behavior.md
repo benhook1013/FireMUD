@@ -12,7 +12,7 @@
 
 - Traffic from the TCP Proxy Service always targets `/ws/game/**` via `GATEWAY_WS_URL`.
 - In player-facing environments, the TCP Proxy -> Gateway WebSocket hop is mTLS-authenticated under the trust policy in [Security](../../system-architecture-security.md#tls-termination--internal-encryption); the local endpoint and certificate variables remain in [TCP Proxy configuration](../tcp-proxy-service/configuration.md#websocket-mtls-to-spring-cloud-gateway).
-- Spring Cloud Gateway strips spoofable tenant and game-instance headers from public ingress and forwards `X-Tenant-Id` / `X-Game-Instance-Id` only when they are derived from trusted inputs, such as `X-Proxy-Tenant-Id` / `X-Proxy-Game-Instance-Id` on the authenticated TCP Proxy -> Gateway hop.
+- Spring Cloud Gateway strips or overwrites spoofable tenant, game-instance, and routing headers from public ingress. It forwards `X-Tenant-Id` / `X-Game-Instance-Id` only when derived from trusted inputs, and accepts `X-World-Slug` / `X-Realm-Slug` / positive `X-Pointer-Version` from TCP Proxy only as an all-or-none bundle on the authenticated bridge; a partial or malformed bundle is rejected before the validated advisory context reaches Game Session.
 - Gateway emits the positive `X-Firemud-Connection-Mode` discriminator on successful gameplay admission: `first_party_web` for the supported protected-cookie connect-token path and `trusted_tcp_proxy` for authenticated TCP Proxy bridges. A future target-only public non-browser header variant requires its own route classification and proof. The canonical marker and downstream trust rules are owned by [Gateway architecture](../../system-architecture-gateway.md#gateway-output-rules-downstream-trusted); Game Session must not infer path type from header absence.
 
 ## WebSocket Close and Handshake Classification
@@ -60,7 +60,7 @@ Unless explicitly described as current behavior, the sections below define the t
 - `/api/account/**` -> Account Service.
 - `/api/session/**` -> Game Session Service HTTP control-plane family.
 - `/api/social/**` -> Social Groups Service.
-- `/assets/**` -> target-only approved published asset origin; not a current Gateway route and separate from `/frontend-assets/**`.
+- `/assets/**` -> target-only published asset origin, pending separate approval/provisioner; not a current Gateway route and separate from `/frontend-assets/**`.
 
 The canonical external allowlist stops there. World Management, Entity Management, Game Logic, and Automation & Scripting do not expose direct Gateway-routed external APIs in the base architecture unless a dedicated design update extends the allowlist.
 
@@ -78,5 +78,5 @@ The canonical gateway route catalog publishes that explicit external inventory d
 
 - Spring Cloud Gateway remains tenant-agnostic. It forwards tenant-related headers only after applying the gateway’s header trust and canonicalization rules.
 - This trust boundary is owned by `HeaderTrustFilter` and configured via `firemud.gateway.header-trust.*`; changes to trusted header sources or canonicalization behavior must update that service-local control surface in the same change.
-- Public clients must not be able to inject trusted `X-Tenant-Id`, `X-Game-Instance-Id`, or proxy-owned correlation headers through the gateway boundary.
+- Public clients must not be able to inject trusted `X-Tenant-Id`, `X-Game-Instance-Id`, `X-World-Slug`, `X-Realm-Slug`, `X-Pointer-Version`, or proxy-owned correlation headers through the gateway boundary.
 - Tenant isolation, quotas, and gameplay authorization decisions remain the responsibility of downstream domain services as described in [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
