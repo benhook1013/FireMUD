@@ -146,7 +146,7 @@ Game Design owns revision history, commits, version state, and publish orchestra
 - Inventory/equipment was a documentation-only authority decision with no runtime behavior change; its recorded proof is `./gradlew linkCheck lintMarkdown`.
 - Settings schema/reference generation and verification are available through `./gradlew updatePlatformSettingsDocs` and `./gradlew verifyPlatformSettingsDocs`; persistence, resolution, cache/invalidation, generation, and surfaced-domain coverage are complete at their recorded boundaries.
 - The broader domain's aggregate documentation checkpoint completed on 2026-08-14 Pacific/Auckland (2026-08-13 UTC): `./gradlew linkCheck lintMarkdown` checked 4,574 links (4,536 OK, 0 errors, 38 excluded) and 454 Markdown files with 0 issues; `bash dev-tools/tests/architecture-doc-contracts.sh` also passed separately (184 tests passed).
-- The current Packet 5 documentation-only validation record is maintained in the canonical [design capability allocation](../design-alignment/design-capability-allocation.md#validation-and-proof-references); that ledger owns allocation-validation history, and this reference does not claim runtime proof.
+- The current Packet 5 documentation-only validation record is maintained in the canonical [design capability allocation](../design-alignment/design-capability-allocation.md#validation-and-proof-references); that ledger entry proves only the Packet 5 documentation/allocation checkpoint. It neither claims runtime proof for that parcel nor weakens the separately listed implementation proof and commands in this tracker.
 
 ## Active Gaps
 

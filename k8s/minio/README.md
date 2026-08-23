@@ -81,7 +81,7 @@ Configure Game Design's authenticated S3 access with `ASSET_STORE_ENDPOINT=http:
 
 Validation must separate the private MinIO endpoint from public delivery: an unauthenticated GET to the private `ASSET_STORE_ENDPOINT` must be rejected, while a target public-origin request is tested only against an attested immutable published object.
 
-Target public delivery uses a separate gateway/CDN origin recorded through target-only `ASSET_STORE_PUBLIC_BASE_URL`; that setting is not implemented in the current single-endpoint first slice. The current Gateway has no `/assets/**` route or asset-store route ID, and private MinIO is not public delivery. Target `/assets/**` remains reserved pending a separate approved public origin/provisioner and stays separate from `/frontend-assets/**`. The public origin must expose only attested immutable published objects. Private staging, quarantine, `FAILED`, and `EXPORTED_UNATTESTED` objects remain inaccessible.
+Target public delivery uses a separate gateway/CDN origin recorded through target-only `ASSET_STORE_PUBLIC_BASE_URL`; that setting is not implemented in the current single-endpoint first slice. The current Gateway has no `/assets/**` route or asset-store route ID, and private MinIO is not public delivery. Target `/assets/**` remains reserved pending a separate approved public origin/provisioner and stays separate from `/frontend-assets/**`. The public origin must expose only attested immutable published objects. Private staging, quarantine, `FAILED`, and `EXPORTED_UNATTESTED` objects remain inaccessible through that public origin or another public delivery path; the authenticated `firemud-assets-writer` retains only its separately authorized bucket access.
 
 ## Validation and Evidence Checklist
 
