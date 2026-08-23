@@ -4,7 +4,7 @@ This companion document holds the reference-heavy material for Redis cache and r
 
 ## Implementation Status
 
-The `room:*` Class A cache contract below is target-state only. It is not a current correctness path until World Management has an opaque room component version and a proven invalidation path. Current readers must not substitute `worldSnapshotId` or `roomDynamicVersion` for that component version; they must use authoritative reads when the target validation contract is unavailable. A cache-embedded version, TTL, or invalidation event alone is not currentness proof. The current Game Session `ratelimit:<sessionId>` key is likewise a legacy implementation and must be drained by its maximum TTL or isolated behind a versioned prefix before target rate-limit helpers consume the shared family. The future reader, invalidation, and version-advance rules below remain normative.
+The `room:*` Class A cache contract below is target-state only. It is not a current correctness path until World Management has an opaque room component version and a proven invalidation path. Namespace-backed `inventory:*` and explicitly instance-scoped `inventory:room-ground:*` cache adoption is likewise target-state; current readers remain authoritative until Entity Management's owner-version/event validation is proven. Current readers must not substitute `worldSnapshotId` or `roomDynamicVersion` for that component version; they must use authoritative reads when the target validation contract is unavailable. A cache-embedded version, TTL, or invalidation event alone is not currentness proof. The current Game Session `ratelimit:<sessionId>` key is likewise a legacy implementation and must be drained by its maximum TTL or isolated behind a versioned prefix before target rate-limit helpers consume the shared family. The future reader, invalidation, and version-advance rules below remain normative.
 
 ## Cache Adoption Checklist
 
@@ -20,11 +20,11 @@ When introducing or changing a cache/rate-limit prefix, designs must answer the 
 - Do not treat a prefix as accepted until the owning service docs and observability references are in sync with this reference document.
 - Cache/rate-limit prefixes must bind to the Cache/Rate-Limit Redis role only; they must never rely on Coordination Redis.
 
-### Worked Example – Inventory Cache (`inventory:*`, Class A)
+### Worked Example – Namespace-Backed Inventory Cache (`inventory:<tenantId>:<playableStateNamespaceId>:<containerId>`, Class A)
 
 This example shows a correctness-critical cache owned by Entity Management.
 
-- Prefix: `inventory:<tenantId>:<playableStateNamespaceId>:<containerId>`.
+- Prefix (namespace-backed only): `inventory:<tenantId>:<playableStateNamespaceId>:<containerId>`.
 - Source of truth: PostgreSQL tables for entities, items, and containment.
 - Version source: the container’s authoritative `version` or `lastModified` field exposed by Entity Management.
 - Cache payload: `containerId`, `tenantId`, the version field, and the item records required for hot reads.
@@ -67,7 +67,8 @@ Cache/Rate-Limit Redis hosts prefixes that are not part of the coordination log 
 
 | Prefix | Role | Correctness Class | Reset Tolerance | Owner / Semantics |
 | --- | --- | --- | --- | --- |
-| `inventory:<tenantId>:<playableStateNamespaceId>:<containerId>` | Cache | Versioned (Class A) | Reset-tolerant | Entity Management cached inventory/container aggregates. |
+| `inventory:<tenantId>:<playableStateNamespaceId>:<containerId>` | Cache | Versioned (Class A) | Reset-tolerant | Entity Management namespace-backed inventory/container aggregates only; the complete scope/version contract remains in the [canonical cache owner](./system-architecture-redis-cache.md#key-naming-and-overwrite-expectations). |
+| `inventory:room-ground:<tenantId>:<gameInstanceId>:<roomInstanceId>:<containerId>` | Cache | Versioned (Class A) | Reset-tolerant | Entity Management explicitly instance-scoped S3 synthetic room-ground holder; see the [canonical cache owner](./system-architecture-redis-cache.md#key-naming-and-overwrite-expectations) for complete scope semantics. |
 | `character-cache:<tenantId>:<playableStateNamespaceId>:<characterId>` | Cache | Versioned (Class A) | Reset-tolerant | Entity Management cached character graphs for hot reads. |
 | `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>` | Cache | Versioned (Class A) | Reset-tolerant | World Management room-scoped dynamic-state cache. |
 | `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` | Cache | Versioned (Class A) | Reset-tolerant | World Management correctness-critical room snapshot cache; payload stores and validates owner `regionId`/`regionEpoch` with the opaque component version, atomically with refresh/TTL, and invalidates on epoch change. |
@@ -87,7 +88,8 @@ CI and code review checks are expected to:
 
 | Prefix / Aggregate | Example Key | Policy | Notes |
 | --- | --- | --- | --- |
-| Inventory/container views | `inventory:<tenantId>:<playableStateNamespaceId>:<containerId>` | Versioned | Validated against a container or aggregate `version`/`lastModified` field in PostgreSQL. |
+| Namespace-backed inventory/container views | `inventory:<tenantId>:<playableStateNamespaceId>:<containerId>` | Versioned | Entity Management validates the container or aggregate `version`/`lastModified` field in PostgreSQL; namespace-backed scope only. |
+| Instance-scoped room-ground containers | `inventory:room-ground:<tenantId>:<gameInstanceId>:<roomInstanceId>:<containerId>` | Versioned | Entity Management validates the authoritative holder version and invalidates on holder/item changes; reset-tolerant and complete instance scope follow the [canonical cache owner](./system-architecture-redis-cache.md#key-naming-and-overwrite-expectations). |
 | Character graphs | `character-cache:<tenantId>:<playableStateNamespaceId>:<characterId>` | Versioned | Backed by character graph rows with explicit versioning. |
 | Dynamic world aggregates | `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>` | Versioned | Backed by authoritative room-instance dynamic-state rows with `roomDynamicVersion`; invalidated on dynamic-state writes and relevant instance lifecycle changes. |
 | Room topology snapshots | `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` | Versioned | Target-only cached room snapshots carry owner `regionId`/`regionEpoch` alongside the opaque World-owned component version; refresh/TTL is atomic, epoch changes invalidate, and current readers use authoritative reads when scope/version proof is unavailable. |
@@ -103,7 +105,7 @@ CI and code review checks are expected to:
 
 ### Recommended Cache Metrics by Prefix Family
 
-- `inventory:*` - hit/miss counters plus optional key-count and oversize counters.
+- `inventory:*` (including `inventory:room-ground:*`) - hit/miss counters plus optional key-count and oversize counters.
 - `character-cache:*` - hit/miss counters plus optional key-count gauges.
 - `world-dynamic:*` / `room:*` - hit/miss counters plus key-count gauges where available.
 - `view:room-look:*` - hit/miss, recompute, write-skip reason, oversize, active-key/variant-budget, and Redis-failure metrics as specified by the [canonical Class-B contract](./system-architecture-redis-cache.md#canonical-viewroom-look-class-b-contract).
@@ -113,7 +115,7 @@ CI and code review checks are expected to:
 
 ### Future Work / TODO
 
-- Keep `inventory:*` and `character-cache:*` definitions in sync with Entity Management.
+- Keep `inventory:*` (including `inventory:room-ground:*`) and `character-cache:*` definitions in sync with Entity Management.
 - Keep `world-dynamic:*` and `room:*` definitions in sync with World Management.
 - Update owning service docs with cache class, TTL strategy, reset tolerance, and example key shapes.
 
