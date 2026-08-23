@@ -223,6 +223,11 @@ The decisions below have applied human-review provenance. They are not pending p
 | `CMD-04` | [ADR 0134](../../architecture/decisions/adr-0134-bounded-durable-semantic-reconnect-context.md) | Complete durable persistence, namespace migration, explicit-logout/authority cleanup, and oversized-entry omission/marker enforcement proof. |
 | `CMD-03` | [ADR 0135](../../architecture/decisions/adr-0135-compact-versioned-player-output-and-late-rendering.md) | Complete the browser consumer and supported schema lifecycle; replace static scope-token comparison with temporal snapshot proof. |
 | `CMD-05` | [ADR 0136](../../architecture/decisions/adr-0136-future-compatible-localization-boundary.md) | Complete deterministic explicit-base fallback and future creator workflow/tooling; existing keyed output and room variants remain partial groundwork. |
+| `TENANT-03` | [ADR 0137](../../architecture/decisions/adr-0137-isolated-playtest-state-modes-and-reset.md) | Implement namespace-aware preparation/reset, owner manifests, isolation enforcement, and focused fork/snapshot proof. |
+| `PLAYTEST-01` | [ADR 0138](../../architecture/decisions/adr-0138-expiring-playtest-grants-with-bounded-active-revocation.md) | Implement bounded expiry, monotonic grant/tombstone mutation, authority delivery, active-binding ejection, and focused revocation proof. |
+| `LIFE-01` | [ADR 0139](../../architecture/decisions/adr-0139-tenant-owned-runtime-lifecycle-with-audited-break-glass.md) | Implement tenant-owned lifecycle gates, recovery availability, audited break-glass, and focused lifecycle proof. |
+| `PLAYER-01` | [ADR 0140](../../architecture/decisions/adr-0140-realm-authored-controllable-actor-entry.md) | Implement published entry-policy resolution, versioned descriptors/templates, persisted actor identity, fork-local copies, and focused proof. |
+| `MOD-01` | [ADR 0141](../../architecture/decisions/adr-0141-fixed-safety-restriction-categories-and-independent-lifecycles.md); [ADR 0142](../../architecture/decisions/adr-0142-bounded-moderation-appeal-cases.md) | Implement fixed-category owner-local enforcement, ordered commands, bounded appeals, protected evidence, and focused category/appeal proof. |
 
 ### Pending Decisions Requiring Product Or Operations Consultation
 
