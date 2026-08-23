@@ -11,7 +11,7 @@ Game Design owns publication coordination, release descriptors, asset lifecycle,
 - `CanDeleteVersionAssets`, `GetVersionAssetArtifactState`, `RepairPublishedVersionAssets`, `TombstoneVersionAssets`, `BeginPurgeVersionAssets`, `FinalizePurgeVersionAssets`, and `GetVersionAssetPurgeStatus` are live Game Design control-plane APIs. The `version_asset_artifact` proof row currently records lifecycle state, state epoch, manifest hash, exported version number, and exported manifest asset keys. In the current first slice, `RepairPublishedVersionAssets` repairs ordinary assets from `game_assets.data` to those persisted exported version-scoped keys only while the process-local frozen version selection remains available; the proof row alone is not restart-safe, and an unavailable selection fails closed with `REPAIR_VERSION_SCOPE_UNAVAILABLE`.
 - Content-addressed private-candidate publication and producer-owned derived-artifact handoff remain target-state. The current first slice still repairs ordinary bytes from `game_assets.data`, exports version-scoped objects, and persists a narrower `published_release_bundle` that lacks the complete target manifest-schema and mandatory actual-byte artifact-digest fields.
 - The live `TombstoneVersionAssets` implementation accepts only `FAILED` and `PURGE_FAILED`; target tombstoning of an eligible retired `PUBLISHED` release is not implemented. The runbook must fail closed for that path rather than claim the current API supports it.
-- The current first slice has one `ASSET_STORE_ENDPOINT` used by the S3 client and generated manifest URLs; it does not implement the target private-origin/public-delivery split or `ASSET_STORE_PUBLIC_BASE_URL`.
+- The current first slice has one `ASSET_STORE_ENDPOINT` used by the S3 client and generated manifest URLs; it does not implement the target private-origin/public-delivery split or `ASSET_STORE_PUBLIC_BASE_URL`. The current Gateway has no `/assets/**` route or asset-store route ID, and private MinIO is not public delivery; target `/assets/**` delivery remains deferred pending a separate approved public origin/provisioner.
 
 ## Health Checks
 
@@ -50,28 +50,30 @@ When using a self-hosted MinIO cluster as the asset store:
      '
    ```
 
-3. **Keep the bucket private and configure CORS for the gateway domain**
+3. **Keep the bucket private; the approved public delivery origin owns browser CORS**
+
+   The current first slice has no public asset route or provisioner, so do not run this CORS step as part of the current deployment. After a separate approved public `/assets/**` origin/provisioner exists, Platform Operations must configure that public delivery origin, or its Gateway/CDN forwarder, to emit or forward the exact CORS response for the approved browser origin. `ASSET_STORE_CORS_ORIGIN` and the bootstrap below may configure supporting MinIO bucket CORS only when MinIO participates behind that separately approved public delivery path; they never authorize direct browser use of the private storage endpoint. Private-bucket CORS alone is not public delivery authority, does not make MinIO public, and must not be replaced with anonymous bucket access.
 
    ```bash
-   if [[ -z "${GATEWAY_ORIGIN:-}" || "$GATEWAY_ORIGIN" == *"*"* || "$GATEWAY_ORIGIN" == *"?"* || "$GATEWAY_ORIGIN" == *"["* || "$GATEWAY_ORIGIN" == *"]"* ]]; then
-     echo "GATEWAY_ORIGIN must be set to a specific, non-wildcard origin" >&2
+   if [[ -z "${ASSET_STORE_CORS_ORIGIN:-}" || "$ASSET_STORE_CORS_ORIGIN" == *"*"* || "$ASSET_STORE_CORS_ORIGIN" == *"?"* || "$ASSET_STORE_CORS_ORIGIN" == *"["* || "$ASSET_STORE_CORS_ORIGIN" == *"]"* ]]; then
+     echo "ASSET_STORE_CORS_ORIGIN must be set to a specific, non-wildcard origin" >&2
      exit 1
    fi
-   if [[ ! "$GATEWAY_ORIGIN" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ && ! "$GATEWAY_ORIGIN" =~ ^http://localhost:[0-9]+$ ]]; then
-     echo "GATEWAY_ORIGIN must use https, except for a local localhost origin" >&2
+   if [[ ! "$ASSET_STORE_CORS_ORIGIN" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ && ! "$ASSET_STORE_CORS_ORIGIN" =~ ^http://localhost:[0-9]+$ ]]; then
+     echo "ASSET_STORE_CORS_ORIGIN must use https, except for a local localhost origin" >&2
      exit 1
    fi
 
    kubectl run mc --rm -it --restart=Never \
      --image=minio/mc:RELEASE.2024-05-09T17-04-24Z@sha256:3e9666a093d0a8fcbbac606346c415ae9277a0ca96989a6bdddd3d03e90a21b4 \
-     --overrides="{\"spec\":{\"containers\":[{\"name\":\"mc\",\"env\":[{\"name\":\"MINIO_ACCESS_KEY\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"minio-credentials\",\"key\":\"accessKey\"}}},{\"name\":\"MINIO_SECRET_KEY\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"minio-credentials\",\"key\":\"secretKey\"}}},{\"name\":\"GATEWAY_ORIGIN\",\"value\":\"${GATEWAY_ORIGIN}\"}]}]}}" \
+     --overrides="{\"spec\":{\"containers\":[{\"name\":\"mc\",\"env\":[{\"name\":\"MINIO_ACCESS_KEY\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"minio-credentials\",\"key\":\"accessKey\"}}},{\"name\":\"MINIO_SECRET_KEY\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"minio-credentials\",\"key\":\"secretKey\"}}},{\"name\":\"ASSET_STORE_CORS_ORIGIN\",\"value\":\"${ASSET_STORE_CORS_ORIGIN}\"}]}]}}" \
      --command -- sh -c '
        export MC_HOST_local="http://${MINIO_ACCESS_KEY}:${MINIO_SECRET_KEY}@minio:9000" &&
        mc anonymous set private local/firemud-assets &&
        printf "%s\\n" \
          "<CORSConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">" \
          "  <CORSRule>" \
-         "    <AllowedOrigin>${GATEWAY_ORIGIN}</AllowedOrigin>" \
+         "    <AllowedOrigin>${ASSET_STORE_CORS_ORIGIN}</AllowedOrigin>" \
          "    <AllowedMethod>GET</AllowedMethod>" \
          "    <AllowedHeader>*</AllowedHeader>" \
          "  </CORSRule>" \
@@ -81,10 +83,10 @@ When using a self-hosted MinIO cluster as the asset store:
    ```
 
 4. **Service configuration**
-   - Once the trusted bootstrap has provisioned `firemud-assets-writer`, the Game Design Service is the **sole writer** to the asset bucket and uses `ASSET_STORE_*` environment variables to export assets and manifests during publish workflows. Runtime services and clients consume published assets via CDN or gateway URLs derived from the manifest; they do not write directly to the bucket.
+   - Once the trusted bootstrap has provisioned `firemud-assets-writer`, the Game Design Service is the **sole writer** to the asset bucket and uses `ASSET_STORE_*` environment variables to export assets and manifests during publish workflows. Target runtime services and clients consume published assets via CDN or gateway URLs derived from the manifest; they do not write directly to the bucket. The current private MinIO endpoint is not public delivery.
    - Keep the bucket private. The gateway or CDN origin uses authenticated object-store credentials and exposes only attested immutable published objects; private staging, quarantine, `FAILED`, and `EXPORTED_UNATTESTED` objects must not be publicly readable.
    - `ASSET_STORE_ENDPOINT` is the private authenticated MinIO/S3 API used by Game Design reads and writes, for example `http://minio:9000` inside the cluster. It is never the public gateway delivery URL.
-   - The target split uses `ASSET_STORE_PUBLIC_BASE_URL=https://<gateway-domain>/assets` only to generate public manifest links. That setting is not implemented in the current single-endpoint first slice; operators must not compensate by granting anonymous bucket-wide access. Any future public origin must expose only attested immutable published objects.
+   - The target split uses `ASSET_STORE_PUBLIC_BASE_URL=https://<gateway-domain>/assets` only to generate public manifest links. That setting is not implemented in the current single-endpoint first slice; target `/assets/**` delivery remains pending a separate approved public origin/provisioner. Operators must not compensate by granting anonymous bucket-wide access. Any future public origin must expose only attested immutable published objects.
    - Keep validation paths distinct: an unauthenticated GET to the private `ASSET_STORE_ENDPOINT` must be rejected, while a public-origin delivery test may request only an attested immutable published object.
 5. **Scope of stored data**
 

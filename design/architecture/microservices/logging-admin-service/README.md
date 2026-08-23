@@ -2,7 +2,7 @@
 
 ## Overview
 
-Centralized logging and administration tools for the platform. The service collects log data from all services, provides moderation capabilities for game operators, embeds shared observability tools, and acts as the operator-facing coordinator for coordination-health monitoring. Per-instance tick pause/resume forwarding is implemented but unavailable as a supported operator mutation until the owner-side variant of the [Operator Mutation Support Gate](./admin-ui.md#implementation-status) is complete.
+Centralized logging and administration tools for the platform. The service collects log data from all services, defines the target fixed-category moderation policy, case, bounded-appeal, and audit contracts for game operators, embeds shared observability tools, and acts as the operator-facing coordinator for coordination-health monitoring. Runtime restriction state remains owned by Account, Game Session, or Social & Groups. Per-instance tick pause/resume forwarding is implemented but unavailable as a supported operator mutation until the owner-side variant of the [Operator Mutation Support Gate](./admin-ui.md#implementation-status) is complete.
 
 ## Script-transition audit and observability boundary (target state; complete composition unavailable)
 
@@ -10,13 +10,13 @@ Target state only: Logging & Admin presents script-transition evidence but is no
 
 ## Implementation Status
 
-Logging & Admin owns target-state moderation policy persistence, evaluation, and audit. `GAMEPLAY_ADMISSION` is the gameplay enforcement decision boundary consumed by Game Session, and `CHAT_SEND` is the chat enforcement decision boundary consumed by Social & Groups; applicable high-risk decisions fail closed when a fresh policy result is unavailable. Versioned snapshot/event propagation and broader owner-side enforcement remain missing. `/moderation/actions` and `ApplyModerationAction` are gated/unavailable and currently persist neither the `moderation_actions` record nor audit evidence, and do not perform owner-side enforcement. They remain unavailable pending the receiving-service variant of the [Operator Mutation Support Gate](./admin-ui.md#implementation-status). This is the separate gated human mutation classification, not an owner-forwarding mutation. The separate `EvaluateModerationPolicy` read remains live at the Game Session and Social & Groups owner boundaries. Per-instance `<tenantId, gameInstanceId>` `PauseTicksForScope`/`ResumeTicksForScope` forwarding is implemented, but it is unavailable under the owner-side variant of the Operator Mutation Support Gate; when enabled, the receiving owner redeems its forwarded reference with Account. `ToggleFeatureFlag` is unavailable under that gate as well. Regional reset and general remediation are not live capabilities.
+Logging & Admin owns fixed safety policy intent, moderation cases, bounded appeal cases/evidence, and audit. `GAMEPLAY_ADMISSION` is the gameplay enforcement boundary owned by Game Session, and `CHAT_SEND` is the chat enforcement boundary owned by Social & Groups; Account owns account-wide safety restrictions. **Current:** Game Session and Social & Groups synchronously call Logging & Admin's `EvaluateModerationPolicy` read at those boundaries, and the callers fail closed when the policy read is unavailable or not fresh. `/moderation/actions` and `ApplyModerationAction` are gated/unavailable and currently persist only the generic legacy `moderation_actions` row; separate fixed-category audit evidence and owner-side enforcement are absent, and the local path is not Gateway-forwarded. **Target:** routine enforcement is owner-local under [Moderation Policies](./moderation-policies.md), with typed commands and durable owner state rather than a synchronous Logging & Admin dependency. Complete fixed categories, owner revisions, appeals, and digest-bound outcome commands remain unimplemented and unproved. Per-instance `<tenantId, gameInstanceId>` `PauseTicksForScope`/`ResumeTicksForScope` forwarding is implemented, but it is unavailable under the owner-side variant of the Operator Mutation Support Gate; when enabled, the receiving owner redeems its forwarded reference with Account. `ToggleFeatureFlag` is unavailable under that gate as well. Regional reset and general remediation are not live capabilities.
 
 ## Responsibilities
 
 - Aggregate logs from every microservice via Fluent Bit sidecars and expose search APIs.
 - Offer dashboards and search for operators and moderators by embedding Kibana and Grafana views.
-- Define moderation policy and, in the target state, persist moderation actions and keep auditable moderation records.
+- **Target-state responsibility:** Define the fixed safety policy vocabulary, retain moderation cases and bounded appeals/evidence, and keep append-only auditable policy/review records; do not own runtime restriction state.
 - Record live audit trails for account events and target/operator-intent audit for feature-flag override requests; intent does not prove a runtime feature-flag mutation.
 - Monitor coordination and tick health across tenant and region scopes. Automated per-instance `<tenantId, gameInstanceId>` `PauseTicksForScope`/`ResumeTicksForScope` forwarding exists but remains unavailable pending the owner-side variant of the Operator Mutation Support Gate; Logging & Admin forwards the opaque reference and does not redeem it. Regional pause/resume, regional reset, and broader/general remediation remain target-only.
 
@@ -24,7 +24,7 @@ Logging & Admin owns target-state moderation policy persistence, evaluation, and
 
 - Central log search for entries collected via Fluent Bit sidecars.
 - [Analytics dashboards](./analytics-dashboards.md) for operators, embedding Kibana and Grafana panels, including Telnet ingress views based on the TCP Proxy metrics described in [Logging & Monitoring](../../system-architecture-logging-monitoring.md) and the example Grafana snippets under `design/observability/grafana/`.
-- Tools for reviewing account-related evidence and target-state restriction workflows; Logging & Admin does not currently record or enforce account restrictions.
+- Tools for reviewing account-related evidence and target-state restriction workflows; Account owns and enforces account restrictions, while Logging & Admin does not currently record or enforce them.
 - [Role-based admin UI](./admin-ui.md) for moderators.
 - [Moderation policies](./moderation-policies.md) including profanity filters.
 - Target-only UI for requesting runtime feature-flag overrides through owning domain control-plane APIs; `ToggleFeatureFlag` is not externally supported until the owner-side variant of the Operator Mutation Support Gate is complete.

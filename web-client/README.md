@@ -15,11 +15,14 @@ The repo's canonical frontend direction is:
 - use `TanStack Query` for reads, mutations, caching, invalidation, polling, and retry behavior;
 - keep local component/form/editor state close to the owning feature;
 - introduce Redux only if a later slice proves a real shared client-state problem that local feature state plus `TanStack Query` no longer solves cleanly.
+- preserve the existing public base while emitting compiled assets under the reserved `/frontend-assets/**` prefix; published game assets remain under the separate `/assets/**` family.
 
 See:
 
 - [Frontend Architecture](../design/architecture/system-architecture-frontend.md)
 - [Player Experience, Commands, and Communication implementation tracker](../design/project-management/implementation-tracking/player-experience-commands-and-communication.md)
+
+The Vite production build writes compiled assets to `dist/frontend-assets/`, so generated compiled JavaScript/CSS references use `/frontend-assets/**`. The prefix is reserved for first-party compiled files, does not SPA-fallback, and is not a Gateway route. The static host/Ingress, origin separation, and full browser proof remain target-state work under [ADR 0144](../design/architecture/decisions/adr-0144-stateless-first-party-frontend-application-boundary.md).
 
 ## Local Development
 

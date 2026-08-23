@@ -33,11 +33,11 @@ The [TCP Proxy Service Operations](./microservices/tcp-proxy-service/operations.
    - Open the TCP Proxy Grafana dashboard and inspect:
      - `tcpproxy.connections.active` / `tcpproxy.connections.total` for unusual spikes or drops.
      - `tcpproxy.connections.limit.exceeded` for sustained non-zero values, which indicate global or per-IP caps are rejecting new connections.
-     - `tcpproxy.telnet.discarded` for spikes that may reflect malformed Telnet sequences, buffer overflows, repeated malformed `SESSION` envelopes, or upstream backpressure that forces the proxy to close connections (for example `tcpproxy.telnet.discarded{reason="gateway_buffer_full"}` when the Telnet → Gateway input buffer reaches its configured ceiling).
+     - `tcpproxy.telnet.discarded` for spikes that may reflect malformed or oversized opaque input, buffer overflows, or upstream backpressure that forces the proxy to close connections (for example `tcpproxy.telnet.discarded{reason="gateway_buffer_full"}` when the Telnet → Gateway input buffer reaches its configured ceiling).
      - `tcpproxy.websocket.reconnects` and `tcpproxy.websocket.reconnect.delay` for repeated Proxy → Gateway WebSocket bridge establishment/retry attempts and backoff delays. Treat these as admission-time or re-probe bridge behavior metrics, not evidence of hidden transport-preserving recovery for already-established Telnet sessions.
      - Circuit-breaker/open-admission indicators for sustained Gateway unreachability (for example counters of quick rejects with `backend_unavailable`) to distinguish intentional protective rejects from random network churn.
      - `tcpproxy.tls.misconfig` and `tcpproxy.gateway.handshake.failures{reason=...}` for TLS/mTLS configuration issues.
-     - MCP protection indicators for negotiation loops and control-line floods (for example `tcpproxy.telnet.discarded{reason="mcp_budget"}` and MCP negotiation failure counters) to distinguish protocol-tooling regressions from generic Telnet instability.
+     - No MCP-specific budget or negotiation-failure indicators are live in the supported runtime. Treat `reason="mcp_budget"` and MCP-specific dashboard panels as target-only; current opaque marker-looking input is covered only by the generic line-size, connection, idle, buffer, and per-IP limit indicators above.
      - If Telnet client IP preservation relies on PROXY protocol, verify that `tcpproxy.telnet.discarded{reason="proxy_protocol"}` is not elevated; sustained `proxy_protocol` discard reasons often indicate a misconfigured Telnet edge proxy (for example PROXY headers sent to the wrong listener or malformed headers).
 4. **Compare Telnet vs WebSocket flows**
    - Pick a specific `{gameInstanceId, tenantId}` (or user) when available and:
@@ -64,16 +64,15 @@ The [TCP Proxy Service Operations](./microservices/tcp-proxy-service/operations.
      - Confirm that the public Telnet `LoadBalancer` fronts a dedicated Telnet edge proxy (for example HAProxy) and that it forwards to the TCP Proxy Service using PROXY protocol on the internal-only listener/port configured by `TCP_PROXY_PROXY_PROTOCOL_PORT`. This is the canonical topology for all shared and player-facing environments.
      - Ensure the raw Telnet listener (`TCP_PROXY_PORT`) is not PROXY-enabled and is not exposed directly on the Internet in production; accepting PROXY headers from public clients allows client-IP spoofing.
      - When PROXY protocol is not enabled, treat the environment as local/dev or tightly controlled self-hosted only; in those cases `TCP_PROXY_MAX_CONNECTIONS_PER_IP` is a best-effort heuristic and you should rely primarily on global `TCP_PROXY_MAX_CONNECTIONS` and higher-layer rate limits, as described in the TCP Proxy design and Deployment Environments docs.
-   - If MCP negotiation failures or MCP budget discards are elevated:
-     - Confirm whether a recent client/tool rollout changed MCP handshake behavior.
-     - Tune MCP guardrails (`TCP_PROXY_MCP_NEGOTIATION_FAILURE_MAX`, `TCP_PROXY_MCP_NEGOTIATION_FAILURE_WINDOW_MS`, `TCP_PROXY_MCP_MAX_ACTIVE_CORDS`, `TCP_PROXY_MCP_MAX_ACTIVE_DATA_TAGS`, `TCP_PROXY_MCP_MAX_CONTROL_LINES_PER_SEC`) only as needed, and prefer fixing misbehaving client scripts before broadly relaxing limits.
+   - If generic opaque-input discards or bridge-health indicators are elevated:
+     - Correlate `tcpproxy.telnet.discarded` with the generic line-size, connection, idle, buffer/backpressure, and per-IP indicators above, and inspect recent client, transport, or configuration changes.
+     - Tune only the live generic Telnet controls listed in the TCP Proxy configuration as needed; the `TCP_PROXY_MCP_*` settings are dormant target-only values and are not remediation.
 
 3. **Run Telnet smoke tests**
    - Use the canonical Telnet smoke script described in the TCP Proxy README to:
      - Connect to the proxy with `telnet` or a test client.
-     - Run baseline gameplay admission without advanced hints: `LOGIN` + `PLAY` + `LOOK`.
-     - Run any supported advanced attach hint path with `LOGIN` + `PLAY` + `LOOK`.
-     - Confirm both flows match expected WebSocket behavior for the same account/character.
+     - Run the current baseline gameplay admission: `LOGIN` + `PLAY` + `LOOK`.
+     - Confirm the flow matches expected WebSocket behavior for the same account/character.
      - Capture the raw transcript and include it in incident notes.
 
 4. **Escalation and mitigation**

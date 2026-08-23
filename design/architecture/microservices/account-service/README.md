@@ -18,6 +18,7 @@ Manages user accounts and authentication for the platform. It stores profile dat
   - receiver-specific private player-delegation JWTs only where an approved workload must carry Account authority, currently `game-session-account-delegation` for Account Service; workload-only gRPC uses mTLS without a bearer token
 - Issuing first-party player bootstrap tokens and gameplay connect tokens for `/ws/game/**` admission.
 - Tracking tenant-scoped profiles and achievements.
+- Maintaining Account-side relationship/projection references for Entity-owned actor discovery; Entity Management owns persisted actor rows and gameplay state.
 - Managing subscription status and ban enforcement.
 - Self-service account recovery for compromised or lost credentials.
 - Account-selected `PASSWORD` and verified-email `EMAIL_OTP` login modes.
@@ -29,14 +30,14 @@ Manages user accounts and authentication for the platform. It stores profile dat
 - Profiles store a display name, bio, game history, and achievements.
 - Password reset and verification flows.
 - Subscription tracking with ban management.
-- Handles payment processing via **Stripe** for one-time purchases and recurring subscriptions.
-- Link accounts to player characters for ownership and permissions.
-- gRPC APIs cover authentication, account lifecycle, export/delete, runtime/admission, membership, realm-grant, entitlement, profile, and payment operations. The canonical API inventory is [API Contracts](./api-contracts.md).
+- Owns the target **Stripe** hosting-plan billing and recurring hosting-subscription boundary; current provider lifecycle and entitlement proof remain partial. Generic PaymentIntent, refund, donation, and creator-share surfaces are unsupported implementation drift and must reject before any provider mutation rather than becoming advertised product paths.
+- Expose Account relationship/projection data for actor discovery and access checks; do not create or own persisted gameplay actors.
+- gRPC APIs cover authentication, account lifecycle, export/delete, runtime/admission, membership, realm-grant, entitlement, profile, and hosting-billing operations; generic payment scaffolds do not widen that capability boundary. The canonical API inventory is [API Contracts](./api-contracts.md).
 
 ## Document Map
 
 - [API Contracts](./api-contracts.md)
-  - public and internal auth/account/payment surfaces, canonical errors, and proto/OpenAPI ownership.
+  - public and internal auth/account/hosting-billing surfaces, gated legacy payment scaffolds, canonical errors, and proto/OpenAPI ownership.
 - [Runtime and Data](./runtime-and-data.md)
   - JWT issuance, session-related data ownership, PostgreSQL/Redis boundaries, and account-state invariants.
 - [Operations](./operations.md)

@@ -2,7 +2,13 @@
 
 ## Overview
 
-Provides chat, guild, and social networking features across games. Basic REST and gRPC APIs are implemented for guilds, friends, chat, and mail. Real-time WebSocket delivery is available.
+Provides chat, guild, and social networking features across games. Basic REST APIs are implemented for guilds, friends, mail, and chat; REST `/chat` is implemented and Gateway-routed, with its current caller-binding and moderation limitations documented in [API Contracts](./api-contracts.md). Real-time WebSocket delivery is available.
+
+## Implementation Status
+
+The current live moderation seam is `SendMessage` consuming the synchronous `EvaluateModerationPolicy` read at `CHAT_SEND`; it fails closed when required policy evidence is unavailable or stale, but only after a cache/replay miss. The REST `/chat` controller currently checks the request's `senderAccountId` through the Social access guard (current-account or tenant access), and chat replay is keyed only by `{tenantId,effectId}` with no authenticated-caller or canonical full-request-digest binding. Target owner-local `chat_mute`/`chat_ban` restriction tables, commands, durable revisions, notices, and bounded appeal outcomes are target-only/partial and are not current persisted controls. Every REST and gRPC write must eventually traverse that same owner-local restriction boundary before persistence/publication. The target owner-local enforcement model avoids making Logging & Admin a routine chat hot-path dependency; until that target model is implemented, the current `CHAT_SEND` path depends synchronously on the `EvaluateModerationPolicy` read. Logging & Admin remains the policy-input, case, evidence, and audit owner.
+
+Target player-safe outcomes remain distinct: `CHAT_MUTE_SEND_DENIED` denies sending while ordinary receipt remains available; `CHAT_BAN_PARTICIPATION_DENIED` denies ordinary participation, sending, and history while essential system and moderation notices remain deliverable. These target codes do not claim that the current read seam has converged on durable owner-local enforcement.
 
 ### Responsibilities
 
@@ -10,7 +16,7 @@ Provides chat, guild, and social networking features across games. Basic REST an
 - Synchronize guild and friend lists in real time
 - Manage guild creation, membership, and roles
 - Maintain friend lists and cross-game social graphs
-- Store chat logs locally; profanity events generate moderation reports via the Logging & Admin Service
+- **Target state:** Store chat logs locally and enforce owner-local `chat_mute`/`chat_ban` restrictions. Current implementation status is recorded above. Profanity events remain evidence/report input to Logging & Admin.
 
 ## Key Features
 
@@ -23,6 +29,7 @@ Provides chat, guild, and social networking features across games. Basic REST an
 - In-game social chat plus account-to-account direct messaging
 - Presence indicators notify when friends come online
 - Game creators can broadcast announcements and send out-of-game emails
+- **Target state:** Enforce fixed-category communication restrictions at send, participation, history, and essential-notice boundaries from owner-local state without making Logging & Admin a routine hot-path dependency; the current `CHAT_SEND` seam remains the synchronous `EvaluateModerationPolicy` read described above.
 
 ### Presence Scope Note
 
@@ -44,9 +51,9 @@ The gameplay `WHO` command is intentionally a current-game-instance presence vie
 ## Document Map
 
 - [API Contracts](./api-contracts.md)
-  - chat/guild/friends/mail API surfaces, delivery contracts, and proto/OpenAPI ownership.
+  - chat/guild/friends/mail API surfaces, delivery contracts, and local restriction consequences.
 - [Runtime and Data](./runtime-and-data.md)
-  - social-data ownership, Redis/cache behavior, and real-time delivery invariants.
+  - social-data ownership, owner-local restriction state, Redis/cache behavior, and real-time delivery invariants.
 - [Operations](./operations.md)
   - readiness/liveness, moderation/delivery operational notes, and local verification guidance.
 - [Configuration](./configuration.md)

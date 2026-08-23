@@ -546,6 +546,33 @@ ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/adr-0136-future-compatible-localization-boundary.md": adr_allocation(
         "EA-1", "Accepted", "EA-3", "AR-1"
     ),
+    "design/architecture/decisions/adr-0137-isolated-playtest-state-modes-and-reset.md": adr_allocation(
+        "AR-3", "Accepted", "AA-3", "GR-2", "GR-3", "AA-1"
+    ),
+    "design/architecture/decisions/adr-0138-expiring-playtest-grants-with-bounded-active-revocation.md": adr_allocation(
+        "AR-3", "Accepted", "AA-3", "AA-2", "PO-1", "EA-3"
+    ),
+    "design/architecture/decisions/adr-0139-tenant-owned-runtime-lifecycle-with-audited-break-glass.md": adr_allocation(
+        "AR-3", "Accepted", "AA-1", "PO-1"
+    ),
+    "design/architecture/decisions/adr-0140-realm-authored-controllable-actor-entry.md": adr_allocation(
+        "AA-2", "Accepted", "AA-3", "GR-3", "EA-3"
+    ),
+    "design/architecture/decisions/adr-0141-fixed-safety-restriction-categories-and-independent-lifecycles.md": adr_allocation(
+        "EA-2", "Accepted", "PO-1", "AA-1"
+    ),
+    "design/architecture/decisions/adr-0142-bounded-moderation-appeal-cases.md": adr_allocation(
+        "PO-1", "Accepted", "EA-2", "AA-1"
+    ),
+    "design/architecture/decisions/adr-0143-stripe-v1-hosting-billing-and-deferred-creator-monetization.md": adr_allocation(
+        "AA-1", "Accepted", "PO-1", "EA-3"
+    ),
+    "design/architecture/decisions/adr-0144-stateless-first-party-frontend-application-boundary.md": adr_allocation(
+        "EA-3", "Accepted", "PO-3", "PO-2"
+    ),
+    "design/architecture/decisions/adr-0145-plain-text-gameplay-and-deferred-classic-client-extensions.md": adr_allocation(
+        "PO-2", "Accepted", "EA-1"
+    ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
     "README.md": "Service overview",

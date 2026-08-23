@@ -402,14 +402,11 @@ services:
       - |
         mc alias set local http://minio:9000 $$ASSET_STORE_ACCESS_KEY $$ASSET_STORE_SECRET_KEY &&
         mc mb --ignore-existing local/$$ASSET_STORE_BUCKET &&
-        mc anonymous set download local/$$ASSET_STORE_BUCKET &&
-        printf '<CORSConfiguration><CORSRule><AllowedOrigin>%s</AllowedOrigin><AllowedMethod>GET</AllowedMethod><AllowedHeader>*</AllowedHeader></CORSRule></CORSConfiguration>' "$$ASSET_STORE_CORS_ORIGIN" > /tmp/cors.xml &&
-        mc cors set local/$$ASSET_STORE_BUCKET /tmp/cors.xml || echo "Skipping MinIO CORS setup in compose bootstrap"
+        mc anonymous set private local/$$ASSET_STORE_BUCKET
     environment:
       ASSET_STORE_ACCESS_KEY: ${ASSET_STORE_ACCESS_KEY}
       ASSET_STORE_SECRET_KEY: ${ASSET_STORE_SECRET_KEY}
       ASSET_STORE_BUCKET: ${ASSET_STORE_BUCKET}
-      ASSET_STORE_CORS_ORIGIN: ${ASSET_STORE_CORS_ORIGIN:-http://localhost:8080}
 
   pg-dump-cron:
     build:

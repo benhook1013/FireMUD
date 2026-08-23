@@ -56,8 +56,7 @@ class GatewayRoutesConfigurationTestProfileTest {
           "social-guilds",
           "social-mail",
           "social-ping",
-          "social-voice-token",
-          "asset-store-public");
+          "social-voice-token");
 
   @Autowired private GatewayProperties gatewayProperties;
 
@@ -83,6 +82,17 @@ class GatewayRoutesConfigurationTestProfileTest {
   @Test
   void publicReportsRouteIsNotConfigured() {
     assertNoConfiguredPathStartsWith(gatewayProperties, "/api/admin/reports");
+  }
+
+  @Test
+  void publishedAssetDeliveryPathIsNotConfigured() {
+    assertNoConfiguredPathStartsWith(gatewayProperties, "/assets/");
+  }
+
+  @Test
+  void publishedAssetDeliveryRouteIdIsNotConfigured() {
+    assertThat(gatewayProperties.getRoutes().stream().map(RouteDefinition::getId))
+        .doesNotContain("asset-store-public");
   }
 
   @Test
@@ -114,8 +124,6 @@ class GatewayRoutesConfigurationTestProfileTest {
     assertHasPath(gatewayProperties, "social-ping", "/api/social/ping");
     assertHasPath(gatewayProperties, "social-voice-token", "/api/social/voice/token/**");
 
-    assertHasPath(gatewayProperties, "asset-store-public", "/assets/**");
-
     assertHasStripPrefix(gatewayProperties, "session-ping", "2");
     assertHasStripPrefix(gatewayProperties, "admin-ping", "2");
     assertHasStripPrefix(gatewayProperties, "admin-admission-pointers", "2");
@@ -135,6 +143,5 @@ class GatewayRoutesConfigurationTestProfileTest {
     assertHasStripPrefix(gatewayProperties, "social-mail", "2");
     assertHasStripPrefix(gatewayProperties, "social-ping", "2");
     assertHasStripPrefix(gatewayProperties, "social-voice-token", "2");
-    assertHasStripPrefix(gatewayProperties, "asset-store-public", "1");
   }
 }

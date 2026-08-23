@@ -44,7 +44,7 @@ These trust surfaces are related but not interchangeable. In very small local or
 
 [Gateway Architecture](../../system-architecture-gateway.md#canonical-close-translation-matrix) owns the top-level close taxonomy, [Protocol Bridging](../../system-architecture-protocol-bridging.md#telnet-disconnect-reasons) owns WebSocket-to-Telnet translation, and local [`protocols.md`](./protocols.md#bridge-state-machine-established-telnet-sessions) records this service's bridge state-machine consequences. The minimum runtime invariants are:
 
-- the proxy must establish the Gateway bridge before forwarding the first gameplay or MCP line;
+- the proxy must establish the Gateway bridge before forwarding the first protocol line, including discovery, authentication, admission, gameplay, or any opaque line from an explicitly selected future transport adapter;
 - pre-admission bridge failures distinguish `backend_unavailable` from `policy_violation`;
 - established-session bridge loss closes the Telnet socket immediately, with no hidden bridge reattach;
 - target-only lifecycle behavior preserves every valid authenticated Gateway top-level close (`logout`, `session_replaced`, `service_restart`, `idle_timeout`, `policy_violation`, `internal_error`, or `backend_unavailable`) as its corresponding Telnet token; absent or invalid top-level attribution alone falls back to `backend_unavailable`. Current handler mapping and classification remain as recorded in [Operations Implementation Status](./operations.md#implementation-status).

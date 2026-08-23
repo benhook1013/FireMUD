@@ -46,34 +46,16 @@ published game assets.
 
    These manifests deploy MinIO only; they do not provision the `firemud-assets-writer` identity or its bucket-scoped policy. No trusted identity/policy provisioner is included in this repository, so the shown deployment remains incomplete and Game Design is blocked until an approved trusted bootstrap provisions that identity and policy and materializes the writer Secret. Do not use `minio-credentials` as the Game Design writer credential.
 
-4. Create the bucket and configure its private policy and gateway CORS. This is bucket/CORS bootstrap only; it does not provision the `firemud-assets-writer` identity or policy. The `mc` pod receives credentials from the Kubernetes Secret as environment variables; the values are never supplied as command-line arguments:
+4. Create the bucket and keep its policy private. This is bucket bootstrap only; it does not provision the `firemud-assets-writer` identity or policy. The pinned private bootstrap intentionally does not configure bucket CORS or create a public asset route. Any later approved `/assets/**` public-origin provisioner must use delivery-platform tooling that supports its required CORS policy and remains separate from this private MinIO writer endpoint. The `mc` pod receives credentials from the Kubernetes Secret as environment variables; the values are never supplied as command-line arguments:
 
    ```bash
-   if [[ -z "${GATEWAY_ORIGIN:-}" || "$GATEWAY_ORIGIN" == *"*"* || "$GATEWAY_ORIGIN" == *"?"* || "$GATEWAY_ORIGIN" == *"["* || "$GATEWAY_ORIGIN" == *"]"* ]]; then
-     echo "GATEWAY_ORIGIN must be set to a specific, non-wildcard origin" >&2
-     exit 1
-   fi
-   if [[ ! "$GATEWAY_ORIGIN" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ && ! "$GATEWAY_ORIGIN" =~ ^http://localhost:[0-9]+$ ]]; then
-     echo "GATEWAY_ORIGIN must use https, except for a local localhost origin" >&2
-     exit 1
-   fi
-
    kubectl run mc --rm -it --restart=Never \
      --image=minio/mc:RELEASE.2024-05-09T17-04-24Z@sha256:3e9666a093d0a8fcbbac606346c415ae9277a0ca96989a6bdddd3d03e90a21b4 \
-     --overrides="{\"spec\":{\"containers\":[{\"name\":\"mc\",\"env\":[{\"name\":\"MINIO_ACCESS_KEY\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"minio-credentials\",\"key\":\"accessKey\"}}},{\"name\":\"MINIO_SECRET_KEY\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"minio-credentials\",\"key\":\"secretKey\"}}},{\"name\":\"GATEWAY_ORIGIN\",\"value\":\"${GATEWAY_ORIGIN}\"}]}]}}" \
+     --overrides='{"spec":{"containers":[{"name":"mc","env":[{"name":"MINIO_ACCESS_KEY","valueFrom":{"secretKeyRef":{"name":"minio-credentials","key":"accessKey"}}},{"name":"MINIO_SECRET_KEY","valueFrom":{"secretKeyRef":{"name":"minio-credentials","key":"secretKey"}}}]}]}}' \
      --command -- sh -c '
        export MC_HOST_local="http://${MINIO_ACCESS_KEY}:${MINIO_SECRET_KEY}@minio:9000" &&
        mc mb --ignore-existing local/firemud-assets &&
-       mc anonymous set private local/firemud-assets &&
-       printf "%s\\n" \
-         "<CORSConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">" \
-         "  <CORSRule>" \
-         "    <AllowedOrigin>${GATEWAY_ORIGIN}</AllowedOrigin>" \
-         "    <AllowedMethod>GET</AllowedMethod>" \
-         "    <AllowedHeader>*</AllowedHeader>" \
-         "  </CORSRule>" \
-         "</CORSConfiguration>" > /tmp/cors.xml &&
-       mc cors set local/firemud-assets /tmp/cors.xml
+       mc anonymous set private local/firemud-assets
      '
    ```
 
@@ -81,7 +63,7 @@ Configure Game Design's authenticated S3 access with `ASSET_STORE_ENDPOINT=http:
 
 Validation must separate the private MinIO endpoint from public delivery: an unauthenticated GET to the private `ASSET_STORE_ENDPOINT` must be rejected, while a target public-origin request is tested only against an attested immutable published object.
 
-Target public delivery uses a separate gateway/CDN origin recorded through target-only `ASSET_STORE_PUBLIC_BASE_URL`; that setting is not implemented in the current single-endpoint first slice. The public origin must expose only attested immutable published objects. Private staging, quarantine, `FAILED`, and `EXPORTED_UNATTESTED` objects remain inaccessible.
+Target public delivery uses a separate gateway/CDN origin recorded through target-only `ASSET_STORE_PUBLIC_BASE_URL`; that setting is not implemented in the current single-endpoint first slice. The current Gateway has no `/assets/**` route or asset-store route ID, and private MinIO is not public delivery. Target `/assets/**` remains reserved pending a separate approved public origin/provisioner and stays separate from `/frontend-assets/**`. The public origin must expose only attested immutable published objects. Private staging, quarantine, `FAILED`, and `EXPORTED_UNATTESTED` objects remain inaccessible through that public origin or another public delivery path; the authenticated `firemud-assets-writer` retains only its separately authorized bucket access.
 
 ## Validation and Evidence Checklist
 

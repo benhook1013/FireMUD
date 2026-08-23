@@ -55,15 +55,17 @@ The full variable list is the canonical source of defaults and behavior for `TCP
 | `TCP_PROXY_PORT` | TCP port the proxy listens on; this is the public TLS listener in `DIRECT_TLS` mode and must remain unbound or private in `EDGE_PROXY` mode | `2323` |
 | `TCP_PROXY_PROXY_PROTOCOL_PORT` | TCP port for the edge-termination mode's PROXY-protocol Telnet listener; internal-only and reachable only from the Telnet edge proxy | `2325` |
 | `GATEWAY_WS_URL` | WebSocket URL for forwarding to the gateway; local Docker and test environments may use a plaintext `ws://` endpoint, but player-facing environments must set an explicit `wss://.../ws/game` target | *(none)* |
-| `TCP_PROXY_DEFAULT_WORLD_SLUG` | Explicit local/bootstrap world slug forwarded when the proxy is configured to seed hidden gameplay bridge metadata instead of waiting for first-party connect-token admission | *(empty)* |
-| `TCP_PROXY_DEFAULT_REALM_SLUG` | Explicit local/bootstrap realm slug paired with the seeded world slug when hidden gameplay bridge metadata is preconfigured | *(empty)* |
-| `TCP_PROXY_DEFAULT_POINTER_VERSION` | Explicit local/bootstrap admission-pointer freshness token paired with the seeded world/realm target when hidden gameplay bridge metadata is preconfigured | *(empty)* |
+| `TCP_PROXY_DEFAULT_WORLD_SLUG` | Explicit local/bootstrap world slug forwarded as server-owned default advisory bridge metadata when configured instead of waiting for first-party connect-token admission; it cannot alter authentication, canonical routing, or gameplay-admission authority | *(empty)* |
+| `TCP_PROXY_DEFAULT_REALM_SLUG` | Explicit local/bootstrap realm slug paired with the server-owned default advisory world metadata; it cannot alter authentication, canonical routing, or gameplay-admission authority | *(empty)* |
+| `TCP_PROXY_DEFAULT_GAME_INSTANCE_ID` | Explicit local/bootstrap game-instance id forwarded as server-owned default advisory bridge metadata; TCP Proxy does not resolve or authorize it | *(empty)* |
+| `TCP_PROXY_DEFAULT_TENANT_ID` | Explicit local/bootstrap tenant id forwarded as server-owned default advisory bridge metadata; TCP Proxy does not resolve or authorize it | *(empty)* |
+| `TCP_PROXY_DEFAULT_POINTER_VERSION` | Explicit local/bootstrap admission-pointer freshness token paired with the server-owned default advisory world/realm metadata; it cannot alter authentication, canonical routing, or gameplay-admission authority | *(empty)* |
 | `TCP_PROXY_TLS_ENABLED` | Enable direct TCP Proxy Telnet-over-TLS termination; required with `DIRECT_TLS` and rejected with `EDGE_PROXY` | `false` |
 | `TCP_PROXY_TLS_CERT` | Path to the Telnet listener TLS certificate | *(empty)* |
 | `TCP_PROXY_TLS_KEY` | Path to the Telnet listener TLS private key | *(empty)* |
 | `TCP_PROXY_MAX_CONNECTIONS` | Maximum concurrent Telnet connections | `0` |
 | `TCP_PROXY_MAX_CONNECTIONS_PER_IP` | Maximum concurrent Telnet connections per client IP | `0` |
-| `TCP_PROXY_MAX_LINE_BYTES` | Maximum accepted Telnet/MCP line in bytes | `4096` |
+| `TCP_PROXY_MAX_LINE_BYTES` | Maximum accepted Telnet/opaque input line in bytes | `4096` |
 | `TCP_PROXY_MAX_OVERSIZE_LINES` | Maximum oversized lines per connection before hard close | `10` |
 | `TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS` | Maximum total retry time for failed `NotifyDisconnect` calls | `5000` |
 | `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` | Initial-admission bridge-establishment window | `5000` |
@@ -71,11 +73,12 @@ The full variable list is the canonical source of defaults and behavior for `TCP
 | `TCP_PROXY_GATEWAY_CIRCUIT_HALF_OPEN_MAX_PROBES` | Maximum concurrent bridge probes while half-open | `3` |
 | `TCP_PROXY_GATEWAY_CIRCUIT_RECOVERY_SUCCESS_COUNT` | Consecutive successful probes required to recover admission | `3` |
 | `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES` | Maximum buffered Telnet lines waiting to be forwarded | `64` |
-| `TCP_PROXY_MCP_NEGOTIATION_FAILURE_MAX` | Maximum MCP negotiation failures allowed per connection within the failure window | `5` |
-| `TCP_PROXY_MCP_NEGOTIATION_FAILURE_WINDOW_MS` | MCP negotiation failure rolling window duration | `60000` |
-| `TCP_PROXY_MCP_MAX_ACTIVE_CORDS` | Maximum concurrent MCP cords per connection | `16` |
-| `TCP_PROXY_MCP_MAX_ACTIVE_DATA_TAGS` | Maximum concurrent MCP multiline `_data-tag` continuations per connection | `16` |
-| `TCP_PROXY_MCP_MAX_CONTROL_LINES_PER_SEC` | Maximum MCP control-line processing rate per connection | `50` |
+| `TCP_PROXY_MCP_ENABLED` | Deprecated implementation-drift marker/greeting flag; target startup accepts `true` only in explicit local/development/test profiles and rejects it in shared, player-facing, and prod-like profiles; the default remains `false`, disabled, and unadvertised; not a supported semantic-extension toggle | `false` |
+| `TCP_PROXY_MCP_NEGOTIATION_FAILURE_MAX` | Dormant target-only MCP budget; not consumed by the current runtime | `5` |
+| `TCP_PROXY_MCP_NEGOTIATION_FAILURE_WINDOW_MS` | Dormant target-only MCP budget window; not consumed by the current runtime | `60000` |
+| `TCP_PROXY_MCP_MAX_ACTIVE_CORDS` | Dormant target-only MCP cord budget; not consumed by the current runtime | `16` |
+| `TCP_PROXY_MCP_MAX_ACTIVE_DATA_TAGS` | Dormant target-only MCP `_data-tag` budget; not consumed by the current runtime | `16` |
+| `TCP_PROXY_MCP_MAX_CONTROL_LINES_PER_SEC` | Dormant target-only MCP control-line budget; not consumed by the current runtime | `50` |
 | `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH` | Client certificate chain path for Proxy -> Gateway WebSocket mTLS | `certs/client.crt` (local/dev only) |
 | `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH` | Client private key path for Proxy -> Gateway WebSocket mTLS | `certs/client.key` (local/dev only) |
 | `FIREMUD_GATEWAY_WS_CA_CERT_PATH` | CA bundle path for verifying the gateway certificate | `certs/ca.crt` |
@@ -84,7 +87,9 @@ The full variable list is the canonical source of defaults and behavior for `TCP
 | `FIREMUD_GRPC_CA_CERT_PATH` | CA bundle path for verifying gRPC peers | `certs/ca.crt` |
 | `OTEL_ENDPOINT` | OpenTelemetry collector endpoint | `http://otel-collector:4317` |
 
-When any `TCP_PROXY_DEFAULT_*` bootstrap routing variables are used together, they must describe one coherent admitted routing bundle: `worldSlug`, `realmSlug`, resolved `tenantId`, resolved `gameInstanceId`, and `pointerVersion`. Do not configure only the runtime ids while omitting the visible world/realm identity or pointer freshness, because that would recreate the partial routing shortcut that `09.1` explicitly removes elsewhere.
+When any `TCP_PROXY_DEFAULT_*` bootstrap variables are used together, local/bootstrap profiles must supply one coherent server-owned advisory bridge-metadata bundle: `worldSlug`, `realmSlug`, explicit `tenantId`, explicit `gameInstanceId`, and `pointerVersion`. These direct environment values are local/bootstrap inputs only: TCP Proxy neither resolves nor authorizes tenant or game-instance identity. Shared and player-facing deployments must obtain matching canonical gameplay-admission evidence and fail closed when that evidence is absent, malformed, stale, or inconsistent; forwarded metadata remains advisory and cannot replace or alter canonical authentication, routing, or gameplay-admission authority. Do not configure only the runtime ids while omitting the visible world/realm identity or pointer freshness, because that would recreate a partial routing shortcut prohibited by the canonical [realm-catalog and admission-pointer contract](../../system-architecture-multi-tenancy.md#realm-catalog-and-admission-pointer-contract).
+
+When all three routing defaults are configured coherently, TCP Proxy forwards them as `X-World-Slug`, `X-Realm-Slug`, and positive `X-Pointer-Version` only on the authenticated Proxy -> Gateway WebSocket hop. Gateway rejects a partial or malformed bundle, removes connect-token carriers for that trusted transport, and forwards the validated advisory bundle to Game Session; the headers never bypass direct credential `LOGIN` / `PLAY` or become gameplay-admission authority. The complete trusted-hop header contract is [TCP Proxy API Contracts](./api-contracts.md#correlation-and-header-contract).
 
 ## WebSocket mTLS to Spring Cloud Gateway
 
@@ -128,7 +133,7 @@ The proxy’s connection caps, idle timeouts, and buffer depth limits are hard c
 
 The connection limits exposed via `TCP_PROXY_MAX_CONNECTIONS` and `TCP_PROXY_MAX_CONNECTIONS_PER_IP` are intended to be tuned per environment.
 
-MCP-specific budgets are intentionally softer than the hard-close Telnet safety limits: exceeding `TCP_PROXY_MCP_*` limits discards MCP control lines as `reason="mcp_budget"` while generally keeping the underlying Telnet connection open, unless the separate MCP negotiation-failure threshold is crossed.
+The listed `TCP_PROXY_MCP_*` budgets are dormant target-only settings and are not consumed by the current runtime. Marker-looking lines are treated as opaque generic input and forwarded subject only to the proxy's live generic line-size, connection, idle, buffer, and per-IP connection limits; no MCP-specific budget/rate-limit enforcement or `reason="mcp_budget"` discard is live. The deprecated `TCP_PROXY_MCP_ENABLED` flag can trigger the implementation-drift greeting when enabled, but the **target** configuration/startup contract accepts `true` only in explicit local/development/test profiles and rejects it in shared, player-facing, and prod-like profiles; it remains `false`, disabled, and unadvertised by default. Focused profile-startup proof is required for this boundary; the current runtime does not yet prove the profile rejection.
 
 The initial Proxy -> Gateway WebSocket bridge retry budget and input buffer depth (`TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` and `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES`) should be sized to match expected gateway availability characteristics and typical player command rates.
 
