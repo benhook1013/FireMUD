@@ -9,6 +9,7 @@ This brief document summarizes optional ways a hosted game can change its look a
 - Whole-game JSON/filesystem/Git import/export and a promised portable snapshot remain outside the current support boundary under [ADR 0125](./decisions/adr-0125-defer-whole-game-portability-and-external-authoring-formats.md). Current creator workflows use service-owned design APIs and world-editing tools; this is a non-support boundary, not an export implementation.
 - Current publication exports ordinary bytes from the first-slice Game Design database source into version-scoped object storage and emits a narrower manifest. Target publication builds and verifies a private candidate before exposing immutable content-addressed objects; all private-candidate/content-addressed bullets and examples below are target state and are not yet the live publication path.
 - Current live script handoff does not yet carry `scriptPinEpoch` or the complete applicable plugin fence `(pluginId, pluginVersionId, bindingId, pluginActivationEpoch, lifecycleRevision)`, so exact same-version old-epoch and old-activation-epoch/lifecycle-revision rejection remain target-state behavior rather than implementation proof.
+- Current actor schema and entry surfaces remain partially RPG-shaped and do not yet prove the Entity contract's policy resolution, descriptor/template validation, synthetic-ID rejection, or namespace-idempotent provisioning.
 
 ## Theme and Branding
 
@@ -76,8 +77,6 @@ Target-state content-addressed `manifest.json` example for the production `versi
 ### Realm-authored actor entry
 
 Realm actor entry is authored release data consumed through the [Entity Management actor-entry contract](./microservices/entity-management-service/api-contracts.md). Creators supply the realm's descriptor/template and game-specific actor components; players see the resulting policy-specific `CHARS`/creation/provision UX. Entity allocates persisted identity, Game Session attaches it, and playtest copies use fork-local IDs with provenance-only `sourceCharacterId`.
-
-The current actor schema and entry surfaces remain partially RPG-shaped and do not yet prove the Entity contract's policy resolution, descriptor/template validation, synthetic-ID rejection, or namespace-idempotent provisioning.
 
 Each playtest lifecycle receives a fresh immutable `playtestLifecycleId`, a fresh `playableStateNamespaceId`, and an initial playtest-state generation. A reset retains the lifecycle ID but replaces the namespace and generation; a runtime replacement within the lifecycle retains both lifecycle ID and namespace. The lifecycle ID is admission/grant coordination evidence, not an Entity durable key. Copied actors always receive fork-local `characterId` values; `sourceCharacterId` is provenance only and never an identity alias or authorization input.
 

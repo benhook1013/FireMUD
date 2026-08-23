@@ -96,8 +96,12 @@ class GatewayRoutesConfigurationTest {
   }
 
   @Test
-  void publishedAssetDeliveryRouteIsNotConfigured() {
+  void publishedAssetDeliveryPathIsNotConfigured() {
     assertNoConfiguredPathStartsWith(gatewayProperties, "/assets/");
+  }
+
+  @Test
+  void publishedAssetDeliveryRouteIdIsNotConfigured() {
     assertThat(gatewayProperties.getRoutes().stream().map(RouteDefinition::getId))
         .doesNotContain("asset-store-public");
   }

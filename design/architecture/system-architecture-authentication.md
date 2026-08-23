@@ -241,7 +241,7 @@ These modes are complementary: public browse remains available before authentica
 
 ### Direct-text REALMS-to-JOIN scope (normative)
 
-- During authenticated `REALMS` resolution, Account Service issues an opaque, short-lived `connectScopeId` for the selected realm. It is bound to the authenticated caller and the exact server-resolved `{tenantId, worldSlug, realmSlug, playableStateNamespaceId, playableStateScope, gameInstanceId, catalogRevision, pointerVersion}` snapshot, including its expiry; the scope record commits the normalized digest for that exact snapshot. It is not a client-selected target or a durable realm handle. The same snapshot is the only source from which Game Session derives and carries the namespace/scope identity through `JOIN`, `CHARS`, connect-token issuance, and `PLAY`; neither `playableStateNamespaceId` nor `playableStateScope` is supplied by the client or accepted as join input.
+- During authenticated `REALMS` resolution, Account Service issues an opaque, short-lived `connectScopeId` for the selected realm. It is bound to the authenticated caller and the exact server-resolved `{tenantId, worldSlug, realmSlug, playableStateNamespaceId, playableStateScope, gameInstanceId, catalogRevision, pointerVersion}` snapshot, including its expiry; a non-public snapshot additionally carries its exact `playtestLifecycleId`, while a non-grant public-production snapshot omits that field. Ordinary-private and playtest grants use the same lifecycle-bound field. The scope record commits the normalized digest for that exact snapshot. It is not a client-selected target or a durable realm handle. The same snapshot is the only source from which Game Session derives and carries the namespace/scope/lifecycle identity through `JOIN`, `CHARS`, connect-token issuance, and `PLAY`; neither `playableStateNamespaceId`, `playableStateScope`, nor `playtestLifecycleId` is supplied by the client or accepted as join input.
 - Game Session obtains that scope and retains it as transport-local session state alongside the response-local `REALMS` selector or index. The text client receives ordinary selectors and display data only; it never receives or supplies authority IDs, a scope, a tenant, a runtime target, a catalog revision, or a pointer version.
 - When the client selects `JOIN`, Game Session calls Account's `JoinPublicProductionMembership` with only trusted caller context, the retained `connectScopeId`, and a server-generated high-entropy `requestId`. Game Session does not accept a client-supplied request ID, `playableStateScope`, storage key, or pass selector/target fields as authority. The `requestId` identifies the logical join attempt and is reused only for its retries; a changed attempt uses a new value.
 - The canonical `JOIN` idempotency digest is `SHA-256` over the UTF-8 bytes of this exact newline-delimited preimage, including the final newline and preserving this field order:
@@ -313,7 +313,7 @@ Authentication-local consequences are limited to bootstrap and admission sequenc
 
 Gateway strips the external carrier and attaches one signed, short-lived non-JWT context. Gateway owns issuance, replay, its dedicated asymmetric signing-key namespace, verification-key publication and rotation, and carrier policy as defined by [Gateway architecture](./system-architecture-gateway.md#tenant-aware-edge-connect-token-gameplay-handshake). Game Session owns receiving-service validation, including explicit audience/recipient binding, before applying gameplay admission. A JWS serialization does not turn this envelope into an Account-issued JWT profile or permit reuse of Account signing keys.
 
-Minimum context fields are `accountId`, `tenantId`, `worldSlug`, `realmSlug`, `playableStateNamespaceId`, `playableStateScope`, `gameInstanceId`, `pointerVersion`, `catalogRevision`, `connectScopeId`, `requestId`, `audience: game-session`, `recipient: game-session-service`, the exact bounded selected-target `authorityTuple`, separate exact `membershipVersion`, `connectTokenJti`, `replayAdmissionFence`, `verifiedAt`, `expiresAt`, and `gatewayRequestId`.
+Minimum context fields are `accountId`, `tenantId`, `worldSlug`, `realmSlug`, `playableStateNamespaceId`, `playableStateScope`, `playtestLifecycleId` when the target is non-public (and absent for a non-grant public-production target), `gameInstanceId`, `pointerVersion`, `catalogRevision`, `connectScopeId`, `requestId`, `audience: game-session`, `recipient: game-session-service`, the exact bounded selected-target `authorityTuple`, separate exact `membershipVersion`, `connectTokenJti`, `replayAdmissionFence`, `verifiedAt`, `expiresAt`, and `gatewayRequestId`.
 
 - Game Session validates the asymmetric signature and `kid` against Gateway verification keys, validates the exact audience/recipient binding, enforces the bounded expiry, and rejects missing, invalid, wrong-recipient, or expired context with `CONNECT_CONTEXT_INVALID` before `PLAY`.
 - Game Session does not implement a second replay authority for `connectTokenJti`; it treats that value as access-controlled correlation and must not emit it as a metric label, ordinary log field, or trace attribute.
@@ -502,6 +502,7 @@ Authorization: Bearer <bootstrapToken>
        displayName: "Playtest Fork",
        tenantId: "7b3b074e-d597-4e9b-b96f-4f5946d26120",
        gameInstanceId: "ad63c32f-b076-48de-9434-87fb16b73c1d",
+       playtestLifecycleId: "2a9c4d8e-6f10-4b32-9c75-1d8e0a6b4f21",
        connectScopeId: "cs_demo_playtest_docks_v4",
        pointerVersion: 4,
        catalogRevision: 43,
@@ -518,7 +519,7 @@ POST /auth/connect-token
 Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_demo_playtest_docks_v4", requestId: "req-456" }
 Set-Cookie: Firemud-Connect-Token=<connectToken>; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=30
--> { accountId, tenantId: "7b3b074e-d597-4e9b-b96f-4f5946d26120", realmSlug: "playtest-docks", gameInstanceId: "ad63c32f-b076-48de-9434-87fb16b73c1d", expiresAt, issuedAt }
+-> { accountId, tenantId: "7b3b074e-d597-4e9b-b96f-4f5946d26120", realmSlug: "playtest-docks", playtestLifecycleId: "2a9c4d8e-6f10-4b32-9c75-1d8e0a6b4f21", gameInstanceId: "ad63c32f-b076-48de-9434-87fb16b73c1d", expiresAt, issuedAt }
 
 GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
 

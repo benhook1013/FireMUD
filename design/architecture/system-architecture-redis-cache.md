@@ -107,7 +107,7 @@ Some dynamic aggregates will be easier to cache if the authoritative store expos
     - Compare it with the version/scope in Redis during the same operation.
     - Reuse the cached payload only when the complete scope and proof match; otherwise recompute from authoritative state or fail closed.
   - Every other service calls the owning service's API and must not read, validate, or reuse that owner's Class A Redis entry directly.
-- Versioning is applied per aggregate root (for example `inventory:<tenantId>:<containerId>`), not per field, and is treated as part of the aggregate’s API contract.
+- Versioning is applied per aggregate root, not per field, and is treated as part of the aggregate’s API contract. For namespace-backed Entity aggregates, the cache scope and version identity are `(tenantId, playableStateNamespaceId, domain object id)` (for example, `inventory:<tenantId>:<playableStateNamespaceId>:<containerId>`); `playableStateScope` is separately validated routing/authorization evidence and is not a key component. Explicitly instance-scoped S3 holders use their complete `(tenantId, gameInstanceId, roomInstanceId/containerId)` scope instead.
 
 - **Best-effort caches (TTL-only)** – payloads that are inexpensive to recompute or where occasional staleness is acceptable:
   - Entries are written with a TTL that bounds staleness; readers accept that data may lag behind the source of truth within that window.
@@ -297,10 +297,11 @@ Cluster slotting implications:
 
 ### Key Naming and Overwrite Expectations
 
-Cached aggregates in Redis should follow structured, namespaced key patterns to keep responsibilities clear and enable targeted invalidation. Examples (subject to refinement):
+Cached aggregates in Redis should follow structured, namespaced key patterns to keep responsibilities clear and enable targeted invalidation. Namespace-backed Entity examples use `(tenantId, playableStateNamespaceId, domain object id)`; explicitly instance-scoped S3 holders use their complete instance scope and never fabricate a namespace key:
 
-- `inventory:<tenantId>:<containerId>` – cached view of a single inventory or container (including room-ground containers).
-- `character-cache:<tenantId>:<characterId>` – cached character graphs for hot reads.
+- `inventory:<tenantId>:<playableStateNamespaceId>:<containerId>` – cached view of a namespace-backed inventory or container.
+- `inventory:room-ground:<tenantId>:<gameInstanceId>:<roomInstanceId>:<containerId>` – cached view of an explicitly instance-scoped S3 synthetic room-ground holder, with complete `(tenantId, gameInstanceId, roomInstanceId/containerId)` scope.
+- `character-cache:<tenantId>:<playableStateNamespaceId>:<characterId>` – cached namespace-backed character graphs for hot reads.
 - `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>` – cached room-level dynamic state used in correctness-critical world decisions.
 - `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` – cached room snapshots/topology slices used for LOOK/navigation, scoped to a running instance.
 - `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>:<sessionId>:<viewerContextHash>:<policyContextHash>:<readFenceHash>` – cached rendered or pre-assembled room view data bound to the exact room, viewer/session, policy context, and applicable causal read fence.

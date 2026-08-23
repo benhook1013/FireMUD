@@ -50,28 +50,30 @@ When using a self-hosted MinIO cluster as the asset store:
      '
    ```
 
-3. **Keep the bucket private and configure CORS for the gateway domain**
+3. **Keep the bucket private and configure CORS only for an approved public delivery origin**
+
+   The current first slice has no public asset route or provisioner, so do not run this CORS step as part of the current deployment. After a separate approved public `/assets/**` origin/provisioner exists, set `ASSET_STORE_CORS_ORIGIN` to the exact browser origin that is authorized to consume that delivery path and run the bootstrap below. This configures browser-origin policy only; it does not make MinIO public and must not be replaced with anonymous bucket access.
 
    ```bash
-   if [[ -z "${GATEWAY_ORIGIN:-}" || "$GATEWAY_ORIGIN" == *"*"* || "$GATEWAY_ORIGIN" == *"?"* || "$GATEWAY_ORIGIN" == *"["* || "$GATEWAY_ORIGIN" == *"]"* ]]; then
-     echo "GATEWAY_ORIGIN must be set to a specific, non-wildcard origin" >&2
+   if [[ -z "${ASSET_STORE_CORS_ORIGIN:-}" || "$ASSET_STORE_CORS_ORIGIN" == *"*"* || "$ASSET_STORE_CORS_ORIGIN" == *"?"* || "$ASSET_STORE_CORS_ORIGIN" == *"["* || "$ASSET_STORE_CORS_ORIGIN" == *"]"* ]]; then
+     echo "ASSET_STORE_CORS_ORIGIN must be set to a specific, non-wildcard origin" >&2
      exit 1
    fi
-   if [[ ! "$GATEWAY_ORIGIN" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ && ! "$GATEWAY_ORIGIN" =~ ^http://localhost:[0-9]+$ ]]; then
-     echo "GATEWAY_ORIGIN must use https, except for a local localhost origin" >&2
+   if [[ ! "$ASSET_STORE_CORS_ORIGIN" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ && ! "$ASSET_STORE_CORS_ORIGIN" =~ ^http://localhost:[0-9]+$ ]]; then
+     echo "ASSET_STORE_CORS_ORIGIN must use https, except for a local localhost origin" >&2
      exit 1
    fi
 
    kubectl run mc --rm -it --restart=Never \
      --image=minio/mc:RELEASE.2024-05-09T17-04-24Z@sha256:3e9666a093d0a8fcbbac606346c415ae9277a0ca96989a6bdddd3d03e90a21b4 \
-     --overrides="{\"spec\":{\"containers\":[{\"name\":\"mc\",\"env\":[{\"name\":\"MINIO_ACCESS_KEY\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"minio-credentials\",\"key\":\"accessKey\"}}},{\"name\":\"MINIO_SECRET_KEY\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"minio-credentials\",\"key\":\"secretKey\"}}},{\"name\":\"GATEWAY_ORIGIN\",\"value\":\"${GATEWAY_ORIGIN}\"}]}]}}" \
+     --overrides="{\"spec\":{\"containers\":[{\"name\":\"mc\",\"env\":[{\"name\":\"MINIO_ACCESS_KEY\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"minio-credentials\",\"key\":\"accessKey\"}}},{\"name\":\"MINIO_SECRET_KEY\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"minio-credentials\",\"key\":\"secretKey\"}}},{\"name\":\"ASSET_STORE_CORS_ORIGIN\",\"value\":\"${ASSET_STORE_CORS_ORIGIN}\"}]}]}}" \
      --command -- sh -c '
        export MC_HOST_local="http://${MINIO_ACCESS_KEY}:${MINIO_SECRET_KEY}@minio:9000" &&
        mc anonymous set private local/firemud-assets &&
        printf "%s\\n" \
          "<CORSConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">" \
          "  <CORSRule>" \
-         "    <AllowedOrigin>${GATEWAY_ORIGIN}</AllowedOrigin>" \
+         "    <AllowedOrigin>${ASSET_STORE_CORS_ORIGIN}</AllowedOrigin>" \
          "    <AllowedMethod>GET</AllowedMethod>" \
          "    <AllowedHeader>*</AllowedHeader>" \
          "  </CORSRule>" \

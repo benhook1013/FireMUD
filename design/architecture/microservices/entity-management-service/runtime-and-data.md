@@ -381,7 +381,7 @@ Synthetic room-ground containers scoped by `(tenantId, gameInstanceId, roomInsta
 - Entity Management owns cleanup of containers and contained items for a terminating `gameInstanceId`.
 - Cleanup must be idempotent and guarded by a durable workflow step key so retries converge without double-deletes.
 - Entity Management must not treat world row deletion as implicit cleanup confirmation; World Management marks an instance `TERMINATED` only after this service confirms cleanup completion.
-- Entity Management must register every additional `gameInstanceId`-owned family, its S3 classification, cleanup request identity, retention rule, and acknowledgement status with the lifecycle owner. Missing or unregistered Entity families block `TERMINATED`; cleanup of one known room-ground family is not whole-service completion. Namespace-backed S1/S2 state under the complete `(tenantId, playableStateNamespaceId, playableStateScope)` identity is retained or mapped under the replacement contract and is not deleted merely because one runtime instance ended. See [ADR 0123](../../decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md).
+- Entity Management must register every additional `gameInstanceId`-owned family, its S3 classification, cleanup request identity, retention rule, and acknowledgement status with the lifecycle owner. Missing or unregistered Entity families block `TERMINATED`; cleanup of one known room-ground family is not whole-service completion. Namespace-backed S1/S2 state under `(tenantId, playableStateNamespaceId)` plus its domain object identity is retained or mapped under the replacement contract; the immutable `playableStateScope` remains separately validated and must not be reinterpreted, and that state is not deleted merely because one runtime instance ended. See [ADR 0123](../../decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md).
 
 ### Workflow Participation
 
@@ -393,14 +393,14 @@ Entity Management does not orchestrate its own synchronous saga or Temporal work
   - Acquires tick locks via shared helpers using keys of the form `tick:{tenantRegionTag}:lock:<entityId>` so locks share a hash tag with tick queues and pending state as described in [Redis Architecture](../../system-architecture-redis.md#key-format-examples).
   - Treats lock TTLs and other coordination parameters as opaque values derived by the Game Session Service and shared helpers; it does not define its own coordination-specific configuration.
 - **Cache/Rate-Limit Redis usage**
-  - Uses Cache/Rate-Limit Redis to cache frequently accessed character graphs and related aggregates under prefixes such as `character-cache:<tenantId>:<characterId>`, following the key naming and TTL/versioning patterns in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md).
+  - Uses Cache/Rate-Limit Redis to cache frequently accessed namespace-backed character graphs and related aggregates under prefixes such as `character-cache:<tenantId>:<playableStateNamespaceId>:<characterId>`, following the key naming and TTL/versioning patterns in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md). Explicitly instance-scoped S3 projections use their complete instance scope instead.
   - These character graph caches are treated as Class A, versioned caches:
     - Cached payloads include a stable version or `lastModified` value derived from the authoritative character tables (for example, the `character.version` or `last_modified` columns exposed via Entity Management APIs).
     - Readers validate versions against PostgreSQL (or version fields surfaced via gRPC) before reusing cached data; on mismatch they recompute the graph and overwrite the cache atomically (value + TTL).
     - TTLs (for example, `FIREMUD_CHARACTER_CACHE_TTL_SECONDS`) act as a safety valve for memory and stale entries, not as the primary correctness mechanism.
-  - Future inventory/containment caches use the `inventory:<tenantId>:<containerId>` prefix from the Redis cache catalog:
-    - Inventories and containers (including room-ground containers) are also treated as Class A: authoritative state and versions live in PostgreSQL, and cache entries must be invalidated via events or version checks when items move.
-    - Event-based invalidation is driven by Entity Management’s own domain events (inventory changed, item moved, container destroyed); listeners delete or refresh affected `inventory:*` keys.
+  - Future namespace-backed inventory/containment caches use the `inventory:<tenantId>:<playableStateNamespaceId>:<containerId>` prefix:
+    - Inventories and containers are also treated as Class A: authoritative state and versions live in PostgreSQL, and cache entries must be invalidated via events or version checks when items move. Namespace-backed durable holders use the namespace-qualified prefix above; explicitly S3 room-ground containers use their complete instance-qualified cache scope.
+    - Event-based invalidation is driven by Entity Management’s own domain events (inventory changed, item moved, container destroyed); listeners delete or refresh the affected complete namespace-qualified `inventory:<tenantId>:<playableStateNamespaceId>:<containerId>` key (or the complete instance scope for an S3 holder), with `inventory:*` used only as a bounded catalog wildcard.
     - Implementations must document which APIs expose the version/`lastModified` fields used for these caches and keep them aligned with the central `inventory:*` entry in `system-architecture-redis-cache.md` and the reset matrix in `system-architecture-redis-reset-and-recovery.md`.
   - Cache metrics for `character-cache:*` and `inventory:*` should follow the recommendations in `system-architecture-redis-cache.md` so hit/miss behavior and key counts are observable.
   - Tests covering these caches are expected to exercise the Class A scenarios described in `system-architecture-redis-cache.md` (miss -> populate -> hit, version mismatch and event-driven invalidation, and behavior after a cache reset).
@@ -408,10 +408,10 @@ Entity Management does not orchestrate its own synchronous saga or Temporal work
 
 ### Version Sources for Entity Caches
 
-Entity Management is the invalidator of record for `character-cache:*` and `inventory:*`:
+Entity Management is the invalidator of record for namespace-qualified `character-cache:*` and `inventory:*` entries:
 
 - Authoritative versions or `lastModified` values for characters and containers are stored alongside the corresponding aggregates in PostgreSQL and surfaced via Entity Management’s gRPC APIs.
-- Cache payloads for `character-cache:<tenantId>:<characterId>` and `inventory:<tenantId>:<containerId>` must embed those same version fields so readers can compare cached vs authoritative versions before reuse.
+- Cache payloads for `character-cache:<tenantId>:<playableStateNamespaceId>:<characterId>` and `inventory:<tenantId>:<playableStateNamespaceId>:<containerId>` must embed those same version fields and complete namespace scope so readers can compare cached vs authoritative versions before reuse. Instance-scoped S3 cache entries must instead carry their complete instance scope.
 - When schema or API fields that act as the version for these aggregates change, this section and the central cache catalog (`system-architecture-redis-cache.md`) must be updated together so reviewers can see exactly which columns/fields drive Class A cache correctness.
 
 Testing expectations for these caches follow the Class A guidance in `system-architecture-redis-cache.md`: unit/integration tests should cover version mismatches, event-driven invalidation, and repopulation after a Redis reset.
