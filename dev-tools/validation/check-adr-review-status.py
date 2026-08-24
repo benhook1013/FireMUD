@@ -343,6 +343,7 @@ def validate_decision_key_target(
     line_number: int,
     label: str,
     target: str,
+    relationship: str,
     decision_key_indexes: dict[Path, set[str]] | None = None,
 ) -> None:
     if decision_key_indexes is None:
@@ -359,7 +360,7 @@ def validate_decision_key_target(
         or not resolved_target.is_file()
     ):
         fail(
-            f"{path}: superseded scan-alias replacement at line {line_number} "
+            f"{path}: {relationship} at line {line_number} "
             "must target an existing Markdown decision document in the canonical "
             f"decision inventory: {target!r}"
         )
@@ -367,7 +368,7 @@ def validate_decision_key_target(
     decision_keys = decision_keys_for_inventory(resolved_target, decision_key_indexes)
     if label not in decision_keys:
         fail(
-            f"{path}: superseded scan-alias replacement at line {line_number} "
+            f"{path}: {relationship} at line {line_number} "
             f"decision-key label {label!r} is not present in the canonical "
             "decision inventory"
         )
@@ -504,7 +505,8 @@ def validate_superseded_scan_alias_outcome(
             line_number,
             label,
             target,
-            decision_key_indexes,
+            relationship="superseded scan-alias replacement",
+            decision_key_indexes=decision_key_indexes,
         )
 
 

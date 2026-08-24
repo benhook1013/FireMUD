@@ -341,7 +341,12 @@ def public_config_map_documents():
     )
     jwks["kind"] = "ConfigMap"
     jwks.pop("type", None)
-    jwks["data"] = jwks.pop("stringData")
+    string_data = jwks.pop("stringData", None)
+    secret_data = jwks.pop("data", None)
+    config_map_data = string_data if string_data else secret_data
+    if not isinstance(config_map_data, dict) or not config_map_data:
+        raise SystemExit("JWT/JWKS Secret fixture is missing usable source data")
+    jwks["data"] = config_map_data
     account = account_deployment(documents)
     pod_spec = account["spec"]["template"]["spec"]
     jwks_volume = next(volume for volume in pod_spec["volumes"] if volume.get("name") == "jwt-jwks")
@@ -1232,6 +1237,21 @@ if not any(
     )
 ):
     raise SystemExit("conditional shared asset target without rationale was accepted")
+
+credential_shaped_target = copy.deepcopy(staging)
+credential_shaped_target["assetStorage"]["bucket"] = {
+    "bindingRef": "secret://firemud/shared-asset-credentials",
+    "shared": True,
+    "sharedRationale": "invalid credential-shaped target",
+}
+if not any(
+    "assetStorage.bucket is a non-sensitive target and cannot use credential fields: bindingRef"
+    in issue
+    for issue in module.external_binding_uniqueness_issues(
+        env_root, "staging", credential_shaped_target
+    )
+):
+    raise SystemExit("credential-shaped shared asset target was accepted")
 
 
 def verify_service_override_contract(case_name, rendered_overrides, allowed_overrides, expected_status, expected_fragment):

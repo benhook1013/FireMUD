@@ -224,7 +224,7 @@ if SECRET_COMPLIANCE_ROOT="$TMP_DIR" \
   echo "assetStorage-enabled compliance accepted a missing asset-store-credentials class" >&2
   exit 1
 fi
-grep -q "missing required credential classes: asset-store-credentials" "$ASSET_MISSING_CLASS_OUTPUT"
+grep -q "production: missing required credential classes: asset-store-credentials" "$ASSET_MISSING_CLASS_OUTPUT"
 
 write_evidence_fixture
 write_compliance_file production lastRotationAt

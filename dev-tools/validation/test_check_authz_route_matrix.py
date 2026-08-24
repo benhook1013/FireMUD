@@ -214,6 +214,16 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 "platform_access_ban branch must use scope=account",
             ),
             (
+                "route status",
+                lambda route: route.__setitem__(
+                    "route_status", "current_openapi_operator_surface"
+                ),
+                (
+                    "platform_access_ban branch must declare route_status "
+                    "target_not_currently_routable"
+                ),
+            ),
+            (
                 "global platform admin membership",
                 lambda route: route.__setitem__(
                     "global_platform_admin_membership_required", True

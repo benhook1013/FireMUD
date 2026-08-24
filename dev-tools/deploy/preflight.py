@@ -1520,7 +1520,7 @@ def optional_integration_state(
             missing.append("assetStorage.bindingRef or assetStorage.fingerprint")
         if missing:
             return True, "Missing enabled asset storage binding keys: " + ", ".join(missing)
-    else:
+    elif section == "outboundComms":
         smtp_host = raw_section.get("smtpHost")
         webhook_targets = raw_section.get("webhookTargets")
         if smtp_host is not None and normalize_binding_value(smtp_host)[0] is None:
@@ -1597,6 +1597,14 @@ def binding_declarations(data: dict[str, Any]):
 def binding_shareability_issues(data: dict[str, Any]) -> list[str]:
     issues: list[str] = []
     for label, raw, shareability in binding_declarations(data):
+        if shareability == "conditional" and isinstance(raw, dict):
+            credential_keys = sorted({"bindingRef", "fingerprint"} & raw.keys())
+            if credential_keys:
+                issues.append(
+                    f"{label} is a non-sensitive target and cannot use credential fields: "
+                    + ", ".join(credential_keys)
+                )
+                continue
         _, shared, rationale = normalize_binding_value(raw)
         if not shared:
             continue

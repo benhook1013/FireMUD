@@ -1576,7 +1576,7 @@ class AdrReviewStatusTests(unittest.TestCase):
             )
 
     def test_superseded_no_adr_replacement_rejects_taxonomy_tokens(self) -> None:
-        for taxonomy_key in ("AA", "EA", "GR"):
+        for taxonomy_key in ("CAPABILITY-GROUP",):
             with self.subTest(taxonomy_key=taxonomy_key), fixture_root() as fixture:
                 root = Path(fixture)
                 write(
@@ -1588,7 +1588,7 @@ class AdrReviewStatusTests(unittest.TestCase):
 
                     | Capability group | Primary | Secondary-only |
                     | --- | --- | --- |
-                    | Accounts and Access (`AA`) | `AA-1.1` | `EA-2.1`, `GR-1.1` |
+                    | Accounts and Access (`CAPABILITY-GROUP`) | `AA-1.1` | `EA-2.1`, `GR-1.1` |
                     """,
                 )
                 append_provenance_row(

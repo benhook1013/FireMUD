@@ -70,7 +70,7 @@ Game Session delivers the candidate-specific authorized views and does not recom
 
 The named scope resolves through authoritative World and Game Logic topology rather than a Social alias or flat distance assumption. The platform may settle or refine the distinction between area and region when concrete world profiles require it; implementation must not silently equate them beforehand.
 
-Every scope is subject to operator fanout and resource caps. Large but permitted audiences use bounded or chunkable delivery with stable identity, backpressure, and explicit completion or partial-failure reporting. Exceeding a cap or losing required resolution produces a typed failure or explicit non-delivery outcome plus diagnostics and metrics. Audience members are never silently truncated.
+Every scope is subject to operator fanout and resource caps. A permitted audience remains one already-bounded, atomically resolved plan. Transport-level chunking may split delivery of that one plan under the same stable identity with backpressure and explicit completion or partial-failure reporting, but it cannot expand the audience or create independently meaningful plan chunks. Audience-plan chunking or an opaque-reference representation requires a separately versioned contract and must preserve atomic resolution with no partial commitment. Exceeding a cap or losing required resolution produces a typed failure or explicit non-delivery outcome plus diagnostics and metrics. Audience members are never silently truncated.
 
 ## Consequences
 

@@ -3303,6 +3303,12 @@ def validate_moderation_action_route_variants(
             f"{platform_label} platform_access_ban branch must bind "
             "explicit_target_account_id",
         )
+    if platform_route.get("route_status") != "target_not_currently_routable":
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must declare "
+            "route_status target_not_currently_routable",
+        )
     if platform_route.get("platform_scope_action_contract") != {
         "category": MODERATION_PLATFORM_ACTION_CATEGORY,
         "status": "target_not_currently_routable",
