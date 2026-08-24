@@ -2291,7 +2291,7 @@ def rendered_secret_binding_is_owned(
     def primary_container(document: dict[str, Any]) -> tuple[str | None, dict[str, Any] | None, list[dict[str, Any]]]:
         metadata = document.get("metadata")
         workload_name = metadata.get("name") if isinstance(metadata, dict) else None
-        workload_namespace = metadata.get("namespace") if isinstance(metadata, dict) else None
+        workload_namespace_value = metadata.get("namespace") if isinstance(metadata, dict) else None
         spec = (((document.get("spec") or {}).get("template") or {}).get("spec") or {})
         containers = spec.get("containers")
         if not isinstance(containers, list):
@@ -2299,7 +2299,7 @@ def rendered_secret_binding_is_owned(
         typed_containers = [container for container in containers if isinstance(container, dict)]
         if (
             not valid_metadata(workload_name)
-            or not valid_metadata(workload_namespace)
+            or not valid_metadata(workload_namespace_value)
             or workload_name not in expected_workloads
         ):
             return workload_name, None, typed_containers
@@ -2351,7 +2351,7 @@ def rendered_secret_binding_is_owned(
             continue
         metadata = document.get("metadata")
         workload_name = metadata.get("name") if isinstance(metadata, dict) else None
-        workload_namespace = metadata.get("namespace") if isinstance(metadata, dict) else None
+        workload_namespace_value = metadata.get("namespace") if isinstance(metadata, dict) else None
         spec = (((document.get("spec") or {}).get("template") or {}).get("spec") or {})
         raw_containers = spec.get("containers")
         if not isinstance(raw_containers, list):
@@ -2363,9 +2363,9 @@ def rendered_secret_binding_is_owned(
         }
         typed_containers = [container for container in raw_containers if isinstance(container, dict)]
         if workload_name in expected_workloads:
-            if not valid_metadata(workload_name) or not valid_metadata(workload_namespace):
+            if not valid_metadata(workload_name) or not valid_metadata(workload_namespace_value):
                 return False
-            if workload_namespace != namespace:
+            if workload_namespace_value != namespace:
                 return False
             workload_counts[workload_name] = workload_counts.get(workload_name, 0) + 1
             if workload_counts[workload_name] > 1:
@@ -2375,8 +2375,8 @@ def rendered_secret_binding_is_owned(
             continue
         if (
             not valid_metadata(workload_name)
-            or not valid_metadata(workload_namespace)
-            or workload_namespace != namespace
+            or not valid_metadata(workload_namespace_value)
+            or workload_namespace_value != namespace
             or workload_name not in expected_workloads
         ):
             return False

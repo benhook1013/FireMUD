@@ -2498,8 +2498,9 @@ def validate_conditional_operator_route(
         route_key_value == MODERATION_ACTION_ROUTE
         and action_category == MODERATION_PLATFORM_ACTION_CATEGORY
     ):
-        # Dedicated moderation validators re-enforce authorization, role,
-        # platform-admin, generation-flag, and forbidden-tenant requirements.
+        # validate_moderation_action_route_variants and
+        # validate_moderation_action_variant_contract re-enforce authorization,
+        # role, platform-admin, generation-flag, and forbidden-tenant requirements.
         return
     if value != "conditional_by_operator_role":
         errors.append(

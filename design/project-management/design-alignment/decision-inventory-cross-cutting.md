@@ -232,6 +232,7 @@ The decisions below have applied human-review provenance. They are not pending p
 | `PLAYER-01` | [ADR 0140](../../architecture/decisions/adr-0140-realm-authored-controllable-actor-entry.md) | Implement published entry-policy resolution, versioned descriptors/templates, persisted actor identity, fork-local copies, and focused proof. |
 | `SAFETY-01` | [ADR 0141](../../architecture/decisions/adr-0141-fixed-safety-restriction-categories-and-independent-lifecycles.md) | Implement fixed-category owner-local enforcement, ordered commands, protected notices/revisions, and focused category proof. |
 | `MS-PO-MODERATION-APPEALS` | [ADR 0142](../../architecture/decisions/adr-0142-bounded-moderation-appeal-cases.md) | Implement Logging & Admin-owned bounded appeals with Account-authenticated intake, protected evidence, jurisdiction/review lifecycle, digest-bound outcome commands to the applicable enforcement owner, and focused appeal proof. |
+| `MOD-01` | [ADR 0146](../../architecture/decisions/adr-0146-owner-local-moderation-enforcement.md) | Owner-local moderation enforcement commands remain incomplete; implement the typed owner commands and prove monotonic enforcement state, active-binding containment, and the complete restriction lifecycle without treating current synchronous `PLAY`/chat checks as completion. |
 
 ### Pending Decisions Requiring Product Or Operations Consultation
 

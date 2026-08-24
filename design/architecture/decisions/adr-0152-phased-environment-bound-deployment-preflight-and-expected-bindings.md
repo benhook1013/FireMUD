@@ -59,6 +59,8 @@ Every policy check belongs to one of these categories:
 - **Apply-blocking** checks must pass before the candidate manifests are applied to the target environment unless a valid event-bound waiver expressly covers that policy ID.
 - **Non-waivable promotion or traffic-open** checks must pass before the protected player-facing or promotion transition. A waiver may permit isolated investigation, repair, or a quarantined drill, but it cannot authorize the protected transition.
 
+`PREFLIGHT-BOOTSTRAP-001` remains apply-blocking for ordinary bootstrap failures, but its custody-selection subcondition is deliberately stricter. Player-facing apply, promotion, and traffic-open require exactly one authenticated accepted custody proof matching the selected custody mode and contract version; a missing, unknown, unsupported, not-yet-implemented, mismatched, or legacy-diagnostic-only proof cannot be waived. This narrow exception does not reclassify or remove ordinary event-bound waiver eligibility from other bootstrap failures. The canonical [deployment preflight policy](../system-architecture-deploy-preflight-policy.md) defines the accepted proof tuples and failure handling.
+
 Waivers are never implied by a report, prior incident, environment, or operator role. An accepted waiver is bound to one deployment event and target environment, names the exact policy IDs and phase, includes an authorized approver, ticket, rationale, issue and expiration timestamps, and is validated as part of the report. It expires with that event and cannot carry forward. A malformed, expired, mismatched, or unauthorized waiver fails closed.
 
 ### Expected Bindings Declare Intent; Observation Establishes Proof

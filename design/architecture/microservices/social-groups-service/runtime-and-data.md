@@ -2,13 +2,19 @@
 
 This document defines the Social & Groups Service runtime model, persistent data ownership, Redis role, and chat/voice delivery behavior.
 
+## Owner-Local Communication Restrictions
+
+**Target state:** Social & Groups is the sole enforcement owner for `chat_mute` and `chat_ban`. Logging & Admin owns policy intent, moderation cases, bounded appeals, and audit; the complete fixed-category and digest-bound command contract is [Moderation Policies](../logging-admin-service/moderation-policies.md). Routine communication does not synchronously call Logging & Admin.
+
+The target local projection is indexed by exact subject and normalized tenant/realm/channel scope, category, monotonic owner revision/enforcement epoch, effective/expiry times, source case/request identity, payload digest, and player-safe notice. Every create, extension, expiry, removal, correction, or modified/overturned appeal outcome is a new owner command; an upheld appeal creates no owner command. Social & Groups atomically commits the revision, current projection, and idempotent result; same identity/same digest replays, conflicting digest is rejected, and delayed/reordered commands cannot erase newer state or resurrect older state. Missing or unreadable required local state fails closed.
+
+At send, participation, and history boundaries, `chat_mute` blocks sending while ordinary receipt remains available and returns the safe outcome `CHAT_MUTE_SEND_DENIED`. `chat_ban` blocks ordinary participation, sending, and history access and returns `CHAT_BAN_PARTICIPATION_DENIED`, while essential system and moderation notices remain deliverable so the player can receive the restriction and appeal/support guidance. When both categories deny the same boundary, Social & Groups returns only the broader `CHAT_BAN_PARTICIPATION_DENIED` outcome and does not expose the lower-priority mute; both records remain independently active. Removing one category or scope never changes another. Appeal filing itself does not change enforcement; a modified or overturned decision is a newer command and must not erase a later unrelated restriction.
+
 ## Implementation Status
 
-The current chat path and policy read remain partial: migrations do not yet implement complete `chat_restriction` and `chat_restriction_revision` owner-local state, and focused proof does not cover owner command/idempotency, expiry and reordering, essential notices, owner-read failure behavior, or bounded appeal outcomes. This status does not change the target owner-local contract below.
+The current chat path and policy read remain partial: migrations do not yet implement complete `chat_restriction` and `chat_restriction_revision` owner-local state, and focused proof does not cover owner command/idempotency, expiry and reordering, essential notices, owner-read failure behavior, or bounded appeal outcomes. The target owner-local contract above is not current implementation proof.
 
 The current live moderation seam is the synchronous `EvaluateModerationPolicy` read consumed by `SendMessage` at `CHAT_SEND`; this makes Logging & Admin a current chat hot-path dependency, and the path fails closed when required policy evidence is unavailable or stale. Owner-local restriction tables, commands, durable revisions, notices, and bounded appeal outcomes for `chat_mute`/`chat_ban` are target-only/partial and are not current persisted controls. Only the target owner-local enforcement model removes that routine dependency; until it is implemented, the synchronous read remains the current seam. Social & Groups owns only local communication consequences, while Logging & Admin remains the policy-input, case, evidence, and audit owner.
-
-The target player-safe outcomes are distinct: `CHAT_MUTE_SEND_DENIED` denies sending while ordinary receipt remains available; `CHAT_BAN_PARTICIPATION_DENIED` denies ordinary participation, sending, and history while essential system and moderation notices remain deliverable. These codes describe the target local enforcement projection, not proof that the current read seam has converged.
 
 ## Architecture and Design Notes
 
@@ -23,20 +29,12 @@ The target player-safe outcomes are distinct: `CHAT_MUTE_SEND_DENIED` denies sen
 - External HTTP APIs consume the end-user Account JWT authorization context forwarded unchanged by Gateway and validate its role/tenant claims locally. Direct internal gRPC callers authenticate with the exact workload mTLS/service identity required by the method contract; any current bearer or delegation metadata remains authorization context and never substitutes for that caller identity. Inter-service transport follows the [Security Architecture](../../system-architecture-security.md).
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics
 
-## Owner-Local Communication Restrictions
-
-**Target state:** Social & Groups is the sole enforcement owner for `chat_mute` and `chat_ban`. Logging & Admin owns policy intent, moderation cases, bounded appeals, and audit; the complete fixed-category and digest-bound command contract is [Moderation Policies](../logging-admin-service/moderation-policies.md). Routine communication does not synchronously call Logging & Admin.
-
-The target local projection is indexed by exact subject and normalized tenant/realm/channel scope, category, monotonic owner revision/enforcement epoch, effective/expiry times, source case/request identity, payload digest, and player-safe notice. Every create, extension, expiry, removal, correction, or modified/overturned appeal outcome is a new owner command; an upheld appeal creates no owner command. Social & Groups atomically commits the revision, current projection, and idempotent result; same identity/same digest replays, conflicting digest is rejected, and delayed/reordered commands cannot erase newer state or resurrect older state. Missing or unreadable required local state fails closed.
-
-At send, participation, and history boundaries, `chat_mute` blocks sending while ordinary receipt remains available and returns the safe outcome `CHAT_MUTE_SEND_DENIED`. `chat_ban` blocks ordinary participation, sending, and history access and returns `CHAT_BAN_PARTICIPATION_DENIED`, while essential system and moderation notices remain deliverable so the player can receive the restriction and appeal/support guidance. When both categories deny the same boundary, Social & Groups returns only the broader `CHAT_BAN_PARTICIPATION_DENIED` outcome and does not expose the lower-priority mute; both records remain independently active. Removing one category or scope never changes another. Appeal filing itself does not change enforcement; a modified or overturned decision is a newer command and must not erase a later unrelated restriction.
-
 ## Data Model
 
 - Type-specific Social history tables/rows persist only communication classes that promise player-visible history; live world speech is not a permanent archive by default
 - Separate finite protected safety-evidence records and content-free idempotency receipts are not player history and have their own retention/access lifecycle
 - `guild` and `guild_member` tables store group ownership and roles against one declared membership subject type: `ACCOUNT` or `{tenantId, playableStateNamespaceId, characterId}`
-- `friend_links` stores tenant-local relationships with explicit lifecycle and `tenantId`; `account_friend_links` stores genuinely tenant-free account-pair relationships with request/accept/reject/remove state; blocks are explicit directional records and take precedence for interaction/visibility
+- **Target state:** `friend_links` stores tenant-local relationships with explicit lifecycle and `tenantId`; `account_friend_links` stores genuinely tenant-free account-pair relationships with request/accept/reject/remove state; explicit directional block records take precedence for interaction/visibility. The current non-pageable presence implementation does not yet model or revalidate those block records; see the [Social & Groups API implementation status](./api-contracts.md#implementation-status).
 - Games can mirror these links in their UI when the feature is enabled; a projection never becomes relationship authority
 - `mail_message` (or its type-specific successor) stores Social-owned mail envelopes, delivery/history state, and stable Entity attachment/escrow references, not item/currency value
 - Social may retain a typed binding from a guild to an Entity-owned container, but it does not create `itemName + quantity`, currency, inventory, or attachment rows
