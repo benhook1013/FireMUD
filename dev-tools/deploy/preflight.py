@@ -1561,13 +1561,17 @@ def external_binding_uniqueness_issues(
 
     issues: list[str] = []
     candidates: list[tuple[str, str, bool, str]] = []
-    add_candidate(issues, candidates, "backupStorage.bucket", current_backup.get("bucket"))
-    add_candidate(
-        issues,
-        candidates,
-        "backupStorage.bindingRef",
-        current_backup.get("bindingRef") or current_backup.get("fingerprint"),
+    current_backup_enabled = (
+        isinstance(current_backup, dict) and current_backup.get("enabled") is True
     )
+    if current_backup_enabled:
+        add_candidate(issues, candidates, "backupStorage.bucket", current_backup.get("bucket"))
+        add_candidate(
+            issues,
+            candidates,
+            "backupStorage.bindingRef",
+            current_backup.get("bindingRef") or current_backup.get("fingerprint"),
+        )
     add_candidate(issues, candidates, "assetStorage.bucket", current_asset.get("bucket"))
     add_candidate(issues, candidates, "assetStorage.endpoint", current_asset.get("endpoint"))
     add_candidate(
@@ -1606,9 +1610,18 @@ def external_binding_uniqueness_issues(
         other_asset = other_data.get("assetStorage") or {}
         other_outbound = other_data.get("outboundComms") or {}
         other_operator = other_data.get("operatorCredentials") or {}
+        other_backup_enabled = (
+            isinstance(other_backup, dict) and other_backup.get("enabled") is True
+        )
         other_lookup = {
-            "backupStorage.bucket": other_backup.get("bucket"),
-            "backupStorage.bindingRef": other_backup.get("bindingRef") or other_backup.get("fingerprint"),
+            "backupStorage.bucket": (
+                other_backup.get("bucket") if other_backup_enabled else None
+            ),
+            "backupStorage.bindingRef": (
+                other_backup.get("bindingRef") or other_backup.get("fingerprint")
+                if other_backup_enabled
+                else None
+            ),
             "assetStorage.bucket": other_asset.get("bucket"),
             "assetStorage.endpoint": other_asset.get("endpoint"),
             "assetStorage.bindingRef": other_asset.get("bindingRef") or other_asset.get("fingerprint"),
@@ -2101,9 +2114,34 @@ def expected_binding_checks(
             )
         )
 
+    backup_storage = data.get("backupStorage")
+    backup_storage_error = None
+    backup_storage_enabled = False
+    if not isinstance(backup_storage, dict):
+        backup_storage_error = "backupStorage must be an object"
+    elif not isinstance(backup_storage.get("enabled"), bool):
+        backup_storage_error = "backupStorage.enabled must be a boolean"
+    else:
+        backup_storage_enabled = backup_storage["enabled"]
+        if not backup_storage_enabled:
+            disabled_fields = [
+                f"backupStorage.{field}"
+                for field in ("bucket", "endpoint", "bindingRef", "fingerprint")
+                if field in backup_storage
+            ]
+            if disabled_fields:
+                backup_storage_error = (
+                    "backupStorage fields must be omitted when disabled: "
+                    + ", ".join(disabled_fields)
+                )
+        if env_class == "production" and not backup_storage_enabled:
+            production_error = "backupStorage.enabled must be true for production"
+            if backup_storage_error:
+                backup_storage_error += f"; {production_error}"
+            else:
+                backup_storage_error = production_error
+
     external_requirements = [
-        ("backupStorage.bucket", None),
-        ("backupStorage.bindingRef", "backupStorage.fingerprint"),
         ("assetStorage.bucket", None),
         ("assetStorage.endpoint", None),
         ("assetStorage.bindingRef", "assetStorage.fingerprint"),
@@ -2111,6 +2149,11 @@ def expected_binding_checks(
         ("operatorCredentials.bindingRef", "operatorCredentials.fingerprint"),
     ]
     missing_external = []
+    if backup_storage_enabled:
+        if not backup_storage.get("bucket"):
+            missing_external.append("backupStorage.bucket")
+        if not backup_storage.get("bindingRef") and not backup_storage.get("fingerprint"):
+            missing_external.append("backupStorage.bindingRef or backupStorage.fingerprint")
     for primary, alternate in external_requirements:
         if not get(data, primary) and (alternate is None or not get(data, alternate)):
             missing_external.append(primary if alternate is None else f"{primary} or {alternate}")
@@ -2118,7 +2161,13 @@ def expected_binding_checks(
     invalid_external_refs = [
         error
         for error in [
-            binding_ref_format_error("backupStorage.bindingRef", get(data, "backupStorage.bindingRef")),
+            (
+                binding_ref_format_error(
+                    "backupStorage.bindingRef", get(data, "backupStorage.bindingRef")
+                )
+                if backup_storage_enabled and get(data, "backupStorage.bindingRef")
+                else None
+            ),
             binding_ref_format_error("assetStorage.bindingRef", get(data, "assetStorage.bindingRef")),
             binding_ref_format_error(
                 "operatorCredentials.bindingRef", get(data, "operatorCredentials.bindingRef")
@@ -2126,7 +2175,16 @@ def expected_binding_checks(
         ]
         if error
     ]
-    if missing_external:
+    if backup_storage_error:
+        results.append(
+            CheckResult(
+                "PREFLIGHT-EXTERNAL-001",
+                True,
+                "fail",
+                f"Expected-bindings external configuration is invalid: {backup_storage_error}",
+            )
+        )
+    elif missing_external:
         results.append(
             CheckResult(
                 "PREFLIGHT-EXTERNAL-001",

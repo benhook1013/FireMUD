@@ -25,8 +25,8 @@ Chat history cache behavior can be tuned with the following variables:
 | -------- | ------- | ------- |
 | `FIREMUD_CHAT_SAYS_TTL_SECONDS` | Seconds to keep `say` messages per player | `7200` |
 | `FIREMUD_CHAT_SAYS_MAX_MESSAGES` | Max cached `say` messages per player | `50` |
-| `FIREMUD_CHAT_WHISPERS_TTL_SECONDS` | Seconds to keep `whisper` messages per tenant and account | `7200` |
-| `FIREMUD_CHAT_WHISPERS_MAX_MESSAGES` | Max cached `whisper` messages per tenant and account | `50` |
+| `FIREMUD_CHAT_WHISPERS_TTL_SECONDS` | Seconds to keep the target gameplay `whisper` projection per tenant, playable-state namespace, and recipient character | `7200` |
+| `FIREMUD_CHAT_WHISPERS_MAX_MESSAGES` | Max cached target gameplay `whisper` messages per tenant, playable-state namespace, and recipient character | `50` |
 | `FIREMUD_CHAT_TELLS_TTL_SECONDS` | Seconds to keep direct tells/messages | `172800` |
 | `FIREMUD_CHAT_TELLS_MAX_MESSAGES` | Max cached tells/messages per player | `50` |
 | `FIREMUD_CHAT_GUILD_TTL_SECONDS` | Seconds to keep guild chat per guild | `172800` |
@@ -35,6 +35,8 @@ Chat history cache behavior can be tuned with the following variables:
 | `FIREMUD_CHAT_CITY_MAX_MESSAGES` | Max cached city chat messages | `50` |
 | `FIREMUD_CHAT_ACCOUNT_TTL_SECONDS` | Seconds to keep account-to-account messages | `172800` |
 | `FIREMUD_CHAT_ACCOUNT_MAX_MESSAGES` | Max cached account messages | `50` |
+
+The target gameplay `WHISPER` cache scope is `{tenantId, playableStateNamespaceId, characterId}`. The live account-keyed Social DTO/entity/schema/key remains an implementation migration gap and must not be used for history/refill across same-account characters or namespaces. These variables remain the current TTL and message-cap settings during that migration; the canonical scope and disclosure contract are maintained in the [Redis cache reference](../../system-architecture-redis-cache-reference.md#canonical-social--groups-chatwhisper-class-b-contract) and [ADR 0149](../../decisions/adr-0149-communication-type-specific-history-and-retention.md).
 
 ## Proto Files
 

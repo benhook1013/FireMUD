@@ -41,6 +41,8 @@ import org.slf4j.MDC;
 
 @ExtendWith(MockitoExtension.class)
 class CommunicationAggregationServiceTest {
+  private static final String VALID_ACCOUNT_ID = "42";
+
   @Mock private SocialGroupsServiceGrpc.SocialGroupsServiceBlockingStub socialStub;
 
   @Mock
@@ -74,6 +76,7 @@ class CommunicationAggregationServiceTest {
                 .setTenantId("1")
                 .setSessionId("sess-1")
                 .setCharacterId("player-0")
+                .setAccountId(VALID_ACCOUNT_ID)
                 .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-7").build())
                 .setType(CommunicationType.SAY)
                 .setText("Hello travelers")
@@ -109,6 +112,7 @@ class CommunicationAggregationServiceTest {
                 .setGameInstanceId("7")
                 .setSessionId("sess-1")
                 .setCharacterId("player-0")
+                .setAccountId(VALID_ACCOUNT_ID)
                 .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-7").build())
                 .setType(CommunicationType.SAY)
                 .setText("Hello travelers")
@@ -121,6 +125,31 @@ class CommunicationAggregationServiceTest {
   }
 
   @Test
+  void rejectsMissingMalformedAndNonPositiveAccountIdsBeforeDownstreamCalls() {
+    for (String accountId : new String[] {"", "not-a-number", "0", "-1"}) {
+      SendCommunicationResponse resp =
+          service.send(
+              SendCommunicationRequest.newBuilder()
+                  .setTenantId("1")
+                  .setSessionId("sess-1")
+                  .setCharacterId("player-0")
+                  .setAccountId(accountId)
+                  .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-7").build())
+                  .setType(CommunicationType.SAY)
+                  .setText("Hello travelers")
+                  .build());
+
+      assertThat(resp.getSuccess()).isFalse();
+      assertThat(resp.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+      assertThat(resp.getError().getMessage())
+          .isEqualTo("account_id must be a positive numeric account id");
+    }
+
+    verify(entityStub, never()).listRoomEntities(any());
+    verify(socialStub, never()).sendMessage(any());
+  }
+
+  @Test
   void rejectsLegacyRuntimeRoomIdsBeforeAudienceLookup() {
     SendCommunicationResponse resp =
         service.send(
@@ -128,6 +157,7 @@ class CommunicationAggregationServiceTest {
                 .setTenantId("tenant-1")
                 .setSessionId("sess-1")
                 .setCharacterId("player-0")
+                .setAccountId(VALID_ACCOUNT_ID)
                 .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("room-7").build())
                 .setType(CommunicationType.SAY)
                 .setText("Hello travelers")
@@ -164,6 +194,7 @@ class CommunicationAggregationServiceTest {
                 .setGameInstanceId("7")
                 .setSessionId("sess-1")
                 .setCharacterId("player-0")
+                .setAccountId(VALID_ACCOUNT_ID)
                 .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-7").build())
                 .setType(CommunicationType.SAY)
                 .setText("Hello travelers")
@@ -206,6 +237,7 @@ class CommunicationAggregationServiceTest {
                 .setTenantId("tenant-1")
                 .setSessionId("sess-1")
                 .setCharacterId("player-0")
+                .setAccountId(VALID_ACCOUNT_ID)
                 .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-7").build())
                 .setType(CommunicationType.SAY)
                 .setText("  Hello travelers  ")
@@ -240,6 +272,7 @@ class CommunicationAggregationServiceTest {
     verify(socialStub).sendMessage(captor.capture());
     assertThat(captor.getValue().getContent()).isEqualTo("Hello travelers");
     assertThat(captor.getValue().getType()).isEqualTo(ChatType.CHAT_TYPE_SAY);
+    assertThat(captor.getValue().getSenderId()).isEqualTo(VALID_ACCOUNT_ID);
   }
 
   @Test
@@ -263,6 +296,7 @@ class CommunicationAggregationServiceTest {
                 .setTenantId("tenant-1")
                 .setSessionId("sess-1")
                 .setCharacterId("player-0")
+                .setAccountId(VALID_ACCOUNT_ID)
                 .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-7").build())
                 .setType(CommunicationType.SAY)
                 .setText("Hello travelers")
@@ -302,6 +336,7 @@ class CommunicationAggregationServiceTest {
                 .setTenantId("tenant-1")
                 .setSessionId("sess-1")
                 .setCharacterId("player-0")
+                .setAccountId(VALID_ACCOUNT_ID)
                 .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-7").build())
                 .setType(CommunicationType.WHISPER)
                 .setTargetCharacterName("Sora")
@@ -384,6 +419,7 @@ class CommunicationAggregationServiceTest {
             .setGameInstanceId("7")
             .setSessionId("sess-1")
             .setCharacterId("player-0")
+            .setAccountId(VALID_ACCOUNT_ID)
             .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-7").build())
             .setType(CommunicationType.WHISPER)
             .setTargetCharacterName("Sora")
@@ -435,6 +471,7 @@ class CommunicationAggregationServiceTest {
                 .setTenantId("tenant-1")
                 .setSessionId("sess-1")
                 .setCharacterId("player-0")
+                .setAccountId(VALID_ACCOUNT_ID)
                 .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-7").build())
                 .setType(CommunicationType.WHISPER)
                 .setTargetCharacterName("Sora")
@@ -494,6 +531,7 @@ class CommunicationAggregationServiceTest {
                 .setTenantId("tenant-1")
                 .setSessionId("sess-1")
                 .setCharacterId("player-0")
+                .setAccountId(VALID_ACCOUNT_ID)
                 .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-7").build())
                 .setType(CommunicationType.WHISPER)
                 .setTargetCharacterName("Sora")
@@ -519,6 +557,7 @@ class CommunicationAggregationServiceTest {
                 .setTenantId("tenant-1")
                 .setSessionId("sess-1")
                 .setCharacterId("player-0")
+                .setAccountId(VALID_ACCOUNT_ID)
                 .setSpeakerName("Emberline")
                 .setType(CommunicationType.TELL)
                 .setTargetCharacterId("player-9")
@@ -564,6 +603,7 @@ class CommunicationAggregationServiceTest {
                 .setTenantId("tenant-1")
                 .setSessionId("sess-1")
                 .setCharacterId("player-0")
+                .setAccountId(VALID_ACCOUNT_ID)
                 .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-7").build())
                 .setType(CommunicationType.SAY)
                 .setText("   ")
@@ -596,6 +636,7 @@ class CommunicationAggregationServiceTest {
                 .setTenantId("tenant-1")
                 .setSessionId("sess-1")
                 .setCharacterId("player-0")
+                .setAccountId(VALID_ACCOUNT_ID)
                 .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-7").build())
                 .setType(CommunicationType.SAY)
                 .setText("Hi")

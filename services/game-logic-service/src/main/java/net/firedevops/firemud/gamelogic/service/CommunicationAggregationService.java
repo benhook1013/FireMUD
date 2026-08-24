@@ -56,6 +56,11 @@ public class CommunicationAggregationService {
           SendCommunicationResponse.newBuilder()
               .setType(request.getType())
               .setMessage(normalizedText);
+      String validatedAccountId = parsePositiveAccountId(request.getAccountId());
+      if (validatedAccountId == null) {
+        return errorResponse(
+            builder, "INVALID_ARGUMENT", "account_id must be a positive numeric account id");
+      }
 
       if (tenantId != null && !isSocialCapabilityEnabled(tenantId, gameInstanceId)) {
         return errorResponse(
@@ -97,7 +102,7 @@ public class CommunicationAggregationService {
             socialStub.sendMessage(
                 SendMessageRequest.newBuilder()
                     .setTenantId(request.getTenantId())
-                    .setSenderId(resolveSenderId(request))
+                    .setSenderId(validatedAccountId)
                     .setType(mapType(request.getType()))
                     .setContent(normalizedText)
                     .setRecipientId(audience.recipientId().orElse(""))
@@ -367,12 +372,6 @@ public class CommunicationAggregationService {
         .orElseGet(() -> speakerId == null || speakerId.isBlank() ? "Unknown" : speakerId);
   }
 
-  private String resolveSenderId(SendCommunicationRequest request) {
-    return StringUtils.hasText(request.getAccountId())
-        ? request.getAccountId()
-        : request.getCharacterId();
-  }
-
   private ChatType mapType(CommunicationType type) {
     return switch (type) {
       case SAY -> ChatType.CHAT_TYPE_SAY;
@@ -392,6 +391,19 @@ public class CommunicationAggregationService {
     }
     try {
       return Long.parseLong(tenantId);
+    } catch (NumberFormatException ignored) {
+      return null;
+    }
+  }
+
+  private String parsePositiveAccountId(String accountId) {
+    if (!StringUtils.hasText(accountId)) {
+      return null;
+    }
+    String normalized = accountId.trim();
+    try {
+      long parsed = Long.parseLong(normalized);
+      return parsed > 0L ? Long.toString(parsed) : null;
     } catch (NumberFormatException ignored) {
       return null;
     }

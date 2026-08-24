@@ -17,6 +17,14 @@ TRAFFIC_EVIDENCE="$TMP_DIR/traffic-open.json"
 PRODUCTION_REPORT="$TMP_DIR/preflight-production.json"
 LEGACY_PRODUCTION_TRAFFIC_EVIDENCE="$TMP_DIR/production-traffic-open.json"
 PRODUCTION_WAIVER="$TMP_DIR/contract-production.waiver.json"
+LEGACY_HOBBY_PREFLIGHT_OUTPUT="$TMP_DIR/firemud-preflight-contract.out"
+MIGRATED_HOBBY_PREFLIGHT_OUTPUT="$TMP_DIR/firemud-preflight-contract-migrated.out"
+TRAFFIC_HOBBY_PREFLIGHT_OUTPUT="$TMP_DIR/firemud-preflight-contract-traffic.out"
+LEGACY_PRODUCTION_PREFLIGHT_OUTPUT="$TMP_DIR/firemud-preflight-contract-production-traffic.out"
+GATED_PRODUCTION_PREFLIGHT_OUTPUT="$TMP_DIR/firemud-preflight-contract-production-traffic-gated.out"
+WAIVER_PRODUCTION_PREFLIGHT_OUTPUT="$TMP_DIR/firemud-preflight-contract-production-traffic-waiver.out"
+HOBBY_TRAFFIC_WRITER_OUTPUT="$TMP_DIR/firemud-preflight-write-traffic-hobby.out"
+PRODUCTION_TRAFFIC_WRITER_OUTPUT="$TMP_DIR/firemud-preflight-write-traffic-production.out"
 
 python3 - <<'PY' "$ROOT_DIR"
 import pathlib
@@ -37,8 +45,6 @@ required_paths = [
     "internalBindings.certificates.gatewayInternalWsListenerRef",
     "internalBindings.certificates.tcpProxyBridgeClientRef",
     "internalBindings.registry.imagePullSecretRef",
-    "backupStorage.bucket",
-    "backupStorage.bindingRef",
     "assetStorage.bucket",
     "assetStorage.bindingRef",
     "outboundComms.smtpHost",
@@ -62,6 +68,20 @@ for env in ("production", "staging", "hobby-self-hosted"):
     missing = [path for path in required_paths if not get(data, path)]
     if missing:
         raise SystemExit(f"{ref}: missing required binding paths: {missing}")
+    backup_storage = data.get("backupStorage")
+    if not isinstance(backup_storage, dict):
+        raise SystemExit(f"{ref}: backupStorage must be a mapping")
+    backup_enabled = backup_storage.get("enabled")
+    if not isinstance(backup_enabled, bool):
+        raise SystemExit(f"{ref}: backupStorage.enabled must be a boolean")
+    if backup_enabled:
+        backup_missing = []
+        if not backup_storage.get("bucket"):
+            backup_missing.append("backupStorage.bucket")
+        if not backup_storage.get("bindingRef") and not backup_storage.get("fingerprint"):
+            backup_missing.append("backupStorage.bindingRef or backupStorage.fingerprint")
+        if backup_missing:
+            raise SystemExit(f"{ref}: missing enabled backup storage paths: {backup_missing}")
 PY
 
 python3 - <<'PY' "$ROOT_DIR" "$OPERATOR_REPORT_PATH"
@@ -390,7 +410,7 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_DEPLOYMENT_REF=contract-hobby \
   FIREMUD_PREFLIGHT_RENDER_PATH="$RENDERED_MANIFEST" \
   FIREMUD_PREFLIGHT_OUTPUT="$REPORT_PATH" \
-  python3 "$SCRIPT" hobby-self-hosted >/tmp/firemud-preflight-contract.out
+  python3 "$SCRIPT" hobby-self-hosted >"$LEGACY_HOBBY_PREFLIGHT_OUTPUT"
 preflight_status=$?
 set -e
 if [ "$preflight_status" -ne 1 ]; then
@@ -475,7 +495,7 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_DEPLOYMENT_REF=contract-hobby-migrated \
   FIREMUD_PREFLIGHT_RENDER_PATH="$MIGRATED_RENDERED_MANIFEST" \
   FIREMUD_PREFLIGHT_OUTPUT="$MIGRATED_REPORT_PATH" \
-  python3 "$SCRIPT" hobby-self-hosted >/tmp/firemud-preflight-contract-migrated.out
+  python3 "$SCRIPT" hobby-self-hosted >"$MIGRATED_HOBBY_PREFLIGHT_OUTPUT"
 migrated_preflight_status=$?
 set -e
 if [ "$migrated_preflight_status" -ne 0 ]; then
@@ -509,7 +529,7 @@ python3 "$WRITER" hobby-self-hosted contract-hobby first-live \
   --assessed-by preflight-contract \
   --preflight-report "$OPERATOR_REPORT_PATH" \
   --evidence-ref contract-test \
-  --output "$TRAFFIC_EVIDENCE" >/tmp/firemud-preflight-write-traffic-hobby.out
+  --output "$TRAFFIC_EVIDENCE" >"$HOBBY_TRAFFIC_WRITER_OUTPUT"
 
 python3 - <<'PY' "$OPERATOR_REPORT_PATH" "$TRAFFIC_EVIDENCE"
 import json
@@ -539,7 +559,7 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_PREFLIGHT_RENDER_PATH="$RENDERED_MANIFEST" \
   FIREMUD_PREFLIGHT_OUTPUT="$REPORT_PATH" \
   FIREMUD_TRAFFIC_OPEN_EVENT=first-live \
-  python3 "$SCRIPT" hobby-self-hosted >/tmp/firemud-preflight-contract-traffic.out 2>&1 && {
+  python3 "$SCRIPT" hobby-self-hosted >"$TRAFFIC_HOBBY_PREFLIGHT_OUTPUT" 2>&1 && {
     echo "expected hobby first-live preflight without controller authority to fail" >&2
     exit 1
   }
@@ -842,7 +862,7 @@ set +e
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_DEPLOYMENT_REF="contract-production" \
   FIREMUD_PREFLIGHT_OUTPUT="$PRODUCTION_REPORT" \
-  python3 "$SCRIPT" production >/tmp/firemud-preflight-contract-production-traffic.out
+  python3 "$SCRIPT" production >"$LEGACY_PRODUCTION_PREFLIGHT_OUTPUT"
 production_preflight_status=$?
 set -e
 if [ "$production_preflight_status" -ne 1 ]; then
@@ -875,17 +895,17 @@ if python3 "$WRITER" production contract-production reopen \
   --assessed-by preflight-contract \
   --preflight-report "$PRODUCTION_REPORT" \
   --evidence-ref contract-test \
-  --output "$LEGACY_PRODUCTION_TRAFFIC_EVIDENCE" >/tmp/firemud-preflight-write-traffic-production.out 2>&1; then
+  --output "$LEGACY_PRODUCTION_TRAFFIC_EVIDENCE" >"$PRODUCTION_TRAFFIC_WRITER_OUTPUT" 2>&1; then
   echo "legacy production traffic-open writer unexpectedly succeeded" >&2
   exit 1
 fi
-grep -Fq "invalid choice: 'production'" /tmp/firemud-preflight-write-traffic-production.out
+grep -Fq "invalid choice: 'production'" "$PRODUCTION_TRAFFIC_WRITER_OUTPUT"
 
 if FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_DEPLOYMENT_REF="contract-production" \
   FIREMUD_PREFLIGHT_OUTPUT="$PRODUCTION_REPORT" \
   FIREMUD_TRAFFIC_OPEN_EVENT=reopen \
-  python3 "$SCRIPT" production >/tmp/firemud-preflight-contract-production-traffic-gated.out 2>&1; then
+  python3 "$SCRIPT" production >"$GATED_PRODUCTION_PREFLIGHT_OUTPUT" 2>&1; then
   echo "production traffic-open preflight unexpectedly passed without controller authority" >&2
   exit 1
 fi
@@ -926,14 +946,14 @@ if FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_PREFLIGHT_OUTPUT="$PRODUCTION_REPORT" \
   FIREMUD_PREFLIGHT_WAIVER="$PRODUCTION_WAIVER" \
   FIREMUD_TRAFFIC_OPEN_EVENT=reopen \
-  python3 "$SCRIPT" production >/tmp/firemud-preflight-contract-production-traffic-waiver.out 2>&1; then
+  python3 "$SCRIPT" production >"$WAIVER_PRODUCTION_PREFLIGHT_OUTPUT" 2>&1; then
   echo "production traffic-open gate unexpectedly accepted a waiver" >&2
   exit 1
 fi
 
-if ! grep -q "waiver execution remains blocked" /tmp/firemud-preflight-contract-production-traffic-waiver.out; then
+if ! grep -q "waiver execution remains blocked" "$WAIVER_PRODUCTION_PREFLIGHT_OUTPUT"; then
   echo "production waiver failed for the wrong reason" >&2
-  cat /tmp/firemud-preflight-contract-production-traffic-waiver.out >&2
+  cat "$WAIVER_PRODUCTION_PREFLIGHT_OUTPUT" >&2
   exit 1
 fi
 if [[ -e "$PRODUCTION_REPORT" ]]; then
@@ -949,7 +969,7 @@ for env in staging production; do
   FIREMUD_PREFLIGHT_CONTEXT=ci-static \
     FIREMUD_DEPLOYMENT_REF="contract-$env" \
     FIREMUD_PREFLIGHT_OUTPUT="$REPORT" \
-    python3 "$SCRIPT" "$env" >/tmp/firemud-preflight-contract-"$env".out
+    python3 "$SCRIPT" "$env" >"$TMP_DIR/firemud-preflight-contract-$env.out"
   preflight_status=$?
   set -e
   if [ "$preflight_status" -ne 1 ]; then
@@ -996,7 +1016,11 @@ for env in ("staging", "production", "hobby-self-hosted"):
 
 base = {
     "internalBindings": {},
-    "backupStorage": {"bucket": "unique-backups", "bindingRef": "secret://firemud/unique-backup"},
+    "backupStorage": {
+        "enabled": True,
+        "bucket": "unique-backups",
+        "bindingRef": "secret://firemud/unique-backup",
+    },
     "assetStorage": {
         "bucket": "unique-assets",
         "endpoint": "https://assets.unique.internal",
@@ -1014,9 +1038,21 @@ staging = {"environment": "staging", **base}
 production = {"environment": "production", **base}
 hobby = {"environment": "hobby-self-hosted", **base}
 
-staging["backupStorage"] = {"bucket": "dup-backups", "bindingRef": "secret://firemud/staging-backup"}
-production["backupStorage"] = {"bucket": "dup-backups", "bindingRef": "secret://firemud/production-backup"}
-hobby["backupStorage"] = {"bucket": "hobby-backups", "bindingRef": "secret://firemud/hobby-backup"}
+staging["backupStorage"] = {
+    "enabled": True,
+    "bucket": "dup-backups",
+    "bindingRef": "secret://firemud/staging-backup",
+}
+production["backupStorage"] = {
+    "enabled": True,
+    "bucket": "dup-backups",
+    "bindingRef": "secret://firemud/production-backup",
+}
+hobby["backupStorage"] = {
+    "enabled": True,
+    "bucket": "hobby-backups",
+    "bindingRef": "secret://firemud/hobby-backup",
+}
 
 for env, data in (("staging", staging), ("production", production), ("hobby-self-hosted", hobby)):
     path = env_root / env / "expected-bindings.yaml"
@@ -1152,6 +1188,23 @@ finally:
 issues = module.external_binding_uniqueness_issues(env_root, "staging", staging)
 if not any("backupStorage.bucket matches production" in issue for issue in issues):
     raise SystemExit(f"expected duplicate backupStorage.bucket issue, got: {issues}")
+
+disabled_staging = copy.deepcopy(staging)
+disabled_production = copy.deepcopy(production)
+disabled_staging["backupStorage"] = {"enabled": False}
+disabled_staging["assetStorage"]["bucket"] = "dup-assets"
+disabled_production["assetStorage"]["bucket"] = "dup-assets"
+for env, data in (("staging", disabled_staging), ("production", disabled_production)):
+    path = env_root / env / "expected-bindings.yaml"
+    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+issues = module.external_binding_uniqueness_issues(
+    env_root, "staging", disabled_staging
+)
+if any(issue.startswith("backupStorage.") for issue in issues):
+    raise SystemExit(f"disabled backup storage must be excluded from uniqueness checks: {issues}")
+if not any("assetStorage.bucket matches production" in issue for issue in issues):
+    raise SystemExit(f"disabled backup storage must not disable other uniqueness checks: {issues}")
 
 shared_value = {"value": "smtp.shared.internal", "shared": True, "sharedRationale": "shared relay"}
 staging["outboundComms"]["smtpHost"] = shared_value
@@ -1320,6 +1373,88 @@ def verify_binding_ref_contract(case_name, mutate, policy_id, expected_fragment)
         raise SystemExit(
             f"{case_name}: expected {policy_id} message to include '{expected_fragment}', got '{policy.message}'"
         )
+
+def verify_backup_storage_failure(case_name, mutate, expected_fragment, env_class="hobby-self-hosted"):
+    expected_path = root / f"design/operations/environments/{env_class}/expected-bindings.yaml"
+    expected = yaml.safe_load(expected_path.read_text(encoding="utf-8"))
+    mutate(expected)
+    case_path = env_root / env_class / f"{case_name}-expected-bindings.yaml"
+    case_path.write_text(yaml.safe_dump(expected, sort_keys=False), encoding="utf-8")
+    results = module.expected_binding_checks(
+        case_path,
+        f"synthetic-{case_name}-expected-bindings.yaml",
+        env_class,
+        rendered_documents,
+    )
+    policy = next(result for result in results if result.policy_id == "PREFLIGHT-EXTERNAL-001")
+    if policy.status != "fail" or expected_fragment not in policy.message:
+        raise SystemExit(
+            f"{case_name}: expected backup-storage failure containing '{expected_fragment}', got {policy.status}: {policy.message}"
+        )
+
+def verify_backup_storage_pass(case_name, mutate):
+    expected_path = root / "design/operations/environments/hobby-self-hosted/expected-bindings.yaml"
+    expected = yaml.safe_load(expected_path.read_text(encoding="utf-8"))
+    mutate(expected)
+    case_path = env_root / "hobby-self-hosted" / f"{case_name}-expected-bindings.yaml"
+    case_path.write_text(yaml.safe_dump(expected, sort_keys=False), encoding="utf-8")
+    results = module.expected_binding_checks(
+        case_path,
+        f"synthetic-{case_name}-expected-bindings.yaml",
+        "hobby-self-hosted",
+        rendered_documents,
+    )
+    policy = next(result for result in results if result.policy_id == "PREFLIGHT-EXTERNAL-001")
+    if policy.status != "pass":
+        raise SystemExit(f"{case_name}: expected backup-storage validation to pass: {policy.message}")
+
+verify_backup_storage_failure(
+    "missing-backup-enabled",
+    lambda data: data["backupStorage"].pop("enabled"),
+    "backupStorage.enabled must be a boolean",
+)
+verify_backup_storage_failure(
+    "wrong-type-backup-enabled",
+    lambda data: data["backupStorage"].__setitem__("enabled", "true"),
+    "backupStorage.enabled must be a boolean",
+)
+verify_backup_storage_failure(
+    "enabled-missing-backup-bucket",
+    lambda data: data["backupStorage"].pop("bucket"),
+    "backupStorage.bucket",
+)
+verify_backup_storage_failure(
+    "enabled-missing-backup-binding",
+    lambda data: data["backupStorage"].pop("bindingRef"),
+    "backupStorage.bindingRef or backupStorage.fingerprint",
+)
+verify_backup_storage_failure(
+    "disabled-populated-backup",
+    lambda data: (
+        data["backupStorage"].__setitem__("enabled", False),
+        data["backupStorage"].__setitem__("fingerprint", "sha256:stale-backup-identity"),
+    ),
+    "backupStorage fields must be omitted when disabled",
+)
+verify_backup_storage_failure(
+    "production-disabled-backup",
+    lambda data: data.__setitem__("backupStorage", {"enabled": False}),
+    "backupStorage.enabled must be true for production",
+    "production",
+)
+verify_backup_storage_pass(
+    "enabled-fingerprint-backup",
+    lambda data: (
+        data["backupStorage"].pop("bindingRef"),
+        data["backupStorage"].__setitem__("fingerprint", "sha256:backup-identity"),
+    ),
+)
+verify_backup_storage_pass(
+    "disabled-omitted-backup",
+    lambda data: (
+        data.__setitem__("backupStorage", {"enabled": False}),
+    ),
+)
 
 verify_binding_ref_contract(
     "invalid-internal-binding-ref",
