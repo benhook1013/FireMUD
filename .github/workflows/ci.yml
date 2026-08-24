@@ -262,6 +262,7 @@ jobs:
           bash ./dev-tools/tests/preview-eligibility-contract.sh
           bash ./dev-tools/tests/worktree-topology-contract.sh
           bash ./dev-tools/tests/preflight-contract.sh
+          bash ./dev-tools/tests/verify-backups-velero-contract.sh
           bash ./dev-tools/tests/overlay-preflight-contract.sh
           bash ./dev-tools/tests/validate-external-credentials-contract.sh
           bash ./dev-tools/tests/observability-validator-contract.sh

@@ -197,6 +197,9 @@ if args[:2] == ["s3api", "list-objects-v2"]:
     candidates = [item for item in objects if item["Key"].endswith(".sql.gz")]
     if not candidates:
         print("None")
+    elif ".[LastModified, Key]" in query:
+        for item in candidates:
+            print(f'{item["LastModified"]}\t{item["Key"]}')
     else:
         print(max(candidates, key=lambda item: item["LastModified"])["Key"])
 elif args[:2] == ["s3", "cp"]:

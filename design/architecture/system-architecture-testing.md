@@ -11,7 +11,7 @@ The retained artifact should also preserve the operator identity and timestamp, 
 
 Current repository automation includes the profile-aware retained-evidence validator `python3 dev-tools/observability/validate-player-experience-smoke-evidence.py <evidence.json>` and runtime harness `dev-tools/observability/run-player-experience-smoke.py`. Every retained artifact invokes the validator, including `independent-omitted` evidence and profiles that omit the player-flow canary; omitted capabilities must omit their capability-specific signals rather than bypassing canonical schema and authority checks. When the player-flow capability is advertised, the current harness runs and retains the complete login/command canary for every declared exposed path in one invocation. Required profiles retain `deadmanAuthority` and a complete bounded `publicPathChecks` map with `not_applicable` for non-exposed paths; `independent-omitted` retains its complete exposed-path declaration and explicit reason without synthesizing external authority or a deadman mirror. PR/main CI remains focused on static metric-cardinality and observability-contract validation; environment-backed checks belong to profiles that claim independent monitoring.
 
-Illustrative retained evidence shape for a hosted-assurance observability smoke; an omitted profile must retain `externalAuthority: {"profile": "independent-omitted", "reason": "...", "exposedPublicPlayerPaths": ["websocket"]}` without deadman or public-path authority records. For promotion-bound evidence, `deploymentRef` is the exact staging overlay commit SHA (`stagingOverlayCommitSha`) and `deploymentEventId` is the distinct UUID selected by the promotion attestation, so evidence cannot be reused across two applies of the same overlay commit. Standalone local evidence may use another non-empty reference, but that artifact is not promotion evidence.
+Illustrative retained evidence shape for a hosted-assurance observability smoke; an omitted profile must retain `externalAuthority: {"profile": "independent-omitted", "reason": "...", "exposedPublicPlayerPaths": ["websocket"]}` and declare `capabilities: {"prometheusMirrors": "omitted", "playerFlowCanary": "omitted"}` without deadman or public-path authority records. For promotion-bound evidence, `deploymentRef` is the exact staging overlay commit SHA (`stagingOverlayCommitSha`) and `deploymentEventId` is the distinct UUID selected by the promotion attestation, so evidence cannot be reused across two applies of the same overlay commit. Standalone local evidence may use another non-empty reference, but that artifact is not promotion evidence.
 
 ```json
 {
@@ -20,6 +20,10 @@ Illustrative retained evidence shape for a hosted-assurance observability smoke;
   "verifiedAt": "2026-03-19T10:55:00Z",
   "verifiedBy": "operator@example",
   "preflightEvidenceRef": "ci://observability-smoke/2026-03-19T10:40:00Z",
+  "capabilities": {
+    "prometheusMirrors": "published",
+    "playerFlowCanary": "advertised"
+  },
   "externalAuthority": {
     "profile": "independent-required",
     "exposedPublicPlayerPaths": ["websocket", "telnet"],

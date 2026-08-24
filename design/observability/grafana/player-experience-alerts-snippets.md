@@ -161,9 +161,13 @@ These example rules enforce the target-state player-centric SLOs defined in the 
     playerflow_canary_success{flow="login"} == 0
     and on (flow, path, target, profile)
     (
-      time() - playerflow_canary_last_run_timestamp_seconds{flow="login"}
-      <= on (profile) group_left()
-        playerflow_canary_freshness_budget_seconds
+      time() - playerflow_canary_last_run_timestamp_seconds{flow="login"} >= 0
+      and on (flow, path, target, profile)
+      (
+        time() - playerflow_canary_last_run_timestamp_seconds{flow="login"}
+        <= on (profile) group_left()
+          playerflow_canary_freshness_budget_seconds
+      )
     )
   for: 2m
   labels:
@@ -183,9 +187,13 @@ These example rules enforce the target-state player-centric SLOs defined in the 
     playerflow_canary_success{flow="command"} == 0
     and on (flow, path, target, profile)
     (
-      time() - playerflow_canary_last_run_timestamp_seconds{flow="command"}
-      <= on (profile) group_left()
-        playerflow_canary_freshness_budget_seconds
+      time() - playerflow_canary_last_run_timestamp_seconds{flow="command"} >= 0
+      and on (flow, path, target, profile)
+      (
+        time() - playerflow_canary_last_run_timestamp_seconds{flow="command"}
+        <= on (profile) group_left()
+          playerflow_canary_freshness_budget_seconds
+      )
     )
   for: 2m
   labels:
@@ -205,9 +213,13 @@ These example rules enforce the target-state player-centric SLOs defined in the 
     playerflow_canary_latency_ms{flow="command"} > 1000
     and on (flow, path, target, profile)
     (
-      time() - playerflow_canary_last_run_timestamp_seconds{flow="command"}
-      <= on (profile) group_left()
-        playerflow_canary_freshness_budget_seconds
+      time() - playerflow_canary_last_run_timestamp_seconds{flow="command"} >= 0
+      and on (flow, path, target, profile)
+      (
+        time() - playerflow_canary_last_run_timestamp_seconds{flow="command"}
+        <= on (profile) group_left()
+          playerflow_canary_freshness_budget_seconds
+      )
     )
   for: 2m
   labels:
@@ -224,6 +236,8 @@ These example rules enforce the target-state player-centric SLOs defined in the 
 
 - alert: PlayerFlowCanaryEvidenceStale
   expr: >-
+    time() - playerflow_canary_last_run_timestamp_seconds < 0
+    or on (flow, path, target, profile)
     time() - playerflow_canary_last_run_timestamp_seconds
     > on (profile) group_left()
       playerflow_canary_freshness_budget_seconds

@@ -536,6 +536,15 @@ for source_text in (valid_playerflow_snippet, valid_text):
         unsafe_scalar = "scalar(" + "playerflow_canary_freshness_budget_seconds" + ")"
         if unsafe_scalar in block:
             raise AssertionError(f"{alert_name} must not use an unscoped scalar freshness budget")
+        if alert_name != "PlayerFlowCanaryEvidenceStale":
+            if not re.search(
+                r"time\(\)\s*-\s*playerflow_canary_last_run_timestamp_seconds"
+                r"(?:\{[^}]*\})?\s*>=\s*0",
+                block,
+            ):
+                raise AssertionError(
+                    f"{alert_name} must reject future canary timestamps"
+                )
 
     if "playerflow_canary_last_run_timestamp_seconds" not in source_text:
         raise AssertionError("canary alert source is missing the run timestamp metric")
@@ -561,6 +570,17 @@ for source_text in (valid_playerflow_snippet, valid_text):
             raise AssertionError(
                 f"PlayerFlowCanaryEvidenceStale is missing {required_text!r}"
             )
+    if not re.search(
+        r"time\(\)\s*-\s*playerflow_canary_last_run_timestamp_seconds\s*<\s*0",
+        stale_body,
+    ):
+        raise AssertionError(
+            "PlayerFlowCanaryEvidenceStale must fire for future canary timestamps"
+        )
+    if "or on (flow, path, target, profile)" not in stale_body:
+        raise AssertionError(
+            "PlayerFlowCanaryEvidenceStale must preserve full canary label matching"
+        )
 
 standalone_alert = """alert: StandaloneBackupAlert
 expr: backup_pipeline_recent_backup_slo_breached > 0

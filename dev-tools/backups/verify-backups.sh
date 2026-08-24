@@ -31,10 +31,16 @@ if [ -n "${PG_DUMP_BUCKET:-}" ]; then
     AWS_ENDPOINT_ARGS=(--endpoint-url "$PG_DUMP_ENDPOINT")
   fi
 
+  # shellcheck disable=SC2016 # AWS JMESPath requires literal backticks.
+  AWS_QUERY='Contents[?ends_with(Key, `.sql.gz`)].[LastModified, Key]'
+  TAB=$(printf '\t')
   KEY=$(aws s3api list-objects-v2 --bucket "$PG_DUMP_BUCKET" \
         --prefix "15min/" \
         "${AWS_ENDPOINT_ARGS[@]}" \
-        --query "sort_by(Contents[?ends_with(Key, \`.sql.gz\`)], &LastModified)[-1].Key" --output text 2>/dev/null || echo None)
+        --query "$AWS_QUERY" \
+        --output text 2>/dev/null |
+        LC_ALL=C sort -t "$TAB" -k1,1r -k2,2r |
+        awk -F "$TAB" '$1 != "None" && NF >= 2 && $2 ~ /\.sql\.gz$/ { print substr($0, index($0, FS) + 1); exit }') || KEY=
   case "$KEY" in
     *.sql.gz) ;;
     *)

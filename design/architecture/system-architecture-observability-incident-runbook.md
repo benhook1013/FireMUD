@@ -12,12 +12,12 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 
 ## Independent Detection Contract
 
-- Deployment profiles must declare whether independent external detection is `required` or `omitted`.
-- Profiles declaring independent monitoring `required` (hosted production profiles claiming externally verified availability or monitoring-resilient readiness) must not rely solely on Prometheus + Alertmanager to detect failure of that same observability stack.
+- Deployment profiles must declare whether independent external detection is `independent-required` or `independent-omitted`.
+- Profiles declaring independent monitoring `independent-required` (hosted production profiles claiming externally verified availability or monitoring-resilient readiness) must not rely solely on Prometheus + Alertmanager to detect failure of that same observability stack.
 - Required independent detection for those profiles:
   - An authoritative externally hosted deadman/heartbeat pager for the in-cluster monitoring stack.
   - Authoritative externally hosted blackbox checks for every path in the profile's complete `exposedPublicPlayerPaths` set (`websocket` and/or `telnet`). Non-exposed paths are `not_applicable`; an exposed path without current evidence means the independent claim is incomplete.
-- Profiles declaring independent monitoring `omitted` may use local or operator-dependent detection and must retain an explicit degraded-detection posture; omission does not block player traffic.
+- Profiles declaring independent monitoring `independent-omitted` may use local or operator-dependent detection and must retain an explicit degraded-detection posture; omission does not block player traffic.
 - During an incident, treat these external checks as the source of truth for “is the monitoring stack itself alive?” and “is the public gameplay edge reachable at all?” when in-cluster telemetry is missing. Prometheus, Alertmanager, Grafana, Kibana, Jaeger, and collector interfaces may remain private; local or provider-native checks diagnose those components.
 - Mirrored Prometheus metrics for those checks are useful for dashboards and smoke tests, but they do not satisfy the independent detection requirement by themselves. See `design/observability/external-monitoring/README.md`.
 
