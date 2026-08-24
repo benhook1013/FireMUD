@@ -14,6 +14,10 @@ The friend-presence slice currently implements non-pageable friend-roster and pr
 
 The target chat write contract derives `senderAccountId` from authenticated caller context before authorization or replay lookup; a request-body `senderAccountId` is not sender authority. It binds the stable `effectId` to that authenticated `senderAccountId` and a canonical full-request digest (`mutationDigest/v1` over the normalized request, including the complete tenant, channel, recipient, content, and effect identity). An exact retry with the same authenticated caller, effect ID, and digest may replay the stored outcome. A caller or digest mismatch returns `IDEMPOTENCY_CONFLICT` without exposing the stored request or outcome, and that check occurs before moderation evaluation or replay return. The current implementation is a known gap: the controller takes `senderAccountId` from the request body for its Social access guard, replay storage and lookup use only `{tenantId,effectId}`, and `ChatService` replays that row before it evaluates moderation policy, with no authenticated-caller or request-digest binding.
 
+### Mail request identity
+
+The player-facing `/mail` route requires `senderAccountId` to match authenticated account context before Social authorization or service dispatch. Tenant roles cannot use the edge route to impersonate another sender; operator/system mail requires a separate owner-authorized contract.
+
 ## REST APIs
 
 | Method | Path | Description |

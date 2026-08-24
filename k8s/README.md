@@ -109,6 +109,11 @@ python3 ./dev-tools/hosted/preview/render-preview-values.py \
 helm upgrade --install firemud ./k8s/helm/firemud -f /tmp/preview-values.yaml -n firemud --create-namespace
 ```
 
+Helm treats same-name `Secret/jwt-jwks` and `ConfigMap/jwt-jwks` objects as
+distinct resource identities, so an upgrade creates the target ConfigMap and
+removes the obsolete Secret without a manual pre-delete. The player-facing
+Kustomize Secret contract remains separate.
+
 The top-level `charts/firemud` chart is a narrower support chart rather than the main full-stack deployment surface.
 
 ## Preview Cluster Prerequisites

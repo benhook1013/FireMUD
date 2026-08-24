@@ -618,7 +618,12 @@ HUMAN_OPERATOR_ISSUANCE_BRANCHES = {
             "membership_generation",
         },
         "required_fields": {"target_account_id"},
-        "forbidden_fields": {"tenant_scope", "tenant_id", "target_tenant_generation"},
+        "forbidden_fields": {
+            "tenant_scope",
+            "tenant_id",
+            "target_tenant_generation",
+            "membership_version_when_applicable",
+        },
     },
 }
 HUMAN_OPERATOR_ISSUANCE_SHARED_BRANCH_FIELDS = {
@@ -752,6 +757,7 @@ MODERATION_PLATFORM_FORBIDDEN_ROUTE_FIELDS = {
     "tenant_id",
     "tenant_scope",
     "target_tenant_generation",
+    "membership_version_when_applicable",
 }
 MODERATION_POLICY_INTENT_COVERAGE_IDENTITY = (
     "moderation-policy-intent-local-redemption"
@@ -3879,6 +3885,22 @@ def validate_moderation_action_variant_contract(
 
     if action_category != MODERATION_PLATFORM_ACTION_CATEGORY:
         return
+    raw_forbidden_fields = route.get("forbidden_fields")
+    forbidden_field_set = (
+        {field for field in raw_forbidden_fields if isinstance(field, str)}
+        if isinstance(raw_forbidden_fields, list)
+        else set()
+    )
+    if (
+        not isinstance(raw_forbidden_fields, list)
+        or forbidden_field_set != MODERATION_PLATFORM_FORBIDDEN_ROUTE_FIELDS
+        or len(raw_forbidden_fields) != len(forbidden_field_set)
+    ):
+        append_unique_error(
+            errors,
+            f"{label} platform_access_ban forbidden_fields must exactly match "
+            f"{sorted(MODERATION_PLATFORM_FORBIDDEN_ROUTE_FIELDS)}",
+        )
     forbidden_fields = field_set & MODERATION_PLATFORM_FORBIDDEN_ROUTE_FIELDS
     forbidden_fields.update(
         field
@@ -3886,8 +3908,7 @@ def validate_moderation_action_variant_contract(
         if field in route
     )
     checks = route_live_checks(route, label, errors, live_checks_cache)
-    if "target_tenant_generation" in checks:
-        forbidden_fields.add("target_tenant_generation")
+    forbidden_fields.update(checks & MODERATION_PLATFORM_FORBIDDEN_ROUTE_FIELDS)
     if forbidden_fields:
         append_unique_error(
             errors,

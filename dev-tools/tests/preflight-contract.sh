@@ -186,6 +186,16 @@ data:
   FIREMUD_REDIS_CACHE_PORT: "6379"
 ---
 apiVersion: v1
+kind: Service
+metadata:
+  namespace: firemud
+  name: spring-cloud-gateway-mtls
+spec:
+  type: ClusterIP
+  ports:
+    - port: 443
+---
+apiVersion: v1
 kind: Secret
 metadata:
   name: postgres-credentials
@@ -211,6 +221,16 @@ stringData:
   jwks.json: '{"keys":[]}'
 ---
 apiVersion: v1
+kind: Secret
+metadata:
+  name: gateway-ws-client
+type: Opaque
+stringData:
+  client.crt: bridge-client
+  client.key: bridge-key
+  ca.crt: bridge-ca
+---
+apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: firemud-app
@@ -231,16 +251,28 @@ spec:
           env:
             - name: GATEWAY_WS_URL
               value: wss://spring-cloud-gateway-mtls.firemud.svc.cluster.local/ws/game
+            - name: FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH
+              value: /tls/client.crt
+            - name: FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH
+              value: /tls/client.key
+            - name: FIREMUD_GATEWAY_WS_CA_CERT_PATH
+              value: /tls/ca.crt
           envFrom:
             - secretRef:
                 name: postgres-credentials
             - configMapRef:
                 name: firemud-config
           volumeMounts:
+            - name: gateway-ws-client
+              mountPath: /tls
+              readOnly: true
             - name: jwt-signing-keys
               mountPath: /var/run/secrets/firemud/jwt
               readOnly: true
       volumes:
+        - name: gateway-ws-client
+          secret:
+            secretName: gateway-ws-client
         - name: jwt-signing-keys
           secret:
             secretName: jwt-signing-keys
@@ -463,6 +495,50 @@ secret_documents = copy.deepcopy(legacy_documents)
 secret_result = jwks_result(secret_documents)
 if secret_result.status != "pass":
     raise SystemExit(f"legacy Secret jwt-jwks did not satisfy the current contract: {secret_result.message}")
+
+expected_bindings_path = pathlib.Path(
+    preflight_path.parents[2],
+    "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
+)
+expected_bindings = yaml.safe_load(expected_bindings_path.read_text(encoding="utf-8"))
+mutated_expected_bindings = copy.deepcopy(expected_bindings)
+mutated_expected_bindings["internalBindings"]["jwt"]["jwksRef"] = (
+    "secret://firemud/renamed-jwt-jwks"
+)
+mutated_documents = copy.deepcopy(legacy_documents)
+
+
+def rename_jwks_references(node):
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if isinstance(value, str) and value == "jwt-jwks":
+                node[key] = "renamed-jwt-jwks"
+            else:
+                rename_jwks_references(value)
+    elif isinstance(node, list):
+        for value in node:
+            rename_jwks_references(value)
+
+
+rename_jwks_references(mutated_documents)
+mutated_binding_results = module.expected_binding_checks(
+    expected_bindings_path,
+    "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
+    "hobby-self-hosted",
+    mutated_documents,
+    context="ci-static",
+    expected_bindings=mutated_expected_bindings,
+)
+mutated_binding_result = next(
+    result
+    for result in mutated_binding_results
+    if result.policy_id == "PREFLIGHT-SECRETS-002"
+)
+if mutated_binding_result.status != "fail" or "must be exactly" not in mutated_binding_result.message:
+    raise SystemExit(
+        "noncanonical legacy jwt-jwks binding was accepted: "
+        f"{mutated_binding_result.message}"
+    )
 
 namespace_less_documents = copy.deepcopy(legacy_documents)
 for document in namespace_less_documents:
@@ -1058,8 +1134,8 @@ if not_applicable_status != "fail" or "non-passing required policy IDs" not in n
 
 PY
 
-# The checked-in production overlay retains the legacy diagnostics without a
-# static apply block.
+# The checked-in production overlay lacks the dedicated bridge client wiring,
+# so static preflight must fail closed rather than authorize URL-only wiring.
 set +e
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_DEPLOYMENT_REF="contract-production" \
@@ -1067,10 +1143,20 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   python3 "$SCRIPT" production >"$LEGACY_PRODUCTION_PREFLIGHT_OUTPUT"
 production_preflight_status=$?
 set -e
-if [ "$production_preflight_status" -ne 0 ]; then
-  echo "production advisory legacy-gap diagnostics must not block static CI" >&2
+if [ "$production_preflight_status" -eq 0 ]; then
+  echo "production preflight unexpectedly authorized URL-only bridge wiring" >&2
   exit 1
 fi
+python3 - "$PRODUCTION_REPORT" <<'PY'
+import json
+import pathlib
+import sys
+
+report = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+bridge = next(check for check in report["checkResults"] if check["policyId"] == "PREFLIGHT-BRIDGE-001")
+if bridge["status"] != "fail" or bridge["required"] is not True:
+    raise SystemExit(f"production bridge gap was not an explicit required failure: {bridge}")
+PY
 
 cat >"$LEGACY_PRODUCTION_TRAFFIC_EVIDENCE" <<'JSON'
 {
@@ -1101,7 +1187,7 @@ if python3 "$WRITER" production contract-production reopen \
   echo "legacy production traffic-open writer unexpectedly succeeded" >&2
   exit 1
 fi
-grep -Fq "invalid choice: 'production'" "$PRODUCTION_TRAFFIC_WRITER_OUTPUT"
+grep -Fq "hobby-self-hosted" "$PRODUCTION_TRAFFIC_WRITER_OUTPUT"
 
 rm -f "$PRODUCTION_REPORT"
 if FIREMUD_PREFLIGHT_CONTEXT=ci-static \
@@ -1166,8 +1252,8 @@ fi
 
 for env in staging production; do
   REPORT="$TMP_DIR/preflight-$env.json"
-  # These checked-in overlays remain legacy Secret-backed; static CI records
-  # the migration gap without treating advisory diagnostics as apply blockers.
+  # These checked-in overlays lack the dedicated bridge client wiring; static
+  # CI must record that required gap rather than authorize URL-only wiring.
   set +e
   FIREMUD_PREFLIGHT_CONTEXT=ci-static \
     FIREMUD_DEPLOYMENT_REF="contract-$env" \
@@ -1175,8 +1261,8 @@ for env in staging production; do
     python3 "$SCRIPT" "$env" >"$TMP_DIR/firemud-preflight-contract-$env.out"
   preflight_status=$?
   set -e
-  if [ "$preflight_status" -ne 0 ]; then
-    echo "$env: advisory legacy-gap diagnostics must not block static CI" >&2
+  if [ "$preflight_status" -eq 0 ]; then
+    echo "$env: URL-only bridge wiring unexpectedly passed static CI" >&2
     exit 1
   fi
 
@@ -1193,10 +1279,17 @@ if report.get("expectedBindingsRef") != expected_ref:
 failures = [
     check
     for check in report["checkResults"]
-    if check["status"] == "fail" and check["policyId"] not in {"PREFLIGHT-JWT-001", "PREFLIGHT-JWKS-001"}
+    if check["status"] == "fail" and check["policyId"] not in {"PREFLIGHT-JWT-001", "PREFLIGHT-JWKS-001", "PREFLIGHT-BRIDGE-001", "PREFLIGHT-SERVICES-001", "PREFLIGHT-REDIS-001"}
 ]
 if failures:
     raise SystemExit(f"{env}: unexpected preflight failures: {failures}")
+bridge = [check for check in report["checkResults"] if check["policyId"] == "PREFLIGHT-BRIDGE-001"]
+if len(bridge) != 1 or bridge[0]["status"] != "fail" or bridge[0]["required"] is not True:
+    raise SystemExit(f"{env}: missing explicit required bridge-client failure: {bridge}")
+for policy_id in ("PREFLIGHT-SERVICES-001", "PREFLIGHT-REDIS-001"):
+    required_gap = [check for check in report["checkResults"] if check["policyId"] == policy_id]
+    if len(required_gap) != 1 or required_gap[0]["status"] != "fail" or required_gap[0]["required"] is not True:
+        raise SystemExit(f"{env}: missing explicit required {policy_id} failure: {required_gap}")
 jwks = [check for check in report["checkResults"] if check["policyId"] == "PREFLIGHT-JWKS-001"]
 if len(jwks) != 1 or jwks[0]["status"] != "pass":
     raise SystemExit(f"{env}: legacy Secret jwt-jwks fixture did not pass the current diagnostic: {jwks}")
@@ -1478,21 +1571,17 @@ def verify_service_override_contract(case_name, rendered_overrides, allowed_over
     expected_path.write_text(yaml.safe_dump(base_expected, sort_keys=False), encoding="utf-8")
 
     rendered_payload = pathlib.Path(f"{tmp}/hobby-rendered.yaml").read_text(encoding="utf-8")
-    rendered_payload = (
-        rendered_payload
-        + "\n---\n"
-        + yaml.safe_dump(
-            {
-                "apiVersion": "v1",
-                "kind": "ConfigMap",
-                "metadata": {"name": f"service-discovery-{case_name}"},
-                "data": rendered_overrides,
-            },
-            sort_keys=False,
-        )
-    )
-
     documents = module.parse_documents(rendered_payload)
+    config_maps = [
+        document
+        for document in documents
+        if document.get("kind") == "ConfigMap"
+        and document.get("metadata", {}).get("name") == "firemud-config"
+        and document.get("metadata", {}).get("namespace") == "firemud"
+    ]
+    if len(config_maps) != 1:
+        raise SystemExit(f"{case_name}: expected exactly one referenced firemud-config ConfigMap")
+    config_maps[0]["data"] = rendered_overrides
     results = module.expected_binding_checks(
         expected_path, f"design/operations/environments/{case_name}-explicit-overrides.yaml", "staging", documents
     )
@@ -1538,7 +1627,34 @@ verify_service_override_contract(
     {},
     {"FIREMUD_SERVICES_ACCOUNT_SERVICE": "account-service.firemud.svc.cluster.local"},
     "fail",
-    "No FIREMUD_SERVICES_* overrides were rendered",
+    "missing from effective workloads",
+)
+verify_service_override_contract(
+    "partial-missing",
+    {"FIREMUD_SERVICES_ACCOUNT_SERVICE": "account-service.firemud.svc.cluster.local"},
+    {
+        "FIREMUD_SERVICES_ACCOUNT_SERVICE": "account-service.firemud.svc.cluster.local",
+        "FIREMUD_SERVICES_GAME_SESSION_SERVICE": "game-session-service.firemud.svc.cluster.local",
+    },
+    "fail",
+    "FIREMUD_SERVICES_GAME_SESSION_SERVICE",
+)
+verify_service_override_contract(
+    "malformed-rendered-key",
+    {"FIREMUD_SERVICES_account_SERVICE": "account-service.firemud.svc.cluster.local"},
+    {"FIREMUD_SERVICES_ACCOUNT_SERVICE": "account-service.firemud.svc.cluster.local"},
+    "fail",
+    "not declared",
+)
+verify_service_override_contract(
+    "invalid-unused-entry",
+    {"FIREMUD_SERVICES_ACCOUNT_SERVICE": "account-service.firemud.svc.cluster.local"},
+    {
+        "FIREMUD_SERVICES_ACCOUNT_SERVICE": "account-service.firemud.svc.cluster.local",
+        "FIREMUD_SERVICES_UNUSED": 7,
+    },
+    "fail",
+    "must be a string",
 )
 
 rendered_documents = module.parse_documents(pathlib.Path(tmp / "hobby-rendered.yaml").read_text(encoding="utf-8"))
@@ -1552,6 +1668,34 @@ for env in ("production", "staging", "hobby-self-hosted"):
         raise SystemExit(f"{env}: checked-in manifest selected unexpected JWT custody mode: {custody_mode}")
 
 current_expected_path = root / "design/operations/environments/hobby-self-hosted/expected-bindings.yaml"
+unreferenced_decoy_documents = copy.deepcopy(rendered_documents)
+unreferenced_decoy_documents.append(
+    {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {"name": "unreferenced-decoy", "namespace": "firemud"},
+        "data": {
+            "FIREMUD_SERVICES_DECOY": "evil.firemud.svc.cluster.local",
+        },
+    }
+)
+unreferenced_decoy_results = module.expected_binding_checks(
+    current_expected_path,
+    "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
+    "hobby-self-hosted",
+    unreferenced_decoy_documents,
+)
+unreferenced_decoy_service = next(
+    result
+    for result in unreferenced_decoy_results
+    if result.policy_id == "PREFLIGHT-SERVICES-001"
+)
+if unreferenced_decoy_service.status != "pass":
+    raise SystemExit(
+        "unreferenced service-discovery ConfigMap decoy affected preflight: "
+        + unreferenced_decoy_service.message
+    )
+
 current_results = module.expected_binding_checks(
     current_expected_path,
     "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
@@ -1561,6 +1705,292 @@ current_results = module.expected_binding_checks(
 current_secrets = next(result for result in current_results if result.policy_id == "PREFLIGHT-SECRETS-002")
 if current_secrets.status != "pass":
     raise SystemExit(f"checked-in legacy JWT custody selector did not pass current wiring validation: {current_secrets.message}")
+
+
+def effective_env_documents(*, config_map=None, config_map_namespace="firemud", workload_namespace="firemud", env=None, env_from=None):
+    workload = {
+        "kind": "Deployment",
+        "metadata": {"name": "account-service", "namespace": workload_namespace},
+        "spec": {
+            "template": {
+                "spec": {
+                    "containers": [
+                        {
+                            "name": "account-service",
+                            "env": env or [],
+                            "envFrom": env_from or [],
+                        }
+                    ]
+                }
+            }
+        },
+    }
+    documents = [workload]
+    if config_map is not None:
+        documents.insert(
+            0,
+            {
+                "kind": "ConfigMap",
+                "metadata": {"name": "cfg", "namespace": config_map_namespace},
+                "data": config_map,
+            },
+        )
+    return documents, workload, workload["spec"]["template"]["spec"]["containers"][0]
+
+
+precedence_documents, precedence_workload, precedence_container = effective_env_documents(
+    config_map={"FIREMUD_SERVICES_ACCOUNT_SERVICE": "from-config-map"},
+    env=[{"name": "FIREMUD_SERVICES_ACCOUNT_SERVICE", "value": "direct-env"}],
+    env_from=[{"configMapRef": {"name": "cfg"}}],
+)
+precedence_values, precedence_issues = module.effective_container_env(
+    precedence_documents, precedence_workload, precedence_container
+)
+if precedence_issues or precedence_values.get("FIREMUD_SERVICES_ACCOUNT_SERVICE") != "direct-env":
+    raise SystemExit(f"direct env did not override envFrom: {precedence_values}, {precedence_issues}")
+
+for case_name, config_map, config_map_namespace, env, env_from, expects_issue in (
+    ("required-configmap", None, "firemud", [], [{"configMapRef": {"name": "cfg"}}], True),
+    ("optional-configmap", None, "firemud", [], [{"configMapRef": {"name": "cfg", "optional": True}}], False),
+    (
+        "required-configmap-key",
+        {},
+        "firemud",
+        [{"name": "FIREMUD_SERVICES_ACCOUNT_SERVICE", "valueFrom": {"configMapKeyRef": {"name": "cfg", "key": "missing"}}}],
+        [],
+        True,
+    ),
+    (
+        "optional-configmap-key",
+        {},
+        "firemud",
+        [{"name": "FIREMUD_SERVICES_ACCOUNT_SERVICE", "valueFrom": {"configMapKeyRef": {"name": "cfg", "key": "missing", "optional": True}}}],
+        [],
+        False,
+    ),
+    ("namespace-decoy-configmap", {"FIREMUD_SERVICES_ACCOUNT_SERVICE": "decoy"}, "other", [], [{"configMapRef": {"name": "cfg"}}], True),
+):
+    documents, workload, container = effective_env_documents(
+        config_map=config_map,
+        config_map_namespace=config_map_namespace,
+        env=env,
+        env_from=env_from,
+    )
+    _, issues = module.effective_container_env(documents, workload, container)
+    if bool(issues) != expects_issue:
+        raise SystemExit(f"{case_name}: unexpected ConfigMap optional/namespace result: {issues}")
+
+secret_documents, secret_workload, secret_container = effective_env_documents(
+    env_from=[{"secretRef": {"name": "bridge-config"}}],
+)
+secret_documents.append(
+    {
+        "kind": "Secret",
+        "metadata": {"name": "bridge-config", "namespace": "firemud"},
+        "stringData": {"FIREMUD_SERVICES_ACCOUNT_SERVICE": "secret-backed"},
+    }
+)
+secret_values, secret_issues = module.effective_container_env(
+    secret_documents, secret_workload, secret_container
+)
+if secret_issues or secret_values.get("FIREMUD_SERVICES_ACCOUNT_SERVICE") != "secret-backed":
+    raise SystemExit(f"rendered Secret envFrom was not resolved: {secret_values}, {secret_issues}")
+secret_overrides, secret_override_issues = module.extract_service_discovery_overrides(secret_documents)
+if secret_override_issues or secret_overrides.get("FIREMUD_SERVICES_ACCOUNT_SERVICE") != "secret-backed":
+    raise SystemExit(f"Secret-backed service override was missed: {secret_overrides}, {secret_override_issues}")
+
+secret_key_documents, secret_key_workload, secret_key_container = effective_env_documents(
+    env=[
+        {
+            "name": "FIREMUD_SERVICES_ACCOUNT_SERVICE",
+            "valueFrom": {"secretKeyRef": {"name": "bridge-config", "key": "FIREMUD_SERVICES_ACCOUNT_SERVICE"}},
+        }
+    ],
+)
+secret_key_documents.append(
+    {
+        "kind": "Secret",
+        "metadata": {"name": "bridge-config", "namespace": "firemud"},
+        "stringData": {"FIREMUD_SERVICES_ACCOUNT_SERVICE": "secret-key-backed"},
+    }
+)
+secret_key_values, secret_key_issues = module.effective_container_env(
+    secret_key_documents, secret_key_workload, secret_key_container
+)
+if secret_key_issues or secret_key_values.get("FIREMUD_SERVICES_ACCOUNT_SERVICE") != "secret-key-backed":
+    raise SystemExit(f"rendered Secret valueFrom was not resolved: {secret_key_values}, {secret_key_issues}")
+
+uninspectable_secret_documents, uninspectable_secret_workload, uninspectable_secret_container = effective_env_documents(
+    env_from=[{"secretRef": {"name": "external-bridge-config"}}],
+)
+_, uninspectable_secret_issues = module.effective_container_env(
+    uninspectable_secret_documents,
+    uninspectable_secret_workload,
+    uninspectable_secret_container,
+)
+if not any("external-bridge-config" in issue for issue in uninspectable_secret_issues):
+    raise SystemExit("uninspectable Secret-backed envFrom source was not failed closed")
+
+bridge_values, bridge_issues = module.validate_gateway_ws_values(
+    rendered_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+)
+if bridge_issues or not bridge_values:
+    raise SystemExit(f"canonical bridge fixture did not pass: {bridge_issues}")
+bridge_mutation = copy.deepcopy(rendered_documents)
+for document in bridge_mutation:
+    if document.get("kind") == "Deployment" and document.get("metadata", {}).get("name") == "tcp-proxy-service":
+        for container in document["spec"]["template"]["spec"]["containers"]:
+            for entry in container.get("env", []):
+                if entry.get("name") == "GATEWAY_WS_URL":
+                    entry["value"] = "wss://evil-spring-cloud-gateway-mtls.firemud.svc.cluster.local/ws/game"
+_, bridge_mutation_issues = module.validate_gateway_ws_values(
+    bridge_mutation, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+)
+if not any("does not match canonical" in issue for issue in bridge_mutation_issues):
+    raise SystemExit("bridge host decoy was accepted")
+
+
+def set_bridge_url(documents, value):
+    for document in documents:
+        if document.get("kind") != "Deployment" or document.get("metadata", {}).get("name") != "tcp-proxy-service":
+            continue
+        for container in document.get("spec", {}).get("template", {}).get("spec", {}).get("containers", []):
+            for entry in container.get("env", []):
+                if entry.get("name") == "GATEWAY_WS_URL":
+                    entry["value"] = value
+
+
+canonical_bridge_url = "wss://spring-cloud-gateway-mtls.firemud.svc.cluster.local/ws/game"
+for case_name, value, expected_fragment in (
+    ("scheme", "ws://spring-cloud-gateway-mtls.firemud.svc.cluster.local/ws/game", "does not match canonical"),
+    ("port", "wss://spring-cloud-gateway-mtls.firemud.svc.cluster.local:444/ws/game", "does not match canonical"),
+    ("path", "wss://spring-cloud-gateway-mtls.firemud.svc.cluster.local/wrong", "does not match canonical"),
+):
+    documents = copy.deepcopy(rendered_documents)
+    set_bridge_url(documents, value)
+    _, issues = module.validate_gateway_ws_values(
+        documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+    )
+    if not any(expected_fragment in issue for issue in issues):
+        raise SystemExit(f"bridge {case_name} decoy was accepted: {issues}")
+
+duplicate_service_documents = copy.deepcopy(rendered_documents)
+duplicate_service_documents.append(
+    copy.deepcopy(
+        next(
+            document
+            for document in duplicate_service_documents
+            if document.get("kind") == "Service"
+            and document.get("metadata", {}).get("name") == "spring-cloud-gateway-mtls"
+        )
+    )
+)
+_, duplicate_service_issues = module.validate_gateway_ws_values(
+    duplicate_service_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+)
+if not any("exactly one rendered internal Gateway mTLS Service" in issue for issue in duplicate_service_issues):
+    raise SystemExit(f"duplicate internal Gateway Service was accepted: {duplicate_service_issues}")
+
+conflicting_bridge_documents = copy.deepcopy(rendered_documents)
+account_deployment = next(
+    document
+    for document in conflicting_bridge_documents
+    if document.get("kind") == "Deployment" and document.get("metadata", {}).get("name") == "account-service"
+)
+account_container = next(
+    container
+    for container in account_deployment["spec"]["template"]["spec"]["containers"]
+    if container.get("name") == "account-service"
+)
+account_container.setdefault("env", []).append(
+    {"name": "GATEWAY_WS_URL", "value": "wss://decoy.firemud.svc.cluster.local/ws/game"}
+)
+_, conflicting_bridge_issues = module.validate_gateway_ws_values(
+    conflicting_bridge_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+)
+if not any("does not match canonical" in issue for issue in conflicting_bridge_issues):
+    raise SystemExit(f"conflicting applicable bridge value was accepted: {conflicting_bridge_issues}")
+
+bridge_path_documents = copy.deepcopy(rendered_documents)
+set_bridge_url(bridge_path_documents, canonical_bridge_url)
+bridge_container = next(
+    container
+    for document in bridge_path_documents
+    if document.get("kind") == "Deployment" and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    for container in document["spec"]["template"]["spec"]["containers"]
+    if container.get("name") == "tcp-proxy-service"
+)
+bridge_container["env"][1]["value"] = "/wrong/client.crt"
+_, bridge_path_issues = module.validate_gateway_ws_values(
+    bridge_path_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+)
+if not any("must be exactly '/tls/client.crt'" in issue for issue in bridge_path_issues):
+    raise SystemExit(f"noncanonical bridge client path was accepted: {bridge_path_issues}")
+
+bridge_mount_documents = copy.deepcopy(rendered_documents)
+bridge_mount_container = next(
+    container
+    for document in bridge_mount_documents
+    if document.get("kind") == "Deployment" and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    for container in document["spec"]["template"]["spec"]["containers"]
+    if container.get("name") == "tcp-proxy-service"
+)
+bridge_mount_container["volumeMounts"] = [
+    mount for mount in bridge_mount_container["volumeMounts"] if mount.get("name") != "gateway-ws-client"
+]
+_, bridge_mount_issues = module.validate_gateway_ws_values(
+    bridge_mount_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+)
+if not any("dedicated read-only Secret-backed /tls mount" in issue for issue in bridge_mount_issues):
+    raise SystemExit(f"missing bridge client mount was accepted: {bridge_mount_issues}")
+
+redis_endpoints, redis_issues = module.effective_redis_endpoints(
+    rendered_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+)
+if redis_issues or redis_endpoints != {
+    "redis-coord.firemud.svc.cluster.local:6379",
+    "redis-cache.firemud.svc.cluster.local:6379",
+}:
+    raise SystemExit(f"canonical Redis fixture did not pass: {redis_issues}, {redis_endpoints}")
+redis_mutation = copy.deepcopy(rendered_documents)
+for document in redis_mutation:
+    if document.get("kind") == "ConfigMap" and document.get("metadata", {}).get("name") == "firemud-config":
+        document["data"]["FIREMUD_REDIS_COORD_HOST"] = "redis-cache"
+_, redis_mutation_issues = module.effective_redis_endpoints(
+    redis_mutation, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+)
+if not any("does not match expected" in issue for issue in redis_mutation_issues):
+    raise SystemExit("referenced Redis ConfigMap mismatch was accepted")
+
+for case_name, field, value in (
+    ("cache-host", "FIREMUD_REDIS_CACHE_HOST", "redis-coord"),
+    ("cache-port", "FIREMUD_REDIS_CACHE_PORT", "6380"),
+):
+    documents = copy.deepcopy(rendered_documents)
+    config_map = next(
+        document
+        for document in documents
+        if document.get("kind") == "ConfigMap" and document.get("metadata", {}).get("name") == "firemud-config"
+    )
+    config_map["data"][field] = value
+    _, issues = module.effective_redis_endpoints(
+        documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+    )
+    if not any("does not match expected" in issue for issue in issues):
+        raise SystemExit(f"Redis {case_name} mismatch was accepted: {issues}")
+
+collision_expected = yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+collision_expected["internalBindings"]["redis"]["cache"]["endpoint"] = collision_expected["internalBindings"]["redis"]["coordination"]["endpoint"]
+collision_documents = copy.deepcopy(rendered_documents)
+collision_config_map = next(
+    document
+    for document in collision_documents
+    if document.get("kind") == "ConfigMap" and document.get("metadata", {}).get("name") == "firemud-config"
+)
+collision_config_map["data"]["FIREMUD_REDIS_CACHE_HOST"] = "redis-coord"
+_, collision_issues = module.effective_redis_endpoints(collision_documents, collision_expected)
+if not any("same host:port" in issue for issue in collision_issues):
+    raise SystemExit(f"Redis coordination/cache endpoint collision was accepted: {collision_issues}")
 
 for case_name, mutate, expected_fragment in (
     (

@@ -1612,7 +1612,7 @@ routes:
         required_live_checks: [issuer_generation, account_generation, current_operator_roles, current_global_role, role_appropriate_assurance]
         forbidden_live_checks: [target_tenant_generation, tenant_generation, membership_when_tenant_role, membership_generation]
         required_fields: [target_account_id]
-        forbidden_fields: [tenant_scope, tenant_id, target_tenant_generation]
+        forbidden_fields: [tenant_scope, tenant_id, target_tenant_generation, membership_version_when_applicable]
     role_assurance: privileged_control_when_global_role
     required_fields: [action_family, action_family_schema_id, action_family_schema_version]
     mutation_contract: create_bounded_human_operator_authorization_reference
@@ -3054,6 +3054,7 @@ routes:
     global_platform_admin_membership_required: false
     mutation_contract: durable_intent_then_moderation_record_idempotency
     required_fields: [policy_intent_request_id, control_plane_request_id, actor_from_session, reason, target_account_id, action, mutation_digest]
+    forbidden_fields: [tenant_scope, tenant_id, target_tenant_generation, membership_version_when_applicable]
     idempotency_contract:
       key: policy_intent_request_id
       digest: mutationDigest/v1

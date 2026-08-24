@@ -12,7 +12,7 @@ The target player-safe outcomes are distinct: `CHAT_MUTE_SEND_DENIED` denies sen
 
 ## Architecture and Design Notes
 
-- Uses typed social delivery state and transport handoffs for chat/mail; current chat delivery uses WebSocket channels, and Game Session owns final delivery to connected gameplay transports
+- Uses typed social delivery state and transport handoffs for chat/mail; current gameplay communication delivery is performed by Game Session through the regression Social stub, while Social does not own connected gameplay WebSocket delivery
 - Stores Social-owned relationship, group, audience, mail-envelope, and applicable history state in PostgreSQL; guild and friend relationships remain persisted here
 - Integrates with Logging & Admin for moderation evidence, policy intent, bounded appeal outcomes, and audit; target owner-local chat enforcement does not depend on that service for routine chat enforcement
 - Chat profanity may generate a gRPC evidence/report call to Logging & Admin; the report does not itself create a `chat_mute` or `chat_ban`

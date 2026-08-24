@@ -46,6 +46,41 @@ BOOTSTRAP_OPERATION_FIELDS = {
 }
 
 
+def schema_issue_environment(message: str) -> str | None:
+    """Return a known environment prefix without trusting arbitrary text."""
+
+    issue_env, separator, _ = message.partition(":")
+    if separator and issue_env in ENV_FILES:
+        return issue_env
+    return None
+
+
+def record_schema_issue_outcome(
+    message: str,
+    enforcement_mode: str,
+    failures: list[str],
+    warnings: list[str],
+    non_authorizing_environments: list[str],
+) -> None:
+    """Collect schema issues while failing closed on unknown advisory prefixes."""
+
+    if enforcement_mode == "strict":
+        failures.append(message)
+        return
+
+    issue_env = schema_issue_environment(message)
+    if issue_env is None:
+        failures.append(
+            "Internal validator error: schema issue lacks a known environment "
+            f"prefix: {message}"
+        )
+        return
+
+    warnings.append(message)
+    if issue_env not in non_authorizing_environments:
+        non_authorizing_environments.append(issue_env)
+
+
 def utc_now() -> dt.datetime:
     today_override = os.environ.get("SECRET_COMPLIANCE_TODAY")
     if today_override:
@@ -107,14 +142,13 @@ def main() -> int:
             mark_non_authorizing(env)
 
     def record_schema_issue(msg: str) -> None:
-        if enforcement_mode == "strict":
-            failures.append(msg)
-        else:
-            warnings.append(msg)
-            issue_env = msg.partition(":")[0]
-            if issue_env not in ENV_FILES:
-                raise ValueError(f"schema issue lacks an environment prefix: {msg}")
-            mark_non_authorizing(issue_env)
+        record_schema_issue_outcome(
+            msg,
+            enforcement_mode,
+            failures,
+            warnings,
+            non_authorizing_environments,
+        )
 
     for env, relative_path in ENV_FILES.items():
         path = root / relative_path
@@ -351,13 +385,24 @@ def main() -> int:
                 )
                 continue
 
-            if age_days > int(max_age):
+            if (
+                isinstance(max_age, bool)
+                or not isinstance(max_age, int)
+                or max_age <= 0
+            ):
+                record_issue(
+                    env,
+                    f"{env}:{cls}: maxAgeDays must be a positive integer, got {max_age!r}",
+                )
+                continue
+
+            if age_days > max_age:
                 record_issue(
                     env,
                     f"{env}:{cls}: credential age {age_days}d exceeds maxAgeDays={max_age}",
                 )
-            elif age_days >= int(max_age) - warning_window_days:
-                remaining_days = int(max_age) - age_days
+            elif age_days >= max_age - warning_window_days:
+                remaining_days = max_age - age_days
                 warnings.append(
                     f"{env}:{cls}: credential age {age_days}d reaches maxAgeDays="
                     f"{max_age} in {remaining_days}d"

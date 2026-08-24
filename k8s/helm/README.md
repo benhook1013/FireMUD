@@ -48,6 +48,14 @@ helm upgrade --install pr-123 ./firemud \
   --create-namespace
 ```
 
+The hosted chart owns public `jwt-jwks` as a `ConfigMap`. Helm treats a
+same-name legacy Secret and the target ConfigMap as distinct resource
+identities, so the upgrade creates the ConfigMap and removes the obsolete
+Secret without a manual pre-delete. The
+`dev-tools/tests/helm-jwks-contract.sh` test proves the target rendered
+resource and workload wiring; it is not a live-cluster upgrade or downtime
+proof.
+
 `firemud/values-hosted-shared.example.yaml` is the shared source template for the hosted deployment contract. `dev-tools/hosted/preview/render-preview-values.py` materializes preview-specific values from it:
 
 - PR number, namespace, release name, and preview hostname

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import datetime as dt
 import itertools
 import json
@@ -13,6 +14,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -69,6 +71,12 @@ JWT_CUSTODY_MODES = (
     "TARGET_NON_EXPORTABLE_SIGNER",
 )
 IMPLEMENTED_JWT_CUSTODY_MODE = "LEGACY_SECRET_DIAGNOSTIC"
+LEGACY_PLAYER_JWKS_REF = "secret://firemud/jwt-jwks"
+BRIDGE_WS_PATHS = {
+    "FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH": "/tls/client.crt",
+    "FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH": "/tls/client.key",
+    "FIREMUD_GATEWAY_WS_CA_CERT_PATH": "/tls/ca.crt",
+}
 BASE_SECRET_COMPLIANCE_CLASSES = frozenset(
     {
         "jwt-signing-keys-jwks",
@@ -1731,14 +1739,124 @@ def normalize_binding_value(raw: Any) -> tuple[str | None, bool, str]:
     return (None, False, "")
 
 
-def extract_service_discovery_overrides(rendered_text: str) -> dict[str, str]:
-    overrides = {}
-    for raw_key, raw_value in re.findall(
-        r"(FIREMUD_SERVICES_[A-Z0-9_]+):\s*([^\n]+)", rendered_text
-    ):
-        value = str(raw_value).strip().strip("\"'")
-        overrides[raw_key] = value
-    return overrides
+def workload_namespace(document: dict[str, Any]) -> str:
+    return metadata_namespace(document) or "firemud"
+
+
+def effective_container_env(
+    documents: list[dict[str, Any]], document: dict[str, Any], container: dict[str, Any]
+) -> tuple[dict[str, str], list[str]]:
+    """Resolve the inspectable effective environment for this workload container."""
+    namespace = workload_namespace(document)
+    configmaps = {
+        (workload_namespace(source), metadata_name(source)): source.get("data") or {}
+        for source in documents
+        if source.get("kind") == "ConfigMap" and metadata_name(source)
+    }
+    secrets: dict[tuple[str, str], dict[str, str]] = {}
+    secret_issues: list[str] = []
+    for source in documents:
+        if source.get("kind") != "Secret" or not metadata_name(source):
+            continue
+        values: dict[str, str] = {}
+        for key, value in (source.get("data") or {}).items():
+            if not isinstance(value, str):
+                secret_issues.append(
+                    f"Secret {workload_namespace(source)}/{metadata_name(source)} encoded value for {key} is not a string"
+                )
+                continue
+            try:
+                decoded = base64.b64decode(value, validate=True).decode("utf-8")
+            except (ValueError, UnicodeDecodeError):
+                secret_issues.append(
+                    f"Secret {workload_namespace(source)}/{metadata_name(source)} encoded value for {key} is invalid"
+                )
+                continue
+            values[str(key)] = decoded
+        for key, value in (source.get("stringData") or {}).items():
+            if isinstance(value, str):
+                values[str(key)] = value
+            else:
+                secret_issues.append(
+                    f"Secret {workload_namespace(source)}/{metadata_name(source)} value for {key} is not a string"
+                )
+        secrets[(workload_namespace(source), metadata_name(source))] = values
+    values: dict[str, str] = {}
+    issues: list[str] = list(secret_issues)
+
+    def add(name: Any, value: Any, source: str) -> None:
+        if not isinstance(name, str) or not name:
+            return
+        if isinstance(value, str):
+            values[name] = value
+        else:
+            issues.append(f"{source} value for {name} is not a string")
+
+    for entry in container.get("envFrom") or []:
+        if not isinstance(entry, dict):
+            continue
+        prefix = str(entry.get("prefix") or "")
+        ref = entry.get("configMapRef")
+        source_kind = "ConfigMap"
+        if isinstance(ref, dict):
+            source_values = configmaps.get((namespace, str(ref.get("name") or "")))
+        else:
+            ref = entry.get("secretRef")
+            source_kind = "Secret"
+            source_values = secrets.get((namespace, str(ref.get("name") or ""))) if isinstance(ref, dict) else None
+        if not isinstance(ref, dict) or not ref.get("name"):
+            continue
+        ref_name = str(ref["name"])
+        if source_values is None:
+            if not ref.get("optional", False):
+                issues.append(f"{source_kind} {namespace}/{ref_name} referenced by workload is missing")
+            continue
+        for key, value in source_values.items():
+            add(prefix + str(key), value, f"{source_kind} {namespace}/{ref_name}")
+
+    for entry in container.get("env") or []:
+        if not isinstance(entry, dict) or not entry.get("name"):
+            continue
+        name = entry["name"]
+        if "value" in entry:
+            add(name, entry.get("value"), "direct env")
+            continue
+        value_from = entry.get("valueFrom")
+        if not isinstance(value_from, dict):
+            continue
+        ref = value_from.get("configMapKeyRef")
+        source_kind = "ConfigMap"
+        if isinstance(ref, dict):
+            source_values = configmaps.get((namespace, str(ref.get("name") or "")))
+        else:
+            ref = value_from.get("secretKeyRef")
+            source_kind = "Secret"
+            source_values = secrets.get((namespace, str(ref.get("name") or ""))) if isinstance(ref, dict) else None
+        if not isinstance(ref, dict) or not ref.get("name") or not ref.get("key"):
+            continue
+        ref_name = str(ref["name"])
+        if source_values is None or ref["key"] not in source_values:
+            if not ref.get("optional", False):
+                issues.append(f"{source_kind} key {namespace}/{ref_name}:{ref['key']} referenced by workload is missing")
+            continue
+        add(name, source_values[ref["key"]], f"{source_kind} {namespace}/{ref_name}")
+    return values, issues
+
+
+def extract_service_discovery_overrides(documents: list[dict[str, Any]]) -> tuple[dict[str, str], list[str]]:
+    overrides: dict[str, str] = {}
+    issues: list[str] = []
+    for document in documents:
+        for _, container, _ in primary_containers(document):
+            values, env_issues = effective_container_env(documents, document, container)
+            issues.extend(env_issues)
+            for key, value in values.items():
+                if not key.startswith("FIREMUD_SERVICES_"):
+                    continue
+                if key in overrides and overrides[key] != value:
+                    issues.append(f"effective {key} values conflict across workloads")
+                overrides[key] = value
+    return overrides, issues
 
 
 def external_binding_uniqueness_issues(
@@ -2054,6 +2172,169 @@ def config_value(documents: list[dict[str, Any]], name: str) -> str | None:
         if name in data:
             return str(data[name])
     return None
+
+
+def normalize_service_endpoint(host: str, port: str, namespace: str) -> str:
+    host = host.strip().lower().rstrip(".")
+    if "." not in host:
+        host = f"{host}.{namespace}.svc.cluster.local"
+    return f"{host}:{port.strip()}"
+
+
+def expected_redis_endpoint(data: dict[str, Any], role: str) -> str | None:
+    value = get(data, f"internalBindings.redis.{role}.endpoint")
+    return value.strip().lower() if isinstance(value, str) and value.strip() else None
+
+
+def effective_redis_endpoints(
+    documents: list[dict[str, Any]], expected: dict[str, Any]
+) -> tuple[set[str], list[str]]:
+    expected_coord = expected_redis_endpoint(expected, "coordination")
+    expected_cache = expected_redis_endpoint(expected, "cache")
+    endpoints: set[str] = set()
+    issues: list[str] = []
+    for document in documents:
+        namespace = workload_namespace(document)
+        for _, container, _ in primary_containers(document):
+            values, env_issues = effective_container_env(documents, document, container)
+            issues.extend(env_issues)
+            if not any(key.startswith("FIREMUD_REDIS_") for key in values):
+                continue
+            resolved: dict[str, str] = {}
+            for role, prefix in (("coordination", "FIREMUD_REDIS_COORD"), ("cache", "FIREMUD_REDIS_CACHE")):
+                host = values.get(prefix + "_HOST")
+                port = values.get(prefix + "_PORT")
+                if not host or not port:
+                    issues.append(f"{prefix} effective host and port are required")
+                    continue
+                endpoint = normalize_service_endpoint(host, port, namespace)
+                resolved[role] = endpoint
+                expected_endpoint = expected_coord if role == "coordination" else expected_cache
+                if expected_endpoint != endpoint:
+                    issues.append(f"{prefix} effective endpoint {endpoint} does not match expected {expected_endpoint}")
+            if len(resolved) == 2:
+                endpoints.update(resolved.values())
+                if resolved["coordination"] == resolved["cache"]:
+                    issues.append("Coordination and Cache Redis endpoints resolve to the same host:port")
+    if not endpoints:
+        issues.append("Could not resolve Redis endpoints from referenced workload configuration")
+    return endpoints, issues
+
+
+def canonical_gateway_ws_endpoint(
+    documents: list[dict[str, Any]], expected: dict[str, Any]
+) -> tuple[str | None, list[str]]:
+    listener_ref = get(expected, "internalBindings.certificates.gatewayInternalWsListenerRef")
+    parsed_ref = parse_binding_ref(listener_ref)
+    namespace = parsed_ref[1] if parsed_ref and parsed_ref[0] == "cert-manager" else None
+    services = [
+        document for document in documents
+        if document.get("kind") == "Service"
+        and metadata_name(document) == "spring-cloud-gateway-mtls"
+        and rendered_namespace_matches(document, namespace, default_namespace=namespace)
+    ]
+    if len(services) != 1:
+        return None, ["exactly one rendered internal Gateway mTLS Service is required"]
+    service = services[0]
+    if (service.get("spec") or {}).get("type", "ClusterIP") != "ClusterIP":
+        return None, ["Gateway mTLS Service must remain ClusterIP/internal-only"]
+    ports = [entry for entry in (service.get("spec") or {}).get("ports") or [] if isinstance(entry, dict)]
+    if len(ports) != 1 or not isinstance(ports[0].get("port"), int):
+        return None, ["Gateway mTLS Service must expose exactly one numeric port"]
+    host = f"spring-cloud-gateway-mtls.{namespace}.svc.cluster.local"
+    return f"{host}:{ports[0]['port']}", []
+
+
+def validate_gateway_ws_values(
+    documents: list[dict[str, Any]], expected: dict[str, Any]
+) -> tuple[list[str], list[str]]:
+    canonical, issues = canonical_gateway_ws_endpoint(documents, expected)
+    values: list[str] = []
+    if canonical is None:
+        return values, issues
+    canonical_host, canonical_port = canonical.rsplit(":", 1)
+    for document in documents:
+        for workload_name, container, volumes in primary_containers(document):
+            declared_names = {
+                entry.get("name")
+                for entry in container.get("env") or []
+                if isinstance(entry, dict)
+            }
+            if workload_name != "tcp-proxy-service" and "GATEWAY_WS_URL" not in declared_names:
+                continue
+            env, env_issues = effective_container_env(documents, document, container)
+            issues.extend(env_issues)
+            for path_name, expected_path in BRIDGE_WS_PATHS.items():
+                if env.get(path_name) != expected_path:
+                    issues.append(
+                        f"{path_name} must be exactly {expected_path!r} for the player-facing bridge"
+                    )
+            grpc_paths = {
+                env.get(name)
+                for name in (
+                    "FIREMUD_GRPC_CERT_CHAIN_PATH",
+                    "FIREMUD_GRPC_PRIVATE_KEY_PATH",
+                    "FIREMUD_GRPC_CA_CERT_PATH",
+                )
+                if env.get(name)
+            }
+
+            def path_is_under(path: str, mount_path: str) -> bool:
+                return path == mount_path or path.startswith(mount_path.rstrip("/") + "/")
+
+            grpc_secret_names = {
+                volumes.get(mount.get("name"))
+                for mount in container.get("volumeMounts") or []
+                if isinstance(mount, dict)
+                and volumes.get(mount.get("name"))
+                and any(path_is_under(path, str(mount.get("mountPath") or "")) for path in grpc_paths)
+            }
+            bridge_mounts = [
+                mount
+                for mount in container.get("volumeMounts") or []
+                if isinstance(mount, dict)
+                and mount.get("mountPath") == "/tls"
+                and mount.get("readOnly") is True
+                and volumes.get(mount.get("name"))
+                and volumes.get(mount.get("name")) not in grpc_secret_names
+            ]
+            if len(bridge_mounts) != 1:
+                issues.append(
+                    "exactly one dedicated read-only Secret-backed /tls mount is required for the Gateway WebSocket bridge"
+                )
+            value = env.get("GATEWAY_WS_URL")
+            if not value:
+                issues.append("GATEWAY_WS_URL is not explicitly configured")
+                continue
+            try:
+                parsed = urlsplit(value)
+                parsed_host = parsed.hostname
+            except ValueError:
+                issues.append(f"GATEWAY_WS_URL {value!r} is malformed")
+                continue
+            try:
+                parsed_port = parsed.port
+            except ValueError:
+                parsed_port = None
+                issues.append(f"GATEWAY_WS_URL {value!r} has an invalid port")
+            if (
+                parsed.scheme != "wss"
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed_host != canonical_host
+                or str(parsed_port or 443) != canonical_port
+                or parsed.path != "/ws/game"
+                or parsed.query
+                or parsed.fragment
+            ):
+                issues.append(f"GATEWAY_WS_URL {value!r} does not match canonical {canonical_host}:{canonical_port}/ws/game")
+                continue
+            values.append(value)
+    if not values:
+        issues.append("no valid effective GATEWAY_WS_URL values were found")
+    elif len(set(values)) != 1:
+        issues.append("effective GATEWAY_WS_URL values conflict across workloads")
+    return values, issues
 
 
 def primary_containers(document: dict[str, Any]) -> list[tuple[str | None, dict[str, Any], dict[str, str | None]]]:
@@ -2390,6 +2671,15 @@ def expected_binding_checks(
             ]
             if error
         ]
+        if (
+            custody_mode == IMPLEMENTED_JWT_CUSTODY_MODE
+            and get(data, "internalBindings.jwt.jwksRef") != LEGACY_PLAYER_JWKS_REF
+        ):
+            invalid_internal_refs.append(
+                "internalBindings.jwt.jwksRef must be exactly "
+                + LEGACY_PLAYER_JWKS_REF
+                + " for the current legacy player-facing contract"
+            )
         missing_rendered_refs = []
         for ref_value in secret_refs:
             name = secret_binding_name(ref_value)
@@ -2686,15 +2976,15 @@ def expected_binding_checks(
             )
 
     mode = get(data, "serviceDiscovery.mode")
-    rendered_text = yaml.safe_dump_all(documents, sort_keys=False)
-    override_lines = extract_service_discovery_overrides(rendered_text)
-    if mode == "kubernetes-dns-default" and override_lines:
+    override_lines, override_issues = extract_service_discovery_overrides(documents)
+    if mode == "kubernetes-dns-default" and (override_lines or override_issues):
         results.append(
             CheckResult(
                 "PREFLIGHT-SERVICES-001",
                 True,
                 "fail",
-                "Rendered manifests contain FIREMUD_SERVICES_* overrides while expected bindings require Kubernetes DNS defaults",
+                "Effective workloads contain service-discovery overrides or unresolved sources: "
+                + "; ".join(override_issues or sorted(override_lines)),
             )
         )
     elif mode == "explicit-overrides":
@@ -2710,6 +3000,22 @@ def expected_binding_checks(
             )
         else:
             failures: list[str] = []
+            for override_name, expected_value in allowed.items():
+                if not isinstance(override_name, str) or not re.fullmatch(
+                    r"FIREMUD_SERVICES_[A-Z0-9_]+", str(override_name)
+                ):
+                    failures.append(
+                        "serviceDiscovery.allowedOverrides keys must match "
+                        "FIREMUD_SERVICES_[A-Z0-9_]+"
+                    )
+                elif not isinstance(expected_value, str):
+                    failures.append(
+                        f"serviceDiscovery.allowedOverrides[{override_name}] must be a string"
+                    )
+                elif override_name not in override_lines:
+                    failures.append(
+                        f"Allowed override {override_name} is missing from effective workloads"
+                    )
             for override_name, rendered_value in sorted(override_lines.items()):
                 if override_name not in allowed:
                     failures.append(
@@ -2724,6 +3030,7 @@ def expected_binding_checks(
                     failures.append(
                         f"Rendered {override_name}='{rendered_value}' does not match allowed value '{expected_value}'"
                     )
+            failures.extend(override_issues)
             if failures:
                 results.append(
                     CheckResult(
@@ -2732,15 +3039,6 @@ def expected_binding_checks(
                         "fail",
                         "Explicit service-discovery override values do not match expected contract: "
                         + "; ".join(failures),
-                    )
-                )
-            elif not override_lines:
-                results.append(
-                    CheckResult(
-                        "PREFLIGHT-SERVICES-001",
-                        True,
-                        "fail",
-                        "No FIREMUD_SERVICES_* overrides were rendered for explicit-overrides mode",
                     )
                 )
             else:
@@ -3878,32 +4176,19 @@ def main() -> int:
                 check.policy_id, check.required, check.status, check.message,
             ) or has_required_failure
 
-    gw_value = None
-    for document in documents:
-        for _, container, _ in primary_containers(document):
-            value = env_value(container, "GATEWAY_WS_URL")
-            if value:
-                gw_value = value
-                break
-        if gw_value:
-            break
-    if not gw_value:
-        has_required_failure = append_result(check_results, "PREFLIGHT-BRIDGE-001", True, "fail", "GATEWAY_WS_URL is not explicitly configured") or has_required_failure
-    elif not gw_value.startswith("wss://"):
-        has_required_failure = append_result(check_results, "PREFLIGHT-BRIDGE-001", True, "fail", "GATEWAY_WS_URL must use wss:// in player-facing environments") or has_required_failure
-    elif "spring-cloud-gateway-mtls" not in gw_value:
-        has_required_failure = append_result(check_results, "PREFLIGHT-BRIDGE-001", True, "fail", "GATEWAY_WS_URL does not target the internal gateway mTLS listener") or has_required_failure
+    _, bridge_issues = validate_gateway_ws_values(documents, expected_bindings)
+    if bridge_issues:
+        has_required_failure = append_result(
+            check_results, "PREFLIGHT-BRIDGE-001", True, "fail", "Gateway bridge validation failed: " + "; ".join(bridge_issues)
+        ) or has_required_failure
     else:
         has_required_failure = append_result(check_results, "PREFLIGHT-BRIDGE-001", True, "pass", "Gateway bridge alignment is valid") or has_required_failure
 
-    coord_host = config_value(documents, "FIREMUD_REDIS_COORD_HOST")
-    coord_port = config_value(documents, "FIREMUD_REDIS_COORD_PORT")
-    cache_host = config_value(documents, "FIREMUD_REDIS_CACHE_HOST")
-    cache_port = config_value(documents, "FIREMUD_REDIS_CACHE_PORT")
-    if not coord_host or not cache_host:
-        has_required_failure = append_result(check_results, "PREFLIGHT-REDIS-001", True, "fail", "Could not resolve both Coordination and Cache Redis endpoints") or has_required_failure
-    elif f"{coord_host}:{coord_port}" == f"{cache_host}:{cache_port}":
-        has_required_failure = append_result(check_results, "PREFLIGHT-REDIS-001", True, "fail", "Coordination and Cache Redis endpoints resolve to the same host:port") or has_required_failure
+    _, redis_issues = effective_redis_endpoints(documents, expected_bindings)
+    if redis_issues:
+        has_required_failure = append_result(
+            check_results, "PREFLIGHT-REDIS-001", True, "fail", "Redis effective configuration validation failed: " + "; ".join(redis_issues)
+        ) or has_required_failure
     else:
         has_required_failure = append_result(check_results, "PREFLIGHT-REDIS-001", True, "pass", "Redis role split contract is satisfied") or has_required_failure
 

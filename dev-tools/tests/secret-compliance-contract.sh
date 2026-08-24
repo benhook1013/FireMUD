@@ -23,6 +23,57 @@ BOOTSTRAP_BINDING_OUTPUT="$TMP_DIR/bootstrap-binding.out"
 ASSET_MISSING_CLASS_OUTPUT="$TMP_DIR/asset-missing-class.out"
 ASSET_INVALID_EVIDENCE_OUTPUT="$TMP_DIR/asset-invalid-evidence.out"
 BACKUP_MISSING_CLASS_OUTPUT="$TMP_DIR/backup-missing-class.out"
+INVALID_MAX_AGE_OUTPUT="$TMP_DIR/invalid-max-age.out"
+
+python3 - "$VALIDATOR" <<'PY'
+import importlib.util
+import pathlib
+import sys
+
+module_path = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("validate_secret_compliance", module_path)
+if spec is None or spec.loader is None:
+    raise SystemExit("could not load secret-compliance validator")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+if module.schema_issue_environment("staging: malformed record") != "staging":
+    raise SystemExit("known schema environment prefix was not recognized")
+for message in ("malformed record", "unknown: malformed record"):
+    if module.schema_issue_environment(message) is not None:
+        raise SystemExit(f"unknown schema prefix was treated as authoritative: {message}")
+
+failures = []
+warnings = []
+non_authorizing = []
+module.record_schema_issue_outcome(
+    "staging: malformed record", "advisory", failures, warnings, non_authorizing
+)
+if failures or warnings != ["staging: malformed record"] or non_authorizing != ["staging"]:
+    raise SystemExit("known-prefix advisory schema issue did not fail closed correctly")
+
+failures = []
+warnings = []
+non_authorizing = []
+module.record_schema_issue_outcome(
+    "unknown: malformed record", "advisory", failures, warnings, non_authorizing
+)
+if (
+    len(failures) != 1
+    or not failures[0].startswith("Internal validator error: schema issue lacks a known environment prefix:")
+    or warnings
+    or non_authorizing
+):
+    raise SystemExit("unknown-prefix advisory schema issue did not fail closed")
+
+failures = []
+warnings = []
+non_authorizing = []
+module.record_schema_issue_outcome(
+    "staging: malformed record", "strict", failures, warnings, non_authorizing
+)
+if failures != ["staging: malformed record"] or warnings or non_authorizing:
+    raise SystemExit("strict schema issue collection changed unexpectedly")
+PY
 
 mkdir -p "$TMP_DIR/design/operations/secret-compliance/evidence"
 
@@ -411,6 +462,39 @@ if SECRET_COMPLIANCE_ROOT="$TMP_DIR" \
   exit 1
 fi
 grep -q "timestamp must include an explicit timezone" "$INVALID_OUTPUT"
+
+for invalid_max_age in "not-a-number" 0 -1 1.5 true; do
+  write_evidence_fixture
+  write_compliance_file production lastRotationAt
+  python3 - "$TMP_DIR/design/operations/secret-compliance/production.yaml" "$invalid_max_age" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+raw_value = sys.argv[2]
+if raw_value == "true":
+    value = True
+elif raw_value in {"0", "-1"}:
+    value = int(raw_value)
+elif raw_value == "1.5":
+    value = 1.5
+else:
+    value = raw_value
+record = json.loads(path.read_text(encoding="utf-8"))
+record["credentialClasses"]["operator-credentials"]["maxAgeDays"] = value
+path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+PY
+  if SECRET_COMPLIANCE_ROOT="$TMP_DIR" \
+    SECRET_COMPLIANCE_TODAY=2026-04-24T00:00:00Z \
+    SECRET_COMPLIANCE_ENFORCEMENT_MODE=strict \
+    python3 "$VALIDATOR" >"$INVALID_MAX_AGE_OUTPUT" 2>&1; then
+    echo "secret compliance validator accepted invalid maxAgeDays: $invalid_max_age" >&2
+    exit 1
+  fi
+  grep -q "operator-credentials: maxAgeDays must be a positive integer" \
+    "$INVALID_MAX_AGE_OUTPUT"
+done
 
 write_evidence_fixture
 write_compliance_file production lastRotationAt

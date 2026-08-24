@@ -293,6 +293,15 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertFalse(platform["tenant_billing_authority_generation_applies"])
         self.assertFalse(platform["membership_authority_generation_applies"])
         self.assertNotIn("target_tenant_generation", platform["required_live_checks"])
+        self.assertEqual(
+            [
+                "tenant_scope",
+                "tenant_id",
+                "target_tenant_generation",
+                "membership_version_when_applicable",
+            ],
+            platform["forbidden_fields"],
+        )
 
     def test_moderation_action_routes_require_exact_branch_cardinality(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -441,6 +450,22 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     "target_tenant_generation"
                 ),
                 "platform_access_ban branch must forbid tenant identity/scope/generation fields",
+            ),
+            (
+                "platform membership evidence",
+                "platform_access_ban",
+                lambda route: route["required_fields"].append(
+                    "membership_version_when_applicable"
+                ),
+                "platform_access_ban branch must forbid tenant identity/scope/generation fields",
+            ),
+            (
+                "platform forbidden membership evidence declaration",
+                "platform_access_ban",
+                lambda route: route["forbidden_fields"].remove(
+                    "membership_version_when_applicable"
+                ),
+                "platform_access_ban forbidden_fields must exactly match",
             ),
         )
         for mutation_name, action_category, mutate, expected_error in mutations:
@@ -997,6 +1022,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     }
                     self.assertEqual(expected, branches)
 
+            tenant_branch = route["conditional_branches"]["tenant_restriction"]
             platform_admin_branch = next(
                 branch
                 for branch in tenant_branch["operator_authorization_branches"]
@@ -2795,7 +2821,12 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             platform["forbidden_live_checks"],
         )
         self.assertEqual(
-            ["tenant_scope", "tenant_id", "target_tenant_generation"],
+            [
+                "tenant_scope",
+                "tenant_id",
+                "target_tenant_generation",
+                "membership_version_when_applicable",
+            ],
             platform["forbidden_fields"],
         )
 
@@ -2827,6 +2858,13 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     "required_live_checks"
                 ].append("target_tenant_generation"),
                 "conditional_branches.platform_access_ban.required_live_checks must equal",
+            ),
+            (
+                "platform membership evidence",
+                lambda route: route["conditional_branches"]["platform_access_ban"][
+                    "forbidden_fields"
+                ].remove("membership_version_when_applicable"),
+                "conditional_branches.platform_access_ban.forbidden_fields must equal",
             ),
             (
                 "missing platform branch",

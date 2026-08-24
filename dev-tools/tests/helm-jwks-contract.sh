@@ -36,6 +36,14 @@ jwks_matches = [
     if document.get("kind") == "ConfigMap"
     and document.get("metadata", {}).get("name") == "jwt-jwks"
 ]
+legacy_secret_matches = [
+    document
+    for document in documents
+    if document.get("kind") == "Secret"
+    and document.get("metadata", {}).get("name") == "jwt-jwks"
+]
+if legacy_secret_matches:
+    raise SystemExit("rendered Helm chart still contains the legacy jwt-jwks Secret")
 if len(jwks_matches) != 1:
     raise SystemExit(
         "rendered YAML must contain exactly one jwt-jwks ConfigMap, "
@@ -76,6 +84,18 @@ if jwks_volume is None:
     )
 if jwks_volume.get("configMap", {}).get("name") != "jwt-jwks":
     raise SystemExit(f"Account jwt-jwks volume is not ConfigMap-backed: {jwks_volume}")
+
+for document in documents:
+    if document.get("kind") != "Deployment":
+        continue
+    workload_pod_spec = document.get("spec", {}).get("template", {}).get("spec", {})
+    for volume in workload_pod_spec.get("volumes", []):
+        if isinstance(volume, dict) and volume.get("name") == "jwt-jwks":
+            if volume.get("configMap", {}).get("name") != "jwt-jwks":
+                raise SystemExit(
+                    "workload jwt-jwks volume is not ConfigMap-backed: "
+                    f"{document.get('metadata', {}).get('name')}: {volume}"
+                )
 
 account_container = next(
     (
