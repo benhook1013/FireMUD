@@ -2788,6 +2788,110 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors,
         )
 
+    def test_automation_operator_issuance_is_non_moderation_only_until_published(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(
+            baseline,
+            "account-service",
+            "IssueAutomationOperatorAuthorizationReference",
+        )
+        self.assertEqual("target_not_currently_routable", route["route_status"])
+        self.assertEqual("non_moderation_only", route["branch_selector"])
+        self.assertEqual("absent_only", route["action_category_policy"])
+        mapping = route["action_family_schema_mapping"]
+        self.assertEqual(
+            ["action_family", "action_family_schema_id", "action_family_schema_version"],
+            mapping["selector_fields"],
+        )
+        self.assertEqual([], mapping["entries"])
+        self.assertEqual(
+            "no_published_action_family_schema_pairs", mapping["entries_status"]
+        )
+        self.assertEqual(
+            "reject_before_issuance", mapping["rejections"]["moderation"]
+        )
+        self.assertEqual(
+            "correlation_only",
+            route["moderation_identity_policy"]["control_plane_request_id"],
+        )
+
+        mutations = (
+            (
+                "branch selector allows moderation",
+                lambda target: target.__setitem__("branch_selector", "any_action"),
+                "branch_selector must be 'non_moderation_only'",
+            ),
+            (
+                "action category is not absent-only",
+                lambda target: target.__setitem__("action_category_policy", "optional"),
+                "action_category_policy must be 'absent_only'",
+            ),
+            (
+                "moderation mapping is allowed",
+                lambda target: target["action_family_schema_mapping"]["rejections"]
+                .__setitem__("moderation", "allow"),
+                "action_family_schema_mapping.rejections must equal",
+            ),
+            (
+                "concrete schema pair is published",
+                lambda target: target["action_family_schema_mapping"]["entries"].append(
+                    {
+                        "action_family": "moderation",
+                        "action_family_schema_id": "moderation-schema",
+                        "action_family_schema_version": "v1",
+                    }
+                ),
+                "action_family_schema_mapping.entries must remain empty",
+            ),
+        )
+        for mutation_name, mutate, expected_error in mutations:
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                mutate(
+                    route_for(
+                        document,
+                        "account-service",
+                        "IssueAutomationOperatorAuthorizationReference",
+                    )
+                )
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(expected_error in error for error in errors),
+                    (mutation_name, errors),
+                )
+
+    def test_moderation_action_variants_require_operator_authorization_and_assurance(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        for action_category in ("tenant_restriction", "platform_access_ban"):
+            for field in ("current_operator_authorization", "role_assurance"):
+                with self.subTest(action_category=action_category, field=field):
+                    document = copy.deepcopy(baseline)
+                    route = next(
+                        route
+                        for route in document["routes"]
+                        if route.get("service") == "logging-admin-service"
+                        and route.get("route") == "POST /moderation/actions"
+                        and route.get("applicability", {}).get("action_category")
+                        == action_category
+                    )
+                    if field == "current_operator_authorization":
+                        route["required_live_checks"].remove(field)
+                    else:
+                        route.pop(field)
+                    errors = []
+                    self.validator.validate_moderation_action_route_variants(
+                        document["routes"], errors
+                    )
+                    expected = (
+                        "must require live check current_operator_authorization"
+                        if field == "current_operator_authorization"
+                        else "must declare role_assurance privileged_control_when_global_role"
+                    )
+                    self.assertTrue(
+                        any(expected in error for error in errors),
+                        (action_category, field, errors),
+                    )
+
     def test_human_operator_issuance_scopes_fields_by_action_branch(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = route_for(

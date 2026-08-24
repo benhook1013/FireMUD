@@ -573,11 +573,38 @@ OPERATOR_REFERENCE_ISSUANCE_REQUIRED_FIELDS = {
         "mutation_digest",
     },
 }
+AUTOMATION_OPERATOR_ISSUANCE_ROUTE_STATUS = "target_not_currently_routable"
+AUTOMATION_OPERATOR_ISSUANCE_SCHEMA_SELECTOR_FIELDS = [
+    "action_family",
+    "action_family_schema_id",
+    "action_family_schema_version",
+]
+AUTOMATION_OPERATOR_ISSUANCE_SCHEMA_MAPPING_REJECTIONS = {
+    "unknown": "reject_before_issuance",
+    "duplicate": "reject_before_issuance",
+    "ambiguous": "reject_before_issuance",
+    "mismatched": "reject_before_issuance",
+    "moderation": "reject_before_issuance",
+}
+AUTOMATION_OPERATOR_ISSUANCE_MODERATION_IDENTITY_POLICY = {
+    "status": "rejected_before_issuance",
+    "request_identity": "dedicated_moderation_identity_required",
+    "digest": "dedicated_moderation_digest_required",
+    "control_plane_request_id": "correlation_only",
+}
 HUMAN_OPERATOR_ISSUANCE_COMMON_REQUIRED_FIELDS = {
     "action_family",
     "action_family_schema_id",
     "action_family_schema_version",
 }
+# Keep the tuple order aligned with the machine-readable branch-field contract.
+# The set-shaped contracts below derive from this canonical ordered collection.
+PLATFORM_ACCESS_BAN_FORBIDDEN_FIELDS = (
+    "tenant_scope",
+    "tenant_id",
+    "target_tenant_generation",
+    "membership_version_when_applicable",
+)
 HUMAN_OPERATOR_ISSUANCE_BRANCHES = {
     "non_moderation": {
         "selector": "action_category=absent",
@@ -632,12 +659,7 @@ HUMAN_OPERATOR_ISSUANCE_BRANCHES = {
         },
         "required_fields": HUMAN_OPERATOR_ISSUANCE_COMMON_REQUIRED_FIELDS
         | {"target_account_id"},
-        "forbidden_fields": {
-            "tenant_scope",
-            "tenant_id",
-            "target_tenant_generation",
-            "membership_version_when_applicable",
-        },
+        "forbidden_fields": set(PLATFORM_ACCESS_BAN_FORBIDDEN_FIELDS),
     },
 }
 HUMAN_OPERATOR_ISSUANCE_SHARED_BRANCH_FIELDS = {
@@ -652,12 +674,7 @@ HUMAN_OPERATOR_ISSUANCE_SHARED_BRANCH_FIELDS = {
     },
     "platform_access_ban": {
         "required": ["target_account_id"],
-        "forbidden": [
-            "tenant_scope",
-            "tenant_id",
-            "target_tenant_generation",
-            "membership_version_when_applicable",
-        ],
+        "forbidden": list(PLATFORM_ACCESS_BAN_FORBIDDEN_FIELDS),
     },
 }
 OPERATOR_ISSUANCE_MODERATION_IDENTITY_KEYS = {
@@ -783,12 +800,9 @@ MODERATION_ACTION_IDEMPOTENCY_CONTRACT = {
     "control_plane_request_id": "correlation_only",
     "owner_enforcement_request_id": "distinct_future_owner_command_identity",
 }
-MODERATION_PLATFORM_FORBIDDEN_ROUTE_FIELDS = {
-    "tenant_id",
-    "tenant_scope",
-    "target_tenant_generation",
-    "membership_version_when_applicable",
-}
+MODERATION_PLATFORM_FORBIDDEN_ROUTE_FIELDS = set(
+    PLATFORM_ACCESS_BAN_FORBIDDEN_FIELDS
+)
 MODERATION_POLICY_INTENT_COVERAGE_IDENTITY = (
     "moderation-policy-intent-local-redemption"
 )
@@ -3289,6 +3303,80 @@ def validate_operator_reference_issuance(
             )
 
 
+def validate_automation_operator_issuance(
+    routes: list[Any],
+    errors: list[str],
+    cardinality_errors: set[str] | None = None,
+) -> None:
+    route = resolve_unique_route(
+        routes,
+        "account-service",
+        "IssueAutomationOperatorAuthorizationReference",
+        errors,
+        cardinality_errors,
+    )
+    if route is None:
+        return
+    label = route_label(route)
+    if route.get("route_status") != AUTOMATION_OPERATOR_ISSUANCE_ROUTE_STATUS:
+        errors.append(
+            f"{label} route_status must remain "
+            f"{AUTOMATION_OPERATOR_ISSUANCE_ROUTE_STATUS!r} until a published "
+            "non_moderation action-family schema pair exists"
+        )
+    if route.get("branch_selector") != "non_moderation_only":
+        errors.append(f"{label} branch_selector must be 'non_moderation_only'")
+    if route.get("action_category_policy") != "absent_only":
+        errors.append(f"{label} action_category_policy must be 'absent_only'")
+
+    mapping_label = f"{label} action_family_schema_mapping"
+    mapping = route.get("action_family_schema_mapping")
+    if not isinstance(mapping, dict):
+        errors.append(f"{mapping_label} must be a mapping")
+        return
+    expected_mapping_fields = {
+        "selector_fields",
+        "entries",
+        "entries_status",
+        "rejections",
+    }
+    if set(mapping) != expected_mapping_fields:
+        errors.append(
+            f"{mapping_label} must contain exactly "
+            f"{sorted(expected_mapping_fields)}"
+        )
+    if mapping.get("selector_fields") != AUTOMATION_OPERATOR_ISSUANCE_SCHEMA_SELECTOR_FIELDS:
+        errors.append(
+            f"{mapping_label}.selector_fields must equal "
+            f"{AUTOMATION_OPERATOR_ISSUANCE_SCHEMA_SELECTOR_FIELDS!r}"
+        )
+    entries = mapping.get("entries")
+    if not isinstance(entries, list):
+        errors.append(f"{mapping_label}.entries must be a list")
+    elif entries:
+        errors.append(
+            f"{mapping_label}.entries must remain empty while no action-family "
+            "schema pairs are published"
+        )
+    if mapping.get("entries_status") != "no_published_action_family_schema_pairs":
+        errors.append(
+            f"{mapping_label}.entries_status must be "
+            "'no_published_action_family_schema_pairs' while entries are empty"
+        )
+    if mapping.get("rejections") != AUTOMATION_OPERATOR_ISSUANCE_SCHEMA_MAPPING_REJECTIONS:
+        errors.append(
+            f"{mapping_label}.rejections must equal "
+            f"{AUTOMATION_OPERATOR_ISSUANCE_SCHEMA_MAPPING_REJECTIONS!r}"
+        )
+
+    moderation_label = f"{label} moderation_identity_policy"
+    if route.get("moderation_identity_policy") != AUTOMATION_OPERATOR_ISSUANCE_MODERATION_IDENTITY_POLICY:
+        errors.append(
+            f"{moderation_label} must require dedicated moderation identity and "
+            "digest while treating control_plane_request_id as correlation-only"
+        )
+
+
 def validate_human_operator_issuance_branches(
     routes: list[Any],
     errors: list[str],
@@ -4057,6 +4145,20 @@ def validate_moderation_action_variant_contract(
                     errors,
                     f"{label} idempotency_contract.{field} must be {expected!r}",
                 )
+
+    checks = route_live_checks(route, label, errors, live_checks_cache)
+    if "current_operator_authorization" not in checks:
+        append_unique_error(
+            errors,
+            f"{label} moderation action branch must require live check "
+            "current_operator_authorization",
+        )
+    if route.get("role_assurance") != PRIVILEGED_OPERATOR_ROLE_ASSURANCE:
+        append_unique_error(
+            errors,
+            f"{label} moderation action branch must declare role_assurance "
+            f"{PRIVILEGED_OPERATOR_ROLE_ASSURANCE}",
+        )
 
     if action_category != MODERATION_PLATFORM_ACTION_CATEGORY:
         return
@@ -5544,6 +5646,7 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
         required_fields_cache,
         cardinality_errors,
     )
+    validate_automation_operator_issuance(routes, errors, cardinality_errors)
     validate_human_operator_issuance_branches(
         routes,
         errors,

@@ -650,6 +650,23 @@ operator_delegation:
             forbidden: [tenant_scope, tenant_id, target_tenant_generation, membership_version_when_applicable]
     unattended_automation:
       auth_path: exact_mtls_workload_plus_versioned_automation_policy
+      branch_selector: non_moderation_only
+      action_category_policy: absent_only
+      action_family_schema_mapping:
+        selector_fields: [action_family, action_family_schema_id, action_family_schema_version]
+        entries: []
+        entries_status: no_published_action_family_schema_pairs
+        rejections:
+          unknown: reject_before_issuance
+          duplicate: reject_before_issuance
+          ambiguous: reject_before_issuance
+          mismatched: reject_before_issuance
+          moderation: reject_before_issuance
+      moderation_identity_policy:
+        status: rejected_before_issuance
+        request_identity: dedicated_moderation_identity_required
+        digest: dedicated_moderation_digest_required
+        control_plane_request_id: correlation_only
       bindings:
         [workload_identity, automation_policy_id, automation_policy_version, tenant_scope, action_family, action_family_schema_id, action_family_schema_version, mutation_digest, membership_version_when_applicable, issuance_fence, authority_evidence_bundle, control_plane_request_id, issued_at, expires_at]
       user_impersonation_forbidden: true
@@ -1647,6 +1664,23 @@ routes:
     end_user_token_required: false
     required_live_checks: [current_automation_policy, workload_action_scope, tenant_generation]
     required_fields: [automation_policy_id, automation_policy_version, tenant_scope, action_family, action_family_schema_id, action_family_schema_version, control_plane_request_id, mutation_digest]
+    branch_selector: non_moderation_only
+    action_category_policy: absent_only
+    action_family_schema_mapping:
+      selector_fields: [action_family, action_family_schema_id, action_family_schema_version]
+      entries: []
+      entries_status: no_published_action_family_schema_pairs
+      rejections:
+        unknown: reject_before_issuance
+        duplicate: reject_before_issuance
+        ambiguous: reject_before_issuance
+        mismatched: reject_before_issuance
+        moderation: reject_before_issuance
+    moderation_identity_policy:
+      status: rejected_before_issuance
+      request_identity: dedicated_moderation_identity_required
+      digest: dedicated_moderation_digest_required
+      control_plane_request_id: correlation_only
     automation_tenant_generation_binding: current_tenant_generation
     automation_privileged_control: prohibited
     mutation_contract: create_bounded_workload_operator_authorization_reference

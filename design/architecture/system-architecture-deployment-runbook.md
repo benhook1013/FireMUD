@@ -23,6 +23,10 @@ This runbook describes the required deployment flow. Current automation is execu
 
 Operators must treat missing real-environment evidence as a blocker even when static preflight policy IDs are present. A successful static report without the required traffic-open, restore, release-manifest, and secret-compliance evidence is not enough to open player-facing traffic.
 
+### Quarantined Apply Versus Player-Facing Authorization
+
+An apply may proceed for isolated repair, investigation, or a quarantined drill when the environment remains fenced from player traffic and no promotion, first-live, reopen, or fresh-boundary restore claim is being made. This operational apply boundary does not waive any required evidence or convert advisory/legacy diagnostics into authorization. Promotion, first-live, reopen-after-restore, and fresh-boundary restore remain closed until their applicable non-waivable preflight, recovery, custody, secret-compliance, and binding evidence passes; only the owner-defined finalized recovery-controller state may release player-facing exposure.
+
 ## Environment Bootstrap (First Deployment Only)
 
 Before the first player-facing deployment into `hobby-self-hosted`, `staging`, or `production`, operators must complete a bootstrap step that creates the minimum environment trust and secret set before any workload apply:

@@ -4392,16 +4392,16 @@ def make_bootstrap_secret_evidence():
     }
 
 
-def write_secret_evidence(evidence):
+def write_secret_evidence(evidence, staging_record=None, staging_record_path=None):
     secret_evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
     evidence_ref = (
         str(secret_evidence_path.relative_to(promotion_root))
         + "#"
         + module.canonical_evidence_digest(evidence)
     )
-    if "staging_record" in globals():
+    if staging_record is not None:
         staging_record["secretComplianceEvidenceRef"] = evidence_ref
-        if "staging_record_path" in globals():
+        if staging_record_path is not None:
             staging_record_path.write_text(json.dumps(staging_record), encoding="utf-8")
     return evidence_ref
 
@@ -4555,7 +4555,11 @@ if (
 # Bootstrap evidence is independently authorized by the matching operation ID
 # and provisioning generation, but it coexists with the required event-scoped
 # JWT rotation evidence for a promotion candidate.
-write_secret_evidence(make_bootstrap_secret_evidence())
+write_secret_evidence(
+    make_bootstrap_secret_evidence(),
+    staging_record=staging_record,
+    staging_record_path=staging_record_path,
+)
 original_attestation_bytes = promotion_attestation_path.read_bytes()
 original_record_bytes = staging_record_path.read_bytes()
 original_preflight_bytes = staging_preflight_path.read_bytes()
@@ -4637,7 +4641,11 @@ bootstrap_mismatch["records"]["operator-credentials"]["provisioningGeneration"] 
 bootstrap_mismatch["records"]["operator-credentials"]["immutableArtifactId"] = evidence_digest(
     bootstrap_mismatch["records"]["operator-credentials"]
 )
-write_secret_evidence(bootstrap_mismatch)
+write_secret_evidence(
+    bootstrap_mismatch,
+    staging_record=staging_record,
+    staging_record_path=staging_record_path,
+)
 bootstrap_mismatch_status, _, bootstrap_mismatch_message, _, _ = module.promotion_check(
     promotion_attestation_path,
     [gateway_image, account_image],
@@ -4656,7 +4664,11 @@ promotion_attestation_path.write_bytes(original_attestation_bytes)
 staging_record_path.write_bytes(original_record_bytes)
 staging_preflight_path.write_bytes(original_preflight_bytes)
 staging_record = json.loads(original_record_bytes)
-write_secret_evidence(make_secret_evidence())
+write_secret_evidence(
+    make_secret_evidence(),
+    staging_record=staging_record,
+    staging_record_path=staging_record_path,
+)
 
 base_attestation = json.loads(promotion_attestation_path.read_text(encoding="utf-8"))
 base_preflight_report = json.loads(staging_preflight_path.read_text(encoding="utf-8"))
@@ -4726,7 +4738,11 @@ verify_jwt_lineage_failure(
 )
 original_expected_bindings_bytes = staging_expected_bindings.read_bytes()
 promotion_attestation_path.write_bytes(original_attestation_bytes)
-write_secret_evidence(make_secret_evidence())
+write_secret_evidence(
+    make_secret_evidence(),
+    staging_record=staging_record,
+    staging_record_path=staging_record_path,
+)
 staging_record_path.write_text(json.dumps(staging_record), encoding="utf-8")
 staging_preflight_path.write_bytes(original_preflight_bytes)
 staging_expected_bindings.write_bytes(original_expected_bindings_bytes + b"\n# changed bytes\n")
@@ -5012,7 +5028,11 @@ staging_record_path.write_text(json.dumps(staging_record), encoding="utf-8")
 
 malformed_secret_evidence = json.loads(secret_evidence_path.read_text(encoding="utf-8"))
 malformed_secret_evidence["records"]["operator-credentials"]["immutableArtifactId"] = {"note": "sha256:"}
-write_secret_evidence(malformed_secret_evidence)
+write_secret_evidence(
+    malformed_secret_evidence,
+    staging_record=staging_record,
+    staging_record_path=staging_record_path,
+)
 malformed_immutable_status, _, malformed_immutable_message, _, _ = module.promotion_check(
     promotion_attestation_path,
     [gateway_image, account_image],
@@ -5021,7 +5041,11 @@ malformed_immutable_status, _, malformed_immutable_message, _, _ = module.promot
 )
 if malformed_immutable_status != "fail" or "not immutable" not in malformed_immutable_message:
     raise SystemExit(f"malformed immutable evidence identifier was accepted: {malformed_immutable_message}")
-write_secret_evidence(make_secret_evidence())
+write_secret_evidence(
+    make_secret_evidence(),
+    staging_record=staging_record,
+    staging_record_path=staging_record_path,
+)
 
 bad_git_attestation = json.loads(promotion_attestation_path.read_text(encoding="utf-8"))
 bad_git_attestation["stagingOverlayCommitSha"] = "d" * 40

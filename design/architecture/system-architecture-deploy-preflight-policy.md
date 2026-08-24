@@ -113,6 +113,8 @@ The policy catalogue owns the binding-type shareability matrix. Production Postg
 | `production` | Yes | Yes | Both gates mandatory before apply. |
 | `hobby-self-hosted` | Optional (recommended) | Yes | Operator preflight is mandatory; CI may be unavailable in single-operator setups. |
 
+`pr-preview` and `dev-demo-cluster` are non-player-facing hosted Helm environments and are outside the `preflight.py` applicability table. Their workflow validation is the rendered Helm chart plus Kubernetes server dry-run; the separate `helm-jwks-contract.sh` test covers preview JWKS resource and Account-mount wiring. These checks are diagnostic hosted-environment proof and do not produce player-facing preflight evidence, expected-bindings reports, promotion authority, or traffic-open authorization.
+
 ## Required Policy Checks
 
 Every run must emit one result per implemented policy ID below, with status `pass`, `fail`, or `not_applicable` (with reason). Entries marked target-state-only are not emitted until their executable checks and contract proof land:
@@ -364,7 +366,7 @@ For `ci-static` runs, `expectedBindingsRef` should point to the same repository 
 
 For a protected player-facing deployment, production promotion or production attestation, first-live or reopen traffic-open event, or fresh-boundary restore, the consuming deployment, promotion, attestation, or recovery record must preserve the exact `jwtCustodyProof` tuple for retries and replay. A retry may consume only a proof with the same `proofId`, `custodyMode`, and `contractVersion`; it must not reselect a mode or treat a legacy diagnostic result as the selected proof. Ordinary non-player reports remain outside this custody-proof requirement and cannot be promoted into protected player-facing evidence.
 
-Illustrative `ci-static` report shape:
+Illustrative abbreviated `ci-static` report shape (non-consumable; omitted policy results and fields are represented by the placeholders below):
 
 ```json
 {
@@ -372,7 +374,7 @@ Illustrative `ci-static` report shape:
   "deploymentRef": {
     "overlayCommitSha": "abc123def456"
   },
-  "deploymentEventId": "9db17a4b-8271-4e81-82f4-b8b1c724b06a",
+  "deploymentEventId": "<illustrative-deployment-event-uuid>",
   "trafficOpenEvent": null,
   "checkResults": [
     {
@@ -384,8 +386,8 @@ Illustrative `ci-static` report shape:
     }
   ],
   "expectedBindingsRef": "design/operations/environments/staging/expected-bindings.yaml",
-  "expectedBindingsDigest": "sha256:...",
-  "policyCatalogVersion": "<policy-catalogue-version>",
+  "expectedBindingsDigest": "<illustrative-expected-bindings-digest>",
+  "policyCatalogVersion": "<illustrative-policy-catalogue-version>",
   "phase": "static-ci",
   "startedAt": "2026-03-13T08:00:00Z",
   "completedAt": "2026-03-13T08:00:03Z",
