@@ -24,8 +24,8 @@ Before applying the detailed checklists below, follow this high‑level workflow
      - Ensure any new or changed prefixes appear in the **Redis Cheat Sheet** (`system-architecture-redis-cheatsheet.md`) as a routed, documented example.
      - Ensure the owning service README Redis sections mirror any authority split or bridge contract introduced here (for example `session:game:*` vs `tick:{tenantRegionTag}:session-binding:<entityId>`, `binding_generation`, or automation enqueue identities such as `automationDispatchId`).
    - For **cache/rate‑limit prefixes**:
-     - Update the cache key catalog in `system-architecture-redis-cache.md` (prefix, role, owner, correctness class, reset tolerance).
-     - Ensure the cheat sheet remains consistent with the cache catalog for any representative entries it lists.
+     - Update the [Cache/Rate-Limit Key Catalog](./system-architecture-redis-cache-reference.md#cacherate-limit-key-catalog) (prefix, role, owner, correctness class, reset tolerance); use `system-architecture-redis-cache.md` for cache policy.
+     - Ensure the cheat sheet remains consistent with the cache reference catalog for any representative entries it lists.
 3. **Update service‑specific docs and shared libraries**
    - Document prefix ownership, reset behavior, and Redis role (Coordination vs Cache/Rate‑Limit) in the relevant service README(s) under their Redis sections (for example, Game Session, Automation & Scripting, Game Logic, Gateway).
    - For coordination changes, update the Lua Script Registry descriptors and key‑builder helpers in `firemud-common` so services and ops tooling share the same key shapes and hash‑tag rules.
@@ -43,6 +43,8 @@ Before applying the detailed checklists below, follow this high‑level workflow
    - Ensure required metrics and alerts for AOF size/growth, the measured unreplicated-write window, prefix key counts, and script outcomes are covered or updated in the [Redis metrics catalog](./system-architecture-redis-metrics-catalog.md).
    - When the change introduces new state-machine fields or outcome codes, ensure the operations docs and metrics catalog name them explicitly (for example `current_tick_state`, `STALE_SESSION_GENERATION`, and stale automation-dispatch outcomes) rather than relying on generic script-failure buckets.
    - Verify that dashboards and alerts referenced in service docs and the incident runbook line up with the new or changed prefixes/scripts.
+7. **Record validation evidence**
+   - Follow the canonical [validation and runtime-proof workflow](../developer-workflows/validation-and-runtime-proof.md) and record the actual formatting, check, and runtime-proof results in PR/CI or implementation-tracking evidence.
 
 Only after these workflow steps are accounted for should a change be considered “ready” to leave design review and move into implementation.
 

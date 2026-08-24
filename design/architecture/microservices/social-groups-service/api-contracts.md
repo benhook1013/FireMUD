@@ -4,15 +4,23 @@ This document defines the Social & Groups Service REST and gRPC surfaces, chat-d
 
 An OpenAPI specification for the REST endpoints is available at `src/main/resources/openapi.yaml` in the service repository.
 
-## Implementation Status
+## Chat and Moderation Contract
 
-The friend-presence slice currently implements non-pageable friend-roster and presence reads over tenant-scoped mutually accepted reciprocal links whose two directed rows are both `active`. One-way links, inactive reciprocal links, and links stored under another tenant are not endpoint-visible; focused integration proof covers those boundaries in [SocialGroupsApplicationIntegrationTest.java](../../../../services/social-groups-service/src/test/java/integration/net/firedevops/firemud/socialgroups/SocialGroupsApplicationIntegrationTest.java). The current endpoint path has no block-state model or block revalidation. It does not create snapshots, continuations, or paginated bulk pages. Snapshot-bound continuation, continuation-time relationship and block revalidation, bounded paginated bulk reads, and the failure-precedence contract below remain target behavior; this document does not claim that the current implementation or existing tests prove those target obligations.
-
-**Target state:** Social & Groups is the enforcement owner for `chat_mute` and `chat_ban`. Its local indexed restriction state is evaluated before chat persistence/publication and at participation/history reads; the complete category, revision, command, notice, and appeal-outcome contract is [Moderation Policies](../logging-admin-service/moderation-policies.md). Every REST and gRPC chat write must traverse that same owner-local restriction boundary before persistence or publication. For Social & Groups, the synchronous `EvaluateModerationPolicy` read consumed by `SendMessage` at `CHAT_SEND` is the sole current chat-moderation seam until owner-local enforcement exists; it remains a Logging & Admin hot-path dependency, and current consumption and chat tests do not prove owner-local durable restrictions, essential notices, independent stacking, expiry/reordering, or appeal handling. The service-local `/chat` path is implemented and exposed through Gateway at `/api/social/chat` today, but its current caller binding and moderation behavior remain limited as described below; the target owner-local gate is not yet proven.
+**Target state:** Social & Groups is the enforcement owner for `chat_mute` and `chat_ban`. Its local indexed restriction state is evaluated before chat persistence/publication and at participation/history reads; the complete category, revision, command, notice, and appeal-outcome contract is [Moderation Policies](../logging-admin-service/moderation-policies.md) and active [ADR 0146](../../decisions/adr-0146-owner-local-moderation-enforcement.md), mapped from reviewed archive record `archive-ADR-0133`. Every REST and gRPC chat write must traverse that same owner-local restriction boundary before persistence or publication. `chat_mute` rejects sending but permits ordinary receipt, while `chat_ban` rejects ordinary participation, send, and history but permits essential moderation/system notices.
 
 ### Chat request identity and replay
 
-The target chat write contract derives `senderAccountId` from authenticated caller context before authorization or replay lookup; a request-body `senderAccountId` is not sender authority. It binds the stable `effectId` to that authenticated `senderAccountId` and a canonical full-request digest (`mutationDigest/v1` over the normalized request, including the complete tenant, channel, recipient, content, and effect identity). An exact retry with the same authenticated caller, effect ID, and digest may replay the stored outcome. A caller or digest mismatch returns `IDEMPOTENCY_CONFLICT` without exposing the stored request or outcome, and that check occurs before moderation evaluation or replay return. The current implementation is a known gap: the controller takes `senderAccountId` from the request body for its Social access guard, replay storage and lookup use only `{tenantId,effectId}`, and `ChatService` replays that row before it evaluates moderation policy, with no authenticated-caller or request-digest binding.
+The target chat write contract derives `senderAccountId` from authenticated caller context before authorization or replay lookup; a request-body `senderAccountId` is not sender authority. It binds the stable `effectId` to that authenticated `senderAccountId` and a canonical full-request digest (`mutationDigest/v1` over the normalized request, including the complete tenant, channel, recipient, content, and effect identity). An exact retry with the same authenticated caller, effect ID, and digest may replay the stored outcome. A caller or digest mismatch returns `IDEMPOTENCY_CONFLICT` without exposing the stored request or outcome, and that check occurs before moderation evaluation or replay return.
+
+## Implementation Status
+
+The friend-presence slice currently implements non-pageable friend-roster and presence reads over tenant-scoped mutually accepted reciprocal links whose two directed rows are both `active`; that is implementation status, not the target relationship authority. The player-facing Gateway `/api/social/friends` route is removed/unavailable because the current endpoint path has no directional block-state model or block revalidation. The direct service-local implementation remains available for direct-service and future non-edge use and retains reciprocal-active filtering, but it does not claim the target player-facing safety boundary. The target distinguishes tenant-free account-pair relationships from separate tenant-local records and binds each group to one declared membership subject type. One-way links, inactive reciprocal links, and links stored under another tenant are not endpoint-visible; focused integration proof covers those boundaries in [SocialGroupsApplicationIntegrationTest.java](../../../../services/social-groups-service/src/test/java/integration/net/firedevops/firemud/socialgroups/SocialGroupsApplicationIntegrationTest.java). It does not create snapshots, continuations, or paginated bulk pages. Snapshot-bound continuation, continuation-time relationship and block revalidation, bounded paginated bulk reads, and the failure-precedence contract below remain target behavior; this document does not claim that the current implementation or existing tests prove those target obligations.
+
+The current chat writer paths remain internal/non-player-safe: the Gateway `/api/social/chat` edge route is removed/unavailable, while service-local `/chat` and gRPC `SendMessage` still use the request-body `senderAccountId` with the Social access guard. The synchronous `EvaluateModerationPolicy` read at `CHAT_SEND` remains the current Logging & Admin hot-path compatibility seam and is consumed only after a cache/replay miss. Replay storage and lookup remain tenant/effect-only and occur before that policy check, with no authenticated-caller or full request-digest binding. Owner-local restriction state, essential notices, independent stacking, expiry/reordering, appeal handling, and the target gate are not yet implemented or proved; these writers therefore remain nonconformant to the target contract above.
+
+### Mail request identity
+
+The player-facing `/mail` route requires `senderAccountId` to match authenticated account context before Social authorization or service dispatch. Tenant roles cannot use the edge route to impersonate another sender; operator/system mail requires a separate owner-authorized contract.
 
 ## REST APIs
 
@@ -21,14 +29,14 @@ The target chat write contract derives `senderAccountId` from authenticated call
 | `GET` | `/ping` | Basic health check returning `"pong"` |
 | `POST` | `/friends` | Create a friend link |
 | `GET` | `/friends/presence` | List bounded cross-game friend presence for one account |
-| `POST` | `/mail` | Send an asynchronous in-game mail message; mail retrieval endpoints are also available |
+| `POST` | `/mail` | Send Social-owned account or gameplay-adapted mail; durable history/acknowledgement follows the declared mail type contract |
 | `POST` | `/guilds` | Create a guild |
-| `POST` | `/guilds/storage` | Add an item to guild storage |
+| `POST` | `/guilds/storage` | Authorize a guild ACL operation against an Entity-owned container; Social does not mint or persist item/value rows |
 | `POST` | `/guilds/alliances` | Create a guild alliance |
 | `POST` | `/guilds/members` | Add a guild member |
 | `POST` | `/guilds/members/role` | Update a guild member's role |
 | `POST` | `/guilds/members/remove` | Remove a guild member |
-| `POST` | `/chat` | Current service-local chat write (Gateway exposes `/api/social/chat`). The current controller takes `senderAccountId` from the request body and checks it through the Social access guard (current-account or tenant access), and the shared service applies the synchronous `EvaluateModerationPolicy` seam only for a new send; effect replay is currently tenant/effect-only and occurs before that policy check. Target behavior derives the sender from authenticated caller context before authorization or replay lookup, then requires the same owner-local `chat_mute`/`chat_ban` gate as `SendMessage` before persistence/publication. |
+| `POST` | `/chat` | Current internal/non-player-safe writer; see [Implementation Status](#implementation-status) for the Gateway, sender, replay, and moderation-seam limitations. Target behavior is defined by the [Chat and Moderation Contract](#chat-and-moderation-contract). |
 | `POST` | `/voice/token` | Issue a temporary WebRTC token for voice chat; the gateway relays media between participants |
 
 Example health check:
@@ -37,10 +45,10 @@ Example health check:
 curl http://localhost:8080/ping
 ```
 
-Current chat request through the Gateway path (target owner-local restriction enforcement remains incomplete; the bearer token authenticates the account matching the illustrative body value):
+Current internal/non-player-safe chat request (the Gateway `/api/social/chat` edge route is removed/unavailable; target owner-local restriction enforcement also remains incomplete):
 
 ```bash
-curl -X POST http://localhost:8080/api/social/chat \
+curl -X POST http://localhost:8080/chat \
   -H 'Authorization: Bearer <access-token>' \
   -H 'Content-Type: application/json' \
   -d '{"tenantId":"tenant-abc","senderAccountId":100,"content":"hello"}'
@@ -57,11 +65,19 @@ curl -X POST http://localhost:8080/voice/token \
 ## gRPC APIs
 
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in `social_groups_service.proto`
-- `SendMessage` – **Target state:** derives `senderAccountId` from authenticated caller context before authorization or replay lookup, validates the caller's exact tenant/realm/channel scope, caller-bound chat request identity, and owner-local `chat_mute`/`chat_ban` state before persistence/publication; `chat_mute` rejects sending but permits ordinary receipt, while `chat_ban` rejects ordinary participation/send/history but permits essential moderation/system notices. **Current state:** the REST and gRPC write path uses the request's `senderAccountId` with the current Social access guard, consumes the synchronous `EvaluateModerationPolicy` seam at `CHAT_SEND` only after a cache/replay miss, and has no authenticated-caller/digest-bound replay or owner-local durable restriction state; the complete local restriction contract is not yet implemented or proved.
+- `SendMessage` – follows the [Chat and Moderation Contract](#chat-and-moderation-contract) in target state; current sender, replay, Gateway, moderation-seam, and owner-local implementation limitations are recorded in [Implementation Status](#implementation-status).
 - `CreateGuild` – establishes a new guild with an owner account
 - `AddFriend` – adds a friend relationship at the game or account level
 - `ListFriendPresence` – returns the bounded account-scoped projection defined by the [Friend Presence Privacy Contract](#friend-presence-privacy-contract). Social & Groups retains the local transport consequence: raw presence is obtained from Game Session and profile policy through bounded internal bulk reads; the current endpoint remains non-pageable as noted in implementation status.
-- `SendMail` – stores asynchronous player mail for later retrieval
+- `SendMail` – stores a Social-owned mail envelope and delivery/history state; item or currency attachments use Entity-owned transfer/escrow references and are not Social value
+
+### Relationship, Group, and Value Authority
+
+- Social & Groups owns friend/block relationships, guild/group definitions, membership subject type, membership and role policy, alliances, social audience resolution, and message/mail envelopes. An account-global relationship is a genuinely tenant-free account pair with an explicit request/accept/reject/remove lifecycle; a tenant-local relationship is a separate tenant-qualified record. A global relationship is never copied into a tenant using a synthetic `tenantId`.
+- Every guild/group declares exactly one membership subject type: `ACCOUNT` identified by `accountId`, or `CHARACTER` identified by `{tenantId, playableStateNamespaceId, characterId}`. Membership, uniqueness, roles, ownership transfer, audience resolution, and ACL evaluation use that type consistently; `gameInstanceId` is not durable membership identity.
+- Account owns account identity, status, and profile-visibility policy; Game Session owns raw presence and connected gameplay transports. Social consumes bounded reads from those owners to produce social projections and does not rewrite their facts or treat a cached projection as authority.
+- Entity Management owns guild containers, items, inventory containment, currency, and mail attachments. Social may authorize a guild ACL and retain a typed Entity-container binding, but it must not persist independent `itemName + quantity`, currency, or attachment value. Attachment send/claim/return/expiry/deletion uses owner-controlled transfer or escrow with stable references and idempotent retries.
+- Ordinary account or social mail enters Social directly. A game-specific mail type may enter Game Logic for explicit gameplay semantics, then returns an authorized result to Social and value owners; tenant-authored gameplay rules cannot inspect ordinary private mail. Active [ADR 0148](../../decisions/adr-0148-social-relationship-authority-and-entity-owned-value.md) records this boundary, mapped from reviewed archive record `archive-ADR-0135`.
 
 ### Friend Presence Privacy Contract
 
@@ -92,17 +108,20 @@ Failure precedence is therefore: request shape, snapshot integrity, caller autho
 grpcurl -plaintext localhost:6565 social_groups.v1.SocialGroupsService/Ping
 ```
 
+## History, Evidence, and Acknowledgement
+
+- Every published communication type declares whether it has durable player-visible history, finite protected moderation/safety evidence, retention/expiry, authorized reads, export/erasure behavior, and what durable state commits before acknowledgement.
+- Mail, account direct messages, and channels that promise scrollback commit their durable history before reporting durable acceptance. World communication (`SAY`, nearby `WHISPER`, gameplay `TELL`, profile-defined `SHOUT`, and game-defined equivalents) is live by default and does not create a permanent player archive unless its type explicitly promises one.
+- Safety evidence is a separate finite protected class, with its own access, case linkage, retention, legal-hold, and erasure rules. Logging & Admin case/audit history is not a player-history store. A content-free idempotency receipt may outlive expired content but cannot reconstruct content or expand an audience.
+- Redis history projections, fanout buffers, and delivery queues are rebuildable Cache/Rate-Limit Redis hints only. Redis loss may remove transient delivery or slow a refill; it never changes the authoritative retention, erasure, idempotency, or disclosure contract.
+- Stored history and export preserve each recipient's original authorized semantic view. A metadata-only, redacted, or partial observer cannot retrieve richer content later through history, export, cache refill, retry, or presentation.
+- Active [ADR 0149](../../decisions/adr-0149-communication-type-specific-history-and-retention.md) records this boundary, mapped from reviewed archive record `archive-ADR-0136`.
+
 ## Delivery Semantics
 
-- In-game communication actions such as `say`, `whisper`, `tell`, guild chat, and mail originate in the Game Logic Service and incorporate context from the World Management and Entity Management services where needed.
-- The Game Logic Service invokes this service to deliver messages, run profanity checks, persist history, and log communications for audit and moderation.
-- Voice chat is an optional feature layered on a lightweight WebRTC gateway; the service issues temporary tokens via `/voice/token` and records voice activity for moderation.
-- The current gameplay-connected `say` slice should be treated as the first implemented communication action only. It proves the cross-service path, but it is not the final abstraction for all communication.
-- Future gameplay communication should preserve a distinction between:
-  - the speech act (`SAY`, `WHISPER`, `SHOUT`, `TELL`, system narration, or game-defined variants),
-  - the delivery scope or target object (directed target, room, local area, region, map, continent, guild/group, account-directed, and other configured channels),
-  - recipient-resolution rules owned by that target, including observer/interceptor handling such as eavesdropping or spy mechanics,
-  - and per-recipient presentation/rendering metadata.
-- Later slices may allow world-topology-aware propagation rules such as area-local whispers, map-wide shouts, or continent-scoped announcements. Social & Groups should accept those semantics through explicit delivery metadata rather than inferring them from a room-chat alias alone.
-- The preferred target-state is a configurable communication envelope where a communication intent names a type definition plus one or more targets/scopes. Social & Groups should receive explicit resolved delivery metadata and presentation directives from the gameplay orchestration layer rather than re-deriving spatial context from a verb name alone.
-- Even when Social & Groups owns durable history, moderation, membership checks, or fanout for a communication type, the action should still enter through Game Logic so gameplay abilities, items, and perception/interception rules can participate consistently across all communication modes.
+- World/gameplay communication such as gameplay `say`, nearby `whisper`, gameplay `tell`, and profile-defined `shout` enters Game Logic when topology, perception, abilities, effects, or authored interception determine meaning. Game Logic emits a bounded resolved plan with explicit type/version, target/scope, candidate-specific authorized views, and freshness evidence.
+- Social & Groups applies social audience/membership, moderation, history, retention, and delivery-state rules to that plan. Game Session owns final delivery to connected gameplay transports and reports transport outcome separately; Social cannot infer spatial observers, broaden views, or claim end-user delivery from a history commit.
+- Account messaging, ordinary guild/group channels, browser social interactions, and ordinary account/social mail enter Social directly after authentication and applicable membership, privacy, and moderation checks. An in-game adapter does not turn them into Game Logic actions or make private platform content visible to tenant-authored scripts. Operator/system communication enters through the originating owner's typed request.
+- Observer views are a closed type-declared vocabulary; unknown fields are excluded, gameplay `TELL` is non-observable by default, and a partial view requires a named published mechanic. `SHOUT` remains deferred until a profile publishes a named bounded topology and fanout cap; Social never invents area/region/map semantics. Active [ADR 0150](../../decisions/adr-0150-closed-observer-views-and-profile-scoped-shout.md) records this boundary, mapped from reviewed archive record `archive-ADR-0137`.
+- Voice chat is an optional feature layered on a lightweight WebRTC gateway; the service issues temporary tokens via `/voice/token` and records voice activity for moderation under its own declared evidence lifecycle.
+- Current gameplay-connected proof covers `SAY`, `WHISPER`, and `TELL`, including canonical actor and live-recipient views. It proves those cross-service paths, not complete durable plan recovery, full recipient-specific projection, cross-pod delivery, or type-specific history. Active [ADR 0147](../../decisions/adr-0147-explicit-communication-classes-and-owner-delivery.md) records the class/owner split, mapped from reviewed archive record `archive-ADR-0134`.

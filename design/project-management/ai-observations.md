@@ -89,3 +89,8 @@ Entry format:
   - Context: Packet 5 alignment in the [system overview](../architecture/system-architecture-overview.md), [Entity Management boundary](../architecture/microservices/entity-management-service/README.md), and [Game Session boundary](../architecture/microservices/game-session-service/README.md).
   - Observation: fixed safety categories keep independent owner lifecycles; tenant runtime entitlements require explicit tenant binding for account-scoped grants; Entity owns persisted actor and fork-local character identity while Game Session owns attachment and controller fencing.
   - Expected pattern: carry explicit scope and owner/fence evidence across each seam, treating source character IDs as provenance rather than authority.
+
+- `2026-08-24`: Expected-binding declarations are intent, not deployment proof
+  - Context: Packet 6 environment-bound preflight and expected-binding work.
+  - Observation: binding declarations classify shareability and enabled integrations, but production state or trust material cannot be made shareable by a generic flag, and declaration alone does not prove a concrete deployment event.
+  - Expected pattern: require applicable integrations only when enabled, and retain the manifest digest, event identity, and observed target binding in event-scoped evidence.

@@ -78,7 +78,7 @@ grep -q "Failing XML files:" <<<"$inspection_output"
 grep -q "Diagnostic only:" <<<"$inspection_output"
 
 bootstrap_validation_output="$(
-  FIREMUD_SMOKE_COMPOSE_SERVICES=$'gateway\ngame-session-service' \
+  FIREMUD_SMOKE_COMPOSE_SERVICES=$'gateway\ngame-session-service\n' \
   FIREMUD_SMOKE_NO_CACHE_SERVICES='gateway game-session-service' \
   FIREMUD_SMOKE_VALIDATE_ONLY=1 \
   bash "$BOOTSTRAP_PROOF"

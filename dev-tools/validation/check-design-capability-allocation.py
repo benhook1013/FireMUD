@@ -573,6 +573,27 @@ ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/adr-0145-plain-text-gameplay-and-deferred-classic-client-extensions.md": adr_allocation(
         "PO-2", "Accepted", "EA-1"
     ),
+    "design/architecture/decisions/adr-0146-owner-local-moderation-enforcement.md": adr_allocation(
+        "PO-1", "Accepted", "EA-2", "AA-1", "PO-4", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0147-explicit-communication-classes-and-owner-delivery.md": adr_allocation(
+        "EA-2", "Accepted", "GR-4", "PO-1", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0148-social-relationship-authority-and-entity-owned-value.md": adr_allocation(
+        "EA-2", "Accepted", "AA-1", "PO-1", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0149-communication-type-specific-history-and-retention.md": adr_allocation(
+        "EA-2", "Accepted", "PO-1", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0150-closed-observer-views-and-profile-scoped-shout.md": adr_allocation(
+        "EA-2", "Accepted", "GR-4", "SF-2", "PO-4"
+    ),
+    "design/architecture/decisions/adr-0151-event-scoped-automated-tier-a-credential-compliance.md": adr_allocation(
+        "PO-3", "Accepted", "PO-1", "PO-4", "SF-1"
+    ),
+    "design/architecture/decisions/adr-0152-phased-environment-bound-deployment-preflight-and-expected-bindings.md": adr_allocation(
+        "PO-3", "Accepted", "PO-4", "SF-1"
+    ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
     "README.md": "Service overview",

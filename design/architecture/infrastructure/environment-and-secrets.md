@@ -27,11 +27,11 @@ Existing links to sections like “gRPC TLS Certificates” and “Authenticatio
 
 ## Implementation Status
 
-The current checked-in runtime and executable preflight remain in the legacy Secret-backed JWKS mode. `jwt-jwks` is a Kubernetes `Secret`, the runtime still permits shared-HMAC and classpath-fallback drift, and `PREFLIGHT-JWKS-001` rejects a `ConfigMap` named `jwt-jwks`. These checks are current wiring evidence only; they do not establish player-facing JWT readiness.
+The checked-in player-facing Kustomize fixtures and runtime remain on the legacy Secret-backed signing path, with shared-HMAC and classpath-fallback drift still documented as implementation gaps; their public JWKS resource is the fixed-name `jwt-jwks` Secret. The executable `PREFLIGHT-JWKS-001` check remains an advisory Secret resource/path/mount diagnostic for that player-facing path and requires the explicit `secret://firemud/jwt-jwks` binding. This is resource/path wiring evidence only; it does not establish runtime JWKS acceptance, validator convergence, signer custody, or player-facing JWT readiness.
 
 The target-only `INTERIM_ACCOUNT_ONLY_MOUNTED_FALLBACK` is not currently proved. Its interim environment consequence is an environment-unique `jwt-signing-keys` Secret mounted only into Account through `FIREMUD_AUTH_JWT_SECRET_PATH`, with validators consuming only the public `jwt-jwks` projection through `FIREMUD_AUTH_JWKS_PATH`. The packaged classpath JWKS fallback is permitted only in local/test environments.
 
-Current hosted `pr-preview` manifests use preview-unique, pre-created signing-key and `jwt-jwks` Secrets; current preflight rejects a `ConfigMap`. Target hosted previews use preview-unique, Account-published `jwt-jwks` ConfigMap data delivered through `FIREMUD_AUTH_JWKS_PATH` to Account and every validator. Shared preview trust material across namespaces is not allowed. The custody and publication contract is canonical in [JWT and Token Contracts](../system-architecture-jwt-and-token-contracts.md#signing-key-rotation-contract-normative).
+Current hosted `pr-preview` rendering uses preview-unique signing-key Secret material plus public `jwt-jwks` ConfigMap data, and `helm-jwks-contract.sh` covers that resource/path wiring and the Account mount. The checked-in player-facing Kustomize fixtures remain on legacy Secret-backed signing plus a public `jwt-jwks` Secret resource; their `PREFLIGHT-JWKS-001` result is advisory and non-authorizing. Target hosted previews use preview-unique, Account-published `jwt-jwks` ConfigMap data delivered through `FIREMUD_AUTH_JWKS_PATH` to Account and every validator. Shared preview trust material across namespaces is not allowed. The custody and publication contract is canonical in [JWT and Token Contracts](../system-architecture-jwt-and-token-contracts.md#signing-key-rotation-contract-normative).
 
 ---
 
@@ -59,7 +59,7 @@ The subsections below are short stubs maintained to keep existing anchors workin
 
 ### Common Application Settings
 
-Common application settings, including the `SPRING_PROFILES_ACTIVE` profile selector, are documented in `environment-and-secrets-catalog.md#common-application-settings`. See the overview’s Operator Quick Reference for the scoped rule: Kubernetes manifests and any shared environment must set `SPRING_PROFILES_ACTIVE` explicitly (do not rely on defaults).
+Common application settings, including the `SPRING_PROFILES_ACTIVE` profile selector, are documented in `environment-and-secrets-catalog.md#common-application-settings`. The canonical rule is: Docker Compose local development sets `dev`; supported direct local execution may leave it unset; Kubernetes deployments set `prod`; automated tests set `test`; and no ad hoc profiles are supported.
 
 ### PostgreSQL Credentials
 

@@ -6,15 +6,29 @@ from __future__ import annotations
 import datetime as dt
 import os
 import pathlib
+import re
 import sys
 
 import yaml
 
+DEV_TOOLS_DIR = pathlib.Path(__file__).resolve().parents[1]
+if str(DEV_TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(DEV_TOOLS_DIR))
+
+from evidence_digest import canonical_evidence_digest
+
 REQUIRED = {
     "jwt-signing-keys-jwks",
     "postgres-application-credentials",
-    "backup-object-store-credentials",
     "operator-credentials",
+}
+IMMUTABLE_ARTIFACT_ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+EXPECTED_BINDING_FILES = {
+    "production": pathlib.Path("design/operations/environments/production/expected-bindings.yaml"),
+    "staging": pathlib.Path("design/operations/environments/staging/expected-bindings.yaml"),
+    "hobby-self-hosted": pathlib.Path(
+        "design/operations/environments/hobby-self-hosted/expected-bindings.yaml"
+    ),
 }
 ENV_FILES = {
     "production": pathlib.Path("design/operations/secret-compliance/production.yaml"),
@@ -23,20 +37,67 @@ ENV_FILES = {
         "design/operations/secret-compliance/hobby-self-hosted.yaml"
     ),
 }
-PROVISIONING_STATES = {"not-provisioned", "provisioned"}
+PROVISIONING_STATES = {"not-provisioned", "noncompliant", "provisioned"}
+BOOTSTRAP_OPERATION_STATUSES = {"pending", "blocked", "failed", "completed"}
+BOOTSTRAP_OPERATION_FIELDS = {
+    "bootstrapOperationId",
+    "bootstrapOperationStatus",
+    "provisioningGeneration",
+}
+
+
+def schema_issue_environment(message: str) -> str | None:
+    """Return a known environment prefix without trusting arbitrary text."""
+
+    issue_env, separator, _ = message.partition(":")
+    if separator and issue_env in ENV_FILES:
+        return issue_env
+    return None
+
+
+def record_schema_issue_outcome(
+    message: str,
+    enforcement_mode: str,
+    failures: list[str],
+    warnings: list[str],
+    non_authorizing_environments: list[str],
+) -> None:
+    """Collect schema issues while failing closed on unknown advisory prefixes."""
+
+    if enforcement_mode == "strict":
+        failures.append(message)
+        return
+
+    issue_env = schema_issue_environment(message)
+    if issue_env is None:
+        failures.append(
+            "Internal validator error: schema issue lacks a known environment "
+            f"prefix: {message}"
+        )
+        return
+
+    warnings.append(message)
+    if issue_env not in non_authorizing_environments:
+        non_authorizing_environments.append(issue_env)
 
 
 def utc_now() -> dt.datetime:
     today_override = os.environ.get("SECRET_COMPLIANCE_TODAY")
     if today_override:
-        return parse_timestamp(today_override)
+        try:
+            return parse_timestamp(today_override)
+        except ValueError as exc:
+            raise SystemExit(
+                "SECRET_COMPLIANCE_TODAY override must be an ISO-8601 timestamp "
+                "with an explicit timezone"
+            ) from exc
     return dt.datetime.now(dt.timezone.utc)
 
 
 def parse_timestamp(value: str) -> dt.datetime:
     parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+        raise ValueError("timestamp must include an explicit timezone")
     return parsed
 
 
@@ -60,6 +121,7 @@ def main() -> int:
 
     failures: list[str] = []
     warnings: list[str] = []
+    non_authorizing_environments: list[str] = []
 
     def hard_gated(env: str) -> bool:
         if env == "production":
@@ -68,17 +130,25 @@ def main() -> int:
             return today >= staging_hard_gate_date
         return False
 
+    def mark_non_authorizing(env: str) -> None:
+        if env not in non_authorizing_environments:
+            non_authorizing_environments.append(env)
+
     def record_issue(env: str, msg: str) -> None:
         if enforcement_mode == "strict" and hard_gated(env):
             failures.append(msg)
         else:
             warnings.append(msg)
+            mark_non_authorizing(env)
 
     def record_schema_issue(msg: str) -> None:
-        if enforcement_mode == "strict":
-            failures.append(msg)
-        else:
-            warnings.append(msg)
+        record_schema_issue_outcome(
+            msg,
+            enforcement_mode,
+            failures,
+            warnings,
+            non_authorizing_environments,
+        )
 
     for env, relative_path in ENV_FILES.items():
         path = root / relative_path
@@ -105,34 +175,165 @@ def main() -> int:
             continue
 
         provisioning_state = data.get("provisioningState")
-        if provisioning_state not in PROVISIONING_STATES:
+        if (
+            not isinstance(provisioning_state, str)
+            or provisioning_state not in PROVISIONING_STATES
+        ):
             record_schema_issue(
                 f"{env}: provisioningState must be one of "
                 f"{', '.join(sorted(PROVISIONING_STATES))}",
             )
             continue
 
-        classes = data.get("credentialClasses", {})
+        if "credentialClasses" not in data:
+            record_schema_issue(f"{env}: credentialClasses must be present")
+            continue
+        classes = data["credentialClasses"]
         if not isinstance(classes, dict):
             record_schema_issue(f"{env}: credentialClasses must be a mapping")
             continue
 
+        expected_binding_path = root / EXPECTED_BINDING_FILES[env]
+        asset_storage_enabled = False
+        backup_storage_enabled = False
+        expected_bindings_valid = True
+        try:
+            expected_bindings = yaml.safe_load(
+                expected_binding_path.read_text(encoding="utf-8")
+            )
+        except (OSError, UnicodeError, yaml.YAMLError) as exc:
+            record_schema_issue(
+                f"{env}: cannot read canonical expected-bindings manifest "
+                f"{EXPECTED_BINDING_FILES[env]}: {exc}"
+            )
+            expected_bindings = {}
+            expected_bindings_valid = False
+        if expected_bindings_valid and (
+            not isinstance(expected_bindings, dict)
+            or expected_bindings.get("environment") != env
+        ):
+            record_schema_issue(
+                f"{env}: canonical expected-bindings manifest must target '{env}'"
+            )
+            expected_bindings_valid = False
+        elif expected_bindings_valid:
+            backup_storage = expected_bindings.get("backupStorage")
+            if not isinstance(backup_storage, dict) or not isinstance(
+                backup_storage.get("enabled"), bool
+            ):
+                record_schema_issue(
+                    f"{env}: backupStorage.enabled must be a boolean"
+                )
+                expected_bindings_valid = False
+            else:
+                backup_storage_enabled = backup_storage["enabled"]
+                if env == "production" and not backup_storage_enabled:
+                    record_schema_issue(
+                        "production: backupStorage.enabled must be true"
+                    )
+                    expected_bindings_valid = False
+            asset_storage = expected_bindings.get("assetStorage")
+            if "assetStorage" in expected_bindings and not isinstance(
+                asset_storage, dict
+            ):
+                record_schema_issue(f"{env}: assetStorage must be a mapping when present")
+                expected_bindings_valid = False
+            elif isinstance(asset_storage, dict):
+                enabled = asset_storage.get("enabled")
+                if not isinstance(enabled, bool):
+                    record_schema_issue(
+                        f"{env}: assetStorage.enabled must be a boolean when assetStorage is present"
+                    )
+                    expected_bindings_valid = False
+                else:
+                    asset_storage_enabled = enabled
+
+        required_classes = set(REQUIRED)
+        if backup_storage_enabled:
+            required_classes.add("backup-object-store-credentials")
+        if asset_storage_enabled:
+            required_classes.add("asset-store-credentials")
+
         if provisioning_state == "not-provisioned":
+            illegal_operation_fields = sorted(
+                BOOTSTRAP_OPERATION_FIELDS & set(data.keys())
+            )
+            if illegal_operation_fields:
+                record_schema_issue(
+                    f"{env}: not-provisioned compliance records must not contain "
+                    "bootstrap operation fields: "
+                    f"{', '.join(illegal_operation_fields)}",
+                )
             if classes:
                 record_schema_issue(
                     f"{env}: not-provisioned compliance records must not list "
                     "credential classes",
                 )
+            mark_non_authorizing(env)
             continue
 
-        missing = sorted(REQUIRED - set(classes.keys()))
+        if not expected_bindings_valid:
+            continue
+
+        bootstrap_status = data.get("bootstrapOperationStatus")
+        bootstrap_operation_id = data.get("bootstrapOperationId")
+        provisioning_generation = data.get("provisioningGeneration")
+        operation_fields_valid = True
+
+        if (
+            not isinstance(bootstrap_status, str)
+            or bootstrap_status not in BOOTSTRAP_OPERATION_STATUSES
+        ):
+            record_schema_issue(
+                f"{env}: bootstrapOperationStatus must be one of "
+                f"{', '.join(sorted(BOOTSTRAP_OPERATION_STATUSES))}",
+            )
+            operation_fields_valid = False
+        if (
+            not isinstance(bootstrap_operation_id, str)
+            or not bootstrap_operation_id.strip()
+        ):
+            record_schema_issue(
+                f"{env}: {provisioning_state} records require a non-empty "
+                "bootstrapOperationId",
+            )
+            operation_fields_valid = False
+        if (
+            isinstance(provisioning_generation, bool)
+            or not isinstance(provisioning_generation, int)
+            or provisioning_generation <= 0
+        ):
+            record_schema_issue(
+                f"{env}: {provisioning_state} records require a positive integer "
+                "provisioningGeneration",
+            )
+            operation_fields_valid = False
+
+        if provisioning_state == "noncompliant":
+            record_schema_issue(
+                f"{env}: provisioningState=noncompliant cannot satisfy a "
+                "provisioning compliance gate",
+            )
+            continue
+
+        if bootstrap_status != "completed":
+            record_schema_issue(
+                f"{env}: provisioningState=provisioned requires "
+                "bootstrapOperationStatus=completed",
+            )
+
+        missing = sorted(required_classes - set(classes.keys()))
         if missing:
             record_schema_issue(
                 f"{env}: missing required credential classes: {', '.join(missing)}",
             )
 
-        for cls in sorted(REQUIRED & set(classes.keys())):
+        for cls in sorted(required_classes & set(classes.keys())):
             rec = classes.get(cls, {})
+            if not isinstance(rec, dict):
+                record_schema_issue(f"{env}:{cls}: credential record must be a mapping")
+                continue
+
             max_age = rec.get("maxAgeDays")
             last_rotation = rec.get("lastRotationAt")
             last_provisioned = rec.get("lastProvisionedAt")
@@ -155,11 +356,27 @@ def main() -> int:
                 continue
 
             evidence_field = evidence_fields[0]
+            bootstrap_record = evidence_field == "lastProvisionedAt"
+            if bootstrap_record and operation_fields_valid:
+                if rec.get("bootstrapOperationId") != bootstrap_operation_id:
+                    record_schema_issue(
+                        f"{env}:{cls}: bootstrap credential record "
+                        "bootstrapOperationId must exactly match top-level "
+                        "bootstrapOperationId",
+                    )
+                if rec.get("provisioningGeneration") != provisioning_generation:
+                    record_schema_issue(
+                        f"{env}:{cls}: bootstrap credential record "
+                        "provisioningGeneration must exactly match top-level "
+                        "provisioningGeneration",
+                    )
             evidence_time = (
                 last_rotation if evidence_field == "lastRotationAt" else last_provisioned
             )
             try:
                 recorded_at = parse_timestamp(evidence_time)
+                if recorded_at > today:
+                    raise ValueError("freshness timestamp must not be in the future")
                 age_days = (today - recorded_at).days
             except (TypeError, ValueError, AttributeError) as exc:
                 record_issue(
@@ -168,13 +385,24 @@ def main() -> int:
                 )
                 continue
 
-            if age_days > int(max_age):
+            if (
+                isinstance(max_age, bool)
+                or not isinstance(max_age, int)
+                or max_age <= 0
+            ):
+                record_issue(
+                    env,
+                    f"{env}:{cls}: maxAgeDays must be a positive integer, got {max_age!r}",
+                )
+                continue
+
+            if age_days > max_age:
                 record_issue(
                     env,
                     f"{env}:{cls}: credential age {age_days}d exceeds maxAgeDays={max_age}",
                 )
-            elif age_days >= int(max_age) - warning_window_days:
-                remaining_days = int(max_age) - age_days
+            elif age_days >= max_age - warning_window_days:
+                remaining_days = max_age - age_days
                 warnings.append(
                     f"{env}:{cls}: credential age {age_days}d reaches maxAgeDays="
                     f"{max_age} in {remaining_days}d"
@@ -198,7 +426,36 @@ def main() -> int:
                 record_issue(env, f"{env}:{cls}: evidence file unreadable: {exc}")
                 continue
 
-            records = (evidence or {}).get("records", {})
+            if not isinstance(evidence, dict):
+                record_issue(
+                    env,
+                    f"{env}:{cls}: evidence payload must be a mapping in "
+                    f"{evidence_ref}",
+                )
+                continue
+
+            if bootstrap_record and operation_fields_valid:
+                if evidence.get("bootstrapOperationId") != bootstrap_operation_id:
+                    record_schema_issue(
+                        f"{env}:{cls}: bootstrap evidence payload "
+                        "bootstrapOperationId must exactly match top-level "
+                        "bootstrapOperationId",
+                    )
+                if evidence.get("provisioningGeneration") != provisioning_generation:
+                    record_schema_issue(
+                        f"{env}:{cls}: bootstrap evidence payload "
+                        "provisioningGeneration must exactly match top-level "
+                        "provisioningGeneration",
+                    )
+
+            records = evidence.get("records", {})
+            if not isinstance(records, dict):
+                record_issue(
+                    env,
+                    f"{env}:{cls}: evidence records must be a mapping in "
+                    f"{evidence_ref}",
+                )
+                continue
             record = records.get(evidence_key)
             if not record:
                 record_issue(
@@ -207,14 +464,74 @@ def main() -> int:
                     f"in {evidence_ref}",
                 )
                 continue
-
-            immutable_id = str(record.get("immutableArtifactId", ""))
-            if not immutable_id or "sha256:" not in immutable_id:
+            if not isinstance(record, dict):
                 record_issue(
                     env,
-                    f"{env}:{cls}: immutableArtifactId is missing or non-immutable "
-                    f"in {evidence_ref}",
+                    f"{env}:{cls}: evidence record must be a mapping in "
+                    f"{evidence_ref}",
                 )
+                continue
+
+            if evidence.get("environment") != env:
+                record_schema_issue(
+                    f"{env}:{cls}: evidence payload environment must exactly match '{env}'"
+                )
+            if record.get("targetEnvironment") != env:
+                record_schema_issue(
+                    f"{env}:{cls}: evidence record targetEnvironment must exactly match '{env}'"
+                )
+            if record.get("credentialClass") != cls:
+                record_schema_issue(
+                    f"{env}:{cls}: evidence record credentialClass must exactly match '{cls}'"
+                )
+            if not bootstrap_record:
+                evidence_operation_id = rec.get("evidenceOperationId")
+                if not isinstance(evidence_operation_id, str) or not evidence_operation_id.strip():
+                    record_schema_issue(
+                        f"{env}:{cls}: non-bootstrap credential records require a stable "
+                        "evidenceOperationId"
+                    )
+                elif record.get("evidenceOperationId") != evidence_operation_id:
+                    record_schema_issue(
+                        f"{env}:{cls}: evidenceOperationId must exactly match the selected "
+                        "credential record"
+                    )
+
+            if bootstrap_record and operation_fields_valid:
+                if record.get("bootstrapOperationId") != bootstrap_operation_id:
+                    record_schema_issue(
+                        f"{env}:{cls}: bootstrap evidence record "
+                        "bootstrapOperationId must exactly match top-level "
+                        "bootstrapOperationId",
+                    )
+                if record.get("provisioningGeneration") != provisioning_generation:
+                    record_schema_issue(
+                        f"{env}:{cls}: bootstrap evidence record "
+                        "provisioningGeneration must exactly match top-level "
+                        "provisioningGeneration",
+                    )
+
+            immutable_id = record.get("immutableArtifactId")
+            if not isinstance(immutable_id, str) or not IMMUTABLE_ARTIFACT_ID_RE.fullmatch(
+                immutable_id
+            ):
+                record_schema_issue(
+                    f"{env}:{cls}: immutableArtifactId must match sha256:<64 lowercase hex> "
+                    f"in {evidence_ref}"
+                )
+            else:
+                try:
+                    expected_digest = canonical_evidence_digest(record)
+                except (TypeError, ValueError) as exc:
+                    record_schema_issue(
+                        f"{env}:{cls}: evidence record cannot be canonically hashed: {exc}"
+                    )
+                else:
+                    if immutable_id != expected_digest:
+                        record_schema_issue(
+                            f"{env}:{cls}: immutableArtifactId does not match the selected "
+                            f"evidence record in {evidence_ref}"
+                        )
 
     for msg in warnings:
         print(f"::warning::{msg}")
@@ -229,6 +546,11 @@ def main() -> int:
             f"- Warnings: `{len(warnings)}`",
             f"- Failures: `{len(failures)}`",
         ]
+        if non_authorizing_environments:
+            lines.append(
+                "- Non-authorizing record validation only (inventory corroboration not performed): "
+                + ", ".join(non_authorizing_environments)
+            )
         if warnings:
             lines.extend(["", "#### Warnings", *[f"- {msg}" for msg in warnings]])
         if failures:
@@ -239,7 +561,14 @@ def main() -> int:
         print("Secret compliance validation failed")
         return 1
 
-    print("Secret compliance validation passed")
+    if non_authorizing_environments:
+        print(
+            "Secret compliance record validation passed; credential compliance "
+            "authorization/readiness was not established for: "
+            + ", ".join(non_authorizing_environments)
+        )
+    else:
+        print("Secret compliance validation passed")
     return 0
 
 

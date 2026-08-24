@@ -14,7 +14,7 @@ operator_mutation_support_gate:
   required_before_enablement:
     - published_action_family_schema
     - shared_cross_language_mutationDigest_v1_golden_vectors
-    - account_issued_authorization_reference_issuance_and_owner_redemption
+    - account_issued_authorization_reference_issuance_and_contract_declared_receiving_boundary_redemption
   applies_to:
     - logging-admin-service/POST /feature-flags/toggle
     - logging-admin-service/POST /moderation/actions
@@ -612,9 +612,61 @@ operator_delegation:
       auth_path: exact_mtls_workload_plus_forwarded_control_ui
       issued_token_state: current_exact_active_control_ui_registry_record
       bindings:
-        [actor_account_id, control_ui_jti, account_generation, role, tenant_scope, action_family, action_family_schema_id, action_family_schema_version, mutation_digest, membership_version_when_applicable, issuance_fence, authority_evidence_bundle, control_plane_request_id, issued_at, expires_at]
+        common: [actor_account_id, control_ui_jti, account_generation, role, action_family, action_family_schema_id, action_family_schema_version, issuance_fence, authority_evidence_bundle, issued_at, expires_at]
+        mutation_identity_selector:
+          selector_fields: [action_family, action_family_schema_id, action_family_schema_version]
+          alternatives:
+            non_moderation:
+              request_identity: control_plane_request_id
+              digest: mutation_digest
+              control_plane_request_id: mutation_identity
+            moderation_policy_intent:
+              request_identity: policy_intent_request_id
+              digest: mutation_digest
+              control_plane_request_id: correlation_only
+            moderation_owner_enforcement:
+              request_identity: owner_enforcement_request_id
+              digest: owner_enforcement_digest
+              control_plane_request_id: correlation_only
+          mapping:
+            key_fields: [action_family, action_family_schema_id, action_family_schema_version]
+            entries: []
+            entries_status: no_published_action_family_schema_pairs
+            rejections:
+              unknown: reject_before_issuance
+              duplicate: reject_before_issuance
+              ambiguous: reject_before_issuance
+              mismatched: reject_before_issuance
+        branch_fields:
+          non_moderation:
+            selector: action_category=absent
+            required: [tenant_scope]
+            optional: [membership_version_when_applicable]
+          tenant_restriction:
+            required: [tenant_scope]
+            optional: [membership_version_when_applicable]
+          platform_access_ban:
+            required: [target_account_id]
+            forbidden: [tenant_scope, tenant_id, target_tenant_generation, membership_version_when_applicable]
     unattended_automation:
       auth_path: exact_mtls_workload_plus_versioned_automation_policy
+      branch_selector: non_moderation_only
+      action_category_policy: absent_only
+      action_family_schema_mapping:
+        selector_fields: [action_family, action_family_schema_id, action_family_schema_version]
+        entries: []
+        entries_status: no_published_action_family_schema_pairs
+        rejections:
+          unknown: reject_before_issuance
+          duplicate: reject_before_issuance
+          ambiguous: reject_before_issuance
+          mismatched: reject_before_issuance
+          moderation: reject_before_issuance
+      moderation_identity_policy:
+        status: rejected_before_issuance
+        request_identity: dedicated_moderation_identity_required
+        digest: dedicated_moderation_digest_required
+        control_plane_request_id: correlation_only
       bindings:
         [workload_identity, automation_policy_id, automation_policy_version, tenant_scope, action_family, action_family_schema_id, action_family_schema_version, mutation_digest, membership_version_when_applicable, issuance_fence, authority_evidence_bundle, control_plane_request_id, issued_at, expires_at]
       user_impersonation_forbidden: true
@@ -632,14 +684,59 @@ operator_delegation:
       contents: [authority_scope, applicable_generations, membership_version_when_applicable, issuance_fence, source_transaction_or_outbox_version, projection_status_and_freshness, issuance_operation_identity]
       caller_assertions_are_not_authority: true
   issuance_idempotency:
-    key: [control_plane_request_id, action_family_schema_id, action_family_schema_version, mutation_digest, exact_scope, authority_path_binding]
+    non_moderation_key: [control_plane_request_id, action_family_schema_id, action_family_schema_version, mutation_digest, exact_scope, authority_path_binding]
+    moderation_keys:
+      policy_intent:
+        request_identity: policy_intent_request_id
+        digest: mutation_digest
+        key: [policy_intent_request_id, action_family_schema_id, action_family_schema_version, mutation_digest, exact_scope, authority_path_binding]
+        control_plane_request_id: correlation_only
+      owner_enforcement:
+        request_identity: owner_enforcement_request_id
+        digest: owner_enforcement_digest
+        key: [owner_enforcement_request_id, action_family_schema_id, action_family_schema_version, owner_enforcement_digest, exact_scope, authority_path_binding]
+        control_plane_request_id: correlation_only
     exact_retry: same_reference_or_same_terminal_outcome
     changed_tuple: IDEMPOTENCY_CONFLICT
     ambiguous_response: read_only_reconcile_same_request_without_replacement_reference
     raw_reference_persistence: encrypted_bounded_response_only
   forwarded_by: logging-admin-service
-  redeemed_by: owner_service_with_account_validation
+  redeemed_by: contract_declared_receiving_boundary
   assertions_alone_are_not_authority: true
+moderation_policy_intent_authorization:
+  coverage_identity: moderation-policy-intent-local-redemption
+  route_identities:
+    - logging-admin-service/POST /moderation/actions
+    - logging-admin-service/ApplyModerationAction
+  request_identity: policy_intent_request_id
+  digest: mutationDigest/v1
+  digest_field: mutation_digest
+  authorization_reference:
+    contract: account_issued_bounded_reference
+    raw_reference_persistence: forbidden_for_policy_intent
+    fingerprint_field: authorization_reference_fingerprint
+  redemption:
+    receiving_boundary: logging-admin-service
+    exactly_once: true
+    owner_redemption: forbidden
+  owner_enforcement_command:
+    request_identity: owner_enforcement_request_id
+    digest: owner_enforcement_digest
+    authorization_reference: owner_enforcement_authorization_reference
+    fingerprint: owner_enforcement_authorization_reference_fingerprint
+    redeemed_by: selected_enforcement_owner
+    distinct_from_policy_intent: true
+moderation_action_selector:
+  request_field: action
+  branch_field: action_category
+  mapping:
+    gameplay_ban: tenant_restriction
+    chat_mute: tenant_restriction
+    chat_ban: tenant_restriction
+    platform_access_ban: platform_access_ban
+  rejected_values: [account_security_lock, ban, account_ban, account_security_ban]
+  unknown_values: reject
+  rejection_phase: before_branch_authorization
 coverage_drift:
   - family: security-lock-export-issuance
     status: drift-found
@@ -654,11 +751,33 @@ coverage_drift:
     target_owner: account-service
     note: No current OpenAPI or owner-side quota-override route exists; do not add an executable route entry until the Account contract exists.
   - family: moderation-enforcement-owner-call
+    category: platform_access_ban
     status: drift-found
     current_routes: []
     target_ingress: logging-admin-service
-    target_owner: account-service_or_gameplay_policy_owner
-    note: ApplyModerationAction has an implementation path for policy input, but POST /moderation/actions and the gRPC action are unavailable/gated pending the action schema, shared mutationDigest/v1 vectors, and Account authorization-reference issuance/redemption flow; no current owner-side enforcement RPC is exposed.
+    target_owner: account-service
+    note: The platform_access_ban owner command is target-only; POST /moderation/actions and ApplyModerationAction remain unavailable/gated and no current Account enforcement RPC is exposed.
+  - family: moderation-enforcement-owner-call
+    category: gameplay_ban
+    status: drift-found
+    current_routes: []
+    target_ingress: logging-admin-service
+    target_owner: game-session-service
+    note: The gameplay_ban owner command is target-only; POST /moderation/actions and ApplyModerationAction remain unavailable/gated and no current Game Session enforcement RPC is exposed.
+  - family: moderation-enforcement-owner-call
+    category: chat_mute
+    status: drift-found
+    current_routes: []
+    target_ingress: logging-admin-service
+    target_owner: social-groups-service
+    note: The chat_mute owner command is target-only; POST /moderation/actions and ApplyModerationAction remain unavailable/gated and no current Social & Groups enforcement RPC is exposed.
+  - family: moderation-enforcement-owner-call
+    category: chat_ban
+    status: drift-found
+    current_routes: []
+    target_ingress: logging-admin-service
+    target_owner: social-groups-service
+    note: The chat_ban owner command is target-only; POST /moderation/actions and ApplyModerationAction remain unavailable/gated and no current Social & Groups enforcement RPC is exposed.
   - family: game-session-session-lifecycle-external-ingress
     status: drift-found
     current_ingress: game-session-service_owner_local_only
@@ -1456,19 +1575,73 @@ routes:
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/logging-admin-service"]
     required_live_checks: [current_account_generation, current_token_generation]
-    membership_authority_generation_applies: conditional_by_operator_role
-    membership_authority_generation_condition:
-      tenant_role: true
-      platformAdmin_global: false
+    branch_selector: action_category_or_absence
+    conditional_branch_precedence:
+      branch_fields_override_top_level: true
+    mutation_identity_selector:
+      selector_fields: [action_family, action_family_schema_id, action_family_schema_version]
+      alternatives:
+        non_moderation:
+          request_identity: control_plane_request_id
+          digest: mutation_digest
+          control_plane_request_id: mutation_identity
+        moderation_policy_intent:
+          request_identity: policy_intent_request_id
+          digest: mutation_digest
+          control_plane_request_id: correlation_only
+        moderation_owner_enforcement:
+          request_identity: owner_enforcement_request_id
+          digest: owner_enforcement_digest
+          control_plane_request_id: correlation_only
+      mapping_ref: operator_delegation.issuance_paths.human.bindings.mutation_identity_selector.mapping
+    conditional_branches:
+      non_moderation:
+        selector: action_category=absent
+        scope: tenant
+        membership_authority_generation_applies: conditional_by_operator_role
+        membership_authority_generation_condition:
+          tenant_role: true
+          platformAdmin_global: false
+        global_platform_admin_reference_generation_binding: target_tenant_generation
+        global_platform_admin_membership_required: false
+        operator_authorization_branches:
+          - branch: tenant_role
+            required_live_checks: [current_account_generation, current_token_generation, membership_when_tenant_role, membership_generation, tenant_generation]
+          - branch: platformAdmin_global
+            required_live_checks: [current_account_generation, current_token_generation, current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
+        required_fields: [action_family, action_family_schema_id, action_family_schema_version, tenant_scope]
+      tenant_restriction:
+        selector: action_category=tenant_restriction
+        scope: tenant
+        membership_authority_generation_applies: conditional_by_operator_role
+        membership_authority_generation_condition:
+          tenant_role: true
+          platformAdmin_global: false
+        global_platform_admin_reference_generation_binding: target_tenant_generation
+        global_platform_admin_membership_required: false
+        operator_authorization_branches:
+          - branch: tenant_role
+            required_live_checks: [current_account_generation, current_token_generation, membership_when_tenant_role, membership_generation, tenant_generation]
+          - branch: platformAdmin_global
+            required_live_checks: [current_account_generation, current_token_generation, current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
+        required_fields: [action_family, action_family_schema_id, action_family_schema_version, tenant_scope]
+      platform_access_ban:
+        selector: action_category=platform_access_ban
+        scope: account
+        classification: account_scoped
+        target_subject_binding: explicit_target_account_id
+        role_assurance: privileged_control_when_global_role
+        roles:
+          any_of: [platformAdmin]
+        membership_authority_generation_applies: false
+        global_platform_admin_membership_required: false
+        tenant_billing_authority_generation_applies: false
+        required_live_checks: [current_account_generation, current_token_generation, issuer_generation, account_generation, current_operator_roles, current_global_role, role_appropriate_assurance]
+        forbidden_live_checks: [target_tenant_generation, tenant_generation, membership_when_tenant_role, membership_generation]
+        required_fields: [action_family, action_family_schema_id, action_family_schema_version, target_account_id]
+        forbidden_fields: [tenant_scope, tenant_id, target_tenant_generation, membership_version_when_applicable]
     role_assurance: privileged_control_when_global_role
-    operator_authorization_branches:
-      - branch: tenant_role
-        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
-      - branch: platformAdmin_global
-        required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
-    global_platform_admin_membership_required: false
-    global_platform_admin_reference_generation_binding: target_tenant_generation
-    required_fields: [tenant_scope, action_family, action_family_schema_id, action_family_schema_version, control_plane_request_id, mutation_digest]
+    required_fields: [action_family, action_family_schema_id, action_family_schema_version]
     mutation_contract: create_bounded_human_operator_authorization_reference
     canonical_errors:
       any_of: [IDEMPOTENCY_CONFLICT]
@@ -1491,6 +1664,23 @@ routes:
     end_user_token_required: false
     required_live_checks: [current_automation_policy, workload_action_scope, tenant_generation]
     required_fields: [automation_policy_id, automation_policy_version, tenant_scope, action_family, action_family_schema_id, action_family_schema_version, control_plane_request_id, mutation_digest]
+    branch_selector: non_moderation_only
+    action_category_policy: absent_only
+    action_family_schema_mapping:
+      selector_fields: [action_family, action_family_schema_id, action_family_schema_version]
+      entries: []
+      entries_status: no_published_action_family_schema_pairs
+      rejections:
+        unknown: reject_before_issuance
+        duplicate: reject_before_issuance
+        ambiguous: reject_before_issuance
+        mismatched: reject_before_issuance
+        moderation: reject_before_issuance
+    moderation_identity_policy:
+      status: rejected_before_issuance
+      request_identity: dedicated_moderation_identity_required
+      digest: dedicated_moderation_digest_required
+      control_plane_request_id: correlation_only
     automation_tenant_generation_binding: current_tenant_generation
     automation_privileged_control: prohibited
     mutation_contract: create_bounded_workload_operator_authorization_reference
@@ -2838,6 +3028,11 @@ routes:
     route: POST /moderation/actions
     scope: tenant
     classification: tenant_regular
+    applicability:
+      action_category: tenant_restriction
+    action_selector_branch: tenant_restriction
+    moderation_policy_intent_authorization_contract: moderation-policy-intent-local-redemption
+    accepted_action_categories: [gameplay_ban, chat_mute, chat_ban]
     route_status: target_not_currently_routable
     tenant_billing_authority_generation_applies: true
     membership_authority_generation_applies: conditional_by_operator_role
@@ -2860,13 +3055,73 @@ routes:
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_moderation_record_idempotency
-    required_fields: [control_plane_request_id, actor_from_session, reason, target_account_id, action, mutation_digest]
+    required_fields: [policy_intent_request_id, control_plane_request_id, actor_from_session, reason, tenant_id, target_account_id, action, mutation_digest]
+    idempotency_contract:
+      key: policy_intent_request_id
+      digest: mutationDigest/v1
+      digest_field: mutation_digest
+      exact_retry: same_policy_intent_request_id_and_digest_returns_stored_outcome
+      changed_digest: IDEMPOTENCY_CONFLICT
+      changed_request_id: distinct_policy_intent_operation
+      control_plane_request_id: correlation_only
+      owner_enforcement_request_id: distinct_future_owner_command_identity
     operator_authorization_reference: account_issued_bounded_reference
     owner_call_status: coverage_drift_no_current_enforcement_owner_rpc
     canonical_errors:
       any_of: [IDEMPOTENCY_CONFLICT]
     roles:
       any_of: [moderator, tenantAdmin, platformAdmin]
+  - service: logging-admin-service
+    route: POST /moderation/actions
+    scope: account
+    classification: account_scoped
+    platform_admin_override: platformAdmin_only
+    applicability:
+      action_category: platform_access_ban
+    action_selector_branch: platform_access_ban
+    moderation_policy_intent_authorization_contract: moderation-policy-intent-local-redemption
+    accepted_action_categories: [platform_access_ban]
+    route_status: target_not_currently_routable
+    issuer_authority_generation_applies: true
+    account_authority_generation_applies: true
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
+    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
+    accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    role_assurance: privileged_control_when_global_role
+    subject_binding: authenticated_operator
+    target_subject_binding: explicit_target_account_id
+    required_live_checks: [current_operator_authorization, issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
+    global_platform_admin_membership_required: false
+    mutation_contract: durable_intent_then_moderation_record_idempotency
+    required_fields: [policy_intent_request_id, control_plane_request_id, actor_from_session, reason, target_account_id, action, mutation_digest]
+    forbidden_fields: [tenant_scope, tenant_id, target_tenant_generation, membership_version_when_applicable]
+    idempotency_contract:
+      key: policy_intent_request_id
+      digest: mutationDigest/v1
+      digest_field: mutation_digest
+      exact_retry: same_policy_intent_request_id_and_digest_returns_stored_outcome
+      changed_digest: IDEMPOTENCY_CONFLICT
+      changed_request_id: distinct_policy_intent_operation
+      control_plane_request_id: correlation_only
+      owner_enforcement_request_id: distinct_future_owner_command_identity
+    operator_authorization_reference: account_issued_bounded_reference
+    owner_call_status: coverage_drift_no_current_enforcement_owner_rpc
+    platform_scope_action_contract:
+      category: platform_access_ban
+      status: target_not_currently_routable
+      required_scope: platform
+      required_operator_authorization_branch: platformAdmin_global
+      tenant_role_authorization: forbidden
+      target_subject: global_account
+      tenant_id: forbidden
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
+    roles:
+      any_of: [platformAdmin]
   - service: logging-admin-service
     route: POST /tick-remediation/pause
     scope: tenant

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import itertools
 import json
 import os
@@ -13,8 +14,15 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn
+from urllib.parse import urlsplit
 
 import yaml
+
+DEV_TOOLS_DIR = Path(__file__).resolve().parents[1]
+if str(DEV_TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(DEV_TOOLS_DIR))
+
+from evidence_digest import canonical_evidence_digest
 
 USAGE = """Usage: preflight.py <staging|production|hobby-self-hosted>
 
@@ -39,6 +47,10 @@ class CheckResult:
     status: str
     message: str
 
+    @property
+    def category(self) -> str:
+        return PREFLIGHT_POLICY_CATALOG[self.policy_id]
+
 
 RECOVERY_COMPATIBILITY_STATUSES = {"compatible", "drill_required", "incompatible"}
 SAFE_RECOVERY_DISPOSITIONS = {
@@ -53,34 +65,124 @@ JSON_READ_ERRORS = (OSError, UnicodeError, json.JSONDecodeError)
 YAML_READ_ERRORS = (OSError, UnicodeError, yaml.YAMLError)
 TIMESTAMP_ERRORS = (TypeError, ValueError, AttributeError, OverflowError)
 SECRET_LOOKUP_TIMEOUT_SECONDS = 30
+JWT_CUSTODY_MODES = (
+    "LEGACY_SECRET_DIAGNOSTIC",
+    "INTERIM_ACCOUNT_ONLY_MOUNTED_FALLBACK",
+    "TARGET_NON_EXPORTABLE_SIGNER",
+)
+IMPLEMENTED_JWT_CUSTODY_MODE = "LEGACY_SECRET_DIAGNOSTIC"
+LEGACY_PLAYER_JWKS_REF = "secret://firemud/jwt-jwks"
+BRIDGE_WS_PATHS = {
+    "FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH": "/tls/client.crt",
+    "FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH": "/tls/client.key",
+    "FIREMUD_GATEWAY_WS_CA_CERT_PATH": "/tls/ca.crt",
+}
+BRIDGE_WS_SECRET_ITEM_PATHS = {
+    "client.crt": "client.crt",
+    "client.key": "client.key",
+    "ca.crt": "ca.crt",
+}
+GRPC_TLS_PATH_NAMES = (
+    "FIREMUD_GRPC_CERT_CHAIN_PATH",
+    "FIREMUD_GRPC_PRIVATE_KEY_PATH",
+    "FIREMUD_GRPC_CA_CERT_PATH",
+)
+BASE_SECRET_COMPLIANCE_CLASSES = frozenset(
+    {
+        "jwt-signing-keys-jwks",
+        "postgres-application-credentials",
+        "operator-credentials",
+    }
+)
+IMMUTABLE_ARTIFACT_ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+DEPLOYMENT_REF_RE = re.compile(r"^[a-z0-9-]+$")
+GIT_COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
-# These are the policy results emitted by this executable. The two JWT policies
-# documented as target-state-only are deliberately not included until they are
-# implemented and emitted by every applicable run.
-EXPECTED_PREFLIGHT_POLICY_IDS = (
-    "PREFLIGHT-DIGEST-001",
-    "PREFLIGHT-DIGEST-002",
-    "PREFLIGHT-SECRETS-001",
-    "PREFLIGHT-SECRETS-002",
-    "PREFLIGHT-JWT-001",
-    "PREFLIGHT-JWKS-001",
-    "PREFLIGHT-BRIDGE-001",
-    "PREFLIGHT-REDIS-001",
-    "PREFLIGHT-BOOTSTRAP-001",
-    "PREFLIGHT-EXTERNAL-001",
-    "PREFLIGHT-SERVICES-001",
-    "PREFLIGHT-PROMOTION-001",
-    "PREFLIGHT-BACKUP-001",
-    "PREFLIGHT-BACKUP-002",
-    "PREFLIGHT-BACKUP-003",
+PREFLIGHT_POLICY_CATALOG_VERSION = "preflight-policy-v1"
+PREFLIGHT_POLICY_CATEGORIES = frozenset(
+    {
+        "advisory",
+        "apply-blocking",
+        "non-waivable-promotion-traffic-open",
+    }
+)
+
+# This is the machine-readable implementation mirror of the complete
+# design-owned policy catalogue. Target-state-only policies remain in the
+# catalogue so their IDs and enforcement categories cannot drift while they
+# are excluded from current executable reports.
+PREFLIGHT_POLICY_CATALOG = {
+    "PREFLIGHT-DIGEST-001": "apply-blocking",
+    "PREFLIGHT-DIGEST-002": "advisory",
+    "PREFLIGHT-SECRETS-001": "apply-blocking",
+    "PREFLIGHT-SECRETS-002": "apply-blocking",
+    "PREFLIGHT-JWT-001": "advisory",
+    "PREFLIGHT-JWT-INTERIM-001": "non-waivable-promotion-traffic-open",
+    "PREFLIGHT-JWKS-001": "advisory",
+    "PREFLIGHT-JWT-002": "non-waivable-promotion-traffic-open",
+    "PREFLIGHT-JWT-ROTATION-001": "non-waivable-promotion-traffic-open",
+    "PREFLIGHT-TELNET-001": "non-waivable-promotion-traffic-open",
+    "PREFLIGHT-BRIDGE-001": "apply-blocking",
+    "PREFLIGHT-REDIS-001": "apply-blocking",
+    "PREFLIGHT-BOOTSTRAP-001": "apply-blocking",
+    "PREFLIGHT-EXTERNAL-001": "apply-blocking",
+    "PREFLIGHT-SERVICES-001": "apply-blocking",
+    "PREFLIGHT-PROMOTION-001": "non-waivable-promotion-traffic-open",
+    "PREFLIGHT-BACKUP-001": "non-waivable-promotion-traffic-open",
+    "PREFLIGHT-BACKUP-002": "non-waivable-promotion-traffic-open",
+    "PREFLIGHT-BACKUP-003": "non-waivable-promotion-traffic-open",
+}
+
+DOCUMENTED_PREFLIGHT_POLICY_ID_SET = frozenset(PREFLIGHT_POLICY_CATALOG)
+TARGET_ONLY_PREFLIGHT_POLICY_IDS = frozenset(
+    {
+        "PREFLIGHT-JWT-INTERIM-001",
+        "PREFLIGHT-JWT-002",
+        "PREFLIGHT-JWT-ROTATION-001",
+        "PREFLIGHT-TELNET-001",
+    }
+)
+
+
+def validate_preflight_policy_catalog(catalog: Any) -> str | None:
+    if not isinstance(catalog, dict):
+        return "preflight policy catalogue must be a mapping"
+    catalog_ids = set(catalog)
+    missing_ids = sorted(DOCUMENTED_PREFLIGHT_POLICY_ID_SET - catalog_ids)
+    unknown_ids = sorted(catalog_ids - DOCUMENTED_PREFLIGHT_POLICY_ID_SET)
+    if missing_ids or unknown_ids:
+        details = []
+        if missing_ids:
+            details.append("missing policy IDs: " + ", ".join(missing_ids))
+        if unknown_ids:
+            details.append("unknown policy IDs: " + ", ".join(unknown_ids))
+        return "invalid preflight policy catalogue: " + "; ".join(details)
+    invalid_categories = sorted(
+        policy_id
+        for policy_id, category in catalog.items()
+        if not isinstance(category, str) or category not in PREFLIGHT_POLICY_CATEGORIES
+    )
+    if invalid_categories:
+        return (
+            "invalid preflight policy catalogue categories for policy IDs: "
+            + ", ".join(invalid_categories)
+        )
+    return None
+
+
+# These are the policy results emitted by this executable. The target-state-only
+# entries remain excluded until their checks are implemented and emitted by
+# every applicable run.
+EXPECTED_PREFLIGHT_POLICY_IDS = tuple(
+    policy_id
+    for policy_id in PREFLIGHT_POLICY_CATALOG
+    if policy_id not in TARGET_ONLY_PREFLIGHT_POLICY_IDS
 )
 EXPECTED_PREFLIGHT_POLICY_ID_SET = set(EXPECTED_PREFLIGHT_POLICY_IDS)
 
 COMMON_REQUIRED_PREFLIGHT_POLICY_IDS = {
     "PREFLIGHT-SECRETS-001",
     "PREFLIGHT-SECRETS-002",
-    "PREFLIGHT-JWT-001",
-    "PREFLIGHT-JWKS-001",
     "PREFLIGHT-BRIDGE-001",
     "PREFLIGHT-REDIS-001",
     "PREFLIGHT-BOOTSTRAP-001",
@@ -109,11 +211,20 @@ def expected_preflight_policy_requirements(
     return required
 
 PROMOTION_ATTESTATION_VERSION = "v1"
+JWT_ROTATION_POLICY_ID = "PREFLIGHT-JWT-ROTATION-001"
+ACCEPTED_JWT_CUSTODY_PROOF_TUPLES = frozenset(
+    {
+        ("PREFLIGHT-JWT-INTERIM-001", "INTERIM_ACCOUNT_ONLY_MOUNTED_FALLBACK", 1),
+        ("PREFLIGHT-JWT-002", "TARGET_NON_EXPORTABLE_SIGNER", 1),
+    }
+)
 PROMOTION_ATTESTATION_REQUIRED_FIELDS = (
     "attestationVersion",
     "environment",
     "stagingOverlayCommitSha",
     "stagingDeploymentEventId",
+    "jwtCustodyProof",
+    "jwtRotationEvidenceRef",
     "productionOverlayRef",
     "serviceDigests",
     "smokeEvidence",
@@ -294,25 +405,42 @@ def parse_timestamp(value: Any, field_name: str) -> dt.datetime:
     return parsed.astimezone(dt.timezone.utc)
 
 
-def secret_lookup_failure(secret_name: str) -> str | None:
+def secret_lookup_failure(secret_name: str, namespace: str = "firemud") -> str | None:
     try:
         result = subprocess.run(
-            ["kubectl", "get", "secret", "-n", "firemud", secret_name],
+            ["kubectl", "get", "secret", "-n", namespace, secret_name],
             check=False,
             capture_output=True,
             text=True,
             timeout=SECRET_LOOKUP_TIMEOUT_SECONDS,
         )
     except (OSError, subprocess.TimeoutExpired, UnicodeError) as exc:
-        return f"Secret lookup could not be verified for firemud/{secret_name}: {exc}"
+        return f"Secret lookup could not be verified for {namespace}/{secret_name}: {exc}"
     if result.returncode == 0:
         return None
 
     stderr = result.stderr.strip()
     if "(NotFound)" in stderr:
-        return f"Missing required Secret in cluster: firemud/{secret_name}"
+        return f"Missing required Secret in cluster: {namespace}/{secret_name}"
     detail = stderr or "kubectl returned a non-zero status without stderr"
-    return f"Secret lookup could not be verified for firemud/{secret_name}: {detail}"
+    return f"Secret lookup could not be verified for {namespace}/{secret_name}: {detail}"
+
+
+def expected_player_secret_bindings(
+    expected: dict[str, Any],
+) -> tuple[tuple[str | None, str | None, str], ...]:
+    return tuple(
+        (
+            secret_binding_name(get(expected, binding_path)),
+            secret_binding_namespace(get(expected, binding_path)),
+            binding_path,
+        )
+        for binding_path in (
+            "internalBindings.postgres.credentialsRef",
+            "internalBindings.jwt.signingKeysRef",
+            "internalBindings.jwt.jwksRef",
+        )
+    )
 
 
 def is_missing(value: Any) -> bool:
@@ -1144,6 +1272,111 @@ def resolve_repo_path(root_dir: Path, ref: str) -> Path:
     return path if path.is_absolute() else root_dir / ref
 
 
+def immutable_file_digest(path: Path) -> str:
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def canonical_expected_bindings_ref(environment: str) -> str:
+    return f"design/operations/environments/{environment}/expected-bindings.yaml"
+
+
+def canonical_promotion_attestation_ref(deployment_ref: str) -> str | None:
+    if not isinstance(deployment_ref, str) or not GIT_COMMIT_SHA_RE.fullmatch(deployment_ref):
+        return None
+    return f"design/operations/deployments/production/attestations/{deployment_ref}.json"
+
+
+def is_canonical_promotion_attestation_ref(
+    value: str, deployment_ref: str, *, root_dir: Path | None = None
+) -> bool:
+    canonical_ref = canonical_promotion_attestation_ref(deployment_ref)
+    if canonical_ref is None or root_dir is None or not isinstance(value, str):
+        return False
+    path = Path(value)
+    if path.is_absolute() or path.as_posix() != canonical_ref:
+        return False
+    if root_dir.is_symlink():
+        return False
+    repository_root = root_dir.resolve()
+    candidate = repository_root / path
+    canonical_directory = (
+        repository_root / "design" / "operations" / "deployments" / "production" / "attestations"
+    ).resolve()
+    if not candidate.resolve(strict=False).is_relative_to(canonical_directory):
+        return False
+    if candidate.resolve(strict=False) != canonical_directory / f"{deployment_ref}.json":
+        return False
+    current = candidate
+    while current != repository_root:
+        if current.is_symlink():
+            return False
+        current = current.parent
+    return True
+
+
+def operator_deployment_ref_is_current(
+    environment: str, deployment_ref: str, checked_out_commit_sha: str
+) -> bool:
+    if environment == "hobby-self-hosted":
+        return bool(DEPLOYMENT_REF_RE.fullmatch(deployment_ref))
+    return bool(
+        GIT_COMMIT_SHA_RE.fullmatch(deployment_ref)
+        and deployment_ref == checked_out_commit_sha
+    )
+
+
+def jwt_custody_proof_error(label: str, value: Any) -> str | None:
+    if not isinstance(value, dict):
+        return f"{label} must be an object"
+    required = {"proofId", "custodyMode", "contractVersion"}
+    if set(value) != required:
+        return f"{label} must contain exactly proofId, custodyMode, and contractVersion"
+    if not isinstance(value["contractVersion"], int) or isinstance(value["contractVersion"], bool):
+        return f"{label}.contractVersion must be an integer"
+    tuple_value = (
+        value.get("proofId"),
+        value.get("custodyMode"),
+        value.get("contractVersion"),
+    )
+    if tuple_value not in ACCEPTED_JWT_CUSTODY_PROOF_TUPLES:
+        return f"{label} does not select an accepted JWT custody proof tuple"
+    return None
+
+
+def load_immutable_json_evidence(
+    root_dir: Path, reference: Any, label: str
+) -> tuple[dict[str, Any] | None, str | None]:
+    if not isinstance(reference, str) or not reference.strip():
+        return None, f"{label} must be a non-empty immutable digest-qualified reference"
+    path_ref, separator, digest = reference.rpartition("#")
+    if not separator or not path_ref or not IMMUTABLE_ARTIFACT_ID_RE.fullmatch(digest):
+        return None, f"{label} must use <repository-path>#sha256:<digest> format"
+    path_value = Path(path_ref)
+    evidence_root = (
+        root_dir / "design" / "operations" / "deployments"
+    ).resolve()
+    evidence_path = resolve_repo_path(root_dir, path_ref).resolve()
+    if path_value.is_absolute() or not evidence_path.is_relative_to(evidence_root):
+        return None, f"{label} must resolve under design/operations/deployments"
+    if evidence_path.suffix != ".json":
+        return None, f"{label} must reference a JSON evidence record"
+    if not evidence_path.exists():
+        return None, f"{label} evidence record not found: {path_ref}"
+    try:
+        evidence = load_json(evidence_path)
+    except JSON_READ_ERRORS as exc:
+        return None, f"{label} evidence record unreadable: {exc}"
+    if not isinstance(evidence, dict):
+        return None, f"{label} evidence record must be a JSON object"
+    try:
+        actual_digest = canonical_evidence_digest(evidence)
+    except (TypeError, ValueError) as exc:
+        return None, f"{label} evidence record cannot be canonically hashed: {exc}"
+    if actual_digest != digest:
+        return None, f"{label} digest does not match the referenced evidence record"
+    return evidence, None
+
+
 def default_preflight_output_path(
     root_dir: Path,
     environment: str,
@@ -1170,15 +1403,25 @@ def validate_preflight_report(
     now_dt: dt.datetime | None = None,
     expected_deployment_event_id: str | None = None,
     completed_by: dt.datetime | None = None,
+    *,
+    allowed_supplemental_policy_ids: tuple[str, ...] = (),
+    expected_bindings_digest: str | None = None,
 ) -> tuple[str, str]:
     label = environment.capitalize()
     effective_now = now_dt or dt.datetime.now(dt.timezone.utc)
     if not isinstance(report, dict):
         return ("fail", f"{label} preflight report must be a JSON object")
+    catalog_error = validate_preflight_policy_catalog(PREFLIGHT_POLICY_CATALOG)
+    if catalog_error:
+        return ("fail", catalog_error)
+    if report.get("policyCatalogVersion") != PREFLIGHT_POLICY_CATALOG_VERSION:
+        return ("fail", f"{label} preflight report policyCatalogVersion mismatch")
     if report.get("environment") != environment:
         return ("fail", f"{label} preflight report must target {environment}")
     if report.get("expectedBindingsRef") != expected_bindings_ref:
         return ("fail", f"{label} preflight report expectedBindingsRef mismatch")
+    if expected_bindings_digest is not None and report.get("expectedBindingsDigest") != expected_bindings_digest:
+        return ("fail", f"{label} preflight report expectedBindingsDigest mismatch")
 
     deployment_ref_obj = report.get("deploymentRef")
     if not isinstance(deployment_ref_obj, dict):
@@ -1236,12 +1479,15 @@ def validate_preflight_report(
             malformed_results.append(str(index))
             continue
         policy_id = check.get("policyId")
+        category = check.get("category")
         status = check.get("status")
         message = check.get("message")
         required = check.get("required")
         if (
             not isinstance(policy_id, str)
             or not policy_id
+            or not isinstance(category, str)
+            or category not in PREFLIGHT_POLICY_CATEGORIES
             or status not in {"pass", "fail", "not_applicable"}
             or not isinstance(message, str)
             or not message
@@ -1263,15 +1509,32 @@ def validate_preflight_report(
     missing_ids = sorted(EXPECTED_PREFLIGHT_POLICY_ID_SET - set(policy_ids))
     if missing_ids:
         return ("fail", f"{label} preflight report missing expected policy IDs: " + ", ".join(missing_ids))
-    unknown_ids = sorted(set(policy_ids) - EXPECTED_PREFLIGHT_POLICY_ID_SET)
+    unknown_ids = sorted(
+        set(policy_ids)
+        - EXPECTED_PREFLIGHT_POLICY_ID_SET
+        - set(allowed_supplemental_policy_ids)
+    )
     if unknown_ids:
         return ("fail", f"{label} preflight report contains unknown policy IDs: " + ", ".join(unknown_ids))
+
+    category_mismatches = sorted(
+        check["policyId"]
+        for check in preflight_results
+        if check["category"] != PREFLIGHT_POLICY_CATALOG[check["policyId"]]
+    )
+    if category_mismatches:
+        return (
+            "fail",
+            f"{label} preflight report has mismatched policy categories: "
+            + ", ".join(category_mismatches),
+        )
 
     expected_requirements = expected_preflight_policy_requirements(environment, traffic_open_event)
     requirement_mismatches = sorted(
         check["policyId"]
         for check in preflight_results
-        if check["required"] is not expected_requirements[check["policyId"]]
+        if check["policyId"] in expected_requirements
+        and check["required"] is not expected_requirements[check["policyId"]]
     )
     if requirement_mismatches:
         return (
@@ -1297,8 +1560,11 @@ def validate_preflight_report(
         for check in preflight_results
         if not check["required"]
         and not (
-            environment == "hobby-self-hosted"
-            and check["policyId"] == "PREFLIGHT-DIGEST-002"
+            check["category"] == "advisory"
+            and (
+                check["policyId"] != "PREFLIGHT-DIGEST-002"
+                or environment == "hobby-self-hosted"
+            )
         )
         and check["status"] != "not_applicable"
     )
@@ -1366,6 +1632,161 @@ def player_facing_environments() -> tuple[str, ...]:
     return ("staging", "production", "hobby-self-hosted")
 
 
+def optional_integration_state(
+    data: dict[str, Any], section: str
+) -> tuple[bool, str | None]:
+    """Return enabled state and validate the explicit optional section contract."""
+    if section not in data:
+        return False, None
+    raw_section = data[section]
+    if not isinstance(raw_section, dict):
+        return False, f"{section} must be an object"
+    enabled = raw_section.get("enabled")
+    if not isinstance(enabled, bool):
+        return False, f"{section}.enabled must be a boolean"
+    if not enabled:
+        leftovers = [
+            f"{section}.{field}"
+            for field in sorted(raw_section)
+            if field != "enabled"
+        ]
+        if leftovers:
+            return False, f"{section} fields must be omitted when disabled: {', '.join(leftovers)}"
+        return False, None
+    if section == "assetStorage":
+        missing = [
+            f"assetStorage.{field}"
+            for field in ("bucket", "endpoint")
+            if normalize_binding_value(raw_section.get(field))[0] is None
+        ]
+        if (
+            normalize_binding_value(raw_section.get("bindingRef"))[0] is None
+            and normalize_binding_value(raw_section.get("fingerprint"))[0] is None
+        ):
+            missing.append("assetStorage.bindingRef or assetStorage.fingerprint")
+        if missing:
+            return True, "Missing enabled asset storage binding keys: " + ", ".join(missing)
+    elif section == "outboundComms":
+        smtp_host = raw_section.get("smtpHost")
+        webhook_targets = raw_section.get("webhookTargets")
+        if smtp_host is not None and normalize_binding_value(smtp_host)[0] is None:
+            return True, "outboundComms.smtpHost must be a non-empty binding value when present"
+        if webhook_targets is not None and (
+            not isinstance(webhook_targets, dict) or not webhook_targets
+        ):
+            return True, "outboundComms.webhookTargets must be a non-empty mapping when present"
+        if isinstance(webhook_targets, dict):
+            invalid_targets = [
+                str(target_name)
+                for target_name, target in webhook_targets.items()
+                if normalize_binding_value(target)[0] is None
+            ]
+            if invalid_targets:
+                return (
+                    True,
+                    "outboundComms.webhookTargets entries must be non-empty binding values: "
+                    + ", ".join(sorted(invalid_targets)),
+                )
+        if not smtp_host and not webhook_targets:
+            return True, "Enabled outbound communications require smtpHost or webhookTargets"
+    return True, None
+
+
+# Sharing is a binding-type decision, not a generic escape hatch. Internal
+# state/trust and credential principals are environment-exclusive. Only the
+# non-secret endpoint/target fields below may be conditionally shared.
+BINDING_SHAREABILITY = {
+    "internalBindings.postgres.endpoint": "exclusive",
+    "internalBindings.postgres.credentialsRef": "exclusive",
+    "internalBindings.redis.coordination.endpoint": "exclusive",
+    "internalBindings.redis.cache.endpoint": "exclusive",
+    "internalBindings.jwt.signingKeysRef": "exclusive",
+    "internalBindings.jwt.jwksRef": "exclusive",
+    "internalBindings.certificates.issuerRef": "exclusive",
+    "internalBindings.certificates.workloadMtlsRef": "exclusive",
+    "internalBindings.certificates.gatewayInternalWsListenerRef": "exclusive",
+    "internalBindings.certificates.tcpProxyBridgeClientRef": "exclusive",
+    "internalBindings.certificates.backupControlPlaneClientRef": "exclusive",
+    "internalBindings.registry.imagePullSecretRef": "exclusive",
+    "backupStorage.bucket": "conditional",
+    "backupStorage.endpoint": "conditional",
+    "backupStorage.bindingRef": "exclusive",
+    "backupStorage.fingerprint": "exclusive",
+    "assetStorage.bucket": "conditional",
+    "assetStorage.endpoint": "conditional",
+    "assetStorage.bindingRef": "exclusive",
+    "assetStorage.fingerprint": "exclusive",
+    "outboundComms.smtpHost": "conditional",
+    "observability.otelCollectorEndpoint": "conditional",
+    "operatorCredentials.bindingRef": "exclusive",
+    "operatorCredentials.fingerprint": "exclusive",
+}
+
+
+def binding_declarations(data: dict[str, Any]):
+    for label, shareability in BINDING_SHAREABILITY.items():
+        raw = get(data, label)
+        if raw is not None:
+            yield label, raw, shareability
+    outbound = data.get("outboundComms")
+    if isinstance(outbound, dict) and outbound.get("enabled") is True:
+        targets = outbound.get("webhookTargets")
+        if isinstance(targets, dict):
+            for target_name, raw_target in sorted(targets.items()):
+                yield (
+                    f"outboundComms.webhookTargets.{target_name}",
+                    raw_target,
+                    "conditional",
+                )
+
+
+def binding_shareability_issues(data: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    for label, raw, shareability in binding_declarations(data):
+        if shareability == "conditional" and isinstance(raw, dict):
+            credential_keys = sorted({"bindingRef", "fingerprint"} & raw.keys())
+            if credential_keys:
+                issues.append(
+                    f"{label} is a non-sensitive target and cannot use credential fields: "
+                    + ", ".join(credential_keys)
+                )
+                continue
+        _, shared, rationale = normalize_binding_value(raw)
+        if not shared:
+            continue
+        if shareability == "exclusive":
+            issues.append(f"{label} is environment-exclusive and cannot be marked shared")
+        elif not rationale:
+            issues.append(f"{label} is marked shared but missing sharedRationale")
+    return issues
+
+
+def required_secret_compliance_classes(root_dir: Path, environment: str) -> set[str]:
+    expected_path = root_dir / "design/operations/environments" / environment / "expected-bindings.yaml"
+    try:
+        expected_data = load_yaml(expected_path) or {}
+    except YAML_READ_ERRORS as exc:
+        raise ValueError(f"Cannot read canonical expected-bindings manifest: {exc}") from exc
+    if not isinstance(expected_data, dict) or expected_data.get("environment") != environment:
+        raise ValueError(
+            f"Canonical expected-bindings manifest must target {environment}: {expected_path}"
+        )
+    asset_enabled, asset_error = optional_integration_state(expected_data, "assetStorage")
+    if asset_error:
+        raise ValueError(f"Canonical assetStorage configuration is invalid: {asset_error}")
+    required = set(BASE_SECRET_COMPLIANCE_CLASSES)
+    backup_storage = expected_data.get("backupStorage")
+    if not isinstance(backup_storage, dict) or not isinstance(
+        backup_storage.get("enabled"), bool
+    ):
+        raise TypeError("Canonical backupStorage.enabled must be a boolean")
+    if backup_storage["enabled"]:
+        required.add("backup-object-store-credentials")
+    if asset_enabled:
+        required.add("asset-store-credentials")
+    return required
+
+
 def normalize_binding_value(raw: Any) -> tuple[str | None, bool, str]:
     if isinstance(raw, dict):
         shared = bool(raw.get("shared"))
@@ -1380,23 +1801,217 @@ def normalize_binding_value(raw: Any) -> tuple[str | None, bool, str]:
     return (None, False, "")
 
 
-def extract_service_discovery_overrides(rendered_text: str) -> dict[str, str]:
-    overrides = {}
-    for raw_key, raw_value in re.findall(
-        r"(FIREMUD_SERVICES_[A-Z0-9_]+):\s*([^\n]+)", rendered_text
-    ):
-        value = str(raw_value).strip().strip("\"'")
-        overrides[raw_key] = value
-    return overrides
+def workload_namespace(document: dict[str, Any]) -> str:
+    return metadata_namespace(document) or "firemud"
+
+
+def effective_container_env(
+    documents: list[dict[str, Any]],
+    document: dict[str, Any],
+    container: dict[str, Any],
+    *,
+    relevant_prefixes: tuple[str, ...] | None = None,
+    relevant_names: set[str] | None = None,
+) -> tuple[dict[str, str], list[str]]:
+    """Resolve the inspectable effective environment for this workload container."""
+    namespace = workload_namespace(document)
+    prefixes = relevant_prefixes or ()
+    names = relevant_names or set()
+    inspect_all = relevant_prefixes is None and relevant_names is None
+
+    def is_relevant(name: Any) -> bool:
+        return inspect_all or (
+            isinstance(name, str)
+            and (name in names or any(name.startswith(prefix) for prefix in prefixes))
+        )
+
+    def secret_env_from_is_relevant(prefix: str) -> bool:
+        # A prefix that is unrelated to the requested contract cannot expose a
+        # relevant key. With no prefix, an absent or malformed external Secret
+        # remains opaque; any concrete keys are still checked below when they
+        # can be inspected safely.
+        return inspect_all or (
+            bool(prefix)
+            and (
+                any(prefix.startswith(candidate) or candidate.startswith(prefix) for candidate in prefixes)
+                or any(name.startswith(prefix) for name in names)
+            )
+        )
+
+    configmaps: dict[tuple[str, str], Any] = {}
+    secrets: dict[tuple[str, str], Any] = {}
+    for source in documents:
+        source_name = metadata_name(source)
+        if not source_name:
+            continue
+        source_key = (workload_namespace(source), source_name)
+        if source.get("kind") == "ConfigMap":
+            configmaps[source_key] = source.get("data")
+        elif source.get("kind") == "Secret":
+            secrets[source_key] = source
+    values: dict[str, str] = {}
+    issues: list[str] = []
+
+    def add(name: Any, value: Any, source: str) -> None:
+        if not isinstance(name, str) or not name:
+            return
+        if isinstance(value, str):
+            values[name] = value
+        else:
+            issues.append(f"{source} value for {name} is not a string")
+
+    for entry in container.get("envFrom") or []:
+        if not isinstance(entry, dict):
+            continue
+        prefix = str(entry.get("prefix") or "")
+        ref = entry.get("configMapRef")
+        source_kind = "ConfigMap"
+        if isinstance(ref, dict):
+            source_values = configmaps.get((namespace, str(ref.get("name") or "")))
+        else:
+            ref = entry.get("secretRef")
+            source_kind = "Secret"
+            source_values = secrets.get((namespace, str(ref.get("name") or ""))) if isinstance(ref, dict) else None
+        if not isinstance(ref, dict) or not ref.get("name"):
+            continue
+        ref_name = str(ref["name"])
+        optional = ref.get("optional", False)
+        if not isinstance(optional, bool):
+            issues.append(f"{source_kind} {namespace}/{ref_name} optional must be a boolean")
+            continue
+        if source_values is None:
+            if (
+                (source_kind == "ConfigMap" and not optional)
+                or (
+                    source_kind == "Secret"
+                    and secret_env_from_is_relevant(prefix)
+                    and not optional
+                )
+            ):
+                issues.append(f"{source_kind} {namespace}/{ref_name} referenced by workload is missing")
+            continue
+        if not isinstance(source_values, dict):
+            if source_kind == "ConfigMap" or inspect_all:
+                issues.append(f"{source_kind} {namespace}/{ref_name} data must be a mapping")
+            continue
+        source_data = source_values.get("data") if source_kind == "Secret" else source_values
+        source_string_data = source_values.get("stringData") if source_kind == "Secret" else None
+        if source_kind == "Secret" and (
+            ("data" in source_values and not isinstance(source_data, dict))
+            or ("stringData" in source_values and not isinstance(source_string_data, dict))
+        ):
+            if secret_env_from_is_relevant(prefix):
+                issues.append(f"Secret {namespace}/{ref_name} data and stringData must be mappings")
+            continue
+        source_entries = dict(source_data or {})
+        source_entries.update(source_string_data or {})
+        for key, value in source_entries.items():
+            effective_name = prefix + str(key)
+            if not is_relevant(effective_name):
+                continue
+            if source_kind == "Secret":
+                issues.append(
+                    f"Secret {namespace}/{ref_name} cannot provide relevant environment configuration {effective_name}"
+                )
+                continue
+            add(effective_name, value, f"ConfigMap {namespace}/{ref_name}")
+
+    for entry in container.get("env") or []:
+        if not isinstance(entry, dict) or not entry.get("name"):
+            continue
+        name = entry["name"]
+        if not is_relevant(name):
+            continue
+        if "value" in entry:
+            add(name, entry.get("value"), "direct env")
+            continue
+        value_from = entry.get("valueFrom")
+        if not isinstance(value_from, dict):
+            continue
+        ref = value_from.get("configMapKeyRef")
+        source_kind = "ConfigMap"
+        if isinstance(ref, dict):
+            source_values = configmaps.get((namespace, str(ref.get("name") or "")))
+        else:
+            ref = value_from.get("secretKeyRef")
+            source_kind = "Secret"
+            source_values = secrets.get((namespace, str(ref.get("name") or ""))) if isinstance(ref, dict) else None
+        if not isinstance(ref, dict) or not ref.get("name") or not ref.get("key"):
+            continue
+        ref_name = str(ref["name"])
+        optional = ref.get("optional", False)
+        if not isinstance(optional, bool):
+            issues.append(f"{source_kind} key {namespace}/{ref_name}:{ref['key']} optional must be a boolean")
+            continue
+        if source_values is None:
+            if not optional:
+                issues.append(f"{source_kind} key {namespace}/{ref_name}:{ref['key']} referenced by workload is missing")
+            continue
+        if not isinstance(source_values, dict):
+            issues.append(f"{source_kind} {namespace}/{ref_name} data must be a mapping")
+            continue
+        if source_kind == "Secret":
+            source_data = source_values.get("data")
+            source_string_data = source_values.get("stringData")
+            if (
+                (source_data is not None and not isinstance(source_data, dict))
+                or (source_string_data is not None and not isinstance(source_string_data, dict))
+            ):
+                issues.append(f"Secret {namespace}/{ref_name} data and stringData must be mappings")
+                continue
+            if ref["key"] not in (source_data or {}) and ref["key"] not in (source_string_data or {}):
+                if not optional:
+                    issues.append(f"Secret key {namespace}/{ref_name}:{ref['key']} referenced by workload is missing")
+                continue
+            issues.append(
+                f"Secret {namespace}/{ref_name} cannot provide relevant environment configuration {name}"
+            )
+            continue
+        if ref["key"] not in source_values:
+            if not optional:
+                issues.append(f"ConfigMap key {namespace}/{ref_name}:{ref['key']} referenced by workload is missing")
+            continue
+        source_value = source_values[ref["key"]]
+        add(name, source_value, f"{source_kind} {namespace}/{ref_name}")
+    return values, issues
+
+
+def extract_service_discovery_overrides(documents: list[dict[str, Any]]) -> tuple[dict[str, str], list[str]]:
+    overrides: dict[str, str] = {}
+    issues: list[str] = []
+    for document in documents:
+        for _, container, _ in primary_containers(document):
+            values, env_issues = effective_container_env(
+                documents,
+                document,
+                container,
+                relevant_prefixes=("FIREMUD_SERVICES_",),
+            )
+            issues.extend(env_issues)
+            for key, value in values.items():
+                if not key.startswith("FIREMUD_SERVICES_"):
+                    continue
+                if key in overrides and overrides[key] != value:
+                    issues.append(f"effective {key} values conflict across workloads")
+                overrides[key] = value
+    return overrides, issues
 
 
 def external_binding_uniqueness_issues(
     manifests_root: Path, env_class: str, current_data: dict[str, Any]
 ) -> list[str]:
-    current_backup = current_data.get("backupStorage") or {}
-    current_asset = current_data.get("assetStorage") or {}
-    current_outbound = current_data.get("outboundComms") or {}
-    current_operator = current_data.get("operatorCredentials") or {}
+    current_backup = current_data.get("backupStorage")
+    current_asset = current_data.get("assetStorage")
+    current_outbound = current_data.get("outboundComms")
+    current_operator = current_data.get("operatorCredentials")
+    current_backup = current_backup if isinstance(current_backup, dict) else {}
+    current_asset = current_asset if isinstance(current_asset, dict) else {}
+    current_outbound = current_outbound if isinstance(current_outbound, dict) else {}
+    current_operator = current_operator if isinstance(current_operator, dict) else {}
+    current_observability = current_data.get("observability")
+    current_observability = (
+        current_observability if isinstance(current_observability, dict) else {}
+    )
 
     def add_candidate(
         issues: list[str],
@@ -1412,33 +2027,46 @@ def external_binding_uniqueness_issues(
             return
         candidates.append((label, value, shared, rationale))
 
-    issues: list[str] = []
+    issues: list[str] = binding_shareability_issues(current_data)
     candidates: list[tuple[str, str, bool, str]] = []
-    add_candidate(issues, candidates, "backupStorage.bucket", current_backup.get("bucket"))
-    add_candidate(
-        issues,
-        candidates,
-        "backupStorage.bindingRef",
-        current_backup.get("bindingRef") or current_backup.get("fingerprint"),
+    current_backup_enabled = (
+        isinstance(current_backup, dict) and current_backup.get("enabled") is True
     )
-    add_candidate(issues, candidates, "assetStorage.bucket", current_asset.get("bucket"))
-    add_candidate(issues, candidates, "assetStorage.endpoint", current_asset.get("endpoint"))
-    add_candidate(
-        issues,
-        candidates,
-        "assetStorage.bindingRef",
-        current_asset.get("bindingRef") or current_asset.get("fingerprint"),
-    )
-    add_candidate(issues, candidates, "outboundComms.smtpHost", current_outbound.get("smtpHost"))
-    for target_name, raw_target in sorted((current_outbound.get("webhookTargets") or {}).items()):
+    if current_backup_enabled:
+        add_candidate(issues, candidates, "backupStorage.bucket", current_backup.get("bucket"))
+        add_candidate(issues, candidates, "backupStorage.endpoint", current_backup.get("endpoint"))
         add_candidate(
-            issues, candidates, f"outboundComms.webhookTargets.{target_name}", raw_target
+            issues,
+            candidates,
+            "backupStorage.bindingRef",
+            current_backup.get("bindingRef") or current_backup.get("fingerprint"),
         )
+    if current_asset.get("enabled") is True:
+        add_candidate(issues, candidates, "assetStorage.bucket", current_asset.get("bucket"))
+        add_candidate(issues, candidates, "assetStorage.endpoint", current_asset.get("endpoint"))
+        add_candidate(
+            issues,
+            candidates,
+            "assetStorage.bindingRef",
+            current_asset.get("bindingRef") or current_asset.get("fingerprint"),
+        )
+    if current_outbound.get("enabled") is True:
+        add_candidate(issues, candidates, "outboundComms.smtpHost", current_outbound.get("smtpHost"))
+        for target_name, raw_target in sorted((current_outbound.get("webhookTargets") or {}).items()):
+            add_candidate(
+                issues, candidates, f"outboundComms.webhookTargets.{target_name}", raw_target
+            )
     add_candidate(
         issues,
         candidates,
         "operatorCredentials.bindingRef",
         current_operator.get("bindingRef") or current_operator.get("fingerprint"),
+    )
+    add_candidate(
+        issues,
+        candidates,
+        "observability.otelCollectorEndpoint",
+        current_observability.get("otelCollectorEndpoint"),
     )
     if issues:
         return issues
@@ -1455,21 +2083,58 @@ def external_binding_uniqueness_issues(
         except YAML_READ_ERRORS as exc:
             issues.append(f"Unreadable expected-bindings manifest for {other_env}: {exc}")
             continue
-        other_backup = other_data.get("backupStorage") or {}
-        other_asset = other_data.get("assetStorage") or {}
-        other_outbound = other_data.get("outboundComms") or {}
-        other_operator = other_data.get("operatorCredentials") or {}
+        other_backup = other_data.get("backupStorage")
+        other_asset = other_data.get("assetStorage")
+        other_outbound = other_data.get("outboundComms")
+        other_operator = other_data.get("operatorCredentials")
+        other_observability = other_data.get("observability")
+        other_backup = other_backup if isinstance(other_backup, dict) else {}
+        other_asset = other_asset if isinstance(other_asset, dict) else {}
+        other_outbound = other_outbound if isinstance(other_outbound, dict) else {}
+        other_operator = other_operator if isinstance(other_operator, dict) else {}
+        other_observability = (
+            other_observability if isinstance(other_observability, dict) else {}
+        )
+        issues.extend(
+            f"{other_env}: {issue}" for issue in binding_shareability_issues(other_data)
+        )
+        other_backup_enabled = (
+            isinstance(other_backup, dict) and other_backup.get("enabled") is True
+        )
+        other_asset_enabled = (
+            isinstance(other_asset, dict) and other_asset.get("enabled") is True
+        )
+        other_outbound_enabled = (
+            isinstance(other_outbound, dict) and other_outbound.get("enabled") is True
+        )
         other_lookup = {
-            "backupStorage.bucket": other_backup.get("bucket"),
-            "backupStorage.bindingRef": other_backup.get("bindingRef") or other_backup.get("fingerprint"),
-            "assetStorage.bucket": other_asset.get("bucket"),
-            "assetStorage.endpoint": other_asset.get("endpoint"),
-            "assetStorage.bindingRef": other_asset.get("bindingRef") or other_asset.get("fingerprint"),
-            "outboundComms.smtpHost": other_outbound.get("smtpHost"),
+            "backupStorage.bucket": (
+                other_backup.get("bucket") if other_backup_enabled else None
+            ),
+            "backupStorage.endpoint": (
+                other_backup.get("endpoint") if other_backup_enabled else None
+            ),
+            "backupStorage.bindingRef": (
+                other_backup.get("bindingRef") or other_backup.get("fingerprint")
+                if other_backup_enabled
+                else None
+            ),
+            "assetStorage.bucket": other_asset.get("bucket") if other_asset_enabled else None,
+            "assetStorage.endpoint": other_asset.get("endpoint") if other_asset_enabled else None,
+            "assetStorage.bindingRef": (
+                other_asset.get("bindingRef") or other_asset.get("fingerprint")
+                if other_asset_enabled
+                else None
+            ),
+            "outboundComms.smtpHost": other_outbound.get("smtpHost") if other_outbound_enabled else None,
             "operatorCredentials.bindingRef": other_operator.get("bindingRef") or other_operator.get("fingerprint"),
+            "observability.otelCollectorEndpoint": other_observability.get(
+                "otelCollectorEndpoint"
+            ),
         }
-        for target_name, raw_target in sorted((other_outbound.get("webhookTargets") or {}).items()):
-            other_lookup[f"outboundComms.webhookTargets.{target_name}"] = raw_target
+        if other_outbound_enabled:
+            for target_name, raw_target in sorted((other_outbound.get("webhookTargets") or {}).items()):
+                other_lookup[f"outboundComms.webhookTargets.{target_name}"] = raw_target
 
         for label, value, current_shared, current_rationale in candidates:
             other_value, other_shared, other_rationale = normalize_binding_value(
@@ -1499,12 +2164,56 @@ def metadata_name(document: dict[str, Any]) -> str | None:
     return metadata.get("name")
 
 
-def rendered_has_resource(documents: list[dict[str, Any]], kind: str, name: str) -> bool:
-    return any(document.get("kind") == kind and metadata_name(document) == name for document in documents)
+def metadata_namespace(document: dict[str, Any]) -> str | None:
+    metadata = document.get("metadata") or {}
+    namespace = metadata.get("namespace")
+    return namespace if isinstance(namespace, str) and namespace else None
 
 
-def rendered_references_secret(documents: list[dict[str, Any]], name: str) -> bool:
+def rendered_namespace_matches(
+    document: dict[str, Any],
+    namespace: str | None,
+    *,
+    default_namespace: str | None = None,
+) -> bool:
+    rendered_namespace = metadata_namespace(document) or default_namespace
+    return namespace is None or rendered_namespace == namespace
+
+
+def rendered_has_resource(
+    documents: list[dict[str, Any]],
+    kind: str,
+    name: str,
+    namespace: str | None = None,
+    *,
+    default_namespace: str | None = None,
+) -> bool:
+    return any(
+        document.get("kind") == kind
+        and metadata_name(document) == name
+        and rendered_namespace_matches(
+            document,
+            namespace,
+            default_namespace=default_namespace,
+        )
+        for document in documents
+    )
+
+
+def rendered_references_secret(
+    documents: list[dict[str, Any]],
+    name: str,
+    namespace: str | None = None,
+    *,
+    default_namespace: str | None = None,
+) -> bool:
     for document in documents:
+        if not rendered_namespace_matches(
+            document,
+            namespace,
+            default_namespace=default_namespace,
+        ):
+            continue
         for node in walk(document):
             if not isinstance(node, dict):
                 continue
@@ -1517,6 +2226,170 @@ def rendered_references_secret(documents: list[dict[str, Any]], name: str) -> bo
             if isinstance(secret_key_ref, dict) and secret_key_ref.get("name") == name:
                 return True
     return False
+
+
+def rendered_secret_binding_is_owned(
+    documents: list[dict[str, Any]],
+    name: str,
+    namespace: str | None,
+    binding_path: str,
+) -> bool:
+    expected_workloads = {
+        "internalBindings.postgres.credentialsRef": frozenset(
+            {
+                "account-service",
+                "automation-scripting-service",
+                "entity-management-service",
+                "game-design-service",
+                "game-logic-service",
+                "game-session-service",
+                "logging-admin-service",
+                "social-groups-service",
+                "tcp-proxy-service",
+                "world-management-service",
+            }
+        ),
+        "internalBindings.jwt.signingKeysRef": frozenset(
+            {
+                "account-service",
+                "automation-scripting-service",
+                "entity-management-service",
+                "game-design-service",
+                "game-logic-service",
+                "game-session-service",
+                "logging-admin-service",
+                "social-groups-service",
+                "world-management-service",
+                "spring-cloud-gateway",
+                "tcp-proxy-service",
+            }
+        ),
+        "internalBindings.jwt.jwksRef": frozenset({"account-service"}),
+    }.get(binding_path, frozenset())
+    required_mounts = {
+        "internalBindings.jwt.signingKeysRef": "/var/run/secrets/firemud/jwt",
+        "internalBindings.jwt.jwksRef": "/var/run/secrets/firemud/jwks",
+    }
+    required_mount = required_mounts.get(binding_path)
+    if not expected_workloads or (
+        binding_path != "internalBindings.postgres.credentialsRef" and required_mount is None
+    ):
+        return False
+    if not isinstance(name, str) or not name.strip() or not isinstance(namespace, str) or not namespace.strip():
+        return False
+    owner_counts: dict[str, int] = {}
+    workload_counts: dict[str, int] = {}
+
+    def valid_metadata(value: Any) -> bool:
+        return (
+            isinstance(value, str)
+            and bool(value)
+            and len(value) <= 63
+            and re.fullmatch(r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?", value) is not None
+        )
+
+    def primary_container(document: dict[str, Any]) -> tuple[str | None, dict[str, Any] | None, list[dict[str, Any]]]:
+        metadata = document.get("metadata")
+        workload_name = metadata.get("name") if isinstance(metadata, dict) else None
+        workload_namespace_value = metadata.get("namespace") if isinstance(metadata, dict) else None
+        spec = (((document.get("spec") or {}).get("template") or {}).get("spec") or {})
+        containers = spec.get("containers")
+        if not isinstance(containers, list):
+            return workload_name, None, []
+        typed_containers = [container for container in containers if isinstance(container, dict)]
+        if (
+            not valid_metadata(workload_name)
+            or not valid_metadata(workload_namespace_value)
+            or workload_name not in expected_workloads
+        ):
+            return workload_name, None, typed_containers
+        matches = [container for container in typed_containers if container.get("name") == workload_name]
+        if len(matches) != 1:
+            return workload_name, None, typed_containers
+        return workload_name, matches[0], typed_containers
+
+    def binding_reference_parts(
+        container: dict[str, Any], volumes: dict[str, str | None]
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+        env_from_refs: list[dict[str, Any]] = []
+        secret_key_refs: list[dict[str, Any]] = []
+        for entry in (container.get("envFrom") or []) + (container.get("env") or []):
+            if not isinstance(entry, dict):
+                continue
+            secret_ref = entry.get("secretRef")
+            if isinstance(secret_ref, dict) and secret_ref.get("name") == name:
+                env_from_refs.append(entry)
+            value_from = entry.get("valueFrom")
+            secret_key_ref = value_from.get("secretKeyRef") if isinstance(value_from, dict) else None
+            if isinstance(secret_key_ref, dict) and secret_key_ref.get("name") == name:
+                secret_key_refs.append(entry)
+        mount_refs = [
+            mount
+            for mount in container.get("volumeMounts") or []
+            if isinstance(mount, dict) and volumes.get(mount.get("name")) == name
+        ]
+        return env_from_refs, secret_key_refs, mount_refs
+
+    def references_binding(container: dict[str, Any], volumes: dict[str, str | None]) -> bool:
+        env_from_refs, secret_key_refs, mount_refs = binding_reference_parts(container, volumes)
+        return bool(env_from_refs or secret_key_refs or mount_refs)
+
+    def correct_binding(container: dict[str, Any], volumes: dict[str, str | None]) -> bool:
+        env_from_refs, secret_key_refs, mount_refs = binding_reference_parts(container, volumes)
+        if binding_path == "internalBindings.postgres.credentialsRef":
+            return len(env_from_refs) == 1 and not secret_key_refs and not mount_refs
+        return (
+            len(mount_refs) == 1
+            and mount_refs[0].get("mountPath") == required_mount
+            and mount_refs[0].get("readOnly") is True
+            and not env_from_refs
+            and not secret_key_refs
+        )
+
+    for document in documents:
+        if document.get("kind") not in {"Deployment", "StatefulSet", "DaemonSet"}:
+            continue
+        metadata = document.get("metadata")
+        workload_name = metadata.get("name") if isinstance(metadata, dict) else None
+        workload_namespace_value = metadata.get("namespace") if isinstance(metadata, dict) else None
+        spec = (((document.get("spec") or {}).get("template") or {}).get("spec") or {})
+        raw_containers = spec.get("containers")
+        if not isinstance(raw_containers, list):
+            continue
+        volumes = {
+            volume.get("name"): ((volume.get("secret") or {}).get("secretName"))
+            for volume in spec.get("volumes") or []
+            if isinstance(volume, dict)
+        }
+        typed_containers = [container for container in raw_containers if isinstance(container, dict)]
+        if workload_name in expected_workloads:
+            if not valid_metadata(workload_name) or not valid_metadata(workload_namespace_value):
+                return False
+            if workload_namespace_value != namespace:
+                return False
+            workload_counts[workload_name] = workload_counts.get(workload_name, 0) + 1
+            if workload_counts[workload_name] > 1:
+                return False
+        has_reference = any(references_binding(container, volumes) for container in typed_containers)
+        if not has_reference:
+            continue
+        if (
+            not valid_metadata(workload_name)
+            or not valid_metadata(workload_namespace_value)
+            or workload_namespace_value != namespace
+            or workload_name not in expected_workloads
+        ):
+            return False
+        _, primary, _ = primary_container(document)
+        if primary is None:
+            return False
+        for container in typed_containers:
+            if not references_binding(container, volumes):
+                continue
+            if container is not primary or not correct_binding(container, volumes):
+                return False
+            owner_counts[workload_name] = owner_counts.get(workload_name, 0) + 1
+    return bool(owner_counts) and all(count == 1 for count in owner_counts.values())
 
 
 def parse_binding_ref(ref: Any) -> tuple[str, str, list[str]] | None:
@@ -1564,8 +2437,22 @@ def secret_binding_name(ref: Any) -> str | None:
     return segments[0] or None
 
 
-def rendered_references_image_pull_secret(documents: list[dict[str, Any]], name: str) -> bool:
+def secret_binding_namespace(ref: Any) -> str | None:
+    parsed = parse_binding_ref(ref)
+    if parsed is None:
+        return None
+    scheme, namespace, segments = parsed
+    if scheme != "secret" or len(segments) != 1:
+        return None
+    return namespace
+
+
+def rendered_references_image_pull_secret(
+    documents: list[dict[str, Any]], name: str, namespace: str | None = None
+) -> bool:
     for document in documents:
+        if not rendered_namespace_matches(document, namespace, default_namespace=namespace):
+            continue
         if document.get("kind") == "ServiceAccount":
             for entry in document.get("imagePullSecrets") or []:
                 if isinstance(entry, dict) and entry.get("name") == name:
@@ -1587,6 +2474,344 @@ def config_value(documents: list[dict[str, Any]], name: str) -> str | None:
         if name in data:
             return str(data[name])
     return None
+
+
+def normalize_service_endpoint(host: str, port: str, namespace: str) -> str:
+    host = host.strip().lower().rstrip(".")
+    if (
+        not host
+        or "://" in host
+        or "/" in host
+        or any(
+            not label or not re.fullmatch(r"[a-z0-9-]+", label)
+            for label in host.split(".")
+        )
+    ):
+        raise ValueError("Redis host must be a DNS host name")
+    port = port.strip()
+    if not port.isdigit() or not 1 <= int(port) <= 65535:
+        raise ValueError("Redis port must be an integer from 1 to 65535")
+    if "." not in host:
+        host = f"{host}.{namespace}.svc.cluster.local"
+    return f"{host}:{port}"
+
+
+def normalize_redis_url(value: Any, namespace: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("Redis URL must be a non-empty string")
+    parsed = urlsplit(value.strip())
+    if parsed.scheme not in {"redis", "rediss"} or parsed.username or parsed.password:
+        raise ValueError("Redis URL must use redis:// or rediss:// without credentials")
+    if parsed.path not in {"", "/"} or parsed.query or parsed.fragment or not parsed.hostname:
+        raise ValueError("Redis URL must identify only a host and port")
+    port = parsed.port or 6379
+    return normalize_service_endpoint(parsed.hostname, str(port), namespace)
+
+
+def service_override_in_environment(value: Any, namespace: str) -> bool:
+    if not isinstance(value, str) or not value.strip() or "://" in value or "/" in value:
+        return False
+    host_port = value.strip().lower().rstrip(".")
+    host = host_port
+    if host_port.count(":") == 1:
+        host, port = host_port.rsplit(":", 1)
+        if not port.isdigit() or not 1 <= int(port) <= 65535:
+            return False
+    if not host or any(not label or not re.fullmatch(r"[a-z0-9-]+", label) for label in host.split(".")):
+        return False
+    if "." not in host:
+        return True
+    allowed_suffixes = (
+        f".{namespace}",
+        f".{namespace}.svc",
+        f".{namespace}.svc.cluster.local",
+    )
+    return host.endswith(allowed_suffixes)
+
+
+def expected_redis_endpoint(data: dict[str, Any], role: str) -> str | None:
+    value = get(data, f"internalBindings.redis.{role}.endpoint")
+    return value.strip().lower() if isinstance(value, str) and value.strip() else None
+
+
+def effective_redis_endpoints(
+    documents: list[dict[str, Any]], expected: dict[str, Any]
+) -> tuple[set[str], list[str]]:
+    expected_coord = expected_redis_endpoint(expected, "coordination")
+    expected_cache = expected_redis_endpoint(expected, "cache")
+    endpoints: set[str] = set()
+    issues: list[str] = []
+    for document in documents:
+        namespace = workload_namespace(document)
+        for _, container, _ in primary_containers(document):
+            values, env_issues = effective_container_env(
+                documents,
+                document,
+                container,
+                relevant_prefixes=("FIREMUD_REDIS_",),
+            )
+            issues.extend(env_issues)
+            if not any(key.startswith("FIREMUD_REDIS_") for key in values):
+                continue
+            resolved: dict[str, str] = {}
+            for role, prefix in (("coordination", "FIREMUD_REDIS_COORD"), ("cache", "FIREMUD_REDIS_CACHE")):
+                url = values.get(prefix + "_URL")
+                try:
+                    if url:
+                        endpoint = normalize_redis_url(url, namespace)
+                    else:
+                        host = values.get(prefix + "_HOST")
+                        port = values.get(prefix + "_PORT")
+                        if not host or not port:
+                            raise ValueError(
+                                f"{prefix} requires URL or host and port"
+                            )
+                        endpoint = normalize_service_endpoint(host, port, namespace)
+                except ValueError as exc:
+                    issues.append(f"{prefix} effective endpoint is invalid: {exc}")
+                    continue
+                resolved[role] = endpoint
+                expected_endpoint = expected_coord if role == "coordination" else expected_cache
+                if expected_endpoint != endpoint:
+                    issues.append(f"{prefix} effective endpoint {endpoint} does not match expected {expected_endpoint}")
+            if len(resolved) == 2:
+                endpoints.update(resolved.values())
+                if resolved["coordination"] == resolved["cache"]:
+                    issues.append("Coordination and Cache Redis endpoints resolve to the same host:port")
+    if not endpoints:
+        issues.append("Could not resolve Redis endpoints from referenced workload configuration")
+    return endpoints, issues
+
+
+def canonical_gateway_ws_endpoint(
+    documents: list[dict[str, Any]], expected: dict[str, Any]
+) -> tuple[str | None, list[str]]:
+    listener_ref = get(expected, "internalBindings.certificates.gatewayInternalWsListenerRef")
+    parsed_ref = parse_binding_ref(listener_ref)
+    if (
+        parsed_ref is None
+        or parsed_ref[0] != "cert-manager"
+        or not parsed_ref[1]
+        or len(parsed_ref[2]) != 1
+    ):
+        return None, [
+            "internalBindings.certificates.gatewayInternalWsListenerRef must be a cert-manager binding with one namespace-local name"
+        ]
+    namespace = parsed_ref[1]
+    services = [
+        document for document in documents
+        if document.get("kind") == "Service"
+        and metadata_name(document) == "spring-cloud-gateway-mtls"
+        and rendered_namespace_matches(document, namespace, default_namespace=namespace)
+    ]
+    if len(services) != 1:
+        return None, ["exactly one rendered internal Gateway mTLS Service is required"]
+    service = services[0]
+    if (service.get("spec") or {}).get("type", "ClusterIP") != "ClusterIP":
+        return None, ["Gateway mTLS Service must remain ClusterIP/internal-only"]
+    ports = [entry for entry in (service.get("spec") or {}).get("ports") or [] if isinstance(entry, dict)]
+    if len(ports) != 1 or not isinstance(ports[0].get("port"), int):
+        return None, ["Gateway mTLS Service must expose exactly one numeric port"]
+    host = f"spring-cloud-gateway-mtls.{namespace}.svc.cluster.local"
+    return f"{host}:{ports[0]['port']}", []
+
+
+def validate_gateway_ws_values(
+    documents: list[dict[str, Any]], expected: dict[str, Any]
+) -> tuple[list[str], list[str]]:
+    canonical, issues = canonical_gateway_ws_endpoint(documents, expected)
+    values: list[str] = []
+    if canonical is None:
+        return values, issues
+    canonical_host, canonical_port = canonical.rsplit(":", 1)
+    for document in documents:
+        for workload_name, container, volumes in primary_containers(document):
+            declared_names = {
+                entry.get("name")
+                for entry in container.get("env") or []
+                if isinstance(entry, dict)
+            }
+            if workload_name != "tcp-proxy-service" and "GATEWAY_WS_URL" not in declared_names:
+                continue
+            env, env_issues = effective_container_env(
+                documents,
+                document,
+                container,
+                relevant_names={"GATEWAY_WS_URL", *BRIDGE_WS_PATHS, *GRPC_TLS_PATH_NAMES},
+            )
+            issues.extend(env_issues)
+            for path_name, expected_path in BRIDGE_WS_PATHS.items():
+                if env.get(path_name) != expected_path:
+                    issues.append(
+                        f"{path_name} must be exactly {expected_path!r} for the player-facing bridge"
+                    )
+            grpc_path_values = {
+                name: env.get(name) for name in GRPC_TLS_PATH_NAMES
+            }
+            missing_grpc_paths = [
+                name
+                for name, path in grpc_path_values.items()
+                if not isinstance(path, str) or not path.startswith("/")
+            ]
+            if missing_grpc_paths:
+                issues.append(
+                    "all canonical gRPC TLS path variables must be configured as absolute paths: "
+                    + ", ".join(missing_grpc_paths)
+                )
+            grpc_paths = {
+                path
+                for path in grpc_path_values.values()
+                if isinstance(path, str) and path.startswith("/")
+            }
+
+            def path_is_under(path: str, mount_path: str) -> bool:
+                return path == mount_path or path.startswith(mount_path.rstrip("/") + "/")
+
+            grpc_mounts = [
+                mount
+                for mount in container.get("volumeMounts") or []
+                if isinstance(mount, dict)
+                and mount.get("readOnly") is True
+                and volumes.get(mount.get("name"))
+                and isinstance(mount.get("mountPath"), str)
+                and any(path_is_under(path, mount["mountPath"]) for path in grpc_paths)
+            ]
+            if len(grpc_mounts) != 1:
+                issues.append(
+                    "exactly one dedicated read-only Secret-backed gRPC TLS mount is required"
+                )
+            grpc_secret_names = {
+                volumes.get(mount.get("name")) for mount in grpc_mounts
+            }
+            bridge_ref = parse_binding_ref(
+                get(expected, "internalBindings.certificates.tcpProxyBridgeClientRef")
+            )
+            expected_bridge_namespace = (
+                bridge_ref[1]
+                if bridge_ref and bridge_ref[0] == "cert-manager" and len(bridge_ref[2]) == 1
+                else None
+            )
+            expected_bridge_name = (
+                bridge_ref[2][0]
+                if bridge_ref and bridge_ref[0] == "cert-manager" and len(bridge_ref[2]) == 1
+                else None
+            )
+            pod_spec = (((document.get("spec") or {}).get("template") or {}).get("spec") or {})
+            volume_definitions = {
+                volume.get("name"): volume
+                for volume in pod_spec.get("volumes") or []
+                if isinstance(volume, dict) and volume.get("name")
+            }
+
+            def bridge_volume_is_valid(
+                mount: dict[str, Any],
+                *,
+                bridge_name: str | None = expected_bridge_name,
+                bridge_namespace: str | None = expected_bridge_namespace,
+                current_document: dict[str, Any] = document,
+                current_volumes: dict[str, str | None] = volumes,
+                current_volume_definitions: dict[str, dict[str, Any]] = volume_definitions,
+            ) -> bool:
+                if bridge_name is None or bridge_namespace is None:
+                    return False
+                if workload_namespace(current_document) != bridge_namespace:
+                    issues.append(
+                        "Gateway WebSocket bridge workload namespace does not match "
+                        f"expected {bridge_namespace}"
+                    )
+                    return False
+                secret_name = current_volumes.get(mount.get("name"))
+                if secret_name != bridge_name:
+                    issues.append(
+                        "Gateway WebSocket bridge mount must reference Secret "
+                        f"{bridge_namespace}/{bridge_name}"
+                    )
+                    return False
+                if "subPath" in mount:
+                    issues.append("Gateway WebSocket bridge Secret mount must not use subPath")
+                    return False
+                volume = current_volume_definitions.get(mount.get("name")) or {}
+                secret = volume.get("secret") if isinstance(volume, dict) else None
+                if not isinstance(secret, dict):
+                    return False
+                items = secret.get("items")
+                expected_item_pairs = set(BRIDGE_WS_SECRET_ITEM_PATHS.items())
+                if (
+                    not isinstance(items, list)
+                    or len(items) != len(expected_item_pairs)
+                    or any(
+                        not isinstance(item, dict)
+                        or set(item) != {"key", "path"}
+                        or not isinstance(item.get("key"), str)
+                        or not isinstance(item.get("path"), str)
+                        for item in items
+                    )
+                ):
+                    issues.append(
+                        "Gateway WebSocket bridge Secret volume items must select exactly "
+                        "client.crt->client.crt, client.key->client.key, and ca.crt->ca.crt"
+                    )
+                    return False
+                item_pairs = {(item["key"], item["path"]) for item in items}
+                if item_pairs != expected_item_pairs:
+                    issues.append(
+                        "Gateway WebSocket bridge Secret volume items must select exactly "
+                        "client.crt->client.crt, client.key->client.key, and ca.crt->ca.crt"
+                    )
+                    return False
+                return True
+
+            bridge_mounts = [
+                mount
+                for mount in container.get("volumeMounts") or []
+                if isinstance(mount, dict)
+                and mount.get("mountPath") == "/tls"
+                and mount.get("readOnly") is True
+                and volumes.get(mount.get("name"))
+                and volumes.get(mount.get("name")) not in grpc_secret_names
+                and bridge_volume_is_valid(mount)
+            ]
+            if len(bridge_mounts) != 1:
+                issues.append(
+                    "exactly one dedicated read-only Secret-backed /tls mount is required for the Gateway WebSocket bridge"
+                )
+            value = env.get("GATEWAY_WS_URL")
+            if not value:
+                issues.append("GATEWAY_WS_URL is not explicitly configured")
+                continue
+            try:
+                parsed = urlsplit(value)
+                parsed_host = parsed.hostname
+            except ValueError:
+                issues.append(f"GATEWAY_WS_URL {value!r} is malformed")
+                continue
+            try:
+                parsed_port = parsed.port
+            except ValueError:
+                issues.append(f"GATEWAY_WS_URL {value!r} has an invalid port")
+                continue
+            effective_port = 443 if parsed_port is None else parsed_port
+            if not 1 <= effective_port <= 65535:
+                issues.append(f"GATEWAY_WS_URL {value!r} has an invalid port")
+                continue
+            if (
+                parsed.scheme != "wss"
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed_host != canonical_host
+                or str(effective_port) != canonical_port
+                or parsed.path != "/ws/game"
+                or parsed.query
+                or parsed.fragment
+            ):
+                issues.append(f"GATEWAY_WS_URL {value!r} does not match canonical {canonical_host}:{canonical_port}/ws/game")
+                continue
+            values.append(value)
+    if not values:
+        issues.append("no valid effective GATEWAY_WS_URL values were found")
+    elif len(set(values)) != 1:
+        issues.append("effective GATEWAY_WS_URL values conflict across workloads")
+    return values, issues
 
 
 def primary_containers(document: dict[str, Any]) -> list[tuple[str | None, dict[str, Any], dict[str, str | None]]]:
@@ -1627,8 +2852,20 @@ def has_secret_mount(
     return False
 
 
-def has_secret_reference(documents: list[dict[str, Any]], name: str) -> bool:
+def has_secret_reference(
+    documents: list[dict[str, Any]],
+    name: str,
+    namespace: str | None = None,
+    *,
+    default_namespace: str | None = None,
+) -> bool:
     for document in documents:
+        if not rendered_namespace_matches(
+            document,
+            namespace,
+            default_namespace=default_namespace,
+        ):
+            continue
         for _, container, volumes in primary_containers(document):
             for mounted_secret in volumes.values():
                 if mounted_secret == name:
@@ -1655,8 +2892,83 @@ def append_result(
     status: str,
     message: str,
 ) -> bool:
-    check_results.append(CheckResult(policy_id, required, status, message))
-    return required and status == "fail"
+    if policy_id not in PREFLIGHT_POLICY_CATALOG:
+        raise ValueError(f"Unknown preflight policy ID: {policy_id}")
+    category = PREFLIGHT_POLICY_CATALOG[policy_id]
+    effective_required = required and category != "advisory"
+    check_results.append(CheckResult(policy_id, effective_required, status, message))
+    return effective_required and status == "fail"
+
+
+def expected_bindings_schema_issues(data: Any) -> list[str]:
+    """Reject unknown expected-bindings keys before optional defaults are applied."""
+    if not isinstance(data, dict):
+        return ["expected-bindings manifest must be a mapping"]
+
+    nested_keys: dict[str, set[str] | None] = {
+        "internalBindings": {"postgres", "redis", "jwt", "certificates", "registry"},
+        "backupStorage": {"enabled", "bucket", "endpoint", "bindingRef", "fingerprint"},
+        "assetStorage": {"enabled", "bucket", "endpoint", "bindingRef", "fingerprint"},
+        "outboundComms": {"enabled", "smtpHost", "webhookTargets"},
+        "operatorCredentials": {"bindingRef", "fingerprint"},
+        "serviceDiscovery": {"mode", "allowedOverrides"},
+        "observability": {"otelCollectorEndpoint"},
+        "backupMaintenancePause": {"enabled"},
+    }
+    child_keys: dict[str, set[str] | None] = {
+        "internalBindings.postgres": {"endpoint", "credentialsRef"},
+        "internalBindings.redis": {"coordination", "cache"},
+        "internalBindings.redis.coordination": {"endpoint"},
+        "internalBindings.redis.cache": {"endpoint"},
+        "internalBindings.jwt": {"custodyMode", "signingKeysRef", "jwksRef"},
+        "internalBindings.certificates": {
+            "issuerRef",
+            "workloadMtlsRef",
+            "gatewayInternalWsListenerRef",
+            "tcpProxyBridgeClientRef",
+            "backupControlPlaneClientRef",
+        },
+        "internalBindings.registry": {"imagePullSecretRef"},
+        "observability.otelCollectorEndpoint": {"value", "shared", "sharedRationale"},
+    }
+    conditional_value_keys = {"value", "shared", "sharedRationale"}
+    allowed_top_level = {
+        "environment",
+        *nested_keys,
+    }
+    issues: list[str] = []
+    for key in data:
+        if key not in allowed_top_level:
+            issues.append(f"unknown top-level key '{key}'")
+
+    def check_mapping(path: str, value: Any, allowed: set[str] | None) -> None:
+        if not isinstance(value, dict) or allowed is None:
+            return
+        for key in value:
+            if key not in allowed:
+                issues.append(f"unknown expected-bindings key '{path}.{key}'")
+
+    for path, allowed in nested_keys.items():
+        check_mapping(path, get(data, path), allowed)
+    for path, allowed in child_keys.items():
+        check_mapping(path, get(data, path), allowed)
+    for path in (
+        "backupStorage.bucket",
+        "backupStorage.endpoint",
+        "assetStorage.bucket",
+        "assetStorage.endpoint",
+        "outboundComms.smtpHost",
+    ):
+        check_mapping(path, get(data, path), conditional_value_keys)
+    webhook_targets = get(data, "outboundComms.webhookTargets")
+    if isinstance(webhook_targets, dict):
+        for target_name, target_value in webhook_targets.items():
+            check_mapping(
+                f"outboundComms.webhookTargets.{target_name}",
+                target_value,
+                conditional_value_keys,
+            )
+    return issues
 
 
 def expected_binding_checks(
@@ -1664,21 +2976,59 @@ def expected_binding_checks(
     expected_bindings_ref: str,
     env_class: str,
     documents: list[dict[str, Any]],
+    context: str = "ci-static",
+    *,
+    expected_bindings: Any | None = None,
+    expected_bindings_error: str | None = None,
 ) -> list[CheckResult]:
-    try:
-        data = load_yaml(expected_bindings_path) or {}
-    except YAML_READ_ERRORS as exc:
+    if expected_bindings_error is not None:
         return [
-            CheckResult("PREFLIGHT-SECRETS-002", True, "fail", f"Expected-bindings manifest is unreadable: {exc}"),
+            CheckResult(
+                "PREFLIGHT-SECRETS-002",
+                True,
+                "fail",
+                f"Expected-bindings manifest is unreadable: {expected_bindings_error}",
+            ),
             CheckResult("PREFLIGHT-BOOTSTRAP-001", True, "fail", "Expected-bindings manifest is unreadable"),
             CheckResult("PREFLIGHT-EXTERNAL-001", True, "fail", "Expected-bindings manifest is unreadable"),
             CheckResult("PREFLIGHT-SERVICES-001", True, "fail", "Expected-bindings manifest is unreadable"),
         ]
 
+    if expected_bindings is None:
+        try:
+            expected_bindings = load_yaml(expected_bindings_path) or {}
+        except YAML_READ_ERRORS as exc:
+            return [
+                CheckResult("PREFLIGHT-SECRETS-002", True, "fail", f"Expected-bindings manifest is unreadable: {exc}"),
+                CheckResult("PREFLIGHT-BOOTSTRAP-001", True, "fail", "Expected-bindings manifest is unreadable"),
+                CheckResult("PREFLIGHT-EXTERNAL-001", True, "fail", "Expected-bindings manifest is unreadable"),
+                CheckResult("PREFLIGHT-SERVICES-001", True, "fail", "Expected-bindings manifest is unreadable"),
+            ]
+
+    data = expected_bindings
+
+    if not isinstance(data, dict):
+        return [
+            CheckResult("PREFLIGHT-SECRETS-002", True, "fail", "Expected-bindings manifest must be a mapping"),
+            CheckResult("PREFLIGHT-BOOTSTRAP-001", True, "fail", "Expected-bindings manifest is invalid"),
+            CheckResult("PREFLIGHT-EXTERNAL-001", True, "fail", "Expected-bindings manifest is invalid"),
+            CheckResult("PREFLIGHT-SERVICES-001", True, "fail", "Expected-bindings manifest is invalid"),
+        ]
+
     results: list[CheckResult] = []
+    schema_issues = expected_bindings_schema_issues(data)
     if data.get("environment") != env_class:
         results.append(
             CheckResult("PREFLIGHT-SECRETS-002", True, "fail", f"Expected-bindings environment mismatch in {expected_bindings_ref}")
+        )
+    elif schema_issues:
+        results.append(
+            CheckResult(
+                "PREFLIGHT-SECRETS-002",
+                True,
+                "fail",
+                "Expected-bindings schema contains unknown keys: " + "; ".join(schema_issues),
+            )
         )
     else:
         required_internal = [
@@ -1686,6 +3036,7 @@ def expected_binding_checks(
             "internalBindings.postgres.credentialsRef",
             "internalBindings.redis.coordination.endpoint",
             "internalBindings.redis.cache.endpoint",
+            "internalBindings.jwt.custodyMode",
             "internalBindings.jwt.signingKeysRef",
             "internalBindings.jwt.jwksRef",
             "internalBindings.certificates.issuerRef",
@@ -1723,10 +3074,23 @@ def expected_binding_checks(
         if exceptional_pause_enabled:
             required_internal.append("internalBindings.certificates.backupControlPlaneClientRef")
         missing = [key for key in required_internal if not get(data, key)]
+        custody_mode = get(data, "internalBindings.jwt.custodyMode")
+        custody_mode_invalid = (
+            not isinstance(custody_mode, str) or custody_mode not in JWT_CUSTODY_MODES
+        )
         secret_refs = [
-            get(data, "internalBindings.postgres.credentialsRef"),
-            get(data, "internalBindings.jwt.signingKeysRef"),
-            get(data, "internalBindings.jwt.jwksRef"),
+            (
+                "internalBindings.postgres.credentialsRef",
+                get(data, "internalBindings.postgres.credentialsRef"),
+            ),
+            (
+                "internalBindings.jwt.signingKeysRef",
+                get(data, "internalBindings.jwt.signingKeysRef"),
+            ),
+            (
+                "internalBindings.jwt.jwksRef",
+                get(data, "internalBindings.jwt.jwksRef"),
+            ),
         ]
         invalid_internal_refs = [
             error
@@ -1793,13 +3157,60 @@ def expected_binding_checks(
             ]
             if error
         ]
+        if (
+            custody_mode == IMPLEMENTED_JWT_CUSTODY_MODE
+            and get(data, "internalBindings.jwt.jwksRef") != LEGACY_PLAYER_JWKS_REF
+        ):
+            invalid_internal_refs.append(
+                "internalBindings.jwt.jwksRef must be exactly "
+                + LEGACY_PLAYER_JWKS_REF
+                + " for the current legacy player-facing contract"
+            )
         missing_rendered_refs = []
-        for ref_value in secret_refs:
+        for binding_path, ref_value in secret_refs:
             name = secret_binding_name(ref_value)
-            if name and not rendered_references_secret(documents, name):
+            namespace = secret_binding_namespace(ref_value)
+            if name and not rendered_secret_binding_is_owned(
+                documents,
+                name,
+                namespace,
+                binding_path,
+            ):
                 missing_rendered_refs.append(name)
         registry_pull_secret = secret_binding_name(get(data, "internalBindings.registry.imagePullSecretRef"))
-        if pause_config_error:
+        registry_pull_namespace = secret_binding_namespace(
+            get(data, "internalBindings.registry.imagePullSecretRef")
+        )
+        if missing and "internalBindings.jwt.custodyMode" in missing:
+            results.append(
+                CheckResult(
+                    "PREFLIGHT-SECRETS-002",
+                    True,
+                    "fail",
+                    "Expected-bindings missing internal keys: " + ", ".join(missing),
+                )
+            )
+        elif custody_mode_invalid:
+            results.append(
+                CheckResult(
+                    "PREFLIGHT-SECRETS-002",
+                    True,
+                    "fail",
+                    "Expected-bindings internalBindings.jwt.custodyMode must be one of: "
+                    + ", ".join(JWT_CUSTODY_MODES),
+                )
+            )
+        elif custody_mode != IMPLEMENTED_JWT_CUSTODY_MODE:
+            results.append(
+                CheckResult(
+                    "PREFLIGHT-SECRETS-002",
+                    True,
+                    "fail",
+                    f"JWT custody mode {custody_mode} is recognized but not currently implemented; "
+                    f"only {IMPLEMENTED_JWT_CUSTODY_MODE} is supported by this executable",
+                )
+            )
+        elif pause_config_error:
             results.append(
                 CheckResult(
                     "PREFLIGHT-SECRETS-002",
@@ -1835,7 +3246,9 @@ def expected_binding_checks(
                     "Rendered workloads do not reference expected Secret bindings: " + ", ".join(missing_rendered_refs),
                 )
             )
-        elif registry_pull_secret and not rendered_references_image_pull_secret(documents, registry_pull_secret):
+        elif registry_pull_secret and not rendered_references_image_pull_secret(
+            documents, registry_pull_secret, registry_pull_namespace
+        ):
             results.append(
                 CheckResult(
                     "PREFLIGHT-SECRETS-002",
@@ -1854,17 +3267,41 @@ def expected_binding_checks(
                 )
             )
 
-    bootstrap_names = [
-        name
-        for name in (
+    bootstrap_bindings = [
+        (
+            "internalBindings.postgres.credentialsRef",
             secret_binding_name(get(data, "internalBindings.postgres.credentialsRef")),
+            secret_binding_namespace(get(data, "internalBindings.postgres.credentialsRef")),
+        ),
+        (
+            "internalBindings.jwt.signingKeysRef",
             secret_binding_name(get(data, "internalBindings.jwt.signingKeysRef")),
-            secret_binding_name(get(data, "internalBindings.jwt.jwksRef")),
-        )
-        if name
+            secret_binding_namespace(get(data, "internalBindings.jwt.signingKeysRef")),
+        ),
     ]
-    missing_bootstrap = [name for name in bootstrap_names if not rendered_references_secret(documents, name)]
-    if missing_bootstrap:
+    missing_bootstrap = [
+        name
+        for binding_path, name, namespace in bootstrap_bindings
+        if name and not rendered_secret_binding_is_owned(
+            documents,
+            name,
+            namespace,
+            binding_path,
+        )
+    ]
+    custody_mode = get(data, "internalBindings.jwt.custodyMode")
+    custody_gate_required = context == "operator" and env_class in player_facing_environments()
+    if custody_gate_required:
+        results.append(
+            CheckResult(
+                "PREFLIGHT-BOOTSTRAP-001",
+                True,
+                "fail",
+                "No accepted player-facing JWT custody proof is implemented for selected mode: "
+                + str(custody_mode),
+            )
+        )
+    elif missing_bootstrap:
         results.append(
             CheckResult(
                 "PREFLIGHT-BOOTSTRAP-001",
@@ -1883,16 +3320,48 @@ def expected_binding_checks(
             )
         )
 
+    backup_storage = data.get("backupStorage")
+    backup_storage_error = None
+    backup_storage_enabled = False
+    if not isinstance(backup_storage, dict):
+        backup_storage_error = "backupStorage must be an object"
+    elif not isinstance(backup_storage.get("enabled"), bool):
+        backup_storage_error = "backupStorage.enabled must be a boolean"
+    else:
+        backup_storage_enabled = backup_storage["enabled"]
+        if not backup_storage_enabled:
+            disabled_fields = [
+                f"backupStorage.{field}"
+                for field in ("bucket", "endpoint", "bindingRef", "fingerprint")
+                if field in backup_storage
+            ]
+            if disabled_fields:
+                backup_storage_error = (
+                    "backupStorage fields must be omitted when disabled: "
+                    + ", ".join(disabled_fields)
+                )
+        if env_class == "production" and not backup_storage_enabled:
+            production_error = "backupStorage.enabled must be true for production"
+            if backup_storage_error:
+                backup_storage_error += f"; {production_error}"
+            else:
+                backup_storage_error = production_error
+
+    asset_storage_enabled, asset_storage_error = optional_integration_state(
+        data, "assetStorage"
+    )
+    outbound_comms_enabled, outbound_comms_error = optional_integration_state(
+        data, "outboundComms"
+    )
     external_requirements = [
-        ("backupStorage.bucket", None),
-        ("backupStorage.bindingRef", "backupStorage.fingerprint"),
-        ("assetStorage.bucket", None),
-        ("assetStorage.endpoint", None),
-        ("assetStorage.bindingRef", "assetStorage.fingerprint"),
-        ("outboundComms.smtpHost", None),
         ("operatorCredentials.bindingRef", "operatorCredentials.fingerprint"),
     ]
     missing_external = []
+    if backup_storage_enabled:
+        if not backup_storage.get("bucket"):
+            missing_external.append("backupStorage.bucket")
+        if not backup_storage.get("bindingRef") and not backup_storage.get("fingerprint"):
+            missing_external.append("backupStorage.bindingRef or backupStorage.fingerprint")
     for primary, alternate in external_requirements:
         if not get(data, primary) and (alternate is None or not get(data, alternate)):
             missing_external.append(primary if alternate is None else f"{primary} or {alternate}")
@@ -1900,15 +3369,49 @@ def expected_binding_checks(
     invalid_external_refs = [
         error
         for error in [
-            binding_ref_format_error("backupStorage.bindingRef", get(data, "backupStorage.bindingRef")),
-            binding_ref_format_error("assetStorage.bindingRef", get(data, "assetStorage.bindingRef")),
-            binding_ref_format_error(
-                "operatorCredentials.bindingRef", get(data, "operatorCredentials.bindingRef")
+            (
+                binding_ref_format_error(
+                    "backupStorage.bindingRef", get(data, "backupStorage.bindingRef")
+                )
+                if backup_storage_enabled and get(data, "backupStorage.bindingRef")
+                else None
+            ),
+            (
+                binding_ref_format_error(
+                    "assetStorage.bindingRef", get(data, "assetStorage.bindingRef")
+                )
+                if asset_storage_enabled and get(data, "assetStorage.bindingRef")
+                else None
+            ),
+            (
+                binding_ref_format_error(
+                    "operatorCredentials.bindingRef", get(data, "operatorCredentials.bindingRef")
+                )
+                if get(data, "operatorCredentials.bindingRef")
+                else None
             ),
         ]
         if error
     ]
-    if missing_external:
+    optional_errors = [
+        error for error in (asset_storage_error, outbound_comms_error) if error
+    ]
+    if backup_storage_error or optional_errors:
+        results.append(
+            CheckResult(
+                "PREFLIGHT-EXTERNAL-001",
+                True,
+                "fail",
+                "Expected-bindings external configuration is invalid: "
+                + "; ".join(
+                    error
+                    for error in ([backup_storage_error] if backup_storage_error else [])
+                    + optional_errors
+                    if error
+                ),
+            )
+        )
+    elif missing_external:
         results.append(
             CheckResult(
                 "PREFLIGHT-EXTERNAL-001",
@@ -1926,7 +3429,9 @@ def expected_binding_checks(
                 "Expected-bindings external binding refs are invalid: " + "; ".join(invalid_external_refs),
             )
         )
-    elif not isinstance(webhook_targets, dict) or not webhook_targets:
+    elif outbound_comms_enabled and (
+        not isinstance(webhook_targets, dict) or not webhook_targets
+    ) and not get(data, "outboundComms.smtpHost"):
         results.append(
             CheckResult(
                 "PREFLIGHT-EXTERNAL-001",
@@ -1959,15 +3464,19 @@ def expected_binding_checks(
             )
 
     mode = get(data, "serviceDiscovery.mode")
-    rendered_text = yaml.safe_dump_all(documents, sort_keys=False)
-    override_lines = extract_service_discovery_overrides(rendered_text)
-    if mode == "kubernetes-dns-default" and override_lines:
+    target_namespace = next(
+        (workload_namespace(document) for document in documents if primary_containers(document)),
+        "firemud",
+    )
+    override_lines, override_issues = extract_service_discovery_overrides(documents)
+    if mode == "kubernetes-dns-default" and (override_lines or override_issues):
         results.append(
             CheckResult(
                 "PREFLIGHT-SERVICES-001",
                 True,
                 "fail",
-                "Rendered manifests contain FIREMUD_SERVICES_* overrides while expected bindings require Kubernetes DNS defaults",
+                "Effective workloads contain service-discovery overrides or unresolved sources: "
+                + "; ".join(override_issues or sorted(override_lines)),
             )
         )
     elif mode == "explicit-overrides":
@@ -1983,6 +3492,26 @@ def expected_binding_checks(
             )
         else:
             failures: list[str] = []
+            for override_name, expected_value in allowed.items():
+                if not isinstance(override_name, str) or not re.fullmatch(
+                    r"FIREMUD_SERVICES_[A-Z0-9_]+", str(override_name)
+                ):
+                    failures.append(
+                        "serviceDiscovery.allowedOverrides keys must match "
+                        "FIREMUD_SERVICES_[A-Z0-9_]+"
+                    )
+                elif not isinstance(expected_value, str):
+                    failures.append(
+                        f"serviceDiscovery.allowedOverrides[{override_name}] must be a string"
+                    )
+                elif not service_override_in_environment(expected_value, target_namespace):
+                    failures.append(
+                        f"serviceDiscovery.allowedOverrides[{override_name}] must target the {target_namespace} Kubernetes environment"
+                    )
+                elif override_name not in override_lines:
+                    failures.append(
+                        f"Allowed override {override_name} is missing from effective workloads"
+                    )
             for override_name, rendered_value in sorted(override_lines.items()):
                 if override_name not in allowed:
                     failures.append(
@@ -1993,10 +3522,16 @@ def expected_binding_checks(
                 if not isinstance(expected_value, str):
                     failures.append(f"serviceDiscovery.allowedOverrides[{override_name}] must be a string")
                     continue
+                if not service_override_in_environment(rendered_value, target_namespace):
+                    failures.append(
+                        f"Rendered {override_name} must target the {target_namespace} Kubernetes environment"
+                    )
+                    continue
                 if expected_value != rendered_value:
                     failures.append(
                         f"Rendered {override_name}='{rendered_value}' does not match allowed value '{expected_value}'"
                     )
+            failures.extend(override_issues)
             if failures:
                 results.append(
                     CheckResult(
@@ -2005,15 +3540,6 @@ def expected_binding_checks(
                         "fail",
                         "Explicit service-discovery override values do not match expected contract: "
                         + "; ".join(failures),
-                    )
-                )
-            elif not override_lines:
-                results.append(
-                    CheckResult(
-                        "PREFLIGHT-SERVICES-001",
-                        True,
-                        "fail",
-                        "No FIREMUD_SERVICES_* overrides were rendered for explicit-overrides mode",
                     )
                 )
             else:
@@ -2046,44 +3572,57 @@ def expected_binding_checks(
     return results
 
 
-def jwt_jwks_checks(documents: list[dict[str, Any]]) -> list[CheckResult]:
+def jwt_jwks_checks(
+    documents: list[dict[str, Any]], jwks_namespace: str
+) -> list[CheckResult]:
     inline_secret = False
     missing_secret_path: list[str] = []
     missing_signing_mount: list[str] = []
     missing_jwks_mount: list[str] = []
+    account_jwks_workloads: list[str] = []
     global_secret_path = config_value(documents, "FIREMUD_AUTH_JWT_SECRET_PATH")
     global_jwks_path = config_value(documents, "FIREMUD_AUTH_JWKS_PATH")
-    for workload_name, container, volumes in [item for document in documents for item in primary_containers(document)]:
-        container_name = container.get("name") or "<unknown>"
-        if env_value(container, "FIREMUD_AUTH_JWT_SECRET") is not None:
-            inline_secret = True
-        secret_path = env_value(container, "FIREMUD_AUTH_JWT_SECRET_PATH") or global_secret_path
-        if not secret_path:
-            missing_secret_path.append(f"{workload_name}/{container_name}")
-        elif str(secret_path).startswith("/var/run/secrets/firemud/jwt/") and not has_secret_mount(
-            container,
-            volumes,
-            "jwt-signing-keys",
-            "/var/run/secrets/firemud/jwt",
-        ):
-            missing_signing_mount.append(f"{workload_name}/{container_name}")
-        jwks_path = env_value(container, "FIREMUD_AUTH_JWKS_PATH") or global_jwks_path
-        if (
-            container_name == "account-service"
-            and jwks_path
-            and str(jwks_path).startswith("/var/run/secrets/firemud/jwks/")
-            and not has_secret_mount(container, volumes, "jwt-jwks", "/var/run/secrets/firemud/jwks")
-        ):
-            missing_jwks_mount.append(f"{workload_name}/{container_name}")
+    for document in documents:
+        for workload_name, container, volumes in primary_containers(document):
+            container_name = container.get("name") or "<unknown>"
+            if env_value(container, "FIREMUD_AUTH_JWT_SECRET") is not None:
+                inline_secret = True
+            secret_path = env_value(container, "FIREMUD_AUTH_JWT_SECRET_PATH") or global_secret_path
+            if not secret_path:
+                missing_secret_path.append(f"{workload_name}/{container_name}")
+            elif str(secret_path).startswith("/var/run/secrets/firemud/jwt/") and not has_secret_mount(
+                container,
+                volumes,
+                "jwt-signing-keys",
+                "/var/run/secrets/firemud/jwt",
+            ):
+                missing_signing_mount.append(f"{workload_name}/{container_name}")
+            if container_name == "account-service":
+                account_label = f"{workload_name}/{container_name}"
+                account_jwks_workloads.append(account_label)
+                jwks_path = env_value(container, "FIREMUD_AUTH_JWKS_PATH") or global_jwks_path
+                if (
+                    not jwks_path
+                    or not str(jwks_path).startswith("/var/run/secrets/firemud/jwks/")
+                    or not has_secret_mount(
+                        container,
+                        volumes,
+                        "jwt-jwks",
+                        "/var/run/secrets/firemud/jwks",
+                    )
+                ):
+                    missing_jwks_mount.append(account_label)
+    if not account_jwks_workloads:
+        missing_jwks_mount.append("<missing account-service>")
 
     results: list[CheckResult] = []
     if inline_secret:
-        results.append(CheckResult("PREFLIGHT-JWT-001", True, "fail", "Inline JWT secret material detected in rendered workloads"))
+        results.append(CheckResult("PREFLIGHT-JWT-001", False, "fail", "Inline JWT secret material detected in rendered workloads"))
     elif missing_secret_path:
         results.append(
             CheckResult(
                 "PREFLIGHT-JWT-001",
-                True,
+                False,
                 "fail",
                 "FIREMUD_AUTH_JWT_SECRET_PATH is missing for workloads: " + ", ".join(missing_secret_path),
             )
@@ -2092,7 +3631,7 @@ def jwt_jwks_checks(documents: list[dict[str, Any]]) -> list[CheckResult]:
         results.append(
             CheckResult(
                 "PREFLIGHT-JWT-001",
-                True,
+                False,
                 "fail",
                 "JWT signing Secret is not mounted at the configured path for workloads: " + ", ".join(missing_signing_mount),
             )
@@ -2101,30 +3640,80 @@ def jwt_jwks_checks(documents: list[dict[str, Any]]) -> list[CheckResult]:
         results.append(
             CheckResult(
                 "PREFLIGHT-JWT-001",
-                True,
+                False,
                 "pass",
                 "JWT file-path contract and signing Secret mounts are satisfied",
             )
         )
 
-    if rendered_has_resource(documents, "ConfigMap", "jwt-jwks"):
-        results.append(CheckResult("PREFLIGHT-JWKS-001", True, "fail", "jwt-jwks is configured as a ConfigMap in player-facing context"))
-    elif not rendered_has_resource(documents, "Secret", "jwt-jwks") and not has_secret_reference(documents, "jwt-jwks"):
-        results.append(CheckResult("PREFLIGHT-JWKS-001", True, "fail", "Rendered workloads do not reference jwt-jwks as a Secret"))
+    if rendered_has_resource(
+        documents,
+        "ConfigMap",
+        "jwt-jwks",
+        jwks_namespace,
+        default_namespace=jwks_namespace,
+    ):
+        results.append(
+            CheckResult(
+                "PREFLIGHT-JWKS-001",
+                False,
+                "fail",
+                "jwt-jwks is configured as a ConfigMap in player-facing context",
+            )
+        )
+    elif any(
+        document.get("kind") == "Secret"
+        and metadata_name(document) == "jwt-jwks"
+        and not rendered_namespace_matches(
+            document,
+            jwks_namespace,
+            default_namespace=jwks_namespace,
+        )
+        for document in documents
+    ):
+        results.append(
+            CheckResult(
+                "PREFLIGHT-JWKS-001",
+                False,
+                "fail",
+                f"jwt-jwks Secret resource is not in the expected namespace: {jwks_namespace}",
+            )
+        )
+    elif not rendered_has_resource(
+        documents,
+        "Secret",
+        "jwt-jwks",
+        jwks_namespace,
+        default_namespace=jwks_namespace,
+    ) and not has_secret_reference(
+        documents,
+        "jwt-jwks",
+        jwks_namespace,
+        default_namespace=jwks_namespace,
+    ):
+        results.append(
+            CheckResult(
+                "PREFLIGHT-JWKS-001",
+                False,
+                "fail",
+                "Rendered workloads do not reference jwt-jwks as a Secret",
+            )
+        )
     elif missing_jwks_mount:
         results.append(
             CheckResult(
                 "PREFLIGHT-JWKS-001",
-                True,
+                False,
                 "fail",
-                "Account Service does not mount jwt-jwks at the configured JWKS path: " + ", ".join(missing_jwks_mount),
+                "Account Service does not mount jwt-jwks at the configured JWKS path: "
+                + ", ".join(missing_jwks_mount),
             )
         )
     else:
         results.append(
             CheckResult(
                 "PREFLIGHT-JWKS-001",
-                True,
+                False,
                 "pass",
                 "jwt-jwks Secret contract and Account Service mount are satisfied",
             )
@@ -2311,11 +3900,17 @@ def _promotion_check(
     missing_attestation_fields = [
         field for field in PROMOTION_ATTESTATION_REQUIRED_FIELDS if field not in att or is_missing(att[field])
     ]
-    if missing_attestation_fields:
+    missing_non_jwt_attestation_fields = [
+        field
+        for field in missing_attestation_fields
+        if field not in {"jwtCustodyProof", "jwtRotationEvidenceRef"}
+    ]
+    if missing_non_jwt_attestation_fields:
         return (
             "fail",
             str(att.get("rollbackMode", "unknown")),
-            "Attestation missing required canonical fields: " + ", ".join(missing_attestation_fields),
+            "Attestation missing required canonical fields: "
+            + ", ".join(missing_non_jwt_attestation_fields),
         )
 
     if att.get("attestationVersion") != PROMOTION_ATTESTATION_VERSION:
@@ -2356,6 +3951,18 @@ def _promotion_check(
     if recovery_status != "pass":
         return ("fail", rollback_mode, recovery_message)
 
+    if missing_attestation_fields:
+        return (
+            "fail",
+            rollback_mode,
+            "Attestation missing required canonical fields: " + ", ".join(missing_attestation_fields),
+        )
+    custody_proof_error = jwt_custody_proof_error(
+        "Attestation jwtCustodyProof", att["jwtCustodyProof"]
+    )
+    if custody_proof_error:
+        return ("fail", rollback_mode, custody_proof_error)
+
     service_digests = att.get("serviceDigests", {})
     expected_service_names = set()
     for image in images:
@@ -2384,6 +3991,8 @@ def _promotion_check(
     staging_sha = att.get("stagingOverlayCommitSha", "")
     if not isinstance(staging_sha, str) or not staging_sha:
         return ("fail", rollback_mode, "Attestation missing stagingOverlayCommitSha")
+    if not GIT_COMMIT_SHA_RE.fullmatch(staging_sha):
+        return ("fail", rollback_mode, "Attestation stagingOverlayCommitSha must be a full Git commit SHA")
     if not git_commit_exists(root_dir, staging_sha):
         return ("fail", rollback_mode, f"Staging overlay commit does not exist in Git: {staging_sha}")
 
@@ -2416,6 +4025,44 @@ def _promotion_check(
     if not isinstance(record, dict):
         return ("fail", rollback_mode, "Staging deployment record must be a JSON object")
 
+    expected_bindings_ref = canonical_expected_bindings_ref("staging")
+    expected_bindings_path = resolve_repo_path(root_dir, expected_bindings_ref)
+    if not expected_bindings_path.exists():
+        return ("fail", rollback_mode, f"Canonical expected-bindings manifest not found: {expected_bindings_ref}")
+    try:
+        expected_bindings_digest = immutable_file_digest(expected_bindings_path)
+    except OSError as exc:
+        return ("fail", rollback_mode, f"Canonical expected-bindings manifest unreadable: {exc}")
+
+    secret_evidence, secret_evidence_error = load_immutable_json_evidence(
+        root_dir, record.get("secretComplianceEvidenceRef"), "secretComplianceEvidenceRef"
+    )
+    if secret_evidence_error:
+        return ("fail", rollback_mode, secret_evidence_error)
+    if secret_evidence is None:
+        return (
+            "fail",
+            rollback_mode,
+            "secretComplianceEvidenceRef loader returned no evidence without an error",
+        )
+    if secret_evidence.get("environment") != "staging":
+        return ("fail", rollback_mode, "Staging secret compliance evidence environment must be staging")
+    secret_records = secret_evidence.get("records", {})
+    if not isinstance(secret_records, dict):
+        return ("fail", rollback_mode, "Staging secret compliance evidence records must be an object")
+    bootstrap_fields_present = (
+        "bootstrapOperationId" in secret_evidence
+        or "provisioningGeneration" in secret_evidence
+        or any(
+            isinstance(secret_record, dict)
+            and (
+                "bootstrapOperationId" in secret_record
+                or "provisioningGeneration" in secret_record
+            )
+            for secret_record in secret_records.values()
+        )
+    )
+
     required_record_fields = (
         "environment",
         "overlayCommitSha",
@@ -2430,6 +4077,10 @@ def _promotion_check(
         "secretComplianceSnapshotAt",
         "secretComplianceStatus",
         "secretComplianceEvidenceRef",
+        "expectedBindingsRef",
+        "expectedBindingsDigest",
+        "jwtCustodyProof",
+        "jwtRotationEvidenceRef",
         "smokeEvidence",
     )
     missing_record_fields = [
@@ -2440,6 +4091,23 @@ def _promotion_check(
             "fail",
             rollback_mode,
             "Staging deployment record missing required canonical fields: " + ", ".join(missing_record_fields),
+        )
+    record_custody_proof_error = jwt_custody_proof_error(
+        "Staging deployment record jwtCustodyProof", record["jwtCustodyProof"]
+    )
+    if record_custody_proof_error:
+        return ("fail", rollback_mode, record_custody_proof_error)
+    if att["jwtCustodyProof"] != record["jwtCustodyProof"]:
+        return (
+            "fail",
+            rollback_mode,
+            "Staging deployment record jwtCustodyProof does not match the attestation",
+        )
+    if att.get("jwtRotationEvidenceRef") != record.get("jwtRotationEvidenceRef"):
+        return (
+            "fail",
+            rollback_mode,
+            "Staging deployment record jwtRotationEvidenceRef does not match the attestation",
         )
     if not isinstance(record.get("appliedBy"), str) or not record["appliedBy"].strip():
         return ("fail", rollback_mode, "Staging deployment record appliedBy must be non-empty")
@@ -2468,6 +4136,14 @@ def _promotion_check(
         return ("fail", rollback_mode, "Staging deployment record overlayCommitSha mismatch")
     if record.get("deploymentEventId") != staging_event_id:
         return ("fail", rollback_mode, "Staging deployment record deploymentEventId mismatch")
+    if record.get("expectedBindingsRef") != expected_bindings_ref:
+        return ("fail", rollback_mode, "Staging deployment record expectedBindingsRef mismatch")
+    if not isinstance(record.get("expectedBindingsDigest"), str) or not IMMUTABLE_ARTIFACT_ID_RE.fullmatch(
+        record["expectedBindingsDigest"]
+    ):
+        return ("fail", rollback_mode, "Staging deployment record expectedBindingsDigest must be sha256-qualified")
+    if record["expectedBindingsDigest"] != expected_bindings_digest:
+        return ("fail", rollback_mode, "Staging deployment record expectedBindingsDigest mismatch")
 
     record_digests = record["serviceDigests"]
     if record_digests != service_digests:
@@ -2495,14 +4171,119 @@ def _promotion_check(
     preflight_status, preflight_message = validate_preflight_report(
         preflight_report,
         "staging",
-        "design/operations/environments/staging/expected-bindings.yaml",
+        expected_bindings_ref,
         staging_sha,
         now_dt=now_dt,
         expected_deployment_event_id=str(record["deploymentEventId"]),
         completed_by=record_timestamps["appliedAt"],
+        expected_bindings_digest=expected_bindings_digest,
+        allowed_supplemental_policy_ids=(
+            JWT_ROTATION_POLICY_ID,
+            att["jwtCustodyProof"]["proofId"],
+        ),
     )
     if preflight_status != "pass":
         return ("fail", rollback_mode, preflight_message)
+    if preflight_report.get("expectedBindingsRef") != record["expectedBindingsRef"]:
+        return ("fail", rollback_mode, "Staging preflight report expectedBindingsRef does not match the deployment record")
+    if preflight_report.get("expectedBindingsDigest") != record["expectedBindingsDigest"]:
+        return ("fail", rollback_mode, "Staging preflight report expectedBindingsDigest does not match the deployment record")
+    if preflight_report.get("deploymentEventId") != record["deploymentEventId"]:
+        return ("fail", rollback_mode, "Staging preflight report deploymentEventId does not match the deployment record")
+    preflight_custody_proof_error = jwt_custody_proof_error(
+        "Staging operator preflight report jwtCustodyProof",
+        preflight_report.get("jwtCustodyProof"),
+    )
+    if preflight_custody_proof_error:
+        return ("fail", rollback_mode, preflight_custody_proof_error)
+    if preflight_report.get("jwtCustodyProof") != att["jwtCustodyProof"]:
+        return (
+            "fail",
+            rollback_mode,
+            "Staging operator preflight report jwtCustodyProof does not match the attestation",
+        )
+    custody_policy_ids = {
+        proof_id for proof_id, _, _ in ACCEPTED_JWT_CUSTODY_PROOF_TUPLES
+    }
+    custody_checks = [
+        check
+        for check in preflight_report.get("checkResults", [])
+        if isinstance(check, dict) and check.get("policyId") in custody_policy_ids
+    ]
+    selected_custody_policy_id = att["jwtCustodyProof"]["proofId"]
+    if any(check.get("policyId") != selected_custody_policy_id for check in custody_checks):
+        return (
+            "fail",
+            rollback_mode,
+            "Staging operator preflight report contains an alternate JWT custody policy result",
+        )
+    if (
+        len(custody_checks) != 1
+        or custody_checks[0].get("status") != "pass"
+        or custody_checks[0].get("required") is not True
+    ):
+        return (
+            "fail",
+            rollback_mode,
+            "Staging operator preflight report must contain one passing required result for the selected JWT custody policy",
+        )
+    rotation_checks = [
+        check
+        for check in preflight_report.get("checkResults", [])
+        if isinstance(check, dict) and check.get("policyId") == JWT_ROTATION_POLICY_ID
+    ]
+    if len(rotation_checks) != 1 or rotation_checks[0].get("status") != "pass":
+        return (
+            "fail",
+            rollback_mode,
+            "Staging operator preflight report must contain one passing PREFLIGHT-JWT-ROTATION-001 result",
+        )
+    if rotation_checks[0].get("required") is not True:
+        return (
+            "fail",
+            rollback_mode,
+            "Staging operator preflight report JWT rotation result must be event-scoped",
+        )
+
+    rotation_evidence, rotation_evidence_error = load_immutable_json_evidence(
+        root_dir,
+        att["jwtRotationEvidenceRef"],
+        "jwtRotationEvidenceRef",
+    )
+    if rotation_evidence_error:
+        return ("fail", rollback_mode, rotation_evidence_error)
+    if rotation_evidence is None:
+        return (
+            "fail",
+            rollback_mode,
+            "jwtRotationEvidenceRef loader returned no evidence without an error",
+        )
+    if rotation_evidence.get("policyId") != JWT_ROTATION_POLICY_ID:
+        return (
+            "fail",
+            rollback_mode,
+            "jwtRotationEvidenceRef evidence policyId must be PREFLIGHT-JWT-ROTATION-001",
+        )
+    if rotation_evidence.get("status") != "pass":
+        return ("fail", rollback_mode, "jwtRotationEvidenceRef evidence status must be pass")
+    if rotation_evidence.get("deploymentEventId") != staging_event_id:
+        return (
+            "fail",
+            rollback_mode,
+            "jwtRotationEvidenceRef evidence deploymentEventId does not match the staging event",
+        )
+    rotation_custody_proof_error = jwt_custody_proof_error(
+        "jwtRotationEvidenceRef evidence jwtCustodyProof",
+        rotation_evidence.get("jwtCustodyProof"),
+    )
+    if rotation_custody_proof_error:
+        return ("fail", rollback_mode, rotation_custody_proof_error)
+    if rotation_evidence.get("jwtCustodyProof") != att["jwtCustodyProof"]:
+        return (
+            "fail",
+            rollback_mode,
+            "jwtRotationEvidenceRef evidence jwtCustodyProof does not match the attestation",
+        )
 
     live_state = record.get("liveStateEvidence")
     if not isinstance(live_state, dict):
@@ -2518,38 +4299,99 @@ def _promotion_check(
         return ("fail", rollback_mode, "Staging live-state evidence observedDigests do not match the attestation")
 
     secret_status = record.get("secretComplianceStatus")
-    secret_ref = record.get("secretComplianceEvidenceRef")
     if secret_status != "pass":
         return ("fail", rollback_mode, "Staging deployment record secretComplianceStatus must be pass")
-    if not isinstance(secret_ref, str) or not secret_ref.strip():
-        return ("fail", rollback_mode, "Staging deployment record secretComplianceEvidenceRef must be non-empty")
-    secret_path = resolve_repo_path(root_dir, str(secret_ref))
-    if not secret_path.exists():
-        return ("fail", rollback_mode, f"Staging secret compliance evidence not found: {secret_ref}")
     try:
-        secret_evidence = load_json(secret_path)
-    except JSON_READ_ERRORS as exc:
-        return ("fail", rollback_mode, f"Staging secret compliance evidence unreadable: {exc}")
-    required_secret_classes = {
-        "jwt-signing-keys-jwks",
-        "postgres-application-credentials",
-        "backup-object-store-credentials",
-        "operator-credentials",
-    }
-    if not isinstance(secret_evidence, dict):
-        return ("fail", rollback_mode, "Staging secret compliance evidence must be a JSON object")
-    records = secret_evidence.get("records", {})
-    if not isinstance(records, dict):
-        return ("fail", rollback_mode, "Staging secret compliance evidence records must be an object")
+        required_secret_classes = required_secret_compliance_classes(root_dir, "staging")
+    except (TypeError, ValueError) as exc:
+        return ("fail", rollback_mode, str(exc))
+    records = secret_records
+
+    # Bootstrap evidence is authorized by the validator through the immutable
+    # bootstrap operation and provisioning generation. Rotation evidence uses
+    # the per-record evidence operation instead. Treat a partially supplied
+    # bootstrap pair as bootstrap-shaped so it fails closed rather than being
+    # silently accepted as rotation evidence.
+    top_bootstrap_operation_id = secret_evidence.get("bootstrapOperationId")
+    top_provisioning_generation = secret_evidence.get("provisioningGeneration")
+    if bootstrap_fields_present:
+        if (
+            not isinstance(top_bootstrap_operation_id, str)
+            or not top_bootstrap_operation_id.strip()
+        ):
+            return (
+                "fail",
+                rollback_mode,
+                "Staging secret compliance bootstrap evidence requires a non-empty bootstrapOperationId",
+            )
+        if (
+            isinstance(top_provisioning_generation, bool)
+            or not isinstance(top_provisioning_generation, int)
+            or top_provisioning_generation <= 0
+        ):
+            return (
+                "fail",
+                rollback_mode,
+                "Staging secret compliance bootstrap evidence requires a positive integer provisioningGeneration",
+            )
     for key in required_secret_classes:
         rec = records.get(key)
         if not isinstance(rec, dict):
             return ("fail", rollback_mode, f"Staging secret compliance evidence missing record: {key}")
+        if rec.get("targetEnvironment") != "staging":
+            return (
+                "fail",
+                rollback_mode,
+                f"Staging secret compliance evidence targetEnvironment mismatch: {key}",
+            )
+        if rec.get("credentialClass") != key:
+            return (
+                "fail",
+                rollback_mode,
+                f"Staging secret compliance evidence credentialClass mismatch: {key}",
+            )
+        if bootstrap_fields_present:
+            if rec.get("bootstrapOperationId") != top_bootstrap_operation_id:
+                return (
+                    "fail",
+                    rollback_mode,
+                    f"Staging secret compliance bootstrapOperationId mismatch: {key}",
+                )
+            if rec.get("provisioningGeneration") != top_provisioning_generation:
+                return (
+                    "fail",
+                    rollback_mode,
+                    f"Staging secret compliance provisioningGeneration mismatch: {key}",
+                )
+        else:
+            evidence_operation_id = rec.get("evidenceOperationId")
+            if not isinstance(evidence_operation_id, str) or not evidence_operation_id.strip():
+                return (
+                    "fail",
+                    rollback_mode,
+                    f"Staging secret compliance evidence missing evidenceOperationId: {key}",
+                )
         immutable_id = rec.get("immutableArtifactId")
-        if not isinstance(immutable_id, str) or not re.fullmatch(
-            r"[^\s]+:sha256:[0-9a-fA-F]{64}", immutable_id
-        ):
-            return ("fail", rollback_mode, f"Staging secret compliance evidence record is not immutable: {key}")
+        if not isinstance(immutable_id, str) or not IMMUTABLE_ARTIFACT_ID_RE.fullmatch(immutable_id):
+            return (
+                "fail",
+                rollback_mode,
+                f"Staging secret compliance evidence record is not immutable: {key}",
+            )
+        try:
+            expected_digest = canonical_evidence_digest(rec)
+        except (TypeError, ValueError) as exc:
+            return (
+                "fail",
+                rollback_mode,
+                f"Staging secret compliance evidence record cannot be canonically hashed: {key}: {exc}",
+            )
+        if immutable_id != expected_digest:
+            return (
+                "fail",
+                rollback_mode,
+                f"Staging secret compliance evidence record digest mismatch: {key}",
+            )
 
     return ("pass", rollback_mode, "Production promotion attestation and staging deployment evidence are valid")
 
@@ -2710,6 +4552,7 @@ def write_report(
     expected_bindings_ref: str,
     deployment_event_id: str,
     traffic_open_event: str,
+    expected_bindings_digest: str,
 ) -> None:
     if env_class == "hobby-self-hosted":
         deployment_ref_obj = {"manifestRef": deployment_ref}
@@ -2720,11 +4563,13 @@ def write_report(
         "deploymentRef": deployment_ref_obj,
         "deploymentEventId": deployment_event_id,
         "trafficOpenEvent": traffic_open_event or None,
+        "policyCatalogVersion": PREFLIGHT_POLICY_CATALOG_VERSION,
         "startedAt": started_at,
         "completedAt": completed_at,
         "checkResults": [
             {
                 "policyId": check.policy_id,
+                "category": check.category,
                 "required": check.required,
                 "status": check.status,
                 "message": check.message,
@@ -2735,8 +4580,14 @@ def write_report(
         "toolVersion": "preflight.py-v1",
         "context": context,
     }
+    report["expectedBindingsDigest"] = expected_bindings_digest
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    try:
+        with output_path.open("x", encoding="utf-8") as handle:
+            json.dump(report, handle, indent=2)
+            handle.write("\n")
+    except FileExistsError:
+        fail(f"Preflight report output already exists and will not be overwritten: {output_path}")
 
 
 def main() -> int:
@@ -2750,16 +4601,35 @@ def main() -> int:
     context = os.environ.get("FIREMUD_PREFLIGHT_CONTEXT", "operator")
     if context not in {"operator", "ci-static"}:
         fail(f"Invalid FIREMUD_PREFLIGHT_CONTEXT: {context}")
-    deployment_ref = os.environ.get("FIREMUD_DEPLOYMENT_REF") or run(["git", "rev-parse", "--short=12", "HEAD"]).strip()
+    checked_out_commit_sha = run(["git", "rev-parse", "HEAD"]).strip()
+    deployment_ref = os.environ.get("FIREMUD_DEPLOYMENT_REF") or checked_out_commit_sha
+    if env_class == "hobby-self-hosted":
+        if not isinstance(deployment_ref, str) or not operator_deployment_ref_is_current(
+            env_class, deployment_ref, checked_out_commit_sha
+        ):
+            fail("FIREMUD_DEPLOYMENT_REF must contain only lowercase ASCII letters, digits, and hyphens")
+    elif not isinstance(deployment_ref, str) or not operator_deployment_ref_is_current(
+        env_class, deployment_ref, checked_out_commit_sha
+    ):
+        fail("staging/production FIREMUD_DEPLOYMENT_REF must equal the checked-out full Git commit SHA")
     waiver_path = os.environ.get("FIREMUD_PREFLIGHT_WAIVER", "")
     if waiver_path:
         fail("Preflight waiver execution remains blocked until one-time consumption authority is implemented")
     deployment_event_id = str(uuid.uuid4())
-    expected_bindings_ref = f"design/operations/environments/{env_class}/expected-bindings.yaml"
+    expected_bindings_ref = canonical_expected_bindings_ref(env_class)
     expected_bindings_path = root_dir / expected_bindings_ref
     if not expected_bindings_path.exists():
         fail(f"Expected-bindings manifest not found: {expected_bindings_path}")
-
+    try:
+        expected_bindings_digest = immutable_file_digest(expected_bindings_path)
+    except OSError as exc:
+        fail(f"Expected-bindings manifest unreadable: {exc}")
+    expected_bindings_load_error = None
+    try:
+        expected_bindings = load_yaml(expected_bindings_path) or {}
+    except YAML_READ_ERRORS as exc:
+        expected_bindings = {}
+        expected_bindings_load_error = str(exc)
     if env_class == "hobby-self-hosted":
         render_path_env = os.environ.get("FIREMUD_PREFLIGHT_RENDER_PATH")
         if not render_path_env:
@@ -2793,7 +4663,15 @@ def main() -> int:
     check_results: list[CheckResult] = []
     has_required_failure = False
 
-    for check in expected_binding_checks(expected_bindings_path, expected_bindings_ref, env_class, documents):
+    for check in expected_binding_checks(
+        expected_bindings_path,
+        expected_bindings_ref,
+        env_class,
+        documents,
+        context=context,
+        expected_bindings=expected_bindings,
+        expected_bindings_error=expected_bindings_load_error,
+    ):
         has_required_failure = append_result(
             check_results,
             check.policy_id,
@@ -2846,11 +4724,17 @@ def main() -> int:
 
     secret_check_failed = False
     if context == "ci-static":
-        for secret_name in ("postgres-credentials", "jwt-signing-keys", "jwt-jwks"):
-            if not rendered_references_secret(documents, secret_name):
+        for secret_name, secret_namespace, binding_path in expected_player_secret_bindings(expected_bindings):
+            if not secret_name or not rendered_secret_binding_is_owned(
+                documents,
+                secret_name,
+                secret_namespace,
+                binding_path,
+            ):
                 has_required_failure = append_result(
                     check_results,
-                    "PREFLIGHT-SECRETS-001", True, "fail", f"Rendered workloads do not reference required Secret binding: {secret_name}",
+                    "PREFLIGHT-SECRETS-001", True, "fail",
+                    f"Rendered workloads do not prove ownership of required Secret binding: {binding_path} ({secret_name})",
                 ) or has_required_failure
                 secret_check_failed = True
                 break
@@ -2860,8 +4744,16 @@ def main() -> int:
                 "PREFLIGHT-SECRETS-001", True, "pass", "Rendered workloads reference required player-facing Secret bindings",
             ) or has_required_failure
     else:
-        for secret_name in ("postgres-credentials", "jwt-signing-keys", "jwt-jwks"):
-            failure_message = secret_lookup_failure(secret_name)
+        for secret_name, secret_namespace, binding_path in expected_player_secret_bindings(
+            expected_bindings
+        ):
+            if not secret_name or not secret_namespace:
+                failure_message = (
+                    "Cannot resolve required Secret binding from expected bindings: "
+                    + binding_path
+                )
+            else:
+                failure_message = secret_lookup_failure(secret_name, secret_namespace)
             if failure_message is not None:
                 has_required_failure = append_result(
                     check_results,
@@ -2872,45 +4764,53 @@ def main() -> int:
         if not secret_check_failed:
             has_required_failure = append_result(
                 check_results,
-                "PREFLIGHT-SECRETS-001", True, "pass", "Required player-facing Secrets exist in the target cluster",
+                "PREFLIGHT-SECRETS-001", True, "pass",
+                "Required player-facing Secrets exist in the target cluster",
             ) or has_required_failure
 
-    for check in jwt_jwks_checks(documents):
+    jwks_namespace = secret_binding_namespace(
+        get(expected_bindings, "internalBindings.jwt.jwksRef")
+    )
+    if jwks_namespace is None:
         has_required_failure = append_result(
             check_results,
-            check.policy_id, check.required, check.status, check.message,
+            "PREFLIGHT-JWT-001",
+            False,
+            "fail",
+            "Cannot evaluate the JWT signing contract without a resolvable jwt-jwks namespace",
         ) or has_required_failure
+        has_required_failure = append_result(
+            check_results,
+            "PREFLIGHT-JWKS-001",
+            False,
+            "fail",
+            "Cannot resolve the jwt-jwks namespace from the expected binding",
+        ) or has_required_failure
+    else:
+        for check in jwt_jwks_checks(documents, jwks_namespace):
+            has_required_failure = append_result(
+                check_results,
+                check.policy_id, check.required, check.status, check.message,
+            ) or has_required_failure
 
-    gw_value = None
-    for document in documents:
-        for _, container, _ in primary_containers(document):
-            value = env_value(container, "GATEWAY_WS_URL")
-            if value:
-                gw_value = value
-                break
-        if gw_value:
-            break
-    if not gw_value:
-        has_required_failure = append_result(check_results, "PREFLIGHT-BRIDGE-001", True, "fail", "GATEWAY_WS_URL is not explicitly configured") or has_required_failure
-    elif not gw_value.startswith("wss://"):
-        has_required_failure = append_result(check_results, "PREFLIGHT-BRIDGE-001", True, "fail", "GATEWAY_WS_URL must use wss:// in player-facing environments") or has_required_failure
-    elif "spring-cloud-gateway-mtls" not in gw_value:
-        has_required_failure = append_result(check_results, "PREFLIGHT-BRIDGE-001", True, "fail", "GATEWAY_WS_URL does not target the internal gateway mTLS listener") or has_required_failure
+    _, bridge_issues = validate_gateway_ws_values(documents, expected_bindings)
+    if bridge_issues:
+        has_required_failure = append_result(
+            check_results, "PREFLIGHT-BRIDGE-001", True, "fail", "Gateway bridge validation failed: " + "; ".join(bridge_issues)
+        ) or has_required_failure
     else:
         has_required_failure = append_result(check_results, "PREFLIGHT-BRIDGE-001", True, "pass", "Gateway bridge alignment is valid") or has_required_failure
 
-    coord_host = config_value(documents, "FIREMUD_REDIS_COORD_HOST")
-    coord_port = config_value(documents, "FIREMUD_REDIS_COORD_PORT")
-    cache_host = config_value(documents, "FIREMUD_REDIS_CACHE_HOST")
-    cache_port = config_value(documents, "FIREMUD_REDIS_CACHE_PORT")
-    if not coord_host or not cache_host:
-        has_required_failure = append_result(check_results, "PREFLIGHT-REDIS-001", True, "fail", "Could not resolve both Coordination and Cache Redis endpoints") or has_required_failure
-    elif f"{coord_host}:{coord_port}" == f"{cache_host}:{cache_port}":
-        has_required_failure = append_result(check_results, "PREFLIGHT-REDIS-001", True, "fail", "Coordination and Cache Redis endpoints resolve to the same host:port") or has_required_failure
+    _, redis_issues = effective_redis_endpoints(documents, expected_bindings)
+    if redis_issues:
+        has_required_failure = append_result(
+            check_results, "PREFLIGHT-REDIS-001", True, "fail", "Redis effective configuration validation failed: " + "; ".join(redis_issues)
+        ) or has_required_failure
     else:
         has_required_failure = append_result(check_results, "PREFLIGHT-REDIS-001", True, "pass", "Redis role split contract is satisfied") or has_required_failure
 
     promotion_attestation = os.environ.get("FIREMUD_PROMOTION_ATTESTATION", "")
+    canonical_attestation_ref = canonical_promotion_attestation_ref(deployment_ref)
     backup_readiness_evidence = os.environ.get("FIREMUD_BACKUP_READINESS_EVIDENCE", "")
     if env_class != "production":
         has_required_failure = append_result(check_results, "PREFLIGHT-PROMOTION-001", False, "not_applicable", "Promotion attestation applies only to production") or has_required_failure
@@ -2922,7 +4822,19 @@ def main() -> int:
         if not promotion_attestation:
             has_required_failure = append_result(check_results, "PREFLIGHT-PROMOTION-001", True, "fail", "FIREMUD_PROMOTION_ATTESTATION is required for production operator preflight") or has_required_failure
             has_required_failure = append_result(check_results, "PREFLIGHT-BACKUP-001", True, "fail", "Recovery compatibility cannot be evaluated without a promotion attestation") or has_required_failure
-        elif not Path(promotion_attestation).exists():
+        elif canonical_attestation_ref is None or not is_canonical_promotion_attestation_ref(
+            promotion_attestation, deployment_ref, root_dir=root_dir
+        ):
+            has_required_failure = append_result(
+                check_results,
+                "PREFLIGHT-PROMOTION-001",
+                True,
+                "fail",
+                "FIREMUD_PROMOTION_ATTESTATION must be the canonical repository-relative path "
+                + str(canonical_attestation_ref),
+            ) or has_required_failure
+            has_required_failure = append_result(check_results, "PREFLIGHT-BACKUP-001", True, "fail", "Recovery compatibility cannot be evaluated because the promotion attestation path is not canonical") or has_required_failure
+        elif not (root_dir / canonical_attestation_ref).exists():
             has_required_failure = append_result(check_results, "PREFLIGHT-PROMOTION-001", True, "fail", f"Attestation file not found: {promotion_attestation}") or has_required_failure
             has_required_failure = append_result(check_results, "PREFLIGHT-BACKUP-001", True, "fail", "Recovery compatibility cannot be evaluated because the promotion attestation is missing") or has_required_failure
         else:
@@ -2933,7 +4845,7 @@ def main() -> int:
                 recovery_status,
                 recovery_message,
             ) = promotion_check(
-                Path(promotion_attestation),
+                root_dir / canonical_attestation_ref,
                 service_images,
                 root_dir,
                 expected_production_overlay_ref=deployment_ref,
@@ -2994,6 +4906,7 @@ def main() -> int:
         expected_bindings_ref,
         deployment_event_id,
         traffic_open_event,
+        expected_bindings_digest,
     )
 
     if has_required_failure:

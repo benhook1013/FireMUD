@@ -4,6 +4,7 @@ import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestS
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasPath;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasStripPrefix;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertNoConfiguredPathStartsWith;
+import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertSocialChatAndFriendsAreEdgeGated;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.Set;
@@ -51,8 +52,6 @@ class GatewayRoutesConfigurationTestProfileTest {
           "account-profiles",
           "account-ping",
           "account-jwks",
-          "social-chat",
-          "social-friends",
           "social-guilds",
           "social-mail",
           "social-ping",
@@ -64,6 +63,11 @@ class GatewayRoutesConfigurationTestProfileTest {
   void testProfileUsesCanonicalCuratedPublicRouteIds() {
     assertThat(gatewayProperties.getRoutes().stream().map(RouteDefinition::getId))
         .containsExactlyInAnyOrderElementsOf(ROUTE_IDS);
+  }
+
+  @Test
+  void socialChatAndFriendsAreEdgeGated() {
+    assertSocialChatAndFriendsAreEdgeGated(gatewayProperties);
   }
 
   @Test
@@ -117,8 +121,6 @@ class GatewayRoutesConfigurationTestProfileTest {
     assertHasPath(gatewayProperties, "account-ping", "/api/account/ping");
     assertHasPath(gatewayProperties, "account-jwks", "/api/account/.well-known/jwks.json");
 
-    assertHasPath(gatewayProperties, "social-chat", "/api/social/chat/**");
-    assertHasPath(gatewayProperties, "social-friends", "/api/social/friends/**");
     assertHasPath(gatewayProperties, "social-guilds", "/api/social/guilds/**");
     assertHasPath(gatewayProperties, "social-mail", "/api/social/mail/**");
     assertHasPath(gatewayProperties, "social-ping", "/api/social/ping");
@@ -137,8 +139,6 @@ class GatewayRoutesConfigurationTestProfileTest {
     assertHasStripPrefix(gatewayProperties, "account-profiles", "2");
     assertHasStripPrefix(gatewayProperties, "account-ping", "2");
     assertHasStripPrefix(gatewayProperties, "account-jwks", "2");
-    assertHasStripPrefix(gatewayProperties, "social-chat", "2");
-    assertHasStripPrefix(gatewayProperties, "social-friends", "2");
     assertHasStripPrefix(gatewayProperties, "social-guilds", "2");
     assertHasStripPrefix(gatewayProperties, "social-mail", "2");
     assertHasStripPrefix(gatewayProperties, "social-ping", "2");

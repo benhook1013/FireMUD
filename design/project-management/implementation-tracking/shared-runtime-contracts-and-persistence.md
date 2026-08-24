@@ -20,6 +20,16 @@ Implementation is partial: Game Session has durable per-instance pin state, whil
 
 These links add decision provenance only; they do not upgrade shared persistence or workflow status.
 
+## Packet 5 Tail and Packet 6 P0 Status and Proof Gaps
+
+- `SF-2.1` / `SF-2.3`: [ADR 0146](../../architecture/decisions/adr-0146-owner-local-moderation-enforcement.md) keeps restriction enforcement with Account, Game Session, and Social & Groups rather than a shared runtime owner; owner-local restriction tables, monotonic revisions, and owner-result proof remain incomplete.
+- `SF-2.1` / `SF-2.3`: [ADR 0147](../../architecture/decisions/adr-0147-explicit-communication-classes-and-owner-delivery.md) leaves resolved-plan persistence, direct social adapters, privacy proof, and cross-pod connected delivery incomplete; the canonical service contracts remain the authority.
+- `SF-2.1` / `SF-2.2` / `SF-2.3`: [ADR 0148](../../architecture/decisions/adr-0148-social-relationship-authority-and-entity-owned-value.md) and [ADR 0149](../../architecture/decisions/adr-0149-communication-type-specific-history-and-retention.md) leave tenant/account relationship convergence, entity-owned value/attachment paths, type-specific retention/evidence, durable acknowledgement, and recipient-view-preserving reads incomplete.
+- `SF-2.3`: [ADR 0150](../../architecture/decisions/adr-0150-closed-observer-views-and-profile-scoped-shout.md) leaves closed observer declarations, safe-field projections, freshness fencing, candidate delivery, bounded chunking, and SHOUT implementation/proof incomplete.
+- `SF-1.3`: [ADR 0151](../../architecture/decisions/adr-0151-event-scoped-automated-tier-a-credential-compliance.md) leaves automated compliance evidence and event-scoped trust/recovery gate proof incomplete; no shared-runtime implementation status is upgraded here.
+
+These links add decision provenance and shared-runtime consequences only; capability implementation and verification states remain the values in the [Capability Status](#capability-status) table below.
+
 ## Capability Status
 
 | Capability | Implementation | Verification | Design | Implementation anchors | Proof anchors | Secondary handoffs | Gap or decision |
@@ -41,6 +51,8 @@ These links add decision provenance only; they do not upgrade shared persistence
 - [Temporal workflows](../../architecture/system-architecture-temporal-workflows.md) defines durable workflow boundaries and operator truth; [ADR 0078](../../architecture/decisions/adr-0078-digest-bound-workflow-and-step-retry-identities.md) defines the durable workflow/request and digest-bound step identity consumed by adopters.
 - [Scripting runtime execution](../../architecture/system-architecture-scripting-runtime-execution.md) and [scheduler/timers](../../architecture/system-architecture-scripting-scheduler-and-timers.md) consume the shared timing and workflow model. [ADR 0059](../../architecture/decisions/adr-0059-causal-floor-cross-service-presentation-reads.md), [ADR 0063](../../architecture/decisions/adr-0063-durable-per-dispatch-script-handoff.md), and [ADR 0069](../../architecture/decisions/adr-0069-at-least-once-effect-execution-with-one-logical-terminal-outcome.md) define shared identity, durable handoff, and logical terminal-outcome boundaries without claiming this tracker owns their service implementation.
 - [Logging and monitoring](../../architecture/system-architecture-logging-monitoring.md) defines audit, failure, and observability expectations at service boundaries.
+
+- [Social & Groups communication contracts](../../architecture/microservices/social-groups-service/api-contracts.md) and [runtime/data](../../architecture/microservices/social-groups-service/runtime-and-data.md) remain canonical for the Packet 5 communication, relationship, history, and observer decisions; [ADR 0147](../../architecture/decisions/adr-0147-explicit-communication-classes-and-owner-delivery.md), [ADR 0148](../../architecture/decisions/adr-0148-social-relationship-authority-and-entity-owned-value.md), [ADR 0149](../../architecture/decisions/adr-0149-communication-type-specific-history-and-retention.md), and [ADR 0150](../../architecture/decisions/adr-0150-closed-observer-views-and-profile-scoped-shout.md) provide provenance, while this tracker records shared persistence and proof gaps only.
 
 [ADR 0113](../../architecture/decisions/adr-0113-bounded-pull-settings-distribution-with-freshness-classes.md) adds monotonic revision and bounded freshness/fallback evidence to shared settings consumption; implementation and proof of revision ordering, stale handling, and restrictive fences remain open. [ADR 0117](../../architecture/decisions/adr-0117-producer-owned-event-schemas-with-one-materialized-catalogue.md) keeps producer schema ownership while requiring one Automation materialized catalogue; producer-manifest discovery, compatibility, retention, and digest convergence remain unimplemented. These accepted boundaries do not upgrade shared-contract capability states.
 

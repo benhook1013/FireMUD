@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-Kubernetes Secret mounts, cert-manager examples, expected-binding preflight, and secret-compliance evidence exist, but the repository does not satisfy the complete target. Base manifests mount JWT signing material beyond Account, gRPC workloads commonly share one TLS Secret, and production Secret encryption-at-rest/audit proof plus automated rotation/convergence remain incomplete.
+Kubernetes Secret mounts, cert-manager examples, expected-binding preflight, and secret-compliance evidence exist, but the repository does not satisfy the complete target. Base manifests mount JWT signing material beyond Account, gRPC workloads commonly share one TLS Secret, and production Secret encryption-at-rest/audit proof plus automated rotation/convergence remain incomplete. Hosted preview/dev-demo Helm currently uses the shared `firemud-grpc-tls` Secret across gRPC workloads; that proves encrypted transport only, not target per-workload identity or player-facing equivalence. The target remains distinct leaf Secrets per workload with a shared CA, with generic per-workload identity preflight proof still unimplemented.
 
 ## Decision Record
 
@@ -91,6 +91,8 @@ Teaching each service to call Vault or cloud APIs creates provider coupling, sta
 A companion Vault container in the same trust and recovery domain provides little protection when its unseal or root material is delivered through the same Compose environment. It adds failure modes without establishing independent custody.
 
 ## Implementation and Proof Obligations
+
+Select validation and runtime evidence according to [Validation and Runtime Proof](../../developer-workflows/validation-and-runtime-proof.md); Secret mounts, workload identity/RBAC, rotation, and convergence changes require the applicable contract and render checks plus canonical fresh-image rebuild-and-boot and focused smoke proof. Record execution results in PR/CI evidence or implementation-tracking documents, not in this ADR.
 
 - Remove Account JWT private material from every non-Account workload and prove validators consume only public JWKS.
 - Replace shared gRPC leaf material with cert-manager-issued per-workload certificates and prove exact workload identity plus method caller allowlists.

@@ -106,18 +106,6 @@ public class CanonicalGatewayRoutesConfiguration {
                 "/api/account/.well-known/jwks.json",
                 2),
             route(
-                "social-chat",
-                environment.getProperty(
-                    "FIREMUD_GATEWAY_ROUTE_SOCIAL_URI", "http://social-groups-service:8080"),
-                "/api/social/chat/**",
-                2),
-            route(
-                "social-friends",
-                environment.getProperty(
-                    "FIREMUD_GATEWAY_ROUTE_SOCIAL_URI", "http://social-groups-service:8080"),
-                "/api/social/friends/**",
-                2),
-            route(
                 "social-guilds",
                 environment.getProperty(
                     "FIREMUD_GATEWAY_ROUTE_SOCIAL_URI", "http://social-groups-service:8080"),

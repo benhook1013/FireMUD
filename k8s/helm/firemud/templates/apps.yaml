@@ -1,4 +1,5 @@
 {{- if .Values.previewStack.enabled }}
+{{- $previewJwt := .Values.previewStack.jwt | default (dict) }}
 {{- range $service := .Values.previewStack.services }}
 ---
 apiVersion: apps/v1
@@ -78,14 +79,14 @@ spec:
             - secretRef:
                 name: firemud-secret
           {{- end }}
-          {{- if or $service.mountGrpcTls (and $.Values.previewStack.jwt.enabled $service.envFromShared) }}
+          {{- if or $service.mountGrpcTls (and $previewJwt.enabled $service.envFromShared) }}
           volumeMounts:
             {{- if $service.mountGrpcTls }}
             - name: grpc-tls
               mountPath: /tls
               readOnly: true
             {{- end }}
-            {{- if and $.Values.previewStack.jwt.enabled $service.envFromShared }}
+            {{- if and $previewJwt.enabled $service.envFromShared }}
             - name: jwt-signing-keys
               mountPath: /var/run/secrets/firemud/jwt
               readOnly: true
@@ -125,26 +126,21 @@ spec:
             limits:
               cpu: {{ default "750m" $.Values.previewStack.resources.app.limits.cpu | quote }}
               memory: {{ default "512Mi" $.Values.previewStack.resources.app.limits.memory | quote }}
-      {{- if or $service.mountGrpcTls (and $.Values.previewStack.jwt.enabled $service.envFromShared) }}
+      {{- if or $service.mountGrpcTls (and $previewJwt.enabled $service.envFromShared) }}
       volumes:
         {{- if $service.mountGrpcTls }}
         - name: grpc-tls
           secret:
             secretName: {{ include "firemud.grpcSecretName" $ }}
         {{- end }}
-        {{- if and $.Values.previewStack.jwt.enabled $service.envFromShared }}
+        {{- if and $previewJwt.enabled $service.envFromShared }}
         - name: jwt-signing-keys
           secret:
             secretName: jwt-signing-keys
         {{- if eq $service.name "account-service" }}
         - name: jwt-jwks
-          {{- if eq (default "ConfigMap" $.Values.previewStack.jwt.jwksResourceKind) "Secret" }}
-          secret:
-            secretName: jwt-jwks
-          {{- else }}
           configMap:
             name: jwt-jwks
-          {{- end }}
         {{- end }}
         {{- end }}
       {{- end }}

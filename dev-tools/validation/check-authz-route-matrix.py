@@ -380,6 +380,10 @@ OPERATOR_AUTHORIZATION_BRANCHES = {
         "target_tenant_generation",
     },
 }
+HUMAN_OPERATOR_ISSUANCE_AUTHORIZATION_BRANCHES = {
+    branch: checks | {"current_account_generation", "current_token_generation"}
+    for branch, checks in OPERATOR_AUTHORIZATION_BRANCHES.items()
+}
 ACCOUNT_AUTHORIZATION_BRANCHES = {
     "self_service": {
         "target_subject_binding": "exact_caller_account_id",
@@ -554,12 +558,9 @@ PLATFORM_ADMIN_ROLE_ASSURANCE_ROUTE_IDENTITIES = {
 }
 OPERATOR_REFERENCE_ISSUANCE_REQUIRED_FIELDS = {
     ("account-service", "IssueHumanOperatorAuthorizationReference"): {
-        "tenant_scope",
         "action_family",
         "action_family_schema_id",
         "action_family_schema_version",
-        "control_plane_request_id",
-        "mutation_digest",
     },
     ("account-service", "IssueAutomationOperatorAuthorizationReference"): {
         "automation_policy_id",
@@ -572,6 +573,169 @@ OPERATOR_REFERENCE_ISSUANCE_REQUIRED_FIELDS = {
         "mutation_digest",
     },
 }
+AUTOMATION_OPERATOR_ISSUANCE_ROUTE_STATUS = "target_not_currently_routable"
+AUTOMATION_OPERATOR_ISSUANCE_SCHEMA_SELECTOR_FIELDS = [
+    "action_family",
+    "action_family_schema_id",
+    "action_family_schema_version",
+]
+AUTOMATION_OPERATOR_ISSUANCE_SCHEMA_MAPPING_REJECTIONS = {
+    "unknown": "reject_before_issuance",
+    "duplicate": "reject_before_issuance",
+    "ambiguous": "reject_before_issuance",
+    "mismatched": "reject_before_issuance",
+    "moderation": "reject_before_issuance",
+}
+AUTOMATION_OPERATOR_ISSUANCE_MODERATION_IDENTITY_POLICY = {
+    "status": "rejected_before_issuance",
+    "request_identity": "dedicated_moderation_identity_required",
+    "digest": "dedicated_moderation_digest_required",
+    "control_plane_request_id": "correlation_only",
+}
+HUMAN_OPERATOR_ISSUANCE_COMMON_REQUIRED_FIELDS = {
+    "action_family",
+    "action_family_schema_id",
+    "action_family_schema_version",
+}
+# Keep the tuple order aligned with the machine-readable branch-field contract.
+# The set-shaped contracts below derive from this canonical ordered collection.
+PLATFORM_ACCESS_BAN_FORBIDDEN_FIELDS = (
+    "tenant_scope",
+    "tenant_id",
+    "target_tenant_generation",
+    "membership_version_when_applicable",
+)
+HUMAN_OPERATOR_ISSUANCE_BRANCHES = {
+    "non_moderation": {
+        "selector": "action_category=absent",
+        "scope": "tenant",
+        "membership_authority_generation_applies": "conditional_by_operator_role",
+        "membership_authority_generation_condition": {
+            "tenant_role": True,
+            "platformAdmin_global": False,
+        },
+        "global_platform_admin_reference_generation_binding": "target_tenant_generation",
+        "global_platform_admin_membership_required": False,
+        "required_fields": HUMAN_OPERATOR_ISSUANCE_COMMON_REQUIRED_FIELDS
+        | {"tenant_scope"},
+    },
+    "tenant_restriction": {
+        "selector": "action_category=tenant_restriction",
+        "scope": "tenant",
+        "membership_authority_generation_applies": "conditional_by_operator_role",
+        "membership_authority_generation_condition": {
+            "tenant_role": True,
+            "platformAdmin_global": False,
+        },
+        "global_platform_admin_reference_generation_binding": "target_tenant_generation",
+        "global_platform_admin_membership_required": False,
+        "required_fields": HUMAN_OPERATOR_ISSUANCE_COMMON_REQUIRED_FIELDS
+        | {"tenant_scope"},
+    },
+    "platform_access_ban": {
+        "selector": "action_category=platform_access_ban",
+        "scope": "account",
+        "classification": "account_scoped",
+        "target_subject_binding": "explicit_target_account_id",
+        "role_assurance": PRIVILEGED_OPERATOR_ROLE_ASSURANCE,
+        "roles": {"any_of": ["platformAdmin"]},
+        "membership_authority_generation_applies": False,
+        "global_platform_admin_membership_required": False,
+        "tenant_billing_authority_generation_applies": False,
+        "required_live_checks": {
+            "current_account_generation",
+            "current_token_generation",
+            "issuer_generation",
+            "account_generation",
+            "current_operator_roles",
+            "current_global_role",
+            "role_appropriate_assurance",
+        },
+        "forbidden_live_checks": {
+            "target_tenant_generation",
+            "tenant_generation",
+            "membership_when_tenant_role",
+            "membership_generation",
+        },
+        "required_fields": HUMAN_OPERATOR_ISSUANCE_COMMON_REQUIRED_FIELDS
+        | {"target_account_id"},
+        "forbidden_fields": set(PLATFORM_ACCESS_BAN_FORBIDDEN_FIELDS),
+    },
+}
+HUMAN_OPERATOR_ISSUANCE_SHARED_BRANCH_FIELDS = {
+    "non_moderation": {
+        "selector": "action_category=absent",
+        "required": ["tenant_scope"],
+        "optional": ["membership_version_when_applicable"],
+    },
+    "tenant_restriction": {
+        "required": ["tenant_scope"],
+        "optional": ["membership_version_when_applicable"],
+    },
+    "platform_access_ban": {
+        "required": ["target_account_id"],
+        "forbidden": list(PLATFORM_ACCESS_BAN_FORBIDDEN_FIELDS),
+    },
+}
+OPERATOR_ISSUANCE_MODERATION_IDENTITY_KEYS = {
+    "policy_intent": {
+        "request_identity": "policy_intent_request_id",
+        "digest": "mutation_digest",
+        "key": [
+            "policy_intent_request_id",
+            "action_family_schema_id",
+            "action_family_schema_version",
+            "mutation_digest",
+            "exact_scope",
+            "authority_path_binding",
+        ],
+    },
+    "owner_enforcement": {
+        "request_identity": "owner_enforcement_request_id",
+        "digest": "owner_enforcement_digest",
+        "key": [
+            "owner_enforcement_request_id",
+            "action_family_schema_id",
+            "action_family_schema_version",
+            "owner_enforcement_digest",
+            "exact_scope",
+            "authority_path_binding",
+        ],
+    },
+}
+HUMAN_OPERATOR_ISSUANCE_IDENTITY_ALTERNATIVES = {
+    "non_moderation": {
+        "request_identity": "control_plane_request_id",
+        "digest": "mutation_digest",
+        "control_plane_request_id": "mutation_identity",
+    },
+    "moderation_policy_intent": {
+        "request_identity": "policy_intent_request_id",
+        "digest": "mutation_digest",
+        "control_plane_request_id": "correlation_only",
+    },
+    "moderation_owner_enforcement": {
+        "request_identity": "owner_enforcement_request_id",
+        "digest": "owner_enforcement_digest",
+        "control_plane_request_id": "correlation_only",
+    },
+}
+HUMAN_OPERATOR_ISSUANCE_SELECTOR_KEY_FIELDS = [
+    "action_family",
+    "action_family_schema_id",
+    "action_family_schema_version",
+]
+HUMAN_OPERATOR_ISSUANCE_SELECTOR_MAPPING_REJECTIONS = {
+    "unknown": "reject_before_issuance",
+    "duplicate": "reject_before_issuance",
+    "ambiguous": "reject_before_issuance",
+    "mismatched": "reject_before_issuance",
+}
+HUMAN_OPERATOR_ISSUANCE_SELECTOR_MAPPING_REF = (
+    "operator_delegation.issuance_paths.human.bindings."
+    "mutation_identity_selector.mapping"
+)
+HUMAN_OPERATOR_ISSUANCE_ROUTE_STATUS = "target_not_currently_routable"
 AUTH_UNAVAILABLE = "AUTH_UNAVAILABLE"
 UNAVAILABLE_AUTHORITY_ERROR_ALIASES = {
     "MEMBERSHIP_AUTH_UNAVAILABLE",
@@ -593,6 +757,79 @@ LOGGING_ADMIN_IDEMPOTENT_OPERATOR_ROUTES = {
     ("logging-admin-service", "POST /moderation/actions"),
     ("logging-admin-service", "POST /tick-remediation/pause"),
     ("logging-admin-service", "POST /tick-remediation/resume"),
+}
+MODERATION_ACTION_ROUTE = ("logging-admin-service", "POST /moderation/actions")
+MODERATION_TENANT_ACTION_CATEGORIES = {
+    "gameplay_ban",
+    "chat_mute",
+    "chat_ban",
+}
+MODERATION_PLATFORM_ACTION_CATEGORY = "platform_access_ban"
+MODERATION_ACTION_BRANCHES = {
+    "tenant_restriction": MODERATION_TENANT_ACTION_CATEGORIES,
+    "platform_access_ban": {MODERATION_PLATFORM_ACTION_CATEGORY},
+}
+MODERATION_ACTION_REQUIRED_FIELDS = {
+    "tenant_restriction": {
+        "policy_intent_request_id",
+        "control_plane_request_id",
+        "actor_from_session",
+        "reason",
+        "tenant_id",
+        "target_account_id",
+        "action",
+        "mutation_digest",
+    },
+    "platform_access_ban": {
+        "policy_intent_request_id",
+        "control_plane_request_id",
+        "actor_from_session",
+        "reason",
+        "target_account_id",
+        "action",
+        "mutation_digest",
+    },
+}
+MODERATION_ACTION_IDEMPOTENCY_CONTRACT = {
+    "key": "policy_intent_request_id",
+    "digest": "mutationDigest/v1",
+    "digest_field": "mutation_digest",
+    "exact_retry": "same_policy_intent_request_id_and_digest_returns_stored_outcome",
+    "changed_digest": "IDEMPOTENCY_CONFLICT",
+    "changed_request_id": "distinct_policy_intent_operation",
+    "control_plane_request_id": "correlation_only",
+    "owner_enforcement_request_id": "distinct_future_owner_command_identity",
+}
+MODERATION_PLATFORM_FORBIDDEN_ROUTE_FIELDS = set(
+    PLATFORM_ACCESS_BAN_FORBIDDEN_FIELDS
+)
+MODERATION_POLICY_INTENT_COVERAGE_IDENTITY = (
+    "moderation-policy-intent-local-redemption"
+)
+MODERATION_POLICY_INTENT_ROUTE_IDENTITIES = [
+    "logging-admin-service/POST /moderation/actions",
+    "logging-admin-service/ApplyModerationAction",
+]
+MODERATION_SUPPORT_GATE_REDEMPTION_REQUIREMENT = (
+    "account_issued_authorization_reference_issuance_and_"
+    "contract_declared_receiving_boundary_redemption"
+)
+MODERATION_ACTION_SELECTOR_MAPPING = {
+    category: branch
+    for branch, categories in MODERATION_ACTION_BRANCHES.items()
+    for category in sorted(categories)
+}
+MODERATION_ACTION_SELECTOR_REJECTED_VALUES = {
+    "account_security_lock",
+    "ban",
+    "account_ban",
+    "account_security_ban",
+}
+MODERATION_ENFORCEMENT_OWNER_BY_CATEGORY = {
+    "platform_access_ban": "account-service",
+    "gameplay_ban": "game-session-service",
+    "chat_mute": "social-groups-service",
+    "chat_ban": "social-groups-service",
 }
 EXPECTED_ROUTE_CLASS_BRANCHES = {
     ("account_scoped", "platformAdmin_global"): {
@@ -2117,6 +2354,7 @@ def operator_authorization_branch_checks(
     label: str,
     errors: list[str],
     live_checks_cache: LiveChecksCache | None = None,
+    expected_branches: dict[str, set[str]] | None = None,
 ) -> dict[str, list[set[str]]]:
     raw_branches = route.get("operator_authorization_branches")
     if not isinstance(raw_branches, list):
@@ -2135,10 +2373,11 @@ def operator_authorization_branch_checks(
         if not isinstance(branch, str) or not branch.strip():
             errors.append(f"{branch_label}.branch must be a non-empty string")
             continue
-        if branch not in OPERATOR_AUTHORIZATION_BRANCHES:
+        expected_branch_checks = expected_branches or OPERATOR_AUTHORIZATION_BRANCHES
+        if branch not in expected_branch_checks:
             errors.append(
                 f"{branch_label}.branch must be one of "
-                f"{sorted(OPERATOR_AUTHORIZATION_BRANCHES)}"
+                f"{sorted(expected_branch_checks)}"
             )
         if branch in branches:
             errors.append(f"{branch_label} duplicates operator branch {branch!r}")
@@ -2150,7 +2389,7 @@ def operator_authorization_branch_checks(
             live_checks_cache,
             "required_live_checks",
         )
-        expected_checks = OPERATOR_AUTHORIZATION_BRANCHES.get(branch)
+        expected_checks = expected_branch_checks.get(branch)
         if expected_checks is not None and checks != expected_checks:
             errors.append(
                 f"{branch_label}.required_live_checks must equal "
@@ -2158,11 +2397,11 @@ def operator_authorization_branch_checks(
             )
         branches.setdefault(branch, []).append(checks)
 
-    expected_branches = set(OPERATOR_AUTHORIZATION_BRANCHES)
-    if set(branches) != expected_branches:
+    expected_branch_names = set(expected_branches or OPERATOR_AUTHORIZATION_BRANCHES)
+    if set(branches) != expected_branch_names:
         errors.append(
             f"{label} operator_authorization_branches must contain exactly "
-            f"{sorted(expected_branches)}"
+            f"{sorted(expected_branch_names)}"
         )
     return branches
 
@@ -2253,6 +2492,15 @@ def validate_conditional_operator_route(
 ) -> None:
     route_key_value = route_set_key(route)
     if route_key_value not in CONDITIONAL_OPERATOR_ROUTES:
+        return
+    action_category = applicability_value(route, "action_category", label, errors)
+    if (
+        route_key_value == MODERATION_ACTION_ROUTE
+        and action_category == MODERATION_PLATFORM_ACTION_CATEGORY
+    ):
+        # validate_moderation_action_route_variants and
+        # validate_moderation_action_variant_contract re-enforce authorization,
+        # role, platform-admin, generation-flag, and forbidden-tenant requirements.
         return
     if value != "conditional_by_operator_role":
         errors.append(
@@ -3058,6 +3306,518 @@ def validate_operator_reference_issuance(
             )
 
 
+def validate_automation_operator_issuance(
+    routes: list[Any],
+    errors: list[str],
+    cardinality_errors: set[str] | None = None,
+) -> None:
+    route = resolve_unique_route(
+        routes,
+        "account-service",
+        "IssueAutomationOperatorAuthorizationReference",
+        errors,
+        cardinality_errors,
+    )
+    if route is None:
+        return
+    label = route_label(route)
+    if route.get("route_status") != AUTOMATION_OPERATOR_ISSUANCE_ROUTE_STATUS:
+        errors.append(
+            f"{label} route_status must remain "
+            f"{AUTOMATION_OPERATOR_ISSUANCE_ROUTE_STATUS!r} until a published "
+            "non_moderation action-family schema pair exists"
+        )
+    if route.get("branch_selector") != "non_moderation_only":
+        errors.append(f"{label} branch_selector must be 'non_moderation_only'")
+    if route.get("action_category_policy") != "absent_only":
+        errors.append(f"{label} action_category_policy must be 'absent_only'")
+
+    mapping_label = f"{label} action_family_schema_mapping"
+    mapping = route.get("action_family_schema_mapping")
+    if not isinstance(mapping, dict):
+        errors.append(f"{mapping_label} must be a mapping")
+        return
+    expected_mapping_fields = {
+        "selector_fields",
+        "entries",
+        "entries_status",
+        "rejections",
+    }
+    if set(mapping) != expected_mapping_fields:
+        errors.append(
+            f"{mapping_label} must contain exactly "
+            f"{sorted(expected_mapping_fields)}"
+        )
+    if mapping.get("selector_fields") != AUTOMATION_OPERATOR_ISSUANCE_SCHEMA_SELECTOR_FIELDS:
+        errors.append(
+            f"{mapping_label}.selector_fields must equal "
+            f"{AUTOMATION_OPERATOR_ISSUANCE_SCHEMA_SELECTOR_FIELDS!r}"
+        )
+    entries = mapping.get("entries")
+    if not isinstance(entries, list):
+        errors.append(f"{mapping_label}.entries must be a list")
+    elif entries:
+        errors.append(
+            f"{mapping_label}.entries must remain empty while no action-family "
+            "schema pairs are published"
+        )
+    if mapping.get("entries_status") != "no_published_action_family_schema_pairs":
+        errors.append(
+            f"{mapping_label}.entries_status must be "
+            "'no_published_action_family_schema_pairs' while entries are empty"
+        )
+    if mapping.get("rejections") != AUTOMATION_OPERATOR_ISSUANCE_SCHEMA_MAPPING_REJECTIONS:
+        errors.append(
+            f"{mapping_label}.rejections must equal "
+            f"{AUTOMATION_OPERATOR_ISSUANCE_SCHEMA_MAPPING_REJECTIONS!r}"
+        )
+
+    moderation_label = f"{label} moderation_identity_policy"
+    if route.get("moderation_identity_policy") != AUTOMATION_OPERATOR_ISSUANCE_MODERATION_IDENTITY_POLICY:
+        errors.append(
+            f"{moderation_label} must require dedicated moderation identity and "
+            "digest while treating control_plane_request_id as correlation-only"
+        )
+
+
+def validate_human_operator_issuance_branches(
+    routes: list[Any],
+    errors: list[str],
+    cardinality_errors: set[str] | None = None,
+    *,
+    document: dict[str, Any],
+) -> None:
+    route = resolve_unique_route(
+        routes,
+        "account-service",
+        "IssueHumanOperatorAuthorizationReference",
+        errors,
+        cardinality_errors,
+    )
+    if route is None:
+        return
+    label = route_label(route)
+    if route.get("route_status") != HUMAN_OPERATOR_ISSUANCE_ROUTE_STATUS:
+        errors.append(
+            f"{label} route_status must remain "
+            f"{HUMAN_OPERATOR_ISSUANCE_ROUTE_STATUS!r} while no action-family "
+            "schema pairs are published"
+        )
+    if route.get("branch_selector") != "action_category_or_absence":
+        errors.append(
+            f"{label} branch_selector must be 'action_category_or_absence'"
+        )
+    precedence = route.get("conditional_branch_precedence")
+    if not isinstance(precedence, dict) or precedence.get(
+        "branch_fields_override_top_level"
+    ) is not True:
+        errors.append(
+            f"{label} conditional_branch_precedence must override top-level fields"
+        )
+
+    identity_selector = route.get("mutation_identity_selector")
+    identity_label = f"{label} mutation_identity_selector"
+    if not isinstance(identity_selector, dict):
+        errors.append(f"{identity_label} must be a mapping")
+    else:
+        if identity_selector.get("selector_fields") != HUMAN_OPERATOR_ISSUANCE_SELECTOR_KEY_FIELDS:
+            errors.append(
+                f"{identity_label}.selector_fields must equal "
+                f"{HUMAN_OPERATOR_ISSUANCE_SELECTOR_KEY_FIELDS!r}"
+            )
+        if identity_selector.get("mapping_ref") != HUMAN_OPERATOR_ISSUANCE_SELECTOR_MAPPING_REF:
+            errors.append(
+                f"{identity_label}.mapping_ref must equal "
+                f"{HUMAN_OPERATOR_ISSUANCE_SELECTOR_MAPPING_REF!r}"
+            )
+        alternatives = identity_selector.get("alternatives")
+        expected_names = set(HUMAN_OPERATOR_ISSUANCE_IDENTITY_ALTERNATIVES)
+        if not isinstance(alternatives, dict) or set(alternatives) != expected_names:
+            errors.append(
+                f"{identity_label}.alternatives must contain exactly "
+                f"{sorted(expected_names)}"
+            )
+        elif isinstance(alternatives, dict):
+            for name, expected in HUMAN_OPERATOR_ISSUANCE_IDENTITY_ALTERNATIVES.items():
+                alternative_label = f"{identity_label}.alternatives.{name}"
+                alternative = alternatives.get(name)
+                if not isinstance(alternative, dict):
+                    errors.append(f"{alternative_label} must be a mapping")
+                    continue
+                expected_fields = set(expected)
+                if set(alternative) != expected_fields:
+                    errors.append(
+                        f"{alternative_label} must contain exactly "
+                        f"{sorted(expected_fields)}"
+                    )
+                for field, expected_value in expected.items():
+                    if alternative.get(field) != expected_value:
+                        errors.append(
+                            f"{alternative_label}.{field} must equal "
+                            f"{expected_value!r}"
+                        )
+
+    validate_human_operator_issuance_selector_mapping_and_branches(document, errors)
+
+
+def validate_human_operator_issuance_selector_mapping_and_branches(
+    document: dict[str, Any], errors: list[str]
+) -> None:
+    label = (
+        "operator_delegation.issuance_paths.human.bindings."
+        "mutation_identity_selector.mapping"
+    )
+    delegation = document.get("operator_delegation")
+    issuance_paths = (
+        delegation.get("issuance_paths")
+        if isinstance(delegation, dict)
+        else None
+    )
+    human_path = (
+        issuance_paths.get("human")
+        if isinstance(issuance_paths, dict)
+        else None
+    )
+    bindings = human_path.get("bindings") if isinstance(human_path, dict) else None
+    identity_selector = (
+        bindings.get("mutation_identity_selector")
+        if isinstance(bindings, dict)
+        else None
+    )
+    mapping = (
+        identity_selector.get("mapping")
+        if isinstance(identity_selector, dict)
+        else None
+    )
+    if not isinstance(mapping, dict):
+        errors.append(f"{label} must be a mapping")
+        return
+
+    expected_mapping_fields = {
+        "key_fields",
+        "entries",
+        "entries_status",
+        "rejections",
+    }
+    if set(mapping) != expected_mapping_fields:
+        errors.append(
+            f"{label} must contain exactly {sorted(expected_mapping_fields)}"
+        )
+
+    if mapping.get("key_fields") != HUMAN_OPERATOR_ISSUANCE_SELECTOR_KEY_FIELDS:
+        errors.append(
+            f"{label}.key_fields must equal "
+            f"{HUMAN_OPERATOR_ISSUANCE_SELECTOR_KEY_FIELDS!r}"
+        )
+    if mapping.get("rejections") != HUMAN_OPERATOR_ISSUANCE_SELECTOR_MAPPING_REJECTIONS:
+        errors.append(
+            f"{label}.rejections must equal "
+            f"{HUMAN_OPERATOR_ISSUANCE_SELECTOR_MAPPING_REJECTIONS!r}"
+        )
+
+    entries = mapping.get("entries")
+    if not isinstance(entries, list):
+        errors.append(f"{label}.entries must be a list")
+        return
+    if entries:
+        errors.append(
+            f"{label}.entries must remain empty while no action-family schema "
+            "pairs are published"
+        )
+    elif mapping.get("entries_status") != "no_published_action_family_schema_pairs":
+        errors.append(
+            f"{label}.entries_status must be "
+            "'no_published_action_family_schema_pairs' when entries are empty"
+        )
+
+    expected_entry_fields = {
+        "action_family",
+        "action_family_schema_id",
+        "action_family_schema_version",
+        "identity_alternative",
+    }
+    seen_keys: set[tuple[str, str, str]] = set()
+    for index, entry in enumerate(entries):
+        entry_label = f"{label}.entries[{index}]"
+        if not isinstance(entry, dict):
+            errors.append(f"{entry_label} must be a mapping")
+            continue
+        if set(entry) != expected_entry_fields:
+            errors.append(
+                f"{entry_label} must contain exactly "
+                f"{sorted(expected_entry_fields)}"
+            )
+            continue
+        values = tuple(entry.get(field) for field in HUMAN_OPERATOR_ISSUANCE_SELECTOR_KEY_FIELDS)
+        if any(not isinstance(value, str) or not value for value in values):
+            errors.append(
+                f"{entry_label} key fields must be non-empty strings"
+            )
+            continue
+        key = (values[0], values[1], values[2])
+        if key in seen_keys:
+            errors.append(
+                f"{entry_label} duplicates selector key "
+                f"{list(key)!r}"
+            )
+        seen_keys.add(key)
+        if entry.get("identity_alternative") not in HUMAN_OPERATOR_ISSUANCE_IDENTITY_ALTERNATIVES:
+            errors.append(
+                f"{entry_label}.identity_alternative must name exactly one "
+                "declared identity alternative"
+            )
+
+    routes = document.get("routes")
+    route = resolve_unique_route(
+        routes if isinstance(routes, list) else [],
+        "account-service",
+        "IssueHumanOperatorAuthorizationReference",
+        errors,
+    )
+    if route is None:
+        return
+    label = route_label(route)
+    branches = route.get("conditional_branches")
+    if not isinstance(branches, dict):
+        errors.append(f"{label} conditional_branches must be a mapping")
+        return
+    if "operator_authorization_branches" in route:
+        errors.append(
+            f"{label} operator_authorization_branches must be branch-specific "
+            "under conditional_branches.tenant_restriction or conditional_branches.non_moderation"
+        )
+    expected_names = set(HUMAN_OPERATOR_ISSUANCE_BRANCHES)
+    if set(branches) != expected_names:
+        errors.append(
+            f"{label} conditional_branches must contain exactly "
+            f"{sorted(expected_names)}"
+        )
+
+    top_level_fields = route.get("required_fields")
+    top_level_field_set = (
+        {field for field in top_level_fields if isinstance(field, str)}
+        if isinstance(top_level_fields, list)
+        else set()
+    )
+    if "tenant_scope" in top_level_field_set:
+        errors.append(
+            f"{label} tenant_scope must be branch-specific, not a common required field"
+        )
+
+    for branch_name, expected in HUMAN_OPERATOR_ISSUANCE_BRANCHES.items():
+        branch_label = f"{label} conditional_branches.{branch_name}"
+        branch = branches.get(branch_name)
+        if not isinstance(branch, dict):
+            errors.append(f"{branch_label} must be a mapping")
+            continue
+        for field, expected_value in expected.items():
+            if field in {"required_fields", "required_live_checks", "forbidden_live_checks", "forbidden_fields"}:
+                continue
+            if branch.get(field) != expected_value:
+                errors.append(
+                    f"{branch_label} must declare {field}={expected_value!r}"
+                )
+        for field in (
+            "required_fields",
+            "forbidden_fields",
+            "required_live_checks",
+            "forbidden_live_checks",
+        ):
+            if field not in expected:
+                continue
+            value = branch.get(field)
+            if not isinstance(value, list) or any(
+                not isinstance(item, str) for item in value
+            ):
+                errors.append(f"{branch_label}.{field} must be a list of strings")
+                continue
+            actual = set(value)
+            if len(actual) != len(value):
+                errors.append(f"{branch_label}.{field} must not contain duplicates")
+            if actual != expected[field]:
+                errors.append(
+                    f"{branch_label}.{field} must equal {sorted(expected[field])}"
+                )
+        required_fields = branch.get("required_fields")
+        forbidden_fields = branch.get("forbidden_fields", [])
+        if isinstance(required_fields, list) and isinstance(forbidden_fields, list):
+            overlap = sorted(set(required_fields) & set(forbidden_fields))
+            if overlap:
+                errors.append(
+                    f"{branch_label} required_fields must not be forbidden: {overlap}"
+                )
+        required_checks = branch.get("required_live_checks", [])
+        forbidden_checks = branch.get("forbidden_live_checks", [])
+        if isinstance(required_checks, list) and isinstance(forbidden_checks, list):
+            overlap = sorted(set(required_checks) & set(forbidden_checks))
+            if overlap:
+                errors.append(
+                    f"{branch_label} required_live_checks must not be forbidden: {overlap}"
+                )
+
+    for tenant_branch_name in ("non_moderation", "tenant_restriction"):
+        tenant_branch = branches.get(tenant_branch_name)
+        if not isinstance(tenant_branch, dict):
+            continue
+        if "operator_authorization_branches" not in tenant_branch:
+            errors.append(
+                f"{label} {tenant_branch_name} branch must declare "
+                "operator_authorization_branches"
+            )
+        else:
+            operator_authorization_branch_checks(
+                tenant_branch,
+                f"{label} conditional_branches.{tenant_branch_name}",
+                errors,
+                expected_branches=HUMAN_OPERATOR_ISSUANCE_AUTHORIZATION_BRANCHES,
+            )
+
+    platform_branch = branches.get("platform_access_ban")
+    if isinstance(platform_branch, dict):
+        if "operator_authorization_branches" in platform_branch:
+            errors.append(
+                f"{label} platform_access_ban branch must not declare "
+                "operator_authorization_branches"
+            )
+        forbidden_fields = platform_branch.get("forbidden_fields")
+        if isinstance(forbidden_fields, list):
+            common_conflicts = sorted(
+                top_level_field_set & set(forbidden_fields)
+            )
+            if common_conflicts:
+                errors.append(
+                    f"{label} platform_access_ban branch forbids common fields: "
+                    f"{common_conflicts}"
+                )
+
+
+def validate_human_operator_issuance_shared_branch_fields(
+    document: dict[str, Any], errors: list[str]
+) -> None:
+    label = (
+        "operator_delegation.issuance_paths.human.bindings.branch_fields"
+    )
+    delegation = document.get("operator_delegation")
+    issuance_paths = (
+        delegation.get("issuance_paths")
+        if isinstance(delegation, dict)
+        else None
+    )
+    human_path = (
+        issuance_paths.get("human")
+        if isinstance(issuance_paths, dict)
+        else None
+    )
+    bindings = human_path.get("bindings") if isinstance(human_path, dict) else None
+    branch_fields = (
+        bindings.get("branch_fields") if isinstance(bindings, dict) else None
+    )
+    if not isinstance(branch_fields, dict):
+        errors.append(f"{label} must be a mapping")
+        return
+
+    expected_names = set(HUMAN_OPERATOR_ISSUANCE_SHARED_BRANCH_FIELDS)
+    if set(branch_fields) != expected_names:
+        errors.append(
+            f"{label} must contain exactly {sorted(expected_names)}"
+        )
+
+    for branch_name, expected in HUMAN_OPERATOR_ISSUANCE_SHARED_BRANCH_FIELDS.items():
+        branch_label = f"{label}.{branch_name}"
+        branch = branch_fields.get(branch_name)
+        if not isinstance(branch, dict):
+            errors.append(f"{branch_label} must be a mapping")
+            continue
+        if set(branch) != set(expected):
+            errors.append(
+                f"{branch_label} must contain exactly {sorted(expected)}"
+            )
+        for field, expected_value in expected.items():
+            actual_value = branch.get(field)
+            if isinstance(expected_value, list):
+                if not isinstance(actual_value, list) or any(
+                    not isinstance(item, str) for item in actual_value
+                ):
+                    errors.append(f"{branch_label}.{field} must be a list of strings")
+                    continue
+                if len(actual_value) != len(set(actual_value)):
+                    errors.append(
+                        f"{branch_label}.{field} must not contain duplicates"
+                    )
+                if actual_value != expected_value:
+                    errors.append(
+                        f"{branch_label}.{field} must equal {expected_value!r}"
+                    )
+            elif actual_value != expected_value:
+                errors.append(
+                    f"{branch_label}.{field} must equal {expected_value!r}"
+                )
+
+
+def validate_operator_issuance_identity_contract(
+    document: dict[str, Any], errors: list[str]
+) -> None:
+    delegation = document.get("operator_delegation")
+    issuance = delegation.get("issuance_idempotency") if isinstance(delegation, dict) else None
+    label = "operator_delegation.issuance_idempotency"
+    if not isinstance(issuance, dict):
+        errors.append(f"{label} must be a mapping")
+        return
+    expected_non_moderation_key = [
+        "control_plane_request_id",
+        "action_family_schema_id",
+        "action_family_schema_version",
+        "mutation_digest",
+        "exact_scope",
+        "authority_path_binding",
+    ]
+    if issuance.get("non_moderation_key") != expected_non_moderation_key:
+        errors.append(
+            f"{label}.non_moderation_key must use control_plane_request_id "
+            "as the mutation identity"
+        )
+    moderation_keys = issuance.get("moderation_keys")
+    expected_names = set(OPERATOR_ISSUANCE_MODERATION_IDENTITY_KEYS)
+    if not isinstance(moderation_keys, dict) or set(moderation_keys) != expected_names:
+        errors.append(
+            f"{label}.moderation_keys must contain exactly {sorted(expected_names)}"
+        )
+        return
+    identities: set[str] = set()
+    for name, expected in OPERATOR_ISSUANCE_MODERATION_IDENTITY_KEYS.items():
+        branch_label = f"{label}.moderation_keys.{name}"
+        branch = moderation_keys.get(name)
+        if not isinstance(branch, dict):
+            errors.append(f"{branch_label} must be a mapping")
+            continue
+        for field in ("request_identity", "digest", "key"):
+            if branch.get(field) != expected[field]:
+                errors.append(
+                    f"{branch_label}.{field} must equal {expected[field]!r}"
+                )
+        if branch.get("control_plane_request_id") != "correlation_only":
+            errors.append(
+                f"{branch_label}.control_plane_request_id must be correlation_only"
+            )
+        request_identity = branch.get("request_identity")
+        if isinstance(request_identity, str):
+            identities.add(request_identity)
+            key = branch.get("key")
+            if isinstance(key, list) and "control_plane_request_id" in key:
+                errors.append(
+                    f"{branch_label}.key must not use correlation-only "
+                    "control_plane_request_id"
+                )
+    if identities != {
+        "policy_intent_request_id",
+        "owner_enforcement_request_id",
+    }:
+        errors.append(
+            f"{label}.moderation_keys must use exactly the dedicated moderation "
+            "mutation identities"
+        )
+
+
 def validate_authority_unavailable_outcomes(
     routes: list[Any],
     errors: list[str],
@@ -3106,6 +3866,545 @@ def validate_authority_unavailable_outcomes(
                 f"{service} {route_name} must declare {AUTH_UNAVAILABLE} "
                 "for unavailable authority"
             )
+
+
+def validate_moderation_policy_contract(
+    document: dict[str, Any], routes: list[Any], errors: list[str]
+) -> None:
+    contract = document.get("moderation_policy_intent_authorization")
+    if not isinstance(contract, dict):
+        errors.append(
+            "moderation_policy_intent_authorization must be a mapping"
+        )
+        return
+
+    if contract.get("coverage_identity") != MODERATION_POLICY_INTENT_COVERAGE_IDENTITY:
+        errors.append(
+            "moderation_policy_intent_authorization.coverage_identity must be "
+            f"{MODERATION_POLICY_INTENT_COVERAGE_IDENTITY!r}"
+        )
+    if contract.get("route_identities") != MODERATION_POLICY_INTENT_ROUTE_IDENTITIES:
+        errors.append(
+            "moderation_policy_intent_authorization.route_identities must be "
+            f"{MODERATION_POLICY_INTENT_ROUTE_IDENTITIES!r}"
+        )
+    if contract.get("request_identity") != "policy_intent_request_id":
+        errors.append(
+            "moderation_policy_intent_authorization.request_identity must be "
+            "'policy_intent_request_id'"
+        )
+    if contract.get("digest") != "mutationDigest/v1":
+        errors.append(
+            "moderation_policy_intent_authorization.digest must be "
+            "'mutationDigest/v1'"
+        )
+    if contract.get("digest_field") != "mutation_digest":
+        errors.append(
+            "moderation_policy_intent_authorization.digest_field must be "
+            "'mutation_digest'"
+        )
+
+    authorization_reference = contract.get("authorization_reference")
+    if not isinstance(authorization_reference, dict):
+        errors.append(
+            "moderation_policy_intent_authorization.authorization_reference "
+            "must be a mapping"
+        )
+    else:
+        if (
+            authorization_reference.get("contract")
+            != "account_issued_bounded_reference"
+        ):
+            errors.append(
+                "moderation policy-intent authorization reference must use "
+                "the account_issued_bounded_reference contract"
+            )
+        if (
+            authorization_reference.get("raw_reference_persistence")
+            != "forbidden_for_policy_intent"
+        ):
+            errors.append(
+                "moderation policy-intent authorization reference must forbid "
+                "raw reference persistence"
+            )
+        if authorization_reference.get("fingerprint_field") != "authorization_reference_fingerprint":
+            errors.append(
+                "moderation policy-intent authorization reference must use "
+                "authorization_reference_fingerprint"
+            )
+
+    redemption = contract.get("redemption")
+    if not isinstance(redemption, dict):
+        errors.append(
+            "moderation_policy_intent_authorization.redemption must be a mapping"
+        )
+    else:
+        expected_redemption = {
+            "receiving_boundary": "logging-admin-service",
+            "exactly_once": True,
+            "owner_redemption": "forbidden",
+        }
+        for field, expected in expected_redemption.items():
+            if redemption.get(field) != expected:
+                errors.append(
+                    "moderation policy-intent redemption must declare "
+                    f"{field}={expected!r}"
+                )
+
+    owner_command = contract.get("owner_enforcement_command")
+    if not isinstance(owner_command, dict):
+        errors.append(
+            "moderation_policy_intent_authorization.owner_enforcement_command "
+            "must be a mapping"
+        )
+    else:
+        expected_owner_command = {
+            "request_identity": "owner_enforcement_request_id",
+            "digest": "owner_enforcement_digest",
+            "authorization_reference": "owner_enforcement_authorization_reference",
+            "fingerprint": "owner_enforcement_authorization_reference_fingerprint",
+            "redeemed_by": "selected_enforcement_owner",
+            "distinct_from_policy_intent": True,
+        }
+        for field, expected in expected_owner_command.items():
+            if owner_command.get(field) != expected:
+                errors.append(
+                    "moderation owner-enforcement command must declare "
+                    f"{field}={expected!r}"
+                )
+
+    selector = document.get("moderation_action_selector")
+    if not isinstance(selector, dict):
+        errors.append("moderation_action_selector must be a mapping")
+    else:
+        if selector.get("request_field") != "action":
+            errors.append(
+                "moderation_action_selector.request_field must be 'action'"
+            )
+        if selector.get("branch_field") != "action_category":
+            errors.append(
+                "moderation_action_selector.branch_field must be 'action_category'"
+            )
+        if selector.get("mapping") != MODERATION_ACTION_SELECTOR_MAPPING:
+            errors.append(
+                "moderation_action_selector.mapping must exactly map the closed "
+                f"action set: {MODERATION_ACTION_SELECTOR_MAPPING!r}"
+            )
+        rejected_values = selector.get("rejected_values")
+        if (
+            not isinstance(rejected_values, list)
+            or set(rejected_values) != MODERATION_ACTION_SELECTOR_REJECTED_VALUES
+            or len(rejected_values) != len(set(rejected_values))
+        ):
+            errors.append(
+                "moderation_action_selector.rejected_values must exactly reject "
+                f"{sorted(MODERATION_ACTION_SELECTOR_REJECTED_VALUES)}"
+            )
+        if selector.get("unknown_values") != "reject":
+            errors.append(
+                "moderation_action_selector.unknown_values must be 'reject'"
+            )
+        if selector.get("rejection_phase") != "before_branch_authorization":
+            errors.append(
+                "moderation_action_selector.rejection_phase must be "
+                "'before_branch_authorization'"
+            )
+
+    gate = document.get("operator_mutation_support_gate")
+    gate_applies_to = gate.get("applies_to") if isinstance(gate, dict) else None
+    if not isinstance(gate_applies_to, list):
+        errors.append(
+            "operator_mutation_support_gate.applies_to must include the "
+            "moderation policy-intent authorization identities"
+        )
+    else:
+        missing_gate_identities = sorted(
+            set(MODERATION_POLICY_INTENT_ROUTE_IDENTITIES) - set(gate_applies_to)
+        )
+        if missing_gate_identities:
+            errors.append(
+                "operator mutation gate is missing moderation policy-intent "
+                f"identities: {missing_gate_identities}"
+            )
+        required_before_enablement = gate.get("required_before_enablement")
+        if (
+            not isinstance(required_before_enablement, list)
+            or MODERATION_SUPPORT_GATE_REDEMPTION_REQUIREMENT
+            not in required_before_enablement
+        ):
+            errors.append(
+                "operator mutation gate must require Account reference issuance "
+                "plus contract-declared receiving-boundary redemption"
+            )
+
+    operator_delegation = document.get("operator_delegation")
+    if not isinstance(operator_delegation, dict) or operator_delegation.get(
+        "redeemed_by"
+    ) != "contract_declared_receiving_boundary":
+        errors.append(
+            "operator_delegation.redeemed_by must be "
+            "'contract_declared_receiving_boundary'"
+        )
+
+    moderation_routes = matching_routes(
+        routes, MODERATION_ACTION_ROUTE[0], MODERATION_ACTION_ROUTE[1]
+    )
+    for route in moderation_routes:
+        label = route_label(route)
+        branch = applicability_value(route, "action_category", label, errors)
+        if route.get("action_selector_branch") != branch:
+            errors.append(
+                f"{label} action_selector_branch must link its applicability "
+                f"branch {branch!r}"
+            )
+        if (
+            route.get("moderation_policy_intent_authorization_contract")
+            != MODERATION_POLICY_INTENT_COVERAGE_IDENTITY
+        ):
+            errors.append(
+                f"{label} must link moderation policy-intent authorization "
+                f"coverage {MODERATION_POLICY_INTENT_COVERAGE_IDENTITY!r}"
+            )
+
+    coverage_drift = document.get("coverage_drift")
+    moderation_drift: list[dict[str, Any]] = []
+    if isinstance(coverage_drift, list):
+        moderation_drift = [
+            entry
+            for entry in coverage_drift
+            if isinstance(entry, dict)
+            and entry.get("family") == "moderation-enforcement-owner-call"
+        ]
+    observed_owners: dict[str, str] = {}
+    for entry in moderation_drift:
+        category = entry.get("category")
+        owner = entry.get("target_owner")
+        if category in observed_owners:
+            errors.append(
+                "moderation-enforcement-owner-call coverage must not duplicate "
+                f"category {category!r}"
+            )
+        elif isinstance(category, str) and isinstance(owner, str):
+            observed_owners[category] = owner
+        if entry.get("status") != "drift-found":
+            errors.append(
+                "moderation-enforcement-owner-call coverage must remain "
+                "status drift-found"
+            )
+        if entry.get("target_ingress") != "logging-admin-service":
+            errors.append(
+                "moderation-enforcement-owner-call coverage must target "
+                "logging-admin-service ingress"
+            )
+        if entry.get("current_routes") != []:
+            errors.append(
+                "moderation-enforcement-owner-call coverage must declare "
+                "current_routes=[]"
+            )
+    if observed_owners != MODERATION_ENFORCEMENT_OWNER_BY_CATEGORY:
+        errors.append(
+            "moderation-enforcement-owner-call coverage must exactly map "
+            f"categories to owners: {MODERATION_ENFORCEMENT_OWNER_BY_CATEGORY!r}"
+        )
+
+
+def validate_moderation_action_variant_contract(
+    route: dict[str, Any],
+    label: str,
+    action_category: str,
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None = None,
+) -> None:
+    expected_fields = MODERATION_ACTION_REQUIRED_FIELDS[action_category]
+    raw_fields = route.get("required_fields")
+    field_set = (
+        {field for field in raw_fields if isinstance(field, str)}
+        if isinstance(raw_fields, list)
+        else set()
+    )
+    if (
+        not isinstance(raw_fields, list)
+        or field_set != expected_fields
+        or len(raw_fields) != len(field_set)
+    ):
+        append_unique_error(
+            errors,
+            f"{label} required_fields must exactly match the "
+            f"{action_category!r} moderation action contract: "
+            f"{sorted(expected_fields)}",
+        )
+
+    contract = route.get("idempotency_contract")
+    if not isinstance(contract, dict):
+        append_unique_error(
+            errors,
+            f"{label} idempotency_contract must declare the moderation action "
+            "identity and digest contract",
+        )
+    else:
+        for field, expected in MODERATION_ACTION_IDEMPOTENCY_CONTRACT.items():
+            if contract.get(field) != expected:
+                append_unique_error(
+                    errors,
+                    f"{label} idempotency_contract.{field} must be {expected!r}",
+                )
+
+    checks = route_live_checks(route, label, errors, live_checks_cache)
+    if "current_operator_authorization" not in checks:
+        append_unique_error(
+            errors,
+            f"{label} moderation action branch must require live check "
+            "current_operator_authorization",
+        )
+    if route.get("role_assurance") != PRIVILEGED_OPERATOR_ROLE_ASSURANCE:
+        append_unique_error(
+            errors,
+            f"{label} moderation action branch must declare role_assurance "
+            f"{PRIVILEGED_OPERATOR_ROLE_ASSURANCE}",
+        )
+
+    if action_category != MODERATION_PLATFORM_ACTION_CATEGORY:
+        return
+    raw_forbidden_fields = route.get("forbidden_fields")
+    forbidden_field_set = (
+        {field for field in raw_forbidden_fields if isinstance(field, str)}
+        if isinstance(raw_forbidden_fields, list)
+        else set()
+    )
+    if (
+        not isinstance(raw_forbidden_fields, list)
+        or forbidden_field_set != MODERATION_PLATFORM_FORBIDDEN_ROUTE_FIELDS
+        or len(raw_forbidden_fields) != len(forbidden_field_set)
+    ):
+        append_unique_error(
+            errors,
+            f"{label} platform_access_ban forbidden_fields must exactly match "
+            f"{sorted(MODERATION_PLATFORM_FORBIDDEN_ROUTE_FIELDS)}",
+        )
+    forbidden_fields = field_set & MODERATION_PLATFORM_FORBIDDEN_ROUTE_FIELDS
+    forbidden_fields.update(
+        field
+        for field in MODERATION_PLATFORM_FORBIDDEN_ROUTE_FIELDS
+        if field in route
+    )
+    forbidden_fields.update(checks & MODERATION_PLATFORM_FORBIDDEN_ROUTE_FIELDS)
+    if forbidden_fields:
+        append_unique_error(
+            errors,
+            f"{label} platform_access_ban branch must forbid tenant "
+            f"identity/scope/generation fields: {sorted(forbidden_fields)}",
+        )
+
+
+def validate_moderation_action_route_variants(
+    routes: list[Any],
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None = None,
+) -> None:
+    """Keep moderation action categories on their one canonical auth branch."""
+
+    matches = matching_routes(
+        routes, MODERATION_ACTION_ROUTE[0], MODERATION_ACTION_ROUTE[1]
+    )
+    if len(matches) != len(MODERATION_ACTION_BRANCHES):
+        append_unique_error(
+            errors,
+            "logging-admin-service POST /moderation/actions must declare exactly "
+            "one tenant-restriction and one platform-access-ban action branch",
+        )
+
+    observed: dict[str, dict[str, Any]] = {}
+    for route in matches:
+        label = route_label(route)
+        action_category = applicability_value(route, "action_category", label, errors)
+        if action_category not in MODERATION_ACTION_BRANCHES:
+            append_unique_error(
+                errors,
+                f"{label} must select one of the canonical moderation action "
+                f"branches: {sorted(MODERATION_ACTION_BRANCHES)}",
+            )
+            continue
+        if action_category in observed:
+            append_unique_error(
+                errors,
+                f"{label} duplicates moderation action branch {action_category!r}",
+            )
+            continue
+        observed[action_category] = route
+        accepted_categories = route.get("accepted_action_categories")
+        if (
+            not isinstance(accepted_categories, list)
+            or any(not isinstance(category, str) for category in accepted_categories)
+            or set(accepted_categories) != MODERATION_ACTION_BRANCHES[action_category]
+            or len(accepted_categories) != len(set(accepted_categories))
+        ):
+            append_unique_error(
+                errors,
+                f"{label} accepted_action_categories must exactly match the "
+                f"{action_category!r} moderation action branch",
+            )
+        validate_moderation_action_variant_contract(
+            route,
+            label,
+            action_category,
+            errors,
+            live_checks_cache,
+        )
+
+    if set(observed) != set(MODERATION_ACTION_BRANCHES):
+        return
+
+    tenant_route = observed["tenant_restriction"]
+    tenant_label = route_label(tenant_route)
+    if tenant_route.get("classification") != "tenant_regular":
+        append_unique_error(
+            errors,
+            f"{tenant_label} tenant-restriction branch must use classification "
+            "tenant_regular",
+        )
+    if tenant_route.get("scope") != "tenant":
+        append_unique_error(
+            errors,
+            f"{tenant_label} tenant-restriction branch must use scope=tenant",
+        )
+    tenant_required_fields = tenant_route.get("required_fields")
+    if (
+        not isinstance(tenant_required_fields, list)
+        or "tenant_id" not in tenant_required_fields
+    ):
+        append_unique_error(
+            errors,
+            f"{tenant_label} tenant-restriction branch required_fields must include tenant_id",
+        )
+
+    platform_route = observed["platform_access_ban"]
+    platform_label = route_label(platform_route)
+    if platform_route.get("classification") != "account_scoped":
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must use classification "
+            "account_scoped",
+        )
+    if platform_route.get("scope") != "account":
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must use scope=account",
+        )
+    if platform_route.get("global_platform_admin_membership_required") is not False:
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must set "
+            "global_platform_admin_membership_required=false",
+        )
+    if platform_route.get("tenant_billing_authority_generation_applies") is not False:
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must disable tenant "
+            "billing authority generation",
+        )
+    if platform_route.get("membership_authority_generation_applies") is not False:
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must disable membership "
+            "authority generation",
+        )
+    if "membership_authority_generation_condition" in platform_route:
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must not declare a "
+            "membership authority-generation condition",
+        )
+    if "operator_authorization_branches" in platform_route:
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must not declare "
+            "operator_authorization_branches",
+        )
+    if platform_route.get("account_authority_generation_applies") is not True:
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must apply account "
+            "authority generation",
+        )
+    if platform_route.get("issuer_authority_generation_applies") is not True:
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must apply issuer "
+            "authority generation",
+        )
+
+    platform_checks = route_live_checks(
+        platform_route, platform_label, errors, live_checks_cache
+    )
+    forbidden_checks = platform_checks & {
+        "membership",
+        "membership_generation",
+        "tenant_generation",
+        "target_tenant_generation",
+    }
+    if forbidden_checks:
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must not require tenant "
+            f"or membership checks: {sorted(forbidden_checks)}",
+        )
+    expected_platform_checks = {
+        "current_operator_authorization",
+        "issuer_generation",
+        "account_generation",
+        "current_global_role",
+        "role_appropriate_assurance",
+    }
+    missing_platform_checks = expected_platform_checks - platform_checks
+    unexpected_platform_checks = platform_checks - expected_platform_checks - forbidden_checks
+    if missing_platform_checks or unexpected_platform_checks:
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch has missing or unexpected "
+            "live checks after tenant/membership exclusions: "
+            f"missing={sorted(missing_platform_checks)}, "
+            f"unexpected={sorted(unexpected_platform_checks)}",
+        )
+
+    roles = platform_route.get("roles")
+    if not isinstance(roles, dict) or roles.get("any_of") != ["platformAdmin"]:
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must authorize only "
+            "platformAdmin",
+        )
+    if platform_route.get("role_assurance") != PRIVILEGED_OPERATOR_ROLE_ASSURANCE:
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must require "
+            f"{PRIVILEGED_OPERATOR_ROLE_ASSURANCE}",
+        )
+    if platform_route.get("target_subject_binding") != "explicit_target_account_id":
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must bind "
+            "explicit_target_account_id",
+        )
+    if platform_route.get("route_status") != "target_not_currently_routable":
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must declare "
+            "route_status target_not_currently_routable",
+        )
+    if platform_route.get("platform_scope_action_contract") != {
+        "category": MODERATION_PLATFORM_ACTION_CATEGORY,
+        "status": "target_not_currently_routable",
+        "required_scope": "platform",
+        "required_operator_authorization_branch": "platformAdmin_global",
+        "tenant_role_authorization": "forbidden",
+        "target_subject": "global_account",
+        "tenant_id": "forbidden",
+    }:
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must declare the "
+            "platform-jurisdiction target-account contract",
+        )
 
 
 def validate_generation_applicability(
@@ -3277,17 +4576,35 @@ def validate_logging_admin_idempotency(
     required_fields_cache: RequiredFieldsCache | None = None,
 ) -> None:
     for service, route_name in sorted(LOGGING_ADMIN_IDEMPOTENT_OPERATOR_ROUTES):
-        route = resolve_unique_route(
-            routes,
-            service,
-            route_name,
-            errors,
-            cardinality_errors,
-        )
-        if route is not None:
+        if (service, route_name) == MODERATION_ACTION_ROUTE:
+            matching = matching_routes(routes, service, route_name)
+            if not matching:
+                resolve_unique_route(
+                    routes,
+                    service,
+                    route_name,
+                    errors,
+                    cardinality_errors,
+                )
+            routes_to_validate = matching
+        else:
+            route = resolve_unique_route(
+                routes,
+                service,
+                route_name,
+                errors,
+                cardinality_errors,
+            )
+            routes_to_validate = [route] if route is not None else []
+        for route in routes_to_validate:
+            label = (
+                route_label(route)
+                if (service, route_name) == MODERATION_ACTION_ROUTE
+                else f"{service} {route_name}"
+            )
             validate_idempotency_contract(
                 route,
-                f"{service} {route_name}",
+                label,
                 errors,
                 required_fields_cache,
             )
@@ -4314,6 +5631,8 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     validate_route_class_branch_table(document, errors)
     validate_authority_evidence_policy(document, errors)
     route_keys = validate_route_variants(routes, set(classifications), errors)
+    validate_moderation_policy_contract(document, routes, errors)
+    validate_moderation_action_route_variants(routes, errors, live_checks_cache)
     validate_route_statuses(routes, allowed_route_statuses, errors)
     validate_required_fields(routes, errors, required_fields_cache)
     cardinality_errors: set[str] = set()
@@ -4329,6 +5648,15 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
         required_fields_cache,
         cardinality_errors,
     )
+    validate_automation_operator_issuance(routes, errors, cardinality_errors)
+    validate_human_operator_issuance_branches(
+        routes,
+        errors,
+        cardinality_errors,
+        document=document,
+    )
+    validate_human_operator_issuance_shared_branch_fields(document, errors)
+    validate_operator_issuance_identity_contract(document, errors)
     validate_generation_applicability(routes, errors, live_checks_cache)
     validate_account_export_applicability(document, errors)
     validate_account_export_routes(routes, errors, live_checks_cache)

@@ -4,6 +4,7 @@ import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestS
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasPath;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasStripPrefixTwo;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertNoConfiguredPathStartsWith;
+import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertSocialChatAndFriendsAreEdgeGated;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.route;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -51,8 +52,6 @@ class GatewayRoutesConfigurationTest {
           "account-profiles",
           "account-ping",
           "account-jwks",
-          "social-chat",
-          "social-friends",
           "social-guilds",
           "social-mail",
           "social-ping",
@@ -75,6 +74,11 @@ class GatewayRoutesConfigurationTest {
   void publicRouteAllowlistExposesOnlyCuratedEdgeRoutes() {
     assertThat(gatewayProperties.getRoutes().stream().map(RouteDefinition::getId))
         .containsExactlyInAnyOrderElementsOf(ROUTE_IDS);
+  }
+
+  @Test
+  void socialChatAndFriendsAreEdgeGated() {
+    assertSocialChatAndFriendsAreEdgeGated(gatewayProperties);
   }
 
   @Test
@@ -141,15 +145,11 @@ class GatewayRoutesConfigurationTest {
     assertHasStripPrefixTwo(gatewayProperties, "account-ping");
     assertHasStripPrefixTwo(gatewayProperties, "account-jwks");
 
-    assertHasPath(gatewayProperties, "social-chat", "/api/social/chat/**");
-    assertHasPath(gatewayProperties, "social-friends", "/api/social/friends/**");
     assertHasPath(gatewayProperties, "social-guilds", "/api/social/guilds/**");
     assertHasPath(gatewayProperties, "social-mail", "/api/social/mail/**");
     assertHasPath(gatewayProperties, "social-ping", "/api/social/ping");
     assertHasPath(gatewayProperties, "social-voice-token", "/api/social/voice/token/**");
 
-    assertHasStripPrefixTwo(gatewayProperties, "social-chat");
-    assertHasStripPrefixTwo(gatewayProperties, "social-friends");
     assertHasStripPrefixTwo(gatewayProperties, "social-guilds");
     assertHasStripPrefixTwo(gatewayProperties, "social-mail");
     assertHasStripPrefixTwo(gatewayProperties, "social-ping");

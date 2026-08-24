@@ -9,6 +9,7 @@ internalBindings:
     cache:
       endpoint: redis-cache.firemud.svc.cluster.local:6379
   jwt:
+    custodyMode: LEGACY_SECRET_DIAGNOSTIC
     signingKeysRef: secret://firemud/jwt-signing-keys
     jwksRef: secret://firemud/jwt-jwks
   certificates:
@@ -19,13 +20,16 @@ internalBindings:
   registry:
     imagePullSecretRef: secret://firemud/ghcr-pull-production
 backupStorage:
+  enabled: true
   bucket: firemud-production-backups
   bindingRef: secret://firemud/production-backup-object-store
 assetStorage:
+  enabled: true
   bucket: firemud-production-assets
   endpoint: https://minio.production.internal
   bindingRef: secret://firemud/production-asset-object-store
 outboundComms:
+  enabled: true
   smtpHost: smtp.production.internal
   webhookTargets:
     accountNotifications: production-only

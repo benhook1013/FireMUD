@@ -72,6 +72,26 @@ def fixture_root() -> tempfile.TemporaryDirectory[str]:
         """,
     )
     write(
+        root
+        / "design/project-management/design-alignment/decision-inventory-cross-cutting.md",
+        """
+        # Decision inventory
+
+        | Decision key | Decision |
+        | --- | --- |
+        | `TEST-DECISION` | Fixture decision |
+        """,
+    )
+    for inventory_name in (
+        "decision-inventory-microservices.md",
+        "decision-inventory-specialized-runtime.md",
+        "decision-inventory-product-operations.md",
+    ):
+        write(
+            root / "design/project-management/design-alignment" / inventory_name,
+            "# Decision inventory\n",
+        )
+    write(
         root / "design/architecture/decisions/adr-0001-legacy.md",
         """
         # ADR 0001
@@ -1165,15 +1185,38 @@ class AdrReviewStatusTests(unittest.TestCase):
             set_review_status(root, "Accepted", "Deferred")
             self.validator.validate(root)
 
-    def test_checked_deferred_row_without_adr_provenance_remains_valid(self) -> None:
+    def test_checked_deferred_row_without_adr_provenance_accepts_strict_no_adr(
+        self,
+    ) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            write(
+                root / "design/architecture/system-architecture-transactions.md",
+                "# Transactions\n",
+            )
+            append_provenance_row(
+                root,
+                "- [x] `TEST-DEFERRED` — `deferred` on 2026-07-27; "
+                "[canonical contract](../../architecture/"
+                "system-architecture-transactions.md); no ADR required",
+            )
+            self.validator.validate(root)
+
+    def test_checked_deferred_row_without_adr_provenance_rejects_arbitrary_link(
+        self,
+    ) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
             append_provenance_row(
                 root,
-                "- [x] `TEST-DEFERRED` — `deferred` on 2026-07-27; "
+                "- [x] `TEST-DEFERRED-NOTES` — `deferred` on 2026-07-27; "
                 "[notes](https://example.com)",
             )
-            self.validator.validate(root)
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "checked deferred row at line",
+            )
 
     def test_checked_deferred_adr_provenance_requires_accepted_status(self) -> None:
         with fixture_root() as fixture:
@@ -1283,6 +1326,22 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "must contain at least one exact [ADR NNNN] outcome link",
             )
 
+    def test_checked_no_adr_row_rejects_prose_after_exact_suffix(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            write(root / "design/architecture/system-architecture-transactions.md", "# Transactions\n")
+            append_provenance_row(
+                root,
+                "- [x] `TEST-NO-ADR-TRAILING-PROSE` — `accepted` on 2026-07-27; "
+                "[canonical contract](../../architecture/"
+                "system-architecture-transactions.md); no ADR required; trailing prose",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "must contain at least one exact [ADR NNNN] outcome link",
+            )
+
     def test_checked_no_adr_row_rejects_missing_or_outside_contract_target(self) -> None:
         cases = (
             (
@@ -1340,6 +1399,314 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "must contain at least one exact [ADR NNNN] outcome link",
             )
 
+    def test_superseded_no_adr_row_rejects_canonical_contract_without_adr_provenance(
+        self,
+    ) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            write(
+                root
+                / "design/architecture/system-architecture-overview.md",
+                "# System architecture overview\n",
+            )
+            append_provenance_row(
+                root,
+                "- [x] `TEST-SUPERSEDED-NO-ADR` — `superseded` on 2026-07-27 by "
+                "`TEST-DECISION`; [canonical contract]("
+                "../../architecture/system-architecture-overview.md#"
+                "communication-flows); "
+                "no ADR required",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "must use exact [ADR NNNN] provenance or the documented "
+                "replacement-map no-ADR form",
+            )
+
+    def test_superseded_no_adr_row_accepts_replacement_links_without_provenance(
+        self,
+    ) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_provenance_row(
+                root,
+                "- [x] `TEST-SUPERSEDED-REPLACEMENTS` — `superseded` on "
+                "2026-07-27 by `TEST-DECISION`; [replacement ADR 0012](../../"
+                "architecture/decisions/adr-0012-reviewed.md); [replacement "
+                "ADR 0013](../../architecture/decisions/adr-0013-pending.md); "
+                "no ADR required",
+            )
+            reviews = checked_reviews(self.validator, root)
+            self.assertEqual({"TEST-01"}, {review.key for review in reviews[12]})
+            self.assertNotIn(13, reviews)
+
+    def test_superseded_no_adr_replacement_accepts_heading_defined_decision_key(
+        self,
+    ) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            write(
+                root
+                / "design/project-management/design-alignment/"
+                "decision-inventory-product-operations.md",
+                """
+                # Product And Operations Decision Inventory
+
+                #### `SOCIAL-01` - Superseded communication decision
+                """,
+            )
+            append_provenance_row(
+                root,
+                "- [x] `TEST-SUPERSEDED-HEADING-KEY` — `superseded` on "
+                "2026-07-27 by `SOCIAL-01`; [replacement ADR 0012](../../"
+                "architecture/decisions/adr-0012-reviewed.md); no ADR required",
+            )
+            reviews = checked_reviews(self.validator, root)
+            self.assertEqual({"TEST-01"}, {review.key for review in reviews[12]})
+
+    def test_decision_inventory_table_scans_all_canonical_keys_in_first_cell(
+        self,
+    ) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = (
+                root
+                / "design/project-management/design-alignment/"
+                "decision-inventory-cross-cutting.md"
+            )
+            write(
+                path,
+                """
+                # Decision inventory
+
+                | Existing key(s) | Evidence |
+                | --- | --- |
+                | `TEST-DECISION`, `SECOND-DECISION`, `AA`, `MS-AA-TOKEN-REVOCATION` | Fixture decision |
+                | `AFTER-ROW` | Another fixture decision |
+                """,
+            )
+            decision_keys = self.validator.decision_keys_for_inventory(path, {})
+            self.assertEqual(
+                {"TEST-DECISION", "SECOND-DECISION", "AFTER-ROW"},
+                decision_keys,
+            )
+
+    def test_canonical_decision_keys_rejects_missing_inventory(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            missing_inventory = self.validator.DECISION_INVENTORY_PATHS[-1]
+            (root / missing_inventory).unlink()
+            expect_failure(
+                self,
+                lambda: self.validator.canonical_decision_keys(root, {}),
+                "canonical decision inventory is missing or not a file: "
+                f"{missing_inventory.as_posix()}",
+            )
+
+    def test_decision_inventory_table_stops_before_following_table(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = (
+                root
+                / "design/project-management/design-alignment/"
+                "decision-inventory-cross-cutting.md"
+            )
+            write(
+                path,
+                """
+                # Decision inventory
+
+                | Decision key | Decision |
+                | --- | --- |
+                | `TEST-DECISION` | Fixture decision |
+
+                | Other key | Other decision |
+                | --- | --- |
+                | `SHOULD-NOT-BE-SCANNED` | Following table |
+                """,
+            )
+            decision_keys = self.validator.decision_keys_for_inventory(path, {})
+            self.assertEqual({"TEST-DECISION"}, decision_keys)
+
+    def test_superseded_no_adr_replacement_accepts_multiple_decision_keys(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = (
+                root
+                / "design/project-management/design-alignment/"
+                "decision-inventory-cross-cutting.md"
+            )
+            write(
+                path,
+                """
+                # Decision inventory
+
+                | Decision key | Decision |
+                | --- | --- |
+                | `TEST-DECISION` | Fixture decision |
+                | `SECOND-DECISION` | Second fixture decision |
+                | `THIRD-DECISION` | Third fixture decision |
+                """,
+            )
+            append_provenance_row(
+                root,
+                "- [x] `TEST-SUPERSEDED-MULTI-KEY` — `superseded` on "
+                "2026-07-27 by `TEST-DECISION`, `SECOND-DECISION`, and "
+                "`THIRD-DECISION`; [replacement ADR 0012](../../"
+                "architecture/decisions/adr-0012-reviewed.md); no ADR required",
+            )
+            reviews = checked_reviews(self.validator, root)
+            self.assertEqual({"TEST-01"}, {review.key for review in reviews[12]})
+
+    def test_superseded_no_adr_replacement_rejects_malformed_key_separator(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_provenance_row(
+                root,
+                "- [x] `TEST-SUPERSEDED-MALFORMED-SEPARATOR` — `superseded` "
+                "on 2026-07-27 by `TEST-DECISION`, and `SECOND-DECISION`; "
+                "[replacement ADR 0012](../../architecture/decisions/"
+                "adr-0012-reviewed.md); no ADR required",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "must use the documented 'by `DECISION-KEY`' replacement-key form",
+            )
+
+    def test_superseded_no_adr_replacement_rejects_taxonomy_tokens(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            write(
+                root
+                / "design/project-management/design-alignment/"
+                "decision-inventory-product-operations.md",
+                """
+                # Product And Operations Decision Inventory
+
+                | Capability group | Primary | Secondary-only |
+                | --- | --- | --- |
+                | Accounts and Access (`CAPABILITY-GROUP`) | `AA-1.1` | `EA-2.1`, `GR-1.1` |
+                """,
+            )
+            append_provenance_row(
+                root,
+                "- [x] `TEST-SUPERSEDED-TAXONOMY-KEY` — `superseded` on "
+                "2026-07-27 by `CAPABILITY-GROUP`; [replacement ADR 0012](../../"
+                "architecture/decisions/adr-0012-reviewed.md); no ADR required",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "replacement key(s) not present in the canonical decision inventories: "
+                "CAPABILITY-GROUP",
+            )
+
+    def test_superseded_no_adr_replacement_row_rejects_unknown_decision_key(
+        self,
+    ) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_provenance_row(
+                root,
+                "- [x] `TEST-SUPERSEDED-REPLACEMENT-UNKNOWN-KEY` — `superseded` "
+                "on 2026-07-27 by `UNKNOWN-DECISION`; [replacement ADR 0012](../../"
+                "architecture/decisions/adr-0012-reviewed.md); no ADR required",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "replacement key(s) not present in the canonical decision inventories: "
+                "UNKNOWN-DECISION",
+            )
+
+    def test_superseded_no_adr_replacement_row_rejects_exact_adr_provenance(
+        self,
+    ) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_provenance_row(
+                root,
+                "- [x] `TEST-SUPERSEDED-REPLACEMENT-ADR-LABEL` — `superseded` "
+                "on 2026-07-27 by `TEST-DECISION`; [ADR 0012](../../architecture/decisions/"
+                "adr-0012-reviewed.md); [replacement ADR 0013](../../"
+                "architecture/decisions/adr-0013-pending.md); no ADR required",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "must not use exact [ADR NNNN] provenance labels",
+            )
+
+    def test_superseded_no_adr_replacement_row_requires_replacement_key_form(
+        self,
+    ) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_provenance_row(
+                root,
+                "- [x] `TEST-SUPERSEDED-REPLACEMENT-KEY-FORM` — `superseded` "
+                "on 2026-07-27; [replacement ADR 0012](../../architecture/"
+                "decisions/adr-0012-reviewed.md); no ADR required",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "must use the documented 'by `DECISION-KEY`' replacement-key form",
+            )
+
+    def test_superseded_no_adr_replacement_row_rejects_duplicate_replacement(
+        self,
+    ) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_provenance_row(
+                root,
+                "- [x] `TEST-SUPERSEDED-REPLACEMENT-DUPLICATE` — `superseded` "
+                "on 2026-07-27 by `TEST-DECISION`; [replacement ADR 0012](../../architecture/"
+                "decisions/adr-0012-reviewed.md); [replacement ADR 0012](../../"
+                "architecture/decisions/adr-0012-reviewed.md); no ADR required",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "contains duplicate replacement ADR 0012 links",
+            )
+
+    def test_superseded_no_adr_replacement_row_rejects_mismatched_target(
+        self,
+    ) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_provenance_row(
+                root,
+                "- [x] `TEST-SUPERSEDED-REPLACEMENT-MISMATCH` — `superseded` "
+                "on 2026-07-27 by `TEST-DECISION`; [replacement ADR 0013](../../architecture/"
+                "decisions/adr-0012-reviewed.md); no ADR required",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "replacement ADR 0013 does not match target",
+            )
+
+    def test_superseded_no_adr_replacement_row_rejects_arbitrary_link(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_provenance_row(
+                root,
+                "- [x] `TEST-SUPERSEDED-REPLACEMENT-ARBITRARY` — `superseded` "
+                "on 2026-07-27 by `TEST-DECISION`; [replacement ADR 0012](../../architecture/"
+                "decisions/adr-0012-reviewed.md); [notes](https://example.com); "
+                "no ADR required",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "has non-replacement link label 'notes'",
+            )
+
     def test_superseded_scan_alias_links_replacements_without_provenance(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
@@ -1370,6 +1737,46 @@ class AdrReviewStatusTests(unittest.TestCase):
                 self,
                 lambda: checked_reviews(self.validator, root),
                 "must contain replacement-decision Markdown links",
+            )
+
+    def test_historical_scan_alias_requires_superseded_disposition(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            write(
+                root / "design/architecture/decisions/adr-0014-replacement.md",
+                "# ADR 0014\n",
+            )
+            append_provenance_row(
+                root,
+                "- [x] `MS-AA-TOKEN-REVOCATION` — `revised` on 2026-07-27 by "
+                "[replacement ADR 0014](../../architecture/decisions/"
+                "adr-0014-replacement.md); retained as a historical "
+                "service-scan alias.",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "must use the Superseded disposition and end",
+            )
+
+    def test_superseded_scan_alias_rejects_no_adr_form(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            write(
+                root / "design/architecture/system-architecture-overview.md",
+                "# System architecture overview\n",
+            )
+            append_provenance_row(
+                root,
+                "- [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-27; "
+                "[canonical contract](../../architecture/"
+                "system-architecture-overview.md#communication-flows); "
+                "no ADR required",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "must use the Superseded disposition and end",
             )
 
     def test_superseded_scan_alias_rejects_replacement_adr_number_mismatch(
@@ -1419,18 +1826,74 @@ class AdrReviewStatusTests(unittest.TestCase):
     def test_superseded_scan_alias_accepts_decision_key_target(self) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
-            write(
-                root / "design/architecture/decision-notes.md",
-                "# Decision notes\n",
-            )
             append_provenance_row(
                 root,
                 "- [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-27 by "
-                "[MS-AA-LOGIN-FACTORS](../../architecture/decision-notes.md); "
+                "[TEST-DECISION](./decision-inventory-cross-cutting.md); "
                 "retained as a historical service-scan alias.",
             )
             reviews = checked_reviews(self.validator, root)
             self.assertEqual({"TEST-01"}, {review.key for review in reviews[12]})
+
+    def test_superseded_scan_alias_rejects_fenced_decision_key_target(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            write(
+                root
+                / "design/project-management/design-alignment/decision-inventory-cross-cutting.md",
+                """
+                # Decision inventory
+
+                ```text
+                | `FENCED-DECISION` | Fixture decision hidden in an example |
+                ```
+                """,
+            )
+            append_provenance_row(
+                root,
+                "- [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-27 by "
+                "[FENCED-DECISION](./decision-inventory-cross-cutting.md); "
+                "retained as a historical service-scan alias.",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "is not present in the canonical decision inventory",
+            )
+
+    def test_superseded_scan_alias_rejects_unknown_decision_key_label(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_provenance_row(
+                root,
+                "- [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-27 by "
+                "[NOT-A-DECISION](./decision-inventory-cross-cutting.md); "
+                "retained as a historical service-scan alias.",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "is not present in the canonical decision inventory",
+            )
+
+    def test_superseded_scan_alias_rejects_arbitrary_decision_document_target(
+        self,
+    ) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            write(root / "design/architecture/decision-notes.md", "# Notes\n")
+            append_provenance_row(
+                root,
+                "- [x] `MS-AA-TOKEN-REVOCATION` — `superseded` on 2026-07-27 by "
+                "[TEST-DECISION](../../architecture/decision-notes.md); "
+                "retained as a historical service-scan alias.",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "must target an existing Markdown decision document in the "
+                "canonical decision inventory",
+            )
 
     def test_superseded_scan_alias_rejects_missing_decision_key_target(self) -> None:
         with fixture_root() as fixture:

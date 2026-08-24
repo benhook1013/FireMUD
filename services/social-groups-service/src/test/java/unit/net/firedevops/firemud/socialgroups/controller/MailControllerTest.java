@@ -80,4 +80,28 @@ class MailControllerTest {
 
     verifyNoInteractions(mailService, socialAccessGuard);
   }
+
+  @Test
+  void sendMailRejectsSenderImpersonationBeforeAccessCheckAndDispatch() throws Exception {
+    String token =
+        jwtUtil.generateToken(
+            "2",
+            Map.of(
+                "accountId", "2",
+                "globalRoles", List.of(),
+                "scopedRoles", Map.of("1", List.of("tenantAdmin"))));
+
+    mockMvc
+        .perform(
+            post("/mail")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .content(
+                    """
+                    {"tenantId":1,"senderAccountId":3,"recipientAccountId":4,"subject":"hello","content":"test body"}
+                    """))
+        .andExpect(status().isForbidden());
+
+    verifyNoInteractions(mailService, socialAccessGuard);
+  }
 }

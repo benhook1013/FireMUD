@@ -4,6 +4,7 @@ import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestS
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasPath;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasStripPrefixTwo;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertNoConfiguredPathStartsWith;
+import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertSocialChatAndFriendsAreEdgeGated;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.route;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -52,8 +53,6 @@ class GatewayRoutesConfigurationProdTest {
           "account-profiles",
           "account-ping",
           "account-jwks",
-          "social-chat",
-          "social-friends",
           "social-guilds",
           "social-mail",
           "social-ping",
@@ -76,6 +75,11 @@ class GatewayRoutesConfigurationProdTest {
   void publicRouteAllowlistExposesOnlyCuratedEdgeRoutes() {
     assertThat(gatewayProperties.getRoutes().stream().map(RouteDefinition::getId))
         .containsExactlyInAnyOrderElementsOf(ROUTE_IDS);
+  }
+
+  @Test
+  void socialChatAndFriendsAreEdgeGated() {
+    assertSocialChatAndFriendsAreEdgeGated(gatewayProperties);
   }
 
   @Test
@@ -118,13 +122,11 @@ class GatewayRoutesConfigurationProdTest {
     assertHasMethod(gatewayProperties, "admin-tick-remediation", "GET");
     assertHasPath(gatewayProperties, "design", "/api/design/**");
     assertHasPath(gatewayProperties, "account-auth", "/api/account/auth/**");
-    assertHasPath(gatewayProperties, "social-chat", "/api/social/chat/**");
     assertHasStripPrefixTwo(gatewayProperties, "admin-ping");
     assertHasStripPrefixTwo(gatewayProperties, "admin-admission-pointers");
     assertHasStripPrefixTwo(gatewayProperties, "admin-remote-followups");
     assertHasStripPrefixTwo(gatewayProperties, "admin-tick-remediation");
     assertHasStripPrefixTwo(gatewayProperties, "design");
     assertHasStripPrefixTwo(gatewayProperties, "account-auth");
-    assertHasStripPrefixTwo(gatewayProperties, "social-chat");
   }
 }

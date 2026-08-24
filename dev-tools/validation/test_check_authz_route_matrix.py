@@ -139,6 +139,580 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     def test_current_matrix_passes(self):
         self.assertEqual([], self.validator.validate(MATRIX))
 
+    def test_moderation_root_contract_declares_receiving_redemption_and_selector(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        contract = document["moderation_policy_intent_authorization"]
+        self.assertEqual(
+            "moderation-policy-intent-local-redemption",
+            contract["coverage_identity"],
+        )
+        self.assertEqual(
+            [
+                "logging-admin-service/POST /moderation/actions",
+                "logging-admin-service/ApplyModerationAction",
+            ],
+            contract["route_identities"],
+        )
+        self.assertEqual(
+            {
+                "receiving_boundary": "logging-admin-service",
+                "exactly_once": True,
+                "owner_redemption": "forbidden",
+            },
+            contract["redemption"],
+        )
+        self.assertEqual(
+            {
+                "contract": "account_issued_bounded_reference",
+                "raw_reference_persistence": "forbidden_for_policy_intent",
+                "fingerprint_field": "authorization_reference_fingerprint",
+            },
+            contract["authorization_reference"],
+        )
+        self.assertEqual(
+            {
+                "gameplay_ban": "tenant_restriction",
+                "chat_mute": "tenant_restriction",
+                "chat_ban": "tenant_restriction",
+                "platform_access_ban": "platform_access_ban",
+            },
+            document["moderation_action_selector"]["mapping"],
+        )
+        self.assertEqual(
+            ["account_security_lock", "ban", "account_ban", "account_security_ban"],
+            document["moderation_action_selector"]["rejected_values"],
+        )
+
+    def test_moderation_root_contract_rejects_wrong_redemption_or_selector(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        document["moderation_policy_intent_authorization"]["redemption"][
+            "owner_redemption"
+        ] = "required"
+        document["moderation_policy_intent_authorization"]["authorization_reference"][
+            "contract"
+        ] = "control_plane_request_id"
+        document["operator_delegation"]["redeemed_by"] = (
+            "owner_service_with_account_validation"
+        )
+        document["operator_mutation_support_gate"]["required_before_enablement"][-1] = (
+            "account_issued_authorization_reference_issuance_and_owner_redemption"
+        )
+        document["moderation_action_selector"]["mapping"][
+            "platform_access_ban"
+        ] = "tenant_restriction"
+
+        errors = validate_document(self.validator, document)
+
+        self.assertTrue(
+            any(
+                "moderation policy-intent redemption must declare "
+                "owner_redemption='forbidden'" in error
+                for error in errors
+            ),
+            errors,
+        )
+        self.assertTrue(
+            any(
+                "moderation policy-intent authorization reference must use" in error
+                for error in errors
+            ),
+            errors,
+        )
+        self.assertTrue(
+            any(
+                "moderation_action_selector.mapping must exactly map" in error
+                for error in errors
+            ),
+            errors,
+        )
+        self.assertTrue(
+            any(
+                "operator mutation gate must require Account reference issuance"
+                in error
+                for error in errors
+            ),
+            errors,
+        )
+        self.assertTrue(
+            any(
+                "operator_delegation.redeemed_by must be" in error
+                for error in errors
+            ),
+            errors,
+        )
+
+    def test_moderation_owner_coverage_requires_exact_category_owner_set(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        record = next(
+            entry
+            for entry in document["coverage_drift"]
+            if entry.get("family") == "moderation-enforcement-owner-call"
+            and entry.get("category") == "chat_ban"
+        )
+        record["target_owner"] = "account-service"
+
+        errors = validate_document(self.validator, document)
+
+        self.assertTrue(
+            any(
+                "moderation-enforcement-owner-call coverage must exactly map"
+                in error
+                for error in errors
+            ),
+            errors,
+        )
+
+    def test_moderation_action_categories_select_exact_authorization_branch(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        routes = [
+            route
+            for route in document["routes"]
+            if route.get("service") == "logging-admin-service"
+            and route.get("route") == "POST /moderation/actions"
+        ]
+        self.assertEqual(2, len(routes))
+        branches = {
+            route["applicability"]["action_category"]: route for route in routes
+        }
+        self.assertEqual(
+            {"tenant_restriction", "platform_access_ban"}, set(branches)
+        )
+        self.assertEqual(
+            ["gameplay_ban", "chat_mute", "chat_ban"],
+            branches["tenant_restriction"]["accepted_action_categories"],
+        )
+        self.assertEqual(
+            ["platform_access_ban"],
+            branches["platform_access_ban"]["accepted_action_categories"],
+        )
+        platform = branches["platform_access_ban"]
+        self.assertEqual("account_scoped", platform["classification"])
+        self.assertEqual("account", platform["scope"])
+        self.assertEqual(["platformAdmin"], platform["roles"]["any_of"])
+        self.assertEqual("explicit_target_account_id", platform["target_subject_binding"])
+        self.assertFalse(platform["tenant_billing_authority_generation_applies"])
+        self.assertFalse(platform["membership_authority_generation_applies"])
+        self.assertNotIn("target_tenant_generation", platform["required_live_checks"])
+        self.assertEqual(
+            [
+                "tenant_scope",
+                "tenant_id",
+                "target_tenant_generation",
+                "membership_version_when_applicable",
+            ],
+            platform["forbidden_fields"],
+        )
+
+    def test_moderation_action_routes_require_exact_branch_cardinality(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        document["routes"] = [
+            route
+            for route in document["routes"]
+            if not (
+                route.get("service") == "logging-admin-service"
+                and route.get("route") == "POST /moderation/actions"
+                and route.get("applicability", {}).get("action_category")
+                == "platform_access_ban"
+            )
+        ]
+
+        errors = validate_document(self.validator, document)
+
+        self.assertIn(
+            "logging-admin-service POST /moderation/actions must declare exactly "
+            "one tenant-restriction and one platform-access-ban action branch",
+            errors,
+        )
+
+    def test_moderation_action_routes_reject_duplicate_branch_with_distinct_variant(
+        self,
+    ):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        tenant_route = next(
+            route
+            for route in document["routes"]
+            if route.get("service") == "logging-admin-service"
+            and route.get("route") == "POST /moderation/actions"
+            and route.get("applicability", {}).get("action_category")
+            == "tenant_restriction"
+        )
+        duplicate = copy.deepcopy(tenant_route)
+        duplicate["applicability"]["client_variant"] = "secondary"
+        document["routes"].append(duplicate)
+
+        errors = validate_document(self.validator, document)
+
+        self.assertTrue(
+            any(
+                "duplicates moderation action branch 'tenant_restriction'" in error
+                for error in errors
+            ),
+            errors,
+        )
+
+    def test_moderation_routes_bind_policy_intent_identity_and_distinct_owner_identity(
+        self,
+    ):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        routes = [
+            route
+            for route in document["routes"]
+            if route.get("service") == "logging-admin-service"
+            and route.get("route") == "POST /moderation/actions"
+        ]
+
+        self.assertEqual(2, len(routes))
+        for route in routes:
+            with self.subTest(
+                action_category=route["applicability"]["action_category"]
+            ):
+                self.assertIn("policy_intent_request_id", route["required_fields"])
+                self.assertIn("control_plane_request_id", route["required_fields"])
+                self.assertIn("mutation_digest", route["required_fields"])
+                contract = route["idempotency_contract"]
+                self.assertEqual("policy_intent_request_id", contract["key"])
+                self.assertEqual("mutationDigest/v1", contract["digest"])
+                self.assertEqual("mutation_digest", contract["digest_field"])
+                self.assertEqual("correlation_only", contract["control_plane_request_id"])
+                self.assertEqual(
+                    "distinct_future_owner_command_identity",
+                    contract["owner_enforcement_request_id"],
+                )
+
+    def test_moderation_action_routes_enforce_fields_and_idempotency_contract(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        routes = {
+            route["applicability"]["action_category"]: route
+            for route in document["routes"]
+            if route.get("service") == "logging-admin-service"
+            and route.get("route") == "POST /moderation/actions"
+        }
+        for action_category, route in routes.items():
+            with self.subTest(action_category=action_category):
+                self.assertEqual(
+                    self.validator.MODERATION_ACTION_REQUIRED_FIELDS[action_category],
+                    set(route["required_fields"]),
+                )
+                for field, expected in self.validator.MODERATION_ACTION_IDEMPOTENCY_CONTRACT.items():
+                    self.assertEqual(expected, route["idempotency_contract"][field])
+
+    def test_moderation_action_routes_reject_missing_identity_and_platform_tenant_fields(
+        self,
+    ):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        mutations = (
+            (
+                "tenant policy identity",
+                "tenant_restriction",
+                lambda route: route["required_fields"].remove(
+                    "policy_intent_request_id"
+                ),
+                "required_fields must exactly match the 'tenant_restriction' moderation action contract",
+            ),
+            (
+                "platform policy identity",
+                "platform_access_ban",
+                lambda route: route["required_fields"].remove(
+                    "policy_intent_request_id"
+                ),
+                "required_fields must exactly match the 'platform_access_ban' moderation action contract",
+            ),
+            (
+                "duplicate platform policy identity",
+                "platform_access_ban",
+                lambda route: route["required_fields"].append(
+                    "policy_intent_request_id"
+                ),
+                "required_fields must exactly match the 'platform_access_ban' moderation action contract",
+            ),
+            (
+                "non-string tenant field",
+                "tenant_restriction",
+                lambda route: route["required_fields"].append(1),
+                "required_fields must exactly match the 'tenant_restriction' moderation action contract",
+            ),
+            (
+                "platform required tenant id",
+                "platform_access_ban",
+                lambda route: route["required_fields"].append("tenant_id"),
+                "platform_access_ban branch must forbid tenant identity/scope/generation fields",
+            ),
+            (
+                "platform declared tenant scope",
+                "platform_access_ban",
+                lambda route: route.__setitem__("tenant_scope", "tenant"),
+                "platform_access_ban branch must forbid tenant identity/scope/generation fields",
+            ),
+            (
+                "platform target tenant generation",
+                "platform_access_ban",
+                lambda route: route["required_live_checks"].append(
+                    "target_tenant_generation"
+                ),
+                "platform_access_ban branch must forbid tenant identity/scope/generation fields",
+            ),
+            (
+                "platform membership evidence",
+                "platform_access_ban",
+                lambda route: route["required_fields"].append(
+                    "membership_version_when_applicable"
+                ),
+                "platform_access_ban branch must forbid tenant identity/scope/generation fields",
+            ),
+            (
+                "platform forbidden membership evidence declaration",
+                "platform_access_ban",
+                lambda route: route["forbidden_fields"].remove(
+                    "membership_version_when_applicable"
+                ),
+                "platform_access_ban forbidden_fields must exactly match",
+            ),
+        )
+        for mutation_name, action_category, mutate, expected_error in mutations:
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                route = next(
+                    route
+                    for route in document["routes"]
+                    if route.get("service") == "logging-admin-service"
+                    and route.get("route") == "POST /moderation/actions"
+                    and route.get("applicability", {}).get("action_category")
+                    == action_category
+                )
+                mutate(route)
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(expected_error in error for error in errors),
+                    (mutation_name, errors),
+                )
+
+    def test_moderation_action_routes_reject_idempotency_identity_aliasing(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        mutations = (
+            ("key", "key", "control_plane_request_id"),
+            ("digest field", "digest_field", "control_plane_request_id"),
+            (
+                "exact retry omitted",
+                "exact_retry",
+                None,
+            ),
+            (
+                "changed digest",
+                "changed_digest",
+                "PERMISSION_DENIED",
+            ),
+            (
+                "changed request id omitted",
+                "changed_request_id",
+                None,
+            ),
+            ("correlation", "control_plane_request_id", "mutation_identity"),
+            (
+                "owner identity",
+                "owner_enforcement_request_id",
+                "policy_intent_request_id",
+            ),
+        )
+        for mutation_name, field, value in mutations:
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                route = next(
+                    route
+                    for route in document["routes"]
+                    if route.get("service") == "logging-admin-service"
+                    and route.get("route") == "POST /moderation/actions"
+                    and route.get("applicability", {}).get("action_category")
+                    == "tenant_restriction"
+                )
+                if value is None:
+                    route["idempotency_contract"].pop(field)
+                else:
+                    route["idempotency_contract"][field] = value
+                errors = validate_document(self.validator, document)
+                expected = self.validator.MODERATION_ACTION_IDEMPOTENCY_CONTRACT[field]
+                self.assertTrue(
+                    any(
+                        f"idempotency_contract.{field} must be {expected!r}" in error
+                        for error in errors
+                    ),
+                    errors,
+                )
+
+    def test_platform_moderation_branch_rejects_tenant_authority_regressions(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        mutations = (
+            (
+                "classification",
+                lambda route: route.__setitem__("classification", "tenant_regular"),
+                "platform_access_ban branch must use classification account_scoped",
+            ),
+            (
+                "scope",
+                lambda route: route.__setitem__("scope", "tenant"),
+                "platform_access_ban branch must use scope=account",
+            ),
+            (
+                "route status",
+                lambda route: route.__setitem__(
+                    "route_status", "current_openapi_operator_surface"
+                ),
+                (
+                    "platform_access_ban branch must declare route_status "
+                    "target_not_currently_routable"
+                ),
+            ),
+            (
+                "global platform admin membership",
+                lambda route: route.__setitem__(
+                    "global_platform_admin_membership_required", True
+                ),
+                (
+                    "platform_access_ban branch must set "
+                    "global_platform_admin_membership_required=false"
+                ),
+            ),
+            (
+                "tenant billing generation",
+                lambda route: route.__setitem__(
+                    "tenant_billing_authority_generation_applies", True
+                ),
+                "platform_access_ban branch must disable tenant billing authority generation",
+            ),
+            (
+                "membership generation",
+                lambda route: route.__setitem__(
+                    "membership_authority_generation_applies", True
+                ),
+                "platform_access_ban branch must disable membership authority generation",
+            ),
+            (
+                "target tenant generation check",
+                lambda route: route["required_live_checks"].append(
+                    "target_tenant_generation"
+                ),
+                "platform_access_ban branch must not require tenant or membership checks",
+            ),
+            (
+                "tenant role",
+                lambda route: route.__setitem__(
+                    "roles", {"any_of": ["moderator", "platformAdmin"]}
+                ),
+                "platform_access_ban branch must authorize only platformAdmin",
+            ),
+            (
+                "operator authorization branches",
+                lambda route: route.__setitem__(
+                    "operator_authorization_branches",
+                    [
+                        {
+                            "branch": "tenant_role",
+                            "required_live_checks": [
+                                "membership_when_tenant_role",
+                                "membership_generation",
+                                "tenant_generation",
+                            ],
+                        },
+                        {
+                            "branch": "platformAdmin_global",
+                            "required_live_checks": [
+                                "current_operator_roles",
+                                "current_global_role",
+                                "role_appropriate_assurance",
+                                "target_tenant_generation",
+                            ],
+                        },
+                    ],
+                ),
+                "platform_access_ban branch must not declare operator_authorization_branches",
+            ),
+        )
+        for mutation_name, mutate, expected_error in mutations:
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                platform = next(
+                    route
+                    for route in document["routes"]
+                    if route.get("service") == "logging-admin-service"
+                    and route.get("route") == "POST /moderation/actions"
+                    and route.get("applicability", {}).get("action_category")
+                    == "platform_access_ban"
+                )
+                mutate(platform)
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(expected_error in error for error in errors),
+                    (mutation_name, errors),
+                )
+
+    def test_tenant_moderation_branch_requires_explicit_tenant_id(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        tenant = next(
+            route
+            for route in baseline["routes"]
+            if route.get("service") == "logging-admin-service"
+            and route.get("route") == "POST /moderation/actions"
+            and route.get("applicability", {}).get("action_category")
+            == "tenant_restriction"
+        )
+        self.assertIn("tenant_id", tenant["required_fields"])
+
+        tenant["required_fields"].remove("tenant_id")
+        errors = validate_document(self.validator, baseline)
+
+        self.assertTrue(
+            any(
+                "tenant-restriction branch required_fields must include tenant_id"
+                in error
+                for error in errors
+            ),
+            errors,
+        )
+
+    def test_malformed_moderation_applicability_fails_closed_without_exception(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        platform = next(
+            route
+            for route in document["routes"]
+            if route.get("service") == "logging-admin-service"
+            and route.get("route") == "POST /moderation/actions"
+            and route.get("applicability", {}).get("action_category")
+            == "platform_access_ban"
+        )
+        platform["applicability"] = []
+
+        errors = validate_document(self.validator, document)
+
+        self.assertTrue(
+            any(
+                "must select one of the canonical moderation action branches"
+                in error
+                for error in errors
+            ),
+            errors,
+        )
+
+    def test_malformed_platform_moderation_live_checks_use_canonical_diagnostic(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        platform = next(
+            route
+            for route in document["routes"]
+            if route.get("service") == "logging-admin-service"
+            and route.get("route") == "POST /moderation/actions"
+            and route.get("applicability", {}).get("action_category")
+            == "platform_access_ban"
+        )
+        platform["required_live_checks"] = None
+
+        errors = validate_document(self.validator, document)
+
+        self.assertTrue(
+            any(
+                "required_live_checks must be a list of strings" in error
+                for error in errors
+            ),
+            errors,
+        )
+
     def test_owner_route_metadata_is_explicit(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         routes = grouped_routes(document, "game-session-service")
@@ -173,7 +747,19 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         routes = grouped_routes(document, "logging-admin-service")
         for route_name in route_names:
             self.assertTrue(routes[route_name])
-            for route in routes[route_name]:
+            variants = routes[route_name]
+            if route_name == "POST /moderation/actions":
+                variants = [
+                    route
+                    for route in variants
+                    if route["applicability"]["action_category"]
+                    == "tenant_restriction"
+                ]
+                self.assertTrue(
+                    variants,
+                    f"{route_name} must define a tenant_restriction variant",
+                )
+            for route in variants:
                 self.assertEqual(
                     "conditional_by_operator_role",
                     route["membership_authority_generation_applies"],
@@ -397,10 +983,28 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 "target_tenant_generation",
             },
         }
+        human_expected = {
+            branch: checks
+            | {"current_account_generation", "current_token_generation"}
+            for branch, checks in expected.items()
+        }
         for service, route_name in sorted(self.validator.CONDITIONAL_OPERATOR_ROUTES):
             with self.subTest(service=service, route=route_name):
                 document = copy.deepcopy(baseline)
-                route = route_for(document, service, route_name)
+                if (service, route_name) == (
+                    "logging-admin-service",
+                    "POST /moderation/actions",
+                ):
+                    route = next(
+                        route
+                        for route in document["routes"]
+                        if route.get("service") == service
+                        and route.get("route") == route_name
+                        and route.get("applicability", {}).get("action_category")
+                        == "tenant_restriction"
+                    )
+                else:
+                    route = route_for(document, service, route_name)
                 branches = {
                     branch["branch"]: set(branch["required_live_checks"])
                     for branch in route["operator_authorization_branches"]
@@ -414,23 +1018,29 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 "account-service",
                 "IssueHumanOperatorAuthorizationReference",
             )
-            branches = {
-                branch["branch"]: set(branch["required_live_checks"])
-                for branch in route["operator_authorization_branches"]
-            }
-            self.assertEqual(expected, branches)
+            for branch_name in ("non_moderation", "tenant_restriction"):
+                with self.subTest(branch=branch_name):
+                    tenant_branch = route["conditional_branches"][branch_name]
+                    branches = {
+                        branch["branch"]: set(branch["required_live_checks"])
+                        for branch in tenant_branch["operator_authorization_branches"]
+                    }
+                    self.assertEqual(human_expected, branches)
 
+            tenant_branch = route["conditional_branches"]["tenant_restriction"]
             platform_admin_branch = next(
                 branch
-                for branch in route["operator_authorization_branches"]
+                for branch in tenant_branch["operator_authorization_branches"]
                 if branch["branch"] == "platformAdmin_global"
             )
             platform_admin_branch["required_live_checks"].remove(
                 "target_tenant_generation"
             )
             errors = []
-            self.validator.validate_generation_applicability(
-                document["routes"], errors
+            self.validator.validate_human_operator_issuance_branches(
+                document["routes"],
+                errors,
+                document=document,
             )
             self.assertTrue(
                 any(
@@ -783,12 +1393,29 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         for service, route_name in sorted(
             self.validator.LOGGING_ADMIN_IDEMPOTENT_OPERATOR_ROUTES
         ):
-            route = route_for(document, service, route_name)
-            self.assertIn("mutation_digest", route["required_fields"])
-            self.assertIn(
-                "IDEMPOTENCY_CONFLICT",
-                route["canonical_errors"]["any_of"],
-            )
+            if (service, route_name) == (
+                "logging-admin-service",
+                "POST /moderation/actions",
+            ):
+                variants = [
+                    route
+                    for route in document["routes"]
+                    if route.get("service") == service
+                    and route.get("route") == route_name
+                ]
+                self.assertEqual(
+                    2,
+                    len(variants),
+                    f"{service} {route_name} must define both moderation-action variants",
+                )
+            else:
+                variants = [route_for(document, service, route_name)]
+            for route in variants:
+                self.assertIn("mutation_digest", route["required_fields"])
+                self.assertIn(
+                    "IDEMPOTENCY_CONFLICT",
+                    route["canonical_errors"]["any_of"],
+                )
 
         route = route_for(
             document,
@@ -804,6 +1431,60 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertIn(
             "logging-admin-service POST /feature-flags/toggle must declare "
             "IDEMPOTENCY_CONFLICT",
+            errors,
+        )
+
+    def test_moderation_idempotency_diagnostics_include_applicability_variant(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        for action_category in ("tenant_restriction", "platform_access_ban"):
+            with self.subTest(action_category=action_category):
+                document = copy.deepcopy(baseline)
+                route = next(
+                    route
+                    for route in document["routes"]
+                    if route.get("service") == "logging-admin-service"
+                    and route.get("route") == "POST /moderation/actions"
+                    and route.get("applicability", {}).get("action_category")
+                    == action_category
+                )
+                route["required_fields"].remove("mutation_digest")
+                errors = []
+                self.validator.validate_logging_admin_idempotency(
+                    document["routes"], errors
+                )
+                label = self.validator.route_label(route)
+                self.assertIn(
+                    f"{label} must require mutation_digest for idempotency",
+                    errors,
+                )
+                self.assertNotIn(
+                    "logging-admin-service POST /moderation/actions must require "
+                    "mutation_digest for idempotency",
+                    errors,
+                )
+
+    def test_non_moderation_idempotency_diagnostics_ignore_applicability_variant(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(
+            document,
+            "logging-admin-service",
+            "POST /feature-flags/toggle",
+        )
+        route["applicability"] = {"future": "metadata"}
+        route["required_fields"].remove("mutation_digest")
+        errors = []
+        self.validator.validate_logging_admin_idempotency(
+            document["routes"], errors
+        )
+        self.assertIn(
+            "logging-admin-service POST /feature-flags/toggle must require "
+            "mutation_digest for idempotency",
+            errors,
+        )
+        self.assertNotIn(
+            "logging-admin-service POST /feature-flags/toggle "
+            '[variant={"future":"metadata"}] must require mutation_digest '
+            "for idempotency",
             errors,
         )
 
@@ -2107,6 +2788,849 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors,
         )
 
+    def test_automation_operator_issuance_is_non_moderation_only_until_published(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(
+            baseline,
+            "account-service",
+            "IssueAutomationOperatorAuthorizationReference",
+        )
+        self.assertEqual("target_not_currently_routable", route["route_status"])
+        self.assertEqual("non_moderation_only", route["branch_selector"])
+        self.assertEqual("absent_only", route["action_category_policy"])
+        mapping = route["action_family_schema_mapping"]
+        self.assertEqual(
+            ["action_family", "action_family_schema_id", "action_family_schema_version"],
+            mapping["selector_fields"],
+        )
+        self.assertEqual([], mapping["entries"])
+        self.assertEqual(
+            "no_published_action_family_schema_pairs", mapping["entries_status"]
+        )
+        self.assertEqual(
+            "reject_before_issuance", mapping["rejections"]["moderation"]
+        )
+        self.assertEqual(
+            "correlation_only",
+            route["moderation_identity_policy"]["control_plane_request_id"],
+        )
+
+        mutations = (
+            (
+                "branch selector allows moderation",
+                lambda target: target.__setitem__("branch_selector", "any_action"),
+                "branch_selector must be 'non_moderation_only'",
+            ),
+            (
+                "action category is not absent-only",
+                lambda target: target.__setitem__("action_category_policy", "optional"),
+                "action_category_policy must be 'absent_only'",
+            ),
+            (
+                "moderation mapping is allowed",
+                lambda target: target["action_family_schema_mapping"]["rejections"]
+                .__setitem__("moderation", "allow"),
+                "action_family_schema_mapping.rejections must equal",
+            ),
+            (
+                "concrete schema pair is published",
+                lambda target: target["action_family_schema_mapping"]["entries"].append(
+                    {
+                        "action_family": "moderation",
+                        "action_family_schema_id": "moderation-schema",
+                        "action_family_schema_version": "v1",
+                    }
+                ),
+                "action_family_schema_mapping.entries must remain empty",
+            ),
+        )
+        for mutation_name, mutate, expected_error in mutations:
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                mutate(
+                    route_for(
+                        document,
+                        "account-service",
+                        "IssueAutomationOperatorAuthorizationReference",
+                    )
+                )
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(expected_error in error for error in errors),
+                    (mutation_name, errors),
+                )
+
+    def test_moderation_action_variants_require_operator_authorization_and_assurance(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        for action_category in ("tenant_restriction", "platform_access_ban"):
+            for field in ("current_operator_authorization", "role_assurance"):
+                with self.subTest(action_category=action_category, field=field):
+                    document = copy.deepcopy(baseline)
+                    route = next(
+                        route
+                        for route in document["routes"]
+                        if route.get("service") == "logging-admin-service"
+                        and route.get("route") == "POST /moderation/actions"
+                        and route.get("applicability", {}).get("action_category")
+                        == action_category
+                    )
+                    if field == "current_operator_authorization":
+                        route["required_live_checks"].remove(field)
+                    else:
+                        route.pop(field)
+                    errors = []
+                    self.validator.validate_moderation_action_route_variants(
+                        document["routes"], errors
+                    )
+                    expected = (
+                        "must require live check current_operator_authorization"
+                        if field == "current_operator_authorization"
+                        else "must declare role_assurance privileged_control_when_global_role"
+                    )
+                    self.assertTrue(
+                        any(expected in error for error in errors),
+                        (action_category, field, errors),
+                    )
+
+    def test_human_operator_issuance_scopes_fields_by_action_branch(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(
+            document, "account-service", "IssueHumanOperatorAuthorizationReference"
+        )
+        self.assertNotIn("tenant_scope", route["required_fields"])
+        self.assertEqual("action_category_or_absence", route["branch_selector"])
+        branches = route["conditional_branches"]
+        self.assertEqual(
+            {"non_moderation", "tenant_restriction", "platform_access_ban"},
+            set(branches),
+        )
+        non_moderation = branches["non_moderation"]
+        self.assertEqual("action_category=absent", non_moderation["selector"])
+        self.assertEqual("tenant", non_moderation["scope"])
+        self.assertEqual(
+            [
+                "action_family",
+                "action_family_schema_id",
+                "action_family_schema_version",
+                "tenant_scope",
+            ],
+            non_moderation["required_fields"],
+        )
+        self.assertEqual(
+            {"tenant_role", "platformAdmin_global"},
+            {
+                branch["branch"]
+                for branch in non_moderation["operator_authorization_branches"]
+            },
+        )
+        self.assertEqual(
+            [
+                "action_family",
+                "action_family_schema_id",
+                "action_family_schema_version",
+                "tenant_scope",
+            ],
+            branches["tenant_restriction"]["required_fields"],
+        )
+        self.assertEqual(
+            {"tenant_role", "platformAdmin_global"},
+            {
+                branch["branch"]
+                for branch in branches["tenant_restriction"][
+                    "operator_authorization_branches"
+                ]
+            },
+        )
+        self.assertNotIn("operator_authorization_branches", route)
+        platform = branches["platform_access_ban"]
+        self.assertEqual(
+            [
+                "action_family",
+                "action_family_schema_id",
+                "action_family_schema_version",
+                "target_account_id",
+            ],
+            platform["required_fields"],
+        )
+        self.assertEqual("action_category=platform_access_ban", platform["selector"])
+        self.assertEqual("account", platform["scope"])
+        self.assertEqual("account_scoped", platform["classification"])
+        self.assertEqual(
+            "explicit_target_account_id", platform["target_subject_binding"]
+        )
+        self.assertEqual(
+            [
+                "current_account_generation",
+                "current_token_generation",
+                "issuer_generation",
+                "account_generation",
+                "current_operator_roles",
+                "current_global_role",
+                "role_appropriate_assurance",
+            ],
+            platform["required_live_checks"],
+        )
+        self.assertEqual(
+            [
+                "target_tenant_generation",
+                "tenant_generation",
+                "membership_when_tenant_role",
+                "membership_generation",
+            ],
+            platform["forbidden_live_checks"],
+        )
+        self.assertEqual(
+            [
+                "tenant_scope",
+                "tenant_id",
+                "target_tenant_generation",
+                "membership_version_when_applicable",
+            ],
+            platform["forbidden_fields"],
+        )
+
+    def test_human_operator_issuance_branches_retain_common_schema_requirements(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        for branch_name in (
+            "non_moderation",
+            "tenant_restriction",
+            "platform_access_ban",
+        ):
+            with self.subTest(branch=branch_name):
+                document = copy.deepcopy(baseline)
+                route = route_for(
+                    document,
+                    "account-service",
+                    "IssueHumanOperatorAuthorizationReference",
+                )
+                route["conditional_branches"][branch_name]["required_fields"].remove(
+                    "action_family_schema_id"
+                )
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(
+                        f"conditional_branches.{branch_name}.required_fields must equal"
+                        in error
+                        for error in errors
+                    ),
+                    (branch_name, errors),
+                )
+
+    def test_human_operator_issuance_rejects_cross_scope_branch_drift(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        mutations = (
+            (
+                "wrong branch selector",
+                lambda route: route.__setitem__(
+                    "branch_selector", "action_category"
+                ),
+                "branch_selector must be 'action_category_or_absence'",
+            ),
+            (
+                "common tenant scope",
+                lambda route: route["required_fields"].append("tenant_scope"),
+                "tenant_scope must be branch-specific, not a common required field",
+            ),
+            (
+                "platform tenant field",
+                lambda route: route["conditional_branches"]["platform_access_ban"][
+                    "required_fields"
+                ].append("tenant_scope"),
+                "conditional_branches.platform_access_ban.required_fields must equal",
+            ),
+            (
+                "platform target tenant generation",
+                lambda route: route["conditional_branches"]["platform_access_ban"][
+                    "required_live_checks"
+                ].append("target_tenant_generation"),
+                "conditional_branches.platform_access_ban.required_live_checks must equal",
+            ),
+            (
+                "platform membership evidence",
+                lambda route: route["conditional_branches"]["platform_access_ban"][
+                    "forbidden_fields"
+                ].remove("membership_version_when_applicable"),
+                "conditional_branches.platform_access_ban.forbidden_fields must equal",
+            ),
+            (
+                "missing platform branch",
+                lambda route: route["conditional_branches"].pop("platform_access_ban"),
+                "conditional_branches must contain exactly",
+            ),
+            (
+                "top-level operator branches",
+                lambda route: route.__setitem__(
+                    "operator_authorization_branches",
+                    copy.deepcopy(
+                        route["conditional_branches"]["tenant_restriction"][
+                            "operator_authorization_branches"
+                        ]
+                    ),
+                ),
+                "operator_authorization_branches must be branch-specific",
+            ),
+            (
+                "platform operator branches",
+                lambda route: route["conditional_branches"]["platform_access_ban"].__setitem__(
+                    "operator_authorization_branches",
+                    copy.deepcopy(
+                        route["conditional_branches"]["tenant_restriction"][
+                            "operator_authorization_branches"
+                        ]
+                    ),
+                ),
+                "platform_access_ban branch must not declare operator_authorization_branches",
+            ),
+            (
+                "missing non-moderation branch",
+                lambda route: route["conditional_branches"].pop("non_moderation"),
+                "conditional_branches must contain exactly",
+            ),
+            (
+                "wrong non-moderation selector",
+                lambda route: route["conditional_branches"]["non_moderation"].__setitem__(
+                    "selector", "action_category=tenant_restriction"
+                ),
+                "conditional_branches.non_moderation must declare selector='action_category=absent'",
+            ),
+            (
+                "wrong non-moderation scope",
+                lambda route: route["conditional_branches"]["non_moderation"].__setitem__(
+                    "scope", "account"
+                ),
+                "conditional_branches.non_moderation must declare scope='tenant'",
+            ),
+            (
+                "missing non-moderation tenant generation",
+                lambda route: route["conditional_branches"]["non_moderation"][
+                    "operator_authorization_branches"
+                ][0]["required_live_checks"].remove("tenant_generation"),
+                "conditional_branches.non_moderation operator_authorization_branches[0].required_live_checks must equal",
+            ),
+        )
+        for mutation_name, mutate, expected_error in mutations:
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                route = route_for(
+                    document,
+                    "account-service",
+                    "IssueHumanOperatorAuthorizationReference",
+                )
+                mutate(route)
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(expected_error in error for error in errors),
+                    (mutation_name, errors),
+                )
+
+    def test_human_operator_shared_branch_fields_reject_drift(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        mutations = (
+            (
+                "missing non-moderation branch",
+                lambda branch_fields: branch_fields.pop("non_moderation"),
+                "branch_fields must contain exactly",
+            ),
+            (
+                "wrong non-moderation selector",
+                lambda branch_fields: branch_fields["non_moderation"].__setitem__(
+                    "selector", "action_category=tenant_restriction"
+                ),
+                "branch_fields.non_moderation.selector must equal",
+            ),
+            (
+                "wrong tenant restriction required field",
+                lambda branch_fields: branch_fields["tenant_restriction"].__setitem__(
+                    "required", ["target_account_id"]
+                ),
+                "branch_fields.tenant_restriction.required must equal",
+            ),
+            (
+                "wrong platform access ban forbidden field",
+                lambda branch_fields: branch_fields["platform_access_ban"].__setitem__(
+                    "forbidden", ["tenant_scope"]
+                ),
+                "branch_fields.platform_access_ban.forbidden must equal",
+            ),
+        )
+        for mutation_name, mutate, expected_error in mutations:
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                branch_fields = document["operator_delegation"]["issuance_paths"][
+                    "human"
+                ]["bindings"]["branch_fields"]
+                mutate(branch_fields)
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(expected_error in error for error in errors),
+                    (mutation_name, errors),
+                )
+
+    def test_moderation_operator_issuance_uses_dedicated_mutation_identities(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(
+            document, "account-service", "IssueHumanOperatorAuthorizationReference"
+        )
+        self.assertEqual(
+            ["action_family", "action_family_schema_id", "action_family_schema_version"],
+            route["required_fields"],
+        )
+        self.assertEqual(
+            ["action_family", "action_family_schema_id", "action_family_schema_version"],
+            route["mutation_identity_selector"]["selector_fields"],
+        )
+        self.assertEqual(
+            "operator_delegation.issuance_paths.human.bindings."
+            "mutation_identity_selector.mapping",
+            route["mutation_identity_selector"]["mapping_ref"],
+        )
+        selector_mapping = document["operator_delegation"]["issuance_paths"][
+            "human"
+        ]["bindings"]["mutation_identity_selector"]["mapping"]
+        self.assertEqual(
+            ["action_family", "action_family_schema_id", "action_family_schema_version"],
+            selector_mapping["key_fields"],
+        )
+        self.assertEqual([], selector_mapping["entries"])
+        self.assertEqual(
+            "no_published_action_family_schema_pairs",
+            selector_mapping["entries_status"],
+        )
+        self.assertEqual(
+            {
+                "unknown": "reject_before_issuance",
+                "duplicate": "reject_before_issuance",
+                "ambiguous": "reject_before_issuance",
+                "mismatched": "reject_before_issuance",
+            },
+            selector_mapping["rejections"],
+        )
+        self.assertEqual(
+            {
+                "non_moderation",
+                "moderation_policy_intent",
+                "moderation_owner_enforcement",
+            },
+            set(route["mutation_identity_selector"]["alternatives"]),
+        )
+        self.assertEqual(
+            "policy_intent_request_id",
+            route["mutation_identity_selector"]["alternatives"][
+                "moderation_policy_intent"
+            ]["request_identity"],
+        )
+        self.assertEqual(
+            "owner_enforcement_request_id",
+            route["mutation_identity_selector"]["alternatives"][
+                "moderation_owner_enforcement"
+            ]["request_identity"],
+        )
+        identity_contract = document["operator_delegation"]["issuance_idempotency"]
+        self.assertEqual(
+            "control_plane_request_id",
+            identity_contract["non_moderation_key"][0],
+        )
+        self.assertEqual(
+            {
+                "policy_intent",
+                "owner_enforcement",
+            },
+            set(identity_contract["moderation_keys"]),
+        )
+        self.assertEqual(
+            {
+                "policy_intent_request_id",
+                "owner_enforcement_request_id",
+            },
+            {
+                branch["request_identity"]
+                for branch in identity_contract["moderation_keys"].values()
+            },
+        )
+        for branch in identity_contract["moderation_keys"].values():
+            self.assertEqual("correlation_only", branch["control_plane_request_id"])
+            self.assertNotIn("control_plane_request_id", branch["key"])
+
+    def test_moderation_operator_issuance_rejects_identity_aliasing_or_omission(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        mutations = (
+            (
+                "request policy intent aliases control plane",
+                lambda contract: contract["mutation_identity_selector"][
+                    "alternatives"
+                ]["moderation_policy_intent"].__setitem__(
+                    "request_identity", "control_plane_request_id"
+                ),
+                "mutation_identity_selector.alternatives.moderation_policy_intent.request_identity must equal",
+                "route",
+            ),
+            (
+                "request owner identity omitted",
+                lambda contract: contract["mutation_identity_selector"][
+                    "alternatives"
+                ].pop("moderation_owner_enforcement"),
+                "mutation_identity_selector.alternatives must contain exactly",
+                "route",
+            ),
+            (
+                "global policy intent aliases control plane",
+                lambda contract: contract["moderation_keys"]["policy_intent"].__setitem__(
+                    "request_identity", "control_plane_request_id"
+                ),
+                "must equal 'policy_intent_request_id'",
+                "issuance",
+            ),
+            (
+                "owner key uses control plane",
+                lambda contract: contract["moderation_keys"]["owner_enforcement"][
+                    "key"
+                ].append("control_plane_request_id"),
+                "must not use correlation-only control_plane_request_id",
+                "issuance",
+            ),
+            (
+                "appeal identity branch",
+                lambda contract: contract["moderation_keys"].__setitem__(
+                    "appeal_submission",
+                    {
+                        "request_identity": "appeal_submission_request_id",
+                        "digest": "mutation_digest",
+                        "key": ["appeal_submission_request_id"],
+                        "control_plane_request_id": "correlation_only",
+                    },
+                ),
+                "moderation_keys must contain exactly",
+                "issuance",
+            ),
+        )
+        for mutation_name, mutate, expected_error, target in mutations:
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                route = route_for(
+                    document,
+                    "account-service",
+                    "IssueHumanOperatorAuthorizationReference",
+                )
+                contract = (
+                    route
+                    if target == "route"
+                    else document["operator_delegation"]["issuance_idempotency"]
+                )
+                mutate(contract)
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(expected_error in error for error in errors),
+                    (mutation_name, errors),
+                )
+
+    def test_moderation_operator_issuance_rejects_mismatched_or_extra_selector_fields(
+        self,
+    ):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        mutations = (
+            (
+                "non-moderation digest aliases owner enforcement",
+                "non_moderation",
+                "digest",
+                "owner_enforcement_digest",
+            ),
+            (
+                "policy intent digest aliases owner enforcement",
+                "moderation_policy_intent",
+                "digest",
+                "owner_enforcement_digest",
+            ),
+            (
+                "owner enforcement identity aliases policy intent",
+                "moderation_owner_enforcement",
+                "request_identity",
+                "policy_intent_request_id",
+            ),
+            (
+                "policy intent accepts owner digest field",
+                "moderation_policy_intent",
+                "owner_enforcement_digest",
+                "owner-enforcement-digest",
+            ),
+        )
+        for mutation_name, branch_name, field, value in mutations:
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                route = route_for(
+                    document,
+                    "account-service",
+                    "IssueHumanOperatorAuthorizationReference",
+                )
+                alternative = route["mutation_identity_selector"]["alternatives"][
+                    branch_name
+                ]
+                alternative[field] = value
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(
+                        f"mutation_identity_selector.alternatives.{branch_name}"
+                        in error
+                        for error in errors
+                    ),
+                    (mutation_name, errors),
+                )
+
+    def test_moderation_operator_issuance_rejects_missing_selector_pair_fields(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        mutations = (
+            ("non_moderation", "control_plane_request_id"),
+            ("moderation_policy_intent", "digest"),
+            ("moderation_owner_enforcement", "digest"),
+        )
+        for branch_name, field in mutations:
+            with self.subTest(branch=branch_name, field=field):
+                document = copy.deepcopy(baseline)
+                route = route_for(
+                    document,
+                    "account-service",
+                    "IssueHumanOperatorAuthorizationReference",
+                )
+                route["mutation_identity_selector"]["alternatives"][
+                    branch_name
+                ].pop(field)
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(
+                        f"mutation_identity_selector.alternatives.{branch_name} "
+                        "must contain exactly"
+                        in error
+                        for error in errors
+                    ),
+                    (branch_name, field, errors),
+                )
+
+    def test_operator_issuance_selector_mapping_rejects_unknown_or_ambiguous_entries(
+        self,
+    ):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        valid_entry = {
+            "action_family": "fixture-family",
+            "action_family_schema_id": "fixture-schema",
+            "action_family_schema_version": "v1",
+            "identity_alternative": "non_moderation",
+        }
+        mutations = (
+            (
+                "unknown alternative",
+                lambda mapping: mapping["entries"].append(
+                    {**valid_entry, "identity_alternative": "unknown"}
+                ),
+                "identity_alternative must name exactly one",
+            ),
+            (
+                "duplicate exact selector key",
+                lambda mapping: mapping["entries"].extend(
+                    [valid_entry, dict(valid_entry)]
+                ),
+                "duplicates selector key",
+            ),
+            (
+                "missing exact schema version",
+                lambda mapping: mapping["entries"].append(
+                    {
+                        key: value
+                        for key, value in valid_entry.items()
+                        if key != "action_family_schema_version"
+                    }
+                ),
+                "must contain exactly",
+            ),
+        )
+        for mutation_name, mutate, expected_error in mutations:
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                mapping = document["operator_delegation"]["issuance_paths"]["human"][
+                    "bindings"
+                ]["mutation_identity_selector"]["mapping"]
+                mutate(mapping)
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(expected_error in error for error in errors),
+                    (mutation_name, errors),
+                )
+
+    def test_operator_issuance_selector_mapping_requires_exact_selector_contract(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        mutations = (
+            (
+                "selector fields omit schema pair",
+                "selector",
+                lambda selector: selector.__setitem__("selector_fields", ["action_family"]),
+                "selector_fields must equal",
+            ),
+            (
+                "mapping reference points elsewhere",
+                "selector",
+                lambda selector: selector.__setitem__("mapping_ref", "route-local"),
+                "mapping_ref must equal",
+            ),
+            (
+                "unknown values are not rejected",
+                "mapping",
+                lambda mapping: mapping["rejections"].__setitem__("unknown", "allow"),
+                "rejections must equal",
+            ),
+        )
+        for mutation_name, target, mutate, expected_error in mutations:
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                route = route_for(
+                    document,
+                    "account-service",
+                    "IssueHumanOperatorAuthorizationReference",
+                )
+                if target == "selector":
+                    mutate(route["mutation_identity_selector"])
+                else:
+                    mapping = document["operator_delegation"]["issuance_paths"]["human"][
+                        "bindings"
+                    ]["mutation_identity_selector"]["mapping"]
+                    mutate(mapping)
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(expected_error in error for error in errors),
+                    (mutation_name, errors),
+                )
+
+    def test_operator_issuance_selector_mapping_rejects_published_or_open_drift(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        valid_entry = {
+            "action_family": "fixture-family",
+            "action_family_schema_id": "fixture-schema",
+            "action_family_schema_version": "v1",
+            "identity_alternative": "non_moderation",
+        }
+        mutations = (
+            (
+                "non-empty published registry",
+                lambda document: (
+                    document["operator_delegation"]["issuance_paths"]["human"][
+                        "bindings"
+                    ]["mutation_identity_selector"]["mapping"]["entries"].append(
+                        valid_entry
+                    ),
+                    document["operator_delegation"]["issuance_paths"]["human"][
+                        "bindings"
+                    ]["mutation_identity_selector"]["mapping"].__setitem__(
+                        "entries_status", "published_action_family_schema_pairs"
+                    ),
+                ),
+                "entries must remain empty",
+            ),
+            (
+                "empty registry claims published",
+                lambda document: document["operator_delegation"]["issuance_paths"][
+                    "human"
+                ]["bindings"]["mutation_identity_selector"]["mapping"].__setitem__(
+                    "entries_status", "published_action_family_schema_pairs"
+                ),
+                "entries_status must be",
+            ),
+            (
+                "issuance route is current",
+                lambda document: route_for(
+                    document,
+                    "account-service",
+                    "IssueHumanOperatorAuthorizationReference",
+                ).__setitem__("route_status", "current_openapi_operator_surface"),
+                "route_status must remain",
+            ),
+        )
+        for mutation_name, mutate, expected_error in mutations:
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                mutate(document)
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(expected_error in error for error in errors),
+                    (mutation_name, errors),
+                )
+
+    def test_operator_issuance_selector_mapping_rejects_nonempty_entries_without_status_noise(
+        self,
+    ):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        mapping = document["operator_delegation"]["issuance_paths"]["human"][
+            "bindings"
+        ]["mutation_identity_selector"]["mapping"]
+        mapping["entries"].append(
+            {
+                "action_family": "fixture-family",
+                "action_family_schema_id": "fixture-schema",
+                "action_family_schema_version": "v1",
+                "identity_alternative": "non_moderation",
+            }
+        )
+        errors = validate_document(self.validator, document)
+        self.assertEqual(
+            1,
+            sum("entries must remain empty" in error for error in errors),
+        )
+        self.assertFalse(
+            any("entries_status must be" in error for error in errors),
+            errors,
+        )
+
+    def test_operator_issuance_selector_mapping_rejects_ambiguous_or_mismatched_declarations(
+        self,
+    ):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        valid_entry = {
+            "action_family": "fixture-family",
+            "action_family_schema_id": "fixture-schema",
+            "action_family_schema_version": "v1",
+            "identity_alternative": "non_moderation",
+        }
+        mutations = (
+            (
+                "same tuple selects two alternatives",
+                lambda mapping: (
+                    mapping["entries"].extend(
+                        [
+                            valid_entry,
+                            {
+                                **valid_entry,
+                                "identity_alternative": "moderation_policy_intent",
+                            },
+                        ]
+                    ),
+                    mapping.__setitem__(
+                        "entries_status", "published_action_family_schema_pairs"
+                    ),
+                ),
+                "duplicates selector key",
+            ),
+            (
+                "selector key declaration is mismatched",
+                lambda mapping: mapping.__setitem__(
+                    "key_fields",
+                    [
+                        "action_family_schema_id",
+                        "action_family",
+                        "action_family_schema_version",
+                    ],
+                ),
+                "key_fields must equal",
+            ),
+        )
+        for mutation_name, mutate, expected_error in mutations:
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                mapping = document["operator_delegation"]["issuance_paths"]["human"][
+                    "bindings"
+                ]["mutation_identity_selector"]["mapping"]
+                mutate(mapping)
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(expected_error in error for error in errors),
+                    (mutation_name, errors),
+                )
+
     def test_operator_reference_issuance_missing_required_fields_has_one_diagnostic(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = route_for(
@@ -2122,8 +3646,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 "account-service IssueHumanOperatorAuthorizationReference "
                 "required_fields must include operator-reference fields: "
                 "['action_family', 'action_family_schema_id', "
-                "'action_family_schema_version', 'control_plane_request_id', "
-                "'mutation_digest', 'tenant_scope']"
+                "'action_family_schema_version']"
             ),
         )
         self.assertFalse(
@@ -2133,6 +3656,49 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 for error in errors
             )
         )
+
+    def test_human_operator_issuance_rejects_missing_forwarded_token_freshness_in_every_effective_branch(
+        self,
+    ):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        effective_branches = (
+            ("non_moderation", 0),
+            ("non_moderation", 1),
+            ("tenant_restriction", 0),
+            ("tenant_restriction", 1),
+            ("platform_access_ban", None),
+        )
+        for branch_name, nested_index in effective_branches:
+            for freshness_check in (
+                "current_account_generation",
+                "current_token_generation",
+            ):
+                with self.subTest(
+                    branch=branch_name,
+                    nested_index=nested_index,
+                    check=freshness_check,
+                ):
+                    document = copy.deepcopy(baseline)
+                    route = route_for(
+                        document,
+                        "account-service",
+                        "IssueHumanOperatorAuthorizationReference",
+                    )
+                    branch = route["conditional_branches"][branch_name]
+                    if nested_index is None:
+                        branch["required_live_checks"].remove(freshness_check)
+                    else:
+                        branch["operator_authorization_branches"][nested_index][
+                            "required_live_checks"
+                        ].remove(freshness_check)
+                    errors = validate_document(self.validator, document)
+                    self.assertTrue(
+                        any(
+                            "required_live_checks must equal" in error
+                            for error in errors
+                        ),
+                        (branch_name, nested_index, freshness_check, errors),
+                    )
 
     def test_unavailable_authority_uses_one_canonical_error(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))

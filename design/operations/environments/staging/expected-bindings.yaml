@@ -9,6 +9,7 @@ internalBindings:
     cache:
       endpoint: redis-cache.firemud.svc.cluster.local:6379
   jwt:
+    custodyMode: LEGACY_SECRET_DIAGNOSTIC
     signingKeysRef: secret://firemud/jwt-signing-keys
     jwksRef: secret://firemud/jwt-jwks
   certificates:
@@ -19,14 +20,17 @@ internalBindings:
   registry:
     imagePullSecretRef: secret://firemud/ghcr-pull-staging
 backupStorage:
+  enabled: true
   bucket: firemud-staging-backups
   endpoint: https://minio.staging.internal
   bindingRef: secret://firemud/staging-backup-object-store
 assetStorage:
+  enabled: true
   bucket: firemud-staging-assets
   endpoint: https://minio.staging.internal
   bindingRef: secret://firemud/staging-asset-object-store
 outboundComms:
+  enabled: true
   smtpHost: smtp.staging.internal
   webhookTargets:
     accountNotifications: staging-only
