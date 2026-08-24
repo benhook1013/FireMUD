@@ -380,6 +380,10 @@ OPERATOR_AUTHORIZATION_BRANCHES = {
         "target_tenant_generation",
     },
 }
+HUMAN_OPERATOR_ISSUANCE_AUTHORIZATION_BRANCHES = {
+    branch: checks | {"current_account_generation", "current_token_generation"}
+    for branch, checks in OPERATOR_AUTHORIZATION_BRANCHES.items()
+}
 ACCOUNT_AUTHORIZATION_BRANCHES = {
     "self_service": {
         "target_subject_binding": "exact_caller_account_id",
@@ -612,6 +616,8 @@ HUMAN_OPERATOR_ISSUANCE_BRANCHES = {
         "global_platform_admin_membership_required": False,
         "tenant_billing_authority_generation_applies": False,
         "required_live_checks": {
+            "current_account_generation",
+            "current_token_generation",
             "issuer_generation",
             "account_generation",
             "current_operator_roles",
@@ -2334,6 +2340,7 @@ def operator_authorization_branch_checks(
     label: str,
     errors: list[str],
     live_checks_cache: LiveChecksCache | None = None,
+    expected_branches: dict[str, set[str]] | None = None,
 ) -> dict[str, list[set[str]]]:
     raw_branches = route.get("operator_authorization_branches")
     if not isinstance(raw_branches, list):
@@ -2352,10 +2359,11 @@ def operator_authorization_branch_checks(
         if not isinstance(branch, str) or not branch.strip():
             errors.append(f"{branch_label}.branch must be a non-empty string")
             continue
-        if branch not in OPERATOR_AUTHORIZATION_BRANCHES:
+        expected_branch_checks = expected_branches or OPERATOR_AUTHORIZATION_BRANCHES
+        if branch not in expected_branch_checks:
             errors.append(
                 f"{branch_label}.branch must be one of "
-                f"{sorted(OPERATOR_AUTHORIZATION_BRANCHES)}"
+                f"{sorted(expected_branch_checks)}"
             )
         if branch in branches:
             errors.append(f"{branch_label} duplicates operator branch {branch!r}")
@@ -2367,7 +2375,7 @@ def operator_authorization_branch_checks(
             live_checks_cache,
             "required_live_checks",
         )
-        expected_checks = OPERATOR_AUTHORIZATION_BRANCHES.get(branch)
+        expected_checks = expected_branch_checks.get(branch)
         if expected_checks is not None and checks != expected_checks:
             errors.append(
                 f"{branch_label}.required_live_checks must equal "
@@ -2375,11 +2383,11 @@ def operator_authorization_branch_checks(
             )
         branches.setdefault(branch, []).append(checks)
 
-    expected_branches = set(OPERATOR_AUTHORIZATION_BRANCHES)
-    if set(branches) != expected_branches:
+    expected_branch_names = set(expected_branches or OPERATOR_AUTHORIZATION_BRANCHES)
+    if set(branches) != expected_branch_names:
         errors.append(
             f"{label} operator_authorization_branches must contain exactly "
-            f"{sorted(expected_branches)}"
+            f"{sorted(expected_branch_names)}"
         )
     return branches
 
@@ -3570,6 +3578,7 @@ def validate_human_operator_issuance_selector_mapping_and_branches(
                 tenant_branch,
                 f"{label} conditional_branches.{tenant_branch_name}",
                 errors,
+                expected_branches=HUMAN_OPERATOR_ISSUANCE_AUTHORIZATION_BRANCHES,
             )
 
     platform_branch = branches.get("platform_access_ban")

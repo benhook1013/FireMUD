@@ -92,6 +92,8 @@ A companion Vault container in the same trust and recovery domain provides littl
 
 ## Implementation and Proof Obligations
 
+Select validation and runtime evidence according to [Validation and Runtime Proof](../../developer-workflows/validation-and-runtime-proof.md); Secret mounts, workload identity/RBAC, rotation, and convergence changes require the applicable contract and render checks plus canonical fresh-image rebuild-and-boot and focused smoke proof. Record execution results in PR/CI evidence or implementation-tracking documents, not in this ADR.
+
 - Remove Account JWT private material from every non-Account workload and prove validators consume only public JWKS.
 - Replace shared gRPC leaf material with cert-manager-issued per-workload certificates and prove exact workload identity plus method caller allowlists.
 - Prove secret-expiry handling stops new work, drains or terminates existing connections within the class-specific deadline, replaces every in-process consumer, and cannot regain readiness while any affected process still uses invalid material.

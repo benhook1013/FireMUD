@@ -983,6 +983,11 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 "target_tenant_generation",
             },
         }
+        human_expected = {
+            branch: checks
+            | {"current_account_generation", "current_token_generation"}
+            for branch, checks in expected.items()
+        }
         for service, route_name in sorted(self.validator.CONDITIONAL_OPERATOR_ROUTES):
             with self.subTest(service=service, route=route_name):
                 document = copy.deepcopy(baseline)
@@ -1020,7 +1025,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                         branch["branch"]: set(branch["required_live_checks"])
                         for branch in tenant_branch["operator_authorization_branches"]
                     }
-                    self.assertEqual(expected, branches)
+                    self.assertEqual(human_expected, branches)
 
             tenant_branch = route["conditional_branches"]["tenant_restriction"]
             platform_admin_branch = next(
@@ -2851,6 +2856,8 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
         self.assertEqual(
             [
+                "current_account_generation",
+                "current_token_generation",
                 "issuer_generation",
                 "account_generation",
                 "current_operator_roles",
@@ -3545,6 +3552,49 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 for error in errors
             )
         )
+
+    def test_human_operator_issuance_rejects_missing_forwarded_token_freshness_in_every_effective_branch(
+        self,
+    ):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        effective_branches = (
+            ("non_moderation", 0),
+            ("non_moderation", 1),
+            ("tenant_restriction", 0),
+            ("tenant_restriction", 1),
+            ("platform_access_ban", None),
+        )
+        for branch_name, nested_index in effective_branches:
+            for freshness_check in (
+                "current_account_generation",
+                "current_token_generation",
+            ):
+                with self.subTest(
+                    branch=branch_name,
+                    nested_index=nested_index,
+                    check=freshness_check,
+                ):
+                    document = copy.deepcopy(baseline)
+                    route = route_for(
+                        document,
+                        "account-service",
+                        "IssueHumanOperatorAuthorizationReference",
+                    )
+                    branch = route["conditional_branches"][branch_name]
+                    if nested_index is None:
+                        branch["required_live_checks"].remove(freshness_check)
+                    else:
+                        branch["operator_authorization_branches"][nested_index][
+                            "required_live_checks"
+                        ].remove(freshness_check)
+                    errors = validate_document(self.validator, document)
+                    self.assertTrue(
+                        any(
+                            "required_live_checks must equal" in error
+                            for error in errors
+                        ),
+                        (branch_name, nested_index, freshness_check, errors),
+                    )
 
     def test_unavailable_authority_uses_one_canonical_error(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))

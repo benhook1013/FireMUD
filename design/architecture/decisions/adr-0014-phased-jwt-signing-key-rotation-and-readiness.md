@@ -206,6 +206,8 @@ Use a separate key ring for each tenant to reduce tenant blast radius. This mult
 
 ## Implementation and Proof Obligations
 
+Select validation and runtime evidence according to [Validation and Runtime Proof](../../developer-workflows/validation-and-runtime-proof.md); custody and mounted Secret/ConfigMap changes require the applicable contract and render checks, while authentication, rotation, validator convergence, readiness, or startup changes require the canonical fresh-image rebuild-and-boot and focused smoke proof. Record execution results in PR/CI evidence or implementation-tracking documents, not in this ADR.
+
 - Replace shared-HMAC player-facing issuance and validation with Account-authorized asymmetric signing through the delegated non-exportable signer and downstream JWKS validation. Use the materialization-controller-written, Account-consumed Secret only as the controlled interim fallback until signer delegation is implemented.
 - Remove Account private signing material from every validating workload and prevent local private player-delegation-token minting outside Account.
 - Define a reusable versioned signing/JWKS bundle and phased rotation state machine with an authoritative durable CAS signer-promotion commit record, restart reconciliation, and issuance quarantine until signer and published generations agree.
