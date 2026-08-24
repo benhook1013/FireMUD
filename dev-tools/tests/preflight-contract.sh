@@ -464,6 +464,16 @@ secret_result = jwks_result(secret_documents)
 if secret_result.status != "pass":
     raise SystemExit(f"legacy Secret jwt-jwks did not satisfy the current contract: {secret_result.message}")
 
+namespace_less_documents = copy.deepcopy(legacy_documents)
+for document in namespace_less_documents:
+    document.get("metadata", {}).pop("namespace", None)
+namespace_less_result = jwks_result(namespace_less_documents)
+if namespace_less_result.status != "pass":
+    raise SystemExit(
+        "namespace-less jwt-jwks wiring did not inherit the configured namespace: "
+        f"{namespace_less_result.message}"
+    )
+
 wrong_namespace_documents = copy.deepcopy(legacy_documents)
 wrong_namespace_secret = next(
     document

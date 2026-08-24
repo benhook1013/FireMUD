@@ -24,7 +24,7 @@ Before applying the detailed checklists below, follow this high‑level workflow
      - Ensure any new or changed prefixes appear in the **Redis Cheat Sheet** (`system-architecture-redis-cheatsheet.md`) as a routed, documented example.
      - Ensure the owning service README Redis sections mirror any authority split or bridge contract introduced here (for example `session:game:*` vs `tick:{tenantRegionTag}:session-binding:<entityId>`, `binding_generation`, or automation enqueue identities such as `automationDispatchId`).
    - For **cache/rate‑limit prefixes**:
-     - Update the [Cache/Rate-Limit Key Catalog](./system-architecture-redis-cache-reference.md#cache-rate-limit-key-catalog) (prefix, role, owner, correctness class, reset tolerance); use `system-architecture-redis-cache.md` for cache policy.
+     - Update the [Cache/Rate-Limit Key Catalog](./system-architecture-redis-cache-reference.md#cacherate-limit-key-catalog) (prefix, role, owner, correctness class, reset tolerance); use `system-architecture-redis-cache.md` for cache policy.
      - Ensure the cheat sheet remains consistent with the cache reference catalog for any representative entries it lists.
 3. **Update service‑specific docs and shared libraries**
    - Document prefix ownership, reset behavior, and Redis role (Coordination vs Cache/Rate‑Limit) in the relevant service README(s) under their Redis sections (for example, Game Session, Automation & Scripting, Game Logic, Gateway).

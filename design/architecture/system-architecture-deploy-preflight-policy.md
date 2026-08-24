@@ -402,11 +402,14 @@ CI and manual operator runs must produce the same report shape so audit tooling 
   - `design/operations/deployments/<environment>/preflight/<deployment-ref>/<deploymentEventId>.json`
 - Break-glass waivers are stored beside the report artifact as:
   - `design/operations/deployments/<environment>/preflight/<deployment-ref>/<deploymentEventId>.waiver.json`
+- Rejected pre-event waiver-input audit artifacts are stored separately under:
+  - `design/operations/deployments/<environment>/preflight/waiver-input-rejections/<attemptId>.json`
+- Each `<attemptId>` is a fresh canonical UUID for one rejected attempt. These artifacts are non-authorizing and are separate from deployment-event reports and waivers; they do not have or substitute for a `deploymentEventId`.
 - `deployment-ref` is:
   - `<overlayCommitSha>` for overlay-driven staging/production deployments, or
   - a normalized manifest/chart reference token for hobby/self-hosted deployments.
 - Naming rule: `<deployment-ref>` and similar artifact tokens must use lowercase ASCII plus digits and `-`. `deploymentEventId` uses canonical UUID text and changes for every retry or re-apply so immutable event evidence is never overwritten.
-- Retention requirement: keep preflight reports and waivers for at least as long as release/rollback audit history is retained.
+- Retention requirement: keep preflight reports, waivers, and rejected waiver-input audit artifacts for at least as long as release/rollback audit history is retained.
 - Waiver records must include: authorized approver identity, incident/change ticket, rationale, exact policy IDs and phase, target environment, deployment event identity, issue timestamp, and event-bounded expiration.
 - Current implementation status: `preflight.py` rejects `FIREMUD_PREFLIGHT_WAIVER` before generating a deployment event or report, and rejects consumed reports containing `waiverPath`, until a trusted authority can issue and atomically consume each waiver exactly once. Event-ID equality alone is not replay protection. Pre-event waiver rejection is the narrow exception to the event-bound failure-report rule because no `deploymentEventId` exists yet. The target caller records a separate non-authorizing machine-readable `waiver-input-rejected` audit artifact containing a fresh attempt ID, timestamp, target environment and deployment reference when parseable, waiver artifact identity and digest without its sensitive contents, authenticated actor or workload identity when available, and a stable rejection reason. Failure to create that audit record remains fail-closed and grants no deployment authority. The current executable does not yet emit this separate artifact, so waiver input remains unavailable rather than falling back to unaudited or authorizing behavior.
 

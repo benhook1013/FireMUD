@@ -28,4 +28,6 @@ Required fields:
 - `secretComplianceEvidenceRef`
 - `smokeEvidence`
 
+The canonical projection from environment `provisioningState` and bootstrap operation/evidence state into `secretComplianceStatus` and `secretComplianceEvidenceRef` is owned by [Environment Variables & Secrets Overview](../../../../architecture/infrastructure/environment-and-secrets-overview.md#secret-compliance-controls). This directory records the deployment-local snapshot and consequence; it does not redefine compliance precedence.
+
 Production promotion attestation validation depends on these records.

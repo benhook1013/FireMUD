@@ -294,6 +294,53 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertFalse(platform["membership_authority_generation_applies"])
         self.assertNotIn("target_tenant_generation", platform["required_live_checks"])
 
+    def test_moderation_action_routes_require_exact_branch_cardinality(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        document["routes"] = [
+            route
+            for route in document["routes"]
+            if not (
+                route.get("service") == "logging-admin-service"
+                and route.get("route") == "POST /moderation/actions"
+                and route.get("applicability", {}).get("action_category")
+                == "platform_access_ban"
+            )
+        ]
+
+        errors = validate_document(self.validator, document)
+
+        self.assertIn(
+            "logging-admin-service POST /moderation/actions must declare exactly "
+            "one tenant-restriction and one platform-access-ban action branch",
+            errors,
+        )
+
+    def test_moderation_action_routes_reject_duplicate_branch_with_distinct_variant(
+        self,
+    ):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        tenant_route = next(
+            route
+            for route in document["routes"]
+            if route.get("service") == "logging-admin-service"
+            and route.get("route") == "POST /moderation/actions"
+            and route.get("applicability", {}).get("action_category")
+            == "tenant_restriction"
+        )
+        duplicate = copy.deepcopy(tenant_route)
+        duplicate["applicability"]["client_variant"] = "secondary"
+        document["routes"].append(duplicate)
+
+        errors = validate_document(self.validator, document)
+
+        self.assertTrue(
+            any(
+                "duplicates moderation action branch 'tenant_restriction'" in error
+                for error in errors
+            ),
+            errors,
+        )
+
     def test_moderation_routes_bind_policy_intent_identity_and_distinct_owner_identity(
         self,
     ):
@@ -1177,9 +1224,10 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     if route.get("service") == service
                     and route.get("route") == route_name
                 ]
-                self.assertTrue(
-                    variants,
-                    f"{service} {route_name} must define at least one moderation-action variant",
+                self.assertEqual(
+                    2,
+                    len(variants),
+                    f"{service} {route_name} must define both moderation-action variants",
                 )
             else:
                 variants = [route_for(document, service, route_name)]

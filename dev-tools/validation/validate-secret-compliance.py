@@ -4,14 +4,18 @@
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
-import json
 import os
 import pathlib
 import re
 import sys
 
 import yaml
+
+DEV_TOOLS_DIR = pathlib.Path(__file__).resolve().parents[1]
+if str(DEV_TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(DEV_TOOLS_DIR))
+
+from evidence_digest import canonical_evidence_digest
 
 REQUIRED = {
     "jwt-signing-keys-jwks",
@@ -54,37 +58,6 @@ def parse_timestamp(value: str) -> dt.datetime:
     if parsed.tzinfo is None:
         raise ValueError("timestamp must include an explicit timezone")
     return parsed
-
-
-def canonical_evidence_digest(record: dict) -> str:
-    """Hash the selected record using the documented RFC 8785 subset."""
-    payload = {key: value for key, value in record.items() if key != "immutableArtifactId"}
-
-    def encode(value: object) -> str:
-        if value is None:
-            return "null"
-        if isinstance(value, bool):
-            return "true" if value else "false"
-        if isinstance(value, str):
-            value.encode("utf-8")
-            return json.dumps(value, ensure_ascii=False)
-        if isinstance(value, int):
-            if abs(value) > 9_007_199_254_740_991:
-                raise TypeError("integers outside the RFC 8785 interoperable range are not allowed")
-            return str(value)
-        if isinstance(value, float):
-            raise TypeError("floating-point numbers are not allowed in evidence records")
-        if isinstance(value, dict):
-            if not all(isinstance(key, str) for key in value):
-                raise TypeError("evidence object keys must be strings")
-            keys = sorted(value, key=lambda key: key.encode("utf-16-be"))
-            return "{" + ",".join(f"{encode(key)}:{encode(value[key])}" for key in keys) + "}"
-        if isinstance(value, list):
-            return "[" + ",".join(encode(nested) for nested in value) + "]"
-        raise TypeError(f"unsupported evidence value type: {type(value).__name__}")
-
-    encoded = encode(payload).encode("utf-8")
-    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
 def main() -> int:
@@ -195,12 +168,15 @@ def main() -> int:
             )
             expected_bindings = {}
             expected_bindings_valid = False
-        if not isinstance(expected_bindings, dict) or expected_bindings.get("environment") != env:
+        if expected_bindings_valid and (
+            not isinstance(expected_bindings, dict)
+            or expected_bindings.get("environment") != env
+        ):
             record_schema_issue(
                 f"{env}: canonical expected-bindings manifest must target '{env}'"
             )
             expected_bindings_valid = False
-        else:
+        elif expected_bindings_valid:
             backup_storage = expected_bindings.get("backupStorage")
             if not isinstance(backup_storage, dict) or not isinstance(
                 backup_storage.get("enabled"), bool

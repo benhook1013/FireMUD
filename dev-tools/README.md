@@ -14,6 +14,7 @@ Keep the root of `dev-tools/` small. Only canonical human-facing entrypoints and
 - `verify-compose-health.sh` – shared health gate used by the smoke entrypoints.
 - `validation/run-locked-gradle.sh` – canonical local verification wrapper that prevents overlapping service-level Gradle runs from writing the same test-result trees at once.
 - `validation/inspect-test-results.sh` – read-only JUnit XML summary helper for diagnosing quiet post-suite Gradle tails without guessing at process state.
+- `evidence_digest.py` – shared canonical RFC 8785-subset evidence digest helper imported by deployment and validation gates.
 - `wait-for-it.sh` – shared Docker image/runtime helper.
 
 ## Folder map

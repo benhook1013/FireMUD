@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
 import itertools
 import json
 import os
@@ -16,6 +15,12 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 import yaml
+
+DEV_TOOLS_DIR = Path(__file__).resolve().parents[1]
+if str(DEV_TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(DEV_TOOLS_DIR))
+
+from evidence_digest import canonical_evidence_digest
 
 USAGE = """Usage: preflight.py <staging|production|hobby-self-hosted>
 
@@ -392,37 +397,6 @@ def parse_timestamp(value: Any, field_name: str) -> dt.datetime:
     if parsed.tzinfo is None:
         raise ValueError(f"{field_name} must include a timezone")
     return parsed.astimezone(dt.timezone.utc)
-
-
-def canonical_evidence_digest(record: dict[str, Any]) -> str:
-    """Hash a selected evidence record with the documented RFC 8785 subset."""
-    payload = {key: value for key, value in record.items() if key != "immutableArtifactId"}
-
-    def encode(value: Any) -> str:
-        if value is None:
-            return "null"
-        if isinstance(value, bool):
-            return "true" if value else "false"
-        if isinstance(value, str):
-            value.encode("utf-8")
-            return json.dumps(value, ensure_ascii=False)
-        if isinstance(value, int):
-            if abs(value) > 9_007_199_254_740_991:
-                raise TypeError("integers outside the RFC 8785 interoperable range are not allowed")
-            return str(value)
-        if isinstance(value, float):
-            raise TypeError("floating-point numbers are not allowed in evidence records")
-        if isinstance(value, dict):
-            if not all(isinstance(key, str) for key in value):
-                raise TypeError("evidence object keys must be strings")
-            keys = sorted(value, key=lambda key: key.encode("utf-16-be"))
-            return "{" + ",".join(f"{encode(key)}:{encode(value[key])}" for key in keys) + "}"
-        if isinstance(value, list):
-            return "[" + ",".join(encode(nested) for nested in value) + "]"
-        raise TypeError(f"unsupported evidence value type: {type(value).__name__}")
-
-    encoded = encode(payload).encode("utf-8")
-    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
 def secret_lookup_failure(secret_name: str) -> str | None:
@@ -1872,17 +1846,32 @@ def metadata_namespace(document: dict[str, Any]) -> str | None:
     return namespace if isinstance(namespace, str) and namespace else None
 
 
-def rendered_namespace_matches(document: dict[str, Any], namespace: str | None) -> bool:
-    return namespace is None or metadata_namespace(document) == namespace
+def rendered_namespace_matches(
+    document: dict[str, Any],
+    namespace: str | None,
+    *,
+    default_namespace: str | None = None,
+) -> bool:
+    rendered_namespace = metadata_namespace(document) or default_namespace
+    return namespace is None or rendered_namespace == namespace
 
 
 def rendered_has_resource(
-    documents: list[dict[str, Any]], kind: str, name: str, namespace: str | None = None
+    documents: list[dict[str, Any]],
+    kind: str,
+    name: str,
+    namespace: str | None = None,
+    *,
+    default_namespace: str | None = None,
 ) -> bool:
     return any(
         document.get("kind") == kind
         and metadata_name(document) == name
-        and rendered_namespace_matches(document, namespace)
+        and rendered_namespace_matches(
+            document,
+            namespace,
+            default_namespace=default_namespace,
+        )
         for document in documents
     )
 
@@ -2030,10 +2019,18 @@ def has_secret_mount(
 
 
 def has_secret_reference(
-    documents: list[dict[str, Any]], name: str, namespace: str | None = None
+    documents: list[dict[str, Any]],
+    name: str,
+    namespace: str | None = None,
+    *,
+    default_namespace: str | None = None,
 ) -> bool:
     for document in documents:
-        if not rendered_namespace_matches(document, namespace):
+        if not rendered_namespace_matches(
+            document,
+            namespace,
+            default_namespace=default_namespace,
+        ):
             continue
         for _, container, volumes in primary_containers(document):
             for mounted_secret in volumes.values():
@@ -2741,7 +2738,13 @@ def jwt_jwks_checks(
             )
         )
 
-    if rendered_has_resource(documents, "ConfigMap", "jwt-jwks", jwks_namespace):
+    if rendered_has_resource(
+        documents,
+        "ConfigMap",
+        "jwt-jwks",
+        jwks_namespace,
+        default_namespace=jwks_namespace,
+    ):
         results.append(
             CheckResult(
                 "PREFLIGHT-JWKS-001",
@@ -2753,7 +2756,11 @@ def jwt_jwks_checks(
     elif any(
         document.get("kind") == "Secret"
         and metadata_name(document) == "jwt-jwks"
-        and not rendered_namespace_matches(document, jwks_namespace)
+        and not rendered_namespace_matches(
+            document,
+            jwks_namespace,
+            default_namespace=jwks_namespace,
+        )
         for document in documents
     ):
         results.append(
@@ -2765,8 +2772,17 @@ def jwt_jwks_checks(
             )
         )
     elif not rendered_has_resource(
-        documents, "Secret", "jwt-jwks", jwks_namespace
-    ) and not has_secret_reference(documents, "jwt-jwks", jwks_namespace):
+        documents,
+        "Secret",
+        "jwt-jwks",
+        jwks_namespace,
+        default_namespace=jwks_namespace,
+    ) and not has_secret_reference(
+        documents,
+        "jwt-jwks",
+        jwks_namespace,
+        default_namespace=jwks_namespace,
+    ):
         results.append(
             CheckResult(
                 "PREFLIGHT-JWKS-001",
@@ -3598,6 +3614,13 @@ def main() -> int:
         get(expected_bindings, "internalBindings.jwt.jwksRef")
     )
     if jwks_namespace is None:
+        has_required_failure = append_result(
+            check_results,
+            "PREFLIGHT-JWT-001",
+            False,
+            "fail",
+            "Cannot evaluate the JWT signing contract without a resolvable jwt-jwks namespace",
+        ) or has_required_failure
         has_required_failure = append_result(
             check_results,
             "PREFLIGHT-JWKS-001",

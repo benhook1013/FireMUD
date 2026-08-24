@@ -6,23 +6,7 @@ For the full catalog of environment variables (including defaults and environmen
 
 The front owner contracts for this overview are [event-scoped Tier A credential compliance](../decisions/adr-0151-event-scoped-automated-tier-a-credential-compliance.md) and [phased environment-bound preflight and expected bindings](../decisions/adr-0152-phased-environment-bound-deployment-preflight-and-expected-bindings.md). This document owns environment-specific resource, binding, and compliance consequences; the linked decisions own the cross-cutting gates.
 
-## Table of Contents
-
-- [Operator Quick Reference](#operator-quick-reference)
-- [Local Development vs Kubernetes Environments](#local-development-vs-kubernetes-environments)
-- [Secret Governance Tiers](#secret-governance-tiers)
-- [Configuration vs Secrets](#configuration-vs-secrets)
-- [Certificate Management and Watchers](#certificate-management-and-watchers)
-- [How to Use the Catalog](#how-to-use-the-catalog)
-- [Related Documentation](#related-documentation)
-
----
-
-## Operator Quick Reference
-
-This section summarizes the **most important environment variables and delivery/readiness behaviors** for on‑call operators. Refer to the catalog document for the full list of variables and detailed defaults.
-
-### Implementation Notes
+## Implementation Status
 
 This document describes the canonical environment and secret target state. The first implementation pass now documents or partially implements the highest-risk deployment-critical pieces:
 
@@ -39,6 +23,25 @@ The current hosted `pr-preview` path uses the renderer and Helm resource contrac
 The expected-binding selector is separate from the hosted preview resource shape. Player-facing manifests select exactly one of `LEGACY_SECRET_DIAGNOSTIC`, `INTERIM_ACCOUNT_ONLY_MOUNTED_FALLBACK`, or `TARGET_NON_EXPORTABLE_SIGNER`. The current `preflight.py` constant `IMPLEMENTED_JWT_CUSTODY_MODE` is `LEGACY_SECRET_DIAGNOSTIC`; its required `FIREMUD_AUTH_JWT_SECRET_PATH` and shared-HMAC Secret checks are diagnostic only and never satisfy player-facing readiness. The interim mode requires Account-only private-bundle proof plus public-JWKS consumption by Account and every validator, while target mode requires the private path to be absent and no application private material. Only the separately authenticated interim or target custody proof can authorize player-facing traffic; neither current legacy checks nor the preview ConfigMap/mount check claims that authority.
 
 Remaining deployment work includes enforcing the target JWT resource/readiness boundary and producing deeper live evidence: the traffic-open backup gates validate the first evidence shape, but real environment evidence files still need to be produced by operators or automation before first live traffic; expected-binding validation should also become stricter as richer Kubernetes live-state checks become available. Do not interpret those gaps as alternative supported behavior for staging, production, or hobby/self-hosted traffic.
+
+## Table of Contents
+
+- [Implementation Status](#implementation-status)
+- [Operator Quick Reference](#operator-quick-reference)
+- [Local Development vs Kubernetes Environments](#local-development-vs-kubernetes-environments)
+- [Secret Governance Tiers](#secret-governance-tiers)
+- [Configuration vs Secrets](#configuration-vs-secrets)
+- [Certificate Management and Watchers](#certificate-management-and-watchers)
+- [How to Use the Catalog](#how-to-use-the-catalog)
+- [Related Documentation](#related-documentation)
+
+---
+
+## Operator Quick Reference
+
+This section summarizes the **most important environment variables and delivery/readiness behaviors** for on‑call operators. Refer to the catalog document for the full list of variables and detailed defaults.
+
+Current implementation drift and the checked-in JWT/JWKS resource modes are recorded in [Implementation Status](#implementation-status); the configuration tables below remain operator guidance.
 
 ### Core Profiles
 
@@ -183,6 +186,8 @@ Tier A controls must be measurable, not policy-only. Each player-facing environm
 - `provisioned` means the environment has completed one exact bootstrap generation. Its record must contain `bootstrapOperationStatus=completed`, a stable non-empty `bootstrapOperationId`, a positive `provisioningGeneration`, all required credential classes and immutable evidence, and exact operation/generation bindings throughout those records. CI enforces the configured credential-age limits.
 
 Bootstrap is one durable operation lifecycle, not a claim that inventory, bindings, resources, and evidence committed in one cross-system transaction. The operation records a stable `bootstrapOperationId` and positive monotonic `provisioningGeneration`, and binds inventory confirmation, expected credential bindings, namespace/resource creation, and bootstrap evidence to that tuple. An operation starts with `bootstrapOperationStatus=pending` and may become `blocked`, `failed`, or `completed`; the environment projection remains `noncompliant` for any unresolved operation or evidence condition. Once an operation starts or any required resource exists, the projection cannot return to `not-provisioned`; retries may resume or advance the same operation identity but cannot erase that history. Only `bootstrapOperationStatus=completed` with an exact generation present in every required binding and evidence record may project `provisioned`; a missing, malformed, conflicting, or stale generation remains `noncompliant`.
+
+Deployment records project that environment state rather than asserting an independent compliance result. `secretComplianceStatus=pass` is valid only when the environment record is `provisioned`, bootstrap-lineage records have `bootstrapOperationStatus=completed`, every required operation/generation binding and freshness check matches at `secretComplianceSnapshotAt`, and `secretComplianceEvidenceRef` resolves to the exact immutable evidence evaluated for that snapshot. A partial environment remains `provisioningState=noncompliant` with its stable `bootstrapOperationId`, positive `provisioningGeneration`, and actual `pending`, `blocked`, `failed`, or `completed` operation status; a completed operation with invalid evidence is still noncompliant. A detached, explicitly non-promotable staging deployment may project that state as `secretComplianceStatus=warning`; an applicable promotion, first-live, reopen, or recovery-readiness event must project `fail` and remain blocked. `not-provisioned` carries none of the operation/generation fields and cannot produce a passing deployment record or an evidence reference. Missing, malformed, stale, conflicting, or `noncompliant` environment state takes precedence over successful subchecks and can never be projected as `pass`; a warning or failing record may retain `secretComplianceEvidenceRef` only when it identifies the exact evidence actually evaluated, and the reference never upgrades the status by itself.
 
 A provisioned record contains:
 

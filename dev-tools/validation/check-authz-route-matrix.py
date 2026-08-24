@@ -617,10 +617,9 @@ MODERATION_SUPPORT_GATE_REDEMPTION_REQUIREMENT = (
     "contract_declared_receiving_boundary_redemption"
 )
 MODERATION_ACTION_SELECTOR_MAPPING = {
-    "gameplay_ban": "tenant_restriction",
-    "chat_mute": "tenant_restriction",
-    "chat_ban": "tenant_restriction",
-    "platform_access_ban": "platform_access_ban",
+    category: branch
+    for branch, categories in MODERATION_ACTION_BRANCHES.items()
+    for category in sorted(categories)
 }
 MODERATION_ACTION_SELECTOR_REJECTED_VALUES = {
     "account_security_lock",

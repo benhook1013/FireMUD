@@ -245,8 +245,8 @@ Canonical player-facing examples:
 - `account_security_lock` – `ERROR ACCOUNT_LOCKED Contact support to recover this account.`
 - `platform_access_ban` – `ERROR PLATFORM_ACCESS_BANNED Platform access is restricted. Follow the provided support or appeal guidance.`
 - `gameplay_ban` – `ERROR GAMEPLAY_BANNED You cannot enter this realm.`
-- `chat_mute` – `ERROR CHAT_MUTED You cannot send messages in this realm.` Ordinary receipt remains available.
-- `chat_ban` – `ERROR CHAT_BANNED You cannot participate in chat in this realm.` Essential moderation and system notices remain deliverable.
+- `chat_mute` – `ERROR CHAT_MUTE_SEND_DENIED You cannot send messages in this realm.` Ordinary receipt remains available.
+- `chat_ban` – `ERROR CHAT_BAN_PARTICIPATION_DENIED You cannot participate in chat in this realm.` Essential moderation and system notices remain deliverable.
 
 The target communication model differentiates speech mode from audience scope and recipient view so game profiles can define bounded, explicit gameplay communication. Exact class, relationship/value, history, and observer boundaries are recorded in active ADRs 0147–0150, mapped from the reviewed archive decision keys `MS-GR-COMMUNICATION-ORCHESTRATION`, `MS-SOCIAL-RELATIONSHIP-AUTHORITY`, `MS-SOCIAL-HISTORY-DURABILITY`, and `MS-SOCIAL-OBSERVER-SHOUT-POLICY`; the former room-local `SOCIAL-01` staging assumption is superseded provenance. Current availability is summarized in [Implementation Status](#implementation-status).
 
