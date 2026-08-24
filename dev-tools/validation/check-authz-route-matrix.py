@@ -3511,7 +3511,7 @@ def validate_logging_admin_idempotency(
         for route in routes_to_validate:
             validate_idempotency_contract(
                 route,
-                f"{service} {route_name}",
+                route_label(route),
                 errors,
                 required_fields_cache,
             )

@@ -1074,6 +1074,35 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors,
         )
 
+    def test_moderation_idempotency_diagnostics_include_applicability_variant(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        for action_category in ("tenant_restriction", "platform_access_ban"):
+            with self.subTest(action_category=action_category):
+                document = copy.deepcopy(baseline)
+                route = next(
+                    route
+                    for route in document["routes"]
+                    if route.get("service") == "logging-admin-service"
+                    and route.get("route") == "POST /moderation/actions"
+                    and route.get("applicability", {}).get("action_category")
+                    == action_category
+                )
+                route["required_fields"].remove("mutation_digest")
+                errors = []
+                self.validator.validate_logging_admin_idempotency(
+                    document["routes"], errors
+                )
+                label = self.validator.route_label(route)
+                self.assertIn(
+                    f"{label} must require mutation_digest for idempotency",
+                    errors,
+                )
+                self.assertNotIn(
+                    "logging-admin-service POST /moderation/actions must require "
+                    "mutation_digest for idempotency",
+                    errors,
+                )
+
     def test_privileged_operator_routes_require_live_global_role_and_assurance(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         document = copy.deepcopy(baseline)

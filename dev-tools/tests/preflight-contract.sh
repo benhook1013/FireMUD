@@ -9,7 +9,9 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 RENDERED_MANIFEST="$TMP_DIR/hobby-rendered.yaml"
+MIGRATED_RENDERED_MANIFEST="$TMP_DIR/hobby-rendered-configmap.yaml"
 REPORT_PATH="$TMP_DIR/preflight-report.json"
+MIGRATED_REPORT_PATH="$TMP_DIR/preflight-migrated-report.json"
 OPERATOR_REPORT_PATH="$TMP_DIR/operator-preflight-report.json"
 TRAFFIC_EVIDENCE="$TMP_DIR/traffic-open.json"
 PRODUCTION_REPORT="$TMP_DIR/preflight-production.json"
@@ -205,6 +207,53 @@ spec:
             secretName: jwt-jwks
 YAML
 
+python3 - <<'PY' "$RENDERED_MANIFEST" "$MIGRATED_RENDERED_MANIFEST"
+import pathlib
+import sys
+
+import yaml
+
+source = pathlib.Path(sys.argv[1])
+destination = pathlib.Path(sys.argv[2])
+documents = list(yaml.safe_load_all(source.read_text(encoding="utf-8")))
+found_jwks_resource = False
+found_account_wiring = False
+for document in documents:
+    metadata = document.get("metadata") or {}
+    if document.get("kind") == "Secret" and metadata.get("name") == "jwt-jwks":
+        document["kind"] = "ConfigMap"
+        document.pop("type", None)
+        document.pop("stringData", None)
+        document["data"] = {
+            "jwks.json": '{"keys":[{"kty":"RSA","kid":"contract-jwks"}]}'
+        }
+        found_jwks_resource = True
+    if document.get("kind") != "Deployment" or metadata.get("name") != "account-service":
+        continue
+    pod_spec = document["spec"]["template"]["spec"]
+    jwks_volume = next(
+        volume for volume in pod_spec.get("volumes", []) if volume.get("name") == "jwt-jwks"
+    )
+    jwks_volume.pop("secret", None)
+    jwks_volume["configMap"] = {"name": "jwt-jwks"}
+    account_container = next(
+        container
+        for container in pod_spec.get("containers", [])
+        if container.get("name") == "account-service"
+    )
+    jwks_mount = next(
+        mount for mount in account_container.get("volumeMounts", []) if mount.get("name") == "jwt-jwks"
+    )
+    if jwks_mount.get("mountPath") != "/var/run/secrets/firemud/jwks":
+        raise SystemExit("migrated ConfigMap fixture has an unexpected Account JWKS mount path")
+    found_account_wiring = True
+
+if not found_jwks_resource or not found_account_wiring:
+    raise SystemExit("migrated ConfigMap fixture did not contain the expected JWKS resource and Account wiring")
+
+destination.write_text(yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8")
+PY
+
 python3 - <<'PY' "$RENDERED_MANIFEST" "$SCRIPT"
 import copy
 import importlib.util
@@ -335,6 +384,7 @@ if secret_result.status != "fail" or "ConfigMap" not in secret_result.message:
     raise SystemExit(f"Secret jwt-jwks incorrectly satisfied the public-resource contract: {secret_result.message}")
 PY
 
+# Legacy Secret-backed hobby fixture: the migration gap must remain explicit.
 set +e
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_DEPLOYMENT_REF=contract-hobby \
@@ -348,13 +398,20 @@ if [ "$preflight_status" -ne 1 ]; then
   exit 1
 fi
 
-python3 - <<'PY' "$REPORT_PATH"
+python3 - <<'PY' "$ROOT_DIR" "$REPORT_PATH"
+import importlib.util
 import json
 import pathlib
 import sys
 import uuid
 
-report = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+root = pathlib.Path(sys.argv[1])
+report = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+spec = importlib.util.spec_from_file_location("preflight_report_contract", root / "dev-tools/deploy/preflight.py")
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
 expected_ids = {
     "PREFLIGHT-DIGEST-001",
     "PREFLIGHT-DIGEST-002",
@@ -380,6 +437,8 @@ if actual_ids != expected_ids or len(report["checkResults"]) != len(expected_ids
     raise SystemExit("preflight report did not emit exactly the complete expected policy set")
 if report.get("expectedBindingsRef") != "design/operations/environments/hobby-self-hosted/expected-bindings.yaml":
     raise SystemExit("preflight report missing expectedBindingsRef")
+if report.get("policyCatalogVersion") != module.PREFLIGHT_POLICY_CATALOG_VERSION:
+    raise SystemExit("preflight report missing or mismatched policyCatalogVersion")
 try:
     uuid.UUID(report["deploymentEventId"])
 except (KeyError, ValueError) as exc:
@@ -388,6 +447,11 @@ if report.get("trafficOpenEvent") is not None:
     raise SystemExit("general preflight report unexpectedly recorded a traffic-open event")
 if any(not isinstance(check.get("required"), bool) for check in report["checkResults"]):
     raise SystemExit("preflight report did not emit required applicability for every policy")
+if any(
+    check.get("category") != module.PREFLIGHT_POLICY_CATALOG.get(check.get("policyId"))
+    for check in report["checkResults"]
+):
+    raise SystemExit("preflight report did not emit the catalogue category for every policy")
 failures = [
     check
     for check in report["checkResults"]
@@ -403,6 +467,42 @@ legacy_jwks = [
 ]
 if len(legacy_jwks) != 1 or legacy_jwks[0]["status"] != "fail" or "ConfigMap" not in legacy_jwks[0]["message"]:
     raise SystemExit(f"legacy Secret jwt-jwks fixture did not fail the canonical public-resource check: {legacy_jwks}")
+PY
+
+# Migrated ConfigMap-backed hobby fixture: the canonical JWKS check must pass.
+set +e
+FIREMUD_PREFLIGHT_CONTEXT=ci-static \
+  FIREMUD_DEPLOYMENT_REF=contract-hobby-migrated \
+  FIREMUD_PREFLIGHT_RENDER_PATH="$MIGRATED_RENDERED_MANIFEST" \
+  FIREMUD_PREFLIGHT_OUTPUT="$MIGRATED_REPORT_PATH" \
+  python3 "$SCRIPT" hobby-self-hosted >/tmp/firemud-preflight-contract-migrated.out
+migrated_preflight_status=$?
+set -e
+if [ "$migrated_preflight_status" -ne 0 ]; then
+  echo "migrated ConfigMap-backed hobby fixture unexpectedly failed preflight" >&2
+  exit 1
+fi
+
+python3 - <<'PY' "$MIGRATED_REPORT_PATH"
+import json
+import pathlib
+import sys
+
+report = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+required_failures = [
+    check
+    for check in report["checkResults"]
+    if check["required"] and check["status"] == "fail"
+]
+if required_failures:
+    raise SystemExit(f"migrated ConfigMap fixture had unexpected required preflight failures: {required_failures}")
+migrated_jwks = [
+    check
+    for check in report["checkResults"]
+    if check["policyId"] == "PREFLIGHT-JWKS-001"
+]
+if len(migrated_jwks) != 1 or migrated_jwks[0]["status"] != "pass":
+    raise SystemExit(f"migrated ConfigMap fixture did not pass the canonical public-resource check: {migrated_jwks}")
 PY
 
 python3 "$WRITER" hobby-self-hosted contract-hobby first-live \
@@ -541,6 +641,7 @@ def report_results(environment, traffic_open_event=None):
     return [
         {
             "policyId": policy_id,
+            "category": module.PREFLIGHT_POLICY_CATALOG[policy_id],
             "required": requirements[policy_id],
             "status": (
                 "pass"
@@ -558,6 +659,7 @@ complete_report = {
     "deploymentRef": {"manifestRef": "contract-hobby"},
     "deploymentEventId": deployment_event_id,
     "trafficOpenEvent": None,
+    "policyCatalogVersion": module.PREFLIGHT_POLICY_CATALOG_VERSION,
     "startedAt": "2026-01-01T00:00:00Z",
     "completedAt": "2026-01-01T00:00:01Z",
     "toolVersion": "preflight.py-v1",
@@ -569,6 +671,72 @@ complete_status, complete_message = validate_report(
 )
 if complete_status != "pass":
     raise SystemExit(f"complete preflight policy set did not pass: {complete_message}")
+for invalid_catalog in (
+    {policy_id: category for policy_id, category in module.PREFLIGHT_POLICY_CATALOG.items() if policy_id != "PREFLIGHT-BACKUP-003"},
+    {**module.PREFLIGHT_POLICY_CATALOG, "PREFLIGHT-UNKNOWN-001": "apply-blocking"},
+    {**module.PREFLIGHT_POLICY_CATALOG, "PREFLIGHT-BACKUP-003": "invalid"},
+):
+    catalog_message = module.validate_preflight_policy_catalog(invalid_catalog)
+    if catalog_message is None:
+        raise SystemExit(f"invalid preflight policy catalogue was accepted: {invalid_catalog}")
+for invalid_version in (None, "preflight-policy-v0"):
+    invalid_version_report = {**complete_report}
+    if invalid_version is None:
+        invalid_version_report.pop("policyCatalogVersion")
+    else:
+        invalid_version_report["policyCatalogVersion"] = invalid_version
+    version_status, version_message = validate_report(
+        invalid_version_report, "hobby-self-hosted", "contract-hobby"
+    )
+    if version_status != "fail" or "policyCatalogVersion" not in version_message:
+        raise SystemExit(f"invalid policy catalogue version was accepted: {version_message}")
+missing_category_report = {
+    **complete_report,
+    "checkResults": [
+        ({key: value for key, value in check.items() if key != "category"} if index == 0 else check)
+        for index, check in enumerate(complete_report["checkResults"])
+    ],
+}
+missing_category_status, missing_category_message = validate_report(
+    missing_category_report, "hobby-self-hosted", "contract-hobby"
+)
+if missing_category_status != "fail" or "malformed checkResults" not in missing_category_message:
+    raise SystemExit(f"missing policy result category was accepted: {missing_category_message}")
+invalid_category_report = {
+    **complete_report,
+    "checkResults": [
+        ({**check, "category": "invalid"} if index == 0 else check)
+        for index, check in enumerate(complete_report["checkResults"])
+    ],
+}
+invalid_category_status, invalid_category_message = validate_report(
+    invalid_category_report, "hobby-self-hosted", "contract-hobby"
+)
+if invalid_category_status != "fail" or "malformed checkResults" not in invalid_category_message:
+    raise SystemExit(f"invalid policy result category was accepted: {invalid_category_message}")
+mismatched_category_report = {
+    **complete_report,
+    "checkResults": [
+        (
+            {
+                **check,
+                "category": (
+                    "advisory"
+                    if module.PREFLIGHT_POLICY_CATALOG[check["policyId"]] != "advisory"
+                    else "apply-blocking"
+                ),
+            }
+            if index == 0
+            else check
+        )
+        for index, check in enumerate(complete_report["checkResults"])
+    ],
+}
+mismatched_category_status, mismatched_category_message = validate_report(
+    mismatched_category_report, "hobby-self-hosted", "contract-hobby"
+)
+if mismatched_category_status != "fail" or "mismatched policy categories" not in mismatched_category_message:
+    raise SystemExit(f"mismatched policy result category was accepted: {mismatched_category_message}")
 for invalid_event_id in (None, "not-a-uuid", "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"):
     invalid_report = {**complete_report, "deploymentEventId": invalid_event_id}
     invalid_status, invalid_message = validate_report(
@@ -669,6 +837,7 @@ if not_applicable_status != "fail" or "non-passing required policy IDs" not in n
 
 PY
 
+# The checked-in production overlay remains a separately named legacy-gap case.
 set +e
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_DEPLOYMENT_REF="contract-production" \
@@ -677,7 +846,7 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
 production_preflight_status=$?
 set -e
 if [ "$production_preflight_status" -ne 1 ]; then
-  echo "expected legacy Secret jwt-jwks fixture to fail canonical public-resource preflight" >&2
+  echo "expected checked-in production legacy-gap fixture to fail canonical public-resource preflight" >&2
   exit 1
 fi
 
@@ -784,7 +953,7 @@ for env in staging production; do
   preflight_status=$?
   set -e
   if [ "$preflight_status" -ne 1 ]; then
-    echo "$env: expected legacy Secret jwt-jwks fixture to fail canonical public-resource preflight" >&2
+    echo "$env: expected checked-in legacy-gap fixture to fail canonical public-resource preflight" >&2
     exit 1
   fi
 
@@ -951,7 +1120,7 @@ try:
     module.subprocess.run = config_map_lookup(
         "", 1, 'Error from server (NotFound): configmaps "missing" not found'
     )
-    config_map_missing_message = module.config_map_lookup_failure("missing")
+    config_map_missing_message = module.jwks_config_map_lookup_failure("missing")
     if config_map_missing_message != "Missing required ConfigMap in cluster: firemud/missing":
         raise SystemExit(
             f"NotFound ConfigMap lookup reported incorrectly: {config_map_missing_message}"
@@ -962,7 +1131,7 @@ try:
         ("non-string", {"data": {"jwks.json": 7}}),
     ):
         module.subprocess.run = config_map_lookup(json.dumps(payload))
-        config_map_invalid_message = module.config_map_lookup_failure("jwt-jwks")
+        config_map_invalid_message = module.jwks_config_map_lookup_failure("jwt-jwks")
         if (
             config_map_invalid_message is None
             or "data.jwks.json" not in config_map_invalid_message
@@ -975,7 +1144,7 @@ try:
     module.subprocess.run = config_map_lookup(
         json.dumps({"data": {"jwks.json": '{"keys":[]}'}})
     )
-    if module.config_map_lookup_failure("jwt-jwks") is not None:
+    if module.jwks_config_map_lookup_failure("jwt-jwks") is not None:
         raise SystemExit("valid ConfigMap JSON lookup did not pass")
 finally:
     module.subprocess.run = original_subprocess_run
@@ -2429,6 +2598,7 @@ staging_preflight_path.write_text(
             "deploymentRef": {"overlayCommitSha": staging_sha},
             "deploymentEventId": staging_event_id,
             "trafficOpenEvent": None,
+            "policyCatalogVersion": module.PREFLIGHT_POLICY_CATALOG_VERSION,
             "startedAt": past_timestamp,
             "completedAt": past_timestamp,
             "toolVersion": "preflight.py-v1",
@@ -2436,6 +2606,7 @@ staging_preflight_path.write_text(
             "checkResults": [
                 {
                     "policyId": policy_id,
+                    "category": module.PREFLIGHT_POLICY_CATALOG[policy_id],
                     "required": required,
                     "status": "pass" if required else "not_applicable",
                     "message": "contract evidence",

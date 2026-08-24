@@ -15,9 +15,9 @@ The P0 preflight authority is [phased environment-bound preflight and expected b
 
 ## Implementation Status
 
-`./dev-tools/deploy/preflight.py` is the canonical executable preflight entrypoint for the checks it currently implements. The one actual checked-in deployment mode remains legacy Secret-backed JWT signing with fixed public `jwt-jwks` ConfigMap wiring: it consumes `design/operations/environments/<environment>/expected-bindings.yaml`, writes `expectedBindingsRef` into reports, validates the mounted JWT path and legacy resource contract, validates expected binding shape, and enforces cross-environment uniqueness for external player-facing bindings unless the manifests explicitly mark them shared with a rationale. In the current executable, `PREFLIGHT-JWT-001` checks the signing path and only requires the canonical `jwt-signing-keys` mount when the resolved private path is under `/var/run/secrets/firemud/jwt/`; `PREFLIGHT-JWKS-001` requires the explicit `configmap://firemud/jwt-jwks` binding, a public `jwt-jwks` `ConfigMap` with a non-empty `data.jwks.json` string, and the Account Service to resolve `FIREMUD_AUTH_JWKS_PATH` under `/var/run/secrets/firemud/jwks/` and mount that ConfigMap at the canonical root. These two results are diagnostic resource/path wiring evidence only; they do not prove runtime JWKS acceptance, validator convergence, or signer custody. The policy separately defines the interim Account-only mounted fallback and target non-exportable signer states, each with deeper mode-specific proof that the executable does not yet emit. The executable does not inspect deployed public Telnet listener topology or emit a public-listener exposure-exclusivity result; TCP Proxy runtime configuration cannot infer deployed exposure. Routine online backup does not require `backupControlPlaneClientRef`; that identity is validated only when an expected-bindings manifest explicitly enables an exceptional maintenance pause workflow.
+`./dev-tools/deploy/preflight.py` is the canonical executable preflight entrypoint for the checks it currently implements. The one actual checked-in deployment mode remains legacy Secret-backed JWT signing with fixed public `jwt-jwks` ConfigMap wiring: it consumes `design/operations/environments/<environment>/expected-bindings.yaml`, writes `expectedBindingsRef` and `policyCatalogVersion` into reports, resolves and emits the catalogue `category` for every result, validates consumed reports against the exact catalogue ID set/category vocabulary, validates the mounted JWT path and legacy resource contract, validates expected binding shape, and enforces cross-environment uniqueness for external player-facing bindings unless the manifests explicitly mark them shared with a rationale. In the current executable, `PREFLIGHT-JWT-001` checks the signing path and only requires the canonical `jwt-signing-keys` mount when the resolved private path is under `/var/run/secrets/firemud/jwt/`; `PREFLIGHT-JWKS-001` requires the explicit `configmap://firemud/jwt-jwks` binding, a public `jwt-jwks` `ConfigMap` with a non-empty `data.jwks.json` string, and the Account Service to resolve `FIREMUD_AUTH_JWKS_PATH` under `/var/run/secrets/firemud/jwks/` and mount that ConfigMap at the canonical root. These two results are diagnostic resource/path wiring evidence only; they do not prove runtime JWKS acceptance, validator convergence, or signer custody. The policy separately defines the interim Account-only mounted fallback and target non-exportable signer states, each with deeper mode-specific proof that the executable does not yet emit. The executable does not inspect deployed public Telnet listener topology or emit a public-listener exposure-exclusivity result; TCP Proxy runtime configuration cannot infer deployed exposure. Routine online backup does not require `backupControlPlaneClientRef`; that identity is validated only when an expected-bindings manifest explicitly enables an exceptional maintenance pause workflow.
 
-The current report generator and validator do not yet emit or enforce the target `expectedBindingsDigest`, `policyCatalogVersion`, evaluation `phase`, live target/cluster identity, or conditional authorizing `jwtCustodyProof`. Until those fields and their focused proof are implemented together, current reports remain partial non-authorizing evidence and cannot satisfy a protected player-facing deployment, promotion, first-live, reopen, or fresh-boundary restore gate.
+The current report generator and validator now emit and enforce the versioned `policyCatalogVersion` and per-result `category`. They do not yet emit or enforce the target `expectedBindingsDigest`, evaluation `phase`, live target/cluster identity, or conditional authorizing `jwtCustodyProof`. Until those remaining fields and their focused proof are implemented together, current reports remain partial non-authorizing evidence and cannot satisfy a protected player-facing deployment, promotion, first-live, reopen, or fresh-boundary restore gate.
 
 The restore mode, continuation, replay, and reopen lifecycle is canonical in [Backup & Disaster Recovery](./system-architecture-backup-recovery.md). Target preflight will validate controller-owned live recovery state and immutable evidence and emit prerequisite evidence. It is never release authority and does not perform continuation, authorization, or release. The current executable has no controller-backed result because no recovery-controller RPC currently exists in the checked-in `protos/` source, so this remains a target-state contract rather than an implemented gRPC surface.
 
@@ -70,6 +70,30 @@ Preflight has three ordered phases:
 A later phase may reference earlier evidence, but a static pass never authorizes apply, promotion, or player traffic. Reports across phases bind to one deployment event, target identity, candidate identity, policy-catalogue version, and expected-binding content digest.
 
 Every policy ID declares one enforcement category: `advisory`, `apply-blocking`, or `non-waivable-promotion-traffic-open`. Apply-blocking checks may accept a valid event-scoped waiver. A waiver may authorize isolated repair or a quarantined drill, but cannot authorize a transition protected by a non-waivable check.
+
+The design-owned catalogue below is mirrored by the machine-readable `PREFLIGHT_POLICY_CATALOG` mapping in `dev-tools/deploy/preflight.py` under `policyCatalogVersion: preflight-policy-v1`. The mirror is fail-closed if its ID set is not exactly the set below, if any ID has more than one mapping, or if a category is outside the three values above. The four entries marked target-state-only remain in the catalogue for stable identity and category but are not emitted by the current executable.
+
+| Policy ID | Enforcement category | Current executable |
+| --- | --- | --- |
+| `PREFLIGHT-DIGEST-001` | `apply-blocking` | emitted |
+| `PREFLIGHT-DIGEST-002` | `advisory` | emitted |
+| `PREFLIGHT-SECRETS-001` | `apply-blocking` | emitted |
+| `PREFLIGHT-SECRETS-002` | `apply-blocking` | emitted |
+| `PREFLIGHT-JWT-001` | `advisory` | emitted |
+| `PREFLIGHT-JWT-INTERIM-001` | `non-waivable-promotion-traffic-open` | target-state-only |
+| `PREFLIGHT-JWKS-001` | `advisory` | emitted |
+| `PREFLIGHT-JWT-002` | `non-waivable-promotion-traffic-open` | target-state-only |
+| `PREFLIGHT-JWT-ROTATION-001` | `non-waivable-promotion-traffic-open` | target-state-only |
+| `PREFLIGHT-TELNET-001` | `non-waivable-promotion-traffic-open` | target-state-only |
+| `PREFLIGHT-BRIDGE-001` | `apply-blocking` | emitted |
+| `PREFLIGHT-REDIS-001` | `apply-blocking` | emitted |
+| `PREFLIGHT-BOOTSTRAP-001` | `apply-blocking` | emitted |
+| `PREFLIGHT-EXTERNAL-001` | `apply-blocking` | emitted |
+| `PREFLIGHT-SERVICES-001` | `apply-blocking` | emitted |
+| `PREFLIGHT-PROMOTION-001` | `non-waivable-promotion-traffic-open` | emitted |
+| `PREFLIGHT-BACKUP-001` | `non-waivable-promotion-traffic-open` | emitted |
+| `PREFLIGHT-BACKUP-002` | `non-waivable-promotion-traffic-open` | emitted |
+| `PREFLIGHT-BACKUP-003` | `non-waivable-promotion-traffic-open` | emitted |
 
 The policy catalogue owns the binding-type shareability matrix. Production PostgreSQL and Redis authorities, JWT signing/JWKS trust, certificate issuers and workload private identities, production-capable registry credentials, backup/asset write principals, and operator-control identities are environment-exclusive. `shared: true` is accepted only for a class the matrix marks shareable or conditionally shareable, with matching declarations, rationale, and required isolation evidence in every participating environment; it cannot override an environment-exclusive class. Optional asset storage, outbound communications, non-default object storage, webhooks, and similar integrations are required only when their canonical enablement input is active; disabled integrations do not require placeholder targets or credentials.
 
@@ -322,7 +346,7 @@ The report artifact must include:
 - `deploymentEventId`, a canonical UUID generated by preflight and unique to the current preflight/apply event; retries or later re-applies must use a new value
 - `trafficOpenEvent` (`first-live`, `reopen`, or `null` for a general pre-apply report)
 - `jwtCustodyProof` only for a consumed report that can authorize a protected player-facing deployment, production promotion or production attestation, traffic-open event, or fresh-boundary restore, containing the exact accepted `proofId`, `custodyMode`, and `contractVersion`; ordinary non-player deployment, drill, maintenance, and diagnostic reports do not require this field, and `ci-static` reports may omit it because their JWT custody results are non-authorizing static evidence
-- `checkResults[]` with `policyId`, boolean `required`, `status`, and `message`
+- `checkResults[]` with `policyId`, its catalogue-resolved `category`, boolean `required`, `status`, and `message`; a missing, unknown, or mismatched category is invalid
 - `expectedBindingsRef` for player-facing environments
 - `expectedBindingsDigest` for the exact manifest bytes consumed
 - for live phases, a complete `candidateResourceInventory` bound to the exact candidate-render digest; each resource records its stable candidate identity, whether pre-apply expects it `present` or `absent-before-create`, and the matching live observation. Post-apply evidence must account for every inventoried resource and exact-match the stable observed identity of each resource created or retained by the candidate; missing candidate resources, undeclared extras within the candidate-owned set, and resources expected to be created but still absent fail closed
@@ -349,6 +373,7 @@ Illustrative `ci-static` report shape:
   "checkResults": [
     {
       "policyId": "PREFLIGHT-DIGEST-001",
+      "category": "apply-blocking",
       "required": true,
       "status": "pass",
       "message": "all images are digest pinned"

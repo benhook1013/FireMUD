@@ -39,6 +39,10 @@ class CheckResult:
     status: str
     message: str
 
+    @property
+    def category(self) -> str:
+        return PREFLIGHT_POLICY_CATALOG[self.policy_id]
+
 
 RECOVERY_COMPATIBILITY_STATUSES = {"compatible", "drill_required", "incompatible"}
 SAFE_RECOVERY_DISPOSITIONS = {
@@ -61,25 +65,109 @@ JWT_CUSTODY_MODES = (
 IMPLEMENTED_JWT_CUSTODY_MODE = "LEGACY_SECRET_DIAGNOSTIC"
 CANONICAL_JWKS_REF = "configmap://firemud/jwt-jwks"
 
-# These are the policy results emitted by this executable. The two JWT policies
-# documented as target-state-only are deliberately not included until they are
-# implemented and emitted by every applicable run.
-EXPECTED_PREFLIGHT_POLICY_IDS = (
-    "PREFLIGHT-DIGEST-001",
-    "PREFLIGHT-DIGEST-002",
-    "PREFLIGHT-SECRETS-001",
-    "PREFLIGHT-SECRETS-002",
-    "PREFLIGHT-JWT-001",
-    "PREFLIGHT-JWKS-001",
-    "PREFLIGHT-BRIDGE-001",
-    "PREFLIGHT-REDIS-001",
-    "PREFLIGHT-BOOTSTRAP-001",
-    "PREFLIGHT-EXTERNAL-001",
-    "PREFLIGHT-SERVICES-001",
-    "PREFLIGHT-PROMOTION-001",
-    "PREFLIGHT-BACKUP-001",
-    "PREFLIGHT-BACKUP-002",
-    "PREFLIGHT-BACKUP-003",
+PREFLIGHT_POLICY_CATALOG_VERSION = "preflight-policy-v1"
+PREFLIGHT_POLICY_CATEGORIES = frozenset(
+    {
+        "advisory",
+        "apply-blocking",
+        "non-waivable-promotion-traffic-open",
+    }
+)
+
+# This is the machine-readable implementation mirror of the complete
+# design-owned policy catalogue. Target-state-only policies remain in the
+# catalogue so their IDs and enforcement categories cannot drift while they
+# are excluded from current executable reports.
+PREFLIGHT_POLICY_CATALOG = {
+    "PREFLIGHT-DIGEST-001": "apply-blocking",
+    "PREFLIGHT-DIGEST-002": "advisory",
+    "PREFLIGHT-SECRETS-001": "apply-blocking",
+    "PREFLIGHT-SECRETS-002": "apply-blocking",
+    "PREFLIGHT-JWT-001": "advisory",
+    "PREFLIGHT-JWT-INTERIM-001": "non-waivable-promotion-traffic-open",
+    "PREFLIGHT-JWKS-001": "advisory",
+    "PREFLIGHT-JWT-002": "non-waivable-promotion-traffic-open",
+    "PREFLIGHT-JWT-ROTATION-001": "non-waivable-promotion-traffic-open",
+    "PREFLIGHT-TELNET-001": "non-waivable-promotion-traffic-open",
+    "PREFLIGHT-BRIDGE-001": "apply-blocking",
+    "PREFLIGHT-REDIS-001": "apply-blocking",
+    "PREFLIGHT-BOOTSTRAP-001": "apply-blocking",
+    "PREFLIGHT-EXTERNAL-001": "apply-blocking",
+    "PREFLIGHT-SERVICES-001": "apply-blocking",
+    "PREFLIGHT-PROMOTION-001": "non-waivable-promotion-traffic-open",
+    "PREFLIGHT-BACKUP-001": "non-waivable-promotion-traffic-open",
+    "PREFLIGHT-BACKUP-002": "non-waivable-promotion-traffic-open",
+    "PREFLIGHT-BACKUP-003": "non-waivable-promotion-traffic-open",
+}
+
+DOCUMENTED_PREFLIGHT_POLICY_ID_SET = frozenset(
+    {
+        "PREFLIGHT-DIGEST-001",
+        "PREFLIGHT-DIGEST-002",
+        "PREFLIGHT-SECRETS-001",
+        "PREFLIGHT-SECRETS-002",
+        "PREFLIGHT-JWT-001",
+        "PREFLIGHT-JWT-INTERIM-001",
+        "PREFLIGHT-JWKS-001",
+        "PREFLIGHT-JWT-002",
+        "PREFLIGHT-JWT-ROTATION-001",
+        "PREFLIGHT-TELNET-001",
+        "PREFLIGHT-BRIDGE-001",
+        "PREFLIGHT-REDIS-001",
+        "PREFLIGHT-BOOTSTRAP-001",
+        "PREFLIGHT-EXTERNAL-001",
+        "PREFLIGHT-SERVICES-001",
+        "PREFLIGHT-PROMOTION-001",
+        "PREFLIGHT-BACKUP-001",
+        "PREFLIGHT-BACKUP-002",
+        "PREFLIGHT-BACKUP-003",
+    }
+)
+TARGET_ONLY_PREFLIGHT_POLICY_IDS = frozenset(
+    {
+        "PREFLIGHT-JWT-INTERIM-001",
+        "PREFLIGHT-JWT-002",
+        "PREFLIGHT-JWT-ROTATION-001",
+        "PREFLIGHT-TELNET-001",
+    }
+)
+
+
+def validate_preflight_policy_catalog(catalog: Any) -> str | None:
+    if not isinstance(catalog, dict):
+        return "preflight policy catalogue must be a mapping"
+    catalog_ids = set(catalog)
+    missing_ids = sorted(DOCUMENTED_PREFLIGHT_POLICY_ID_SET - catalog_ids)
+    unknown_ids = sorted(catalog_ids - DOCUMENTED_PREFLIGHT_POLICY_ID_SET)
+    if missing_ids or unknown_ids or len(catalog) != len(DOCUMENTED_PREFLIGHT_POLICY_ID_SET):
+        details = []
+        if missing_ids:
+            details.append("missing policy IDs: " + ", ".join(missing_ids))
+        if unknown_ids:
+            details.append("unknown policy IDs: " + ", ".join(unknown_ids))
+        if not details:
+            details.append("policy IDs must occur exactly once")
+        return "invalid preflight policy catalogue: " + "; ".join(details)
+    invalid_categories = sorted(
+        policy_id
+        for policy_id, category in catalog.items()
+        if not isinstance(category, str) or category not in PREFLIGHT_POLICY_CATEGORIES
+    )
+    if invalid_categories:
+        return (
+            "invalid preflight policy catalogue categories for policy IDs: "
+            + ", ".join(invalid_categories)
+        )
+    return None
+
+
+# These are the policy results emitted by this executable. The target-state-only
+# entries remain excluded until their checks are implemented and emitted by
+# every applicable run.
+EXPECTED_PREFLIGHT_POLICY_IDS = tuple(
+    policy_id
+    for policy_id in PREFLIGHT_POLICY_CATALOG
+    if policy_id not in TARGET_ONLY_PREFLIGHT_POLICY_IDS
 )
 EXPECTED_PREFLIGHT_POLICY_ID_SET = set(EXPECTED_PREFLIGHT_POLICY_IDS)
 
@@ -322,7 +410,7 @@ def secret_lookup_failure(secret_name: str) -> str | None:
     return f"Secret lookup could not be verified for firemud/{secret_name}: {detail}"
 
 
-def config_map_lookup_failure(config_map_name: str) -> str | None:
+def jwks_config_map_lookup_failure(config_map_name: str) -> str | None:
     try:
         result = subprocess.run(
             ["kubectl", "get", "configmap", "-n", "firemud", config_map_name, "-o", "json"],
@@ -1214,6 +1302,11 @@ def validate_preflight_report(
     effective_now = now_dt or dt.datetime.now(dt.timezone.utc)
     if not isinstance(report, dict):
         return ("fail", f"{label} preflight report must be a JSON object")
+    catalog_error = validate_preflight_policy_catalog(PREFLIGHT_POLICY_CATALOG)
+    if catalog_error:
+        return ("fail", catalog_error)
+    if report.get("policyCatalogVersion") != PREFLIGHT_POLICY_CATALOG_VERSION:
+        return ("fail", f"{label} preflight report policyCatalogVersion mismatch")
     if report.get("environment") != environment:
         return ("fail", f"{label} preflight report must target {environment}")
     if report.get("expectedBindingsRef") != expected_bindings_ref:
@@ -1275,12 +1368,15 @@ def validate_preflight_report(
             malformed_results.append(str(index))
             continue
         policy_id = check.get("policyId")
+        category = check.get("category")
         status = check.get("status")
         message = check.get("message")
         required = check.get("required")
         if (
             not isinstance(policy_id, str)
             or not policy_id
+            or not isinstance(category, str)
+            or category not in PREFLIGHT_POLICY_CATEGORIES
             or status not in {"pass", "fail", "not_applicable"}
             or not isinstance(message, str)
             or not message
@@ -1305,6 +1401,18 @@ def validate_preflight_report(
     unknown_ids = sorted(set(policy_ids) - EXPECTED_PREFLIGHT_POLICY_ID_SET)
     if unknown_ids:
         return ("fail", f"{label} preflight report contains unknown policy IDs: " + ", ".join(unknown_ids))
+
+    category_mismatches = sorted(
+        check["policyId"]
+        for check in preflight_results
+        if check["category"] != PREFLIGHT_POLICY_CATALOG[check["policyId"]]
+    )
+    if category_mismatches:
+        return (
+            "fail",
+            f"{label} preflight report has mismatched policy categories: "
+            + ", ".join(category_mismatches),
+        )
 
     expected_requirements = expected_preflight_policy_requirements(environment, traffic_open_event)
     requirement_mismatches = sorted(
@@ -1725,6 +1833,8 @@ def append_result(
     status: str,
     message: str,
 ) -> bool:
+    if policy_id not in PREFLIGHT_POLICY_CATALOG:
+        raise ValueError(f"Unknown preflight policy ID: {policy_id}")
     check_results.append(CheckResult(policy_id, required, status, message))
     return required and status == "fail"
 
@@ -2888,11 +2998,13 @@ def write_report(
         "deploymentRef": deployment_ref_obj,
         "deploymentEventId": deployment_event_id,
         "trafficOpenEvent": traffic_open_event or None,
+        "policyCatalogVersion": PREFLIGHT_POLICY_CATALOG_VERSION,
         "startedAt": started_at,
         "completedAt": completed_at,
         "checkResults": [
             {
                 "policyId": check.policy_id,
+                "category": check.category,
                 "required": check.required,
                 "status": check.status,
                 "message": check.message,
@@ -3043,7 +3155,7 @@ def main() -> int:
                 secret_check_failed = True
                 break
         if not secret_check_failed:
-            failure_message = config_map_lookup_failure("jwt-jwks")
+            failure_message = jwks_config_map_lookup_failure("jwt-jwks")
             if failure_message is not None:
                 has_required_failure = append_result(
                     check_results, "PREFLIGHT-SECRETS-001", True, "fail", failure_message,
