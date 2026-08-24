@@ -2031,7 +2031,7 @@ def rendered_references_image_pull_secret(
     documents: list[dict[str, Any]], name: str, namespace: str | None = None
 ) -> bool:
     for document in documents:
-        if not rendered_namespace_matches(document, namespace):
+        if not rendered_namespace_matches(document, namespace, default_namespace=namespace):
             continue
         if document.get("kind") == "ServiceAccount":
             for entry in document.get("imagePullSecrets") or []:

@@ -519,6 +519,25 @@ if module.rendered_references_secret(
     default_namespace="firemud",
 ):
     raise SystemExit("Secret reference with an explicit wrong namespace was accepted")
+
+image_pull_namespace_reference_document = {
+    "kind": "ServiceAccount",
+    "metadata": {"name": "image-pull-namespace-reference"},
+    "imagePullSecrets": [{"name": "ghcr-pull-hobby"}],
+}
+if not module.rendered_references_image_pull_secret(
+    [image_pull_namespace_reference_document],
+    "ghcr-pull-hobby",
+    "firemud",
+):
+    raise SystemExit("namespace-less image pull Secret reference did not inherit the expected namespace")
+image_pull_namespace_reference_document["metadata"]["namespace"] = "other"
+if module.rendered_references_image_pull_secret(
+    [image_pull_namespace_reference_document],
+    "ghcr-pull-hobby",
+    "firemud",
+):
+    raise SystemExit("image pull Secret reference with an explicit wrong namespace was accepted")
 PY
 
 # Legacy Secret-backed hobby fixture is the current player-facing contract.
@@ -3459,9 +3478,11 @@ verify_jwt_lineage_failure(
 )
 verify_jwt_lineage_failure(
     "failed-selected-custody-policy",
-    mutate_preflight=lambda preflight: preflight["checkResults"][-2].__setitem__(
-        "status", "fail"
-    ),
+    mutate_preflight=lambda preflight: next(
+        check
+        for check in preflight["checkResults"]
+        if check["policyId"] == "PREFLIGHT-JWT-INTERIM-001"
+    ).__setitem__("status", "fail"),
     expected_fragment="one passing required result for the selected JWT custody policy",
 )
 verify_jwt_lineage_failure(

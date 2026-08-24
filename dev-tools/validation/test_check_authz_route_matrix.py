@@ -988,12 +988,14 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 "account-service",
                 "IssueHumanOperatorAuthorizationReference",
             )
-            tenant_branch = route["conditional_branches"]["tenant_restriction"]
-            branches = {
-                branch["branch"]: set(branch["required_live_checks"])
-                for branch in tenant_branch["operator_authorization_branches"]
-            }
-            self.assertEqual(expected, branches)
+            for branch_name in ("non_moderation", "tenant_restriction"):
+                with self.subTest(branch=branch_name):
+                    tenant_branch = route["conditional_branches"][branch_name]
+                    branches = {
+                        branch["branch"]: set(branch["required_live_checks"])
+                        for branch in tenant_branch["operator_authorization_branches"]
+                    }
+                    self.assertEqual(expected, branches)
 
             platform_admin_branch = next(
                 branch
@@ -2735,7 +2737,23 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             document, "account-service", "IssueHumanOperatorAuthorizationReference"
         )
         self.assertNotIn("tenant_scope", route["required_fields"])
+        self.assertEqual("action_category_or_absence", route["branch_selector"])
         branches = route["conditional_branches"]
+        self.assertEqual(
+            {"non_moderation", "tenant_restriction", "platform_access_ban"},
+            set(branches),
+        )
+        non_moderation = branches["non_moderation"]
+        self.assertEqual("action_category=absent", non_moderation["selector"])
+        self.assertEqual("tenant", non_moderation["scope"])
+        self.assertEqual(["tenant_scope"], non_moderation["required_fields"])
+        self.assertEqual(
+            {"tenant_role", "platformAdmin_global"},
+            {
+                branch["branch"]
+                for branch in non_moderation["operator_authorization_branches"]
+            },
+        )
         self.assertEqual(
             ["tenant_scope"], branches["tenant_restriction"]["required_fields"]
         )
@@ -2785,6 +2803,13 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         mutations = (
             (
+                "wrong branch selector",
+                lambda route: route.__setitem__(
+                    "branch_selector", "action_category"
+                ),
+                "branch_selector must be 'action_category_or_absence'",
+            ),
+            (
                 "common tenant scope",
                 lambda route: route["required_fields"].append("tenant_scope"),
                 "tenant_scope must be branch-specific, not a common required field",
@@ -2832,6 +2857,32 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 ),
                 "platform_access_ban branch must not declare operator_authorization_branches",
             ),
+            (
+                "missing non-moderation branch",
+                lambda route: route["conditional_branches"].pop("non_moderation"),
+                "conditional_branches must contain exactly",
+            ),
+            (
+                "wrong non-moderation selector",
+                lambda route: route["conditional_branches"]["non_moderation"].__setitem__(
+                    "selector", "action_category=tenant_restriction"
+                ),
+                "conditional_branches.non_moderation must declare selector='action_category=absent'",
+            ),
+            (
+                "wrong non-moderation scope",
+                lambda route: route["conditional_branches"]["non_moderation"].__setitem__(
+                    "scope", "account"
+                ),
+                "conditional_branches.non_moderation must declare scope='tenant'",
+            ),
+            (
+                "missing non-moderation tenant generation",
+                lambda route: route["conditional_branches"]["non_moderation"][
+                    "operator_authorization_branches"
+                ][0]["required_live_checks"].remove("tenant_generation"),
+                "conditional_branches.non_moderation operator_authorization_branches[0].required_live_checks must equal",
+            ),
         )
         for mutation_name, mutate, expected_error in mutations:
             with self.subTest(mutation=mutation_name):
@@ -2842,6 +2893,49 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     "IssueHumanOperatorAuthorizationReference",
                 )
                 mutate(route)
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(expected_error in error for error in errors),
+                    (mutation_name, errors),
+                )
+
+    def test_human_operator_shared_branch_fields_reject_drift(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        mutations = (
+            (
+                "missing non-moderation branch",
+                lambda branch_fields: branch_fields.pop("non_moderation"),
+                "branch_fields must contain exactly",
+            ),
+            (
+                "wrong non-moderation selector",
+                lambda branch_fields: branch_fields["non_moderation"].__setitem__(
+                    "selector", "action_category=tenant_restriction"
+                ),
+                "branch_fields.non_moderation.selector must equal",
+            ),
+            (
+                "wrong tenant restriction required field",
+                lambda branch_fields: branch_fields["tenant_restriction"].__setitem__(
+                    "required", ["target_account_id"]
+                ),
+                "branch_fields.tenant_restriction.required must equal",
+            ),
+            (
+                "wrong platform access ban forbidden field",
+                lambda branch_fields: branch_fields["platform_access_ban"].__setitem__(
+                    "forbidden", ["tenant_scope"]
+                ),
+                "branch_fields.platform_access_ban.forbidden must equal",
+            ),
+        )
+        for mutation_name, mutate, expected_error in mutations:
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                branch_fields = document["operator_delegation"]["issuance_paths"][
+                    "human"
+                ]["bindings"]["branch_fields"]
+                mutate(branch_fields)
                 errors = validate_document(self.validator, document)
                 self.assertTrue(
                     any(expected_error in error for error in errors),

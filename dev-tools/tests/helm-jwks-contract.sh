@@ -46,6 +46,9 @@ data = jwks.get("data")
 jwks_json = data.get("jwks.json") if isinstance(data, dict) else None
 if not isinstance(jwks_json, str) or not jwks_json.strip():
     raise SystemExit("jwt-jwks ConfigMap did not render non-empty data.jwks.json")
+projected_jwks_files = {
+    key for key in data if isinstance(key, str) and key
+}
 
 account = next(
     (
@@ -105,6 +108,11 @@ def validate_account_jwks_path_overrides(container):
                 "Account FIREMUD_AUTH_JWKS_PATH override must be a file path under "
                 f"{jwks_path_prefix}"
             )
+        if pathlib.PurePosixPath(value).name not in projected_jwks_files:
+            raise SystemExit(
+                "Account FIREMUD_AUTH_JWKS_PATH override must name a file projected by "
+                f"the jwt-jwks ConfigMap: {value}"
+            )
 
 
 validate_account_jwks_path_overrides(account_container)
@@ -113,13 +121,14 @@ positive_override_container = copy.deepcopy(account_container)
 positive_override_container.setdefault("env", []).append(
     {
         "name": "FIREMUD_AUTH_JWKS_PATH",
-        "value": f"{jwks_path_prefix}override.json",
+        "value": f"{jwks_path_prefix}jwks.json",
     }
 )
 validate_account_jwks_path_overrides(positive_override_container)
 
 for invalid_value in (
     jwks_path_prefix,
+    f"{jwks_path_prefix}override.json",
     "/tmp/override.json",
     7,
 ):
@@ -179,6 +188,11 @@ if (
     raise SystemExit(
         "FIREMUD_AUTH_JWKS_PATH must be a file path under "
         f"{jwks_mount_path}"
+    )
+if pathlib.PurePosixPath(jwks_path).name not in projected_jwks_files:
+    raise SystemExit(
+        "FIREMUD_AUTH_JWKS_PATH must name a file projected by the jwt-jwks ConfigMap: "
+        f"{jwks_path}"
     )
 PY
 

@@ -570,6 +570,18 @@ OPERATOR_REFERENCE_ISSUANCE_REQUIRED_FIELDS = {
     },
 }
 HUMAN_OPERATOR_ISSUANCE_BRANCHES = {
+    "non_moderation": {
+        "selector": "action_category=absent",
+        "scope": "tenant",
+        "membership_authority_generation_applies": "conditional_by_operator_role",
+        "membership_authority_generation_condition": {
+            "tenant_role": True,
+            "platformAdmin_global": False,
+        },
+        "global_platform_admin_reference_generation_binding": "target_tenant_generation",
+        "global_platform_admin_membership_required": False,
+        "required_fields": {"tenant_scope"},
+    },
     "tenant_restriction": {
         "selector": "action_category=tenant_restriction",
         "scope": "tenant",
@@ -607,6 +619,26 @@ HUMAN_OPERATOR_ISSUANCE_BRANCHES = {
         },
         "required_fields": {"target_account_id"},
         "forbidden_fields": {"tenant_scope", "tenant_id", "target_tenant_generation"},
+    },
+}
+HUMAN_OPERATOR_ISSUANCE_SHARED_BRANCH_FIELDS = {
+    "non_moderation": {
+        "selector": "action_category=absent",
+        "required": ["tenant_scope"],
+        "optional": ["membership_version_when_applicable"],
+    },
+    "tenant_restriction": {
+        "required": ["tenant_scope"],
+        "optional": ["membership_version_when_applicable"],
+    },
+    "platform_access_ban": {
+        "required": ["target_account_id"],
+        "forbidden": [
+            "tenant_scope",
+            "tenant_id",
+            "target_tenant_generation",
+            "membership_version_when_applicable",
+        ],
     },
 }
 OPERATOR_ISSUANCE_MODERATION_IDENTITY_KEYS = {
@@ -3234,8 +3266,10 @@ def validate_human_operator_issuance_branches(
     if route is None:
         return
     label = route_label(route)
-    if route.get("branch_selector") != "action_category":
-        errors.append(f"{label} branch_selector must be 'action_category'")
+    if route.get("branch_selector") != "action_category_or_absence":
+        errors.append(
+            f"{label} branch_selector must be 'action_category_or_absence'"
+        )
     precedence = route.get("conditional_branch_precedence")
     if not isinstance(precedence, dict) or precedence.get(
         "branch_fields_override_top_level"
@@ -3279,7 +3313,7 @@ def validate_human_operator_issuance_branches(
     if "operator_authorization_branches" in route:
         errors.append(
             f"{label} operator_authorization_branches must be branch-specific "
-            "under conditional_branches.tenant_restriction"
+            "under conditional_branches.tenant_restriction or conditional_branches.non_moderation"
         )
     expected_names = set(HUMAN_OPERATOR_ISSUANCE_BRANCHES)
     if set(branches) != expected_names:
@@ -3350,17 +3384,19 @@ def validate_human_operator_issuance_branches(
                     f"{branch_label} required_live_checks must not be forbidden: {overlap}"
                 )
 
-    tenant_branch = branches.get("tenant_restriction")
-    if isinstance(tenant_branch, dict):
+    for tenant_branch_name in ("non_moderation", "tenant_restriction"):
+        tenant_branch = branches.get(tenant_branch_name)
+        if not isinstance(tenant_branch, dict):
+            continue
         if "operator_authorization_branches" not in tenant_branch:
             errors.append(
-                f"{label} tenant_restriction branch must declare "
+                f"{label} {tenant_branch_name} branch must declare "
                 "operator_authorization_branches"
             )
         else:
             operator_authorization_branch_checks(
                 tenant_branch,
-                f"{label} conditional_branches.tenant_restriction",
+                f"{label} conditional_branches.{tenant_branch_name}",
                 errors,
             )
 
@@ -3380,6 +3416,69 @@ def validate_human_operator_issuance_branches(
                 errors.append(
                     f"{label} platform_access_ban branch forbids common fields: "
                     f"{common_conflicts}"
+                )
+
+
+def validate_human_operator_issuance_shared_branch_fields(
+    document: dict[str, Any], errors: list[str]
+) -> None:
+    label = (
+        "operator_delegation.issuance_paths.human.bindings.branch_fields"
+    )
+    delegation = document.get("operator_delegation")
+    issuance_paths = (
+        delegation.get("issuance_paths")
+        if isinstance(delegation, dict)
+        else None
+    )
+    human_path = (
+        issuance_paths.get("human")
+        if isinstance(issuance_paths, dict)
+        else None
+    )
+    bindings = human_path.get("bindings") if isinstance(human_path, dict) else None
+    branch_fields = (
+        bindings.get("branch_fields") if isinstance(bindings, dict) else None
+    )
+    if not isinstance(branch_fields, dict):
+        errors.append(f"{label} must be a mapping")
+        return
+
+    expected_names = set(HUMAN_OPERATOR_ISSUANCE_SHARED_BRANCH_FIELDS)
+    if set(branch_fields) != expected_names:
+        errors.append(
+            f"{label} must contain exactly {sorted(expected_names)}"
+        )
+
+    for branch_name, expected in HUMAN_OPERATOR_ISSUANCE_SHARED_BRANCH_FIELDS.items():
+        branch_label = f"{label}.{branch_name}"
+        branch = branch_fields.get(branch_name)
+        if not isinstance(branch, dict):
+            errors.append(f"{branch_label} must be a mapping")
+            continue
+        if set(branch) != set(expected):
+            errors.append(
+                f"{branch_label} must contain exactly {sorted(expected)}"
+            )
+        for field, expected_value in expected.items():
+            actual_value = branch.get(field)
+            if isinstance(expected_value, list):
+                if not isinstance(actual_value, list) or any(
+                    not isinstance(item, str) for item in actual_value
+                ):
+                    errors.append(f"{branch_label}.{field} must be a list of strings")
+                    continue
+                if len(actual_value) != len(set(actual_value)):
+                    errors.append(
+                        f"{branch_label}.{field} must not contain duplicates"
+                    )
+                if actual_value != expected_value:
+                    errors.append(
+                        f"{branch_label}.{field} must equal {expected_value!r}"
+                    )
+            elif actual_value != expected_value:
+                errors.append(
+                    f"{branch_label}.{field} must equal {expected_value!r}"
                 )
 
 
@@ -5249,6 +5348,7 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
         errors,
         cardinality_errors,
     )
+    validate_human_operator_issuance_shared_branch_fields(document, errors)
     validate_operator_issuance_identity_contract(document, errors)
     validate_generation_applicability(routes, errors, live_checks_cache)
     validate_account_export_applicability(document, errors)

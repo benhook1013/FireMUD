@@ -629,6 +629,10 @@ operator_delegation:
               digest: owner_enforcement_digest
               control_plane_request_id: correlation_only
         branch_fields:
+          non_moderation:
+            selector: action_category=absent
+            required: [tenant_scope]
+            optional: [membership_version_when_applicable]
           tenant_restriction:
             required: [tenant_scope]
             optional: [membership_version_when_applicable]
@@ -1545,7 +1549,7 @@ routes:
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/logging-admin-service"]
     required_live_checks: [current_account_generation, current_token_generation]
-    branch_selector: action_category
+    branch_selector: action_category_or_absence
     conditional_branch_precedence:
       branch_fields_override_top_level: true
     mutation_identity_selector:
@@ -1564,6 +1568,21 @@ routes:
           digest: owner_enforcement_digest
           control_plane_request_id: correlation_only
     conditional_branches:
+      non_moderation:
+        selector: action_category=absent
+        scope: tenant
+        membership_authority_generation_applies: conditional_by_operator_role
+        membership_authority_generation_condition:
+          tenant_role: true
+          platformAdmin_global: false
+        global_platform_admin_reference_generation_binding: target_tenant_generation
+        global_platform_admin_membership_required: false
+        operator_authorization_branches:
+          - branch: tenant_role
+            required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
+          - branch: platformAdmin_global
+            required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
+        required_fields: [tenant_scope]
       tenant_restriction:
         selector: action_category=tenant_restriction
         scope: tenant

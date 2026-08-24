@@ -120,7 +120,7 @@ Future imports preserve the archive's exact disposition and review date, materia
 | 3 | Execution correctness and durability | 43 | 43 | `applied` |
 | 4 | Publishing, settings, and authored behavior | 36 | 36 | `applied` |
 | 5 | Gameplay and player experience | 21 | 21 | `applied` |
-| 6 | Operations and delivery | 25 | 3 | `partially-applied`; P1-P3 remain `pending-import` |
+| 6 | Operations and delivery | 25 | 3 | P0: 3 applied, 7 `pending-import`; P1-P3 remain `pending-import` |
 | 7 | Existing ADR-backed and lower-risk remainder | 17 | 0 | `pending-import` |
 | **Total** | | **183** | **143** | `review-complete`; `import-in-progress` |
 
