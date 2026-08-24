@@ -214,11 +214,20 @@ def expected_preflight_policy_requirements(
     return required
 
 PROMOTION_ATTESTATION_VERSION = "v1"
+JWT_ROTATION_POLICY_ID = "PREFLIGHT-JWT-ROTATION-001"
+ACCEPTED_JWT_CUSTODY_PROOF_TUPLES = frozenset(
+    {
+        ("PREFLIGHT-JWT-INTERIM-001", "INTERIM_ACCOUNT_ONLY_MOUNTED_FALLBACK", 1),
+        ("PREFLIGHT-JWT-002", "TARGET_NON_EXPORTABLE_SIGNER", 1),
+    }
+)
 PROMOTION_ATTESTATION_REQUIRED_FIELDS = (
     "attestationVersion",
     "environment",
     "stagingOverlayCommitSha",
     "stagingDeploymentEventId",
+    "jwtCustodyProof",
+    "jwtRotationEvidenceRef",
     "productionOverlayRef",
     "serviceDigests",
     "smokeEvidence",
@@ -1249,6 +1258,58 @@ def resolve_repo_path(root_dir: Path, ref: str) -> Path:
     return path if path.is_absolute() else root_dir / ref
 
 
+def jwt_custody_proof_error(label: str, value: Any) -> str | None:
+    if not isinstance(value, dict):
+        return f"{label} must be an object"
+    required = {"proofId", "custodyMode", "contractVersion"}
+    if set(value) != required:
+        return f"{label} must contain exactly proofId, custodyMode, and contractVersion"
+    if not isinstance(value["contractVersion"], int) or isinstance(value["contractVersion"], bool):
+        return f"{label}.contractVersion must be an integer"
+    tuple_value = (
+        value.get("proofId"),
+        value.get("custodyMode"),
+        value.get("contractVersion"),
+    )
+    if tuple_value not in ACCEPTED_JWT_CUSTODY_PROOF_TUPLES:
+        return f"{label} does not select an accepted JWT custody proof tuple"
+    return None
+
+
+def load_immutable_json_evidence(
+    root_dir: Path, reference: Any, label: str
+) -> tuple[dict[str, Any] | None, str | None]:
+    if not isinstance(reference, str) or not reference.strip():
+        return None, f"{label} must be a non-empty immutable digest-qualified reference"
+    path_ref, separator, digest = reference.rpartition("#")
+    if not separator or not path_ref or not IMMUTABLE_ARTIFACT_ID_RE.fullmatch(digest):
+        return None, f"{label} must use <repository-path>#sha256:<digest> format"
+    path_value = Path(path_ref)
+    evidence_root = (
+        root_dir / "design" / "operations" / "deployments"
+    ).resolve()
+    evidence_path = resolve_repo_path(root_dir, path_ref).resolve()
+    if path_value.is_absolute() or not evidence_path.is_relative_to(evidence_root):
+        return None, f"{label} must resolve under design/operations/deployments"
+    if evidence_path.suffix != ".json":
+        return None, f"{label} must reference a JSON evidence record"
+    if not evidence_path.exists():
+        return None, f"{label} evidence record not found: {path_ref}"
+    try:
+        evidence = load_json(evidence_path)
+    except JSON_READ_ERRORS as exc:
+        return None, f"{label} evidence record unreadable: {exc}"
+    if not isinstance(evidence, dict):
+        return None, f"{label} evidence record must be a JSON object"
+    try:
+        actual_digest = canonical_evidence_digest(evidence)
+    except (TypeError, ValueError) as exc:
+        return None, f"{label} evidence record cannot be canonically hashed: {exc}"
+    if actual_digest != digest:
+        return None, f"{label} digest does not match the referenced evidence record"
+    return evidence, None
+
+
 def default_preflight_output_path(
     root_dir: Path,
     environment: str,
@@ -1275,6 +1336,8 @@ def validate_preflight_report(
     now_dt: dt.datetime | None = None,
     expected_deployment_event_id: str | None = None,
     completed_by: dt.datetime | None = None,
+    *,
+    allowed_supplemental_policy_ids: tuple[str, ...] = (),
 ) -> tuple[str, str]:
     label = environment.capitalize()
     effective_now = now_dt or dt.datetime.now(dt.timezone.utc)
@@ -1376,7 +1439,11 @@ def validate_preflight_report(
     missing_ids = sorted(EXPECTED_PREFLIGHT_POLICY_ID_SET - set(policy_ids))
     if missing_ids:
         return ("fail", f"{label} preflight report missing expected policy IDs: " + ", ".join(missing_ids))
-    unknown_ids = sorted(set(policy_ids) - EXPECTED_PREFLIGHT_POLICY_ID_SET)
+    unknown_ids = sorted(
+        set(policy_ids)
+        - EXPECTED_PREFLIGHT_POLICY_ID_SET
+        - set(allowed_supplemental_policy_ids)
+    )
     if unknown_ids:
         return ("fail", f"{label} preflight report contains unknown policy IDs: " + ", ".join(unknown_ids))
 
@@ -1396,7 +1463,8 @@ def validate_preflight_report(
     requirement_mismatches = sorted(
         check["policyId"]
         for check in preflight_results
-        if check["required"] is not expected_requirements[check["policyId"]]
+        if check["policyId"] in expected_requirements
+        and check["required"] is not expected_requirements[check["policyId"]]
     )
     if requirement_mismatches:
         return (
@@ -3033,11 +3101,17 @@ def _promotion_check(
     missing_attestation_fields = [
         field for field in PROMOTION_ATTESTATION_REQUIRED_FIELDS if field not in att or is_missing(att[field])
     ]
-    if missing_attestation_fields:
+    missing_non_jwt_attestation_fields = [
+        field
+        for field in missing_attestation_fields
+        if field not in {"jwtCustodyProof", "jwtRotationEvidenceRef"}
+    ]
+    if missing_non_jwt_attestation_fields:
         return (
             "fail",
             str(att.get("rollbackMode", "unknown")),
-            "Attestation missing required canonical fields: " + ", ".join(missing_attestation_fields),
+            "Attestation missing required canonical fields: "
+            + ", ".join(missing_non_jwt_attestation_fields),
         )
 
     if att.get("attestationVersion") != PROMOTION_ATTESTATION_VERSION:
@@ -3077,6 +3151,18 @@ def _promotion_check(
 
     if recovery_status != "pass":
         return ("fail", rollback_mode, recovery_message)
+
+    if missing_attestation_fields:
+        return (
+            "fail",
+            rollback_mode,
+            "Attestation missing required canonical fields: " + ", ".join(missing_attestation_fields),
+        )
+    custody_proof_error = jwt_custody_proof_error(
+        "Attestation jwtCustodyProof", att["jwtCustodyProof"]
+    )
+    if custody_proof_error:
+        return ("fail", rollback_mode, custody_proof_error)
 
     service_digests = att.get("serviceDigests", {})
     expected_service_names = set()
@@ -3152,6 +3238,8 @@ def _promotion_check(
         "secretComplianceSnapshotAt",
         "secretComplianceStatus",
         "secretComplianceEvidenceRef",
+        "jwtCustodyProof",
+        "jwtRotationEvidenceRef",
         "smokeEvidence",
     )
     missing_record_fields = [
@@ -3162,6 +3250,23 @@ def _promotion_check(
             "fail",
             rollback_mode,
             "Staging deployment record missing required canonical fields: " + ", ".join(missing_record_fields),
+        )
+    record_custody_proof_error = jwt_custody_proof_error(
+        "Staging deployment record jwtCustodyProof", record["jwtCustodyProof"]
+    )
+    if record_custody_proof_error:
+        return ("fail", rollback_mode, record_custody_proof_error)
+    if att["jwtCustodyProof"] != record["jwtCustodyProof"]:
+        return (
+            "fail",
+            rollback_mode,
+            "Staging deployment record jwtCustodyProof does not match the attestation",
+        )
+    if att["jwtRotationEvidenceRef"] != record["jwtRotationEvidenceRef"]:
+        return (
+            "fail",
+            rollback_mode,
+            "Staging deployment record jwtRotationEvidenceRef does not match the attestation",
         )
     if not isinstance(record.get("appliedBy"), str) or not record["appliedBy"].strip():
         return ("fail", rollback_mode, "Staging deployment record appliedBy must be non-empty")
@@ -3222,9 +3327,102 @@ def _promotion_check(
         now_dt=now_dt,
         expected_deployment_event_id=str(record["deploymentEventId"]),
         completed_by=record_timestamps["appliedAt"],
+        allowed_supplemental_policy_ids=(
+            JWT_ROTATION_POLICY_ID,
+            att["jwtCustodyProof"]["proofId"],
+        ),
     )
     if preflight_status != "pass":
         return ("fail", rollback_mode, preflight_message)
+    preflight_custody_proof_error = jwt_custody_proof_error(
+        "Staging operator preflight report jwtCustodyProof",
+        preflight_report.get("jwtCustodyProof"),
+    )
+    if preflight_custody_proof_error:
+        return ("fail", rollback_mode, preflight_custody_proof_error)
+    if preflight_report.get("jwtCustodyProof") != att["jwtCustodyProof"]:
+        return (
+            "fail",
+            rollback_mode,
+            "Staging operator preflight report jwtCustodyProof does not match the attestation",
+        )
+    custody_policy_ids = {
+        proof_id for proof_id, _, _ in ACCEPTED_JWT_CUSTODY_PROOF_TUPLES
+    }
+    custody_checks = [
+        check
+        for check in preflight_report.get("checkResults", [])
+        if isinstance(check, dict) and check.get("policyId") in custody_policy_ids
+    ]
+    selected_custody_policy_id = att["jwtCustodyProof"]["proofId"]
+    if any(check.get("policyId") != selected_custody_policy_id for check in custody_checks):
+        return (
+            "fail",
+            rollback_mode,
+            "Staging operator preflight report contains an alternate JWT custody policy result",
+        )
+    if (
+        len(custody_checks) != 1
+        or custody_checks[0].get("status") != "pass"
+        or custody_checks[0].get("required") is not True
+    ):
+        return (
+            "fail",
+            rollback_mode,
+            "Staging operator preflight report must contain one passing required result for the selected JWT custody policy",
+        )
+    rotation_checks = [
+        check
+        for check in preflight_report.get("checkResults", [])
+        if isinstance(check, dict) and check.get("policyId") == JWT_ROTATION_POLICY_ID
+    ]
+    if len(rotation_checks) != 1 or rotation_checks[0].get("status") != "pass":
+        return (
+            "fail",
+            rollback_mode,
+            "Staging operator preflight report must contain one passing PREFLIGHT-JWT-ROTATION-001 result",
+        )
+    if rotation_checks[0].get("required") is not True:
+        return (
+            "fail",
+            rollback_mode,
+            "Staging operator preflight report JWT rotation result must be event-scoped",
+        )
+
+    rotation_evidence, rotation_evidence_error = load_immutable_json_evidence(
+        root_dir,
+        att["jwtRotationEvidenceRef"],
+        "jwtRotationEvidenceRef",
+    )
+    if rotation_evidence_error:
+        return ("fail", rollback_mode, rotation_evidence_error)
+    assert rotation_evidence is not None
+    if rotation_evidence.get("policyId") != JWT_ROTATION_POLICY_ID:
+        return (
+            "fail",
+            rollback_mode,
+            "jwtRotationEvidenceRef evidence policyId must be PREFLIGHT-JWT-ROTATION-001",
+        )
+    if rotation_evidence.get("status") != "pass":
+        return ("fail", rollback_mode, "jwtRotationEvidenceRef evidence status must be pass")
+    if rotation_evidence.get("deploymentEventId") != staging_event_id:
+        return (
+            "fail",
+            rollback_mode,
+            "jwtRotationEvidenceRef evidence deploymentEventId does not match the staging event",
+        )
+    rotation_custody_proof_error = jwt_custody_proof_error(
+        "jwtRotationEvidenceRef evidence jwtCustodyProof",
+        rotation_evidence.get("jwtCustodyProof"),
+    )
+    if rotation_custody_proof_error:
+        return ("fail", rollback_mode, rotation_custody_proof_error)
+    if rotation_evidence.get("jwtCustodyProof") != att["jwtCustodyProof"]:
+        return (
+            "fail",
+            rollback_mode,
+            "jwtRotationEvidenceRef evidence jwtCustodyProof does not match the attestation",
+        )
 
     live_state = record.get("liveStateEvidence")
     if not isinstance(live_state, dict):

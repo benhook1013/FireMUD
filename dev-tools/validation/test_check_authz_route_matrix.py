@@ -370,6 +370,149 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     contract["owner_enforcement_request_id"],
                 )
 
+    def test_moderation_action_routes_enforce_fields_and_idempotency_contract(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        routes = {
+            route["applicability"]["action_category"]: route
+            for route in document["routes"]
+            if route.get("service") == "logging-admin-service"
+            and route.get("route") == "POST /moderation/actions"
+        }
+        for action_category, route in routes.items():
+            with self.subTest(action_category=action_category):
+                self.assertEqual(
+                    self.validator.MODERATION_ACTION_REQUIRED_FIELDS[action_category],
+                    set(route["required_fields"]),
+                )
+                for field, expected in self.validator.MODERATION_ACTION_IDEMPOTENCY_CONTRACT.items():
+                    self.assertEqual(expected, route["idempotency_contract"][field])
+
+    def test_moderation_action_routes_reject_missing_identity_and_platform_tenant_fields(
+        self,
+    ):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        mutations = (
+            (
+                "tenant policy identity",
+                "tenant_restriction",
+                lambda route: route["required_fields"].remove(
+                    "policy_intent_request_id"
+                ),
+                "required_fields must exactly match the 'tenant_restriction' moderation action contract",
+            ),
+            (
+                "platform policy identity",
+                "platform_access_ban",
+                lambda route: route["required_fields"].remove(
+                    "policy_intent_request_id"
+                ),
+                "required_fields must exactly match the 'platform_access_ban' moderation action contract",
+            ),
+            (
+                "duplicate platform policy identity",
+                "platform_access_ban",
+                lambda route: route["required_fields"].append(
+                    "policy_intent_request_id"
+                ),
+                "required_fields must exactly match the 'platform_access_ban' moderation action contract",
+            ),
+            (
+                "non-string tenant field",
+                "tenant_restriction",
+                lambda route: route["required_fields"].append(1),
+                "required_fields must exactly match the 'tenant_restriction' moderation action contract",
+            ),
+            (
+                "platform required tenant id",
+                "platform_access_ban",
+                lambda route: route["required_fields"].append("tenant_id"),
+                "platform_access_ban branch must forbid tenant identity/scope/generation fields",
+            ),
+            (
+                "platform declared tenant scope",
+                "platform_access_ban",
+                lambda route: route.__setitem__("tenant_scope", "tenant"),
+                "platform_access_ban branch must forbid tenant identity/scope/generation fields",
+            ),
+            (
+                "platform target tenant generation",
+                "platform_access_ban",
+                lambda route: route["required_live_checks"].append(
+                    "target_tenant_generation"
+                ),
+                "platform_access_ban branch must forbid tenant identity/scope/generation fields",
+            ),
+        )
+        for mutation_name, action_category, mutate, expected_error in mutations:
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                route = next(
+                    route
+                    for route in document["routes"]
+                    if route.get("service") == "logging-admin-service"
+                    and route.get("route") == "POST /moderation/actions"
+                    and route.get("applicability", {}).get("action_category")
+                    == action_category
+                )
+                mutate(route)
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(expected_error in error for error in errors),
+                    (mutation_name, errors),
+                )
+
+    def test_moderation_action_routes_reject_idempotency_identity_aliasing(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        mutations = (
+            ("key", "key", "control_plane_request_id"),
+            ("digest field", "digest_field", "control_plane_request_id"),
+            (
+                "exact retry omitted",
+                "exact_retry",
+                None,
+            ),
+            (
+                "changed digest",
+                "changed_digest",
+                "PERMISSION_DENIED",
+            ),
+            (
+                "changed request id omitted",
+                "changed_request_id",
+                None,
+            ),
+            ("correlation", "control_plane_request_id", "mutation_identity"),
+            (
+                "owner identity",
+                "owner_enforcement_request_id",
+                "policy_intent_request_id",
+            ),
+        )
+        for mutation_name, field, value in mutations:
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                route = next(
+                    route
+                    for route in document["routes"]
+                    if route.get("service") == "logging-admin-service"
+                    and route.get("route") == "POST /moderation/actions"
+                    and route.get("applicability", {}).get("action_category")
+                    == "tenant_restriction"
+                )
+                if value is None:
+                    route["idempotency_contract"].pop(field)
+                else:
+                    route["idempotency_contract"][field] = value
+                errors = validate_document(self.validator, document)
+                expected = self.validator.MODERATION_ACTION_IDEMPOTENCY_CONTRACT[field]
+                self.assertTrue(
+                    any(
+                        f"idempotency_contract.{field} must be {expected!r}" in error
+                        for error in errors
+                    ),
+                    errors,
+                )
+
     def test_platform_moderation_branch_rejects_tenant_authority_regressions(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         mutations = (

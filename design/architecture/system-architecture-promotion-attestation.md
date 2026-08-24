@@ -10,7 +10,7 @@ This document defines the canonical attestation artifact used to promote image d
 
 ## Implementation Status
 
-The current repository validates checked-in, operator-authored promotion evidence and does not yet prove the target machine-generated evidence producer or the JWT custody/rotation lineage fields below. The target contract below still requires operator review of evidence grounded in immutable artifacts and observed live state.
+The current repository validates checked-in, operator-authored promotion evidence, including the JWT custody and rotation lineage fields below. The current preflight and staging-record producers do not yet emit that target evidence, so production promotion remains blocked until those producers and their underlying custody/rotation proof are implemented. The target contract still requires operator review of evidence grounded in immutable artifacts and observed live state.
 
 ## Artifact Format
 

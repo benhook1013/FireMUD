@@ -814,6 +814,27 @@ complete_status, complete_message = validate_report(
 )
 if complete_status != "pass":
     raise SystemExit(f"complete preflight policy set did not pass: {complete_message}")
+ordinary_supplemental_report = {
+    **complete_report,
+    "checkResults": complete_report["checkResults"]
+    + [
+        {
+            "policyId": "PREFLIGHT-JWT-ROTATION-001",
+            "category": module.PREFLIGHT_POLICY_CATALOG["PREFLIGHT-JWT-ROTATION-001"],
+            "required": True,
+            "status": "pass",
+            "message": "ordinary report must not authorize rotation evidence",
+        }
+    ],
+}
+ordinary_supplemental_status, ordinary_supplemental_message = validate_report(
+    ordinary_supplemental_report, "hobby-self-hosted", "contract-hobby"
+)
+if ordinary_supplemental_status != "fail" or "unknown policy IDs" not in ordinary_supplemental_message:
+    raise SystemExit(
+        "ordinary preflight validation accepted supplemental JWT rotation evidence: "
+        + ordinary_supplemental_message
+    )
 for advisory_status in ("pass", "fail"):
     advisory_report = {
         **complete_report,
@@ -3199,6 +3220,29 @@ def make_secret_evidence():
 
 secret_evidence_path.write_text(json.dumps(make_secret_evidence()), encoding="utf-8")
 staging_event_id = "55555555-5555-4555-8555-555555555555"
+jwt_custody_proof = {
+    "proofId": "PREFLIGHT-JWT-INTERIM-001",
+    "custodyMode": "INTERIM_ACCOUNT_ONLY_MOUNTED_FALLBACK",
+    "contractVersion": 1,
+}
+rotation_evidence = {
+    "policyId": "PREFLIGHT-JWT-ROTATION-001",
+    "status": "pass",
+    "deploymentEventId": staging_event_id,
+    "jwtCustodyProof": jwt_custody_proof,
+}
+rotation_evidence_path = (
+    promotion_root
+    / "design/operations/deployments/staging/jwt-rotation"
+    / f"{staging_event_id}.json"
+)
+rotation_evidence_path.parent.mkdir(parents=True, exist_ok=True)
+rotation_evidence_path.write_text(json.dumps(rotation_evidence), encoding="utf-8")
+rotation_evidence_ref = (
+    str(rotation_evidence_path.relative_to(promotion_root))
+    + "#"
+    + module.canonical_evidence_digest(rotation_evidence)
+)
 staging_dir = (
     promotion_root
     / "design/operations/deployments/staging/deployments"
@@ -3226,6 +3270,7 @@ staging_preflight_path.write_text(
             "completedAt": past_timestamp,
             "toolVersion": "preflight.py-v1",
             "context": "operator",
+            "jwtCustodyProof": jwt_custody_proof,
             "checkResults": [
                 {
                     "policyId": policy_id,
@@ -3235,6 +3280,22 @@ staging_preflight_path.write_text(
                     "message": "contract evidence",
                 }
                 for policy_id, required in staging_requirements.items()
+            ]
+            + [
+                {
+                    "policyId": "PREFLIGHT-JWT-INTERIM-001",
+                    "category": module.PREFLIGHT_POLICY_CATALOG["PREFLIGHT-JWT-INTERIM-001"],
+                    "required": True,
+                    "status": "pass",
+                    "message": "contract evidence",
+                },
+                {
+                    "policyId": "PREFLIGHT-JWT-ROTATION-001",
+                    "category": module.PREFLIGHT_POLICY_CATALOG["PREFLIGHT-JWT-ROTATION-001"],
+                    "required": True,
+                    "status": "pass",
+                    "message": "contract evidence",
+                }
             ],
         }
     ),
@@ -3249,6 +3310,8 @@ staging_record = {
     "deployStatus": "pass",
     "smokeStatus": "pass",
     "serviceDigests": {"spring-cloud-gateway": gateway_image, "account-service": account_image},
+    "jwtCustodyProof": jwt_custody_proof,
+    "jwtRotationEvidenceRef": rotation_evidence_ref,
     "preflightReportPath": str(staging_preflight_path.relative_to(promotion_root)),
     "liveStateEvidence": {
         "status": "pass",
@@ -3260,7 +3323,8 @@ staging_record = {
     "secretComplianceEvidenceRef": secret_evidence_path.name,
     "smokeEvidence": ["contract-smoke"],
 }
-(staging_dir / f"{staging_event_id}.json").write_text(json.dumps(staging_record), encoding="utf-8")
+staging_record_path = staging_dir / f"{staging_event_id}.json"
+staging_record_path.write_text(json.dumps(staging_record), encoding="utf-8")
 promotion_recovery_dir = promotion_root / "design/operations/deployments/production/recovery"
 promotion_recovery_dir.mkdir(parents=True)
 (promotion_recovery_dir / "baseline.json").write_text(json.dumps(valid_baseline), encoding="utf-8")
@@ -3272,6 +3336,8 @@ promotion_attestation_path.write_text(
             "environment": "staging",
             "stagingOverlayCommitSha": staging_sha,
             "stagingDeploymentEventId": staging_event_id,
+            "jwtCustodyProof": jwt_custody_proof,
+            "jwtRotationEvidenceRef": rotation_evidence_ref,
             "productionOverlayRef": "contract-production",
             "serviceDigests": {"spring-cloud-gateway": gateway_image, "account-service": account_image},
             "smokeEvidence": ["contract-smoke"],
@@ -3294,6 +3360,169 @@ if (
     or promotion_mode != "rollback-compatible"
 ):
     raise SystemExit(f"valid rollback-compatible promotion did not pass: {promotion_message}")
+
+base_attestation = json.loads(promotion_attestation_path.read_text(encoding="utf-8"))
+base_preflight_report = json.loads(staging_preflight_path.read_text(encoding="utf-8"))
+
+
+def verify_jwt_lineage_failure(
+    case_name,
+    mutate_attestation=None,
+    mutate_record=None,
+    mutate_rotation=None,
+    mutate_preflight=None,
+    expected_fragment="",
+):
+    attestation = copy.deepcopy(base_attestation)
+    record = copy.deepcopy(staging_record)
+    rotation = copy.deepcopy(rotation_evidence)
+    preflight = copy.deepcopy(base_preflight_report)
+    if mutate_attestation:
+        mutate_attestation(attestation)
+    if mutate_record:
+        mutate_record(record)
+    if mutate_rotation:
+        mutate_rotation(rotation)
+        rotation_evidence_path.write_text(json.dumps(rotation), encoding="utf-8")
+        rotation_ref = (
+            str(rotation_evidence_path.relative_to(promotion_root))
+            + "#"
+            + module.canonical_evidence_digest(rotation)
+        )
+        attestation["jwtRotationEvidenceRef"] = rotation_ref
+        record["jwtRotationEvidenceRef"] = rotation_ref
+    else:
+        rotation_evidence_path.write_text(json.dumps(rotation), encoding="utf-8")
+    if mutate_preflight:
+        mutate_preflight(preflight)
+    staging_preflight_path.write_text(json.dumps(preflight), encoding="utf-8")
+    promotion_attestation_path.write_text(json.dumps(attestation), encoding="utf-8")
+    staging_record_path.write_text(json.dumps(record), encoding="utf-8")
+    status, _, message, _, _ = module.promotion_check(
+        promotion_attestation_path,
+        [gateway_image, account_image],
+        promotion_root,
+        expected_production_overlay_ref="contract-production",
+    )
+    if status != "fail" or expected_fragment not in message:
+        raise SystemExit(f"{case_name}: JWT lineage failure was not enforced: {message}")
+
+
+verify_jwt_lineage_failure(
+    "missing-attestation-custody-proof",
+    mutate_attestation=lambda attestation: attestation.pop("jwtCustodyProof"),
+    expected_fragment="Attestation missing required canonical fields",
+)
+verify_jwt_lineage_failure(
+    "missing-record-custody-proof",
+    mutate_record=lambda record: record.pop("jwtCustodyProof"),
+    expected_fragment="Staging deployment record missing required canonical fields",
+)
+verify_jwt_lineage_failure(
+    "mismatched-custody-proof",
+    mutate_attestation=lambda attestation: attestation.__setitem__(
+        "jwtCustodyProof",
+        {
+            "proofId": "PREFLIGHT-JWT-002",
+            "custodyMode": "TARGET_NON_EXPORTABLE_SIGNER",
+            "contractVersion": 1,
+        },
+    ),
+    expected_fragment="jwtCustodyProof does not match the attestation",
+)
+verify_jwt_lineage_failure(
+    "extra-custody-proof-field",
+    mutate_attestation=lambda attestation: attestation["jwtCustodyProof"].__setitem__(
+        "unexpected", True
+    ),
+    expected_fragment="must contain exactly proofId, custodyMode, and contractVersion",
+)
+for invalid_contract_version in (True, 1.0):
+    verify_jwt_lineage_failure(
+        f"invalid-contract-version-{invalid_contract_version!r}",
+        mutate_attestation=lambda attestation, version=invalid_contract_version: attestation[
+            "jwtCustodyProof"
+        ].__setitem__("contractVersion", version),
+        expected_fragment="contractVersion must be an integer",
+    )
+verify_jwt_lineage_failure(
+    "missing-selected-custody-policy",
+    mutate_preflight=lambda preflight: preflight.__setitem__(
+        "checkResults",
+        [
+            check
+            for check in preflight["checkResults"]
+            if check["policyId"] != "PREFLIGHT-JWT-INTERIM-001"
+        ],
+    ),
+    expected_fragment="one passing required result for the selected JWT custody policy",
+)
+verify_jwt_lineage_failure(
+    "failed-selected-custody-policy",
+    mutate_preflight=lambda preflight: preflight["checkResults"][-2].__setitem__(
+        "status", "fail"
+    ),
+    expected_fragment="one passing required result for the selected JWT custody policy",
+)
+verify_jwt_lineage_failure(
+    "alternate-custody-policy",
+    mutate_preflight=lambda preflight: preflight["checkResults"].append(
+        {
+            "policyId": "PREFLIGHT-JWT-002",
+            "category": module.PREFLIGHT_POLICY_CATALOG["PREFLIGHT-JWT-002"],
+            "required": True,
+            "status": "pass",
+            "message": "alternate custody must be rejected",
+        }
+    ),
+    expected_fragment="unknown policy IDs",
+)
+verify_jwt_lineage_failure(
+    "missing-attestation-rotation-ref",
+    mutate_attestation=lambda attestation: attestation.pop("jwtRotationEvidenceRef"),
+    expected_fragment="Attestation missing required canonical fields",
+)
+verify_jwt_lineage_failure(
+    "mismatched-rotation-ref",
+    mutate_attestation=lambda attestation: attestation.__setitem__(
+        "jwtRotationEvidenceRef", rotation_evidence_ref + "-mismatch"
+    ),
+    expected_fragment="jwtRotationEvidenceRef does not match the attestation",
+)
+verify_jwt_lineage_failure(
+    "wrong-rotation-event",
+    mutate_rotation=lambda rotation: rotation.__setitem__(
+        "deploymentEventId", "88888888-8888-4888-8888-888888888888"
+    ),
+    expected_fragment="deploymentEventId does not match the staging event",
+)
+verify_jwt_lineage_failure(
+    "wrong-rotation-policy",
+    mutate_rotation=lambda rotation: rotation.__setitem__("policyId", "PREFLIGHT-JWT-002"),
+    expected_fragment="policyId must be PREFLIGHT-JWT-ROTATION-001",
+)
+verify_jwt_lineage_failure(
+    "wrong-rotation-status",
+    mutate_rotation=lambda rotation: rotation.__setitem__("status", "fail"),
+    expected_fragment="evidence status must be pass",
+)
+verify_jwt_lineage_failure(
+    "non-immutable-rotation-ref",
+    mutate_attestation=lambda attestation: attestation.__setitem__(
+        "jwtRotationEvidenceRef",
+        "design/operations/deployments/staging/jwt-rotation/evidence.json#sha256:not-immutable",
+    ),
+    mutate_record=lambda record: record.__setitem__(
+        "jwtRotationEvidenceRef",
+        "design/operations/deployments/staging/jwt-rotation/evidence.json#sha256:not-immutable",
+    ),
+    expected_fragment="must use <repository-path>#sha256:<digest> format",
+)
+
+rotation_evidence_path.write_text(json.dumps(rotation_evidence), encoding="utf-8")
+staging_record_path.write_text(json.dumps(staging_record), encoding="utf-8")
+staging_preflight_path.write_text(json.dumps(base_preflight_report), encoding="utf-8")
+promotion_attestation_path.write_text(json.dumps(base_attestation), encoding="utf-8")
 
 # Exercise staging-lineage failures independently of the deliberately blocked
 # recovery-inventory dereference boundary above.

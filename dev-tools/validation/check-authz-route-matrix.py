@@ -685,6 +685,42 @@ MODERATION_ACTION_BRANCHES = {
     "tenant_restriction": MODERATION_TENANT_ACTION_CATEGORIES,
     "platform_access_ban": {MODERATION_PLATFORM_ACTION_CATEGORY},
 }
+MODERATION_ACTION_REQUIRED_FIELDS = {
+    "tenant_restriction": {
+        "policy_intent_request_id",
+        "control_plane_request_id",
+        "actor_from_session",
+        "reason",
+        "tenant_id",
+        "target_account_id",
+        "action",
+        "mutation_digest",
+    },
+    "platform_access_ban": {
+        "policy_intent_request_id",
+        "control_plane_request_id",
+        "actor_from_session",
+        "reason",
+        "target_account_id",
+        "action",
+        "mutation_digest",
+    },
+}
+MODERATION_ACTION_IDEMPOTENCY_CONTRACT = {
+    "key": "policy_intent_request_id",
+    "digest": "mutationDigest/v1",
+    "digest_field": "mutation_digest",
+    "exact_retry": "same_policy_intent_request_id_and_digest_returns_stored_outcome",
+    "changed_digest": "IDEMPOTENCY_CONFLICT",
+    "changed_request_id": "distinct_policy_intent_operation",
+    "control_plane_request_id": "correlation_only",
+    "owner_enforcement_request_id": "distinct_future_owner_command_identity",
+}
+MODERATION_PLATFORM_FORBIDDEN_ROUTE_FIELDS = {
+    "tenant_id",
+    "tenant_scope",
+    "target_tenant_generation",
+}
 MODERATION_POLICY_INTENT_COVERAGE_IDENTITY = (
     "moderation-policy-intent-local-redemption"
 )
@@ -3701,6 +3737,66 @@ def validate_moderation_policy_contract(
         )
 
 
+def validate_moderation_action_variant_contract(
+    route: dict[str, Any],
+    label: str,
+    action_category: str,
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None = None,
+) -> None:
+    expected_fields = MODERATION_ACTION_REQUIRED_FIELDS[action_category]
+    raw_fields = route.get("required_fields")
+    field_set = (
+        {field for field in raw_fields if isinstance(field, str)}
+        if isinstance(raw_fields, list)
+        else set()
+    )
+    if (
+        not isinstance(raw_fields, list)
+        or field_set != expected_fields
+        or len(raw_fields) != len(field_set)
+    ):
+        append_unique_error(
+            errors,
+            f"{label} required_fields must exactly match the "
+            f"{action_category!r} moderation action contract: "
+            f"{sorted(expected_fields)}",
+        )
+
+    contract = route.get("idempotency_contract")
+    if not isinstance(contract, dict):
+        append_unique_error(
+            errors,
+            f"{label} idempotency_contract must declare the moderation action "
+            "identity and digest contract",
+        )
+    else:
+        for field, expected in MODERATION_ACTION_IDEMPOTENCY_CONTRACT.items():
+            if contract.get(field) != expected:
+                append_unique_error(
+                    errors,
+                    f"{label} idempotency_contract.{field} must be {expected!r}",
+                )
+
+    if action_category != MODERATION_PLATFORM_ACTION_CATEGORY:
+        return
+    forbidden_fields = field_set & MODERATION_PLATFORM_FORBIDDEN_ROUTE_FIELDS
+    forbidden_fields.update(
+        field
+        for field in MODERATION_PLATFORM_FORBIDDEN_ROUTE_FIELDS
+        if field in route
+    )
+    checks = route_live_checks(route, label, errors, live_checks_cache)
+    if "target_tenant_generation" in checks:
+        forbidden_fields.add("target_tenant_generation")
+    if forbidden_fields:
+        append_unique_error(
+            errors,
+            f"{label} platform_access_ban branch must forbid tenant "
+            f"identity/scope/generation fields: {sorted(forbidden_fields)}",
+        )
+
+
 def validate_moderation_action_route_variants(
     routes: list[Any],
     errors: list[str],
@@ -3748,6 +3844,13 @@ def validate_moderation_action_route_variants(
                 f"{label} accepted_action_categories must exactly match the "
                 f"{action_category!r} moderation action branch",
             )
+        validate_moderation_action_variant_contract(
+            route,
+            label,
+            action_category,
+            errors,
+            live_checks_cache,
+        )
 
     if set(observed) != set(MODERATION_ACTION_BRANCHES):
         return
