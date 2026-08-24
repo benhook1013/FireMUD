@@ -48,6 +48,9 @@ required_paths = [
     "internalBindings.certificates.tcpProxyBridgeClientRef",
     "internalBindings.registry.imagePullSecretRef",
     "assetStorage.enabled",
+    "backupStorage.enabled",
+    "backupStorage.bucket",
+    "backupStorage.bindingRef",
     "assetStorage.bucket",
     "assetStorage.bindingRef",
     "outboundComms.enabled",
@@ -63,6 +66,31 @@ def get(data, dotted):
             return None
         cur = cur[part]
     return cur
+
+def checked_in_manifest_error(ref, data, expected_environment):
+    if data.get("environment") != expected_environment:
+        return f"{ref}: environment mismatch"
+    missing = [path for path in required_paths if get(data, path) is None]
+    if "assetStorage" in data:
+        missing.extend(
+            path
+            for path in (
+                "assetStorage.bucket",
+                "assetStorage.endpoint",
+                "assetStorage.bindingRef",
+            )
+            if not get(data, path)
+        )
+    if missing:
+        return f"{ref}: missing required binding paths: {missing}"
+    backup_storage = data.get("backupStorage")
+    if not isinstance(backup_storage, dict):
+        return f"{ref}: backupStorage must be a mapping"
+    if not isinstance(backup_storage.get("enabled"), bool):
+        return f"{ref}: backupStorage.enabled must be a boolean"
+    if backup_storage["enabled"] is not True:
+        return f"{ref}: checked-in backupStorage.enabled must be true"
+    return None
 
 for env in ("production", "staging", "hobby-self-hosted"):
     ref = pathlib.Path(f"design/operations/environments/{env}/expected-bindings.yaml")
@@ -101,6 +129,174 @@ for env in ("production", "staging", "hobby-self-hosted"):
                 raise SystemExit(f"{ref}: enabled assetStorage needs bindingRef or fingerprint")
         elif not optional.get("smtpHost") and not optional.get("webhookTargets"):
             raise SystemExit(f"{ref}: enabled outboundComms needs smtpHost or webhookTargets")
+    error = checked_in_manifest_error(ref, data, env)
+    if error:
+        raise SystemExit(error)
+
+checked_in_hobby = yaml.safe_load(
+    (root / "design/operations/environments/hobby-self-hosted/expected-bindings.yaml").read_text(
+        encoding="utf-8"
+    )
+)
+for case_name, backup_storage in (("absent", "absent"), ("null", None)):
+    case_data = dict(checked_in_hobby)
+    if backup_storage == "absent":
+        case_data.pop("backupStorage", None)
+    else:
+        case_data["backupStorage"] = backup_storage
+    error = checked_in_manifest_error(
+        pathlib.Path(f"synthetic-{case_name}-backup-storage.yaml"),
+        case_data,
+        "hobby-self-hosted",
+    )
+    if error is None or "missing required binding paths" not in error or "backupStorage" not in error:
+        raise SystemExit(f"{case_name} backupStorage did not report missing paths: {error}")
+
+disabled_data = dict(checked_in_hobby)
+disabled_data["backupStorage"] = dict(checked_in_hobby["backupStorage"])
+disabled_data["backupStorage"]["enabled"] = False
+disabled_error = checked_in_manifest_error(
+    pathlib.Path("synthetic-disabled-backup-storage.yaml"),
+    disabled_data,
+    "hobby-self-hosted",
+)
+if disabled_error is None or "checked-in backupStorage.enabled must be true" not in disabled_error:
+    raise SystemExit(f"explicitly disabled backupStorage changed its diagnostic: {disabled_error}")
+PY
+
+python3 - <<'PY' "$ROOT_DIR" "$TMP_DIR"
+import json
+import os
+import pathlib
+import subprocess
+import sys
+
+import yaml
+
+root = pathlib.Path(sys.argv[1])
+tmp = pathlib.Path(sys.argv[2]) / "backup-selection-contract"
+tmp.mkdir(parents=True, exist_ok=True)
+fake_bin = tmp / "bin"
+fake_bin.mkdir()
+
+(fake_bin / "aws").write_text(
+    '''#!/usr/bin/env python3
+import gzip
+import json
+import os
+import pathlib
+import sys
+
+args = sys.argv[1:]
+objects = json.loads(os.environ["FAKE_OBJECTS"])
+if args[:2] == ["s3api", "list-objects-v2"]:
+    query = args[args.index("--query") + 1]
+    pathlib.Path(os.environ["FAKE_QUERY_LOG"]).write_text(query, encoding="utf-8")
+    if "ends_with" not in query or ".sql.gz" not in query:
+        raise SystemExit("selection query did not filter for .sql.gz")
+    candidates = [item for item in objects if item["Key"].endswith(".sql.gz")]
+    if not candidates:
+        print("None")
+    else:
+        print(max(candidates, key=lambda item: item["LastModified"])["Key"])
+elif args[:2] == ["s3", "cp"]:
+    source = args[2]
+    destination = args[3]
+    if not source.endswith(".sql.gz"):
+        raise SystemExit("restore attempted to copy a non-.sql.gz object")
+    pathlib.Path(destination).write_bytes(gzip.compress(b"-- selected valid hosted artifact\\n"))
+else:
+    raise SystemExit(f"unexpected aws invocation: {args}")
+''',
+    encoding="utf-8",
+)
+(fake_bin / "velero").write_text(
+    "#!/usr/bin/env python3\nprint('backup-1 Completed')\n",
+    encoding="utf-8",
+)
+(fake_bin / "psql").write_text(
+    '''#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import sys
+
+pathlib.Path(os.environ["PSQL_CAPTURE"]).write_bytes(sys.stdin.buffer.read())
+pathlib.Path(os.environ["PSQL_ARGS_CAPTURE"]).write_text(json.dumps(sys.argv[1:]), encoding="utf-8")
+''',
+    encoding="utf-8",
+)
+for tool in ("aws", "velero", "psql"):
+    (fake_bin / tool).chmod(0o755)
+
+objects_with_legacy_newer = [
+    {"Key": "15min/valid-older.sql.gz", "LastModified": "2026-08-24T12:00:00Z"},
+    {"Key": "15min/legacy-newer.dump", "LastModified": "2026-08-24T12:01:00Z"},
+    {"Key": "15min/arbitrary-newer-object", "LastModified": "2026-08-24T12:02:00Z"},
+]
+objects_without_valid = [
+    {"Key": "15min/legacy-newer.dump", "LastModified": "2026-08-24T12:01:00Z"},
+    {"Key": "15min/arbitrary-object", "LastModified": "2026-08-24T12:02:00Z"},
+]
+
+def run(script, objects, *, expect_success):
+    query_log = tmp / (pathlib.Path(script).stem + "-query.txt")
+    capture = tmp / (pathlib.Path(script).stem + "-psql.sql")
+    args_capture = tmp / (pathlib.Path(script).stem + "-psql-args.json")
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "PG_DUMP_BUCKET": "firemud-test",
+            "FIREMUD_POSTGRES_HOST": "localhost",
+            "FIREMUD_POSTGRES_USER": "firemud",
+            "FIREMUD_POSTGRES_DB": "firemud",
+            "FAKE_OBJECTS": json.dumps(objects),
+            "FAKE_QUERY_LOG": str(query_log),
+            "PSQL_CAPTURE": str(capture),
+            "PSQL_ARGS_CAPTURE": str(args_capture),
+        }
+    )
+    result = subprocess.run([str(script)], env=env, text=True, capture_output=True)
+    if (result.returncode == 0) != expect_success:
+        raise SystemExit(
+            f"{script} selection outcome was unexpected: rc={result.returncode}, "
+            f"stdout={result.stdout!r}, stderr={result.stderr!r}"
+        )
+    query = query_log.read_text(encoding="utf-8")
+    if "ends_with" not in query or ".sql.gz" not in query:
+        raise SystemExit(f"{script} did not retain the .sql.gz selection query: {query!r}")
+    return result, capture
+
+restore_script = root / "dev-tools/restores/restore-latest-db.sh"
+verify_script = root / "dev-tools/backups/verify-backups.sh"
+embedded_documents = list(yaml.safe_load_all((root / "k8s/velero/verify-backups-cronjob.yaml").read_text()))
+embedded_source = next(
+    document["data"]["verify-backups.sh"]
+    for document in embedded_documents
+    if isinstance(document, dict) and document.get("kind") == "ConfigMap"
+)
+embedded_script = tmp / "verify-backups-embedded.sh"
+embedded_script.write_text(embedded_source, encoding="utf-8")
+embedded_script.chmod(0o755)
+
+for script in (restore_script, verify_script, embedded_script):
+    result, capture = run(script, objects_with_legacy_newer, expect_success=True)
+    if script == restore_script:
+        if "valid-older.sql.gz" not in result.stdout or "legacy-newer.dump" in result.stdout:
+            raise SystemExit(f"{script} selected the wrong scheduled object: {result.stdout!r}")
+        if capture.read_bytes() != b"-- selected valid hosted artifact\n":
+            raise SystemExit(f"{script} streamed unexpected artifact bytes")
+        psql_args = json.loads((tmp / "restore-latest-db-psql-args.json").read_text(encoding="utf-8"))
+        if ["-v", "ON_ERROR_STOP=1"] != psql_args[:2]:
+            raise SystemExit(f"{script} did not enable psql ON_ERROR_STOP: {psql_args!r}")
+    elif "valid-older.sql.gz" not in result.stdout or "legacy-newer.dump" in result.stdout:
+        raise SystemExit(f"{script} verified the wrong scheduled object: {result.stdout!r}")
+
+for script in (restore_script, verify_script, embedded_script):
+    result, _ = run(script, objects_without_valid, expect_success=False)
+    if ".sql.gz" not in result.stderr:
+        raise SystemExit(f"{script} did not report missing valid .sql.gz artifact: {result.stderr!r}")
 PY
 
 python3 - <<'PY' "$ROOT_DIR" "$OPERATOR_REPORT_PATH"
@@ -869,6 +1065,9 @@ if module.rendered_references_image_pull_secret(
 PY
 
 # Legacy Secret-backed hobby fixture is the current player-facing contract.
+# The checked-in player-facing hobby fixture remains legacy Secret-backed. Keep
+# its migration-gap failure explicit while focused cases prove the alternate
+# ConfigMap shape is not accepted by the current contract.
 set +e
 rm -f "$REPORT_PATH"
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
@@ -1053,6 +1252,7 @@ PY
 
 python3 - <<'PY' "$ROOT_DIR" "$TMP_DIR"
 import ast
+import hashlib
 import importlib.util
 import json
 import pathlib
@@ -1554,6 +1754,7 @@ done
 
 python3 - <<'PY' "$ROOT_DIR" "$TMP_DIR"
 import copy
+import hashlib
 import json
 import importlib.util
 import pathlib
@@ -1813,6 +2014,26 @@ if not any(
     )
 ):
     raise SystemExit("credential-shaped shared asset target was accepted")
+disabled_asset_expected = copy.deepcopy(hobby)
+disabled_asset_expected.pop("assetStorage")
+disabled_asset_expected["outboundComms"]["webhookTargets"]["accountNotifications"] = "hobby-disabled-only"
+disabled_asset_expected["operatorCredentials"]["bindingRef"] = "cert-manager://firemud/hobby-disabled-operator"
+disabled_asset_path = env_root / "hobby-self-hosted" / "asset-storage-disabled.yaml"
+disabled_asset_path.write_text(yaml.safe_dump(disabled_asset_expected, sort_keys=False), encoding="utf-8")
+disabled_asset_results = module.expected_binding_checks(
+    disabled_asset_path,
+    "design/operations/environments/hobby-self-hosted/asset-storage-disabled.yaml",
+    "hobby-self-hosted",
+    [],
+)
+disabled_asset_external = next(
+    result for result in disabled_asset_results if result.policy_id == "PREFLIGHT-EXTERNAL-001"
+)
+if disabled_asset_external.status != "pass":
+    raise SystemExit(
+        "disabled external asset storage should not require assetStorage keys: "
+        + disabled_asset_external.message
+    )
 
 
 def verify_service_override_contract(case_name, rendered_overrides, allowed_overrides, expected_status, expected_fragment):
@@ -3066,6 +3287,125 @@ verify_binding_ref_contract(
     "Rendered workloads do not reference expected Secret bindings",
 )
 
+fingerprint_only_external = copy.deepcopy(
+    yaml.safe_load(
+        (root / "design/operations/environments/hobby-self-hosted/expected-bindings.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+)
+fingerprint_only_external["assetStorage"].pop("bindingRef")
+fingerprint_only_external["assetStorage"]["fingerprint"] = "sha256:asset-fingerprint"
+fingerprint_only_external["operatorCredentials"].pop("bindingRef")
+fingerprint_only_external["operatorCredentials"]["fingerprint"] = "sha256:operator-fingerprint"
+fingerprint_only_path = env_root / "hobby-self-hosted" / "fingerprint-only-external-bindings.yaml"
+fingerprint_only_path.write_text(yaml.safe_dump(fingerprint_only_external, sort_keys=False), encoding="utf-8")
+fingerprint_only_results = module.expected_binding_checks(
+    fingerprint_only_path,
+    "synthetic-fingerprint-only-external-bindings",
+    "hobby-self-hosted",
+    rendered_documents,
+)
+fingerprint_only_external_result = next(
+    result for result in fingerprint_only_results if result.policy_id == "PREFLIGHT-EXTERNAL-001"
+)
+if fingerprint_only_external_result.status != "pass":
+    raise SystemExit(
+        "fingerprint-only asset/operator bindings should pass external validation: "
+        + fingerprint_only_external_result.message
+    )
+
+verify_binding_ref_contract(
+    "invalid-asset-binding-ref",
+    lambda data: data["assetStorage"].__setitem__("bindingRef", "not-a-binding-ref"),
+    "PREFLIGHT-EXTERNAL-001",
+    "assetStorage.bindingRef must use <scheme>://<namespace>/<binding> format",
+)
+verify_binding_ref_contract(
+    "invalid-operator-binding-ref",
+    lambda data: data["operatorCredentials"].__setitem__("bindingRef", "not-a-binding-ref"),
+    "PREFLIGHT-EXTERNAL-001",
+    "operatorCredentials.bindingRef must use <scheme>://<namespace>/<binding> format",
+)
+
+def verify_backup_storage_contract(case_name, env_class, mutate, expected_status, expected_fragment):
+    source_path = root / f"design/operations/environments/{env_class}/expected-bindings.yaml"
+    expected = yaml.safe_load(source_path.read_text(encoding="utf-8"))
+    mutate(expected)
+    case_path = env_root / env_class / f"{case_name}-expected-bindings.yaml"
+    case_path.write_text(yaml.safe_dump(expected, sort_keys=False), encoding="utf-8")
+    results = module.expected_binding_checks(
+        case_path,
+        f"design/operations/environments/{env_class}/{case_name}-expected-bindings.yaml",
+        env_class,
+        rendered_documents,
+    )
+    external = next(result for result in results if result.policy_id == "PREFLIGHT-EXTERNAL-001")
+    if external.status != expected_status or expected_fragment not in external.message:
+        raise SystemExit(
+            f"{case_name}: expected {expected_status} with '{expected_fragment}', "
+            f"got {external.status}: {external.message}"
+        )
+
+verify_backup_storage_contract(
+    "missing-backup-enablement",
+    "hobby-self-hosted",
+    lambda data: data["backupStorage"].pop("enabled"),
+    "fail",
+    "backupStorage.enabled must be a boolean",
+)
+verify_backup_storage_contract(
+    "nonboolean-backup-enablement",
+    "hobby-self-hosted",
+    lambda data: data["backupStorage"].__setitem__("enabled", "true"),
+    "fail",
+    "backupStorage.enabled must be a boolean",
+)
+verify_backup_storage_contract(
+    "production-backup-disabled",
+    "production",
+    lambda data: (
+        data["backupStorage"].__setitem__("enabled", False),
+        [data["backupStorage"].pop(field, None) for field in ("bucket", "endpoint", "bindingRef", "fingerprint")],
+    ),
+    "fail",
+    "backupStorage.enabled must be true for production",
+)
+verify_backup_storage_contract(
+    "enabled-backup-missing-binding",
+    "hobby-self-hosted",
+    lambda data: data["backupStorage"].pop("bindingRef"),
+    "fail",
+    "enabled backup storage missing keys",
+)
+verify_backup_storage_contract(
+    "disabled-backup-placeholder",
+    "hobby-self-hosted",
+    lambda data: data["backupStorage"].__setitem__("enabled", False),
+    "fail",
+    "enabled=false must omit backup binding fields",
+)
+verify_backup_storage_contract(
+    "disabled-backup-valid",
+    "hobby-self-hosted",
+    lambda data: (
+        data["backupStorage"].__setitem__("enabled", False),
+        [data["backupStorage"].pop(field, None) for field in ("bucket", "endpoint", "bindingRef", "fingerprint")],
+    ),
+    "pass",
+    "External bindings are environment-scoped",
+)
+
+disabled_backup = copy.deepcopy(hobby)
+disabled_backup["backupStorage"] = {"enabled": False}
+disabled_backup_issues = module.external_binding_uniqueness_issues(
+    env_root, "hobby-self-hosted", disabled_backup
+)
+if any("backupStorage." in issue for issue in disabled_backup_issues):
+    raise SystemExit(
+        "disabled backup storage should be ignored for uniqueness: " + "; ".join(disabled_backup_issues)
+    )
+
 routine_expected = yaml.safe_load(
     (root / "design/operations/environments/hobby-self-hosted/expected-bindings.yaml").read_text(encoding="utf-8")
 )
@@ -3158,8 +3498,132 @@ if undeclared_pause_secrets.status != "fail" or "must be omitted" not in undecla
     raise SystemExit(f"undeclared backup maintenance identity did not fail closed: {undeclared_pause_secrets.message}")
 
 now = module.dt.datetime.now(module.dt.timezone.utc).replace(microsecond=0)
-past_timestamp = (now - module.dt.timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+past_time = now - module.dt.timedelta(minutes=5)
+past_timestamp = past_time.isoformat().replace("+00:00", "Z")
+past_epoch = int(past_time.timestamp())
 future_timestamp = (now + module.dt.timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+freshness_timestamp = (now - module.dt.timedelta(minutes=15)).isoformat().replace("+00:00", "Z")
+older_freshness_timestamp = (now - module.dt.timedelta(minutes=20)).isoformat().replace("+00:00", "Z")
+smoke_evidence_ref = "evidence/player-experience-smoke.json"
+smoke_evidence_path = tmp / smoke_evidence_ref
+smoke_evidence_path.parent.mkdir(parents=True)
+smoke_evidence_path.write_text(
+    json.dumps(
+        {
+            "deploymentRef": "staging-contract",
+            "verifiedAt": past_timestamp,
+            "verifiedBy": "preflight-contract",
+            "preflightEvidenceRef": "ci://preflight-contract",
+            "executionMode": "live",
+            "externalAuthorityProvenance": "retained-external",
+            "capabilities": {
+                "prometheusMirrors": "published",
+                "playerFlowCanary": "advertised",
+            },
+            "externalAuthority": {
+                "profile": "independent-required",
+                "exposedPublicPlayerPaths": ["websocket", "telnet"],
+                "detectionBudgetSeconds": 195,
+                "evidenceObservedAt": past_timestamp,
+                "lastSuccessfulHeartbeatObservedAt": past_timestamp,
+                "deadmanAuthority": {
+                    "status": "green",
+                    "evidenceRef": "pager://staging-contract/deadman",
+                    "target": "staging-contract-deadman",
+                    "checkRef": "check://staging-contract/deadman",
+                },
+                "publicPathChecks": {
+                    "websocket": {
+                        "status": "green",
+                        "evidenceRef": "probe://staging-contract/websocket",
+                        "target": "staging-contract-websocket",
+                        "lastSuccessfulProbeObservedAt": past_timestamp,
+                    },
+                    "telnet": {
+                        "status": "green",
+                        "evidenceRef": "probe://staging-contract/telnet",
+                        "target": "staging-contract-telnet",
+                        "lastSuccessfulProbeObservedAt": past_timestamp,
+                    },
+                },
+            },
+            "mirroredSignals": {
+                "entrypath_blackbox_probe_success": [
+                    {"path": "websocket", "target": "gateway", "value": 1},
+                    {"path": "telnet", "target": "tcp_proxy", "value": 1},
+                ],
+                "observability_deadman_heartbeat_timestamp_seconds": {
+                    "source": "staging-contract",
+                    "value": 1773917600,
+                },
+                "playerflow_canary_success": [
+                    {"flow": "login", "path": "websocket", "target": "gateway", "value": 1, "profile": "independent-required"},
+                    {"flow": "command", "path": "websocket", "target": "gateway", "value": 1, "profile": "independent-required"},
+                    {"flow": "login", "path": "telnet", "target": "tcp_proxy", "value": 1, "profile": "independent-required"},
+                    {"flow": "command", "path": "telnet", "target": "tcp_proxy", "value": 1, "profile": "independent-required"},
+                ],
+                "playerflow_canary_latency_ms": [
+                    {"flow": "command", "path": "websocket", "target": "gateway", "value": 184, "profile": "independent-required"},
+                    {"flow": "command", "path": "telnet", "target": "tcp_proxy", "value": 201, "profile": "independent-required"},
+                ],
+                "playerflow_canary_last_run_timestamp_seconds": [
+                    {"flow": "login", "path": "websocket", "target": "gateway", "value": past_epoch, "profile": "independent-required"},
+                    {"flow": "command", "path": "websocket", "target": "gateway", "value": past_epoch, "profile": "independent-required"},
+                    {"flow": "login", "path": "telnet", "target": "tcp_proxy", "value": past_epoch, "profile": "independent-required"},
+                    {"flow": "command", "path": "telnet", "target": "tcp_proxy", "value": past_epoch, "profile": "independent-required"},
+                ],
+                "playerflow_canary_freshness_budget_seconds": {
+                    "profile": "independent-required",
+                    "value": 195,
+                },
+            },
+            "canaryAlerts": [
+                {"alert": "PlayerFlowCanaryLoginFailed", "severity": "P0", "exerciseResult": "passed"},
+                {"alert": "PlayerFlowCanaryCommandFailed", "severity": "P1", "exerciseResult": "passed"},
+                {"alert": "PlayerFlowCanaryLatencyHigh", "severity": "P1", "exerciseResult": "passed"},
+                {"alert": "PlayerFlowCanaryEvidenceStale", "severity": "P1", "exerciseResult": "passed"},
+            ],
+        }
+    ),
+    encoding="utf-8",
+)
+
+original_subprocess_run = module.subprocess.run
+
+
+def timed_out_smoke_validator(*args, **kwargs):
+    raise module.subprocess.TimeoutExpired(args[0], kwargs.get("timeout"))
+
+
+module.subprocess.run = timed_out_smoke_validator
+try:
+    timeout_status, timeout_message = module.validate_retained_smoke_evidence(
+        tmp,
+        [smoke_evidence_ref],
+        "Contract smokeEvidence",
+    )
+finally:
+    module.subprocess.run = original_subprocess_run
+if timeout_status != "fail" or "validation timed out" not in timeout_message:
+    raise SystemExit(f"smoke evidence validator timeout did not fail closed: {timeout_message}")
+
+
+def unavailable_smoke_validator(*args, **kwargs):
+    raise OSError("validator executable missing")
+
+
+module.subprocess.run = unavailable_smoke_validator
+try:
+    unavailable_status, unavailable_message = module.validate_retained_smoke_evidence(
+        tmp,
+        [smoke_evidence_ref],
+        "Contract smokeEvidence",
+    )
+finally:
+    module.subprocess.run = original_subprocess_run
+if unavailable_status != "fail" or "could not run: validator executable missing" not in unavailable_message:
+    raise SystemExit(f"smoke evidence validator launch failure did not fail closed: {unavailable_message}")
+
 recovery_dir = tmp / "design/operations/deployments/production/recovery"
 recovery_dir.mkdir(parents=True)
 
@@ -3193,6 +3657,135 @@ def write_json(name, data):
 
 def timestamp(value):
     return value.isoformat().replace("+00:00", "Z")
+
+verified_point = {
+    "schemaVersion": "verified-restorable-point/v1",
+    "environment": "production",
+    "databaseIdentity": {
+        "clusterIdentity": "production-postgres-cluster-20260824",
+        "databaseName": "firemud",
+    },
+    "backupArtifact": {
+        "artifactRef": "s3://firemud-production/backups/20260824T120000Z.sql.gz",
+        "artifactIdentity": "snapshot-production-20260824T120000Z",
+        "artifactDigest": "sha256:" + "a" * 64,
+        "lineageRef": "lineage/production-20260824T120000Z",
+        "snapshotAt": "2026-08-24T12:00:00Z",
+    },
+    "verification": {
+        "operationId": "verify-production-20260824T120500Z",
+        "verifiedAt": "2026-08-24T12:05:00Z",
+        "restoreToolIdentity": {
+            "name": "psql",
+            "version": "16.4",
+            "digest": "sha256:" + "b" * 64,
+        },
+    },
+    "recordDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+}
+scheduled_backup_script = (root / "dev-tools/backups/pg-dump-rotate.sh").read_text(encoding="utf-8")
+scheduled_cronjob = (root / "k8s/postgres/pg-dump-cronjob.yaml").read_text(encoding="utf-8")
+scheduled_restore_script = (root / "dev-tools/restores/restore-latest-db.sh").read_text(encoding="utf-8")
+local_backup_script = (root / "dev-tools/backups/backup-db.sh").read_text(encoding="utf-8")
+local_restore_script = (root / "dev-tools/restores/restore-db.sh").read_text(encoding="utf-8")
+for label, content in (
+    ("scheduled backup script", scheduled_backup_script),
+    ("scheduled Kubernetes backup script", scheduled_cronjob),
+):
+    if "pg_dump -Fp" not in content or ".sql.gz" not in content or "gzip > \"$DUMP\"" not in content:
+        raise SystemExit(f"{label} does not declare the hosted pg_dump -Fp -> gzip -> .sql.gz producer pair")
+    if "pg_restore" in content:
+        raise SystemExit(f"{label} must not select pg_restore for the hosted plain-SQL artifact")
+if 'gunzip -c "$FILE" | psql' not in scheduled_restore_script:
+    raise SystemExit("hosted scheduled restore script does not consume .sql.gz with gunzip | psql")
+if "pg_dump" not in local_backup_script or "-Fc" not in local_backup_script or "pg_restore" not in local_restore_script:
+    raise SystemExit("local custom-format .dump/pg_restore lane is not preserved")
+expected_verified_point_bytes = (
+    b'{"backupArtifact":{"artifactDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",'
+    b'"artifactIdentity":"snapshot-production-20260824T120000Z","artifactRef":"s3://firemud-production/backups/20260824T120000Z.sql.gz",'
+    b'"lineageRef":"lineage/production-20260824T120000Z","snapshotAt":"2026-08-24T12:00:00Z"},"databaseIdentity":{"clusterIdentity":"production-postgres-cluster-20260824",'
+    b'"databaseName":"firemud"},"environment":"production","schemaVersion":"verified-restorable-point/v1",'
+    b'"verification":{"operationId":"verify-production-20260824T120500Z","restoreToolIdentity":{"digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",'
+    b'"name":"psql","version":"16.4"},"verifiedAt":"2026-08-24T12:05:00Z"}}'
+)
+if module.canonical_verified_restorable_point_bytes(verified_point) != expected_verified_point_bytes:
+    raise SystemExit("verified-point producer did not emit the canonical golden-vector bytes")
+verified_point["recordDigest"] = "sha256:6c569a3c7276f3bce99746d07a258e960bf869f4f7baa35a8c4c576f7904e0b0"
+verified_point_dir = tmp / module.VERIFIED_RESTORABLE_POINT_DIRECTORY
+verified_point_dir.mkdir(parents=True)
+verified_point_path = verified_point_dir / "20260824T120500Z.json"
+verified_point_path.write_text(json.dumps(verified_point), encoding="utf-8")
+point_status, point_message = module.validate_verified_restorable_point(
+    verified_point,
+    "production",
+    "2026-08-24T12:00:00Z",
+    "2026-08-24T12:05:00Z",
+    verified_point["recordDigest"],
+    verified_point["backupArtifact"]["artifactRef"],
+)
+if point_status != "pass":
+    raise SystemExit(f"verified-point consumer rejected the golden vector: {point_message}")
+tampered_point = {
+    **verified_point,
+    "backupArtifact": {
+        **verified_point["backupArtifact"],
+        "artifactDigest": "sha256:" + "c" * 64,
+    },
+}
+tampered_status, tampered_message = module.validate_verified_restorable_point(
+    tampered_point,
+    "production",
+    "2026-08-24T12:00:00Z",
+    "2026-08-24T12:05:00Z",
+    verified_point["recordDigest"],
+    verified_point["backupArtifact"]["artifactRef"],
+)
+if tampered_status != "fail" or "recordDigest" not in tampered_message:
+    raise SystemExit(f"verified-point consumer accepted a tampered golden vector: {tampered_message}")
+changed_time_point = copy.deepcopy(verified_point)
+changed_time_point["verification"]["verifiedAt"] = "2026-08-24T12:06:00Z"
+changed_time_status, changed_time_message = module.validate_verified_restorable_point(
+    changed_time_point,
+    "production",
+    "2026-08-24T12:00:00Z",
+    "2026-08-24T12:05:00Z",
+    verified_point["recordDigest"],
+    verified_point["backupArtifact"]["artifactRef"],
+)
+if changed_time_status != "fail" or "verifiedAt" not in changed_time_message:
+    raise SystemExit(f"verified-point consumer accepted changed verification time: {changed_time_message}")
+changed_snapshot_point = copy.deepcopy(verified_point)
+changed_snapshot_point["backupArtifact"]["snapshotAt"] = "2026-08-24T12:01:00Z"
+changed_snapshot_status, changed_snapshot_message = module.validate_verified_restorable_point(
+    changed_snapshot_point,
+    "production",
+    "2026-08-24T12:00:00Z",
+    "2026-08-24T12:05:00Z",
+    verified_point["recordDigest"],
+    verified_point["backupArtifact"]["artifactRef"],
+)
+if changed_snapshot_status != "fail" or "snapshotAt" not in changed_snapshot_message:
+    raise SystemExit(f"verified-point consumer accepted changed snapshot time: {changed_snapshot_message}")
+duplicate_point_path = verified_point_dir / "duplicate.json"
+duplicate_point_path.write_text(
+    '{"schemaVersion":"verified-restorable-point/v1","schemaVersion":"verified-restorable-point/v1"}',
+    encoding="utf-8",
+)
+try:
+    module.load_verified_restorable_point(duplicate_point_path)
+except ValueError:
+    pass
+else:
+    raise SystemExit("verified-point consumer accepted duplicate JSON members")
+
+readiness_point = copy.deepcopy(verified_point)
+readiness_point["backupArtifact"]["snapshotAt"] = past_timestamp
+readiness_point["verification"]["verifiedAt"] = past_timestamp
+readiness_point["recordDigest"] = "sha256:" + hashlib.sha256(
+    module.canonical_verified_restorable_point_bytes(readiness_point)
+).hexdigest()
+readiness_point_path = verified_point_dir / "current.json"
+readiness_point_path.write_text(json.dumps(readiness_point), encoding="utf-8")
 
 def canonical_recovery_record(finalized_at):
     quarantine_started_at = finalized_at - module.dt.timedelta(minutes=25)
@@ -3318,11 +3911,44 @@ def canonical_recovery_record(finalized_at):
         "durableParticipantConvergence": {"gameplay": {"disposition": "converged"}},
         "externalEffectReconciliation": {"mail": {"disposition": "invalidated"}},
         "sessionRecovery": {"gameSessionHandling": "invalidated", "authSessionHandling": "invalidated"},
+        "credentialApplicability": {
+            class_name: "applicable"
+            for class_name in (
+                "jwt-signing-keys-jwks",
+                "postgres-application-credentials",
+                "workload-leaf",
+                "bridge-leaf",
+                "operator-leaf",
+                "backup-storage",
+                "asset-storage",
+                "outbound-comms",
+                "operator-credentials",
+            )
+        },
+        "credentialDispositions": {
+            "jwt-signing-keys-jwks": "rotated",
+            "postgres-application-credentials": "rebound",
+            "workload-leaf": "reissued",
+            "bridge-leaf": "reissued",
+            "operator-leaf": "verified_not_restored",
+            "backup-storage": "rebound",
+            "asset-storage": "verified_not_restored",
+            "outbound-comms": "rotated",
+            "operator-credentials": "reissued",
+        },
         "jwtHardening": {
             "rotationJobRef": "jobs/jwt-rotation",
             "resultingKeyIds": ["kid-1"],
             "revocationWatermarkEvidence": "evidence/jwt-revocation",
             "validatorConvergenceEvidence": "evidence/jwt-validators",
+            "compromiseClassified": False,
+            "replacementEvidence": {
+                "oldKid": "kid-old",
+                "candidateKid": "kid-1",
+                "oldKidRejected": True,
+                "candidateKidAccepted": True,
+                "validatorEvidenceRef": "evidence/jwt-validators",
+            },
         },
         "databaseCredentialRotation": {
             "rotationJobRef": "jobs/postgres-rotation",
@@ -3339,11 +3965,46 @@ def canonical_recovery_record(finalized_at):
         "secretComplianceRefresh": {
             "recordRef": "design/operations/secret-compliance/production.yaml",
             "evidenceRef": "evidence/secret-compliance",
-            "credentialClasses": ["jwt-signing-keys-jwks", "postgres-application-credentials"],
-            "freshness": "lastRotationAt",
+            "credentialClasses": [
+                "jwt-signing-keys-jwks",
+                "postgres-application-credentials",
+                "backup-storage",
+                "asset-storage",
+            ],
+            "freshness": {
+                "jwt-signing-keys-jwks": {
+                    "lineage": "existing",
+                    "field": "lastRotationAt",
+                    "value": freshness_timestamp,
+                    "previousField": "lastProvisionedAt",
+                    "previousValue": "2026-03-01T00:00:00Z",
+                },
+                "postgres-application-credentials": {
+                    "lineage": "existing",
+                    "field": "lastRotationAt",
+                    "value": freshness_timestamp,
+                    "previousField": "lastRotationAt",
+                    "previousValue": freshness_timestamp,
+                },
+                "backup-storage": {
+                    "lineage": "existing",
+                    "field": "lastRotationAt",
+                    "value": freshness_timestamp,
+                    "previousField": "lastRotationAt",
+                    "previousValue": freshness_timestamp,
+                },
+                "asset-storage": {
+                    "lineage": "existing",
+                    "field": "lastRotationAt",
+                    "value": freshness_timestamp,
+                    "previousField": "lastRotationAt",
+                    "previousValue": freshness_timestamp,
+                },
+            },
         },
         "smokeStatus": "pass",
-        "smokeEvidence": ["evidence/smoke"],
+        "smokeEvidence": [smoke_evidence_ref],
+        "evidenceRefs": ["evidence/recovery-baseline.json"],
         "reopenApprovedBy": "preflight-contract",
     }
 
@@ -3358,6 +4019,9 @@ def compatibility_result(status):
         "evaluatedAt": past_timestamp,
         "evaluatorToolDigest": "sha256:evaluator",
         "newDrillRequired": False,
+        "newestVerifiedRestorablePointRef": str(readiness_point_path.relative_to(tmp)),
+        "newestVerifiedRestorablePointDigest": readiness_point["recordDigest"],
+        "newestVerifiedRestorablePointAt": past_timestamp,
     }
 
 stub_baseline = {
@@ -3393,6 +4057,907 @@ baseline_status, baseline_message = module.validate_recovery_baseline(
 )
 if baseline_status != "pass":
     raise SystemExit(f"valid recovery baseline did not pass: {baseline_message}")
+
+legacy_refresh_class_names = copy.deepcopy(valid_baseline)
+legacy_refresh_class_names["secretComplianceRefresh"]["credentialClasses"] = [
+    "backupStorage",
+    "assetStorage",
+]
+legacy_refresh_class_names["secretComplianceRefresh"]["freshness"] = {
+    "backupStorage": legacy_refresh_class_names["secretComplianceRefresh"]["freshness"].pop(
+        "backup-storage"
+    ),
+    "assetStorage": legacy_refresh_class_names["secretComplianceRefresh"]["freshness"].pop(
+        "asset-storage"
+    ),
+}
+legacy_refresh_class_names_path = recovery_dir / "legacy-refresh-class-names-baseline.json"
+legacy_refresh_class_names_path.write_text(json.dumps(legacy_refresh_class_names), encoding="utf-8")
+legacy_refresh_class_names_status, legacy_refresh_class_names_message = module.validate_recovery_baseline(
+    tmp,
+    str(legacy_refresh_class_names_path.relative_to(tmp)),
+    "sha256:recovery-contract",
+    now,
+    now,
+)
+if (
+    legacy_refresh_class_names_status != "fail"
+    or "references a class without a disposition" not in legacy_refresh_class_names_message
+):
+    raise SystemExit(
+        "legacy refresh class aliases were accepted: " + legacy_refresh_class_names_message
+    )
+
+not_applicable_internal_credential = copy.deepcopy(valid_baseline)
+not_applicable_internal_credential["credentialApplicability"]["jwt-signing-keys-jwks"] = "not_applicable"
+del not_applicable_internal_credential["credentialDispositions"]["jwt-signing-keys-jwks"]
+not_applicable_internal_credential_path = recovery_dir / "not-applicable-internal-credential-baseline.json"
+not_applicable_internal_credential_path.write_text(
+    json.dumps(not_applicable_internal_credential),
+    encoding="utf-8",
+)
+not_applicable_internal_credential_status, not_applicable_internal_credential_message = (
+    module.validate_recovery_baseline(
+        tmp,
+        str(not_applicable_internal_credential_path.relative_to(tmp)),
+        "sha256:recovery-contract",
+        now,
+        now,
+    )
+)
+if (
+    not_applicable_internal_credential_status != "fail"
+    or "required credential classes must be applicable" not in not_applicable_internal_credential_message
+    or "jwt-signing-keys-jwks" not in not_applicable_internal_credential_message
+):
+    raise SystemExit(
+        "not-applicable internal credential class was accepted: "
+        + not_applicable_internal_credential_message
+    )
+
+not_applicable_backup_storage = copy.deepcopy(valid_baseline)
+not_applicable_backup_storage["credentialApplicability"]["backup-storage"] = "not_applicable"
+del not_applicable_backup_storage["credentialDispositions"]["backup-storage"]
+not_applicable_backup_storage["secretComplianceRefresh"]["credentialClasses"].remove("backup-storage")
+del not_applicable_backup_storage["secretComplianceRefresh"]["freshness"]["backup-storage"]
+not_applicable_backup_storage["externalCredentialValidation"]["records"]["backup-storage"] = {
+    "status": "not_applicable",
+    "reason": "credential-class-not-present",
+    "evidenceRef": "evidence/backup-storage-not-applicable.json",
+}
+not_applicable_backup_storage_path = recovery_dir / "not-applicable-backup-storage-baseline.json"
+not_applicable_backup_storage_path.write_text(
+    json.dumps(not_applicable_backup_storage),
+    encoding="utf-8",
+)
+not_applicable_backup_storage_status, not_applicable_backup_storage_message = (
+    module.validate_recovery_baseline(
+        tmp,
+        str(not_applicable_backup_storage_path.relative_to(tmp)),
+        "sha256:recovery-contract",
+        now,
+        now,
+    )
+)
+if (
+    not_applicable_backup_storage_status != "fail"
+    or "required credential classes must be applicable" not in not_applicable_backup_storage_message
+    or "backup-storage" not in not_applicable_backup_storage_message
+):
+    raise SystemExit(
+        "not-applicable production backup-storage was accepted: "
+        + not_applicable_backup_storage_message
+    )
+
+missing_recovery_evidence_refs = copy.deepcopy(valid_baseline)
+del missing_recovery_evidence_refs["evidenceRefs"]
+missing_recovery_evidence_refs_path = recovery_dir / "missing-recovery-evidence-refs-baseline.json"
+missing_recovery_evidence_refs_path.write_text(
+    json.dumps(missing_recovery_evidence_refs),
+    encoding="utf-8",
+)
+missing_recovery_evidence_refs_status, missing_recovery_evidence_refs_message = module.validate_recovery_baseline(
+    tmp,
+    str(missing_recovery_evidence_refs_path.relative_to(tmp)),
+    "sha256:recovery-contract",
+    now,
+    now,
+)
+if missing_recovery_evidence_refs_status != "fail" or "evidenceRefs" not in missing_recovery_evidence_refs_message:
+    raise SystemExit(
+        "missing recovery evidenceRefs did not fail closed: "
+        + missing_recovery_evidence_refs_message
+    )
+
+empty_recovery_evidence_refs = copy.deepcopy(valid_baseline)
+empty_recovery_evidence_refs["evidenceRefs"] = []
+empty_recovery_evidence_refs_path = recovery_dir / "empty-recovery-evidence-refs-baseline.json"
+empty_recovery_evidence_refs_path.write_text(
+    json.dumps(empty_recovery_evidence_refs),
+    encoding="utf-8",
+)
+empty_recovery_evidence_refs_status, empty_recovery_evidence_refs_message = module.validate_recovery_baseline(
+    tmp,
+    str(empty_recovery_evidence_refs_path.relative_to(tmp)),
+    "sha256:recovery-contract",
+    now,
+    now,
+)
+if empty_recovery_evidence_refs_status != "fail" or "evidenceRefs" not in empty_recovery_evidence_refs_message:
+    raise SystemExit(
+        "empty recovery evidenceRefs did not fail closed: "
+        + empty_recovery_evidence_refs_message
+    )
+
+malformed_recovery_evidence_refs = copy.deepcopy(valid_baseline)
+malformed_recovery_evidence_refs["evidenceRefs"] = ["evidence/recovery-baseline.json", 7]
+malformed_recovery_evidence_refs_path = recovery_dir / "malformed-recovery-evidence-refs-baseline.json"
+malformed_recovery_evidence_refs_path.write_text(
+    json.dumps(malformed_recovery_evidence_refs),
+    encoding="utf-8",
+)
+malformed_recovery_evidence_refs_status, malformed_recovery_evidence_refs_message = module.validate_recovery_baseline(
+    tmp,
+    str(malformed_recovery_evidence_refs_path.relative_to(tmp)),
+    "sha256:recovery-contract",
+    now,
+    now,
+)
+if (
+    malformed_recovery_evidence_refs_status != "fail"
+    or "evidenceRefs must contain only non-empty strings" not in malformed_recovery_evidence_refs_message
+):
+    raise SystemExit(
+        "malformed recovery evidenceRefs did not fail closed: "
+        + malformed_recovery_evidence_refs_message
+    )
+
+object_recovery_evidence_refs = copy.deepcopy(valid_baseline)
+object_recovery_evidence_refs["evidenceRefs"] = {"baseline": "evidence/recovery-baseline.json"}
+object_recovery_evidence_refs_path = recovery_dir / "object-recovery-evidence-refs-baseline.json"
+object_recovery_evidence_refs_path.write_text(
+    json.dumps(object_recovery_evidence_refs),
+    encoding="utf-8",
+)
+object_recovery_evidence_refs_status, object_recovery_evidence_refs_message = module.validate_recovery_baseline(
+    tmp,
+    str(object_recovery_evidence_refs_path.relative_to(tmp)),
+    "sha256:recovery-contract",
+    now,
+    now,
+)
+if (
+    object_recovery_evidence_refs_status != "fail"
+    or "evidenceRefs must be a non-empty list" not in object_recovery_evidence_refs_message
+):
+    raise SystemExit(
+        "object-shaped recovery evidenceRefs did not fail closed: "
+        + object_recovery_evidence_refs_message
+    )
+
+missing_applicable_credential_disposition = copy.deepcopy(valid_baseline)
+del missing_applicable_credential_disposition["credentialDispositions"]["operator-credentials"]
+missing_applicable_credential_disposition_path = recovery_dir / "missing-applicable-credential-disposition-baseline.json"
+missing_applicable_credential_disposition_path.write_text(
+    json.dumps(missing_applicable_credential_disposition),
+    encoding="utf-8",
+)
+missing_applicable_credential_disposition_status, missing_applicable_credential_disposition_message = (
+    module.validate_recovery_baseline(
+        tmp,
+        str(missing_applicable_credential_disposition_path.relative_to(tmp)),
+        "sha256:recovery-contract",
+        now,
+        now,
+    )
+)
+if (
+    missing_applicable_credential_disposition_status != "fail"
+    or "missing: operator-credentials" not in missing_applicable_credential_disposition_message
+):
+    raise SystemExit(
+        "applicable credential class without a disposition did not fail closed: "
+        + missing_applicable_credential_disposition_message
+    )
+
+not_applicable_external_credential = copy.deepcopy(valid_baseline)
+not_applicable_external_credential["credentialApplicability"]["asset-storage"] = "not_applicable"
+del not_applicable_external_credential["credentialDispositions"]["asset-storage"]
+not_applicable_external_credential["secretComplianceRefresh"]["credentialClasses"].remove("asset-storage")
+del not_applicable_external_credential["secretComplianceRefresh"]["freshness"]["asset-storage"]
+not_applicable_external_credential["externalCredentialValidation"]["records"]["asset-storage"] = {
+    "status": "not_applicable",
+    "reason": "credential-class-not-present",
+    "evidenceRef": "evidence/asset-storage-not-applicable.json",
+}
+not_applicable_external_credential_path = recovery_dir / "not-applicable-external-credential-baseline.json"
+not_applicable_external_credential_path.write_text(
+    json.dumps(not_applicable_external_credential),
+    encoding="utf-8",
+)
+not_applicable_external_credential_status, not_applicable_external_credential_message = (
+    module.validate_recovery_baseline(
+        tmp,
+        str(not_applicable_external_credential_path.relative_to(tmp)),
+        "sha256:recovery-contract",
+        now,
+        now,
+    )
+)
+if not_applicable_external_credential_status != "pass":
+    raise SystemExit(
+        "not-applicable external credential class did not pass with explicit evidence shape: "
+        + not_applicable_external_credential_message
+    )
+
+non_applicable_external_disposition = copy.deepcopy(not_applicable_external_credential)
+non_applicable_external_disposition["credentialDispositions"]["asset-storage"] = "verified_not_restored"
+non_applicable_external_disposition_path = recovery_dir / "non-applicable-external-disposition-baseline.json"
+non_applicable_external_disposition_path.write_text(
+    json.dumps(non_applicable_external_disposition),
+    encoding="utf-8",
+)
+non_applicable_external_disposition_status, non_applicable_external_disposition_message = (
+    module.validate_recovery_baseline(
+        tmp,
+        str(non_applicable_external_disposition_path.relative_to(tmp)),
+        "sha256:recovery-contract",
+        now,
+        now,
+    )
+)
+if (
+    non_applicable_external_disposition_status != "fail"
+    or "extra: asset-storage" not in non_applicable_external_disposition_message
+):
+    raise SystemExit(
+        "non-applicable external credential disposition was accepted: "
+        + non_applicable_external_disposition_message
+    )
+
+non_applicable_external_pass_evidence = copy.deepcopy(not_applicable_external_credential)
+non_applicable_external_pass_evidence["externalCredentialValidation"]["records"]["asset-storage"] = copy.deepcopy(
+    valid_baseline["externalCredentialValidation"]["records"]["asset-storage"]
+)
+non_applicable_external_pass_evidence_path = recovery_dir / "non-applicable-external-pass-evidence-baseline.json"
+non_applicable_external_pass_evidence_path.write_text(
+    json.dumps(non_applicable_external_pass_evidence),
+    encoding="utf-8",
+)
+non_applicable_external_pass_evidence_status, non_applicable_external_pass_evidence_message = (
+    module.validate_recovery_baseline(
+        tmp,
+        str(non_applicable_external_pass_evidence_path.relative_to(tmp)),
+        "sha256:recovery-contract",
+        now,
+        now,
+    )
+)
+if (
+    non_applicable_external_pass_evidence_status != "fail"
+    or "must be not_applicable for non-applicable class: asset-storage" not in non_applicable_external_pass_evidence_message
+):
+    raise SystemExit(
+        "non-applicable external credential pass evidence was accepted: "
+        + non_applicable_external_pass_evidence_message
+    )
+
+missing_credential_applicability = copy.deepcopy(valid_baseline)
+del missing_credential_applicability["credentialApplicability"]["operator-leaf"]
+missing_credential_applicability_path = recovery_dir / "missing-credential-applicability-baseline.json"
+missing_credential_applicability_path.write_text(
+    json.dumps(missing_credential_applicability),
+    encoding="utf-8",
+)
+missing_credential_applicability_status, missing_credential_applicability_message = module.validate_recovery_baseline(
+    tmp,
+    str(missing_credential_applicability_path.relative_to(tmp)),
+    "sha256:recovery-contract",
+    now,
+    now,
+)
+if (
+    missing_credential_applicability_status != "fail"
+    or "credentialApplicability keys must exactly cover" not in missing_credential_applicability_message
+    or "missing: operator-leaf" not in missing_credential_applicability_message
+):
+    raise SystemExit(
+        "missing credential applicability did not fail closed: "
+        + missing_credential_applicability_message
+    )
+
+unknown_credential_applicability = copy.deepcopy(valid_baseline)
+unknown_credential_applicability["credentialApplicability"]["unknown-credential"] = "applicable"
+unknown_credential_applicability_path = recovery_dir / "unknown-credential-applicability-baseline.json"
+unknown_credential_applicability_path.write_text(
+    json.dumps(unknown_credential_applicability),
+    encoding="utf-8",
+)
+unknown_credential_applicability_status, unknown_credential_applicability_message = module.validate_recovery_baseline(
+    tmp,
+    str(unknown_credential_applicability_path.relative_to(tmp)),
+    "sha256:recovery-contract",
+    now,
+    now,
+)
+if (
+    unknown_credential_applicability_status != "fail"
+    or "extra: unknown-credential" not in unknown_credential_applicability_message
+):
+    raise SystemExit(
+        "unknown credential applicability class did not fail closed: "
+        + unknown_credential_applicability_message
+    )
+
+malformed_credential_applicability = copy.deepcopy(valid_baseline)
+malformed_credential_applicability["credentialApplicability"]["operator-leaf"] = "unknown"
+malformed_credential_applicability_path = recovery_dir / "malformed-credential-applicability-baseline.json"
+malformed_credential_applicability_path.write_text(
+    json.dumps(malformed_credential_applicability),
+    encoding="utf-8",
+)
+malformed_credential_applicability_status, malformed_credential_applicability_message = module.validate_recovery_baseline(
+    tmp,
+    str(malformed_credential_applicability_path.relative_to(tmp)),
+    "sha256:recovery-contract",
+    now,
+    now,
+)
+if (
+    malformed_credential_applicability_status != "fail"
+    or "unknown or malformed value for: operator-leaf" not in malformed_credential_applicability_message
+):
+    raise SystemExit(
+        "malformed credential applicability value did not fail closed: "
+        + malformed_credential_applicability_message
+    )
+
+missing_credential_dispositions = copy.deepcopy(valid_baseline)
+del missing_credential_dispositions["credentialDispositions"]
+missing_credential_dispositions_path = recovery_dir / "missing-credential-dispositions-baseline.json"
+missing_credential_dispositions_path.write_text(
+    json.dumps(missing_credential_dispositions),
+    encoding="utf-8",
+)
+missing_credential_dispositions_status, missing_credential_dispositions_message = module.validate_recovery_baseline(
+    tmp,
+    str(missing_credential_dispositions_path.relative_to(tmp)),
+    "sha256:recovery-contract",
+    now,
+    now,
+)
+if (
+    missing_credential_dispositions_status != "fail"
+    or "credentialDispositions" not in missing_credential_dispositions_message
+):
+    raise SystemExit(
+        "missing credentialDispositions did not fail closed: "
+        + missing_credential_dispositions_message
+    )
+
+missing_credential_class = copy.deepcopy(valid_baseline)
+del missing_credential_class["credentialDispositions"]["operator-leaf"]
+missing_credential_class_path = recovery_dir / "missing-credential-class-baseline.json"
+missing_credential_class_path.write_text(json.dumps(missing_credential_class), encoding="utf-8")
+missing_credential_class_status, missing_credential_class_message = module.validate_recovery_baseline(
+    tmp,
+    str(missing_credential_class_path.relative_to(tmp)),
+    "sha256:recovery-contract",
+    now,
+    now,
+)
+if missing_credential_class_status != "fail" or "missing: operator-leaf" not in missing_credential_class_message:
+    raise SystemExit(
+        "missing fixed credential disposition class did not fail closed: "
+        + missing_credential_class_message
+    )
+
+extra_credential_class = copy.deepcopy(valid_baseline)
+extra_credential_class["credentialDispositions"]["unknown-credential"] = "rotated"
+extra_credential_class_path = recovery_dir / "extra-credential-class-baseline.json"
+extra_credential_class_path.write_text(json.dumps(extra_credential_class), encoding="utf-8")
+extra_credential_class_status, extra_credential_class_message = module.validate_recovery_baseline(
+    tmp,
+    str(extra_credential_class_path.relative_to(tmp)),
+    "sha256:recovery-contract",
+    now,
+    now,
+)
+if extra_credential_class_status != "fail" or "extra: unknown-credential" not in extra_credential_class_message:
+    raise SystemExit(
+        "extra credential disposition class did not fail closed: "
+        + extra_credential_class_message
+    )
+
+unknown_credential_disposition = copy.deepcopy(valid_baseline)
+unknown_credential_disposition["credentialDispositions"]["jwt-signing-keys-jwks"] = "unknown"
+unknown_credential_disposition_path = recovery_dir / "unknown-credential-disposition-baseline.json"
+unknown_credential_disposition_path.write_text(
+    json.dumps(unknown_credential_disposition),
+    encoding="utf-8",
+)
+unknown_credential_disposition_status, unknown_credential_disposition_message = module.validate_recovery_baseline(
+    tmp,
+    str(unknown_credential_disposition_path.relative_to(tmp)),
+    "sha256:recovery-contract",
+    now,
+    now,
+)
+if unknown_credential_disposition_status != "fail" or "unknown or malformed disposition" not in (
+    unknown_credential_disposition_message
+):
+    raise SystemExit(
+        "unknown credential disposition did not fail closed: "
+        + unknown_credential_disposition_message
+    )
+
+unhashable_credential_disposition = copy.deepcopy(valid_baseline)
+unhashable_credential_disposition["credentialDispositions"]["jwt-signing-keys-jwks"] = ["rotated"]
+unhashable_credential_disposition_path = recovery_dir / "unhashable-credential-disposition-baseline.json"
+unhashable_credential_disposition_path.write_text(
+    json.dumps(unhashable_credential_disposition),
+    encoding="utf-8",
+)
+unhashable_credential_disposition_status, unhashable_credential_disposition_message = (
+    module.validate_recovery_baseline(
+        tmp,
+        str(unhashable_credential_disposition_path.relative_to(tmp)),
+        "sha256:recovery-contract",
+        now,
+        now,
+    )
+)
+if unhashable_credential_disposition_status != "fail" or "unknown or malformed disposition" not in (
+    unhashable_credential_disposition_message
+):
+    raise SystemExit(
+        "unhashable credential disposition did not fail closed: "
+        + unhashable_credential_disposition_message
+    )
+
+impossible_credential_dispositions = copy.deepcopy(valid_baseline)
+impossible_credential_dispositions["credentialDispositions"] = ["not-an-object"]
+impossible_credential_dispositions_path = recovery_dir / "impossible-credential-dispositions-baseline.json"
+impossible_credential_dispositions_path.write_text(
+    json.dumps(impossible_credential_dispositions),
+    encoding="utf-8",
+)
+impossible_credential_dispositions_status, impossible_credential_dispositions_message = module.validate_recovery_baseline(
+    tmp,
+    str(impossible_credential_dispositions_path.relative_to(tmp)),
+    "sha256:recovery-contract",
+    now,
+    now,
+)
+if impossible_credential_dispositions_status != "fail" or "must be an object" not in (
+    impossible_credential_dispositions_message
+):
+    raise SystemExit(
+        "impossible credentialDispositions shape did not fail closed: "
+        + impossible_credential_dispositions_message
+    )
+
+duplicate_credential_dispositions_path = recovery_dir / "duplicate-credential-disposition-baseline.json"
+duplicate_credential_dispositions_json = json.dumps(valid_baseline).replace(
+    '"credentialDispositions": {',
+    '"credentialDispositions": {"jwt-signing-keys-jwks": "rotated",',
+    1,
+)
+duplicate_credential_dispositions_path.write_text(
+    duplicate_credential_dispositions_json,
+    encoding="utf-8",
+)
+duplicate_credential_dispositions_status, duplicate_credential_dispositions_message = module.validate_recovery_baseline(
+    tmp,
+    str(duplicate_credential_dispositions_path.relative_to(tmp)),
+    "sha256:recovery-contract",
+    now,
+    now,
+)
+if duplicate_credential_dispositions_status != "fail" or "duplicate JSON member" not in (
+    duplicate_credential_dispositions_message
+):
+    raise SystemExit(
+        "duplicate credential disposition member did not fail closed: "
+        + duplicate_credential_dispositions_message
+    )
+
+def validate_recovery_variant(name, data):
+    path = recovery_dir / name
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return module.validate_recovery_baseline(
+        tmp,
+        str(path.relative_to(tmp)),
+        "sha256:recovery-contract",
+        now,
+        now,
+    )
+
+missing_jwt_compromise_classification = copy.deepcopy(valid_baseline)
+del missing_jwt_compromise_classification["jwtHardening"]["compromiseClassified"]
+missing_jwt_compromise_status, missing_jwt_compromise_message = validate_recovery_variant(
+    "missing-jwt-compromise-classification-baseline.json",
+    missing_jwt_compromise_classification,
+)
+if missing_jwt_compromise_status != "fail" or "compromiseClassified" not in missing_jwt_compromise_message:
+    raise SystemExit(
+        "JWT hardening without an explicit compromise classification was accepted: "
+        + missing_jwt_compromise_message
+    )
+
+ordinary_jwt_compromise_fields = copy.deepcopy(valid_baseline)
+ordinary_jwt_compromise_fields["jwtHardening"]["compromisedKid"] = "kid-compromised"
+ordinary_jwt_compromise_status, ordinary_jwt_compromise_message = validate_recovery_variant(
+    "ordinary-jwt-compromise-fields-baseline.json",
+    ordinary_jwt_compromise_fields,
+)
+if (
+    ordinary_jwt_compromise_status != "fail"
+    or "ordinary JWT hardening must not include compromise identity fields" not in ordinary_jwt_compromise_message
+):
+    raise SystemExit(
+        "ordinary JWT replacement with compromise identity evidence was accepted: "
+        + ordinary_jwt_compromise_message
+    )
+
+missing_jwt_compromise_evidence = copy.deepcopy(valid_baseline)
+missing_jwt_compromise_evidence["jwtHardening"]["compromiseClassified"] = True
+missing_jwt_compromise_status, missing_jwt_compromise_message = validate_recovery_variant(
+    "missing-jwt-compromise-evidence-baseline.json",
+    missing_jwt_compromise_evidence,
+)
+if (
+    missing_jwt_compromise_status != "fail"
+    or "compromise-classified JWT hardening missing fields" not in missing_jwt_compromise_message
+):
+    raise SystemExit(
+        "compromise-classified JWT hardening without identity evidence was accepted: "
+        + missing_jwt_compromise_message
+    )
+
+valid_jwt_compromise = copy.deepcopy(valid_baseline)
+valid_jwt_compromise["jwtHardening"].update(
+    {
+        "compromiseClassified": True,
+        "resultingKeyIds": ["kid-candidate"],
+        "compromisedKid": "kid-compromised",
+        "candidateKid": "kid-candidate",
+        "compromisedPublicKeyFingerprint": "sha256:" + "a" * 64,
+        "candidatePublicKeyFingerprint": "sha256:" + "b" * 64,
+    }
+)
+del valid_jwt_compromise["jwtHardening"]["replacementEvidence"]
+valid_jwt_compromise_status, valid_jwt_compromise_message = validate_recovery_variant(
+    "valid-jwt-compromise-baseline.json",
+    valid_jwt_compromise,
+)
+if valid_jwt_compromise_status != "pass":
+    raise SystemExit(
+        "complete compromise-classified JWT hardening did not pass: "
+        + valid_jwt_compromise_message
+    )
+
+duplicate_jwt_compromise_identity = copy.deepcopy(valid_jwt_compromise)
+duplicate_jwt_compromise_identity["jwtHardening"]["candidateKid"] = "kid-compromised"
+duplicate_jwt_compromise_status, duplicate_jwt_compromise_message = validate_recovery_variant(
+    "duplicate-jwt-compromise-identity-baseline.json",
+    duplicate_jwt_compromise_identity,
+)
+if (
+    duplicate_jwt_compromise_status != "fail"
+    or "requires distinct compromisedKid and candidateKid" not in duplicate_jwt_compromise_message
+):
+    raise SystemExit(
+        "compromise-classified JWT hardening with duplicate key identities was accepted: "
+        + duplicate_jwt_compromise_message
+    )
+
+malformed_jwt_compromise_fingerprint = copy.deepcopy(valid_jwt_compromise)
+malformed_jwt_compromise_fingerprint["jwtHardening"]["candidatePublicKeyFingerprint"] = (
+    "SHA256:" + "b" * 64
+)
+malformed_jwt_compromise_status, malformed_jwt_compromise_message = validate_recovery_variant(
+    "malformed-jwt-compromise-fingerprint-baseline.json",
+    malformed_jwt_compromise_fingerprint,
+)
+if (
+    malformed_jwt_compromise_status != "fail"
+    or "fingerprints must use lowercase sha256:<64 hex>" not in malformed_jwt_compromise_message
+):
+    raise SystemExit(
+        "malformed compromise public-key fingerprint was accepted: "
+        + malformed_jwt_compromise_message
+    )
+
+mismatched_jwt_compromise_resulting_key = copy.deepcopy(valid_jwt_compromise)
+mismatched_jwt_compromise_resulting_key["jwtHardening"]["resultingKeyIds"] = ["kid-other"]
+mismatched_jwt_compromise_status, mismatched_jwt_compromise_message = validate_recovery_variant(
+    "mismatched-jwt-compromise-resulting-key-baseline.json",
+    mismatched_jwt_compromise_resulting_key,
+)
+if (
+    mismatched_jwt_compromise_status != "fail"
+    or "candidateKid must be present in resultingKeyIds" not in mismatched_jwt_compromise_message
+):
+    raise SystemExit(
+        "compromise candidate key absent from resultingKeyIds was accepted: "
+        + mismatched_jwt_compromise_message
+    )
+
+compromised_jwt_compromise_resulting_key = copy.deepcopy(valid_jwt_compromise)
+compromised_jwt_compromise_resulting_key["jwtHardening"]["resultingKeyIds"] = [
+    "kid-candidate",
+    "kid-compromised",
+]
+compromised_jwt_compromise_status, compromised_jwt_compromise_message = validate_recovery_variant(
+    "compromised-jwt-compromise-resulting-key-baseline.json",
+    compromised_jwt_compromise_resulting_key,
+)
+if (
+    compromised_jwt_compromise_status != "fail"
+    or "compromisedKid must be absent from resultingKeyIds" not in compromised_jwt_compromise_message
+):
+    raise SystemExit(
+        "compromised key retained in resultingKeyIds was accepted: "
+        + compromised_jwt_compromise_message
+    )
+
+missing_replacement_evidence = copy.deepcopy(valid_baseline)
+del missing_replacement_evidence["jwtHardening"]["replacementEvidence"]
+missing_replacement_status, missing_replacement_message = validate_recovery_variant(
+    "missing-replacement-evidence-baseline.json",
+    missing_replacement_evidence,
+)
+if (
+    missing_replacement_status != "fail"
+    or "replacementEvidence must contain exactly" not in missing_replacement_message
+):
+    raise SystemExit(
+        "ordinary JWT hardening without replacement evidence was accepted: "
+        + missing_replacement_message
+    )
+
+malformed_replacement_evidence = copy.deepcopy(valid_baseline)
+malformed_replacement_evidence["jwtHardening"]["replacementEvidence"] = {"oldKid": "kid-old"}
+malformed_replacement_status, malformed_replacement_message = validate_recovery_variant(
+    "malformed-replacement-evidence-baseline.json",
+    malformed_replacement_evidence,
+)
+if (
+    malformed_replacement_status != "fail"
+    or "replacementEvidence must contain exactly" not in malformed_replacement_message
+):
+    raise SystemExit(
+        "malformed ordinary JWT replacement evidence was accepted: "
+        + malformed_replacement_message
+    )
+
+mismatched_replacement_evidence = copy.deepcopy(valid_baseline)
+mismatched_replacement_evidence["jwtHardening"]["replacementEvidence"][
+    "validatorEvidenceRef"
+] = "evidence/other-jwt-validators"
+mismatched_replacement_status, mismatched_replacement_message = validate_recovery_variant(
+    "mismatched-replacement-evidence-baseline.json",
+    mismatched_replacement_evidence,
+)
+if (
+    mismatched_replacement_status != "fail"
+    or "validatorEvidenceRef must match validatorConvergenceEvidence" not in mismatched_replacement_message
+):
+    raise SystemExit(
+        "mismatched ordinary JWT replacement evidence reference was accepted: "
+        + mismatched_replacement_message
+    )
+
+false_replacement_evidence = copy.deepcopy(valid_baseline)
+false_replacement_evidence["jwtHardening"]["replacementEvidence"]["oldKidRejected"] = False
+false_replacement_status, false_replacement_message = validate_recovery_variant(
+    "false-replacement-evidence-baseline.json",
+    false_replacement_evidence,
+)
+if (
+    false_replacement_status != "fail"
+    or "rejection/acceptance flags must be true" not in false_replacement_message
+):
+    raise SystemExit(
+        "false ordinary JWT replacement proof was accepted: " + false_replacement_message
+    )
+
+mismatched_replacement_resulting_key = copy.deepcopy(valid_baseline)
+mismatched_replacement_resulting_key["jwtHardening"]["resultingKeyIds"] = ["kid-other"]
+mismatched_replacement_resulting_key_status, mismatched_replacement_resulting_key_message = (
+    validate_recovery_variant(
+        "mismatched-replacement-resulting-key-baseline.json",
+        mismatched_replacement_resulting_key,
+    )
+)
+if (
+    mismatched_replacement_resulting_key_status != "fail"
+    or "replacementEvidence candidateKid must be present in resultingKeyIds"
+    not in mismatched_replacement_resulting_key_message
+):
+    raise SystemExit(
+        "ordinary JWT replacement candidate absent from resultingKeyIds was accepted: "
+        + mismatched_replacement_resulting_key_message
+    )
+
+retained_replacement_resulting_key = copy.deepcopy(valid_baseline)
+retained_replacement_resulting_key["jwtHardening"]["resultingKeyIds"] = ["kid-old", "kid-1"]
+retained_replacement_status, retained_replacement_message = validate_recovery_variant(
+    "retained-replacement-resulting-key-baseline.json",
+    retained_replacement_resulting_key,
+)
+if (
+    retained_replacement_status != "fail"
+    or "replacementEvidence oldKid must be absent from resultingKeyIds" not in retained_replacement_message
+):
+    raise SystemExit(
+        "ordinary JWT replacement old key retained in resultingKeyIds was accepted: "
+        + retained_replacement_message
+    )
+
+compromise_with_replacement_evidence = copy.deepcopy(valid_jwt_compromise)
+compromise_with_replacement_evidence["jwtHardening"]["replacementEvidence"] = copy.deepcopy(
+    valid_baseline["jwtHardening"]["replacementEvidence"]
+)
+compromise_with_replacement_status, compromise_with_replacement_message = validate_recovery_variant(
+    "compromise-with-replacement-evidence-baseline.json",
+    compromise_with_replacement_evidence,
+)
+if (
+    compromise_with_replacement_status != "fail"
+    or "replacementEvidence is prohibited" not in compromise_with_replacement_message
+):
+    raise SystemExit(
+        "compromise-classified JWT hardening with ordinary replacement evidence was accepted: "
+        + compromise_with_replacement_message
+    )
+
+verified_with_replacement_evidence = copy.deepcopy(valid_baseline)
+verified_with_replacement_evidence["credentialDispositions"]["jwt-signing-keys-jwks"] = (
+    "verified_not_restored"
+)
+verified_with_replacement_status, verified_with_replacement_message = validate_recovery_variant(
+    "verified-with-replacement-evidence-baseline.json",
+    verified_with_replacement_evidence,
+)
+if (
+    verified_with_replacement_status != "fail"
+    or "replacementEvidence is prohibited" not in verified_with_replacement_message
+):
+    raise SystemExit(
+        "verified_not_restored JWT hardening with ordinary replacement evidence was accepted: "
+        + verified_with_replacement_message
+    )
+
+missing_freshness_entry = copy.deepcopy(valid_baseline)
+del missing_freshness_entry["secretComplianceRefresh"]["freshness"]["jwt-signing-keys-jwks"]
+missing_freshness_status, missing_freshness_message = validate_recovery_variant(
+    "missing-freshness-entry-baseline.json",
+    missing_freshness_entry,
+)
+if missing_freshness_status != "fail" or "freshness keys must exactly match credentialClasses" not in missing_freshness_message:
+    raise SystemExit(
+        "missing recovery freshness entry was accepted: " + missing_freshness_message
+    )
+
+reissued_last_provisioned = copy.deepcopy(valid_baseline)
+reissued_last_provisioned["credentialDispositions"]["jwt-signing-keys-jwks"] = "reissued"
+reissued_last_provisioned["secretComplianceRefresh"]["freshness"]["jwt-signing-keys-jwks"]["field"] = "lastProvisionedAt"
+reissued_last_provisioned_status, reissued_last_provisioned_message = validate_recovery_variant(
+    "reissued-last-provisioned-baseline.json",
+    reissued_last_provisioned,
+)
+if (
+    reissued_last_provisioned_status != "fail"
+    or "reissued freshness must use lastRotationAt" not in reissued_last_provisioned_message
+):
+    raise SystemExit(
+        "existing-lineage reissued credential using lastProvisionedAt was accepted: "
+        + reissued_last_provisioned_message
+    )
+
+for freshness_disposition, selected_timestamp, freshness_relation in (
+    ("rotated", "2026-03-01T00:00:00Z", "equal"),
+    ("rotated", "2026-02-01T00:00:00Z", "older"),
+    ("reissued", "2026-03-01T00:00:00Z", "equal"),
+    ("reissued", "2026-02-01T00:00:00Z", "older"),
+):
+    stale_existing_lineage = copy.deepcopy(valid_baseline)
+    stale_existing_lineage["credentialDispositions"]["jwt-signing-keys-jwks"] = (
+        freshness_disposition
+    )
+    stale_existing_lineage["secretComplianceRefresh"]["freshness"][
+        "jwt-signing-keys-jwks"
+    ]["value"] = selected_timestamp
+    stale_existing_lineage_status, stale_existing_lineage_message = (
+        validate_recovery_variant(
+            f"{freshness_disposition}-{freshness_relation}-existing-lineage-baseline.json",
+            stale_existing_lineage,
+        )
+    )
+    if (
+        stale_existing_lineage_status != "fail"
+        or f"{freshness_disposition} freshness must advance the existing timestamp"
+        not in stale_existing_lineage_message
+    ):
+        raise SystemExit(
+            f"existing-lineage {freshness_disposition} {freshness_relation} freshness was accepted: "
+            + stale_existing_lineage_message
+        )
+
+new_lineage_reissued = copy.deepcopy(valid_baseline)
+new_lineage_reissued["credentialDispositions"]["jwt-signing-keys-jwks"] = "reissued"
+new_lineage_reissued["secretComplianceRefresh"]["freshness"]["jwt-signing-keys-jwks"] = {
+    "lineage": "new",
+    "field": "lastProvisionedAt",
+    "value": freshness_timestamp,
+    "previousField": None,
+    "previousValue": None,
+}
+new_lineage_reissued_status, new_lineage_reissued_message = validate_recovery_variant(
+    "new-lineage-reissued-baseline.json",
+    new_lineage_reissued,
+)
+if new_lineage_reissued_status != "pass":
+    raise SystemExit(
+        "new-lineage first issuance using lastProvisionedAt did not pass: "
+        + new_lineage_reissued_message
+    )
+
+new_lineage_rotated = copy.deepcopy(valid_baseline)
+new_lineage_rotated["credentialDispositions"]["jwt-signing-keys-jwks"] = "rotated"
+new_lineage_rotated["secretComplianceRefresh"]["freshness"]["jwt-signing-keys-jwks"] = {
+    "lineage": "new",
+    "field": "lastProvisionedAt",
+    "value": freshness_timestamp,
+    "previousField": None,
+    "previousValue": None,
+}
+new_lineage_rotated_status, new_lineage_rotated_message = validate_recovery_variant(
+    "new-lineage-rotated-baseline.json",
+    new_lineage_rotated,
+)
+if new_lineage_rotated_status != "pass":
+    raise SystemExit(
+        "new-lineage first issuance using rotated did not pass: " + new_lineage_rotated_message
+    )
+
+rebound_changed_timestamp = copy.deepcopy(valid_baseline)
+rebound_changed_timestamp["secretComplianceRefresh"]["freshness"][
+    "postgres-application-credentials"
+]["value"] = older_freshness_timestamp
+rebound_changed_status, rebound_changed_message = validate_recovery_variant(
+    "rebound-changed-timestamp-baseline.json",
+    rebound_changed_timestamp,
+)
+if (
+    rebound_changed_status != "fail"
+    or "rebound freshness must preserve the existing field/value" not in rebound_changed_message
+):
+    raise SystemExit(
+        "rebound credential changing its preserved timestamp was accepted: "
+        + rebound_changed_message
+    )
+
+future_rebound_preserved_timestamp = copy.deepcopy(valid_baseline)
+future_rebound_preserved_timestamp["secretComplianceRefresh"]["freshness"][
+    "postgres-application-credentials"
+]["value"] = future_timestamp
+future_rebound_preserved_timestamp["secretComplianceRefresh"]["freshness"][
+    "postgres-application-credentials"
+]["previousValue"] = future_timestamp
+future_rebound_status, future_rebound_message = validate_recovery_variant(
+    "future-rebound-preserved-timestamp-baseline.json",
+    future_rebound_preserved_timestamp,
+)
+if (
+    future_rebound_status != "fail"
+    or "freshness value must not be later than finalizedAt" not in future_rebound_message
+):
+    raise SystemExit(
+        "future rebound freshness pair was accepted: " + future_rebound_message
+    )
 
 wide_restore_high_water = {"stream": "erasures", "sequence": 40}
 wide_overlay = copy.deepcopy(valid_baseline["erasureOverlayReconciliation"])
@@ -4155,7 +5720,7 @@ missing_compatibility_attestation = write_json(
         "stagingDeploymentEventId": "55555555-5555-4555-8555-555555555555",
         "productionOverlayRef": "contract-production",
         "serviceDigests": {"account-service": "ghcr.io/firemud/account-service@sha256:candidate"},
-        "smokeEvidence": ["contract-smoke"],
+        "smokeEvidence": [smoke_evidence_ref],
         "approvedBy": "preflight-contract",
         "rollbackMode": "rollback-compatible",
     },
@@ -4182,12 +5747,103 @@ def promotion_attestation(compatibility, rollback_mode="rollback-compatible"):
         "stagingDeploymentEventId": "55555555-5555-4555-8555-555555555555",
         "productionOverlayRef": "contract-production",
         "serviceDigests": {"account-service": "ghcr.io/firemud/account-service@sha256:candidate"},
-        "smokeEvidence": ["contract-smoke"],
+        "smokeEvidence": [smoke_evidence_ref],
         "generatedAt": past_timestamp,
         "approvedBy": "preflight-contract",
         "rollbackMode": rollback_mode,
         "recoveryCompatibility": compatibility,
     }
+
+for compact_field in (
+    "newestVerifiedRestorablePointRef",
+    "newestVerifiedRestorablePointDigest",
+    "newestVerifiedRestorablePointAt",
+):
+    missing_compact_point = compatibility_result("compatible")
+    del missing_compact_point[compact_field]
+    missing_compact_status, missing_compact_message = module.recovery_compatibility_check(
+        {"generatedAt": past_timestamp, "recoveryCompatibility": missing_compact_point},
+        "rollback-compatible",
+        tmp,
+        now,
+    )
+    if missing_compact_status != "fail" or compact_field not in missing_compact_message:
+        raise SystemExit(
+            f"missing {compact_field} did not fail recovery compatibility closed: "
+            + missing_compact_message
+        )
+
+future_compact_point = compatibility_result("compatible")
+future_compact_point["newestVerifiedRestorablePointAt"] = future_timestamp
+future_compact_status, future_compact_message = module.recovery_compatibility_check(
+    {"generatedAt": past_timestamp, "recoveryCompatibility": future_compact_point},
+    "rollback-compatible",
+    tmp,
+    now,
+)
+if future_compact_status != "fail" or "newestVerifiedRestorablePointAt is future-dated" not in future_compact_message:
+    raise SystemExit(f"future compact verified point did not fail closed: {future_compact_message}")
+
+stale_compact_point = compatibility_result("compatible")
+stale_compact_point["newestVerifiedRestorablePointAt"] = timestamp(now - module.dt.timedelta(minutes=20))
+stale_compact_status, stale_compact_message = module.recovery_compatibility_check(
+    {"generatedAt": past_timestamp, "recoveryCompatibility": stale_compact_point},
+    "rollback-compatible",
+    tmp,
+    now,
+)
+if stale_compact_status != "fail" or "newestVerifiedRestorablePointAt older than 15 minutes" not in stale_compact_message:
+    raise SystemExit(f"stale compact verified point did not fail closed: {stale_compact_message}")
+
+bad_compact_digest = compatibility_result("compatible")
+bad_compact_digest["newestVerifiedRestorablePointDigest"] = "sha256:" + "c" * 64
+bad_compact_digest_status, bad_compact_digest_message = module.recovery_compatibility_check(
+    {"generatedAt": past_timestamp, "recoveryCompatibility": bad_compact_digest},
+    "rollback-compatible",
+    tmp,
+    now,
+)
+if bad_compact_digest_status != "fail" or "does not match the verified-point record" not in bad_compact_digest_message:
+    raise SystemExit(f"compact verified-point digest mismatch did not fail closed: {bad_compact_digest_message}")
+
+missing_compact_record = compatibility_result("compatible")
+missing_compact_record["newestVerifiedRestorablePointRef"] = (
+    "design/operations/deployments/production/verified-restorable-points/missing.json"
+)
+missing_compact_record_status, missing_compact_record_message = module.recovery_compatibility_check(
+    {"generatedAt": past_timestamp, "recoveryCompatibility": missing_compact_record},
+    "rollback-compatible",
+    tmp,
+    now,
+)
+if missing_compact_record_status != "fail" or "record not found" not in missing_compact_record_message:
+    raise SystemExit(f"missing compact verified-point record did not fail closed: {missing_compact_record_message}")
+
+duplicate_compact_record = compatibility_result("compatible")
+duplicate_compact_record["newestVerifiedRestorablePointRef"] = str(duplicate_point_path.relative_to(tmp))
+duplicate_compact_status, duplicate_compact_message = module.recovery_compatibility_check(
+    {"generatedAt": past_timestamp, "recoveryCompatibility": duplicate_compact_record},
+    "rollback-compatible",
+    tmp,
+    now,
+)
+if duplicate_compact_status != "fail" or "duplicate JSON member" not in duplicate_compact_message:
+    raise SystemExit(f"duplicate compact verified-point record did not fail closed: {duplicate_compact_message}")
+
+compact_schema_invalid_path = verified_point_dir / "compact-schema-invalid.json"
+compact_schema_invalid_path.write_text(json.dumps({}), encoding="utf-8")
+schema_invalid_compact_record = compatibility_result("compatible")
+schema_invalid_compact_record["newestVerifiedRestorablePointRef"] = str(
+    compact_schema_invalid_path.relative_to(tmp)
+)
+schema_invalid_compact_status, schema_invalid_compact_message = module.recovery_compatibility_check(
+    {"generatedAt": past_timestamp, "recoveryCompatibility": schema_invalid_compact_record},
+    "rollback-compatible",
+    tmp,
+    now,
+)
+if schema_invalid_compact_status != "fail" or "record is schema-invalid" not in schema_invalid_compact_message:
+    raise SystemExit(f"schema-invalid compact verified-point record did not fail closed: {schema_invalid_compact_message}")
 
 for compatibility_status in ("drill_required", "incompatible"):
     status_result = compatibility_result(compatibility_status)
@@ -4490,6 +6146,17 @@ staging_preflight_path.write_text(
     ),
     encoding="utf-8",
 )
+promotion_smoke_evidence_path = promotion_root / smoke_evidence_ref
+promotion_smoke_evidence_path.parent.mkdir(parents=True)
+promotion_smoke_evidence = json.loads(smoke_evidence_path.read_text(encoding="utf-8"))
+promotion_smoke_evidence["deploymentRef"] = staging_sha
+promotion_smoke_evidence["deploymentEventId"] = staging_event_id
+promotion_smoke_evidence_path.write_text(json.dumps(promotion_smoke_evidence), encoding="utf-8")
+promotion_smoke_entry = {
+    "ref": smoke_evidence_ref,
+    "contentDigest": "sha256:" + hashlib.sha256(promotion_smoke_evidence_path.read_bytes()).hexdigest(),
+}
+staging_record_path = staging_dir / f"{staging_event_id}.json"
 staging_record = {
     "environment": "staging",
     "overlayCommitSha": staging_sha,
@@ -4512,13 +6179,21 @@ staging_record = {
     "secretComplianceSnapshotAt": past_timestamp,
     "secretComplianceStatus": "pass",
     "secretComplianceEvidenceRef": secret_compliance_ref,
-    "smokeEvidence": ["contract-smoke"],
+    "smokeEvidence": [promotion_smoke_entry],
 }
 staging_record_path = staging_dir / f"{staging_event_id}.json"
 staging_record_path.write_text(json.dumps(staging_record), encoding="utf-8")
 promotion_recovery_dir = promotion_root / "design/operations/deployments/production/recovery"
 promotion_recovery_dir.mkdir(parents=True)
 (promotion_recovery_dir / "baseline.json").write_text(json.dumps(valid_baseline), encoding="utf-8")
+promotion_verified_point_dir = promotion_root / module.VERIFIED_RESTORABLE_POINT_DIRECTORY
+promotion_verified_point_dir.mkdir(parents=True)
+promotion_verified_point_path = promotion_verified_point_dir / "current.json"
+promotion_verified_point_path.write_text(json.dumps(readiness_point), encoding="utf-8")
+promotion_compatibility = compatibility_result("compatible")
+promotion_compatibility["newestVerifiedRestorablePointRef"] = str(
+    promotion_verified_point_path.relative_to(promotion_root)
+)
 promotion_attestation_path = promotion_root / "promotion-attestation.json"
 promotion_attestation_path.write_text(
     json.dumps(
@@ -4531,11 +6206,11 @@ promotion_attestation_path.write_text(
             "jwtRotationEvidenceRef": rotation_evidence_ref,
             "productionOverlayRef": "contract-production",
             "serviceDigests": {"spring-cloud-gateway": gateway_image, "account-service": account_image},
-            "smokeEvidence": ["contract-smoke"],
+            "smokeEvidence": [promotion_smoke_entry],
             "generatedAt": past_timestamp,
             "approvedBy": "preflight-contract",
             "rollbackMode": "rollback-compatible",
-            "recoveryCompatibility": compatibility_result("compatible"),
+            "recoveryCompatibility": promotion_compatibility,
         }
     ),
     encoding="utf-8",
@@ -4593,9 +6268,100 @@ if (
         + missing_rotation_message
     )
 
-# Bootstrap evidence is independently authorized by the matching operation ID
-# and provisioning generation, but it coexists with the required event-scoped
-# JWT rotation evidence for a promotion candidate.
+promotion_attestation_data = json.loads(promotion_attestation_path.read_text(encoding="utf-8"))
+valid_smoke_evidence = json.loads(promotion_smoke_evidence_path.read_text(encoding="utf-8"))
+valid_promotion_smoke_bytes = promotion_smoke_evidence_path.read_bytes()
+
+malformed_entry_attestation = {
+    **promotion_attestation_data,
+    "smokeEvidence": [smoke_evidence_ref],
+}
+malformed_entry_path = promotion_root / "malformed-smoke-entry-attestation.json"
+malformed_entry_path.write_text(json.dumps(malformed_entry_attestation), encoding="utf-8")
+malformed_entry_status, _, malformed_entry_message, _, _ = module.promotion_check(
+    malformed_entry_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if malformed_entry_status != "fail" or "exactly ref and contentDigest" not in malformed_entry_message:
+    raise SystemExit(f"string smoke evidence entry was accepted: {malformed_entry_message}")
+
+extra_entry_attestation = {
+    **promotion_attestation_data,
+    "smokeEvidence": [{**promotion_smoke_entry, "extra": "not-allowed"}],
+}
+extra_entry_path = promotion_root / "extra-smoke-entry-attestation.json"
+extra_entry_path.write_text(json.dumps(extra_entry_attestation), encoding="utf-8")
+extra_entry_status, _, extra_entry_message, _, _ = module.promotion_check(
+    extra_entry_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if extra_entry_status != "fail" or "exactly ref and contentDigest" not in extra_entry_message:
+    raise SystemExit(f"extra smoke evidence entry field was accepted: {extra_entry_message}")
+
+wrong_digest_attestation = {
+    **promotion_attestation_data,
+    "smokeEvidence": [{**promotion_smoke_entry, "contentDigest": "sha256:" + "0" * 64}],
+}
+wrong_digest_path = promotion_root / "wrong-smoke-digest-attestation.json"
+wrong_digest_path.write_text(json.dumps(wrong_digest_attestation), encoding="utf-8")
+wrong_digest_status, _, wrong_digest_message, _, _ = module.promotion_check(
+    wrong_digest_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if wrong_digest_status != "fail" or "contentDigest does not match" not in wrong_digest_message:
+    raise SystemExit(f"wrong smoke evidence content digest was accepted: {wrong_digest_message}")
+
+promotion_smoke_evidence_path.write_text(
+    json.dumps({**valid_smoke_evidence, "verifiedBy": "tampered-smoke-evidence"}),
+    encoding="utf-8",
+)
+tampered_bytes_status, _, tampered_bytes_message, _, _ = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if tampered_bytes_status != "fail" or "contentDigest does not match" not in tampered_bytes_message:
+    raise SystemExit(f"tampered smoke evidence bytes were accepted: {tampered_bytes_message}")
+promotion_smoke_evidence_path.write_bytes(valid_promotion_smoke_bytes)
+
+missing_smoke_attestation = {
+    **promotion_attestation_data,
+    "smokeEvidence": [
+        {"ref": "missing/player-experience-smoke.json", "contentDigest": "sha256:" + "a" * 64}
+    ],
+}
+missing_smoke_path = promotion_root / "missing-smoke-attestation.json"
+missing_smoke_path.write_text(json.dumps(missing_smoke_attestation), encoding="utf-8")
+missing_smoke_status, _, missing_smoke_message, _, _ = module.promotion_check(
+    missing_smoke_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if missing_smoke_status != "fail" or "retained evidence file not found" not in missing_smoke_message:
+    raise SystemExit(f"missing smoke evidence was accepted: {missing_smoke_message}")
+
+opaque_smoke_attestation = {
+    **promotion_attestation_data,
+    "smokeEvidence": [
+        {"ref": "https://monitoring.example/smoke/contract", "contentDigest": "sha256:" + "a" * 64}
+    ],
+}
+opaque_smoke_path = promotion_root / "opaque-smoke-attestation.json"
+opaque_smoke_path.write_text(json.dumps(opaque_smoke_attestation), encoding="utf-8")
+opaque_smoke_status, _, opaque_smoke_message, _, _ = module.promotion_check(
+    opaque_smoke_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
 write_secret_evidence(
     make_bootstrap_secret_evidence(),
     staging_record=staging_record,
@@ -4944,6 +6710,137 @@ rotation_evidence_path.write_text(json.dumps(rotation_evidence), encoding="utf-8
 staging_record_path.write_text(json.dumps(staging_record), encoding="utf-8")
 staging_preflight_path.write_text(json.dumps(base_preflight_report), encoding="utf-8")
 promotion_attestation_path.write_text(json.dumps(base_attestation), encoding="utf-8")
+if opaque_smoke_status != "fail" or "retained evidence file not found" not in opaque_smoke_message:
+    raise SystemExit(f"opaque smoke evidence was accepted: {opaque_smoke_message}")
+
+malformed_smoke_path = promotion_root / "evidence/malformed-player-experience-smoke.json"
+malformed_smoke_path.write_text("{not-json", encoding="utf-8")
+malformed_smoke_attestation = {
+    **promotion_attestation_data,
+    "smokeEvidence": [
+        {
+            "ref": str(malformed_smoke_path.relative_to(promotion_root)),
+            "contentDigest": "sha256:" + hashlib.sha256(malformed_smoke_path.read_bytes()).hexdigest(),
+        }
+    ],
+}
+malformed_smoke_attestation_path = promotion_root / "malformed-smoke-attestation.json"
+malformed_smoke_attestation_path.write_text(json.dumps(malformed_smoke_attestation), encoding="utf-8")
+malformed_smoke_status, _, malformed_smoke_message, _, _ = module.promotion_check(
+    malformed_smoke_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if malformed_smoke_status != "fail" or "retained evidence JSON unreadable" not in malformed_smoke_message:
+    raise SystemExit(f"malformed smoke evidence was accepted: {malformed_smoke_message}")
+
+simulated_smoke_evidence = {**valid_smoke_evidence, "executionMode": "simulated", "externalAuthorityProvenance": "synthetic"}
+promotion_smoke_evidence_path.write_text(json.dumps(simulated_smoke_evidence), encoding="utf-8")
+simulated_smoke_entry = {
+    "ref": smoke_evidence_ref,
+    "contentDigest": "sha256:" + hashlib.sha256(promotion_smoke_evidence_path.read_bytes()).hexdigest(),
+}
+promotion_attestation_path.write_text(
+    json.dumps({**promotion_attestation_data, "smokeEvidence": [simulated_smoke_entry]}),
+    encoding="utf-8",
+)
+staging_record_path.write_text(
+    json.dumps({**staging_record, "smokeEvidence": [simulated_smoke_entry]}),
+    encoding="utf-8",
+)
+simulated_smoke_status, _, simulated_smoke_message, _, _ = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if simulated_smoke_status != "fail" or "executionMode must be live" not in simulated_smoke_message:
+    raise SystemExit(f"simulated smoke evidence was accepted for promotion: {simulated_smoke_message}")
+
+simulated_recovery_status, simulated_recovery_message = module.validate_recovery_baseline(
+    promotion_root,
+    str((promotion_recovery_dir / "baseline.json").relative_to(promotion_root)),
+    "sha256:recovery-contract",
+    now,
+    now,
+)
+if simulated_recovery_status != "fail" or "executionMode must be live" not in simulated_recovery_message:
+    raise SystemExit(f"simulated smoke evidence was accepted for recovery: {simulated_recovery_message}")
+promotion_smoke_evidence_path.write_bytes(valid_promotion_smoke_bytes)
+promotion_attestation_path.write_text(json.dumps(promotion_attestation_data), encoding="utf-8")
+staging_record_path.write_text(json.dumps(staging_record), encoding="utf-8")
+
+wrong_deployment_ref_evidence = {**valid_smoke_evidence, "deploymentRef": "other-staging-event"}
+promotion_smoke_evidence_path.write_text(json.dumps(wrong_deployment_ref_evidence), encoding="utf-8")
+wrong_deployment_ref_entry = {
+    "ref": smoke_evidence_ref,
+    "contentDigest": "sha256:" + hashlib.sha256(promotion_smoke_evidence_path.read_bytes()).hexdigest(),
+}
+promotion_attestation_path.write_text(
+    json.dumps({**promotion_attestation_data, "smokeEvidence": [wrong_deployment_ref_entry]}),
+    encoding="utf-8",
+)
+staging_record_path.write_text(
+    json.dumps({**staging_record, "smokeEvidence": [wrong_deployment_ref_entry]}),
+    encoding="utf-8",
+)
+wrong_deployment_ref_status, _, wrong_deployment_ref_message, _, _ = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if wrong_deployment_ref_status != "fail" or "deploymentRef must match stagingOverlayCommitSha" not in wrong_deployment_ref_message:
+    raise SystemExit(f"smoke evidence with wrong deploymentRef was accepted: {wrong_deployment_ref_message}")
+promotion_smoke_evidence_path.write_bytes(valid_promotion_smoke_bytes)
+promotion_attestation_path.write_text(json.dumps(promotion_attestation_data), encoding="utf-8")
+staging_record_path.write_text(json.dumps(staging_record), encoding="utf-8")
+
+missing_deployment_event_evidence = {**valid_smoke_evidence}
+missing_deployment_event_evidence.pop("deploymentEventId")
+promotion_smoke_evidence_path.write_text(json.dumps(missing_deployment_event_evidence), encoding="utf-8")
+missing_deployment_event_entry = {
+    "ref": smoke_evidence_ref,
+    "contentDigest": "sha256:" + hashlib.sha256(promotion_smoke_evidence_path.read_bytes()).hexdigest(),
+}
+promotion_attestation_path.write_text(
+    json.dumps({**promotion_attestation_data, "smokeEvidence": [missing_deployment_event_entry]}),
+    encoding="utf-8",
+)
+missing_deployment_event_status, _, missing_deployment_event_message, _, _ = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if missing_deployment_event_status != "fail" or "deploymentEventId must match stagingDeploymentEventId" not in missing_deployment_event_message:
+    raise SystemExit(f"smoke evidence without deploymentEventId was accepted: {missing_deployment_event_message}")
+promotion_smoke_evidence_path.write_bytes(valid_promotion_smoke_bytes)
+promotion_attestation_path.write_text(json.dumps(promotion_attestation_data), encoding="utf-8")
+staging_record_path.write_text(json.dumps(staging_record), encoding="utf-8")
+
+wrong_deployment_event_evidence = {**valid_smoke_evidence, "deploymentEventId": "66666666-6666-4666-8666-666666666666"}
+promotion_smoke_evidence_path.write_text(json.dumps(wrong_deployment_event_evidence), encoding="utf-8")
+wrong_deployment_event_entry = {
+    "ref": smoke_evidence_ref,
+    "contentDigest": "sha256:" + hashlib.sha256(promotion_smoke_evidence_path.read_bytes()).hexdigest(),
+}
+promotion_attestation_path.write_text(
+    json.dumps({**promotion_attestation_data, "smokeEvidence": [wrong_deployment_event_entry]}),
+    encoding="utf-8",
+)
+wrong_deployment_event_status, _, wrong_deployment_event_message, _, _ = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if wrong_deployment_event_status != "fail" or "deploymentEventId must match stagingDeploymentEventId" not in wrong_deployment_event_message:
+    raise SystemExit(f"smoke evidence with wrong deploymentEventId was accepted: {wrong_deployment_event_message}")
+promotion_smoke_evidence_path.write_bytes(valid_promotion_smoke_bytes)
+promotion_attestation_path.write_text(json.dumps(promotion_attestation_data), encoding="utf-8")
+staging_record_path.write_text(json.dumps(staging_record), encoding="utf-8")
 
 # Exercise staging-lineage failures independently of the deliberately blocked
 # recovery-inventory dereference boundary above.
@@ -4952,7 +6849,6 @@ module.validate_recovery_baseline = lambda *args, **kwargs: (
     "contract-only complete recovery evidence",
 )
 
-staging_record_path = staging_dir / f"{staging_event_id}.json"
 staging_record_path.write_text(
     json.dumps({**staging_record, "preflightReportPath": "staging-preflight.json"}),
     encoding="utf-8",
@@ -5054,9 +6950,13 @@ malformed_smoke_status, _, malformed_smoke_message, _, _ = module.promotion_chec
     promotion_root,
     expected_production_overlay_ref="contract-production",
 )
-if malformed_smoke_status != "fail" or "smokeEvidence entries" not in malformed_smoke_message:
+if malformed_smoke_status != "fail" or "exactly ref and contentDigest" not in malformed_smoke_message:
     raise SystemExit(f"malformed staging smoke evidence was accepted: {malformed_smoke_message}")
-staging_record_path.write_text(json.dumps({**staging_record, "smokeEvidence": ["different-smoke"]}), encoding="utf-8")
+different_smoke_entry = {**promotion_smoke_entry, "ref": "different-smoke"}
+staging_record_path.write_text(
+    json.dumps({**staging_record, "smokeEvidence": [different_smoke_entry]}),
+    encoding="utf-8",
+)
 mismatched_smoke_status, _, mismatched_smoke_message, _, _ = module.promotion_check(
     promotion_attestation_path,
     [gateway_image, account_image],
@@ -5065,6 +6965,19 @@ mismatched_smoke_status, _, mismatched_smoke_message, _, _ = module.promotion_ch
 )
 if mismatched_smoke_status != "fail" or "does not match" not in mismatched_smoke_message:
     raise SystemExit(f"mismatched staging smoke evidence was accepted: {mismatched_smoke_message}")
+duplicate_smoke_record = {
+    **staging_record,
+    "smokeEvidence": [promotion_smoke_entry, {**promotion_smoke_entry}],
+}
+staging_record_path.write_text(json.dumps(duplicate_smoke_record), encoding="utf-8")
+duplicate_smoke_status, _, duplicate_smoke_message, _, _ = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if duplicate_smoke_status != "fail" or "ref must be unique" not in duplicate_smoke_message:
+    raise SystemExit(f"duplicate staging smoke evidence refs were accepted: {duplicate_smoke_message}")
 staging_record_path.write_text(json.dumps(staging_record), encoding="utf-8")
 
 malformed_secret_evidence = json.loads(secret_evidence_path.read_text(encoding="utf-8"))
@@ -5161,6 +7074,9 @@ future_readiness = write_json(
         "assessedAt": past_timestamp,
         "assessedBy": "preflight-contract",
         "rollbackMode": "roll-forward-only",
+        "newestVerifiedRestorablePointAt": past_timestamp,
+        "newestVerifiedRestorablePointRef": str(readiness_point_path.relative_to(tmp)),
+        "newestVerifiedRestorablePointDigest": readiness_point["recordDigest"],
         "backupLastSuccessAt": future_timestamp,
         "backupVerifyLastSuccessAt": past_timestamp,
         "restoreDrillLastSuccessAt": past_timestamp,
@@ -5170,7 +7086,7 @@ future_readiness = write_json(
         "recoveryControllerLineage": {"recoveryStatus": "finalized"},
         "backupConfidentialityEvidence": {"status": "pass"},
         "backupCoverage": "environment-wide-postgresql",
-        "backupArtifactRef": "backups/artifact",
+        "backupArtifactRef": verified_point["backupArtifact"]["artifactRef"],
         "artifactErasureHighWater": {"stream": "erasures", "sequence": 1},
         "initialCatchupHighWater": {"stream": "erasures", "sequence": 2},
         "restoreHighWater": {"stream": "erasures", "sequence": 3},
@@ -5212,6 +7128,61 @@ future_status, future_message = module.backup_readiness_check(
 )
 if future_status != "fail" or "future-dated timestamps" not in future_message:
     raise SystemExit(f"future-dated backup readiness did not fail closed: {future_message}")
+
+stale_snapshot_readiness_data = json.loads(future_readiness.read_text(encoding="utf-8"))
+stale_snapshot_readiness_data["backupLastSuccessAt"] = past_timestamp
+stale_snapshot_readiness_data["newestVerifiedRestorablePointAt"] = (
+    now - module.dt.timedelta(minutes=20)
+).isoformat().replace("+00:00", "Z")
+stale_snapshot_readiness = write_json("stale-snapshot-readiness.json", stale_snapshot_readiness_data)
+stale_snapshot_status, stale_snapshot_message = module.backup_readiness_check(
+    stale_snapshot_readiness,
+    now.isoformat().replace("+00:00", "Z"),
+    "contract-roll-forward",
+    tmp,
+)
+if (
+    stale_snapshot_status != "fail"
+    or "newestVerifiedRestorablePointAt older than 15 minutes" not in stale_snapshot_message
+):
+    raise SystemExit(
+        "stale snapshot with newer verification did not fail the RPO gate: "
+        f"{stale_snapshot_message}"
+    )
+
+for compact_field, compact_value in (
+    (
+        "newestVerifiedRestorablePointRef",
+        "design/operations/deployments/production/verified-restorable-points/other.json",
+    ),
+    ("newestVerifiedRestorablePointDigest", "sha256:" + "c" * 64),
+    ("newestVerifiedRestorablePointAt", timestamp(now - module.dt.timedelta(minutes=6))),
+):
+    mismatch_name = f"mismatched-{compact_field}.json"
+    mismatch_attestation_data = json.loads(future_attestation.read_text(encoding="utf-8"))
+    mismatch_attestation_data["recoveryCompatibility"]["backupReadinessRef"] = mismatch_name
+    mismatch_attestation = write_json(
+        f"mismatched-{compact_field}-attestation.json",
+        mismatch_attestation_data,
+    )
+    mismatched_readiness_data = json.loads(future_readiness.read_text(encoding="utf-8"))
+    mismatched_readiness_data["backupLastSuccessAt"] = past_timestamp
+    mismatched_readiness_data["promotionAttestationRef"] = mismatch_attestation.name
+    mismatched_readiness_data[compact_field] = compact_value
+    mismatched_readiness = write_json(
+        mismatch_name,
+        mismatched_readiness_data,
+    )
+    mismatched_status, mismatched_message = module.backup_readiness_check(
+        mismatched_readiness,
+        now.isoformat().replace("+00:00", "Z"),
+        "contract-roll-forward",
+        tmp,
+    )
+    if mismatched_status != "fail" or f"{compact_field} does not match the attestation" not in mismatched_message:
+        raise SystemExit(
+            f"backup readiness {compact_field} mismatch did not fail closed: {mismatched_message}"
+        )
 
 blocked_attestation = write_json(
     "blocked-roll-forward-attestation.json",

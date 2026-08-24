@@ -2,11 +2,13 @@
 
 This document defines the machine-checkable evidence, metrics, and compliance records required to prove that FireMUD backups and restore workflows are healthy enough for player-facing operation.
 
+The canonical P0 decisions are [measured online-backup RPO](./decisions/adr-0153-measured-online-backup-rpo-and-future-pitr-trigger.md), [automated recovery proof and differentiated traffic-open gates](./decisions/adr-0154-automated-recovery-proof-and-differentiated-traffic-open-gates.md), and [event-classified post-restore trust reset](./decisions/adr-0155-automated-event-classified-post-restore-trust-reset.md). This document owns retained evidence shape and compliance checks; live recovery and release authority remain with the durable recovery controller.
+
 ## Implementation Notes
 
 Backup-pause metrics are maintenance/reset observability, not player-facing PostgreSQL-recovery proof. They may retain bounded `tenant`/`game-instance`/`region` scope labels and incomplete-scope migration signals for those maintenance workflows, but accepted recovery readiness is proved by one environment-wide recovery-controller lineage. Exact tenant, game-instance, and region identities belong in retained maintenance evidence and control-plane reads, not in the accepted backup-recovery gate.
 
-Backup readiness is an evidence chain, not an artifact-shaped timestamp record. The scheduled dump, restore controller, and preflight must retain complete environment/schema/service/tool lineage and dereference the backup-readiness, baseline, and actual-recovery records independently. `verify-backups.sh` contributes only existence/reachability evidence; immutable lineage, artifact readability, restore-tool compatibility, erasure replay, and player-facing readiness require separate evidence. Player-facing readiness remains blocked until backup-under-write, inventory convergence, hardening, smoke, and controlled-reopen proof is available.
+Backup readiness is an evidence chain, not an artifact-shaped timestamp record. The scheduled dump, restore controller, and preflight must retain complete environment/schema/service/tool lineage and dereference the backup-readiness, baseline, and actual-recovery records independently. `verify-backups.sh` contributes only existence/reachability evidence; immutable lineage, artifact readability, restore-tool compatibility, erasure replay, and player-facing readiness require separate evidence. Player-facing readiness remains blocked until backup-under-write, inventory convergence, hardening, smoke, and controlled-reopen proof is available. Target state requires scheduled isolated drills and automated evidence production; the current implementation does not provide that end-to-end path, so routine proof cannot claim it or depend on an operator transcribing timestamps or result fields. No resumable recovery controller or crash-recoverable traffic-release state machine exists in the current implementation, so hosted player-facing restore readiness remains blocked. The compact verified-point golden helper is non-authorizing schema/digest proof only; protected readiness remains fail-closed until owner-authoritative database, artifact, lineage, and restore-tool bindings plus successful isolated restoration of the same artifact are available.
 
 The artifact-integrity, recovery-participant, and reopen-attempt metrics in this document are target-state contracts, not evidence that the current runtime emits them. No reliable emitter for `backup_artifact_lineage_valid`, `backup_artifact_restore_readable`, `recovery_participant_convergence_state`, or `recovery_reopen_attempt_total` is currently implemented or proven. The reference Prometheus ruleset includes fail-safe missing-source alerts, but those alerts cannot identify an environment or participant after an entire family disappears and must not be interpreted as recovery state; partial source loss must remain a blocked readiness condition rather than becoming an apparent pass. Recovery observability remains unproved; the durable recovery controller and retained evidence records remain the readiness authority.
 
@@ -80,7 +82,7 @@ Maintenance pause metrics remain owned by the region maintenance/reset contracts
 
 ## Production Backup Readiness Evidence
 
-Production releases classified as `roll-forward-only`, any release whose recovery-compatibility result requires a new drill, and production first-live/reopen baselines must include a full backup-readiness record at:
+Every production promotion and every production first-live/reopen event must consume a current environment-bound freshness proof for the newest verified restorable PostgreSQL point. Releases classified as `roll-forward-only`, releases whose recovery-compatibility result requires a new drill, and production first-live/reopen baselines must also include a full backup-readiness record at:
 
 - `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`
 
@@ -96,6 +98,9 @@ Required fields:
 - `candidateServiceDigests`
 - `candidateMigrationPathRef`
 - `backupLastSuccessAt`
+- `newestVerifiedRestorablePointAt`
+- `newestVerifiedRestorablePointRef`
+- `newestVerifiedRestorablePointDigest`
 - `backupVerifyLastSuccessAt`
 - `restoreDrillLastSuccessAt`
 - `restorePlanRef`
@@ -115,16 +120,59 @@ Required fields:
 
 Freshness policy:
 
-- `backupLastSuccessAt` within 90 minutes of production preflight
-- `backupVerifyLastSuccessAt` within 36 hours
+- `newestVerifiedRestorablePointAt` is the immutable artifact capture/snapshot time and must be within the 15-minute hosted RPO objective at production preflight; later verification time, schedule start, or object existence does not satisfy this field
+- `newestVerifiedRestorablePointRef` resolves to one immutable `verified-restorable-point/v1` record under `design/operations/deployments/production/verified-restorable-points/`. `newestVerifiedRestorablePointDigest` must exactly equal that record's `recordDigest`, which is the SHA-256 digest of the record's canonical UTF-8 bytes, encoded as `sha256:` plus 64 lowercase hexadecimal characters. A digest-looking value or mutable reference is not evidence.
+- At `assessedAt`, an eligible point is a canonical, digest-valid, production-bound record whose artifact, database, lineage, and restore-tool bindings validate and whose `verification.verifiedAt` is no later than the assessment. The selected record must have the greatest `backupArtifact.snapshotAt` among every eligible record in the immutable verified-point set. More than one eligible record at that greatest snapshot timestamp is ambiguous and fails closed; operators must reconcile the producer lineage rather than choose by path, verification time, or digest ordering.
+- `backupLastSuccessAt` records pipeline execution separately and cannot substitute for the verified restorable point
+- `backupVerifyLastSuccessAt` is the selected verified-restorable-point record's `verification.verifiedAt` timestamp and must be within 36 hours
 - `restoreDrillLastSuccessAt` within 30 days; a waiver may postpone an isolated drill or salvage exercise but cannot authorize player-facing first-live, post-rewind reopen, or `roll-forward-only` promotion without the required proof
+
+### Canonical Verified Restorable Point Record
+
+The verified-point producer and every readiness consumer share one owner-defined `verified-restorable-point/v1` record. The record has exactly these fields; unknown fields, missing fields, duplicate JSON members, and alternate local schemas are invalid:
+
+```json
+{
+  "schemaVersion": "verified-restorable-point/v1",
+  "environment": "production",
+  "databaseIdentity": {
+    "clusterIdentity": "<target-cluster-identity>",
+    "databaseName": "<database-name>"
+  },
+  "backupArtifact": {
+    "artifactRef": "<immutable-artifact-ref>",
+    "artifactIdentity": "<immutable-artifact-identity>",
+    "artifactDigest": "sha256:<64-lowercase-hex>",
+    "lineageRef": "<immutable-lineage-ref>",
+    "snapshotAt": "<RFC3339-UTC-artifact-capture-timestamp>"
+  },
+  "verification": {
+    "operationId": "<verification-operation-identity>",
+    "verifiedAt": "<RFC3339-UTC-timestamp>",
+    "restoreToolIdentity": {
+      "name": "<supported-restore-tool-name>",
+      "version": "<supported-restore-tool-version>",
+      "digest": "sha256:<64-lowercase-hex>"
+    }
+  },
+  "recordDigest": "sha256:<64-lowercase-hex>"
+}
+```
+
+The producer serializes the complete record as RFC 8785 JSON Canonicalization Scheme bytes encoded as UTF-8: object-member ordering and string encoding are canonical, no producer whitespace is present, and the schema's scalar values are non-empty ASCII strings. For the hash preimage, omit only the top-level `recordDigest` member; include every other member and nested object. The producer computes SHA-256 over those bytes and writes the resulting lowercase `sha256:` digest into `recordDigest`. It publishes the record and its immutable storage binding before publishing the readiness record that references it. Within this exact `verified-restorable-point/v1` record, `verification.restoreToolIdentity` identifies the exact restore consumer, which for this initial hosted logical lane is `psql` with the exact name, version, and tool digest accepted by the recovery-tool owner. The outer backup-readiness/recovery binding carries `backupToolDigest`, which identifies the `pg_dump` producer for the scheduled hosted lane (`pg_dump -Fp` followed by gzip, producing an immutable `.sql.gz` artifact); `backupToolDigest` is not a field in this inner record. This does not authorize an unregistered tool. The local ad hoc custom-format `.dump`/`pg_restore` pair is not the hosted verified-point artifact/tool pair.
+
+The consumer dereferences the immutable record, rejects duplicate members and any schema deviation, recomputes the same RFC 8785/UTF-8 preimage and digest, and exact-matches `recordDigest` to `newestVerifiedRestorablePointDigest`. It also exact-matches `environment`, `backupArtifact.snapshotAt` to `newestVerifiedRestorablePointAt`, `verification.verifiedAt` to `backupVerifyLastSuccessAt`, and `backupArtifact.artifactRef` to `backupArtifactRef`; verification must not predate the captured artifact. The record itself binds the target database identity, artifact identity/digest/lineage and capture time, verification operation/time, and supported restore-tool identity. The consumer must verify the record's target-environment binding and database/artifact/tool identities against the authoritative environment and backup lineage, not merely trust the fields' presence. No timestamp, object-store key, Git path, or mutable pointer substitutes for this record.
+
+The shared producer/consumer proof is one focused golden vector in the existing production preflight contract test. It asserts the exact canonical bytes and expected digest, accepts the unchanged record through the consumer helper, and rejects a changed artifact digest, changed snapshot time, changed verification time, duplicate member, or digest mismatch. This is non-authorizing schema/digest proof for the shared owner record, not a claim that end-to-end backup automation or authoritative identity binding is implemented; protected readiness remains fail-closed until the owner-authoritative database, artifact, lineage, and restore-tool bindings and successful isolated restoration of the same artifact are proved. The current production path still fails closed where the durable recovery controller is unavailable.
 
 Evidence reuse and invalidation:
 
 - rollback-compatible steady-state releases use the compact recovery-compatibility result below and need not duplicate this full record when reuse is valid
+- every promotion still consumes the current freshness reference/digest; a compact compatibility result may reference that live freshness proof without copying the full selected-release backup-readiness record
 - an invalidating recovery-contract change requires a new production-equivalent drill even when the 30-day window has not expired
 - a `roll-forward-only` release never reuses only the cadence record; its source artifact comes from the current production database lineage under representative writes and is restored using candidate recovery tooling, exact candidate service digests, the candidate migration path, and candidate config/bindings
 - first-live and reopen events require environment-specific proof for the boundary being opened
+- target state schedules isolated drills and automates their evidence production; this is not implemented end-to-end in the current baseline and cannot be presented as current proof
 
 Validation rules:
 
@@ -137,6 +185,7 @@ Validation rules:
 - `backupCoverage` must be `environment-wide-postgresql`; a tenant/game-instance/region scope cannot stand in for the whole database
 - `backupToolDigest` must match the tool that produced the source artifact and its source lineage; `recoveryToolDigest` and the recovery-contract fingerprint must match the candidate proved by the drill
 - `sourceServiceDigests` and the backup artifact lineage identify the snapshot-time production source; `candidateServiceDigests` and `candidateMigrationPathRef` identify the exact recovery candidate proved through controlled reopen
+- the freshness reference and digest must bind to the target production environment and the newest artifact that passed completeness, readability, lineage, and supported restore-tool checks; an upload key or existence check alone is not qualifying evidence
 
 ## Production Recovery Compatibility Result
 
@@ -153,9 +202,12 @@ Required fields:
 - `evaluatedAt`
 - `evaluatorToolDigest`
 - `newDrillRequired`
+- `newestVerifiedRestorablePointRef`
+- `newestVerifiedRestorablePointDigest`
+- `newestVerifiedRestorablePointAt`
 - `backupReadinessRef` when `newDrillRequired=true`
 
-The evaluator compares backup/restore tool compatibility, database and migration restore compatibility, durable workflow and reconciliation semantics, Coordination Redis recovery, enabled participant inventory, post-restore hardening, secret/binding contracts, and environment binding. Restore-compatible additive migrations and routine secret-value rotation do not require a new drill when their recovery, authority, delivery, and hardening contracts are unchanged. A semantic or contract change returns `drill_required`; a `roll-forward-only` release always sets `newDrillRequired=true`.
+The evaluator compares backup/restore tool compatibility, database and migration restore compatibility, durable workflow and reconciliation semantics, Coordination Redis recovery, enabled participant inventory, post-restore hardening, secret/binding contracts, and environment binding. It also dereferences the current environment-bound freshness reference and exact digest for every promotion. Restore-compatible additive migrations and routine secret-value rotation do not require a new drill when their recovery, authority, delivery, and hardening contracts are unchanged. A semantic or contract change returns `drill_required`; a `roll-forward-only` release always sets `newDrillRequired=true`. A current verified point is required even when the compact result reuses an otherwise compatible drill.
 
 ## Production Traffic-Open Backup Evidence
 
@@ -188,6 +240,9 @@ Required fields:
 - `backupStorageBinding`
 - `backupLastSuccessAt`
 - `backupVerifyLastSuccessAt`
+- `newestVerifiedRestorablePointAt`
+- `newestVerifiedRestorablePointRef`
+- `newestVerifiedRestorablePointDigest`
 - `restoreDrillLastSuccessAt`
 - `backupReadinessRef`
 - `baselineRecoveryRecordRef`
@@ -209,6 +264,7 @@ Required fields:
 Validation rules:
 
 - backup and verification evidence must bind to the production source lineage; preflight must dereference `backupReadinessRef`, validate the backup-readiness artifact's own `restoreRecoveryRecordRef`, and independently dereference `baselineRecoveryRecordRef`. Both referenced records must be finalized isolated drills compatible with the boundary being opened
+- every first-live and reopen event must dereference the current environment-bound `newestVerifiedRestorablePointRef`, exact-match `newestVerifiedRestorablePointDigest`, and prove `newestVerifiedRestorablePointAt` is no older than 15 minutes at the event; a backup upload or object-store key existence check alone is insufficient
 - an isolated production-equivalent drill may run in a production-equivalent boundary using current production database lineage and compatible recovery contracts/tooling; its evidence is bound only to that isolated boundary
 - the durable actual-recovery controller owns the pre-release and release lifecycle for first-live and reopen. Any preflight consumer must compare the immutable operation-bound evidence and event-matching controller lineage, and must not accept a transient traffic-open file as authority
 - `deploymentEventId` must equal the referenced preflight report so every retry, first-live attempt, or reopen has a unique immutable projection and cannot overwrite or reuse another event's evidence
@@ -233,17 +289,18 @@ Required fields:
 
 - `schemaVersion`
 - `environment`
-- `status` (`pass` or `incomplete`; only `pass` can contribute to traffic-open authorization)
+- `status` (`verified` or `recovery-unverified`)
 - `lastSuccessfulBackupAt`
-- `lastSuccessfulRestoreDrillAt`
-- `lastRestoreDrillAt`
+- `lastSuccessfulRestoreDrillAt` when `status=verified`; it may be omitted or `null` when `status=recovery-unverified`
+- `lastRestoreDrillAt` when a drill has been attempted; it may be omitted or `null` before any attempt and never substitutes for a successful drill
 - `retentionDailyPoints`
 - `backupTooling`
-- `lastSuccessfulRecoveryRecordRef`
 - `recoveryContractFingerprint`
+- `lastSuccessfulRecoveryRecordRef` when `status=verified`
+- `recoveryUnverifiedAcknowledgement` when `status=recovery-unverified`
 - `evidenceRefs[]`
 
-An `incomplete` record is the canonical blocking representation while required recovery proof is unavailable. Its `lastSuccessfulRecoveryRecordRef` and `recoveryContractFingerprint` may be `null`; a `pass` record requires both fields to resolve to the qualifying finalized recovery evidence. Restore hardening for hobby/self-hosted must fail closed for player-traffic reopen if this record is incomplete, missing, stale, or below baseline.
+Every record must prove a successful logical backup no more than 24 hours old and `retentionDailyPoints >= 7`; a schedule declaration without the current successful-backup timestamp and retained-point evidence is insufficient. `recovery-unverified` records include the operator acknowledgement, timestamp, reason, and exact declared `recoveryContractFingerprint`; they may omit or set `lastSuccessfulRestoreDrillAt` to `null`, make no restore-readiness claim, and must not include or claim `lastSuccessfulRecoveryRecordRef`. Verified status additionally requires a non-null successful restore-drill timestamp no more than 30 days old, the supported automated local rehearsal, current evidence, and `lastSuccessfulRecoveryRecordRef`. The current executable intentionally fails `PREFLIGHT-BACKUP-003` closed before consuming this target schema because the durable controller read and hobby compliance validator are not implemented; checked-in shape alone is not validation. Missing or unavailable automation cannot be presented as verified proof. Restore hardening for hobby/self-hosted always fails closed for post-restore player-traffic reopen if verified actual-recovery evidence is missing, stale, or below baseline.
 
 ## Hobby Traffic-Open Evidence
 
@@ -263,7 +320,11 @@ Required fields:
 - `assessedAt`
 - `assessedBy`
 - `backupComplianceRef`
-- `baselineRecoveryRecordRef`
+- `recoveryPosture` (`verified` or `recovery-unverified`)
+- `baselineRecoveryRecordRef` when `recoveryPosture=verified`
+- `lastSuccessfulRecoveryRecordRef` when `recoveryPosture=verified`
+- `recoveryContractFingerprint`
+- `recoveryUnverifiedAcknowledgement` when a first-live event uses `recovery-unverified`
 - `actualRecoveryRecordRef` (durable actual-recovery controller reference for first-live or reopen)
 - `playerFacingTargetBoundary`
 - `trafficExposure` (`player-facing-first-live` or `player-facing-reopen`, matching `eventType`)
@@ -274,8 +335,11 @@ Required fields:
 
 Validation rules:
 
-- `backupComplianceRef` must point to a current compliant record
-- `baselineRecoveryRecordRef` must point to a finalized exported projection of an isolated drill proving the environment-wide `cold_start_restore` contract for the player-facing hobby boundary; first-live and reopen must additionally reference the durable actual-recovery controller for the live boundary
+- a verified first-live event requires `backupComplianceRef` to dereference to the current `status=verified` compliance record; that record's `lastSuccessfulRecoveryRecordRef`, the traffic-open `baselineRecoveryRecordRef`, and the traffic-open `lastSuccessfulRecoveryRecordRef` must all resolve to the same current verified finalized recovery record and its automated local rehearsal proving the environment-wide `cold_start_restore` contract
+- the traffic-open `recoveryContractFingerprint` and the compliance record's fingerprint must exact-match the `recoveryContractFingerprint` value in that same current verified recovery record; stale, split, or mismatched references or fingerprints fail closed
+- a first-live event may instead use `recoveryPosture=recovery-unverified` with explicit acknowledgement and a clear no-recovery-promise diagnostic; `backupComplianceRef` must dereference to the current `status=recovery-unverified` compliance record whose `recoveryContractFingerprint` exact-matches the traffic-open fingerprint, the event must omit `baselineRecoveryRecordRef` and `lastSuccessfulRecoveryRecordRef`, and it must not claim verified status
+- an unverified first-live waiver still requires `PREFLIGHT-BACKUP-003=pass` at the actual-recovery controller's `phase=ready_to_reopen` boundary; the pre-release gate must not require `phase=finalized`, `status=SUCCEEDED`, or quarantine-release postconditions. Those finalized-release and `SUCCEEDED`/quarantine-release postconditions are reserved for validating the post-release traffic-open projection, and the waiver cannot be used for any reopen event
+- every reopen event requires verified posture plus the actual recovery record for that restore; the first-live exception never applies after a rewind
 - the actual-recovery controller lineage and finalized projection must use event-matching `trafficExposure` and name the exact `playerFacingTargetBoundary`; after the controller reaches its owner-defined finalized state, the exporter writes the checked-in projections
 - `deploymentEventId` must equal the referenced preflight report so evidence cannot be reused across retries or traffic-open events
 - the finalized projection must retain `schemaVersion=traffic-open-record/v1` only, and its `operationId`, `eventType`, `deploymentEventId`, `preflightReportPath`, `actualRecoveryRecordRef`, `playerFacingTargetBoundary`, and `trafficExposure` must exact-match the consumed operation-bound evidence and finalized controller lineage; it must include the exact operation-bound `evidenceRef` in `evidenceRefs[]`; where the operation-bound record requires lineage, that lineage must remain traceable there. A missing, mutable, or reissued projection is a later evidence-integrity failure, not a release input
@@ -316,6 +380,7 @@ Required top-level fields:
 - `backupToolDigest`
 - `recoveryToolDigest`
 - `recoveryContractFingerprint`
+- `recoveryPointApprovedBy` and the displayed effective data-loss window for an actual rewind, or a reference to a separately accepted automatic-DR policy
 - `recoveryParticipantInventoryRef`
 - `validatorInventoryRef`
 - `externalEffectInventoryRef`
@@ -335,6 +400,8 @@ Required top-level fields:
 - `externalEffectReconciliation`
 - `erasureOverlayReconciliation`
 - `sessionRecovery`
+- `credentialApplicability` is an object keyed by exactly the closed nine-class credential universe: `jwt-signing-keys-jwks`, `postgres-application-credentials`, `workload-leaf`, `bridge-leaf`, `operator-leaf`, `backup-storage`, `asset-storage`, `outbound-comms`, and `operator-credentials`. The five internal classes (`jwt-signing-keys-jwks`, `postgres-application-credentials`, `workload-leaf`, `bridge-leaf`, and `operator-leaf`) are always `applicable`; production `backup-storage` is also always `applicable` because production requires that environment binding. Only `asset-storage`, `outbound-comms`, and `operator-credentials` may be `not_applicable` in a production recovery record. Missing, unknown, or malformed class or value fails closed
+- `credentialDispositions` is an object keyed by exactly the subset of `credentialApplicability` whose value is `applicable`; each value is exactly one of `rotated`, `reissued`, `rebound`, or `verified_not_restored`. A non-applicable class is omitted and must not claim a disposition
 - `jwtHardening`
 - `databaseCredentialRotation`
 - `certificateReissuance`
@@ -349,13 +416,15 @@ Required top-level fields:
 Nested control-group requirements:
 
 - `restoreSafeMode` includes evidence that player ingress was disabled, normal background processors and outbound integrations were stopped or restore-safe-fenced, Game Session tick execution and command intake could not create fresh coordination state before the coordination recovery gate, and only approved maintenance Jobs ran before quarantine release
-- `jwtHardening` records the observation-only rotation-evidence workload reference, stable `restoreCutoverOperationId`, immutable restore-cutover request digest, resulting key IDs, recorded compromise/reset `issuerAuthorityGeneration` advance, and proof that issued-token registry snapshots with an older `issuerAuthorityGeneration` are rejected. It also records bounded registry/session cleanup status and must contain no private signer material. The exact JWT cleanup, custody, controller-authority, private-material operation, and ordering semantics are defined by [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md#signing-key-rotation-contract-normative); this section retains only the returned evidence fields and observed proofs.
+- `credentialApplicability` is the complete, exact-key classification for the closed internal and external credential universes. The five internal classes and production `backup-storage` are always `applicable`; only `asset-storage`, `outbound-comms`, and `operator-credentials` may be `not_applicable`. `applicable` requires one valid `credentialDispositions` value and the corresponding hardening or validation evidence; `not_applicable` requires no disposition and must not carry applicable/pass evidence. Applicability is an environment binding, not a claim that absent credentials were safely restored
+- `credentialDispositions` records one event-classified disposition for each applicable credential/certificate class. `verified_not_restored` is allowed only when live evidence proves that the current trust material remained outside the restore artifact and still matches the target binding; fresh boundaries, restored, or unprovable trust require `rotated` or `reissued`, or a `rebound` disposition only when the trust boundary was safely re-established without reusing unsafe restored material and that binding and material lineage are proved. Compromise scope cannot use `verified_not_restored`.
+- `jwtHardening` records the observation-only rotation-evidence workload reference, disposition, stable `restoreCutoverOperationId`, immutable restore-cutover request digest, explicit `compromiseClassified` discriminator, and disposition-specific validator evidence. For ordinary `rotated`, `reissued`, and applicable `rebound` replacement paths, `compromiseClassified=false` and exact `replacementEvidence` fields `{oldKid, candidateKid, oldKidRejected, candidateKidAccepted, validatorEvidenceRef}` are required: IDs are distinct, both booleans are true, the reference matches `validatorConvergenceEvidence`, the candidate is present in `resultingKeyIds`, and the old ID is absent. This proof is prohibited for compromise-classified and `verified_not_restored` branches. For a confirmed or suspected compromise hard cutover, `compromiseClassified=true` and the exact compromised/candidate key-ID and lowercase `sha256:<64 hex>` public-key-fingerprint pairings are required in the aggregate and validator evidence; compromise proof remains fail-closed. For `verified_not_restored`, it records current Account signing-authority/JWKS binding, current issuer generation and keyset integrity, validator acceptance of the unchanged current set, and the universal Account/Game Session invalidation results; it does not require a replacement `kid`, rejection of that still-current `kid`, or an issuer-generation advance solely as credential-rotation evidence. It also records bounded registry/session cleanup status and must contain no private signer material. The exact JWT cleanup, custody, controller-authority, private-material operation, and ordering semantics are defined by [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md#signing-key-rotation-contract-normative); this section retains only the returned evidence fields and observed proofs.
 - `validatorInventoryRef` points to an authoritative, complete, reachable inventory. Every validator must have a safe converged result and must receive public JWKS only; missing, unknown, unreachable, or private-key-access results fail recovery
 - JWT hardening evidence is non-secret and records Account/validator convergence results only; it does not define custody, controller authority, or private-material operations. Those semantics remain owned by [JWT and Token Contracts](./system-architecture-jwt-and-token-contracts.md#signing-key-rotation-contract-normative), and recovery evidence must never contain private signer material
-- `databaseCredentialRotation` includes rotation job reference, affected Secret refs, and rollout-restart completion evidence
-- `certificateReissuance` includes workload, bridge, and operator leaf identity evidence plus peer-convergence evidence
-- `externalCredentialValidation` includes one result per credential class with `validationMethod`, `validatedAt`, `validatedBy`, `observedValue`, isolation assertion, and immutable evidence ref. `observedValue` is explicitly non-secret and is limited to a resource ID, certificate/key fingerprint, or redacted presence indicator; it must never contain a password, token, private key, raw secret material, or an unredacted credential-bearing connection string
-- `secretComplianceRefresh` references the refreshed `design/operations/secret-compliance/<environment>.yaml` record, the immutable evidence payload updated by restore hardening, the credential classes refreshed, and whether each class used `lastProvisionedAt` or `lastRotationAt`
+- `databaseCredentialRotation` includes the event-classified disposition, rotation job reference when applicable, affected Secret refs, durable operation identity, phase persisted before password mutation, crash-recovery or rollback outcome across database, Secret, and every authoritative consumer, and rollout/reload completion evidence proving all consumers are healthy and using the expected credential lineage before `rotated` or `rebound` is recorded
+- `certificateReissuance` includes the event-classified disposition, workload, bridge, and operator leaf identity evidence plus peer-convergence evidence
+- `externalCredentialValidation.records` retains exactly one record for each class in the closed external universe. An `applicable` class uses exactly `status`, `evidenceRef`, `isolationAssertion`, `validationMethod`, `validatedAt`, `validatedBy`, and non-secret `observedValue`, with `status=pass`; a `not_applicable` class uses exactly `status=not_applicable`, `reason=credential-class-not-present`, and a non-empty immutable `evidenceRef`, with no validation fields or observed credential detail. A record status must match `credentialApplicability`, and any disposition or pass evidence for a non-applicable class fails closed. `observedValue` is explicitly non-secret and is limited to a resource ID, certificate/key fingerprint, or redacted presence indicator; it must never contain a password, token, private key, raw secret material, or an unredacted credential-bearing connection string
+- `secretComplianceRefresh` references the refreshed `design/operations/secret-compliance/<environment>.yaml` record, the immutable evidence payload updated by restore hardening, the credential classes refreshed using canonical recovery keys `backup-storage` and `asset-storage`, and a per-class `freshness` object containing `lineage`, `field`, `value`, `previousField`, and `previousValue`. The recovery-to-compliance projector and owner handoff apply the fixed, non-caller-selectable namespace mapping `backup-storage` -> secret-compliance `backup-object-store-credentials` and, when external asset storage is applicable, `asset-storage` -> secret-compliance `asset-store-credentials`; recovery `credentialClasses`/`freshness` retain the recovery keys, while the compliance record and evidence payload retain their compliance keys. An unmapped class or a recovery/compliance cross-namespace key fails closed. New lineage/first issuance uses `lineage=new` with either `rotated` or `reissued`, `lastProvisionedAt`, and no previous pair; existing-lineage rotated or reissued replacement uses an advanced `lastRotationAt`; rebound and `verified_not_restored` preserve the exact existing field/value pair. Every selected and previous freshness timestamp is no later than `finalizedAt`. Missing or mismatched disposition-to-freshness semantics, including a reissued existing lineage using `lastProvisionedAt` or a rebound changing its timestamp, fails closed. Rebound also records the distinct rebind operation identity, retained material-lineage identity, and exact new target binding. This mapping is target-state owner/projector behavior; the current static validator does not yet implement the projection or handoff check.
 - for a staging restore of production-origin data, `sanitizationEvidenceRef` identifies an immutable pre-release `recovery-sanitization-evidence/v1` artifact whose `recoveryRef`, `operationId`, `deploymentEventId`, and `backupArtifactDigest` match the durable controller and restored artifact. The finalized recovery projection references that same artifact; it is not used circularly as its own pre-release evidence
 - `recoveryControllerLineage` identifies the durable controller state, environment-wide scope, linked artifact and participant lineage, pre-release `ready_to_reopen` approval, and post-release `finalized` state when this projection is exported
 - `backupConfidentialityEvidence` uses `status=pass`, `transport=encrypted`, and `storage=encrypted` and proves environment-scoped least-privilege access and audit plus retention/secure deletion. Whenever production-origin data is exercised outside production, it also proves quarantine, sanitization, validation, and deletion

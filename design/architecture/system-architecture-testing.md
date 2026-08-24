@@ -2,84 +2,86 @@
 
 FireMUD employs a layered testing approach to keep services reliable while avoiding excessive CI/CD costs. This document describes the scope of each test type, the tooling in use, and how these tests fit into our development workflow.
 
-Environment terminology in this document follows [Deployment Environments](./infrastructure/deployment-environments.md#canonical-environment-classes). Unless a section says otherwise, “prod-like observability smoke” means environment classes `hobby-self-hosted`, `staging`, and `production`; `dev-demo-cluster` may run a subset for rehearsal, but it is not the authoritative environment for prod-like observability sign-off.
-For `hobby-self-hosted`, equivalent operator-run evidence is acceptable when nightly automation is not practical, but the same contracts still apply: external-authority checks, mirrored signals, and player-flow canaries must be validated before player traffic is opened or reopened.
-Minimum acceptable operator-run evidence for that exception is: one retained preflight or smoke record for the event, one retained check result showing the authoritative external pager/deadman path was exercised or verified, one retained check result showing mirrored `entrypath_blackbox_probe_success` / `observability_deadman_heartbeat_timestamp_seconds` and required `playerflow_canary_*` signals were present, and one retained incident or deployment note that records who performed the verification and when.
+Environment terminology in this document follows [Deployment Environments](./infrastructure/deployment-environments.md#canonical-environment-classes). “Hosted-assurance observability smoke” applies to hosted production profiles that claim externally verified availability or monitoring-resilient readiness; staging may run the same checks for rehearsal. Hobby, single-node, and small profiles may explicitly omit the off-cluster monitor and pager under [ADR 0159](./decisions/adr-0159-profile-dependent-independent-deadman-and-public-path-monitoring.md).
+For `hobby-self-hosted`, equivalent operator-run evidence is acceptable when nightly automation is not practical. If the independent path is omitted, retained preflight records the degraded-detection warning while ordinary health and public-path smoke remain applicable; player-flow canaries remain conditional on the profile advertising that capability, and omission alone does not block player traffic.
+Minimum acceptable operator-run evidence for an omitted profile is one retained preflight or smoke record naming the detection posture, one retained result for the locally available public-path checks and, when advertised, player-flow checks, and one incident or deployment note recording who performed verification and when. A profile that claims independent detection must additionally retain current deadman, off-cluster public-path, and paging evidence; independent monitoring does not inherently require player-flow canaries.
 Store first-live and reopen evidence under `design/operations/deployments/hobby-self-hosted/traffic-open/<deployment-ref>/<deploymentEventId>.json`. Store restore-hardening verification evidence under `design/operations/deployments/hobby-self-hosted/recovery/<recovery-ref>.json` and link it from the event-bound traffic-open record; it is supporting recovery evidence, not an alternate traffic-open record.
-For first-live and reopen events, the event-bound traffic-open contract in [Backup Recovery Evidence and Compliance](./system-architecture-backup-recovery-evidence-and-compliance.md#production-traffic-open-backup-evidence) is the sole canonical schema and requires `eventType`, `trafficOpenStatus`, recovery references, and finalized transition state.
-The retained artifact should also preserve the operator identity and timestamp, backing preflight or smoke evidence reference, and results for the authoritative external pager/deadman verification plus mirrored `entrypath_blackbox_probe_success` / `observability_deadman_heartbeat_timestamp_seconds` / `playerflow_canary_*` checks.
+Production first-live and reopen events use the event-bound traffic-open contract in [Backup Recovery Evidence and Compliance](./system-architecture-backup-recovery-evidence-and-compliance.md#production-traffic-open-backup-evidence); `hobby-self-hosted` first-live and reopen events use the profile-specific [hobby traffic-open evidence](./system-architecture-backup-recovery-evidence-and-compliance.md#hobby-traffic-open-evidence). The hobby operation-bound pre-release record reuses the production pre-release shape where specified by the owner document, but each profile's finalized projection, validation, payload, and `contentDigest` remain distinct. Each applicable schema requires its own `eventType`, `trafficOpenStatus`, recovery references, and finalized transition state.
+The retained artifact should also preserve the operator identity and timestamp, backing preflight or smoke evidence reference, and the declared detection posture. Profiles claiming independent monitoring retain authoritative external pager/deadman and public-path verification for their exposed paths. Prometheus mirrors such as `entrypath_blackbox_probe_success` and `observability_deadman_heartbeat_timestamp_seconds` are optional; when the authoritative monitor publishes them, retain and verify them, while `playerflow_canary_*` is retained only when the profile advertises that capability. Omitted profiles retain locally available blackbox evidence only for their declared exposed paths, omit the deadman mirror, and retain player-flow evidence only when advertised, plus the explicit degraded-detection warning.
 
-Current repository automation now includes the canonical retained-evidence validator and runtime smoke harness for the mirrored player-flow canary / blackbox / deadman contract: `dev-tools/observability/validate-player-experience-smoke-evidence.py` and `dev-tools/observability/run-player-experience-smoke.py`. PR/main CI still focuses on static metric-cardinality and observability-contract validation for dashboards, snippets, saved objects, and reference rules; environment-backed checks against Alertmanager, the authoritative external pager, Jaeger, and Kibana/Elasticsearch remain prod-like smoke work driven by the canonical runner rather than ordinary pull-request validation.
+Current repository automation includes the profile-aware retained-evidence validator `python3 dev-tools/observability/validate-player-experience-smoke-evidence.py <evidence.json>` and runtime harness `dev-tools/observability/run-player-experience-smoke.py`. Every retained artifact invokes the validator, including `independent-omitted` evidence and profiles that omit the player-flow canary; omitted capabilities must omit their capability-specific signals rather than bypassing canonical schema and authority checks. When the player-flow capability is advertised, the current harness runs and retains the complete login/command canary for every declared exposed path in one invocation. Required profiles retain `deadmanAuthority` and a complete bounded `publicPathChecks` map with `not_applicable` for non-exposed paths; `independent-omitted` retains its complete exposed-path declaration and explicit reason without synthesizing external authority or a deadman mirror. PR/main CI remains focused on static metric-cardinality and observability-contract validation; environment-backed checks belong to profiles that claim independent monitoring.
 
-Illustrative retained evidence shape for a prod-like observability smoke or hobby traffic-open event:
+Illustrative retained evidence shape for a hosted-assurance observability smoke; an omitted profile must retain `externalAuthority: {"profile": "independent-omitted", "reason": "...", "exposedPublicPlayerPaths": ["websocket"]}` without deadman or public-path authority records. For promotion-bound evidence, `deploymentRef` is the exact staging overlay commit SHA (`stagingOverlayCommitSha`) and `deploymentEventId` is the distinct UUID selected by the promotion attestation, so evidence cannot be reused across two applies of the same overlay commit. Standalone local evidence may use another non-empty reference, but that artifact is not promotion evidence.
 
 ```json
 {
-  "deploymentRef": "staging-2026-03-19-a",
+  "deploymentRef": "<staging-overlay-commit-sha>",
+  "deploymentEventId": "11111111-2222-4333-8444-555555555555",
   "verifiedAt": "2026-03-19T10:55:00Z",
   "verifiedBy": "operator@example",
   "preflightEvidenceRef": "ci://observability-smoke/2026-03-19T10:40:00Z",
   "externalAuthority": {
+    "profile": "independent-required",
+    "exposedPublicPlayerPaths": ["websocket", "telnet"],
+    "detectionBudgetSeconds": 195,
+    "evidenceObservedAt": "2026-03-19T10:55:00Z",
+    "lastSuccessfulHeartbeatObservedAt": "2026-03-19T10:54:00Z",
     "deadmanAuthority": {
       "status": "green",
       "evidenceRef": "pager://staging/player-experience/2026-03-19T10:50:00Z",
       "target": "staging-deadman-authority",
       "checkRef": "check://staging/deadman"
     },
-    "entrypointChecks": {
-      "prometheus": {
+    "publicPathChecks": {
+      "websocket": {
         "status": "green",
-        "evidenceRef": "pager://staging/prometheus/2026-03-19T10:51:00Z",
-        "target": "staging-prometheus",
-        "checkRef": "check://staging/prometheus"
+        "evidenceRef": "probe://staging/websocket/2026-03-19T10:51:00Z",
+        "target": "staging-websocket",
+        "lastSuccessfulProbeObservedAt": "2026-03-19T10:53:00Z"
       },
-      "alertmanager": {
+      "telnet": {
         "status": "green",
-        "evidenceRef": "pager://staging/alertmanager/2026-03-19T10:51:00Z",
-        "target": "staging-alertmanager",
-        "checkRef": "check://staging/alertmanager"
-      },
-      "grafana": {
-        "status": "green",
-        "evidenceRef": "pager://staging/grafana/2026-03-19T10:51:00Z",
-        "target": "staging-grafana",
-        "checkRef": "check://staging/grafana"
-      },
-      "kibana_log_query": {
-        "status": "green",
-        "evidenceRef": "pager://staging/kibana-log-query/2026-03-19T10:51:00Z",
-        "target": "staging-kibana-log-query",
-        "checkRef": "check://staging/kibana-log-query"
-      },
-      "jaeger_query": {
-        "status": "green",
-        "evidenceRef": "pager://staging/jaeger-query/2026-03-19T10:51:00Z",
-        "target": "staging-jaeger-query",
-        "checkRef": "check://staging/jaeger-query"
+        "evidenceRef": "probe://staging/telnet/2026-03-19T10:51:00Z",
+        "target": "staging-telnet",
+        "lastSuccessfulProbeObservedAt": "2026-03-19T10:53:00Z"
       }
     }
   },
   "mirroredSignals": {
     "entrypath_blackbox_probe_success": [
-      {"path": "websocket", "target": "staging-web-gateway", "value": 1},
-      {"path": "telnet", "target": "staging-telnet-edge", "value": 1}
+      {"path": "websocket", "target": "gateway", "value": 1},
+      {"path": "telnet", "target": "tcp_proxy", "value": 1}
     ],
     "observability_deadman_heartbeat_timestamp_seconds": {
       "source": "staging",
       "value": 1773917600
     },
     "playerflow_canary_success": [
-      {"flow": "login", "path": "websocket", "target": "staging-web-gateway", "value": 1},
-      {"flow": "command", "path": "websocket", "target": "staging-web-gateway", "value": 1}
+      {"flow": "login", "path": "websocket", "target": "gateway", "profile": "independent-required", "value": 1},
+      {"flow": "command", "path": "websocket", "target": "gateway", "profile": "independent-required", "value": 1},
+      {"flow": "login", "path": "telnet", "target": "tcp_proxy", "profile": "independent-required", "value": 1},
+      {"flow": "command", "path": "telnet", "target": "tcp_proxy", "profile": "independent-required", "value": 1}
     ],
     "playerflow_canary_latency_ms": [
-      {"flow": "command", "path": "websocket", "target": "staging-web-gateway", "value": 184}
-    ]
+      {"flow": "command", "path": "websocket", "target": "gateway", "profile": "independent-required", "value": 184},
+      {"flow": "command", "path": "telnet", "target": "tcp_proxy", "profile": "independent-required", "value": 221}
+    ],
+    "playerflow_canary_last_run_timestamp_seconds": [
+      {"flow": "login", "path": "websocket", "target": "gateway", "profile": "independent-required", "value": 1773917690},
+      {"flow": "command", "path": "websocket", "target": "gateway", "profile": "independent-required", "value": 1773917690},
+      {"flow": "login", "path": "telnet", "target": "tcp_proxy", "profile": "independent-required", "value": 1773917690},
+      {"flow": "command", "path": "telnet", "target": "tcp_proxy", "profile": "independent-required", "value": 1773917690}
+    ],
+    "playerflow_canary_freshness_budget_seconds": {
+      "profile": "independent-required",
+      "value": 195
+    }
   },
   "canaryAlerts": [
     {"alert": "PlayerFlowCanaryLoginFailed", "severity": "P0", "exerciseResult": "passed"},
     {"alert": "PlayerFlowCanaryCommandFailed", "severity": "P1", "exerciseResult": "passed"},
-    {"alert": "PlayerFlowCanaryLatencyHigh", "severity": "P1", "exerciseResult": "passed"}
+    {"alert": "PlayerFlowCanaryLatencyHigh", "severity": "P1", "exerciseResult": "passed"},
+    {"alert": "PlayerFlowCanaryEvidenceStale", "severity": "P1", "exerciseResult": "passed"}
   ],
   "logPipelineQueryability": {
     "traceId": "9c8d7e6f5a4b3210",
@@ -90,9 +92,9 @@ Illustrative retained evidence shape for a prod-like observability smoke or hobb
 }
 ```
 
-This example is illustrative rather than exhaustive. Equivalent retained evidence is acceptable as long as it preserves the same canonical checks and operator accountability.
+This example is illustrative rather than exhaustive. Equivalent retained evidence is acceptable as long as it preserves the applicable profile's canonical checks and operator accountability. The target independent contract is deadman freshness, each declared exposed browser/WebSocket or Telnet path, and off-cluster page delivery; non-exposed paths remain `not_applicable`. It does not require Prometheus, Alertmanager, Grafana, Kibana, or Jaeger to be externally reachable.
 
-Use `python3 dev-tools/observability/run-player-experience-smoke.py --external-authority-evidence <authority.json> --evidence-out <evidence.json> [--metrics-out <mirrored.prom>]` to generate canonical prod-like smoke evidence and mirrored signal output, then run `python3 dev-tools/observability/validate-player-experience-smoke-evidence.py <evidence.json>` before attaching the result to a traffic-open or recovery record. `authority.json` must be the retained result from the authoritative external monitor for the deadman pager and the required observability entrypoint checks; only `--simulate` may synthesize that authority object.
+Use `python3 dev-tools/observability/run-player-experience-smoke.py --external-authority-evidence <authority.json> --evidence-out <evidence.json> [--metrics-out <mirrored.prom>]` to generate hosted-assurance smoke evidence and mirrored signal output, then run `python3 dev-tools/observability/validate-player-experience-smoke-evidence.py <evidence.json>` before attaching the result to a traffic-open or recovery record. `authority.json` must be the retained profile-aware result from the authoritative external monitor for the deadman and declared public paths, or an explicit `independent-omitted` record with its degraded-detection reason. Only `--simulate` may synthesize that authority object.
 
 ---
 
@@ -188,7 +190,7 @@ OWASP ZAP baseline scans the built web client preview during CI to surface commo
 
 ### Observability Tests
 
-In addition to functional, load, and security tests, FireMUD treats observability wiring as part of the system contract. A minimal set of checks should validate that critical metrics and alerts are present and correctly labeled:
+In addition to functional, load, and security tests, FireMUD treats observability wiring as part of the system contract. The routed-alert and degraded-diagnostic boundary follows [ADR 0158](./decisions/adr-0158-simplified-observability-degradation-without-fallback-alert-authority.md), and profile-dependent external monitoring follows [ADR 0159](./decisions/adr-0159-profile-dependent-independent-deadman-and-public-path-monitoring.md). A minimal set of checks should validate that critical metrics and alerts are present and correctly labeled:
 
 - **Metric presence and labels**
   - After a small synthetic workload in CI (for example a short end-to-end smoke test that exercises login and a few commands), assert that:
@@ -206,15 +208,15 @@ In addition to functional, load, and security tests, FireMUD treats observabilit
   - Define one or more **test-only** alert rules (for example `ObservabilitySmokeTestAlert`) in non-production Alertmanager configurations with `alert_class="test"` and notifications routed only to low-noise channels or logging sinks, not to paging integrations.
   - Provide a short-lived probe in CI that intentionally pushes the corresponding test-only metric over its threshold in a non-production environment and verifies that Alertmanager receives and routes the alert with the expected labels (`service`, `severity="P2"`, `alert_class="test"`, `owner`, `runbook`).
   - These smoke tests can run as non-blocking or informational checks initially; once stable, they can be promoted to required checks for production-like environments, but they must never reuse P0/P1 production alert rules or target production Alertmanager instances directly.
-  - In prod-like observability smoke, also verify that the independently hosted deadman / meta-monitoring path is receiving the in-cluster heartbeat signal. This check must not depend on Prometheus being healthy to succeed.
-  - In prod-like observability smoke, also verify the **authoritative external pager** path itself:
+  - For profiles requiring independent monitoring, verify that the independently hosted deadman / meta-monitoring path is receiving the in-cluster heartbeat signal. This check must not depend on Prometheus being healthy to succeed.
+  - For those profiles, also verify the **authoritative external pager** path itself:
     - force a deadman-staleness test target or equivalent external-only failure mode,
     - verify the external monitoring product opens the expected non-production incident without depending on Prometheus rule evaluation,
-    - verify the mirrored Prometheus signal matches the external monitor state once Prometheus is healthy again.
-  - In prod-like observability smoke, also verify the canonical Logging & Admin alert-state behavior:
-    - when Alertmanager is healthy, the UI/API reports `source="alertmanager"` (or an equivalent explicit source marker) and does not duplicate the same condition from fallback rules,
-    - when Alertmanager is intentionally made unavailable while Prometheus remains healthy, the UI/API reports `source="prometheus-fallback"` for the supported fallback set and marks the view as degraded,
-    - when both Alertmanager and Prometheus are unavailable, the UI/API reports alert-state unavailability instead of presenting stale fallback conditions as current.
+    - when the authoritative monitor publishes a Prometheus mirror, verify that mirror matches the external monitor state once Prometheus is healthy again; a required profile does not fail mirror verification when no mirror is published.
+  - In observability smoke where Alertmanager is available, also verify the canonical Logging & Admin alert-state behavior:
+    - when Alertmanager is healthy, the UI/API reports `source="alertmanager"` (or an equivalent explicit source marker) and does not duplicate the same condition from Prometheus diagnostics,
+    - when Alertmanager is intentionally made unavailable while Prometheus remains healthy, the UI/API reports routed-alert unavailability and labels any bounded Prometheus snapshot as diagnostic rather than active alerts,
+    - when a diagnostic snapshot exceeds its configured freshness budget, the UI/API reports it as `unknown`, and when both Alertmanager and Prometheus are unavailable it reports observability state unavailable.
 
 - **Tracing checks**
   - In at least one non-production pipeline where Jaeger (or an OTLP-compatible trace backend) is available, run a small smoke test that:
@@ -244,18 +246,19 @@ New services and features that add critical metrics or alerts should extend thes
 
 ### Synthetic Player-Flow Canary Checks
 
-Prod-like environments that advertise player-experience monitoring must also validate the synthetic canary path described in the Logging & Monitoring contract:
+Profiles that advertise the player-flow canary capability must also validate the synthetic canary path described in the Logging & Monitoring contract:
 
-- Verify `playerflow_canary_success{flow="login",path=...}` exists for each exposed public path.
-- Verify `playerflow_canary_success{flow="command",path=...}` exists for each exposed public path.
-- Verify `playerflow_canary_latency_ms{flow="command",path=...}` is exported with millisecond semantics.
-- Verify canary labels remain low-cardinality (`flow`, `path`, `target`) and do not include account IDs, tenant IDs, player IDs, or trace IDs.
+- Verify `playerflow_canary_success{flow="login",path=...,target=...,profile=...}` and `playerflow_canary_success{flow="command",path=...,target=...,profile=...}` exist for each exposed public path.
+- Verify `playerflow_canary_latency_ms{flow="command",path=...,target=...,profile=...}` is exported with millisecond semantics, and `playerflow_canary_last_run_timestamp_seconds{flow,path,target,profile}` is current for each required flow/path.
+- Verify the profile-derived `playerflow_canary_freshness_budget_seconds{profile}` matches the authoritative detection budget whenever the canonical Prometheus canary alerts are installed/evaluated.
+- Verify canary labels remain low-cardinality (`flow`, `path`, `target`, `profile`) and do not include account IDs, tenant IDs, player IDs, or trace IDs.
 - Verify the canonical canary alert path can be exercised in non-production without using production paging destinations:
   - login canary failure trips `PlayerFlowCanaryLoginFailed` with `severity="P0"` (or the documented environment-equivalent canonical alert),
   - representative command failure trips `PlayerFlowCanaryCommandFailed` with `severity="P1"`,
   - controlled latency degradation trips `PlayerFlowCanaryLatencyHigh` with `severity="P1"`,
+  - stale available run evidence trips `PlayerFlowCanaryEvidenceStale` with `severity="P1"` and is treated as unknown/degraded rather than a player-flow failure,
   - alert labels preserve `owner`, `severity`, and `runbook` from the architecture contract.
-- These checks are required for prod-like observability smoke because live-traffic SLIs alone are not sufficient in low-traffic periods.
+- These checks are required only for profiles advertising player-flow canaries because live-traffic SLIs alone are not sufficient in low-traffic periods. Independent-monitoring profiles still retain their required deadman and public-path evidence even when they do not advertise player-flow canary metrics.
 
 #### Where These Checks Run (Decision)
 
@@ -264,28 +267,28 @@ To keep PR feedback fast while still preventing “it only breaks in staging” 
 - **Always (PR + main CI)**:
   - Design-contract validation of dashboard/snippet consistency (for example `dev-tools/observability/validate-observability-contract.py`).
   - Markdown link + lint checks so runbook references do not rot.
-- **Prod-like observability smoke (nightly or staging-gated)**:
+- **Environment assurance (nightly or staging-gated, for profiles that claim it)**:
   - Alert routing smoke: trigger a test-only alert (`alert_class="test"`, `severity="P2"`) and verify Alertmanager routing and label preservation end-to-end.
-  - External-authority smoke: verify the independently hosted monitoring system can page on deadman staleness or an equivalent external-only failure target without relying on Prometheus alert evaluation.
-  - External observability-entrypoint smoke: verify the authoritative external monitoring configuration covers Prometheus, Alertmanager, Grafana, Kibana/log-query, and Jaeger/trace-query entrypoints, and that each has a documented non-production validation method or bounded mirrored signal mapping.
-  - External edge blackbox smoke: verify prod-like environments expose an independent synthetic probe metric for each public entry path and that a forced probe failure (or equivalent test target) trips the non-production blackbox alert path.
-  - Player-flow canary smoke: verify the prod-like environment exposes mirrored `playerflow_canary_success` and `playerflow_canary_latency_ms` signals for login and the representative command path, and that a controlled non-production failure can trip the canary alert path.
+  - For profiles requiring independent monitoring, external-authority smoke verifies that the independently hosted monitoring system can page on deadman staleness or an equivalent external-only failure target without relying on Prometheus alert evaluation.
+  - Private observability diagnostics may verify in-cluster or provider-native health checks without requiring Prometheus, Alertmanager, Grafana, Kibana/log-query, or Jaeger/trace-query to be externally reachable.
+  - For profiles requiring independent monitoring, external edge blackbox smoke verifies an independent synthetic probe for each real public entry path and that a forced probe failure (or equivalent test target) reaches the off-cluster notification path.
+  - Player-flow canary smoke is required only where the profile advertises that capability. A profile omitting independent monitoring records degraded detection rather than claiming external deadman/public-path authority; a profile requiring independent monitoring retains deadman and public-path evidence whether or not it advertises player-flow canaries.
   - Tracing smoke: run a login + representative command flow and verify the applicable advertised-and-proved workflow capabilities before asserting named spans. In environments that advertise and prove the `backup` workflow, verify matching `backup_pg_dump_snapshot` + `backup_verify_artifact` evidence; in environments that advertise and prove the `recovery` workflow, verify participant-convergence spans. Without those specific proofs, retain the metrics/log fallback and do not assert workflow spans.
   - Structured log contract smoke: verify sampled logs from critical paths contain `service`, `traceId`, and `correlationId`, plus contextual `tenantId`/`gameInstanceId`/`regionId`/`characterId` only when each is known and applicable; smoke evidence must not fabricate or post-enrich those IDs.
   - Log pipeline queryability smoke: verify those same synthetic records are queryable end-to-end in the canonical Elasticsearch/Kibana or documented compatible log-query path using contextual IDs only when they are present and applicable; do not fabricate or post-enrich IDs for the query.
-  - Prometheus rules conformance smoke: query the Prometheus rules API and verify the required fallback/recording rules are loaded (tail-loss fallback, tick safety ratio recording, login success ratio recording, command p99 latency recording, entry-path availability recording, and chat delivery latency recording).
-    - This includes the canonical dynamic tail-loss pair (`redis_coordination_tail_loss_budget_ms`, `redis_coordination_tail_loss_slo_breached`) and both short-window and 1-day entry-path availability recordings.
+  - Prometheus rules conformance smoke: query the Prometheus rules API and verify the required recording rules and Alertmanager evaluation inputs are loaded (tail-loss diagnostic, tick safety ratio recording, login success ratio recording, command p99 latency recording, entry-path availability recording, and chat delivery latency recording). These rules are not a second routed-alert authority.
+    - This includes the current cadence-derived tail-loss compatibility pair (`redis_coordination_tail_loss_budget_ms`, `redis_coordination_tail_loss_slo_breached`) as diagnostic or Alertmanager-evaluation inputs, not measured-SLO proof. When implemented, the target measured pair (`redis_unreplicated_write_window_slo_ms`, `redis_unreplicated_write_window_slo_breached{scope}`) is checked separately, alongside both short-window and 1-day entry-path availability recordings.
     - This includes preserving the bounded `service` and `command` labels on the core-command latency recording rules so service-specific or single-command regressions continue to alert.
     - This includes the replay-convergence set (`tick_effects_pending_oldest_age_seconds`, `tick_effects_replay_convergence_budget_seconds`, `tick_effects_replay_slo_breached`, and `tick_effects_replay_starved`) so ledger backlog alerting does not drift into environment-specific guesswork.
-    - This also includes backup fallback signals (`backup_pipeline_recent_backup_slo_breached`, `backup_pipeline_recent_verification_slo_breached`, `backup_pipeline_recent_restore_drill_slo_breached`, `backup_artifact_lineage_invalid`, `backup_artifact_restore_unreadable`, `recovery_participant_convergence_blocked`, `recovery_environment_convergence_blocked`, `recovery_participant_convergence_coverage_missing`, `recovery_participant_convergence_source_missing`) and the observability alert group (`firemud.alerts.observability`) so new platform-health alerts cannot drift out of the shared ruleset silently.
+    - This also includes backup diagnostic signals (`backup_pipeline_recent_backup_slo_breached`, `backup_pipeline_recent_verification_slo_breached`, `backup_pipeline_recent_restore_drill_slo_breached`, `backup_artifact_lineage_invalid`, `backup_artifact_restore_unreadable`) and the Alertmanager evaluation group (`firemud.alerts.observability`) so new platform-health rules cannot drift out of the shared ruleset silently. When the environment advertises and proves the recovery-controller capability, also require `recovery_participant_convergence_blocked`, `recovery_environment_convergence_blocked`, `recovery_participant_convergence_coverage_missing`, and `recovery_participant_convergence_source_missing`; otherwise validate the explicit unknown/unavailable state and follow the owner-evidence path rather than requiring those recordings.
     - This also includes the tick-state projections (`current_tick_state`, `current_tick_terminal_at_ms`) and the aggregate remote follow-up recordings (`remote_followups_due_total`, `remote_followups_drain_lag_ms`, `remote_followups_backlog_over_budget_total`) so the observability contract stays aligned with the Redis and scaling docs without drifting back into forbidden tenant/game-instance/region metric labels.
-  - External-signal contract smoke: verify the prod-like environment exposes the canonical independent-signal contract from `design/architecture/system-architecture-logging-monitoring.md#external-probe-and-deadman-contract-normative`, or a documented compatibility mapping:
-    - `entrypath_blackbox_probe_success{path,target}` for `path="websocket"` and `path="telnet"`, or a documented equivalent mapping.
-    - `observability_deadman_heartbeat_timestamp_seconds{source}` or a documented equivalent external heartbeat signal.
-    - `playerflow_canary_success{flow,path,target}` and `playerflow_canary_latency_ms{flow,path,target}` for the required login and representative command flows, or a documented equivalent mapping.
-    - For the deadman path, verify the configured staleness threshold matches the architecture contract (`3 * heartbeat_interval_seconds`).
+  - For profiles requiring independent monitoring, external-signal contract smoke verifies the canonical independent-signal contract from `design/architecture/system-architecture-logging-monitoring.md#external-probe-and-deadman-contract-normative`, or a documented compatibility mapping:
+    - Iterate over the complete `exposedPublicPlayerPaths` set. For each exposed path whose authoritative external monitor publishes a Prometheus mirror, verify the matching `entrypath_blackbox_probe_success{path,target}` series or documented equivalent mapping; record each non-exposed bounded path as `not_applicable`. The authoritative off-cluster public-path evidence remains required for every exposed path even when no mirror is published.
+    - When the authoritative external monitor publishes a Prometheus heartbeat mirror, verify `observability_deadman_heartbeat_timestamp_seconds{source}` or its documented equivalent external heartbeat signal. The external pager/deadman proof remains required without that optional mirror.
+    - When the profile advertises player-flow canaries, verify the profile-labelled success, latency, and last-run records for the required login and representative command flows on every exposed path, regardless of optional entry-path/deadman mirror publication. When canonical Prometheus canary alerts are installed/evaluated, also verify the matching profile-derived freshness budget gauge; an omitted canary capability omits this family.
+    - For the deadman path, consume the canonical external-monitoring evidence's retained observation timestamps, observed staleness, and profile-derived maximum detection budget; do not impose a universal heartbeat-to-threshold formula.
 
-This split ensures that contract drift is caught on every change, while backend-dependent checks run only where Alertmanager/Jaeger are actually available.
+Profiles that omit independent monitoring retain the omission and degraded-detection warning in preflight/incident evidence and do not claim the external deadman/public-path checks above; player-flow canary checks remain conditional solely on that capability being advertised. This split ensures that contract drift is caught on every change, while backend-dependent checks run only where the profile advertises the capability and Alertmanager/Jaeger are actually available.
 
 ### Packet 4 Lifecycle And Authoring Proof Obligations
 

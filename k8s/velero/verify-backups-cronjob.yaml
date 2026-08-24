@@ -33,22 +33,22 @@ data:
     # Verify that Velero backups exist and the object store is reachable.
     # Intended for periodic checks via CI or a Kubernetes CronJob.
     set -euo pipefail
-    
+
     NAMESPACE=${FIREMUD_K8S_NAMESPACE:-firemud}
-    
+
     # Ensure Velero CLI is available
     command -v velero >/dev/null 2>&1 || {
       echo "Velero CLI not found" >&2
       exit 1
     }
-    
+
     # List backups and ensure at least one exists
     BACKUP_COUNT=$(velero backup get -n "$NAMESPACE" --no-headers | wc -l || true)
     if [ "$BACKUP_COUNT" -eq 0 ]; then
       echo "No Velero backups found in namespace $NAMESPACE" >&2
       exit 1
     fi
-    
+
     echo "Found $BACKUP_COUNT Velero backups in $NAMESPACE"
 
     if [ -n "${PG_DUMP_BUCKET:-}" ]; then
@@ -63,10 +63,14 @@ data:
       KEY=$(aws s3api list-objects-v2 --bucket "$PG_DUMP_BUCKET" \
             --prefix "15min/" \
             "${AWS_ENDPOINT_ARGS[@]}" \
-            --query 'sort_by(Contents,&LastModified)[-1].Key' --output text 2>/dev/null || echo None)
-      if [ "$KEY" = "None" ]; then
-        echo "No pg_dump files found in bucket $PG_DUMP_BUCKET" >&2
-        exit 1
-      fi
+            --query 'sort_by(Contents[?ends_with(Key, `.sql.gz`)], &LastModified)[-1].Key' \
+            --output text 2>/dev/null || echo None)
+      case "$KEY" in
+        *.sql.gz) ;;
+        *)
+          echo "No valid .sql.gz pg_dump files found in bucket $PG_DUMP_BUCKET" >&2
+          exit 1
+          ;;
+      esac
       echo "Latest pg_dump: $KEY"
     fi

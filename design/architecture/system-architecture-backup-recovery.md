@@ -2,10 +2,12 @@
 
 This document defines FireMUD’s canonical backup model, restore-mode selection, and environment recovery workflow.
 
+The owner contracts consolidated here are [measured online-backup RPO](./decisions/adr-0153-measured-online-backup-rpo-and-future-pitr-trigger.md), [automated recovery proof and differentiated traffic-open gates](./decisions/adr-0154-automated-recovery-proof-and-differentiated-traffic-open-gates.md), and [event-classified post-restore trust reset](./decisions/adr-0155-automated-event-classified-post-restore-trust-reset.md). This document owns the recovery mode, backup boundary, and controller lifecycle; evidence fields and credential dispositions remain detailed in the linked owner documents.
+
 Backup expectations are defined by environment class:
 
-- **production**: scheduled backups and verification are mandatory.
-- **hobby-self-hosted**: backups are mandatory with a minimum baseline of at least daily logical backup, at least 7 daily restore points retained, and at least one restore drill every 30 days.
+- **production**: scheduled backups and verification are mandatory; the initial hosted RPO objective is 15 minutes measured from the newest verified restorable point.
+- **hobby-self-hosted**: the supported default configures backups and an automated local restore rehearsal. A deployment may explicitly open first-live as `recovery-unverified` with no restore-readiness promise. Retaining verified status requires at least daily logical backup, at least 7 daily restore points, and a current restore drill. No unverified option bypasses quarantine after an actual restore.
 - **staging**: disposable by default with no scheduled backups unless explicitly enabled for specific goals.
 - **local-dev / pr-preview / dev-demo-cluster**: ad hoc or no-backup posture unless explicitly upgraded. `pr-preview` persists mutable state only for the lifetime of the PR and loses that state if the preview node or its storage is lost.
 
@@ -16,11 +18,13 @@ Staging is disposable by default, but if it is restored from production-origin d
 The main body of this document describes the target-state backup workflow. Current implementation may lag the target state in a few areas:
 
 - The scheduled Kubernetes CronJob performs an online `pg_dump`, but it does not yet record the complete environment/schema/service/tool lineage or prove that the artifact can pass the environment-wide cold-start recovery workflow.
+- The configured 15-minute Cron schedule is not proof of the 15-minute hosted RPO. Completion, upload, lineage validation, restore-readability, and the age of the newest verified restorable point are not yet measured end to end.
 - `PauseTicksForScope` / `ResumeTicksForScope` support pausing by `tenant_id` + `game_instance_id` today; `region_id` scoping exists in the proto contract but is not yet enforced end to end.
 - The live ownership/status read is currently `GetRuntimeOwnershipStatus` at the `{tenantId, gameInstanceId}` boundary, not the fuller target-state `GetRegionTickStatus(scope)` surface used throughout the long-term maintenance and reset contract.
 - Region pause/status remains incomplete for maintenance and future scoped recovery, but routine online backups do not depend on tick pause.
 - `verify-backups.sh` currently proves Velero backup existence and, when `PG_DUMP_BUCKET` is configured, pg-dump object-store reachability. Production deployments using that configuration require the object-store proof; a skipped upload caused by missing configuration is a deployment failure, not an optional proof result.
 - Player-facing restore-point recovery remains unsupported because enforced restore quarantine, empty-Redis proof, environment-wide durable convergence, session/epoch invalidation, post-restore hardening automation, and complete recovery-controller/projection validation are not implemented end to end.
+- Scheduled isolated drills, resumable recovery orchestration, operator-authorized recovery-point selection, and crash-recoverable controlled reopen are not implemented. Existing scripts remain bootstrap helpers rather than the unattended playbooks required for single-operator production.
 - Until that convergence is complete, production first-live, reopen after PostgreSQL rewind, and `roll-forward-only` production promotion are non-compliant.
 
 Canonical current-state note:
@@ -39,8 +43,9 @@ Canonical current-state note:
 
 ## PostgreSQL Logical Backups
 
-- `firemud-pg-dump` runs every 15 minutes and stores compressed SQL dumps.
+- `firemud-pg-dump` runs every 15 minutes and stores immutable gzip-compressed plain-SQL dumps (`pg_dump -Fp` -> gzip -> `.sql.gz`). The matching logical restore consumer is `gunzip -c` piped to `psql`; the local ad hoc custom-format `.dump`/`pg_restore` helpers are a separate developer lane and are not hosted readiness artifacts.
 - The CronJob takes an online transactionally consistent PostgreSQL snapshot while normal writes continue; routine backup does not pause gameplay.
+- The hosted-production RPO objective is 15 minutes measured from the newest artifact that has passed integrity, environment/database lineage, restore-readability, and supported-tooling validation. Scheduling alone does not satisfy it, and implementations may need to run more frequently to preserve verification margin.
 - Before opening the PostgreSQL snapshot transaction, the backup workflow reads and durably acknowledges the current committed external erasure-journal sequence as `preSnapshotJournalHighWater` solely as ordering proof. Only after that acknowledgement may it open one transactionally consistent database snapshot; inside that same snapshot it binds immutable `artifactErasureHighWater` to the greatest authoritative erasure-ledger sequence visible there. The candidate may be published when an immutable boundary-proof check establishes either `preSnapshotJournalHighWater >= artifactErasureHighWater`, or, when `preSnapshotJournalHighWater < artifactErasureHighWater`, an `interveningErasureCoverageProof` showing that every sequence in `(preSnapshotJournalHighWater, artifactErasureHighWater]` is represented exactly once with matching identity/digest in both the snapshot-visible erasure ledger and the external journal. Any gap, duplicate, unknown, or unverifiable intervening entry invalidates the candidate and causes the snapshot to be discarded and retried; neither observation is clamped or used as the artifact boundary in place of `artifactErasureHighWater`. Each artifact records both observations with their distinct sources and meanings alongside environment/database identity, snapshot time, schema and migration lineage, deployed service digests, backup-tool digest, and object-storage binding.
 - Production Terraform deploys this CronJob automatically.
 - Retention policy:
@@ -50,6 +55,7 @@ Canonical current-state note:
   - 3 monthly dumps
 - Dumps are written to `firemud-pg-dumps` and may also upload to object storage when `PG_DUMP_BUCKET` is configured.
 - In production, skipped object-storage uploads are a misconfiguration even if short-term dumps remain on PVC.
+- When hosted production has no verified restorable point within the objective, raise the configured backup incident and block production promotion until evidence is current. Do not automatically stop otherwise healthy gameplay merely because backup freshness has degraded.
 - Velero schedules back up Kubernetes manifests only, with `snapshotVolumes: false`.
 - Backups are immutable until normal expiry and may contain subject data erased after their snapshot time. Under [ADR 0050](./decisions/adr-0050-versioned-export-retention-and-erasure-policy.md), Account commits terminal erasure to an immutable, monotonic overlay journal retained outside the PostgreSQL backup lineage. The canonical restore replay interval is fixed as `(artifactErasureHighWater, restoreHighWater]`, inclusive at `restoreHighWater`; the pre-snapshot journal observation is ordering evidence, and when it is lower than the snapshot-bound artifact high-water the immutable `interveningErasureCoverageProof` covers the interval between them, but neither observation is the artifact replay boundary. A deletion committed during or after snapshot creation is covered by that fixed interval and idempotent owner reconciliation only when it is at or below the captured `restoreHighWater`; later deletions use the normal online erasure consumer.
 
@@ -67,6 +73,8 @@ The backup artifact is one consistent PostgreSQL database view, not a tenant- or
 - periodic production-equivalent proof that durable workflow and external-effect reconciliation can recover from an artifact captured while representative writes are active.
 
 Cross-service workflows may be captured between durable steps, as they may be during an abrupt crash. The player-facing readiness boundary is therefore restore-time convergence, not recurring write quiescence. Every declared and enabled durable participant must be idempotently replayable, externally reconcilable, or deterministically terminalizable or invalidatable. A participant that is only durably fenced/disabled with retained backlog is represented as `fenced_disabled_backlog_retained`, but remains an explicit blocker to reopen rather than a qualifying convergence result.
+
+Target state automates backup execution, artifact validation, freshness calculation, isolated restore testing, and evidence generation. The current implementation does not provide complete automated isolated restore testing/evidence, so current readiness cannot claim that path or depend on an operator manually entering timestamps or reconstructing a restore procedure during an incident.
 
 ## Recovery Controller Continuation
 
@@ -159,6 +167,7 @@ This is distinct from:
 Every restore that rewinds PostgreSQL must use one explicit environment-wide `cold_start_restore` contract before the environment may reopen:
 
 - restore PostgreSQL into an enforced quarantine boundary and replace or clear surviving Coordination Redis so the restored database is not merged with newer coordination state;
+- before applying the destructive PostgreSQL operation, the recovery controller must issue and durably bind one non-empty `restoreAttemptId`, exact `targetBoundaryFingerprint`, and selected `recoveryPointId` to the recovery operation, target environment, and candidate artifact. The current logical path may invoke `psql` only with that controller-issued tuple and available target-bound authority; a future physical path must apply the same gate before a base backup or WAL replay. If the result is ambiguous, keep quarantine closed and validate the durable attempt state, target identity and observed boundary fingerprint, and recovery-point identity against the same tuple before continuing or retrying; never blindly repeat the destructive restore. If the controller or target-bound authority/readback is unavailable, stale, contradictory, or ambiguous, fail closed without applying or retrying the destructive operation;
 - Recovery advances or recreates every gameplay epoch/fence and must obtain Account's durable restore-cutover evidence proving invalidation of all restored Account authority and `game-session-account-delegation` lineages, plus separate Game Session recovery evidence proving invalidation of all restored gameplay bindings, before any recovered session or normal workload is admitted. Recovery only observes/reconciles those owner-specific invalidation results; it is not a second Account or Game Session invalidation writer. Account Service is the sole writer of Account-owned issuer, account, tenant, membership-generation, and issued-token projections: recovery requests that cutover, awaits its durable completion, and verifies the returned freshness/generation evidence before continuing. It then obtains a safe disposition for every declared and enabled durable workflow and external-effect family and rebuilds coordination state only from restored durable authority plus new post-restore activity.
 - Recovery captures immutable `initialCatchupHighWater`, then during one bounded final cutover captures immutable `restoreHighWater` and completes the one fixed replay interval `(artifactErasureHighWater, restoreHighWater]` before reopen. The controller may prove that interval in the two bounded portions `(artifactErasureHighWater, initialCatchupHighWater]` and `(initialCatchupHighWater, restoreHighWater]`; deletions later than `restoreHighWater` use the normal online consumer.
 - Proof of empty coordination state, complete participant disposition, post-restore hardening, external credential validation, secret-compliance refresh, backup confidentiality, Account authority/issued-token projection rebuild, replay-domain quarantine/fencing and durable consume acknowledgement, and smoke verification is required before authorization.
@@ -175,6 +184,16 @@ Ambiguous or mixed-timeline restore behavior is not allowed:
 
 `scoped_reset_restore` is a deferred future mode for quarantined experiments only. It requires a separate accepted design and complete region ownership, scope inventory, stale-state rejection, session policy, and reconciliation proof before it can become player-facing.
 
+Routine service, pod, node, and environment restarts that do not rewind PostgreSQL remain automatic availability operations and do not enter this destructive restore workflow. For an actual rewind, automation establishes quarantine and fencing, verifies the candidate, applies the durably bound restore attempt, reconciles the environment, runs hardening and smoke checks, and prepares controlled reopen through retry-safe durable workflow steps.
+
+The destructive recovery-point choice and displayed data-loss window require operator authorization by default. A future explicitly configured automatic-DR policy may pre-authorize a maximum loss window only with strict old-authority fencing and candidate-selection proof; this baseline does not enable it.
+
+### Logical Backup Scale and PITR Trigger
+
+Online logical backups remain the initial hosted, hobby, and small-deployment baseline. Hobby/self-hosted operators may select a slower cadence, but operator status and recovery evidence must show the configured policy, effective RPO, and age of the newest verified restorable point.
+
+Hosted production adopts PostgreSQL physical backup with WAL archiving and point-in-time recovery when logical backups cannot reliably maintain the measured 15-minute objective or when dump duration, overlap, storage behavior, or runtime load materially harms the live platform. PITR changes point selection, not the environment-wide quarantine, empty-Redis reset, durable convergence, external reconciliation, hardening, or controlled-reopen boundary.
+
 ## Kubernetes Production
 
 - Velero backs up Deployments, StatefulSets, ConfigMaps, and Secrets but not volume snapshots.
@@ -188,11 +207,13 @@ Ambiguous or mixed-timeline restore behavior is not allowed:
 
 The following controller-backed sequence is target state and is unavailable until the durable recovery controller and its end-to-end proof path are implemented. Current operators must keep normal workloads stopped or restore-safe-fenced and use the fail-closed [Current Operator Fallback](./system-architecture-redis-reset-and-recovery.md#current-operator-fallback); they must not invoke the unavailable `continueRecovery` or `resume` controls.
 
-Manual bootstrap example sequence (target state only):
+Manual logical-backup bootstrap example sequence (target state only):
+
+Steps 2–3 below cover the currently selected logical-dump restore mode only. Physical base-backup selection and WAL replay remain unavailable until the follow-up PITR implementation decision defines and proves that path; operators must not substitute them into this sequence. When adopted, that separate path must durably bind the same controller-issued `restoreAttemptId`, exact `targetBoundaryFingerprint`, and selected `recoveryPointId` before applying the base backup or replaying WAL.
 
 1. Enter restore-safe quarantine as described in `system-architecture-post-restore-hardening.md` so player ingress, background processors, and outbound integrations cannot run with snapshot-era state.
 2. Copy or download the desired dump.
-3. Restore it into the target PostgreSQL pod with `psql`.
+3. Obtain the controller-issued `restoreAttemptId`, exact `targetBoundaryFingerprint`, and selected `recoveryPointId`, verify the target-bound authority, and only then decompress the selected `.sql.gz` artifact and restore its plain SQL into the target PostgreSQL pod with `psql`. After an ambiguous result, keep quarantine closed and revalidate the durable attempt, target boundary, and recovery point against that exact tuple before any retry; unavailable or contradictory controller authority fails closed.
 4. Restore manifests or Velero resources with normal application workloads held at zero replicas or under an enforced restore-safe startup gate; only infrastructure and maintenance Jobs required for recovery may run.
 5. Prove empty Coordination Redis, record environment-wide `cold_start_restore`, and establish the durable recovery-controller state before any normal Game Session or automation worker can create fresh coordination state.
 6. Capture immutable `initialCatchupHighWater` and complete the initial erasure replay interval `(artifactErasureHighWater, initialCatchupHighWater]` before final cutover. During one bounded final cutover, fence or serialize new erasure-sequence assignment, capture immutable `restoreHighWater`, complete `(initialCatchupHighWater, restoreHighWater]`, and hand off the fixed `restoreHighWater` as the online erasure-consumer cursor. Preserve downstream participant quarantine, epoch/fence reset, and durable-consume requirements throughout. Before coordination initialization, reconcile both Account's durable restore-cutover evidence for Account-session and authority/delegation-lineage invalidation and the separate Game Session-owned evidence for gameplay-binding invalidation; recovery does not perform either invalidation itself. Request that Account Service rebuild and verify the issuer, account, tenant, membership-generation, and exact issued-token projections from durable authority, await its durable completion, and verify the returned freshness/generation evidence. Then complete replay-domain quarantine/fence and durable consume proof before smoke or recovery authorization can pass. Deletions later than `restoreHighWater` use the normal online consumer.

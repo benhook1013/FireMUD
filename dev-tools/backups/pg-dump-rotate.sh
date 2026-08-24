@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Create a pg_dump, enforce retention, and optionally upload to S3/MinIO
+# Create a plain-SQL pg_dump, enforce retention, and optionally upload to S3/MinIO.
+# The scheduled hosted artifact is gzip-compressed SQL and is restored with psql.
 set -euo pipefail
 
 BACKUP_DIR=${BACKUP_DIR:-/backups}
@@ -17,7 +18,10 @@ if [ -n "$BUCKET" ] && ! command -v aws >/dev/null 2>&1; then
   apt-get update -y >/dev/null && apt-get install -y awscli >/dev/null
 fi
 
-pg_dump -h "$FIREMUD_POSTGRES_HOST" -U "$FIREMUD_POSTGRES_USER" -d "$FIREMUD_POSTGRES_DB" | gzip > "$DUMP"
+pg_dump -Fp \
+  -h "$FIREMUD_POSTGRES_HOST" \
+  -U "$FIREMUD_POSTGRES_USER" \
+  -d "$FIREMUD_POSTGRES_DB" | gzip > "$DUMP"
 
 HOUR=$(date +%H)
 # keep last 96 15min dumps

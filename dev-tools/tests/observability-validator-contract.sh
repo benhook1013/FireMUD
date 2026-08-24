@@ -3,6 +3,17 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
+required_published_render="$(kubectl kustomize "$ROOT_DIR/k8s/overlays/monitoring/independent-required-prometheus-published")"
+required_omitted_render="$(kubectl kustomize "$ROOT_DIR/k8s/overlays/monitoring/independent-required-prometheus-omitted")"
+independent_omitted_render="$(kubectl kustomize "$ROOT_DIR/k8s/overlays/monitoring/independent-omitted")"
+grep -q "alert: ObservabilityDeadmanHeartbeatStale" <<<"$required_published_render"
+for render in "$required_omitted_render" "$independent_omitted_render"; do
+  if grep -q "alert: ObservabilityDeadmanHeartbeatStale" <<<"$render"; then
+    echo "a non-published or independent-omitted monitoring overlay installed the deadman alert" >&2
+    exit 1
+  fi
+done
+
 python3 - "$ROOT_DIR" <<'PY'
 import importlib.util
 import re
@@ -40,6 +51,67 @@ if actual_slash_anchor != expected_slash_anchor:
 
 rules_path = root / "k8s/monitoring/prometheus-rules-firemud.yaml"
 valid_text = rules_path.read_text(encoding="utf-8")
+if "ObservabilityDeadmanHeartbeatStale" in valid_text:
+    raise AssertionError(
+        "shared Prometheus rules must not install the profile-dependent deadman alert"
+    )
+
+required_rules_path = (
+    root
+    / "k8s/overlays/monitoring/independent-required-prometheus-published/"
+    / "prometheus-rules-firemud-independent-required.yaml"
+)
+required_rules_text = required_rules_path.read_text(encoding="utf-8")
+deadman_start = required_rules_text.find(
+    "        - alert: ObservabilityDeadmanHeartbeatStale"
+)
+if deadman_start == -1:
+    raise AssertionError("ObservabilityDeadmanHeartbeatStale alert is missing")
+deadman_next = required_rules_text.find("        - alert:", deadman_start + 1)
+deadman_rule = (
+    required_rules_text[deadman_start:]
+    if deadman_next == -1
+    else required_rules_text[deadman_start:deadman_next]
+)
+if (
+    'expr: absent(observability_deadman_stale{profile="independent-required"}) '
+    'or observability_deadman_stale{profile="independent-required"} == 1'
+    not in deadman_rule
+):
+    raise AssertionError(
+        "deadman alert must fail closed on an absent required-profile stale mirror "
+        "or a stale value of 1"
+    )
+if "for: 2m" in deadman_rule or "> 180" in deadman_rule:
+    raise AssertionError("deadman alert must not hard-code the legacy 180s/2m timing")
+
+for alert_name in (
+    "PlayerFlowCanaryLoginFailed",
+    "PlayerFlowCanaryCommandFailed",
+    "PlayerFlowCanaryLatencyHigh",
+):
+    start = valid_text.find(f"        - alert: {alert_name}")
+    if start == -1:
+        raise AssertionError(f"{alert_name} alert is missing")
+    next_rule = valid_text.find("        - alert:", start + 1)
+    block = valid_text[start:] if next_rule == -1 else valid_text[start:next_rule]
+    if "\n            service:" in block:
+        raise AssertionError(f"{alert_name} must not hard-code one service across public paths")
+    if "path: '{{ $labels.path }}'" not in block or "target: '{{ $labels.target }}'" not in block:
+        raise AssertionError(f"{alert_name} must retain failing path and target labels")
+    if "playerflow_canary_last_run_timestamp_seconds" not in block:
+        raise AssertionError(f"{alert_name} must gate on canary run freshness")
+    if "playerflow_canary_freshness_budget_seconds" not in block:
+        raise AssertionError(f"{alert_name} must use the profile-derived freshness budget")
+
+stale_start = valid_text.find("        - alert: PlayerFlowCanaryEvidenceStale")
+if stale_start == -1:
+    raise AssertionError("PlayerFlowCanaryEvidenceStale fixture is missing")
+stale_next = valid_text.find("        - alert:", stale_start + 1)
+without_stale = (
+    valid_text[:stale_start]
+    + ("" if stale_next == -1 else valid_text[stale_next:])
+)
 
 
 def findings_for(text, check):
@@ -53,6 +125,21 @@ def require_message(findings, expected):
     messages = [finding.message for finding in findings]
     if expected not in messages:
         raise AssertionError(f"expected {expected!r}, got {messages!r}")
+
+
+require_message(
+    findings_for(without_stale, validator._validate_reference_prometheus_rules),
+    "reference rules are missing required alerts: PlayerFlowCanaryEvidenceStale",
+)
+empty_required_findings = findings_for(
+    without_stale,
+    lambda path: validator._validate_reference_prometheus_rules(path, set()),
+)
+if empty_required_findings:
+    raise AssertionError(
+        "an explicit empty required-alert set must not restore default requirements: "
+        f"{empty_required_findings!r}"
+    )
 
 
 backup_rule = """        - alert: BackupPipelineNoRecentBackup
@@ -260,6 +347,220 @@ for collection_expression in nested_collection_expressions:
 
 snippet_path = root / "design/observability/grafana/backup-alerts-snippets.md"
 valid_snippet = snippet_path.read_text(encoding="utf-8")
+
+playerflow_snippet_path = root / "design/observability/grafana/player-experience-alerts-snippets.md"
+valid_playerflow_snippet = playerflow_snippet_path.read_text(encoding="utf-8")
+
+
+def replace_canary_label(text, alert_name, label, replacement):
+    rule_match = re.search(
+        rf"(?ms)^[ \t]*- alert: {re.escape(alert_name)}\n"
+        rf"(?P<body>.*?)(?=^[ \t]*- alert: |\Z)",
+        text,
+    )
+    if rule_match is None:
+        raise AssertionError(f"{alert_name} rule is missing from test fixture")
+    body = rule_match.group("body")
+    label_match = re.search(
+        rf"(?m)^(?P<indent>[ \t]+){re.escape(label)}:.*$",
+        body,
+    )
+    if label_match is None:
+        if replacement is None:
+            raise AssertionError(f"{alert_name} label {label} is missing from test fixture")
+        labels_header = re.search(r"(?m)^(?P<indent>[ \t]+)labels:\s*$", body)
+        if labels_header is None:
+            raise AssertionError(f"{alert_name} labels block is missing from test fixture")
+        label_indent = labels_header.group("indent") + "  "
+        updated_body = (
+            body[: labels_header.end()]
+            + f"\n{label_indent}{label}: {replacement}"
+            + body[labels_header.end() :]
+        )
+    elif replacement is None:
+        updated_body = body[: label_match.start()] + body[label_match.end() :]
+    else:
+        updated_body = (
+            body[: label_match.start()]
+            + f"{label_match.group('indent')}{label}: {replacement}"
+            + body[label_match.end() :]
+        )
+    return text[: rule_match.start("body")] + updated_body + text[rule_match.end("body") :]
+
+
+canary_mutations = (
+    ("component", None, "PlayerFlowCanaryLoginFailed must use labels.component=playerflow-canary"),
+    ("component", "entrypath", "PlayerFlowCanaryLoginFailed must use labels.component=playerflow-canary"),
+    ("path", None, "PlayerFlowCanaryLoginFailed must use labels.path={{ $labels.path }}"),
+    ("path", "'{{ $labels.other_path }}'", "PlayerFlowCanaryLoginFailed must use labels.path={{ $labels.path }}"),
+    ("target", None, "PlayerFlowCanaryLoginFailed must use labels.target={{ $labels.target }}"),
+    ("target", "'{{ $labels.other_target }}'", "PlayerFlowCanaryLoginFailed must use labels.target={{ $labels.target }}"),
+)
+
+for source_text, check in (
+    (valid_playerflow_snippet, validator._validate_alert_snippet),
+    (valid_text, validator._validate_reference_prometheus_rules),
+):
+    baseline_findings = findings_for(source_text, check)
+    if baseline_findings:
+        raise AssertionError(f"valid canary rules were rejected: {baseline_findings!r}")
+    for label, replacement, expected_message in canary_mutations:
+        mutated = replace_canary_label(
+            source_text,
+            "PlayerFlowCanaryLoginFailed",
+            label,
+            replacement,
+        )
+        mutated_findings = findings_for(mutated, check)
+        require_message(mutated_findings, expected_message)
+
+for source_text, check in (
+    (valid_playerflow_snippet, validator._validate_alert_snippet),
+    (valid_text, validator._validate_reference_prometheus_rules),
+):
+    for alert_name in (
+        "PlayerFlowCanaryLoginFailed",
+        "PlayerFlowCanaryCommandFailed",
+        "PlayerFlowCanaryLatencyHigh",
+    ):
+        mutated = replace_canary_label(
+            source_text,
+            alert_name,
+            "service",
+            "'prometheus'",
+        )
+        mutated_findings = findings_for(mutated, check)
+        require_message(
+            mutated_findings,
+            f"{alert_name} must not set labels.service on a cross-path canary alert",
+        )
+
+latest_canary_expressions = (
+    (
+        "PlayerFlowCanaryLoginFailed",
+        'playerflow_canary_success{flow="login"} == 0',
+    ),
+    (
+        "PlayerFlowCanaryCommandFailed",
+        'playerflow_canary_success{flow="command"} == 0',
+    ),
+    (
+        "PlayerFlowCanaryLatencyHigh",
+        'playerflow_canary_latency_ms{flow="command"} > 1000',
+    ),
+)
+for source_text in (valid_playerflow_snippet, valid_text):
+    for alert_name, expected_expression in latest_canary_expressions:
+        rule_match = re.search(
+            rf"(?ms)^[ \t]*- alert: {re.escape(alert_name)}\n"
+            rf"(?P<body>.*?)(?=^[ \t]*- alert: |\Z)",
+            source_text,
+        )
+        if rule_match is None:
+            raise AssertionError(f"{alert_name} latest-result block is missing")
+        block = rule_match.group("body")
+        if expected_expression not in block:
+            raise AssertionError(
+                f"{alert_name} must evaluate the latest canary result directly"
+            )
+        if "max_over_time(" in block:
+            raise AssertionError(
+                f"{alert_name} must not retain historical canary samples"
+            )
+
+stale_canary_mutations = (
+    (
+        "component",
+        None,
+        "PlayerFlowCanaryEvidenceStale must use labels.component=playerflow-canary",
+    ),
+    (
+        "path",
+        None,
+        "PlayerFlowCanaryEvidenceStale must use labels.path={{ $labels.path }}",
+    ),
+    (
+        "target",
+        None,
+        "PlayerFlowCanaryEvidenceStale must use labels.target={{ $labels.target }}",
+    ),
+    (
+        "service",
+        "'alertmanager'",
+        "PlayerFlowCanaryEvidenceStale must use labels.service=prometheus",
+    ),
+)
+for source_text, check in (
+    (valid_playerflow_snippet, validator._validate_alert_snippet),
+    (valid_text, validator._validate_reference_prometheus_rules),
+):
+    for label, replacement, expected_message in stale_canary_mutations:
+        mutated = replace_canary_label(
+            source_text,
+            "PlayerFlowCanaryEvidenceStale",
+            label,
+            replacement,
+        )
+        mutated_findings = findings_for(mutated, check)
+        require_message(mutated_findings, expected_message)
+    missing_service = replace_canary_label(
+        source_text,
+        "PlayerFlowCanaryEvidenceStale",
+        "service",
+        None,
+    )
+    missing_service_findings = findings_for(missing_service, check)
+    missing_service_message = (
+        "alert rule is missing required labels: service"
+        if check == validator._validate_alert_snippet
+        else "PlayerFlowCanaryEvidenceStale is missing required labels: service"
+    )
+    require_message(missing_service_findings, missing_service_message)
+
+for source_text in (valid_playerflow_snippet, valid_text):
+    for alert_name in (
+        "PlayerFlowCanaryLoginFailed",
+        "PlayerFlowCanaryCommandFailed",
+        "PlayerFlowCanaryLatencyHigh",
+        "PlayerFlowCanaryEvidenceStale",
+    ):
+        start = source_text.find(f"alert: {alert_name}")
+        if start == -1:
+            raise AssertionError(f"{alert_name} profile-matching block is missing")
+        next_alert = source_text.find("alert:", start + len(f"alert: {alert_name}"))
+        block = source_text[start:] if next_alert == -1 else source_text[start:next_alert]
+        if "profile: '{{ $labels.profile }}'" not in block:
+            raise AssertionError(f"{alert_name} must preserve the bounded profile label")
+        if "on (profile) group_left()" not in block:
+            raise AssertionError(f"{alert_name} must match freshness by profile")
+        unsafe_scalar = "scalar(" + "playerflow_canary_freshness_budget_seconds" + ")"
+        if unsafe_scalar in block:
+            raise AssertionError(f"{alert_name} must not use an unscoped scalar freshness budget")
+
+    if "playerflow_canary_last_run_timestamp_seconds" not in source_text:
+        raise AssertionError("canary alert source is missing the run timestamp metric")
+    if "playerflow_canary_freshness_budget_seconds" not in source_text:
+        raise AssertionError("canary alert source is missing the freshness budget metric")
+    stale_match = re.search(
+        rf"(?ms)^[ \t]*- alert: PlayerFlowCanaryEvidenceStale\n"
+        rf"(?P<body>.*?)(?=^[ \t]*- alert: |\Z)",
+        source_text,
+    )
+    if stale_match is None:
+        raise AssertionError("canary alert source is missing PlayerFlowCanaryEvidenceStale")
+    stale_body = stale_match.group("body")
+    for required_text in (
+        "service: prometheus",
+        "flow: '{{ $labels.flow }}'",
+        "path: '{{ $labels.path }}'",
+        "target: '{{ $labels.target }}'",
+        "time() - playerflow_canary_last_run_timestamp_seconds",
+        "playerflow_canary_freshness_budget_seconds",
+    ):
+        if required_text not in stale_body:
+            raise AssertionError(
+                f"PlayerFlowCanaryEvidenceStale is missing {required_text!r}"
+            )
 
 standalone_alert = """alert: StandaloneBackupAlert
 expr: backup_pipeline_recent_backup_slo_breached > 0

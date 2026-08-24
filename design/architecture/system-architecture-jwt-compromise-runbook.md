@@ -1,11 +1,15 @@
 # FireMUD JWT Compromise Runbook
 
 This runbook defines the mandatory response flow for suspected compromise of JWT signing key material.
-The same hard-cutover key semantics are also required for player-facing post-restore hardening (`system-architecture-post-restore-hardening.md#post-restore-secret-hardening`) even when no active compromise is confirmed, because restored snapshots may resurrect stale trust material.
+Post-restore hardening follows the event-classified trust-reset contract in [ADR 0155](./decisions/adr-0155-automated-event-classified-post-restore-trust-reset.md). The same hard-cutover key semantics apply when JWT/JWKS material was restored, the trust boundary changed, current external authority cannot be proved, or the event is a known or suspected compromise. A same-boundary PostgreSQL-only rewind may preserve current JWT trust only when live evidence proves that the current authority remained outside the restore artifact and is still correctly bound; otherwise fresh material is required. The universal restore quarantine, old-authority fencing, session invalidation, and controlled-reopen gates still apply to every rewind.
 
 ## Implementation Status
 
 This runbook describes target-state behavior. The current runtime does not implement non-exportable signer delegation, Account-only asymmetric issuance and validation, issuer authority-generation advancement and validation, or the rotation/convergence evidence flow; existing HMAC/JWKS file behavior must not be treated as proof that this response flow is available.
+
+## Post-Restore Disposition Boundary
+
+Post-restore hardening records exactly one event-classified disposition for every applicable credential or certificate class: `rotated`, `reissued`, `rebound`, or `verified_not_restored`. The JWT-specific hard-cutover flow below is required for compromise scope, a fresh boundary, restored JWT/JWKS material, or any restore where current trust lineage cannot be proved. For a same-boundary PostgreSQL-only rewind, `verified_not_restored` is permitted only when live artifact-lineage and binding evidence proves that the current Account signing authority and validator trust material were not restored or rolled back and still match the target environment. That disposition does not preserve database-derived sessions, issuer generations, gameplay epochs, or other rewound authority; those universal reset controls remain mandatory. Missing, stale, contradictory, or ambiguous proof keeps the environment quarantined and requires fresh JWT material or same-operation reconciliation.
 
 ## Trigger Conditions
 
@@ -14,6 +18,9 @@ Run this flow when any of the following is true:
 - Signing key material (`jwt-signing-keys`) is suspected exposed.
 - Unexpected token validation patterns indicate possible key misuse.
 - Incident response explicitly classifies the event as key compromise.
+- JWT or JWKS material was restored or rolled back from the recovery artifact.
+- The restore created a fresh or changed trust boundary.
+- After restore, current JWT trust lineage or authority cannot be proved.
 
 ## Required Response Flow
 
@@ -51,7 +58,7 @@ Before reopening player-facing traffic, incident records must include:
 - If promotion committed before convergence or reconciliation completed, the incident record must preserve the quarantined `QUARANTINED_FORWARD_RECONCILIATION_INCOMPLETE` state and forward-reconciliation evidence; it must not claim a pre-promotion rejection, rollback, or completed reopening.
 - For a definitive authenticated custody, CAS, JWK, fingerprint, or candidate-reservation rejection/abort, the durable terminal outcome, failure stage, expected/observed evidence, quarantine state, no-promotion proof, and per-generation uniqueness-fence release-after-terminal-proof; an unavailable or ambiguous custody/controller or terminal write is recorded as nonterminal same-operation quarantine with the fence retained.
 - Quarantine start and end timestamps plus the protected surfaces covered.
-- Timestamped proof that Account Service authorized the private-material operation and reconciled the authenticated preregistration and custody result for the selected custody path: operation-bound reservation identity/version, generation, candidate `kid`, exact `candidatePublicKeyFingerprint`, and non-secret cryptographic evidence for a non-exportable signer; or those fields plus Kubernetes `resourceVersion`, CAS result, exact public-key fingerprint, and private-slot pruning evidence for the interim materialization controller. The record must also prove that the custody result and published candidate JWK matched the operation's reservation/digest-bound key-identity pair, that Account validated and promoted the signing generation, removed the compromised public key and fingerprint, published JWKS, reconciled the required public/private pruning policy, and that rotation automation only observed the Account-owned `jwt-jwks` update through the control/status interface.
+- Timestamped proof that Account Service authorized the operation and reconciled the authenticated preregistration and custody result for the selected custody path: for `TARGET_NON_EXPORTABLE_SIGNER`, record operation-bound reservation identity/version, generation, candidate `kid`, exact `candidatePublicKeyFingerprint`, signer custody/controller authorization, and non-secret cryptographic evidence; for the interim materialization controller, record those fields plus Kubernetes `resourceVersion`, CAS result, exact public-key fingerprint, private-slot authorization, and private-slot pruning evidence. The record must also prove that the custody result and published candidate JWK matched the operation's reservation/digest-bound key-identity pair, that Account validated and promoted the signing generation, removed the compromised public key and fingerprint, published JWKS, reconciled the required public/private pruning policy, and that rotation automation only observed the Account-owned `jwt-jwks` update through the control/status interface.
 - Issuer authority-generation, authority-projection freshness-fence, and logical session-invalidation evidence from one versioned Account snapshot. The record must identify the snapshot version/ETag, committed Account source version/event, observed projection generation/status, and the exact scope that was fenced. Physical deletion of old token records and cleanup of gameplay/control sessions is bounded best-effort work and must be recorded separately; it is not required as cleanup completion before the authority-generation gate can be judged satisfied.
 - Frozen and final validator inventory versions, last observed JWKS generation, observed authority-projection fence, and convergence proof that each current validator rejects the exact compromised `kid` and `compromisedPublicKeyFingerprint` and accepts the distinct candidate `kid` and `candidatePublicKeyFingerprint`. The evidence must account for validators added, replaced, or restarted after the initial freeze. An unavailable registry, generation authority, or freshness-fence authority remains blocked as retryable `AUTH_UNAVAILABLE` / HTTP 503; it is not evidence that tokens are revoked.
 - Reopen decision timestamp and approver.
@@ -63,7 +70,10 @@ Before reopening player-facing traffic, incident records must include:
 
 ## Related Documentation
 
+Validation selection and reporting follow [Validation and Runtime Proof](../developer-workflows/validation-and-runtime-proof.md); execution evidence remains in tracker, PR, and CI artifacts rather than a duplicate runbook ledger.
+
 - `./system-architecture-security.md#jwt-key-compromise-response`
 - `./system-architecture-jwt-and-token-contracts.md#signing-key-rotation-contract-normative`
 - `./decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md`
+- `./decisions/adr-0155-automated-event-classified-post-restore-trust-reset.md`
 - `./system-architecture-post-restore-hardening.md#post-restore-secret-hardening`

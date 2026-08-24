@@ -16,6 +16,19 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 ALLOWED_SEVERITIES = {"P0", "P1", "P2"}
 REQUIRED_ALERT_LABELS = {"service", "severity", "owner", "runbook"}
+SERVICE_OPTIONAL_ALERTS = {
+    "PlayerFlowCanaryLoginFailed",
+    "PlayerFlowCanaryCommandFailed",
+    "PlayerFlowCanaryLatencyHigh",
+}
+PLAYERFLOW_CANARY_ALERTS = SERVICE_OPTIONAL_ALERTS | {
+    "PlayerFlowCanaryEvidenceStale",
+}
+PLAYERFLOW_CANARY_REQUIRED_LABELS = {
+    "component": "playerflow-canary",
+    "path": "{{ $labels.path }}",
+    "target": "{{ $labels.target }}",
+}
 DISALLOWED_ALERT_SERVICE_LABELS = {"gateway", "game-session"}
 GRAFANA_DIR = REPO_ROOT / "design" / "observability" / "grafana"
 CORE_ALERT_SNIPPET_PATHS = [
@@ -687,6 +700,49 @@ def _parse_labels(rule_lines: list[str]) -> dict[str, str]:
     return {}
 
 
+def _playerflow_canary_label_findings(
+    path: Path, alert_name: str, labels: dict[str, str]
+) -> list[Finding]:
+    if alert_name not in PLAYERFLOW_CANARY_ALERTS:
+        return []
+    return [
+        Finding(
+            path=path,
+            message=f"{alert_name} must use labels.{label}={expected}",
+        )
+        for label, expected in PLAYERFLOW_CANARY_REQUIRED_LABELS.items()
+        if labels.get(label) != expected
+    ]
+
+
+def _playerflow_canary_service_findings(
+    path: Path, alert_name: str, labels: dict[str, str]
+) -> list[Finding]:
+    if alert_name in SERVICE_OPTIONAL_ALERTS and "service" in labels:
+        return [
+            Finding(
+                path=path,
+                message=(
+                    f"{alert_name} must not set labels.service on a cross-path canary alert"
+                ),
+            )
+        ]
+    if (
+        alert_name == "PlayerFlowCanaryEvidenceStale"
+        and "service" in labels
+        and labels["service"] != "prometheus"
+    ):
+        return [
+            Finding(
+                path=path,
+                message=(
+                    "PlayerFlowCanaryEvidenceStale must use labels.service=prometheus"
+                ),
+            )
+        ]
+    return []
+
+
 def _parse_expr(rule_lines: list[str]) -> str | None:
     for index, line in enumerate(rule_lines):
         match = re.match(r"^(?P<indent>\s*)expr:\s*(?P<rest>.*)$", line)
@@ -787,7 +843,16 @@ def _validate_alert_snippet(path: Path) -> list[Finding]:
                 continue
             rule_lines = entry.lines
             labels = _parse_labels(rule_lines)
-            missing = sorted(REQUIRED_ALERT_LABELS - labels.keys())
+            findings.extend(
+                _playerflow_canary_label_findings(path, entry.name, labels)
+            )
+            findings.extend(
+                _playerflow_canary_service_findings(path, entry.name, labels)
+            )
+            required_labels = REQUIRED_ALERT_LABELS - (
+                {"service"} if entry.name in SERVICE_OPTIONAL_ALERTS else set()
+            )
+            missing = sorted(required_labels - labels.keys())
             if missing:
                 findings.append(Finding(path=path, message=f"alert rule is missing required labels: {', '.join(missing)}"))
                 continue
@@ -1059,7 +1124,9 @@ def _validate_doc_semantics() -> list[Finding]:
     return findings
 
 
-def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
+def _validate_reference_prometheus_rules(
+    path: Path, required_alerts: set[str] | None = None
+) -> list[Finding]:
     findings: list[Finding] = []
     text = _read_text(path)
     alerts_seen: set[str] = set()
@@ -1080,7 +1147,16 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
         alerts_seen.add(alert_name)
 
         labels = _parse_labels(rule_lines)
-        missing = sorted(REQUIRED_ALERT_LABELS - labels.keys())
+        findings.extend(
+            _playerflow_canary_label_findings(path, alert_name, labels)
+        )
+        findings.extend(
+            _playerflow_canary_service_findings(path, alert_name, labels)
+        )
+        required_labels = REQUIRED_ALERT_LABELS - (
+            {"service"} if alert_name in SERVICE_OPTIONAL_ALERTS else set()
+        )
+        missing = sorted(required_labels - labels.keys())
         if missing:
             findings.append(Finding(path=path, message=f"{alert_name} is missing required labels: {', '.join(missing)}"))
             continue
@@ -1150,53 +1226,54 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
         }:
             findings.append(Finding(path=path, message=f"unexpected tick alert name {alert_name!r} in reference rules; update validator contract if intentional"))
 
-    required_alerts = {
-        "RedisCoordinationTailLossSLOBreached",
-        "TickExecutionUnsafeRatio",
-        "BackupPipelineNoRecentBackup",
-        "BackupLastSuccessMetricsAbsent",
-        "BackupPipelineNoRecentVerification",
-        "BackupVerificationLastSuccessMetricsAbsent",
-        "BackupPipelineNoRecentRestoreDrill",
-        "BackupRestoreDrillLastSuccessMetricsAbsent",
-        "BackupArtifactLineageInvalid",
-        "BackupArtifactLineageMetricsAbsent",
-        "BackupArtifactRestoreUnreadable",
-        "BackupArtifactRestoreReadabilityMetricsAbsent",
-        "RecoveryParticipantConvergenceBlocked",
-        "RecoveryParticipantConvergenceCoverageMissing",
-        "RecoveryParticipantConvergenceMetricsAbsent",
-        "RecoveryReopenAttemptBlocked",
-        "LoginSuccessRatioLowGateway",
-        "LoginSuccessRatioLowTcpProxy",
-        "CommandLatencyP99HighGateway",
-        "CommandLatencyP99HighTcpProxy",
-        "EntryPathAvailabilityLowGateway",
-        "EntryPathAvailabilityLowTcpProxy",
-        "EntryPathAvailabilityLowGatewayCompliance",
-        "EntryPathAvailabilityLowTcpProxyCompliance",
-        "PlayerFlowCanaryLoginFailed",
-        "PlayerFlowCanaryCommandFailed",
-        "PlayerFlowCanaryLatencyHigh",
-        "WebSocketEntryPathBlackboxUnavailable",
-        "TelnetEntryPathBlackboxUnavailable",
-        "ChatDeliveryLatencyP99High",
-        "TickReplayFairnessStarved",
-        "TickReplayScanLagHigh",
-        "ObservabilityDeadmanHeartbeatStale",
-        "AlertmanagerNotificationsFailing",
-        "AlertmanagerConfigReloadFailed",
-        "PrometheusRuleEvaluationsFailing",
-        "PrometheusServiceDiscoveryFailures",
-        "ElasticsearchClusterHealthRed",
-        "ElasticsearchIndexingFailuresHigh",
-        "OTelCollectorExportFailures",
-        "JaegerQueryUnavailable",
-        "JaegerStorageFailuresHigh",
-        "FluentBitOutputErrorsHigh",
-        "GrafanaDatasourceUnavailable",
-        "GrafanaServiceUnavailable",
-    }
+    if required_alerts is None:
+        required_alerts = {
+            "RedisCoordinationTailLossSLOBreached",
+            "TickExecutionUnsafeRatio",
+            "BackupPipelineNoRecentBackup",
+            "BackupLastSuccessMetricsAbsent",
+            "BackupPipelineNoRecentVerification",
+            "BackupVerificationLastSuccessMetricsAbsent",
+            "BackupPipelineNoRecentRestoreDrill",
+            "BackupRestoreDrillLastSuccessMetricsAbsent",
+            "BackupArtifactLineageInvalid",
+            "BackupArtifactLineageMetricsAbsent",
+            "BackupArtifactRestoreUnreadable",
+            "BackupArtifactRestoreReadabilityMetricsAbsent",
+            "RecoveryParticipantConvergenceBlocked",
+            "RecoveryParticipantConvergenceCoverageMissing",
+            "RecoveryParticipantConvergenceMetricsAbsent",
+            "RecoveryReopenAttemptBlocked",
+            "LoginSuccessRatioLowGateway",
+            "LoginSuccessRatioLowTcpProxy",
+            "CommandLatencyP99HighGateway",
+            "CommandLatencyP99HighTcpProxy",
+            "EntryPathAvailabilityLowGateway",
+            "EntryPathAvailabilityLowTcpProxy",
+            "EntryPathAvailabilityLowGatewayCompliance",
+            "EntryPathAvailabilityLowTcpProxyCompliance",
+            "PlayerFlowCanaryLoginFailed",
+            "PlayerFlowCanaryCommandFailed",
+            "PlayerFlowCanaryLatencyHigh",
+            "PlayerFlowCanaryEvidenceStale",
+            "WebSocketEntryPathBlackboxUnavailable",
+            "TelnetEntryPathBlackboxUnavailable",
+            "ChatDeliveryLatencyP99High",
+            "TickReplayFairnessStarved",
+            "TickReplayScanLagHigh",
+            "AlertmanagerNotificationsFailing",
+            "AlertmanagerConfigReloadFailed",
+            "PrometheusRuleEvaluationsFailing",
+            "PrometheusServiceDiscoveryFailures",
+            "ElasticsearchClusterHealthRed",
+            "ElasticsearchIndexingFailuresHigh",
+            "OTelCollectorExportFailures",
+            "JaegerQueryUnavailable",
+            "JaegerStorageFailuresHigh",
+            "FluentBitOutputErrorsHigh",
+            "GrafanaDatasourceUnavailable",
+            "GrafanaServiceUnavailable",
+        }
     missing_required = sorted(required_alerts - alerts_seen)
     if missing_required:
         findings.append(
@@ -1355,6 +1432,20 @@ def main() -> int:
     prometheus_rules = REPO_ROOT / "k8s" / "monitoring" / "prometheus-rules-firemud.yaml"
     findings.extend(_validate_reference_prometheus_recordings(prometheus_rules))
     findings.extend(_validate_reference_prometheus_rules(prometheus_rules))
+    independent_required_rules = (
+        REPO_ROOT
+        / "k8s"
+        / "overlays"
+        / "monitoring"
+        / "independent-required-prometheus-published"
+        / "prometheus-rules-firemud-independent-required.yaml"
+    )
+    findings.extend(
+        _validate_reference_prometheus_rules(
+            independent_required_rules,
+            {"ObservabilityDeadmanHeartbeatStale"},
+        )
+    )
 
     if not findings:
         print("Observability contract validation: OK")

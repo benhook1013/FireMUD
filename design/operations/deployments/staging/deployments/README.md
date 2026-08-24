@@ -18,7 +18,8 @@ Required fields:
 - `appliedBy`
 - `deployStatus` (`pass`)
 - `smokeStatus` (`pass`)
-- `serviceDigests`
+- `serviceDigests` (map of each service to its exact staged immutable manifest or index reference)
+- `servicePlatformDigests` (same service key set, with each service mapped from its exact admitted platform keys to immutable child-manifest references; for a single-platform direct-manifest `serviceDigests` reference, the one child entry equals that manifest, while for a single-platform index reference the entry is the index's sole child-manifest digest)
 - `preflightReportPath`
   - must equal `design/operations/deployments/staging/preflight/<overlayCommitSha>/<deploymentEventId>.json`
   - report `completedAt` must not be later than `appliedAt`
@@ -26,11 +27,12 @@ Required fields:
 - `liveStateEvidence`
   - `status` (`pass`)
   - `observedOverlaySha`
-  - `observedDigests`
+  - `observedDigests` (must exactly equal top-level `serviceDigests`)
+  - `observedPlatformDigests` (must exactly equal top-level `servicePlatformDigests`, including service keys, platform keys, and child-manifest references)
 - `secretComplianceSnapshotAt`
 - `secretComplianceStatus`
 - `secretComplianceEvidenceRef`
-- `smokeEvidence`
+- `smokeEvidence` (non-empty list of closed `{ref, contentDigest}` entries; each `contentDigest` is the lowercase SHA-256 of the exact retained JSON bytes, each artifact's `deploymentRef` matches `overlayCommitSha`, each artifact's `deploymentEventId` equals the deployment record's `deploymentEventId`, and `ref` values are unique)
 
 Target-state promotion-lineage fields (required when this record is selected as production-attestation or production-promotion evidence):
 

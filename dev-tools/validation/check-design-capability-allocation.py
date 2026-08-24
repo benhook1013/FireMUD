@@ -594,6 +594,27 @@ ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/adr-0152-phased-environment-bound-deployment-preflight-and-expected-bindings.md": adr_allocation(
         "PO-3", "Accepted", "PO-4", "SF-1"
     ),
+    "design/architecture/decisions/adr-0153-measured-online-backup-rpo-and-future-pitr-trigger.md": adr_allocation(
+        "PO-3", "Accepted", "GR-1", "PO-4", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0154-automated-recovery-proof-and-differentiated-traffic-open-gates.md": adr_allocation(
+        "PO-3", "Accepted", "GR-1", "PO-4", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0155-automated-event-classified-post-restore-trust-reset.md": adr_allocation(
+        "PO-3", "Accepted", "GR-1", "PO-2", "PO-4", "SF-1"
+    ),
+    "design/architecture/decisions/adr-0156-risk-tiered-progressive-rollout-with-compatibility-bounded-rollback.md": adr_allocation(
+        "PO-3", "Accepted", "AR-3", "PO-1", "PO-4"
+    ),
+    "design/architecture/decisions/adr-0157-dependency-classified-liveness-readiness-and-route-admission.md": adr_allocation(
+        "PO-4", "Accepted", "GR-1", "PO-2", "PO-3"
+    ),
+    "design/architecture/decisions/adr-0158-simplified-observability-degradation-without-fallback-alert-authority.md": adr_allocation(
+        "PO-4", "Accepted", "PO-1"
+    ),
+    "design/architecture/decisions/adr-0159-profile-dependent-independent-deadman-and-public-path-monitoring.md": adr_allocation(
+        "PO-4", "Accepted", "PO-2"
+    ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
     "README.md": "Service overview",

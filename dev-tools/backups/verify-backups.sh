@@ -34,10 +34,13 @@ if [ -n "${PG_DUMP_BUCKET:-}" ]; then
   KEY=$(aws s3api list-objects-v2 --bucket "$PG_DUMP_BUCKET" \
         --prefix "15min/" \
         "${AWS_ENDPOINT_ARGS[@]}" \
-        --query 'sort_by(Contents,&LastModified)[-1].Key' --output text 2>/dev/null || echo None)
-  if [ "$KEY" = "None" ]; then
-    echo "No pg_dump files found in bucket $PG_DUMP_BUCKET" >&2
-    exit 1
-  fi
+        --query "sort_by(Contents[?ends_with(Key, \`.sql.gz\`)], &LastModified)[-1].Key" --output text 2>/dev/null || echo None)
+  case "$KEY" in
+    *.sql.gz) ;;
+    *)
+      echo "No valid .sql.gz pg_dump files found in bucket $PG_DUMP_BUCKET" >&2
+      exit 1
+      ;;
+  esac
   echo "Latest pg_dump: $KEY"
 fi

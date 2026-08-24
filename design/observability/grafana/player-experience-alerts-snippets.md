@@ -157,11 +157,20 @@ These example rules enforce the target-state player-centric SLOs defined in the 
     description: One or more approved scopes have sustained connection failures on TCP Proxy entry paths over the compliance window. Inspect entrypath_connection_attempts_total and follow the player experience runbook.
 
 - alert: PlayerFlowCanaryLoginFailed
-  expr: max_over_time(playerflow_canary_success{flow="login"}[2m]) == 0
+  expr: >-
+    playerflow_canary_success{flow="login"} == 0
+    and on (flow, path, target, profile)
+    (
+      time() - playerflow_canary_last_run_timestamp_seconds{flow="login"}
+      <= on (profile) group_left()
+        playerflow_canary_freshness_budget_seconds
+    )
   for: 2m
   labels:
-    service: spring-cloud-gateway
     component: playerflow-canary
+    path: '{{ $labels.path }}'
+    target: '{{ $labels.target }}'
+    profile: '{{ $labels.profile }}'
     severity: P0
     owner: platform
     runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#login-success-ratio-below-slo
@@ -170,11 +179,20 @@ These example rules enforce the target-state player-centric SLOs defined in the 
     description: The independent player-flow login canary is failing on at least one monitored public path; treat this as player-impacting even when live traffic is sparse.
 
 - alert: PlayerFlowCanaryCommandFailed
-  expr: max_over_time(playerflow_canary_success{flow="command"}[2m]) == 0
+  expr: >-
+    playerflow_canary_success{flow="command"} == 0
+    and on (flow, path, target, profile)
+    (
+      time() - playerflow_canary_last_run_timestamp_seconds{flow="command"}
+      <= on (profile) group_left()
+        playerflow_canary_freshness_budget_seconds
+    )
   for: 2m
   labels:
-    service: game-session-service
     component: playerflow-canary
+    path: '{{ $labels.path }}'
+    target: '{{ $labels.target }}'
+    profile: '{{ $labels.profile }}'
     severity: P1
     owner: gameplay
     runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#command-latency-above-slo
@@ -183,17 +201,46 @@ These example rules enforce the target-state player-centric SLOs defined in the 
     description: The independent player-flow representative command canary is failing after gameplay admission on at least one monitored public path.
 
 - alert: PlayerFlowCanaryLatencyHigh
-  expr: max_over_time(playerflow_canary_latency_ms{flow="command"}[5m]) > 1000
-  for: 5m
+  expr: >-
+    playerflow_canary_latency_ms{flow="command"} > 1000
+    and on (flow, path, target, profile)
+    (
+      time() - playerflow_canary_last_run_timestamp_seconds{flow="command"}
+      <= on (profile) group_left()
+        playerflow_canary_freshness_budget_seconds
+    )
+  for: 2m
   labels:
-    service: game-session-service
     component: playerflow-canary
+    path: '{{ $labels.path }}'
+    target: '{{ $labels.target }}'
+    profile: '{{ $labels.profile }}'
     severity: P1
     owner: gameplay
     runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#command-latency-above-slo
   annotations:
     summary: Synthetic command canary latency high
     description: The independent player-flow representative command canary has exceeded 1000ms for at least one monitored public path.
+
+- alert: PlayerFlowCanaryEvidenceStale
+  expr: >-
+    time() - playerflow_canary_last_run_timestamp_seconds
+    > on (profile) group_left()
+      playerflow_canary_freshness_budget_seconds
+  for: 1m
+  labels:
+    service: prometheus
+    component: playerflow-canary
+    flow: '{{ $labels.flow }}'
+    path: '{{ $labels.path }}'
+    target: '{{ $labels.target }}'
+    profile: '{{ $labels.profile }}'
+    severity: P1
+    owner: platform
+    runbook: design/architecture/system-architecture-observability-incident-runbook.md#prometheus-down-or-stale
+  annotations:
+    summary: Synthetic player-flow canary evidence stale
+    description: The advertised player-flow canary run evidence is older than the profile-derived freshness budget; treat player-flow health as unknown or degraded until a fresh run is retained.
 
 - alert: WebSocketEntryPathBlackboxUnavailable
   expr: max_over_time(entrypath_blackbox_probe_success{path="websocket"}[2m]) == 0

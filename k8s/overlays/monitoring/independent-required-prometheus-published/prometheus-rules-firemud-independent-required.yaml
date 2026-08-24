@@ -1,0 +1,23 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: firemud-independent-required-observability
+  labels:
+    app.kubernetes.io/name: firemud
+    app.kubernetes.io/component: observability
+spec:
+  groups:
+    - name: firemud.alerts.independent_required
+      rules:
+        - alert: ObservabilityDeadmanHeartbeatStale
+          expr: absent(observability_deadman_stale{profile="independent-required"}) or observability_deadman_stale{profile="independent-required"} == 1
+          for: 0m
+          labels:
+            service: external-monitoring
+            component: deadman
+            severity: P0
+            owner: platform
+            runbook: design/architecture/system-architecture-observability-incident-runbook.md#deadman-freshness-contract
+          annotations:
+            summary: Independent observability deadman heartbeat stale
+            description: The profile-aware external deadman mirror has applied its configured stale threshold and evaluation window; confirm the authoritative external monitor and paging path immediately.

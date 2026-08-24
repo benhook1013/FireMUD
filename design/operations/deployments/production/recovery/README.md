@@ -32,15 +32,14 @@ Production-specific requirements:
 - `databaseCredentialRotation`
 - `backupConfidentialityEvidence`
 
-`externalCredentialValidation.records` must include `backup-storage`, `asset-storage`, `outbound-comms`, and `operator-credentials`. Each record must include:
+The canonical recovery record's `credentialApplicability` must cover the closed nine-class credential universe. The five internal classes (`jwt-signing-keys-jwks`, `postgres-application-credentials`, `workload-leaf`, `bridge-leaf`, and `operator-leaf`) are always `applicable` and therefore require a valid disposition plus their corresponding hardening evidence. Production `backup-storage` is also always `applicable` because the production environment binding requires backup storage; the remaining external classes (`asset-storage`, `outbound-comms`, and `operator-credentials`) may be `applicable` or `not_applicable`. `credentialDispositions` contains exactly the applicable classes, so a non-applicable class has no disposition.
 
-- `status` (`pass`)
-- `evidenceRef`
-- `isolationAssertion`
-- `validationMethod`
-- `validatedAt`
-- `validatedBy`
-- `observedValue`
+`externalCredentialValidation.records` must include exactly `backup-storage`, `asset-storage`, `outbound-comms`, and `operator-credentials`, with the record shape matching `credentialApplicability`:
+
+- an `applicable` record has exactly `status=pass`, `evidenceRef`, `isolationAssertion`, `validationMethod`, `validatedAt`, `validatedBy`, and non-secret `observedValue`;
+- a `not_applicable` record has exactly `status=not_applicable`, `reason=credential-class-not-present`, and a non-empty immutable `evidenceRef`; it must not contain validation fields or observed credential detail.
+
+The record status and disposition must agree with the applicability classification; missing, unknown, extra, or contradictory classes fail closed.
 
 `dev-tools/restores/validate-external-credentials.sh production` requires `EXTERNAL_CREDENTIAL_EVIDENCE_REF` to point to the complete recovery evidence document containing these records, not to one nested record. The JSON must include top-level `environment`, `recoveryRef`, canonical `certificateReissuance`, `jwtHardening`, and `databaseCredentialRotation` control groups, plus `externalCredentialValidation.records`.
 

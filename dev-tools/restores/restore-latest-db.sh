@@ -21,18 +21,21 @@ fi
 
 KEY=$(aws s3api list-objects-v2 --bucket "$BUCKET" --prefix "15min/" \
       "${AWS_ENDPOINT_ARGS[@]}" \
-      --query 'sort_by(Contents,&LastModified)[-1].Key' --output text)
+      --query "sort_by(Contents[?ends_with(Key, \`.sql.gz\`)], &LastModified)[-1].Key" --output text)
 
-if [ "$KEY" = "None" ]; then
-  echo "No dumps found in bucket $BUCKET" >&2
-  exit 1
-fi
+case "$KEY" in
+  *.sql.gz) ;;
+  *)
+    echo "No valid .sql.gz dumps found in bucket $BUCKET" >&2
+    exit 1
+    ;;
+esac
 
 aws s3 cp "s3://$BUCKET/$KEY" "$FILE" "${AWS_ENDPOINT_ARGS[@]}"
 
 echo "Restoring $KEY"
 
-gunzip -c "$FILE" | psql -h "${FIREMUD_POSTGRES_HOST:-localhost}" \
+gunzip -c "$FILE" | psql -v ON_ERROR_STOP=1 -h "${FIREMUD_POSTGRES_HOST:-localhost}" \
                     -U "${FIREMUD_POSTGRES_USER:-firemud}" \
                     -d "${FIREMUD_POSTGRES_DB:-firemud}"
 

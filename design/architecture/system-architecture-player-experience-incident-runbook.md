@@ -2,6 +2,8 @@
 
 This runbook describes operator actions for **player-facing SLO breaches** on login, command latency, and chat delivery. It complements the Player Experience SLIs/SLOs in `system-architecture-logging-monitoring.md` and the alert rules in `design/observability/grafana/player-experience-alerts-snippets.md`.
 
+Independent-monitoring applicability follows [ADR 0159](./decisions/adr-0159-profile-dependent-independent-deadman-and-public-path-monitoring.md). Hosted profiles that claim externally verified availability or monitoring-resilient readiness must use an off-cluster monitor for every path in the profile's complete `exposedPublicPlayerPaths` set plus the in-cluster deadman signal; non-exposed paths are `not_applicable`. For an `independent-required` profile, a current authoritative external synthetic-probe result is required for each exposed path regardless of Prometheus availability. Treat a missing, stale, unavailable, or invalid result as `unknown`/degraded rather than green or failed; determine freshness from the retained observed age and the profile's declared detection budget. Hobby, single-node, and other small or otherwise non-required profiles may omit that monitor; when omitted, the preflight and incident record must state the degraded-detection, operator-dependent posture, and the runbook must use the strongest available local checks without implying external detection. Omission alone does not block player traffic.
+
 ## Incident Types
 
 - **Login success ratio below SLO**
@@ -9,13 +11,26 @@ This runbook describes operator actions for **player-facing SLO breaches** on lo
 - **Chat delivery latency above SLO**
 - **Telnet and WebSocket path availability below SLO**
 
-Use Grafana/Kibana/Jaeger when available. If any observability backend is degraded, follow the fallback procedures in `system-architecture-observability-incident-runbook.md` and the degraded-mode branches in each scenario below.
+Use Grafana/Kibana/Jaeger when available. If any observability backend is degraded, follow the degraded-observability procedures in `system-architecture-observability-incident-runbook.md` and the degraded-mode branches in each scenario below.
 
 Synthetic canary identities used in this runbook should be treated as operational probes, not normal players. Operator workflows should keep them out of routine moderation, behavior review, and player-facing analytics unless an incident specifically involves canary validation.
 
 Metrics in this runbook use the bounded `scope` contract from [Logging & Monitoring](./system-architecture-logging-monitoring.md#canonical-bounded-metrics-scope): pre-gameplay flows use `scope="environment"`, while each gameplay metric family documents any narrower bounded operational buckets it supports. Resolve an exact `<tenantId, gameInstanceId, regionId>` runtime scope through Game Session/control-plane runtime-health reads and structured logs before taking gameplay-scope action; do not infer exact runtime ownership from ordinary metric labels.
 
 Log searches in this runbook must preserve the emitting `service` and `traceId` as the primary correlation fields, with `correlationId` when available. Add `tenantId`, `gameInstanceId`, `regionId`, and `characterId` only when those gameplay fields are present and expected by the affected record's logging contract; pre-gameplay records must not be forced to carry them.
+
+## Direct External-Monitor Retrieval When Prometheus Is Unavailable
+
+For an `independent-required` profile, retrieve the authoritative external-monitor result directly from the off-cluster monitor's native API or console, or from its retained evidence store outside the monitored cluster and Prometheus failure domain. Do not substitute a Prometheus mirror, and do not treat optional player-flow canary metrics as externally available through this path. The external deadman/public-path monitor remains the authority; see the [External Monitoring Contract](../observability/external-monitoring/README.md) for its owner-defined evidence shape.
+
+Before using a retrieved result to classify an exposed public path, validate the following at the same trusted evaluation time:
+
+- the declared profile is `independent-required` and its `exposedPublicPlayerPaths` set is complete; every exposed path has a corresponding public-path result, while non-exposed paths are `not_applicable`
+- the deadman and each exposed-path result has a valid status and the required target/evidence references; a current valid failure status is an outage signal, while missing or malformed status is not a failure result
+- `evidenceObservedAt` is a valid UTC timestamp, its observed age, and the retained heartbeat/probe observation ages are within the profile's configured `detectionBudgetSeconds`
+- `evidenceRef`, `checkRef`, and target values are retained as opaque provider-owned references; do not infer freshness or status by parsing their names or timestamps
+
+If any required profile, path, status, timestamp, age, or reference is missing, stale, unavailable, or invalid, classify the affected external-monitor evidence as `unknown`/degraded. Do not classify that path as green or failed, and do not use incomplete external evidence as traffic-reopen or recovery authority. Profiles with independent monitoring omitted use the strongest available local/public-edge checks and retain their documented operator-dependent degraded posture.
 
 ## Trace Preconditions (For Latency/Tick Root Cause)
 
@@ -33,7 +48,8 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 ### Detect (Login success ratio)
 
 - Alert: `LoginSuccessRatioLowGateway` or `LoginSuccessRatioLowTcpProxy` fires (for example, success ratio < 99.5% over 15 minutes).
-- Independent canary alerts for `playerflow_canary_success{flow="login",path=...,target=...}` may fire before live-traffic SLIs move materially in low-traffic environments.
+- Where the profile advertises the player-flow canary capability, and only for paths in its complete `exposedPublicPlayerPaths` set, `playerflow_canary_success{flow="login",path=...,target=...,profile=...}` alerts may fire before live-traffic SLIs move materially in low-traffic environments. Use the matching `playerflow_canary_last_run_timestamp_seconds{flow="login",path=...,target=...,profile=...}` and profile-derived freshness budget before treating the result as actionable. An omitted capability or non-exposed path is `not_applicable`; missing, stale, or unavailable advertised evidence is `unknown`/degraded rather than a canary failure.
+- `PlayerFlowCanaryEvidenceStale` means the available canary evidence exceeded the matching profile budget; treat player-flow health as unknown/degraded until a fresh run is retained, rather than as a synthetic login or command failure.
 - Player reports: widespread login failures or timeouts.
 - Metrics:
   - Player Experience dashboard shows a drop in the login success panel.
@@ -55,7 +71,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
    - Compare Telnet vs WebSocket/HTTPS behavior:
      - If only Telnet is affected, follow the Telnet degraded runbook (`system-architecture-telnet-degraded-runbook.md`) and TCP Proxy dashboards.
      - If both are affected, continue below.
-   - Check the synthetic login canary first. If canaries are failing while live login-volume SLIs are flat, treat the issue as a real outage with insufficient live traffic, not as “no incident”.
+   - When a player-flow canary is configured for the profile, use it as an investigation trigger only when current, fresh, valid evidence exists for an exposed path. If that canary is failing while live login-volume SLIs are flat, corroborate it with live-traffic and authoritative service signals and rule out canary identity or test-data failure before classifying a public outage or applying mitigation. If evidence is missing, stale, unavailable, `not_applicable`, or otherwise invalid, use live-traffic and authoritative service signals instead.
 2. **Inspect Gateway and Account Service**
    - Use service-specific dashboards/logs to check:
      - Error rate and latency on login routes.
@@ -76,7 +92,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
    - Ensure `LoginSuccessRatioLowGateway` and/or `LoginSuccessRatioLowTcpProxy` clear (as applicable) and player reports subside.
    - Use the `player-incident-drilldown.json` Kibana saved search to spot-check representative logs by `service`, `traceId`, and `correlationId`, adding `tenantId` or `characterId` only when those fields are present, to confirm that errors have returned to normal levels.
 6. **Degraded-mode branch (if observability backends are unavailable)**
-   - If Grafana is down: query Prometheus directly for `login_requests_total` success ratio by its available `scope`, `service`, and `outcome` labels, using the deployment-wide `scope="environment"` baseline. Use `playerflow_canary_success{flow="login",path=...,target=...}` to distinguish ingress paths; `login_requests_total` itself has no `path` label. Do not require `gameInstanceId` or `regionId`: login occurs before gameplay scope is selected.
+   - If Grafana is down: query Prometheus directly for `login_requests_total` success ratio by its available `scope`, `service`, and `outcome` labels, using the deployment-wide `scope="environment"` baseline. If the profile advertises player-flow canaries, use `playerflow_canary_success{flow="login",path=...,target=...,profile=...}` with its matching fresh last-run timestamp and profile budget to distinguish only exposed ingress paths; omitted capability or non-exposed paths are `not_applicable`, and missing, stale, or unavailable advertised evidence is `unknown`/degraded. `login_requests_total` itself has no `path` label. Do not require `gameInstanceId` or `regionId`: login occurs before gameplay scope is selected.
    - If Kibana is down: use service logs from Gateway/TCP Proxy/Account pods filtered by `service`, `traceId`, and `correlationId`; do not require gameplay identity fields for this pre-gameplay login path.
    - If Prometheus is down: prioritize service health endpoints and dependency health (Postgres/Redis), and use conservative ingress mitigation (rollback/scale) based on authoritative service signals.
 
@@ -85,7 +101,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 ### Detect (Command latency)
 
 - Alert: `CommandLatencyP99HighGateway` or `CommandLatencyP99HighTcpProxy` fires (p99 command latency > 250ms over 5 minutes).
-- Independent canary alerts for `playerflow_canary_success{flow="command",path=...,target=...}` or `playerflow_canary_latency_ms{flow="command",path=...,target=...}` may fire before traffic-derived latency panels move in low-volume periods.
+- Where the profile advertises the player-flow canary capability, and only for paths in its complete `exposedPublicPlayerPaths` set, `playerflow_canary_success{flow="command",path=...,target=...,profile=...}` or `playerflow_canary_latency_ms{flow="command",path=...,target=...,profile=...}` alerts may fire before traffic-derived latency panels move in low-volume periods. Use the matching `playerflow_canary_last_run_timestamp_seconds{flow="command",path=...,target=...,profile=...}` and profile-derived freshness budget before treating success or latency as actionable. An omitted capability or non-exposed path is `not_applicable`; missing, stale, or unavailable advertised evidence is `unknown`/degraded.
 - Player reports: perceived lag or delayed command responses in game.
 - Metrics:
   - Player Experience dashboard shows elevated command p99 latency for one or more bounded core commands (`move`, `look`, `combat`).
@@ -104,7 +120,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
    - Use the Tick Health & Ledger dashboard:
      - Inspect `tick_execution_time_ms_p99 / tick_lock_ttl_ms` for affected approved scope buckets, then resolve exact regions through control-plane/runtime-health reads and structured logs.
      - Inspect `tick_retry_queue_depth` and `tick_command_queue_depth`.
-   - If the representative command canary is failing or slow while the live-traffic SLI is quiet, use the canary result as the trigger to continue triage rather than waiting for more user traffic.
+   - If the representative command canary is advertised for the exposed path and has current, fresh, valid evidence showing failure or slowness while the live-traffic SLI is quiet, use that result as the trigger to continue triage rather than waiting for more user traffic. Otherwise treat the canary as `not_applicable` or `unknown`/degraded and use live-traffic and authoritative service signals.
    - If tick execution is also degraded:
      - Follow the scaling runbook (`system-architecture-scaling-runbook.md`) to adjust Game Session region density or add replicas before touching tick cadence.
 2. **Check Redis coordination**
@@ -126,7 +142,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
    - Confirm tick health metrics return to normal envelopes.
    - Use the `player-incident-drilldown.json` and `tick-region-logs.json` Kibana saved searches to correlate any remaining slow commands by `service` and `traceId`, adding `correlationId` and the applicable `tenantId`, `gameInstanceId`, `regionId`, `characterId`, and `tickId` fields only when those saved objects and affected records expose them. Resolve the exact `<tenantId, gameInstanceId, regionId>` runtime scope through Game Session/control-plane runtime-health reads and structured logs rather than inferring `gameInstanceId` from these saved-object filters.
 6. **Degraded-mode branch (if observability backends are unavailable)**
-   - If Grafana is down: run direct PromQL checks for command p99 latency, synthetic command-canary success/latency, tick safety ratio, Redis tail-loss, and queue depth per affected gameplay `scope`.
+   - If Grafana is down: run direct PromQL checks for command p99 latency, synthetic command-canary success/latency only when current, fresh, valid advertised evidence exists for the matching profile and exposed path, tick safety ratio, Redis tail-loss, and queue depth per affected gameplay `scope`; otherwise use live-traffic and authoritative service signals.
    - If Jaeger is down or sampling is insufficient: skip span-based narrowing and classify bottlenecks from metrics + structured logs only.
    - If Kibana is down: inspect Game Session and hot domain-service logs directly by `service` and `traceId`, adding `correlationId` and conditional gameplay identity fields (`tenantId`, `gameInstanceId`, `regionId`, `characterId`) only when present in the affected records.
 
@@ -177,7 +193,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 - Player reports: failed or flaky connections on one entry path (Telnet or WebSocket/HTTPS).
 - Metrics:
   - Player Experience dashboard shows a drop in availability computed from `entrypath_connection_attempts_total{service,scope,path,outcome}` for one or more approved bounded `service` and `scope` buckets. Resolve an exact tenant/game-instance/region through control-plane/runtime-health reads and structured logs only when the affected connection record has gameplay identity; otherwise use the emitting service, environment, entry `path`, and external/synthetic `probe target` as the operational scope.
-  - External synthetic probes show whether the public Telnet or WebSocket path is reachable at all when traffic may not be reaching Gateway or TCP Proxy.
+  - For profiles requiring independent monitoring, external synthetic probes show whether the public Telnet or WebSocket path completes its protocol handshake when traffic may not be reaching Gateway or TCP Proxy. Omitted profiles use the strongest available local edge/public-path check and retain the degraded-detection posture.
   - TCP Proxy dashboards show whether `tcpproxy_connections_limit_exceeded` or `tcpproxy_telnet_discarded` are elevated (Telnet path), and Gateway dashboards show whether WebSocket upgrade failures are elevated (WebSocket path).
 
 ### Decide (Entry path availability)
@@ -190,8 +206,8 @@ Trace-driven triage is optional but often decisive for command-latency incidents
   - `protocol_error` suggests client/edge parsing problems.
   - `upstream_unreachable` suggests Gateway or downstream availability issues.
   - `auth_failed` suggests account/JWT or session binding problems.
-- Check the external synthetic probe result first:
-  - If the blackbox probe is failing and `entrypath_connection_attempts_total` is flat or absent, treat this as an ingress/LB/TLS/DNS edge outage rather than an application-level success-ratio problem.
+  - For profiles with independent monitoring, use each fresh authoritative external synthetic-probe result alongside local edge and control-plane/runtime-health evidence. A missing, stale, unavailable, or invalid external result is `unknown`/degraded rather than green or failed. When a current external probe is failing and `entrypath_connection_attempts_total` is flat or absent, treat the external result as authoritative evidence of off-cluster reachability failure and use local/control-plane evidence to distinguish ingress/LB/TLS/DNS failure from an application-level success-ratio problem.
+  - For profiles that omit independent monitoring, use the strongest available local edge/public-path check and keep degraded detection visible. A stale or unknown local check cannot classify an outage alone; a current failing local check must be corroborated with control-plane/runtime-health reads or ingress logs before classifying an edge outage.
 
 ### Act (Entry path availability)
 
@@ -213,9 +229,9 @@ Trace-driven triage is optional but often decisive for command-latency incidents
    - Confirm the short-window detection view recovers quickly for every affected `{service,scope,path}` combination and the dominant failure outcomes subside. Use control-plane/runtime-health reads and structured logs for exact runtime scope only when gameplay identity is present; otherwise verify the environment, entry path, and probe target.
    - Confirm the 1-day compliance view trends back toward SLO after the acute incident is resolved.
 4. **Degraded-mode branch (if observability backends are unavailable)**
-   - If Grafana is down: query Prometheus directly for both `entrypath_connection_attempts_total` success/total ratios by `{service,scope,path}`, the external synthetic-probe metric for each public path, and the mirrored login/command canary metrics where relevant.
+   - If Grafana is down while Prometheus remains available: query Prometheus directly for `entrypath_connection_attempts_total` success/total ratios by `{service,scope,path}`. Use mirrored login/command canary metrics only when the profile advertises the player-flow canary and the corresponding path is exposed; an omitted capability or non-exposed path is `not_applicable`, while missing or stale evidence for a required canary is `unknown`/degraded rather than green or failed. For `independent-required` profiles, use a fresh authoritative external synthetic-probe result for every exposed public path alongside those Prometheus and local signals; missing, stale, unavailable, or invalid external evidence for any path is `unknown`/degraded rather than green or failed. Omitted or otherwise non-required profiles use the strongest local edge/public-path checks and retain degraded detection.
    - If Kibana is down: use Gateway/TCP Proxy logs directly, preserving `service`, `traceId`, and `correlationId` and adding conditional gameplay identity fields only when present, to classify failures (`limit_exceeded`, `protocol_error`, `upstream_unreachable`, `auth_failed`).
-   - If Prometheus is down: rely on edge health, pod events, and direct ingress error logs to guide rollback/scale/cap actions.
+   - If Prometheus is down: follow [Direct External-Monitor Retrieval When Prometheus Is Unavailable](#direct-external-monitor-retrieval-when-prometheus-is-unavailable) for `independent-required` profiles, then use edge health, pod events, and direct ingress error logs as supplementary classification and action evidence. Omitted or otherwise non-required profiles use those strongest available local signals with the same stale/unknown handling and retain degraded detection.
 
 ### Gameplay close classification branch
 
