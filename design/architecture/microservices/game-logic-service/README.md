@@ -19,7 +19,8 @@ Game Logic is intentionally a replaceable same-type worker rather than a keeper 
 - Compute movement/travel costs and pathfinding using world geometry
 - Interact with entity and world services for context data
 - Push results back to the Game Session Service for distribution
-- Resolve world/gameplay communication semantics (topology, perception, capabilities, effects, authored interception, and bounded candidate views) for the communication classes that depend on gameplay state; send one bounded gameplay plan to Social & Groups first for moderation/history/social-audience and social-channel delivery-state/fanout decisions, then return the authorized presentation result to Game Session for final connected-gameplay transport delivery
+- Target: Resolve world/gameplay communication semantics (topology, perception, capabilities, effects, authored interception, and bounded candidate views) for the communication classes that depend on gameplay state; send one bounded gameplay plan to Social & Groups first for moderation/history/social-audience and social-channel delivery-state/fanout decisions, then return the authorized presentation result to Game Session for final connected-gameplay transport delivery
+- Current: `SendCommunication` resolves only the implemented baseline room/direct recipient metadata, forwards a normalized gameplay projection to the Social & Groups regression stub, and returns metadata for Game Session rendering; the complete bounded-plan, authorized-presentation, and owner-handoff contract remains unimplemented or unproved.
 - See the [Service Responsibility Matrix](../../service-responsibility-matrix.md)
   for how this service fits into the overall architecture.
 - Fail readiness when the downstream dependencies required for the currently exposed gameplay command path are unavailable

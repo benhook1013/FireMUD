@@ -2255,8 +2255,6 @@ def rendered_secret_binding_is_owned(
     name: str,
     namespace: str | None,
     binding_path: str,
-    *,
-    default_namespace: str | None = None,
 ) -> bool:
     expected_workloads = {
         "internalBindings.postgres.credentialsRef": frozenset(
@@ -3199,7 +3197,6 @@ def expected_binding_checks(
                 name,
                 namespace,
                 binding_path,
-                default_namespace=namespace,
             ):
                 missing_rendered_refs.append(name)
         registry_pull_secret = secret_binding_name(get(data, "internalBindings.registry.imagePullSecretRef"))
@@ -3312,7 +3309,6 @@ def expected_binding_checks(
             name,
             namespace,
             binding_path,
-            default_namespace=namespace,
         )
     ]
     custody_mode = get(data, "internalBindings.jwt.custodyMode")
@@ -4746,7 +4742,6 @@ def main() -> int:
                 secret_name,
                 secret_namespace,
                 binding_path,
-                default_namespace=secret_namespace,
             ):
                 has_required_failure = append_result(
                     check_results,
