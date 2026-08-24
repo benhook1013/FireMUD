@@ -8,7 +8,10 @@ from typing import Any
 
 
 def canonical_evidence_digest(record: dict[str, Any]) -> str:
-    """Hash a selected evidence record with the documented RFC 8785 subset."""
+    """Hash a record, excluding only its top-level immutableArtifactId field.
+
+    Nested immutableArtifactId occurrences remain part of the canonical payload.
+    """
     payload = {key: value for key, value in record.items() if key != "immutableArtifactId"}
 
     def encode(value: Any) -> str:

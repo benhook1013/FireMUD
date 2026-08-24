@@ -157,6 +157,10 @@ def validate_account_jwks_path_overrides(container):
     for env_entry in container.get("env", []):
         if not isinstance(env_entry, dict) or env_entry.get("name") != "FIREMUD_AUTH_JWKS_PATH":
             continue
+        if "valueFrom" in env_entry:
+            raise SystemExit(
+                "Account FIREMUD_AUTH_JWKS_PATH override must use a literal value"
+            )
         value = env_entry.get("value")
         if (
             not isinstance(value, str)
@@ -184,6 +188,28 @@ positive_override_container.setdefault("env", []).append(
     }
 )
 validate_account_jwks_path_overrides(positive_override_container)
+
+value_from_override_container = copy.deepcopy(account_container)
+value_from_override_container.setdefault("env", []).append(
+    {
+        "name": "FIREMUD_AUTH_JWKS_PATH",
+        "value": f"{jwks_path_prefix}jwks.json",
+        "valueFrom": {
+            "configMapKeyRef": {
+                "name": "firemud-config",
+                "key": "FIREMUD_AUTH_JWKS_PATH",
+            }
+        },
+    }
+)
+try:
+    validate_account_jwks_path_overrides(value_from_override_container)
+except SystemExit:
+    pass
+else:
+    raise SystemExit(
+        "FIREMUD_AUTH_JWKS_PATH override with valueFrom unexpectedly passed"
+    )
 
 for invalid_value in (
     jwks_path_prefix,

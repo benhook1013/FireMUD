@@ -2,7 +2,7 @@
 
 This document outlines how FireMUD is deployed across environments including local Docker Compose, hosted pull-request preview environments, self-hosted hobby deployments, and Kubernetes-backed shared environments (dev/demo, staging, production). It includes discovery mechanisms, health check strategies, and environment-specific control expectations.
 
-The front environment owner contract is [ADR 0152: phased environment-bound deployment preflight and expected bindings](../decisions/adr-0152-phased-environment-bound-deployment-preflight-and-expected-bindings.md). This document applies that contract to environment profiles and deployment topology; later readiness and monitoring decisions remain outside this front foundation.
+The governing environment owner contract is [ADR 0152: phased environment-bound deployment preflight and expected bindings](../decisions/adr-0152-phased-environment-bound-deployment-preflight-and-expected-bindings.md). This document applies that contract to environment profiles and deployment topology; later readiness and monitoring decisions remain outside this front foundation.
 
 ## Table of Contents
 

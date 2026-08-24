@@ -4552,6 +4552,47 @@ if (
 ):
     raise SystemExit(f"valid rollback-compatible promotion did not pass: {promotion_message}")
 
+original_load_immutable_json_evidence = module.load_immutable_json_evidence
+module.load_immutable_json_evidence = lambda *args, **kwargs: (None, None)
+missing_secret_status, missing_secret_mode, missing_secret_message, _, _ = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if (
+    missing_secret_status != "fail"
+    or missing_secret_mode != "rollback-compatible"
+    or "secretComplianceEvidenceRef loader returned no evidence" not in missing_secret_message
+):
+    raise SystemExit(
+        "missing secret evidence without a loader error did not fail closed: "
+        + missing_secret_message
+    )
+
+def load_missing_rotation_evidence(*args, **kwargs):
+    if args[-1] == "jwtRotationEvidenceRef":
+        return None, None
+    return original_load_immutable_json_evidence(*args, **kwargs)
+
+module.load_immutable_json_evidence = load_missing_rotation_evidence
+missing_rotation_status, missing_rotation_mode, missing_rotation_message, _, _ = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+module.load_immutable_json_evidence = original_load_immutable_json_evidence
+if (
+    missing_rotation_status != "fail"
+    or missing_rotation_mode != "rollback-compatible"
+    or "jwtRotationEvidenceRef loader returned no evidence" not in missing_rotation_message
+):
+    raise SystemExit(
+        "missing rotation evidence without a loader error did not fail closed: "
+        + missing_rotation_message
+    )
+
 # Bootstrap evidence is independently authorized by the matching operation ID
 # and provisioning generation, but it coexists with the required event-scoped
 # JWT rotation evidence for a promotion candidate.

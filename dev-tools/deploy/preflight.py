@@ -133,29 +133,7 @@ PREFLIGHT_POLICY_CATALOG = {
     "PREFLIGHT-BACKUP-003": "non-waivable-promotion-traffic-open",
 }
 
-DOCUMENTED_PREFLIGHT_POLICY_ID_SET = frozenset(
-    {
-        "PREFLIGHT-DIGEST-001",
-        "PREFLIGHT-DIGEST-002",
-        "PREFLIGHT-SECRETS-001",
-        "PREFLIGHT-SECRETS-002",
-        "PREFLIGHT-JWT-001",
-        "PREFLIGHT-JWT-INTERIM-001",
-        "PREFLIGHT-JWKS-001",
-        "PREFLIGHT-JWT-002",
-        "PREFLIGHT-JWT-ROTATION-001",
-        "PREFLIGHT-TELNET-001",
-        "PREFLIGHT-BRIDGE-001",
-        "PREFLIGHT-REDIS-001",
-        "PREFLIGHT-BOOTSTRAP-001",
-        "PREFLIGHT-EXTERNAL-001",
-        "PREFLIGHT-SERVICES-001",
-        "PREFLIGHT-PROMOTION-001",
-        "PREFLIGHT-BACKUP-001",
-        "PREFLIGHT-BACKUP-002",
-        "PREFLIGHT-BACKUP-003",
-    }
-)
+DOCUMENTED_PREFLIGHT_POLICY_ID_SET = frozenset(PREFLIGHT_POLICY_CATALOG)
 TARGET_ONLY_PREFLIGHT_POLICY_IDS = frozenset(
     {
         "PREFLIGHT-JWT-INTERIM-001",
@@ -4061,7 +4039,12 @@ def _promotion_check(
     )
     if secret_evidence_error:
         return ("fail", rollback_mode, secret_evidence_error)
-    assert secret_evidence is not None
+    if secret_evidence is None:
+        return (
+            "fail",
+            rollback_mode,
+            "secretComplianceEvidenceRef loader returned no evidence without an error",
+        )
     if secret_evidence.get("environment") != "staging":
         return ("fail", rollback_mode, "Staging secret compliance evidence environment must be staging")
     secret_records = secret_evidence.get("records", {})
@@ -4269,7 +4252,12 @@ def _promotion_check(
     )
     if rotation_evidence_error:
         return ("fail", rollback_mode, rotation_evidence_error)
-    assert rotation_evidence is not None
+    if rotation_evidence is None:
+        return (
+            "fail",
+            rollback_mode,
+            "jwtRotationEvidenceRef loader returned no evidence without an error",
+        )
     if rotation_evidence.get("policyId") != JWT_ROTATION_POLICY_ID:
         return (
             "fail",
