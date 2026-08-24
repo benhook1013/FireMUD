@@ -1457,6 +1457,31 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     errors,
                 )
 
+    def test_non_moderation_idempotency_diagnostics_ignore_applicability_variant(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(
+            document,
+            "logging-admin-service",
+            "POST /feature-flags/toggle",
+        )
+        route["applicability"] = {"future": "metadata"}
+        route["required_fields"].remove("mutation_digest")
+        errors = []
+        self.validator.validate_logging_admin_idempotency(
+            document["routes"], errors
+        )
+        self.assertIn(
+            "logging-admin-service POST /feature-flags/toggle must require "
+            "mutation_digest for idempotency",
+            errors,
+        )
+        self.assertNotIn(
+            "logging-admin-service POST /feature-flags/toggle "
+            '[variant={"future":"metadata"}] must require mutation_digest '
+            "for idempotency",
+            errors,
+        )
+
     def test_privileged_operator_routes_require_live_global_role_and_assurance(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         document = copy.deepcopy(baseline)

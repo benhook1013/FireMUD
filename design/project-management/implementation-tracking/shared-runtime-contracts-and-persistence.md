@@ -28,7 +28,7 @@ These links add decision provenance only; they do not upgrade shared persistence
 - `SF-2.3`: [ADR 0150](../../architecture/decisions/adr-0150-closed-observer-views-and-profile-scoped-shout.md) leaves closed observer declarations, safe-field projections, freshness fencing, candidate delivery, bounded chunking, and SHOUT implementation/proof incomplete.
 - `SF-1.3`: [ADR 0151](../../architecture/decisions/adr-0151-event-scoped-automated-tier-a-credential-compliance.md) leaves automated compliance evidence and event-scoped trust/recovery gate proof incomplete; no shared-runtime implementation status is upgraded here.
 
-These links add decision provenance and shared-runtime consequences only; capability implementation and verification states remain the values in the table above.
+These links add decision provenance and shared-runtime consequences only; capability implementation and verification states remain the values in the [Capability Status](#capability-status) table below.
 
 ## Capability Status
 

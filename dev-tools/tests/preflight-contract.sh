@@ -223,12 +223,22 @@ stringData:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: gateway-ws-client
+  name: hobby-tcp-proxy-bridge
 type: Opaque
 stringData:
   client.crt: bridge-client
   client.key: bridge-key
   ca.crt: bridge-ca
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: grpc-tls
+type: Opaque
+stringData:
+  client.crt: grpc-client
+  client.key: grpc-key
+  ca.crt: grpc-ca
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -249,6 +259,12 @@ spec:
         - name: tcp-proxy-service
           image: ghcr.io/benhook1013/tcp-proxy-service:latest
           env:
+            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
+              value: /grpc-tls/client.crt
+            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
+              value: /grpc-tls/client.key
+            - name: FIREMUD_GRPC_CA_CERT_PATH
+              value: /grpc-tls/ca.crt
             - name: GATEWAY_WS_URL
               value: wss://spring-cloud-gateway-mtls.firemud.svc.cluster.local/ws/game
             - name: FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH
@@ -263,16 +279,22 @@ spec:
             - configMapRef:
                 name: firemud-config
           volumeMounts:
-            - name: gateway-ws-client
+            - name: hobby-tcp-proxy-bridge
               mountPath: /tls
+              readOnly: true
+            - name: grpc-tls
+              mountPath: /grpc-tls
               readOnly: true
             - name: jwt-signing-keys
               mountPath: /var/run/secrets/firemud/jwt
               readOnly: true
       volumes:
-        - name: gateway-ws-client
+        - name: hobby-tcp-proxy-bridge
           secret:
-            secretName: gateway-ws-client
+            secretName: hobby-tcp-proxy-bridge
+        - name: grpc-tls
+          secret:
+            secretName: grpc-tls
         - name: jwt-signing-keys
           secret:
             secretName: jwt-signing-keys
@@ -1287,9 +1309,9 @@ bridge = [check for check in report["checkResults"] if check["policyId"] == "PRE
 if len(bridge) != 1 or bridge[0]["status"] != "fail" or bridge[0]["required"] is not True:
     raise SystemExit(f"{env}: missing explicit required bridge-client failure: {bridge}")
 for policy_id in ("PREFLIGHT-SERVICES-001", "PREFLIGHT-REDIS-001"):
-    required_gap = [check for check in report["checkResults"] if check["policyId"] == policy_id]
-    if len(required_gap) != 1 or required_gap[0]["status"] != "fail" or required_gap[0]["required"] is not True:
-        raise SystemExit(f"{env}: missing explicit required {policy_id} failure: {required_gap}")
+    effective_check = [check for check in report["checkResults"] if check["policyId"] == policy_id]
+    if len(effective_check) != 1 or effective_check[0]["status"] != "pass" or effective_check[0]["required"] is not True:
+        raise SystemExit(f"{env}: unrelated external Secret absence contaminated {policy_id}: {effective_check}")
 jwks = [check for check in report["checkResults"] if check["policyId"] == "PREFLIGHT-JWKS-001"]
 if len(jwks) != 1 or jwks[0]["status"] != "pass":
     raise SystemExit(f"{env}: legacy Secret jwt-jwks fixture did not pass the current diagnostic: {jwks}")
@@ -1395,6 +1417,9 @@ try:
     not_found_message = module.secret_lookup_failure("missing")
     if not_found_message != "Missing required Secret in cluster: firemud/missing":
         raise SystemExit(f"NotFound Secret lookup reported incorrectly: {not_found_message}")
+    namespaced_message = module.secret_lookup_failure("missing", "other")
+    if namespaced_message != "Missing required Secret in cluster: other/missing":
+        raise SystemExit(f"namespaced Secret lookup reported incorrectly: {namespaced_message}")
 
     forbidden_stderr = 'Error from server (Forbidden): secrets is forbidden'
     module.subprocess.run = lambda *args, **kwargs: module.subprocess.CompletedProcess(
@@ -1623,6 +1648,13 @@ verify_service_override_contract(
     "does not match allowed value",
 )
 verify_service_override_contract(
+    "external-host",
+    {"FIREMUD_SERVICES_ACCOUNT_SERVICE": "account-service.evil.example:6565"},
+    {"FIREMUD_SERVICES_ACCOUNT_SERVICE": "account-service.evil.example:6565"},
+    "fail",
+    "Kubernetes environment",
+)
+verify_service_override_contract(
     "missing",
     {},
     {"FIREMUD_SERVICES_ACCOUNT_SERVICE": "account-service.firemud.svc.cluster.local"},
@@ -1707,7 +1739,7 @@ if current_secrets.status != "pass":
     raise SystemExit(f"checked-in legacy JWT custody selector did not pass current wiring validation: {current_secrets.message}")
 
 
-def effective_env_documents(*, config_map=None, config_map_namespace="firemud", workload_namespace="firemud", env=None, env_from=None):
+def effective_env_documents(*, config_map=None, config_map_namespace="firemud", secret=None, secret_namespace="firemud", workload_namespace="firemud", env=None, env_from=None):
     workload = {
         "kind": "Deployment",
         "metadata": {"name": "account-service", "namespace": workload_namespace},
@@ -1735,6 +1767,15 @@ def effective_env_documents(*, config_map=None, config_map_namespace="firemud", 
                 "data": config_map,
             },
         )
+    if secret is not None:
+        documents.insert(
+            0,
+            {
+                "kind": "Secret",
+                "metadata": {"name": "cfg", "namespace": secret_namespace},
+                "stringData": secret,
+            },
+        )
     return documents, workload, workload["spec"]["template"]["spec"]["containers"][0]
 
 
@@ -1752,6 +1793,7 @@ if precedence_issues or precedence_values.get("FIREMUD_SERVICES_ACCOUNT_SERVICE"
 for case_name, config_map, config_map_namespace, env, env_from, expects_issue in (
     ("required-configmap", None, "firemud", [], [{"configMapRef": {"name": "cfg"}}], True),
     ("optional-configmap", None, "firemud", [], [{"configMapRef": {"name": "cfg", "optional": True}}], False),
+    ("malformed-configmap-optional", None, "firemud", [], [{"configMapRef": {"name": "cfg", "optional": "true"}}], True),
     (
         "required-configmap-key",
         {},
@@ -1768,6 +1810,14 @@ for case_name, config_map, config_map_namespace, env, env_from, expects_issue in
         [],
         False,
     ),
+    (
+        "malformed-configmap-key-optional",
+        {},
+        "firemud",
+        [{"name": "FIREMUD_SERVICES_ACCOUNT_SERVICE", "valueFrom": {"configMapKeyRef": {"name": "cfg", "key": "missing", "optional": "false"}}}],
+        [],
+        True,
+    ),
     ("namespace-decoy-configmap", {"FIREMUD_SERVICES_ACCOUNT_SERVICE": "decoy"}, "other", [], [{"configMapRef": {"name": "cfg"}}], True),
 ):
     documents, workload, container = effective_env_documents(
@@ -1779,6 +1829,46 @@ for case_name, config_map, config_map_namespace, env, env_from, expects_issue in
     _, issues = module.effective_container_env(documents, workload, container)
     if bool(issues) != expects_issue:
         raise SystemExit(f"{case_name}: unexpected ConfigMap optional/namespace result: {issues}")
+
+for case_name, secret, secret_namespace, env, env_from, expects_issue in (
+    ("required-secret", None, "firemud", [], [{"secretRef": {"name": "cfg"}}], True),
+    ("optional-secret", None, "firemud", [], [{"secretRef": {"name": "cfg", "optional": True}}], False),
+    ("malformed-secret-optional", None, "firemud", [], [{"secretRef": {"name": "cfg", "optional": 1}}], True),
+    (
+        "required-secret-key",
+        {},
+        "firemud",
+        [{"name": "FIREMUD_SERVICES_ACCOUNT_SERVICE", "valueFrom": {"secretKeyRef": {"name": "cfg", "key": "missing"}}}],
+        [],
+        True,
+    ),
+    (
+        "optional-secret-key",
+        {},
+        "firemud",
+        [{"name": "FIREMUD_SERVICES_ACCOUNT_SERVICE", "valueFrom": {"secretKeyRef": {"name": "cfg", "key": "missing", "optional": True}}}],
+        [],
+        False,
+    ),
+    (
+        "malformed-secret-key-optional",
+        {},
+        "firemud",
+        [{"name": "FIREMUD_SERVICES_ACCOUNT_SERVICE", "valueFrom": {"secretKeyRef": {"name": "cfg", "key": "missing", "optional": 0}}}],
+        [],
+        True,
+    ),
+    ("namespace-decoy-secret", {"FIREMUD_SERVICES_ACCOUNT_SERVICE": "decoy"}, "other", [], [{"secretRef": {"name": "cfg"}}], True),
+):
+    documents, workload, container = effective_env_documents(
+        secret=secret,
+        secret_namespace=secret_namespace,
+        env=env,
+        env_from=env_from,
+    )
+    _, issues = module.effective_container_env(documents, workload, container)
+    if bool(issues) != expects_issue:
+        raise SystemExit(f"{case_name}: unexpected Secret optional/namespace result: {issues}")
 
 secret_documents, secret_workload, secret_container = effective_env_documents(
     env_from=[{"secretRef": {"name": "bridge-config"}}],
@@ -1793,11 +1883,11 @@ secret_documents.append(
 secret_values, secret_issues = module.effective_container_env(
     secret_documents, secret_workload, secret_container
 )
-if secret_issues or secret_values.get("FIREMUD_SERVICES_ACCOUNT_SERVICE") != "secret-backed":
-    raise SystemExit(f"rendered Secret envFrom was not resolved: {secret_values}, {secret_issues}")
+if not secret_issues or secret_values.get("FIREMUD_SERVICES_ACCOUNT_SERVICE") is not None:
+    raise SystemExit(f"Secret-backed service override was not rejected safely: {secret_values}, {secret_issues}")
 secret_overrides, secret_override_issues = module.extract_service_discovery_overrides(secret_documents)
-if secret_override_issues or secret_overrides.get("FIREMUD_SERVICES_ACCOUNT_SERVICE") != "secret-backed":
-    raise SystemExit(f"Secret-backed service override was missed: {secret_overrides}, {secret_override_issues}")
+if not secret_override_issues or secret_overrides:
+    raise SystemExit(f"Secret-backed service override was not rejected: {secret_overrides}, {secret_override_issues}")
 
 secret_key_documents, secret_key_workload, secret_key_container = effective_env_documents(
     env=[
@@ -1817,8 +1907,8 @@ secret_key_documents.append(
 secret_key_values, secret_key_issues = module.effective_container_env(
     secret_key_documents, secret_key_workload, secret_key_container
 )
-if secret_key_issues or secret_key_values.get("FIREMUD_SERVICES_ACCOUNT_SERVICE") != "secret-key-backed":
-    raise SystemExit(f"rendered Secret valueFrom was not resolved: {secret_key_values}, {secret_key_issues}")
+if not secret_key_issues or secret_key_values:
+    raise SystemExit(f"Secret-backed service valueFrom was not rejected: {secret_key_values}, {secret_key_issues}")
 
 uninspectable_secret_documents, uninspectable_secret_workload, uninspectable_secret_container = effective_env_documents(
     env_from=[{"secretRef": {"name": "external-bridge-config"}}],
@@ -1827,15 +1917,75 @@ _, uninspectable_secret_issues = module.effective_container_env(
     uninspectable_secret_documents,
     uninspectable_secret_workload,
     uninspectable_secret_container,
+    relevant_prefixes=("FIREMUD_SERVICES_",),
 )
-if not any("external-bridge-config" in issue for issue in uninspectable_secret_issues):
-    raise SystemExit("uninspectable Secret-backed envFrom source was not failed closed")
+if uninspectable_secret_issues:
+    raise SystemExit(f"unrelated missing external Secret contaminated service checks: {uninspectable_secret_issues}")
+
+external_secret_documents, external_secret_workload, external_secret_container = effective_env_documents(
+    config_map={"FIREMUD_SERVICES_ACCOUNT_SERVICE": "account-service.firemud.svc.cluster.local"},
+    env_from=[
+        {"configMapRef": {"name": "cfg"}},
+        {"secretRef": {"name": "postgres-credentials"}},
+    ],
+)
+external_secret_documents.append(
+    {
+        "kind": "Secret",
+        "metadata": {"name": "postgres-credentials", "namespace": "firemud"},
+        "data": "externally-managed-and-not-rendered",
+    }
+)
+external_values, external_issues = module.effective_container_env(
+    external_secret_documents,
+    external_secret_workload,
+    external_secret_container,
+    relevant_prefixes=("FIREMUD_SERVICES_",),
+)
+if external_issues or external_values.get("FIREMUD_SERVICES_ACCOUNT_SERVICE") != "account-service.firemud.svc.cluster.local":
+    raise SystemExit(f"unrelated external Secret contaminated effective service config: {external_values}, {external_issues}")
+
+malformed_configmap_documents, malformed_configmap_workload, malformed_configmap_container = effective_env_documents(
+    config_map="not-a-mapping",
+    env_from=[{"configMapRef": {"name": "cfg"}}],
+)
+_, malformed_configmap_issues = module.effective_container_env(
+    malformed_configmap_documents,
+    malformed_configmap_workload,
+    malformed_configmap_container,
+    relevant_prefixes=("FIREMUD_SERVICES_",),
+)
+if not any("data must be a mapping" in issue for issue in malformed_configmap_issues):
+    raise SystemExit(f"malformed ConfigMap data did not fail closed: {malformed_configmap_issues}")
+
+malformed_secret_documents, malformed_secret_workload, malformed_secret_container = effective_env_documents(
+    env_from=[{"secretRef": {"name": "malformed-secret"}}],
+)
+malformed_secret_documents.append(
+    {
+        "kind": "Secret",
+        "metadata": {"name": "malformed-secret", "namespace": "firemud"},
+        "data": ["not-a-mapping"],
+    }
+)
+_, malformed_secret_issues = module.effective_container_env(
+    malformed_secret_documents,
+    malformed_secret_workload,
+    malformed_secret_container,
+)
+if not any("data and stringData must be mappings" in issue for issue in malformed_secret_issues):
+    raise SystemExit(f"malformed Secret data did not fail closed: {malformed_secret_issues}")
 
 bridge_values, bridge_issues = module.validate_gateway_ws_values(
     rendered_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
 )
 if bridge_issues or not bridge_values:
     raise SystemExit(f"canonical bridge fixture did not pass: {bridge_issues}")
+invalid_listener_expected = yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+invalid_listener_expected["internalBindings"]["certificates"]["gatewayInternalWsListenerRef"] = "secret://firemud/not-a-cert-manager-binding"
+_, invalid_listener_issues = module.validate_gateway_ws_values(rendered_documents, invalid_listener_expected)
+if not any("gatewayInternalWsListenerRef must be a cert-manager binding" in issue for issue in invalid_listener_issues):
+    raise SystemExit(f"malformed Gateway listener binding was not rejected explicitly: {invalid_listener_issues}")
 bridge_mutation = copy.deepcopy(rendered_documents)
 for document in bridge_mutation:
     if document.get("kind") == "Deployment" and document.get("metadata", {}).get("name") == "tcp-proxy-service":
@@ -1864,6 +2014,7 @@ canonical_bridge_url = "wss://spring-cloud-gateway-mtls.firemud.svc.cluster.loca
 for case_name, value, expected_fragment in (
     ("scheme", "ws://spring-cloud-gateway-mtls.firemud.svc.cluster.local/ws/game", "does not match canonical"),
     ("port", "wss://spring-cloud-gateway-mtls.firemud.svc.cluster.local:444/ws/game", "does not match canonical"),
+    ("port-zero", "wss://spring-cloud-gateway-mtls.firemud.svc.cluster.local:0/ws/game", "has an invalid port"),
     ("path", "wss://spring-cloud-gateway-mtls.firemud.svc.cluster.local/wrong", "does not match canonical"),
 ):
     documents = copy.deepcopy(rendered_documents)
@@ -1902,30 +2053,51 @@ account_container = next(
     for container in account_deployment["spec"]["template"]["spec"]["containers"]
     if container.get("name") == "account-service"
 )
-account_container.setdefault("env", []).append(
-    {"name": "GATEWAY_WS_URL", "value": "wss://decoy.firemud.svc.cluster.local/ws/game"}
+account_container.setdefault("env", []).extend(
+    [
+        {"name": "GATEWAY_WS_URL", "value": "wss://spring-cloud-gateway-mtls.firemud.svc.cluster.local:443/ws/game"},
+        {"name": "FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH", "value": "/tls/client.crt"},
+        {"name": "FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH", "value": "/tls/client.key"},
+        {"name": "FIREMUD_GATEWAY_WS_CA_CERT_PATH", "value": "/tls/ca.crt"},
+    ]
+)
+account_container.setdefault("volumeMounts", []).append(
+    {"name": "hobby-tcp-proxy-bridge", "mountPath": "/tls", "readOnly": True}
+)
+account_deployment["spec"]["template"]["spec"].setdefault("volumes", []).append(
+    {"name": "hobby-tcp-proxy-bridge", "secret": {"secretName": "hobby-tcp-proxy-bridge"}}
 )
 _, conflicting_bridge_issues = module.validate_gateway_ws_values(
     conflicting_bridge_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
 )
-if not any("does not match canonical" in issue for issue in conflicting_bridge_issues):
+if not any("effective GATEWAY_WS_URL values conflict across workloads" in issue for issue in conflicting_bridge_issues):
     raise SystemExit(f"conflicting applicable bridge value was accepted: {conflicting_bridge_issues}")
 
-bridge_path_documents = copy.deepcopy(rendered_documents)
-set_bridge_url(bridge_path_documents, canonical_bridge_url)
-bridge_container = next(
-    container
-    for document in bridge_path_documents
-    if document.get("kind") == "Deployment" and document.get("metadata", {}).get("name") == "tcp-proxy-service"
-    for container in document["spec"]["template"]["spec"]["containers"]
-    if container.get("name") == "tcp-proxy-service"
-)
-bridge_container["env"][1]["value"] = "/wrong/client.crt"
-_, bridge_path_issues = module.validate_gateway_ws_values(
-    bridge_path_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
-)
-if not any("must be exactly '/tls/client.crt'" in issue for issue in bridge_path_issues):
-    raise SystemExit(f"noncanonical bridge client path was accepted: {bridge_path_issues}")
+def set_bridge_env(documents, name, value):
+    for document in documents:
+        if document.get("kind") != "Deployment" or document.get("metadata", {}).get("name") != "tcp-proxy-service":
+            continue
+        for container in document.get("spec", {}).get("template", {}).get("spec", {}).get("containers", []):
+            if container.get("name") != "tcp-proxy-service":
+                continue
+            for entry in container.get("env", []):
+                if entry.get("name") == name:
+                    entry["value"] = value
+
+
+for path_name, expected_path in (
+    ("FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH", "/tls/client.crt"),
+    ("FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH", "/tls/client.key"),
+    ("FIREMUD_GATEWAY_WS_CA_CERT_PATH", "/tls/ca.crt"),
+):
+    bridge_path_documents = copy.deepcopy(rendered_documents)
+    set_bridge_url(bridge_path_documents, canonical_bridge_url)
+    set_bridge_env(bridge_path_documents, path_name, "/wrong/bridge-file")
+    _, bridge_path_issues = module.validate_gateway_ws_values(
+        bridge_path_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+    )
+    if not any(f"must be exactly {expected_path!r}" in issue for issue in bridge_path_issues):
+        raise SystemExit(f"noncanonical bridge path {path_name} was accepted: {bridge_path_issues}")
 
 bridge_mount_documents = copy.deepcopy(rendered_documents)
 bridge_mount_container = next(
@@ -1936,13 +2108,94 @@ bridge_mount_container = next(
     if container.get("name") == "tcp-proxy-service"
 )
 bridge_mount_container["volumeMounts"] = [
-    mount for mount in bridge_mount_container["volumeMounts"] if mount.get("name") != "gateway-ws-client"
+    mount for mount in bridge_mount_container["volumeMounts"] if mount.get("name") != "hobby-tcp-proxy-bridge"
 ]
 _, bridge_mount_issues = module.validate_gateway_ws_values(
     bridge_mount_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
 )
 if not any("dedicated read-only Secret-backed /tls mount" in issue for issue in bridge_mount_issues):
     raise SystemExit(f"missing bridge client mount was accepted: {bridge_mount_issues}")
+
+bridge_readonly_documents = copy.deepcopy(rendered_documents)
+bridge_readonly_container = next(
+    container
+    for document in bridge_readonly_documents
+    if document.get("kind") == "Deployment" and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    for container in document["spec"]["template"]["spec"]["containers"]
+    if container.get("name") == "tcp-proxy-service"
+)
+next(
+    mount for mount in bridge_readonly_container["volumeMounts"] if mount.get("name") == "hobby-tcp-proxy-bridge"
+)["readOnly"] = False
+_, bridge_readonly_issues = module.validate_gateway_ws_values(
+    bridge_readonly_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+)
+if not any("dedicated read-only Secret-backed /tls mount" in issue for issue in bridge_readonly_issues):
+    raise SystemExit(f"writable bridge client mount was accepted: {bridge_readonly_issues}")
+
+bridge_secret_documents = copy.deepcopy(rendered_documents)
+bridge_secret_deployment = next(
+    document
+    for document in bridge_secret_documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+next(
+    volume
+    for volume in bridge_secret_deployment["spec"]["template"]["spec"]["volumes"]
+    if volume.get("name") == "hobby-tcp-proxy-bridge"
+)["secret"]["secretName"] = "wrong-bridge-secret"
+_, bridge_secret_issues = module.validate_gateway_ws_values(
+    bridge_secret_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+)
+if not any("must reference Secret firemud/hobby-tcp-proxy-bridge" in issue for issue in bridge_secret_issues):
+    raise SystemExit(f"wrong bridge Secret identity was accepted: {bridge_secret_issues}")
+
+bridge_subpath_documents = copy.deepcopy(rendered_documents)
+bridge_subpath_container = next(
+    container
+    for document in bridge_subpath_documents
+    if document.get("kind") == "Deployment" and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    for container in document["spec"]["template"]["spec"]["containers"]
+    if container.get("name") == "tcp-proxy-service"
+)
+next(
+    mount for mount in bridge_subpath_container["volumeMounts"] if mount.get("name") == "hobby-tcp-proxy-bridge"
+)["subPath"] = "client.crt"
+_, bridge_subpath_issues = module.validate_gateway_ws_values(
+    bridge_subpath_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+)
+if not any("must not use subPath" in issue for issue in bridge_subpath_issues):
+    raise SystemExit(f"bridge Secret subPath was accepted: {bridge_subpath_issues}")
+
+bridge_items_documents = copy.deepcopy(rendered_documents)
+bridge_items_volume = next(
+    volume
+    for document in bridge_items_documents
+    if document.get("kind") == "Deployment" and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    for volume in document["spec"]["template"]["spec"]["volumes"]
+    if volume.get("name") == "hobby-tcp-proxy-bridge"
+)
+bridge_items_volume["secret"]["items"] = [{"key": "client.crt"}]
+_, bridge_items_issues = module.validate_gateway_ws_values(
+    bridge_items_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+)
+if not any("items must include" in issue for issue in bridge_items_issues):
+    raise SystemExit(f"restrictive bridge Secret items were accepted: {bridge_items_issues}")
+
+bridge_identity_documents = copy.deepcopy(rendered_documents)
+next(
+    volume for volume in next(
+        document for document in bridge_identity_documents
+        if document.get("kind") == "Deployment" and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    )["spec"]["template"]["spec"]["volumes"]
+    if volume.get("name") == "hobby-tcp-proxy-bridge"
+)["secret"]["secretName"] = "grpc-tls"
+_, bridge_identity_issues = module.validate_gateway_ws_values(
+    bridge_identity_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+)
+if not any("dedicated read-only Secret-backed /tls mount" in issue for issue in bridge_identity_issues):
+    raise SystemExit(f"bridge client reused the gRPC Secret identity without failing: {bridge_identity_issues}")
 
 redis_endpoints, redis_issues = module.effective_redis_endpoints(
     rendered_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
@@ -3667,6 +3920,33 @@ def make_secret_evidence():
     return {"environment": "staging", "records": records}
 
 
+def make_bootstrap_secret_evidence():
+    bootstrap_operation_id = "bootstrap-staging-20260825"
+    provisioning_generation = 7
+    records = {}
+    for class_name in (
+        "jwt-signing-keys-jwks",
+        "postgres-application-credentials",
+        "backup-object-store-credentials",
+        "asset-store-credentials",
+        "operator-credentials",
+    ):
+        record = {
+            "targetEnvironment": "staging",
+            "credentialClass": class_name,
+            "bootstrapOperationId": bootstrap_operation_id,
+            "provisioningGeneration": provisioning_generation,
+        }
+        record["immutableArtifactId"] = evidence_digest(record)
+        records[class_name] = record
+    return {
+        "environment": "staging",
+        "bootstrapOperationId": bootstrap_operation_id,
+        "provisioningGeneration": provisioning_generation,
+        "records": records,
+    }
+
+
 secret_evidence_path.write_text(json.dumps(make_secret_evidence()), encoding="utf-8")
 staging_event_id = "55555555-5555-4555-8555-555555555555"
 jwt_custody_proof = {
@@ -3809,6 +4089,45 @@ if (
     or promotion_mode != "rollback-compatible"
 ):
     raise SystemExit(f"valid rollback-compatible promotion did not pass: {promotion_message}")
+
+# Bootstrap evidence is independently authorized by the matching operation ID
+# and provisioning generation; it must not require a rotation evidence ID.
+secret_evidence_path.write_text(
+    json.dumps(make_bootstrap_secret_evidence()),
+    encoding="utf-8",
+)
+bootstrap_promotion_status, _, bootstrap_promotion_message, _, _ = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if bootstrap_promotion_status != "pass":
+    raise SystemExit(
+        "valid bootstrap secret compliance evidence did not pass: "
+        + bootstrap_promotion_message
+    )
+bootstrap_mismatch = make_bootstrap_secret_evidence()
+bootstrap_mismatch["records"]["operator-credentials"]["provisioningGeneration"] = 8
+bootstrap_mismatch["records"]["operator-credentials"]["immutableArtifactId"] = evidence_digest(
+    bootstrap_mismatch["records"]["operator-credentials"]
+)
+secret_evidence_path.write_text(json.dumps(bootstrap_mismatch), encoding="utf-8")
+bootstrap_mismatch_status, _, bootstrap_mismatch_message, _, _ = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if (
+    bootstrap_mismatch_status != "fail"
+    or "provisioningGeneration mismatch" not in bootstrap_mismatch_message
+):
+    raise SystemExit(
+        "bootstrap provisioning generation mismatch was accepted: "
+        + bootstrap_mismatch_message
+    )
+secret_evidence_path.write_text(json.dumps(make_secret_evidence()), encoding="utf-8")
 
 base_attestation = json.loads(promotion_attestation_path.read_text(encoding="utf-8"))
 base_preflight_report = json.loads(staging_preflight_path.read_text(encoding="utf-8"))

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import datetime as dt
 import itertools
 import json
@@ -77,6 +76,7 @@ BRIDGE_WS_PATHS = {
     "FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH": "/tls/client.key",
     "FIREMUD_GATEWAY_WS_CA_CERT_PATH": "/tls/ca.crt",
 }
+BRIDGE_WS_SECRET_KEYS = frozenset({"client.crt", "client.key", "ca.crt"})
 BASE_SECRET_COMPLIANCE_CLASSES = frozenset(
     {
         "jwt-signing-keys-jwks",
@@ -416,25 +416,25 @@ def parse_timestamp(value: Any, field_name: str) -> dt.datetime:
     return parsed.astimezone(dt.timezone.utc)
 
 
-def secret_lookup_failure(secret_name: str) -> str | None:
+def secret_lookup_failure(secret_name: str, namespace: str = "firemud") -> str | None:
     try:
         result = subprocess.run(
-            ["kubectl", "get", "secret", "-n", "firemud", secret_name],
+            ["kubectl", "get", "secret", "-n", namespace, secret_name],
             check=False,
             capture_output=True,
             text=True,
             timeout=SECRET_LOOKUP_TIMEOUT_SECONDS,
         )
     except (OSError, subprocess.TimeoutExpired, UnicodeError) as exc:
-        return f"Secret lookup could not be verified for firemud/{secret_name}: {exc}"
+        return f"Secret lookup could not be verified for {namespace}/{secret_name}: {exc}"
     if result.returncode == 0:
         return None
 
     stderr = result.stderr.strip()
     if "(NotFound)" in stderr:
-        return f"Missing required Secret in cluster: firemud/{secret_name}"
+        return f"Missing required Secret in cluster: {namespace}/{secret_name}"
     detail = stderr or "kubectl returned a non-zero status without stderr"
-    return f"Secret lookup could not be verified for firemud/{secret_name}: {detail}"
+    return f"Secret lookup could not be verified for {namespace}/{secret_name}: {detail}"
 
 
 def is_missing(value: Any) -> bool:
@@ -1744,45 +1744,51 @@ def workload_namespace(document: dict[str, Any]) -> str:
 
 
 def effective_container_env(
-    documents: list[dict[str, Any]], document: dict[str, Any], container: dict[str, Any]
+    documents: list[dict[str, Any]],
+    document: dict[str, Any],
+    container: dict[str, Any],
+    *,
+    relevant_prefixes: tuple[str, ...] | None = None,
+    relevant_names: set[str] | None = None,
 ) -> tuple[dict[str, str], list[str]]:
     """Resolve the inspectable effective environment for this workload container."""
     namespace = workload_namespace(document)
-    configmaps = {
-        (workload_namespace(source), metadata_name(source)): source.get("data") or {}
-        for source in documents
-        if source.get("kind") == "ConfigMap" and metadata_name(source)
-    }
-    secrets: dict[tuple[str, str], dict[str, str]] = {}
-    secret_issues: list[str] = []
+    prefixes = relevant_prefixes or ()
+    names = relevant_names or set()
+    inspect_all = relevant_prefixes is None and relevant_names is None
+
+    def is_relevant(name: Any) -> bool:
+        return inspect_all or (
+            isinstance(name, str)
+            and (name in names or any(name.startswith(prefix) for prefix in prefixes))
+        )
+
+    def secret_env_from_is_relevant(prefix: str) -> bool:
+        # A prefix that is unrelated to the requested contract cannot expose a
+        # relevant key. With no prefix, an absent or malformed external Secret
+        # remains opaque; any concrete keys are still checked below when they
+        # can be inspected safely.
+        return inspect_all or (
+            bool(prefix)
+            and (
+                any(prefix.startswith(candidate) or candidate.startswith(prefix) for candidate in prefixes)
+                or any(name.startswith(prefix) for name in names)
+            )
+        )
+
+    configmaps: dict[tuple[str, str], Any] = {}
+    secrets: dict[tuple[str, str], Any] = {}
     for source in documents:
-        if source.get("kind") != "Secret" or not metadata_name(source):
+        source_name = metadata_name(source)
+        if not source_name:
             continue
-        values: dict[str, str] = {}
-        for key, value in (source.get("data") or {}).items():
-            if not isinstance(value, str):
-                secret_issues.append(
-                    f"Secret {workload_namespace(source)}/{metadata_name(source)} encoded value for {key} is not a string"
-                )
-                continue
-            try:
-                decoded = base64.b64decode(value, validate=True).decode("utf-8")
-            except (ValueError, UnicodeDecodeError):
-                secret_issues.append(
-                    f"Secret {workload_namespace(source)}/{metadata_name(source)} encoded value for {key} is invalid"
-                )
-                continue
-            values[str(key)] = decoded
-        for key, value in (source.get("stringData") or {}).items():
-            if isinstance(value, str):
-                values[str(key)] = value
-            else:
-                secret_issues.append(
-                    f"Secret {workload_namespace(source)}/{metadata_name(source)} value for {key} is not a string"
-                )
-        secrets[(workload_namespace(source), metadata_name(source))] = values
+        source_key = (workload_namespace(source), source_name)
+        if source.get("kind") == "ConfigMap":
+            configmaps[source_key] = source.get("data")
+        elif source.get("kind") == "Secret":
+            secrets[source_key] = source
     values: dict[str, str] = {}
-    issues: list[str] = list(secret_issues)
+    issues: list[str] = []
 
     def add(name: Any, value: Any, source: str) -> None:
         if not isinstance(name, str) or not name:
@@ -1807,17 +1813,53 @@ def effective_container_env(
         if not isinstance(ref, dict) or not ref.get("name"):
             continue
         ref_name = str(ref["name"])
+        optional = ref.get("optional", False)
+        if not isinstance(optional, bool):
+            issues.append(f"{source_kind} {namespace}/{ref_name} optional must be a boolean")
+            continue
         if source_values is None:
-            if not ref.get("optional", False):
+            if (
+                (source_kind == "ConfigMap" and not optional)
+                or (
+                    source_kind == "Secret"
+                    and secret_env_from_is_relevant(prefix)
+                    and not optional
+                )
+            ):
                 issues.append(f"{source_kind} {namespace}/{ref_name} referenced by workload is missing")
             continue
-        for key, value in source_values.items():
-            add(prefix + str(key), value, f"{source_kind} {namespace}/{ref_name}")
+        if not isinstance(source_values, dict):
+            if source_kind == "ConfigMap" or inspect_all:
+                issues.append(f"{source_kind} {namespace}/{ref_name} data must be a mapping")
+            continue
+        source_data = source_values.get("data") if source_kind == "Secret" else source_values
+        source_string_data = source_values.get("stringData") if source_kind == "Secret" else None
+        if source_kind == "Secret" and (
+            ("data" in source_values and not isinstance(source_data, dict))
+            or ("stringData" in source_values and not isinstance(source_string_data, dict))
+        ):
+            if secret_env_from_is_relevant(prefix):
+                issues.append(f"Secret {namespace}/{ref_name} data and stringData must be mappings")
+            continue
+        source_entries = dict(source_data or {})
+        source_entries.update(source_string_data or {})
+        for key, value in source_entries.items():
+            effective_name = prefix + str(key)
+            if not is_relevant(effective_name):
+                continue
+            if source_kind == "Secret":
+                issues.append(
+                    f"Secret {namespace}/{ref_name} cannot provide relevant environment configuration {effective_name}"
+                )
+                continue
+            add(effective_name, value, f"ConfigMap {namespace}/{ref_name}")
 
     for entry in container.get("env") or []:
         if not isinstance(entry, dict) or not entry.get("name"):
             continue
         name = entry["name"]
+        if not is_relevant(name):
+            continue
         if "value" in entry:
             add(name, entry.get("value"), "direct env")
             continue
@@ -1835,11 +1877,40 @@ def effective_container_env(
         if not isinstance(ref, dict) or not ref.get("name") or not ref.get("key"):
             continue
         ref_name = str(ref["name"])
-        if source_values is None or ref["key"] not in source_values:
-            if not ref.get("optional", False):
+        optional = ref.get("optional", False)
+        if not isinstance(optional, bool):
+            issues.append(f"{source_kind} key {namespace}/{ref_name}:{ref['key']} optional must be a boolean")
+            continue
+        if source_values is None:
+            if not optional:
                 issues.append(f"{source_kind} key {namespace}/{ref_name}:{ref['key']} referenced by workload is missing")
             continue
-        add(name, source_values[ref["key"]], f"{source_kind} {namespace}/{ref_name}")
+        if not isinstance(source_values, dict):
+            issues.append(f"{source_kind} {namespace}/{ref_name} data must be a mapping")
+            continue
+        if source_kind == "Secret":
+            source_data = source_values.get("data")
+            source_string_data = source_values.get("stringData")
+            if (
+                (source_data is not None and not isinstance(source_data, dict))
+                or (source_string_data is not None and not isinstance(source_string_data, dict))
+            ):
+                issues.append(f"Secret {namespace}/{ref_name} data and stringData must be mappings")
+                continue
+            if ref["key"] not in (source_data or {}) and ref["key"] not in (source_string_data or {}):
+                if not optional:
+                    issues.append(f"Secret key {namespace}/{ref_name}:{ref['key']} referenced by workload is missing")
+                continue
+            issues.append(
+                f"Secret {namespace}/{ref_name} cannot provide relevant environment configuration {name}"
+            )
+            continue
+        if ref["key"] not in source_values:
+            if not optional:
+                issues.append(f"ConfigMap key {namespace}/{ref_name}:{ref['key']} referenced by workload is missing")
+            continue
+        source_value = source_values[ref["key"]]
+        add(name, source_value, f"{source_kind} {namespace}/{ref_name}")
     return values, issues
 
 
@@ -1848,7 +1919,12 @@ def extract_service_discovery_overrides(documents: list[dict[str, Any]]) -> tupl
     issues: list[str] = []
     for document in documents:
         for _, container, _ in primary_containers(document):
-            values, env_issues = effective_container_env(documents, document, container)
+            values, env_issues = effective_container_env(
+                documents,
+                document,
+                container,
+                relevant_prefixes=("FIREMUD_SERVICES_",),
+            )
             issues.extend(env_issues)
             for key, value in values.items():
                 if not key.startswith("FIREMUD_SERVICES_"):
@@ -2181,6 +2257,27 @@ def normalize_service_endpoint(host: str, port: str, namespace: str) -> str:
     return f"{host}:{port.strip()}"
 
 
+def service_override_in_environment(value: Any, namespace: str) -> bool:
+    if not isinstance(value, str) or not value.strip() or "://" in value or "/" in value:
+        return False
+    host_port = value.strip().lower().rstrip(".")
+    host = host_port
+    if host_port.count(":") == 1:
+        host, port = host_port.rsplit(":", 1)
+        if not port.isdigit() or not 1 <= int(port) <= 65535:
+            return False
+    if not host or any(not label or not re.fullmatch(r"[a-z0-9-]+", label) for label in host.split(".")):
+        return False
+    if "." not in host:
+        return True
+    allowed_suffixes = (
+        f".{namespace}",
+        f".{namespace}.svc",
+        f".{namespace}.svc.cluster.local",
+    )
+    return host.endswith(allowed_suffixes)
+
+
 def expected_redis_endpoint(data: dict[str, Any], role: str) -> str | None:
     value = get(data, f"internalBindings.redis.{role}.endpoint")
     return value.strip().lower() if isinstance(value, str) and value.strip() else None
@@ -2196,7 +2293,12 @@ def effective_redis_endpoints(
     for document in documents:
         namespace = workload_namespace(document)
         for _, container, _ in primary_containers(document):
-            values, env_issues = effective_container_env(documents, document, container)
+            values, env_issues = effective_container_env(
+                documents,
+                document,
+                container,
+                relevant_prefixes=("FIREMUD_REDIS_",),
+            )
             issues.extend(env_issues)
             if not any(key.startswith("FIREMUD_REDIS_") for key in values):
                 continue
@@ -2226,7 +2328,16 @@ def canonical_gateway_ws_endpoint(
 ) -> tuple[str | None, list[str]]:
     listener_ref = get(expected, "internalBindings.certificates.gatewayInternalWsListenerRef")
     parsed_ref = parse_binding_ref(listener_ref)
-    namespace = parsed_ref[1] if parsed_ref and parsed_ref[0] == "cert-manager" else None
+    if (
+        parsed_ref is None
+        or parsed_ref[0] != "cert-manager"
+        or not parsed_ref[1]
+        or len(parsed_ref[2]) != 1
+    ):
+        return None, [
+            "internalBindings.certificates.gatewayInternalWsListenerRef must be a cert-manager binding with one namespace-local name"
+        ]
+    namespace = parsed_ref[1]
     services = [
         document for document in documents
         if document.get("kind") == "Service"
@@ -2262,7 +2373,12 @@ def validate_gateway_ws_values(
             }
             if workload_name != "tcp-proxy-service" and "GATEWAY_WS_URL" not in declared_names:
                 continue
-            env, env_issues = effective_container_env(documents, document, container)
+            env, env_issues = effective_container_env(
+                documents,
+                document,
+                container,
+                relevant_names={"GATEWAY_WS_URL", *BRIDGE_WS_PATHS},
+            )
             issues.extend(env_issues)
             for path_name, expected_path in BRIDGE_WS_PATHS.items():
                 if env.get(path_name) != expected_path:
@@ -2289,6 +2405,74 @@ def validate_gateway_ws_values(
                 and volumes.get(mount.get("name"))
                 and any(path_is_under(path, str(mount.get("mountPath") or "")) for path in grpc_paths)
             }
+            bridge_ref = parse_binding_ref(
+                get(expected, "internalBindings.certificates.tcpProxyBridgeClientRef")
+            )
+            expected_bridge_namespace = (
+                bridge_ref[1]
+                if bridge_ref and bridge_ref[0] == "cert-manager" and len(bridge_ref[2]) == 1
+                else None
+            )
+            expected_bridge_name = (
+                bridge_ref[2][0]
+                if bridge_ref and bridge_ref[0] == "cert-manager" and len(bridge_ref[2]) == 1
+                else None
+            )
+            pod_spec = (((document.get("spec") or {}).get("template") or {}).get("spec") or {})
+            volume_definitions = {
+                volume.get("name"): volume
+                for volume in pod_spec.get("volumes") or []
+                if isinstance(volume, dict) and volume.get("name")
+            }
+
+            def bridge_volume_is_valid(
+                mount: dict[str, Any],
+                *,
+                bridge_name: str | None = expected_bridge_name,
+                bridge_namespace: str | None = expected_bridge_namespace,
+                current_document: dict[str, Any] = document,
+                current_volumes: dict[str, str | None] = volumes,
+                current_volume_definitions: dict[str, dict[str, Any]] = volume_definitions,
+            ) -> bool:
+                if bridge_name is None or bridge_namespace is None:
+                    return False
+                if workload_namespace(current_document) != bridge_namespace:
+                    issues.append(
+                        "Gateway WebSocket bridge workload namespace does not match "
+                        f"expected {bridge_namespace}"
+                    )
+                    return False
+                secret_name = current_volumes.get(mount.get("name"))
+                if secret_name != bridge_name:
+                    issues.append(
+                        "Gateway WebSocket bridge mount must reference Secret "
+                        f"{bridge_namespace}/{bridge_name}"
+                    )
+                    return False
+                if "subPath" in mount:
+                    issues.append("Gateway WebSocket bridge Secret mount must not use subPath")
+                    return False
+                volume = current_volume_definitions.get(mount.get("name")) or {}
+                secret = volume.get("secret") if isinstance(volume, dict) else None
+                if not isinstance(secret, dict):
+                    return False
+                items = secret.get("items")
+                if items is not None and (
+                    not isinstance(items, list)
+                    or {
+                        item.get("key")
+                        for item in items
+                        if isinstance(item, dict)
+                    }
+                    < set(BRIDGE_WS_SECRET_KEYS)
+                ):
+                    issues.append(
+                        "Gateway WebSocket bridge Secret volume items must include "
+                        + ", ".join(sorted(BRIDGE_WS_SECRET_KEYS))
+                    )
+                    return False
+                return True
+
             bridge_mounts = [
                 mount
                 for mount in container.get("volumeMounts") or []
@@ -2297,6 +2481,7 @@ def validate_gateway_ws_values(
                 and mount.get("readOnly") is True
                 and volumes.get(mount.get("name"))
                 and volumes.get(mount.get("name")) not in grpc_secret_names
+                and bridge_volume_is_valid(mount)
             ]
             if len(bridge_mounts) != 1:
                 issues.append(
@@ -2315,14 +2500,18 @@ def validate_gateway_ws_values(
             try:
                 parsed_port = parsed.port
             except ValueError:
-                parsed_port = None
                 issues.append(f"GATEWAY_WS_URL {value!r} has an invalid port")
+                continue
+            effective_port = 443 if parsed_port is None else parsed_port
+            if not 1 <= effective_port <= 65535:
+                issues.append(f"GATEWAY_WS_URL {value!r} has an invalid port")
+                continue
             if (
                 parsed.scheme != "wss"
                 or parsed.username is not None
                 or parsed.password is not None
                 or parsed_host != canonical_host
-                or str(parsed_port or 443) != canonical_port
+                or str(effective_port) != canonical_port
                 or parsed.path != "/ws/game"
                 or parsed.query
                 or parsed.fragment
@@ -2976,6 +3165,10 @@ def expected_binding_checks(
             )
 
     mode = get(data, "serviceDiscovery.mode")
+    target_namespace = next(
+        (workload_namespace(document) for document in documents if primary_containers(document)),
+        "firemud",
+    )
     override_lines, override_issues = extract_service_discovery_overrides(documents)
     if mode == "kubernetes-dns-default" and (override_lines or override_issues):
         results.append(
@@ -3012,6 +3205,10 @@ def expected_binding_checks(
                     failures.append(
                         f"serviceDiscovery.allowedOverrides[{override_name}] must be a string"
                     )
+                elif not service_override_in_environment(expected_value, target_namespace):
+                    failures.append(
+                        f"serviceDiscovery.allowedOverrides[{override_name}] must target the {target_namespace} Kubernetes environment"
+                    )
                 elif override_name not in override_lines:
                     failures.append(
                         f"Allowed override {override_name} is missing from effective workloads"
@@ -3025,6 +3222,11 @@ def expected_binding_checks(
                 expected_value = allowed.get(override_name)
                 if not isinstance(expected_value, str):
                     failures.append(f"serviceDiscovery.allowedOverrides[{override_name}] must be a string")
+                    continue
+                if not service_override_in_environment(rendered_value, target_namespace):
+                    failures.append(
+                        f"Rendered {override_name} must target the {target_namespace} Kubernetes environment"
+                    )
                     continue
                 if expected_value != rendered_value:
                     failures.append(
@@ -3759,6 +3961,46 @@ def _promotion_check(
     records = secret_evidence.get("records", {})
     if not isinstance(records, dict):
         return ("fail", rollback_mode, "Staging secret compliance evidence records must be an object")
+
+    # Bootstrap evidence is authorized by the validator through the immutable
+    # bootstrap operation and provisioning generation. Rotation evidence uses
+    # the per-record evidence operation instead. Treat a partially supplied
+    # bootstrap pair as bootstrap-shaped so it fails closed rather than being
+    # silently accepted as rotation evidence.
+    top_bootstrap_operation_id = secret_evidence.get("bootstrapOperationId")
+    top_provisioning_generation = secret_evidence.get("provisioningGeneration")
+    bootstrap_fields_present = (
+        "bootstrapOperationId" in secret_evidence
+        or "provisioningGeneration" in secret_evidence
+        or any(
+            isinstance(record, dict)
+            and (
+                "bootstrapOperationId" in record
+                or "provisioningGeneration" in record
+            )
+            for record in records.values()
+        )
+    )
+    if bootstrap_fields_present:
+        if (
+            not isinstance(top_bootstrap_operation_id, str)
+            or not top_bootstrap_operation_id.strip()
+        ):
+            return (
+                "fail",
+                rollback_mode,
+                "Staging secret compliance bootstrap evidence requires a non-empty bootstrapOperationId",
+            )
+        if (
+            isinstance(top_provisioning_generation, bool)
+            or not isinstance(top_provisioning_generation, int)
+            or top_provisioning_generation <= 0
+        ):
+            return (
+                "fail",
+                rollback_mode,
+                "Staging secret compliance bootstrap evidence requires a positive integer provisioningGeneration",
+            )
     for key in required_secret_classes:
         rec = records.get(key)
         if not isinstance(rec, dict):
@@ -3775,13 +4017,27 @@ def _promotion_check(
                 rollback_mode,
                 f"Staging secret compliance evidence credentialClass mismatch: {key}",
             )
-        evidence_operation_id = rec.get("evidenceOperationId")
-        if not isinstance(evidence_operation_id, str) or not evidence_operation_id.strip():
-            return (
-                "fail",
-                rollback_mode,
-                f"Staging secret compliance evidence missing evidenceOperationId: {key}",
-            )
+        if bootstrap_fields_present:
+            if rec.get("bootstrapOperationId") != top_bootstrap_operation_id:
+                return (
+                    "fail",
+                    rollback_mode,
+                    f"Staging secret compliance bootstrapOperationId mismatch: {key}",
+                )
+            if rec.get("provisioningGeneration") != top_provisioning_generation:
+                return (
+                    "fail",
+                    rollback_mode,
+                    f"Staging secret compliance provisioningGeneration mismatch: {key}",
+                )
+        else:
+            evidence_operation_id = rec.get("evidenceOperationId")
+            if not isinstance(evidence_operation_id, str) or not evidence_operation_id.strip():
+                return (
+                    "fail",
+                    rollback_mode,
+                    f"Staging secret compliance evidence missing evidenceOperationId: {key}",
+                )
         immutable_id = rec.get("immutableArtifactId")
         if not isinstance(immutable_id, str) or not IMMUTABLE_ARTIFACT_ID_RE.fullmatch(immutable_id):
             return (
@@ -4135,8 +4391,14 @@ def main() -> int:
                 "PREFLIGHT-SECRETS-001", True, "pass", "Rendered workloads reference required player-facing Secret bindings",
             ) or has_required_failure
     else:
-        for secret_name in ("postgres-credentials", "jwt-signing-keys", "jwt-jwks"):
-            failure_message = secret_lookup_failure(secret_name)
+        secret_bindings = (
+            ("postgres-credentials", "internalBindings.postgres.credentialsRef"),
+            ("jwt-signing-keys", "internalBindings.jwt.signingKeysRef"),
+            ("jwt-jwks", "internalBindings.jwt.jwksRef"),
+        )
+        for secret_name, binding_path in secret_bindings:
+            secret_namespace = secret_binding_namespace(get(expected_bindings, binding_path)) or "firemud"
+            failure_message = secret_lookup_failure(secret_name, secret_namespace)
             if failure_message is not None:
                 has_required_failure = append_result(
                     check_results,

@@ -4318,9 +4318,14 @@ def validate_logging_admin_idempotency(
             )
             routes_to_validate = [route] if route is not None else []
         for route in routes_to_validate:
+            label = (
+                route_label(route)
+                if (service, route_name) == MODERATION_ACTION_ROUTE
+                else f"{service} {route_name}"
+            )
             validate_idempotency_contract(
                 route,
-                route_label(route),
+                label,
                 errors,
                 required_fields_cache,
             )

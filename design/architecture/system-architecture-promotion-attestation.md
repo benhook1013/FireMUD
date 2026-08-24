@@ -34,7 +34,7 @@ Required fields:
 - `stagingOverlayCommitSha` – Git SHA of the staging overlay commit applied.
 - `stagingDeploymentEventId` – canonical UUID selecting the immutable staging apply event being promoted.
 - `jwtCustodyProof` – object with exactly `proofId`, `custodyMode`, and `contractVersion`, copied from the selected staging deployment record and its consumed operator preflight report.
-- `jwtRotationEvidenceRef` – immutable, digest-qualified reference to the passing `PREFLIGHT-JWT-ROTATION-001` evidence carried by the selected staging deployment record.
+- `jwtRotationEvidenceRef` – immutable repository reference in the exact form `<repository-path>#sha256:<digest>` to the passing `PREFLIGHT-JWT-ROTATION-001` evidence carried by the selected staging deployment record.
 - `serviceDigests` – map of service name to immutable OCI manifest or index reference (`image@sha256:...`). A single-architecture service records its manifest reference here; a multi-architecture service records its OCI index reference here.
 - `servicePlatformDigests` – map of service name to a map of canonical lowercase OCI platform keys (`os/architecture` or `os/architecture/variant`, for example `linux/amd64` or `linux/arm64/v8`) to exact child-manifest references (`image@sha256:...`). A multi-architecture service's map keys must exactly equal the production-admitted platform set, with no missing or extra entries, and each index descriptor must prove the recorded platform-to-child binding. A single-architecture service has exactly one admitted-platform entry whose child digest equals its `serviceDigests` manifest digest.
 - `smokeEvidence` – list of URLs or artifact IDs for smoke-test results.

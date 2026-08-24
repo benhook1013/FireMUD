@@ -6,7 +6,9 @@ Accepted
 
 ## Implementation Status
 
-This decision is not implemented. Versioned preflight phases, expected-binding observation, conditional integration checks, portable manifests, and executable one-operator proof remain gaps.
+This decision is partially implemented. The checked-in executable provides a bounded static/operator slice: it emits versioned policy-catalogue and report metadata and validates expected-binding shape, rendered bindings, typed sharing, conditional integrations, and report policy IDs/categories. These checks are static, non-authorizing evidence; they do not establish live target identity or protected readiness.
+
+The complete phase-aware contract remains incomplete: content-digest binding, live pre-apply and post-apply observation, complete rendered/live binding comparison, phase and waiver enforcement, and end-to-end one-operator evidence are not implemented. Player-facing apply, promotion, first-live, reopen, and fresh-boundary restore remain fail-closed pending those operator/runtime gates.
 
 ## Decision Record
 
