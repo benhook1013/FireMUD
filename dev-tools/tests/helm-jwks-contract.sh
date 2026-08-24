@@ -25,18 +25,18 @@ documents = [
     )
     if isinstance(document, dict)
 ]
-jwks = next(
-    (
-        document
-        for document in documents
-        if document.get("metadata", {}).get("name") == "jwt-jwks"
-    ),
-    None,
-)
-if jwks is None:
-    raise SystemExit("rendered YAML did not contain the jwt-jwks ConfigMap")
-if jwks.get("kind") != "ConfigMap":
-    raise SystemExit(f"jwt-jwks rendered as {jwks.get('kind')}, expected ConfigMap")
+jwks_matches = [
+    document
+    for document in documents
+    if document.get("kind") == "ConfigMap"
+    and document.get("metadata", {}).get("name") == "jwt-jwks"
+]
+if len(jwks_matches) != 1:
+    raise SystemExit(
+        "rendered YAML must contain exactly one jwt-jwks ConfigMap, "
+        f"found {len(jwks_matches)}"
+    )
+jwks = jwks_matches[0]
 data = jwks.get("data")
 jwks_json = data.get("jwks.json") if isinstance(data, dict) else None
 if not isinstance(jwks_json, str) or not jwks_json.strip():

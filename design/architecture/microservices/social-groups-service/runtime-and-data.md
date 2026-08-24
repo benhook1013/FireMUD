@@ -50,18 +50,19 @@ At send, participation, and history boundaries, `chat_mute` blocks sending while
   - It does not touch `tick:*`, `timer:*`, `retry:*`, `session:*`, or automation coordination keys; gameplay coordination and Automation-owned scheduler/timer coordination remain the responsibility of the Game Session and Automation & Scripting services as described in [Redis Architecture](../../system-architecture-redis.md)
 - **Cache/Rate-Limit Redis**
   - Uses Cache/Rate-Limit Redis for recent history projections, fanout buffers, delivery queues, and rate limits under prefixes such as:
-    - `chat:say:<tenantId>:<characterId>`
+    - `chat:say:<tenantId>:<senderAccountId>`
     - `chat:whisper:<tenantId>:<playableStateNamespaceId>:<characterId>`
     - `chat:tell:<tenantId>:<conversationId>`
     - `chat:guild:<tenantId>:<guildId>`
     - `chat:account:<tenantId>:<accountId>`
     - `chat:city:<tenantId>:<cityId>`
   - The target gameplay `WHISPER` projection is scoped to the exact recipient `{tenantId, playableStateNamespaceId, characterId}` and remains distinct from account-scoped `chat:account:<tenantId>:<accountId>`. The live Social request/DTO/entity/schema and key are still account-keyed as `chat:whisper:<tenantId>:<accountId>`; that is implementation drift and must not serve history/refill across same-account characters or playable-state namespaces. The required cross-service migration and original-view proof remain gaps; see the [canonical Redis contract](../../system-architecture-redis-cache-reference.md#canonical-social--groups-chatwhisper-class-b-contract).
-  - These structures are bounded and rebuildable projections. They may accelerate reads or transient fanout but are never authoritative for promised player history, safety evidence, erasure, or retry receipts; loss cannot change the declared retention or disclosure contract.
-  - `chat:city` is a legacy current city projection. Its presence does not implement or prove the target profile-scoped `SHOUT` contract, which remains deferred until a selected game profile publishes a named bounded topology scope and fanout cap.
+  - These structures are bounded and rebuildable projections. They may accelerate reads or transient fanout but are never authoritative for promised player history, safety evidence, erasure, or retry receipts; loss cannot change the declared retention or disclosure contract. Redis loss or TTL expiry may produce only transient projection gaps; for a communication type that promises durable player history, reads use or fall back to authoritative Social/PostgreSQL history, so projection loss cannot create a durable-history entitlement gap.
+  - The current `chat:say` key is sender-account scoped and must not be presented as a recipient/history scope. Any future gameplay-SAY projection must publish its exact recipient/view scope and original-view contract rather than infer it from a bare character ID.
+  - `chat:city` is a current legacy TTL projection, not durable player history. Its presence does not implement or prove the target profile-scoped `SHOUT` contract. No `SHOUT` Redis/reset family exists until a selected profile publishes its type/storage/topology contract.
   - Cache metrics for these prefixes should follow the `chat:*` recommendations in `system-architecture-redis-cache.md` (for example `cache.chat_hits_total` / `cache.chat_misses_total` with chat-type labels) so hit/miss behavior and key counts are observable
   - Concrete TTL and max-message budgets for these prefixes are documented in [Configuration](./configuration.md) and must remain aligned with the type-specific retention contract and size/complexity envelopes described in `system-architecture-redis-cache.md`. The current `chat:whisper` settings remain `FIREMUD_CHAT_WHISPERS_TTL_SECONDS` (default `7200`) and `FIREMUD_CHAT_WHISPERS_MAX_MESSAGES` (default `50`) while the recipient-scope migration remains pending.
-- New chat/cache prefixes or changes to Redis usage should be validated against the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md) so they remain aligned with the global key catalog and SLOs, and should be added to the cache/rate-limit Redis key catalog maintained in the Redis cache design docs
+  - New chat/cache prefixes or changes to Redis usage should be validated against the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md) so they remain aligned with the global key catalog and SLOs, and should be added to the [canonical cache/rate-limit prefix catalog](../../system-architecture-redis-cache-reference.md#cache-rate-limit-key-catalog).
 
 If you change Redis usage for this service, you must read and apply:
 

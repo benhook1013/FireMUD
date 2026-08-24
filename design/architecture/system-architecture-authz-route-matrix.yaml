@@ -14,7 +14,7 @@ operator_mutation_support_gate:
   required_before_enablement:
     - published_action_family_schema
     - shared_cross_language_mutationDigest_v1_golden_vectors
-    - account_issued_authorization_reference_issuance_and_owner_redemption
+    - account_issued_authorization_reference_issuance_and_contract_declared_receiving_boundary_redemption
   applies_to:
     - logging-admin-service/POST /feature-flags/toggle
     - logging-admin-service/POST /moderation/actions
@@ -638,8 +638,42 @@ operator_delegation:
     ambiguous_response: read_only_reconcile_same_request_without_replacement_reference
     raw_reference_persistence: encrypted_bounded_response_only
   forwarded_by: logging-admin-service
-  redeemed_by: owner_service_with_account_validation
+  redeemed_by: contract_declared_receiving_boundary
   assertions_alone_are_not_authority: true
+moderation_policy_intent_authorization:
+  coverage_identity: moderation-policy-intent-local-redemption
+  route_identities:
+    - logging-admin-service/POST /moderation/actions
+    - logging-admin-service/ApplyModerationAction
+  request_identity: policy_intent_request_id
+  digest: mutationDigest/v1
+  digest_field: mutation_digest
+  authorization_reference:
+    contract: account_issued_bounded_reference
+    raw_reference_persistence: forbidden_for_policy_intent
+    fingerprint_field: authorization_reference_fingerprint
+  redemption:
+    receiving_boundary: logging-admin-service
+    exactly_once: true
+    owner_redemption: forbidden
+  owner_enforcement_command:
+    request_identity: owner_enforcement_request_id
+    digest: owner_enforcement_digest
+    authorization_reference: owner_enforcement_authorization_reference
+    fingerprint: owner_enforcement_authorization_reference_fingerprint
+    redeemed_by: selected_enforcement_owner
+    distinct_from_policy_intent: true
+moderation_action_selector:
+  request_field: action
+  branch_field: action_category
+  mapping:
+    gameplay_ban: tenant_restriction
+    chat_mute: tenant_restriction
+    chat_ban: tenant_restriction
+    platform_access_ban: platform_access_ban
+  rejected_values: [account_security_lock, ban, account_ban, account_security_ban]
+  unknown_values: reject
+  rejection_phase: before_branch_authorization
 coverage_drift:
   - family: security-lock-export-issuance
     status: drift-found
@@ -654,11 +688,33 @@ coverage_drift:
     target_owner: account-service
     note: No current OpenAPI or owner-side quota-override route exists; do not add an executable route entry until the Account contract exists.
   - family: moderation-enforcement-owner-call
+    category: platform_access_ban
     status: drift-found
     current_routes: []
     target_ingress: logging-admin-service
-    target_owner: account-service_or_gameplay_policy_owner
-    note: ApplyModerationAction has an implementation path for policy input, but POST /moderation/actions and the gRPC action are unavailable/gated pending the action schema, shared mutationDigest/v1 vectors, and Account authorization-reference issuance/redemption flow; no current owner-side enforcement RPC is exposed.
+    target_owner: account-service
+    note: The platform_access_ban owner command is target-only; POST /moderation/actions and ApplyModerationAction remain unavailable/gated and no current Account enforcement RPC is exposed.
+  - family: moderation-enforcement-owner-call
+    category: gameplay_ban
+    status: drift-found
+    current_routes: []
+    target_ingress: logging-admin-service
+    target_owner: game-session-service
+    note: The gameplay_ban owner command is target-only; POST /moderation/actions and ApplyModerationAction remain unavailable/gated and no current Game Session enforcement RPC is exposed.
+  - family: moderation-enforcement-owner-call
+    category: chat_mute
+    status: drift-found
+    current_routes: []
+    target_ingress: logging-admin-service
+    target_owner: social-groups-service
+    note: The chat_mute owner command is target-only; POST /moderation/actions and ApplyModerationAction remain unavailable/gated and no current Social & Groups enforcement RPC is exposed.
+  - family: moderation-enforcement-owner-call
+    category: chat_ban
+    status: drift-found
+    current_routes: []
+    target_ingress: logging-admin-service
+    target_owner: social-groups-service
+    note: The chat_ban owner command is target-only; POST /moderation/actions and ApplyModerationAction remain unavailable/gated and no current Social & Groups enforcement RPC is exposed.
   - family: game-session-session-lifecycle-external-ingress
     status: drift-found
     current_ingress: game-session-service_owner_local_only
@@ -2840,6 +2896,8 @@ routes:
     classification: tenant_regular
     applicability:
       action_category: tenant_restriction
+    action_selector_branch: tenant_restriction
+    moderation_policy_intent_authorization_contract: moderation-policy-intent-local-redemption
     accepted_action_categories: [gameplay_ban, chat_mute, chat_ban]
     route_status: target_not_currently_routable
     tenant_billing_authority_generation_applies: true
@@ -2886,6 +2944,8 @@ routes:
     platform_admin_override: platformAdmin_only
     applicability:
       action_category: platform_access_ban
+    action_selector_branch: platform_access_ban
+    moderation_policy_intent_authorization_contract: moderation-policy-intent-local-redemption
     accepted_action_categories: [platform_access_ban]
     route_status: target_not_currently_routable
     issuer_authority_generation_applies: true

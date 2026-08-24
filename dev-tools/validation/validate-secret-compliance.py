@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import json
 import os
 import pathlib
+import re
 import sys
 
 import yaml
@@ -15,6 +18,7 @@ REQUIRED = {
     "postgres-application-credentials",
     "operator-credentials",
 }
+IMMUTABLE_ARTIFACT_ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 EXPECTED_BINDING_FILES = {
     "production": pathlib.Path("design/operations/environments/production/expected-bindings.yaml"),
     "staging": pathlib.Path("design/operations/environments/staging/expected-bindings.yaml"),
@@ -48,8 +52,39 @@ def utc_now() -> dt.datetime:
 def parse_timestamp(value: str) -> dt.datetime:
     parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+        raise ValueError("timestamp must include an explicit timezone")
     return parsed
+
+
+def canonical_evidence_digest(record: dict) -> str:
+    """Hash the selected record using the documented RFC 8785 subset."""
+    payload = {key: value for key, value in record.items() if key != "immutableArtifactId"}
+
+    def encode(value: object) -> str:
+        if value is None:
+            return "null"
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, str):
+            value.encode("utf-8")
+            return json.dumps(value, ensure_ascii=False)
+        if isinstance(value, int):
+            if abs(value) > 9_007_199_254_740_991:
+                raise TypeError("integers outside the RFC 8785 interoperable range are not allowed")
+            return str(value)
+        if isinstance(value, float):
+            raise TypeError("floating-point numbers are not allowed in evidence records")
+        if isinstance(value, dict):
+            if not all(isinstance(key, str) for key in value):
+                raise TypeError("evidence object keys must be strings")
+            keys = sorted(value, key=lambda key: key.encode("utf-16-be"))
+            return "{" + ",".join(f"{encode(key)}:{encode(value[key])}" for key in keys) + "}"
+        if isinstance(value, list):
+            return "[" + ",".join(encode(nested) for nested in value) + "]"
+        raise TypeError(f"unsupported evidence value type: {type(value).__name__}")
+
+    encoded = encode(payload).encode("utf-8")
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
 def main() -> int:
@@ -72,6 +107,7 @@ def main() -> int:
 
     failures: list[str] = []
     warnings: list[str] = []
+    non_authorizing_environments: list[str] = []
 
     def hard_gated(env: str) -> bool:
         if env == "production":
@@ -138,6 +174,7 @@ def main() -> int:
         expected_binding_path = root / EXPECTED_BINDING_FILES[env]
         asset_storage_enabled = False
         backup_storage_enabled = False
+        expected_bindings_valid = True
         try:
             expected_bindings = yaml.safe_load(
                 expected_binding_path.read_text(encoding="utf-8")
@@ -148,10 +185,12 @@ def main() -> int:
                 f"{EXPECTED_BINDING_FILES[env]}: {exc}"
             )
             expected_bindings = {}
+            expected_bindings_valid = False
         if not isinstance(expected_bindings, dict) or expected_bindings.get("environment") != env:
             record_schema_issue(
                 f"{env}: canonical expected-bindings manifest must target '{env}'"
             )
+            expected_bindings_valid = False
         else:
             backup_storage = expected_bindings.get("backupStorage")
             if not isinstance(backup_storage, dict) or not isinstance(
@@ -160,23 +199,27 @@ def main() -> int:
                 record_schema_issue(
                     f"{env}: backupStorage.enabled must be a boolean"
                 )
+                expected_bindings_valid = False
             else:
                 backup_storage_enabled = backup_storage["enabled"]
                 if env == "production" and not backup_storage_enabled:
                     record_schema_issue(
                         "production: backupStorage.enabled must be true"
                     )
+                    expected_bindings_valid = False
             asset_storage = expected_bindings.get("assetStorage")
             if "assetStorage" in expected_bindings and not isinstance(
                 asset_storage, dict
             ):
                 record_schema_issue(f"{env}: assetStorage must be a mapping when present")
+                expected_bindings_valid = False
             elif isinstance(asset_storage, dict):
                 enabled = asset_storage.get("enabled")
                 if not isinstance(enabled, bool):
                     record_schema_issue(
                         f"{env}: assetStorage.enabled must be a boolean when assetStorage is present"
                     )
+                    expected_bindings_valid = False
                 else:
                     asset_storage_enabled = enabled
 
@@ -201,6 +244,10 @@ def main() -> int:
                     f"{env}: not-provisioned compliance records must not list "
                     "credential classes",
                 )
+            non_authorizing_environments.append(env)
+            continue
+
+        if not expected_bindings_valid:
             continue
 
         bootstrap_status = data.get("bootstrapOperationStatus")
@@ -303,6 +350,8 @@ def main() -> int:
             )
             try:
                 recorded_at = parse_timestamp(evidence_time)
+                if recorded_at > today:
+                    raise ValueError("freshness timestamp must not be in the future")
                 age_days = (today - recorded_at).days
             except (TypeError, ValueError, AttributeError) as exc:
                 record_issue(
@@ -387,6 +436,31 @@ def main() -> int:
                 )
                 continue
 
+            if evidence.get("environment") != env:
+                record_schema_issue(
+                    f"{env}:{cls}: evidence payload environment must exactly match '{env}'"
+                )
+            if record.get("targetEnvironment") != env:
+                record_schema_issue(
+                    f"{env}:{cls}: evidence record targetEnvironment must exactly match '{env}'"
+                )
+            if record.get("credentialClass") != cls:
+                record_schema_issue(
+                    f"{env}:{cls}: evidence record credentialClass must exactly match '{cls}'"
+                )
+            if not bootstrap_record:
+                evidence_operation_id = rec.get("evidenceOperationId")
+                if not isinstance(evidence_operation_id, str) or not evidence_operation_id.strip():
+                    record_schema_issue(
+                        f"{env}:{cls}: non-bootstrap credential records require a stable "
+                        "evidenceOperationId"
+                    )
+                elif record.get("evidenceOperationId") != evidence_operation_id:
+                    record_schema_issue(
+                        f"{env}:{cls}: evidenceOperationId must exactly match the selected "
+                        "credential record"
+                    )
+
             if bootstrap_record and operation_fields_valid:
                 if record.get("bootstrapOperationId") != bootstrap_operation_id:
                     record_schema_issue(
@@ -401,13 +475,27 @@ def main() -> int:
                         "provisioningGeneration",
                     )
 
-            immutable_id = str(record.get("immutableArtifactId", ""))
-            if not immutable_id or "sha256:" not in immutable_id:
-                record_issue(
-                    env,
-                    f"{env}:{cls}: immutableArtifactId is missing or non-immutable "
-                    f"in {evidence_ref}",
+            immutable_id = record.get("immutableArtifactId")
+            if not isinstance(immutable_id, str) or not IMMUTABLE_ARTIFACT_ID_RE.fullmatch(
+                immutable_id
+            ):
+                record_schema_issue(
+                    f"{env}:{cls}: immutableArtifactId must match sha256:<64 lowercase hex> "
+                    f"in {evidence_ref}"
                 )
+            else:
+                try:
+                    expected_digest = canonical_evidence_digest(record)
+                except (TypeError, ValueError) as exc:
+                    record_schema_issue(
+                        f"{env}:{cls}: evidence record cannot be canonically hashed: {exc}"
+                    )
+                else:
+                    if immutable_id != expected_digest:
+                        record_schema_issue(
+                            f"{env}:{cls}: immutableArtifactId does not match the selected "
+                            f"evidence record in {evidence_ref}"
+                        )
 
     for msg in warnings:
         print(f"::warning::{msg}")
@@ -422,6 +510,11 @@ def main() -> int:
             f"- Warnings: `{len(warnings)}`",
             f"- Failures: `{len(failures)}`",
         ]
+        if non_authorizing_environments:
+            lines.append(
+                "- Non-authorizing record validation only (inventory corroboration not performed): "
+                + ", ".join(non_authorizing_environments)
+            )
         if warnings:
             lines.extend(["", "#### Warnings", *[f"- {msg}" for msg in warnings]])
         if failures:
@@ -432,7 +525,14 @@ def main() -> int:
         print("Secret compliance validation failed")
         return 1
 
-    print("Secret compliance validation passed")
+    if non_authorizing_environments:
+        print(
+            "Secret compliance record validation passed; credential compliance "
+            "authorization/readiness was not established for: "
+            + ", ".join(non_authorizing_environments)
+        )
+    else:
+        print("Secret compliance validation passed")
     return 0
 
 

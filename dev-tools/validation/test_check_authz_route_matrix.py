@@ -139,6 +139,129 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     def test_current_matrix_passes(self):
         self.assertEqual([], self.validator.validate(MATRIX))
 
+    def test_moderation_root_contract_declares_receiving_redemption_and_selector(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        contract = document["moderation_policy_intent_authorization"]
+        self.assertEqual(
+            "moderation-policy-intent-local-redemption",
+            contract["coverage_identity"],
+        )
+        self.assertEqual(
+            [
+                "logging-admin-service/POST /moderation/actions",
+                "logging-admin-service/ApplyModerationAction",
+            ],
+            contract["route_identities"],
+        )
+        self.assertEqual(
+            {
+                "receiving_boundary": "logging-admin-service",
+                "exactly_once": True,
+                "owner_redemption": "forbidden",
+            },
+            contract["redemption"],
+        )
+        self.assertEqual(
+            {
+                "contract": "account_issued_bounded_reference",
+                "raw_reference_persistence": "forbidden_for_policy_intent",
+                "fingerprint_field": "authorization_reference_fingerprint",
+            },
+            contract["authorization_reference"],
+        )
+        self.assertEqual(
+            {
+                "gameplay_ban": "tenant_restriction",
+                "chat_mute": "tenant_restriction",
+                "chat_ban": "tenant_restriction",
+                "platform_access_ban": "platform_access_ban",
+            },
+            document["moderation_action_selector"]["mapping"],
+        )
+        self.assertEqual(
+            ["account_security_lock", "ban", "account_ban", "account_security_ban"],
+            document["moderation_action_selector"]["rejected_values"],
+        )
+
+    def test_moderation_root_contract_rejects_wrong_redemption_or_selector(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        document["moderation_policy_intent_authorization"]["redemption"][
+            "owner_redemption"
+        ] = "required"
+        document["moderation_policy_intent_authorization"]["authorization_reference"][
+            "contract"
+        ] = "control_plane_request_id"
+        document["operator_delegation"]["redeemed_by"] = (
+            "owner_service_with_account_validation"
+        )
+        document["operator_mutation_support_gate"]["required_before_enablement"][-1] = (
+            "account_issued_authorization_reference_issuance_and_owner_redemption"
+        )
+        document["moderation_action_selector"]["mapping"][
+            "platform_access_ban"
+        ] = "tenant_restriction"
+
+        errors = validate_document(self.validator, document)
+
+        self.assertTrue(
+            any(
+                "moderation policy-intent redemption must declare "
+                "owner_redemption='forbidden'" in error
+                for error in errors
+            ),
+            errors,
+        )
+        self.assertTrue(
+            any(
+                "moderation policy-intent authorization reference must use" in error
+                for error in errors
+            ),
+            errors,
+        )
+        self.assertTrue(
+            any(
+                "moderation_action_selector.mapping must exactly map" in error
+                for error in errors
+            ),
+            errors,
+        )
+        self.assertTrue(
+            any(
+                "operator mutation gate must require Account reference issuance"
+                in error
+                for error in errors
+            ),
+            errors,
+        )
+        self.assertTrue(
+            any(
+                "operator_delegation.redeemed_by must be" in error
+                for error in errors
+            ),
+            errors,
+        )
+
+    def test_moderation_owner_coverage_requires_exact_category_owner_set(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        record = next(
+            entry
+            for entry in document["coverage_drift"]
+            if entry.get("family") == "moderation-enforcement-owner-call"
+            and entry.get("category") == "chat_ban"
+        )
+        record["target_owner"] = "account-service"
+
+        errors = validate_document(self.validator, document)
+
+        self.assertTrue(
+            any(
+                "moderation-enforcement-owner-call coverage must exactly map"
+                in error
+                for error in errors
+            ),
+            errors,
+        )
+
     def test_moderation_action_categories_select_exact_authorization_branch(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         routes = [

@@ -54,6 +54,13 @@ final class GatewayRouteTestSupport {
     assertThat(configuredPaths).noneMatch(path -> path.startsWith(pathPrefix));
   }
 
+  static void assertSocialChatAndFriendsAreEdgeGated(GatewayProperties gatewayProperties) {
+    assertThat(gatewayProperties.getRoutes().stream().map(RouteDefinition::getId))
+        .doesNotContain("social-chat", "social-friends");
+    assertNoConfiguredPathStartsWith(gatewayProperties, "/api/social/chat");
+    assertNoConfiguredPathStartsWith(gatewayProperties, "/api/social/friends");
+  }
+
   static void assertHasStripPrefixTwo(GatewayProperties gatewayProperties, String routeId) {
     assertHasStripPrefix(gatewayProperties, routeId, "2");
   }

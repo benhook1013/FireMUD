@@ -4,6 +4,7 @@ import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestS
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasPath;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasStripPrefixTwo;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertNoConfiguredPathStartsWith;
+import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertSocialChatAndFriendsAreEdgeGated;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.route;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -77,25 +78,8 @@ class GatewayRoutesConfigurationProdTest {
   }
 
   @Test
-  void socialChatRouteIdIsEdgeGatedUntilCallerBindingExists() {
-    assertThat(gatewayProperties.getRoutes().stream().map(RouteDefinition::getId))
-        .doesNotContain("social-chat");
-  }
-
-  @Test
-  void socialChatPathIsEdgeGatedUntilCallerBindingExists() {
-    assertNoConfiguredPathStartsWith(gatewayProperties, "/api/social/chat");
-  }
-
-  @Test
-  void socialFriendsRouteIdIsEdgeGatedUntilDirectionalBlockStateExists() {
-    assertThat(gatewayProperties.getRoutes().stream().map(RouteDefinition::getId))
-        .doesNotContain("social-friends");
-  }
-
-  @Test
-  void socialFriendsPathIsEdgeGatedUntilDirectionalBlockStateExists() {
-    assertNoConfiguredPathStartsWith(gatewayProperties, "/api/social/friends");
+  void socialChatAndFriendsAreEdgeGated() {
+    assertSocialChatAndFriendsAreEdgeGated(gatewayProperties);
   }
 
   @Test

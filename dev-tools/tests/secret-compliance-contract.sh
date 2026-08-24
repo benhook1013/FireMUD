@@ -43,96 +43,157 @@ YAML
 write_expected_binding_files true
 
 write_evidence_fixture() {
-  cat >"$TMP_DIR/design/operations/secret-compliance/evidence/evidence.json" <<'JSON'
-  {
-    "bootstrapOperationId": "bootstrap-contract-test-01",
-    "provisioningGeneration": 1,
-    "records": {
-      "jwt-signing-keys-jwks": {
+  python3 - "$TMP_DIR" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+evidence_dir = root / "design/operations/secret-compliance/evidence"
+classes = (
+    "jwt-signing-keys-jwks",
+    "postgres-application-credentials",
+    "backup-object-store-credentials",
+    "asset-store-credentials",
+    "operator-credentials",
+)
+
+def digest(record):
+    payload = {key: value for key, value in record.items() if key != "immutableArtifactId"}
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+for env in ("production", "staging", "hobby-self-hosted"):
+    evidence = {
+        "environment": env,
         "bootstrapOperationId": "bootstrap-contract-test-01",
         "provisioningGeneration": 1,
-        "immutableArtifactId": "test:jwt:sha256:1111"
-      },
-      "postgres-application-credentials": {
-        "immutableArtifactId": "test:postgres:sha256:2222"
-      },
-      "backup-object-store-credentials": {
-        "immutableArtifactId": "test:backup:sha256:3333"
-      },
-      "asset-store-credentials": {
-        "immutableArtifactId": "test:asset:sha256:5555"
-      },
-      "operator-credentials": {
-        "immutableArtifactId": "test:operator:sha256:4444"
-      }
+        "records": {},
     }
-  }
-JSON
+    for class_name in classes:
+        record = {
+            "targetEnvironment": env,
+            "credentialClass": class_name,
+            "evidenceOperationId": f"rotation-{env}-{class_name}",
+        }
+        if class_name == "jwt-signing-keys-jwks":
+            record.update(
+                {
+                    "bootstrapOperationId": "bootstrap-contract-test-01",
+                    "provisioningGeneration": 1,
+                }
+            )
+        record["immutableArtifactId"] = digest(record)
+        evidence["records"][class_name] = record
+    (evidence_dir / f"{env}.json").write_text(
+        json.dumps(evidence) + "\n", encoding="utf-8"
+    )
+PY
 }
 
 write_evidence_fixture
 
+python3 - "$ROOT_DIR" <<'PY'
+import importlib.util
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location(
+    "secret_compliance_contract",
+    root / "dev-tools/validation/validate-secret-compliance.py",
+)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+expected = "sha256:fd8b688bfa8b71822975ab3519e20b09e43b67d382a9f32831bfa384df21a82d"
+actual = module.canonical_evidence_digest({"\ufffd": 2, "\U0001f600": 1})
+if actual != expected:
+    raise SystemExit(f"RFC 8785 UTF-16 key ordering drifted: {actual}")
+for invalid_record in ({"value": 9_007_199_254_740_992}, {"value": 1.5}):
+    try:
+        module.canonical_evidence_digest(invalid_record)
+    except TypeError:
+        pass
+    else:
+        raise SystemExit(f"non-interoperable evidence number was accepted: {invalid_record}")
+PY
+
 write_compliance_file() {
   local env="$1"
   local timestamp_field="$2"
-  local extra_timestamp_field="${3:-}"
-  local operation_status="${4:-completed}"
-  local bootstrap_fields=""
-  if [[ "$timestamp_field" == "lastProvisionedAt" ]]; then
-    bootstrap_fields='      "bootstrapOperationId": "bootstrap-contract-test-01",
-      "provisioningGeneration": 1,'
+  local extra_timestamp_field=""
+  local operation_status="completed"
+  if [ "$#" -ge 3 ]; then
+    extra_timestamp_field="$3"
   fi
-  local path="$TMP_DIR/design/operations/secret-compliance/$env.yaml"
-  cat >"$path" <<YAML
-{
-  "environment": "$env",
-  "provisioningState": "provisioned",
-  "bootstrapOperationStatus": "$operation_status",
-  "bootstrapOperationId": "bootstrap-contract-test-01",
-  "provisioningGeneration": 1,
-  "credentialClasses": {
-    "jwt-signing-keys-jwks": {
-      "maxAgeDays": 30,
-      "$timestamp_field": "2026-04-20T00:00:00Z",
-      ${extra_timestamp_field:+"\"$extra_timestamp_field\": \"2026-04-20T00:00:00Z\","}
-      ${bootstrap_fields}
-      "evidenceRef": "design/operations/secret-compliance/evidence/evidence.json",
-      "evidenceKey": "jwt-signing-keys-jwks"
-    },
-    "postgres-application-credentials": {
-      "maxAgeDays": 30,
-      "lastRotationAt": "2026-04-20T00:00:00Z",
-      "evidenceRef": "design/operations/secret-compliance/evidence/evidence.json",
-      "evidenceKey": "postgres-application-credentials"
-    },
-    "backup-object-store-credentials": {
-      "maxAgeDays": 30,
-      "lastRotationAt": "2026-04-20T00:00:00Z",
-      "evidenceRef": "design/operations/secret-compliance/evidence/evidence.json",
-      "evidenceKey": "backup-object-store-credentials"
-    },
-    "asset-store-credentials": {
-      "maxAgeDays": 30,
-      "lastRotationAt": "2026-04-20T00:00:00Z",
-      "evidenceRef": "design/operations/secret-compliance/evidence/evidence.json",
-      "evidenceKey": "asset-store-credentials"
-    },
-    "operator-credentials": {
-      "maxAgeDays": 30,
-      "lastRotationAt": "2026-04-20T00:00:00Z",
-      "evidenceRef": "design/operations/secret-compliance/evidence/evidence.json",
-      "evidenceKey": "operator-credentials"
-    }
-  }
+  if [ "$#" -ge 4 ]; then
+    operation_status="$4"
+  fi
+  python3 - "$TMP_DIR" "$env" "$timestamp_field" "$extra_timestamp_field" "$operation_status" <<'PY'
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+env, timestamp_field, extra_timestamp_field, operation_status = sys.argv[2:]
+classes = (
+    "jwt-signing-keys-jwks",
+    "postgres-application-credentials",
+    "backup-object-store-credentials",
+    "asset-store-credentials",
+    "operator-credentials",
+)
+record = {
+    "environment": env,
+    "provisioningState": "provisioned",
+    "bootstrapOperationStatus": operation_status,
+    "bootstrapOperationId": "bootstrap-contract-test-01",
+    "provisioningGeneration": 1,
+    "credentialClasses": {},
 }
-YAML
+for class_name in classes:
+    credential_timestamp_field = (
+        timestamp_field if class_name == "jwt-signing-keys-jwks" else "lastRotationAt"
+    )
+    credential = {
+        "maxAgeDays": 30,
+        credential_timestamp_field: "2026-04-20T00:00:00Z",
+        "evidenceRef": f"design/operations/secret-compliance/evidence/{env}.json",
+        "evidenceKey": class_name,
+    }
+    if extra_timestamp_field and class_name == "jwt-signing-keys-jwks":
+        credential[extra_timestamp_field] = "2026-04-20T00:00:00Z"
+    if timestamp_field == "lastProvisionedAt" and class_name == "jwt-signing-keys-jwks":
+        credential.update(
+            {
+                "bootstrapOperationId": "bootstrap-contract-test-01",
+                "provisioningGeneration": 1,
+            }
+        )
+    else:
+        credential["evidenceOperationId"] = f"rotation-{env}-{class_name}"
+    record["credentialClasses"][class_name] = credential
+(root / "design/operations/secret-compliance" / f"{env}.yaml").write_text(
+    json.dumps(record) + "\n", encoding="utf-8"
+)
+PY
 }
 
 mutate_bootstrap_binding() {
   local mode="$1"
   python3 - \
     "$TMP_DIR/design/operations/secret-compliance/production.yaml" \
-    "$TMP_DIR/design/operations/secret-compliance/evidence/evidence.json" \
+    "$TMP_DIR/design/operations/secret-compliance/evidence/production.json" \
     "$mode" <<'PY'
 import json
 import pathlib
@@ -207,6 +268,115 @@ SECRET_COMPLIANCE_ROOT="$TMP_DIR" \
   SECRET_COMPLIANCE_ENFORCEMENT_MODE=strict \
   python3 "$VALIDATOR" >"$VALID_OUTPUT"
 
+python3 - "$TMP_DIR/design/operations/environments/staging/expected-bindings.yaml" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+path.write_text("environment: production\nbackupStorage:\n  enabled: true\n", encoding="utf-8")
+PY
+if SECRET_COMPLIANCE_ROOT="$TMP_DIR" \
+  SECRET_COMPLIANCE_TODAY=2026-04-24T00:00:00Z \
+  SECRET_COMPLIANCE_ENFORCEMENT_MODE=strict \
+  python3 "$VALIDATOR" >"$HOBBY_SCHEMA_INVALID_OUTPUT" 2>&1; then
+  echo "secret compliance validator accepted a wrong-environment expected-bindings manifest" >&2
+  exit 1
+fi
+grep -q "canonical expected-bindings manifest must target 'staging'" "$HOBBY_SCHEMA_INVALID_OUTPUT"
+if grep -q "staging: missing required credential classes" "$HOBBY_SCHEMA_INVALID_OUTPUT"; then
+  echo "invalid staging expected-bindings manifest produced a misleading missing-class cascade" >&2
+  exit 1
+fi
+write_expected_binding_files true
+
+python3 - "$TMP_DIR/design/operations/secret-compliance/production.yaml" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+record = json.loads(path.read_text(encoding="utf-8"))
+record["credentialClasses"]["postgres-application-credentials"].pop(
+    "evidenceOperationId"
+)
+path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+PY
+if SECRET_COMPLIANCE_ROOT="$TMP_DIR" \
+  SECRET_COMPLIANCE_TODAY=2026-04-24T00:00:00Z \
+  SECRET_COMPLIANCE_ENFORCEMENT_MODE=strict \
+  python3 "$VALIDATOR" >"$INVALID_OUTPUT" 2>&1; then
+  echo "secret compliance validator accepted a non-bootstrap record without evidenceOperationId" >&2
+  exit 1
+fi
+grep -q "non-bootstrap credential records require a stable evidenceOperationId" "$INVALID_OUTPUT"
+
+write_evidence_fixture
+write_compliance_file production lastRotationAt
+python3 - "$TMP_DIR/design/operations/secret-compliance/evidence/production.json" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+evidence = json.loads(path.read_text(encoding="utf-8"))
+evidence["environment"] = "staging"
+path.write_text(json.dumps(evidence) + "\n", encoding="utf-8")
+PY
+if SECRET_COMPLIANCE_ROOT="$TMP_DIR" \
+  SECRET_COMPLIANCE_TODAY=2026-04-24T00:00:00Z \
+  SECRET_COMPLIANCE_ENFORCEMENT_MODE=strict \
+  python3 "$VALIDATOR" >"$INVALID_OUTPUT" 2>&1; then
+  echo "secret compliance validator accepted an evidence payload for the wrong environment" >&2
+  exit 1
+fi
+grep -q "evidence payload environment must exactly match 'production'" "$INVALID_OUTPUT"
+
+write_evidence_fixture
+write_compliance_file production lastRotationAt
+python3 - "$TMP_DIR/design/operations/secret-compliance/production.yaml" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+record = json.loads(path.read_text(encoding="utf-8"))
+record["credentialClasses"]["operator-credentials"]["lastRotationAt"] = (
+    "2026-04-25T00:00:00Z"
+)
+path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+PY
+if SECRET_COMPLIANCE_ROOT="$TMP_DIR" \
+  SECRET_COMPLIANCE_TODAY=2026-04-24T00:00:00Z \
+  SECRET_COMPLIANCE_ENFORCEMENT_MODE=strict \
+  python3 "$VALIDATOR" >"$INVALID_OUTPUT" 2>&1; then
+  echo "secret compliance validator accepted a future freshness timestamp" >&2
+  exit 1
+fi
+grep -q "freshness timestamp must not be in the future" "$INVALID_OUTPUT"
+
+write_evidence_fixture
+write_compliance_file production lastRotationAt
+python3 - "$TMP_DIR/design/operations/secret-compliance/production.yaml" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+record = json.loads(path.read_text(encoding="utf-8"))
+record["credentialClasses"]["operator-credentials"]["lastRotationAt"] = (
+    "2026-04-20T00:00:00"
+)
+path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+PY
+if SECRET_COMPLIANCE_ROOT="$TMP_DIR" \
+  SECRET_COMPLIANCE_TODAY=2026-04-24T00:00:00Z \
+  SECRET_COMPLIANCE_ENFORCEMENT_MODE=strict \
+  python3 "$VALIDATOR" >"$INVALID_OUTPUT" 2>&1; then
+  echo "secret compliance validator accepted a naive freshness timestamp" >&2
+  exit 1
+fi
+grep -q "timestamp must include an explicit timezone" "$INVALID_OUTPUT"
+
 python3 - "$TMP_DIR/design/operations/secret-compliance/production.yaml" <<'PY'
 import json
 import pathlib
@@ -228,7 +398,7 @@ grep -q "production: missing required credential classes: asset-store-credential
 
 write_evidence_fixture
 write_compliance_file production lastRotationAt
-python3 - "$TMP_DIR/design/operations/secret-compliance/evidence/evidence.json" <<'PY'
+python3 - "$TMP_DIR/design/operations/secret-compliance/evidence/production.json" <<'PY'
 import json
 import pathlib
 import sys
@@ -385,6 +555,7 @@ SECRET_COMPLIANCE_ROOT="$TMP_DIR" \
   SECRET_COMPLIANCE_TODAY=2026-12-20T00:00:00Z \
   SECRET_COMPLIANCE_ENFORCEMENT_MODE=strict \
   python3 "$VALIDATOR" >"$NOT_PROVISIONED_OUTPUT"
+grep -q "authorization/readiness was not established" "$NOT_PROVISIONED_OUTPUT"
 
 write_not_provisioned_file production '{"unexpected": {}}'
 if SECRET_COMPLIANCE_ROOT="$TMP_DIR" \

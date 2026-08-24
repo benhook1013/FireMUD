@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import itertools
 import json
 import os
@@ -70,6 +71,8 @@ BASE_SECRET_COMPLIANCE_CLASSES = frozenset(
         "operator-credentials",
     }
 )
+IMMUTABLE_ARTIFACT_ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+DEPLOYMENT_REF_RE = re.compile(r"^[a-z0-9-]+$")
 
 PREFLIGHT_POLICY_CATALOG_VERSION = "preflight-policy-v1"
 PREFLIGHT_POLICY_CATEGORIES = frozenset(
@@ -389,6 +392,37 @@ def parse_timestamp(value: Any, field_name: str) -> dt.datetime:
     if parsed.tzinfo is None:
         raise ValueError(f"{field_name} must include a timezone")
     return parsed.astimezone(dt.timezone.utc)
+
+
+def canonical_evidence_digest(record: dict[str, Any]) -> str:
+    """Hash a selected evidence record with the documented RFC 8785 subset."""
+    payload = {key: value for key, value in record.items() if key != "immutableArtifactId"}
+
+    def encode(value: Any) -> str:
+        if value is None:
+            return "null"
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, str):
+            value.encode("utf-8")
+            return json.dumps(value, ensure_ascii=False)
+        if isinstance(value, int):
+            if abs(value) > 9_007_199_254_740_991:
+                raise TypeError("integers outside the RFC 8785 interoperable range are not allowed")
+            return str(value)
+        if isinstance(value, float):
+            raise TypeError("floating-point numbers are not allowed in evidence records")
+        if isinstance(value, dict):
+            if not all(isinstance(key, str) for key in value):
+                raise TypeError("evidence object keys must be strings")
+            keys = sorted(value, key=lambda key: key.encode("utf-16-be"))
+            return "{" + ",".join(f"{encode(key)}:{encode(value[key])}" for key in keys) + "}"
+        if isinstance(value, list):
+            return "[" + ",".join(encode(nested) for nested in value) + "]"
+        raise TypeError(f"unsupported evidence value type: {type(value).__name__}")
+
+    encoded = encode(payload).encode("utf-8")
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
 def secret_lookup_failure(secret_name: str) -> str | None:
@@ -1676,6 +1710,10 @@ def external_binding_uniqueness_issues(
     current_asset = current_asset if isinstance(current_asset, dict) else {}
     current_outbound = current_outbound if isinstance(current_outbound, dict) else {}
     current_operator = current_operator if isinstance(current_operator, dict) else {}
+    current_observability = current_data.get("observability")
+    current_observability = (
+        current_observability if isinstance(current_observability, dict) else {}
+    )
 
     def add_candidate(
         issues: list[str],
@@ -1726,6 +1764,12 @@ def external_binding_uniqueness_issues(
         "operatorCredentials.bindingRef",
         current_operator.get("bindingRef") or current_operator.get("fingerprint"),
     )
+    add_candidate(
+        issues,
+        candidates,
+        "observability.otelCollectorEndpoint",
+        current_observability.get("otelCollectorEndpoint"),
+    )
     if issues:
         return issues
 
@@ -1745,10 +1789,14 @@ def external_binding_uniqueness_issues(
         other_asset = other_data.get("assetStorage")
         other_outbound = other_data.get("outboundComms")
         other_operator = other_data.get("operatorCredentials")
+        other_observability = other_data.get("observability")
         other_backup = other_backup if isinstance(other_backup, dict) else {}
         other_asset = other_asset if isinstance(other_asset, dict) else {}
         other_outbound = other_outbound if isinstance(other_outbound, dict) else {}
         other_operator = other_operator if isinstance(other_operator, dict) else {}
+        other_observability = (
+            other_observability if isinstance(other_observability, dict) else {}
+        )
         issues.extend(
             f"{other_env}: {issue}" for issue in binding_shareability_issues(other_data)
         )
@@ -1782,6 +1830,9 @@ def external_binding_uniqueness_issues(
             ),
             "outboundComms.smtpHost": other_outbound.get("smtpHost") if other_outbound_enabled else None,
             "operatorCredentials.bindingRef": other_operator.get("bindingRef") or other_operator.get("fingerprint"),
+            "observability.otelCollectorEndpoint": other_observability.get(
+                "otelCollectorEndpoint"
+            ),
         }
         if other_outbound_enabled:
             for target_name, raw_target in sorted((other_outbound.get("webhookTargets") or {}).items()):
@@ -1815,12 +1866,33 @@ def metadata_name(document: dict[str, Any]) -> str | None:
     return metadata.get("name")
 
 
-def rendered_has_resource(documents: list[dict[str, Any]], kind: str, name: str) -> bool:
-    return any(document.get("kind") == kind and metadata_name(document) == name for document in documents)
+def metadata_namespace(document: dict[str, Any]) -> str | None:
+    metadata = document.get("metadata") or {}
+    namespace = metadata.get("namespace")
+    return namespace if isinstance(namespace, str) and namespace else None
 
 
-def rendered_references_secret(documents: list[dict[str, Any]], name: str) -> bool:
+def rendered_namespace_matches(document: dict[str, Any], namespace: str | None) -> bool:
+    return namespace is None or metadata_namespace(document) == namespace
+
+
+def rendered_has_resource(
+    documents: list[dict[str, Any]], kind: str, name: str, namespace: str | None = None
+) -> bool:
+    return any(
+        document.get("kind") == kind
+        and metadata_name(document) == name
+        and rendered_namespace_matches(document, namespace)
+        for document in documents
+    )
+
+
+def rendered_references_secret(
+    documents: list[dict[str, Any]], name: str, namespace: str | None = None
+) -> bool:
     for document in documents:
+        if not rendered_namespace_matches(document, namespace):
+            continue
         for node in walk(document):
             if not isinstance(node, dict):
                 continue
@@ -1880,8 +1952,22 @@ def secret_binding_name(ref: Any) -> str | None:
     return segments[0] or None
 
 
-def rendered_references_image_pull_secret(documents: list[dict[str, Any]], name: str) -> bool:
+def secret_binding_namespace(ref: Any) -> str | None:
+    parsed = parse_binding_ref(ref)
+    if parsed is None:
+        return None
+    scheme, namespace, segments = parsed
+    if scheme != "secret" or len(segments) != 1:
+        return None
+    return namespace
+
+
+def rendered_references_image_pull_secret(
+    documents: list[dict[str, Any]], name: str, namespace: str | None = None
+) -> bool:
     for document in documents:
+        if not rendered_namespace_matches(document, namespace):
+            continue
         if document.get("kind") == "ServiceAccount":
             for entry in document.get("imagePullSecrets") or []:
                 if isinstance(entry, dict) and entry.get("name") == name:
@@ -1943,8 +2029,12 @@ def has_secret_mount(
     return False
 
 
-def has_secret_reference(documents: list[dict[str, Any]], name: str) -> bool:
+def has_secret_reference(
+    documents: list[dict[str, Any]], name: str, namespace: str | None = None
+) -> bool:
     for document in documents:
+        if not rendered_namespace_matches(document, namespace):
+            continue
         for _, container, volumes in primary_containers(document):
             for mounted_secret in volumes.values():
                 if mounted_secret == name:
@@ -1979,6 +2069,77 @@ def append_result(
     return effective_required and status == "fail"
 
 
+def expected_bindings_schema_issues(data: Any) -> list[str]:
+    """Reject unknown expected-bindings keys before optional defaults are applied."""
+    if not isinstance(data, dict):
+        return ["expected-bindings manifest must be a mapping"]
+
+    nested_keys: dict[str, set[str] | None] = {
+        "internalBindings": {"postgres", "redis", "jwt", "certificates", "registry"},
+        "backupStorage": {"enabled", "bucket", "endpoint", "bindingRef", "fingerprint"},
+        "assetStorage": {"enabled", "bucket", "endpoint", "bindingRef", "fingerprint"},
+        "outboundComms": {"enabled", "smtpHost", "webhookTargets"},
+        "operatorCredentials": {"bindingRef", "fingerprint"},
+        "serviceDiscovery": {"mode", "allowedOverrides"},
+        "observability": {"otelCollectorEndpoint"},
+        "backupMaintenancePause": {"enabled"},
+    }
+    child_keys: dict[str, set[str] | None] = {
+        "internalBindings.postgres": {"endpoint", "credentialsRef"},
+        "internalBindings.redis": {"coordination", "cache"},
+        "internalBindings.redis.coordination": {"endpoint"},
+        "internalBindings.redis.cache": {"endpoint"},
+        "internalBindings.jwt": {"custodyMode", "signingKeysRef", "jwksRef"},
+        "internalBindings.certificates": {
+            "issuerRef",
+            "workloadMtlsRef",
+            "gatewayInternalWsListenerRef",
+            "tcpProxyBridgeClientRef",
+            "backupControlPlaneClientRef",
+        },
+        "internalBindings.registry": {"imagePullSecretRef"},
+        "observability.otelCollectorEndpoint": {"value", "shared", "sharedRationale"},
+    }
+    conditional_value_keys = {"value", "shared", "sharedRationale"}
+    allowed_top_level = {
+        "environment",
+        *nested_keys,
+    }
+    issues: list[str] = []
+    for key in data:
+        if key not in allowed_top_level:
+            issues.append(f"unknown top-level key '{key}'")
+
+    def check_mapping(path: str, value: Any, allowed: set[str] | None) -> None:
+        if not isinstance(value, dict) or allowed is None:
+            return
+        for key in value:
+            if key not in allowed:
+                issues.append(f"unknown expected-bindings key '{path}.{key}'")
+
+    for path, allowed in nested_keys.items():
+        check_mapping(path, get(data, path), allowed)
+    for path, allowed in child_keys.items():
+        check_mapping(path, get(data, path), allowed)
+    for path in (
+        "backupStorage.bucket",
+        "backupStorage.endpoint",
+        "assetStorage.bucket",
+        "assetStorage.endpoint",
+        "outboundComms.smtpHost",
+    ):
+        check_mapping(path, get(data, path), conditional_value_keys)
+    webhook_targets = get(data, "outboundComms.webhookTargets")
+    if isinstance(webhook_targets, dict):
+        for target_name, target_value in webhook_targets.items():
+            check_mapping(
+                f"outboundComms.webhookTargets.{target_name}",
+                target_value,
+                conditional_value_keys,
+            )
+    return issues
+
+
 def expected_binding_checks(
     expected_bindings_path: Path,
     expected_bindings_ref: str,
@@ -1996,10 +2157,28 @@ def expected_binding_checks(
             CheckResult("PREFLIGHT-SERVICES-001", True, "fail", "Expected-bindings manifest is unreadable"),
         ]
 
+    if not isinstance(data, dict):
+        return [
+            CheckResult("PREFLIGHT-SECRETS-002", True, "fail", "Expected-bindings manifest must be a mapping"),
+            CheckResult("PREFLIGHT-BOOTSTRAP-001", True, "fail", "Expected-bindings manifest is invalid"),
+            CheckResult("PREFLIGHT-EXTERNAL-001", True, "fail", "Expected-bindings manifest is invalid"),
+            CheckResult("PREFLIGHT-SERVICES-001", True, "fail", "Expected-bindings manifest is invalid"),
+        ]
+
     results: list[CheckResult] = []
+    schema_issues = expected_bindings_schema_issues(data)
     if data.get("environment") != env_class:
         results.append(
             CheckResult("PREFLIGHT-SECRETS-002", True, "fail", f"Expected-bindings environment mismatch in {expected_bindings_ref}")
+        )
+    elif schema_issues:
+        results.append(
+            CheckResult(
+                "PREFLIGHT-SECRETS-002",
+                True,
+                "fail",
+                "Expected-bindings schema contains unknown keys: " + "; ".join(schema_issues),
+            )
         )
     else:
         required_internal = [
@@ -2122,9 +2301,13 @@ def expected_binding_checks(
         missing_rendered_refs = []
         for ref_value in secret_refs:
             name = secret_binding_name(ref_value)
-            if name and not rendered_references_secret(documents, name):
+            namespace = secret_binding_namespace(ref_value)
+            if name and not rendered_references_secret(documents, name, namespace):
                 missing_rendered_refs.append(name)
         registry_pull_secret = secret_binding_name(get(data, "internalBindings.registry.imagePullSecretRef"))
+        registry_pull_namespace = secret_binding_namespace(
+            get(data, "internalBindings.registry.imagePullSecretRef")
+        )
         if missing and "internalBindings.jwt.custodyMode" in missing:
             results.append(
                 CheckResult(
@@ -2190,7 +2373,9 @@ def expected_binding_checks(
                     "Rendered workloads do not reference expected Secret bindings: " + ", ".join(missing_rendered_refs),
                 )
             )
-        elif registry_pull_secret and not rendered_references_image_pull_secret(documents, registry_pull_secret):
+        elif registry_pull_secret and not rendered_references_image_pull_secret(
+            documents, registry_pull_secret, registry_pull_namespace
+        ):
             results.append(
                 CheckResult(
                     "PREFLIGHT-SECRETS-002",
@@ -2209,18 +2394,24 @@ def expected_binding_checks(
                 )
             )
 
-    bootstrap_names = [
-        name
-        for name in (
+    bootstrap_bindings = [
+        (
             secret_binding_name(get(data, "internalBindings.postgres.credentialsRef")),
+            secret_binding_namespace(get(data, "internalBindings.postgres.credentialsRef")),
+        ),
+        (
             secret_binding_name(get(data, "internalBindings.jwt.signingKeysRef")),
-        )
-        if name
+            secret_binding_namespace(get(data, "internalBindings.jwt.signingKeysRef")),
+        ),
     ]
-    missing_bootstrap = [name for name in bootstrap_names if not rendered_references_secret(documents, name)]
+    missing_bootstrap = [
+        name
+        for name, namespace in bootstrap_bindings
+        if name and not rendered_references_secret(documents, name, namespace)
+    ]
     custody_mode = get(data, "internalBindings.jwt.custodyMode")
     custody_gate_required = context == "operator" and env_class in player_facing_environments()
-    if custody_gate_required and custody_mode != IMPLEMENTED_JWT_CUSTODY_MODE:
+    if custody_gate_required:
         results.append(
             CheckResult(
                 "PREFLIGHT-BOOTSTRAP-001",
@@ -2228,15 +2419,6 @@ def expected_binding_checks(
                 "fail",
                 "No accepted player-facing JWT custody proof is implemented for selected mode: "
                 + str(custody_mode),
-            )
-        )
-    elif custody_gate_required and custody_mode == IMPLEMENTED_JWT_CUSTODY_MODE:
-        results.append(
-            CheckResult(
-                "PREFLIGHT-BOOTSTRAP-001",
-                True,
-                "fail",
-                "Legacy JWT diagnostic wiring has no accepted player-facing JWT custody proof",
             )
         )
     elif missing_bootstrap:
@@ -2485,7 +2667,9 @@ def expected_binding_checks(
     return results
 
 
-def jwt_jwks_checks(documents: list[dict[str, Any]]) -> list[CheckResult]:
+def jwt_jwks_checks(
+    documents: list[dict[str, Any]], jwks_namespace: str = "firemud"
+) -> list[CheckResult]:
     inline_secret = False
     missing_secret_path: list[str] = []
     missing_signing_mount: list[str] = []
@@ -2557,7 +2741,7 @@ def jwt_jwks_checks(documents: list[dict[str, Any]]) -> list[CheckResult]:
             )
         )
 
-    if rendered_has_resource(documents, "ConfigMap", "jwt-jwks"):
+    if rendered_has_resource(documents, "ConfigMap", "jwt-jwks", jwks_namespace):
         results.append(
             CheckResult(
                 "PREFLIGHT-JWKS-001",
@@ -2566,9 +2750,23 @@ def jwt_jwks_checks(documents: list[dict[str, Any]]) -> list[CheckResult]:
                 "jwt-jwks is configured as a ConfigMap in player-facing context",
             )
         )
+    elif any(
+        document.get("kind") == "Secret"
+        and metadata_name(document) == "jwt-jwks"
+        and not rendered_namespace_matches(document, jwks_namespace)
+        for document in documents
+    ):
+        results.append(
+            CheckResult(
+                "PREFLIGHT-JWKS-001",
+                False,
+                "fail",
+                f"jwt-jwks Secret resource is not in the expected namespace: {jwks_namespace}",
+            )
+        )
     elif not rendered_has_resource(
-        documents, "Secret", "jwt-jwks"
-    ) and not has_secret_reference(documents, "jwt-jwks"):
+        documents, "Secret", "jwt-jwks", jwks_namespace
+    ) and not has_secret_reference(documents, "jwt-jwks", jwks_namespace):
         results.append(
             CheckResult(
                 "PREFLIGHT-JWKS-001",
@@ -3003,6 +3201,8 @@ def _promotion_check(
         return ("fail", rollback_mode, str(exc))
     if not isinstance(secret_evidence, dict):
         return ("fail", rollback_mode, "Staging secret compliance evidence must be a JSON object")
+    if secret_evidence.get("environment") != "staging":
+        return ("fail", rollback_mode, "Staging secret compliance evidence environment must be staging")
     records = secret_evidence.get("records", {})
     if not isinstance(records, dict):
         return ("fail", rollback_mode, "Staging secret compliance evidence records must be an object")
@@ -3010,11 +3210,46 @@ def _promotion_check(
         rec = records.get(key)
         if not isinstance(rec, dict):
             return ("fail", rollback_mode, f"Staging secret compliance evidence missing record: {key}")
+        if rec.get("targetEnvironment") != "staging":
+            return (
+                "fail",
+                rollback_mode,
+                f"Staging secret compliance evidence targetEnvironment mismatch: {key}",
+            )
+        if rec.get("credentialClass") != key:
+            return (
+                "fail",
+                rollback_mode,
+                f"Staging secret compliance evidence credentialClass mismatch: {key}",
+            )
+        evidence_operation_id = rec.get("evidenceOperationId")
+        if not isinstance(evidence_operation_id, str) or not evidence_operation_id.strip():
+            return (
+                "fail",
+                rollback_mode,
+                f"Staging secret compliance evidence missing evidenceOperationId: {key}",
+            )
         immutable_id = rec.get("immutableArtifactId")
-        if not isinstance(immutable_id, str) or not re.fullmatch(
-            r"[^\s]+:sha256:[0-9a-fA-F]{64}", immutable_id
-        ):
-            return ("fail", rollback_mode, f"Staging secret compliance evidence record is not immutable: {key}")
+        if not isinstance(immutable_id, str) or not IMMUTABLE_ARTIFACT_ID_RE.fullmatch(immutable_id):
+            return (
+                "fail",
+                rollback_mode,
+                f"Staging secret compliance evidence record is not immutable: {key}",
+            )
+        try:
+            expected_digest = canonical_evidence_digest(rec)
+        except (TypeError, ValueError) as exc:
+            return (
+                "fail",
+                rollback_mode,
+                f"Staging secret compliance evidence record cannot be canonically hashed: {key}: {exc}",
+            )
+        if immutable_id != expected_digest:
+            return (
+                "fail",
+                rollback_mode,
+                f"Staging secret compliance evidence record digest mismatch: {key}",
+            )
 
     return ("pass", rollback_mode, "Production promotion attestation and staging deployment evidence are valid")
 
@@ -3203,7 +3438,12 @@ def write_report(
         "context": context,
     }
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    try:
+        with output_path.open("x", encoding="utf-8") as handle:
+            json.dump(report, handle, indent=2)
+            handle.write("\n")
+    except FileExistsError:
+        fail(f"Preflight report output already exists and will not be overwritten: {output_path}")
 
 
 def main() -> int:
@@ -3218,6 +3458,8 @@ def main() -> int:
     if context not in {"operator", "ci-static"}:
         fail(f"Invalid FIREMUD_PREFLIGHT_CONTEXT: {context}")
     deployment_ref = os.environ.get("FIREMUD_DEPLOYMENT_REF") or run(["git", "rev-parse", "--short=12", "HEAD"]).strip()
+    if not isinstance(deployment_ref, str) or not DEPLOYMENT_REF_RE.fullmatch(deployment_ref):
+        fail("FIREMUD_DEPLOYMENT_REF must contain only lowercase ASCII letters, digits, and hyphens")
     waiver_path = os.environ.get("FIREMUD_PREFLIGHT_WAIVER", "")
     if waiver_path:
         fail("Preflight waiver execution remains blocked until one-time consumption authority is implemented")

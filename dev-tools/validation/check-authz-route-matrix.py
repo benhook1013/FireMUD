@@ -605,6 +605,35 @@ MODERATION_ACTION_BRANCHES = {
     "tenant_restriction": MODERATION_TENANT_ACTION_CATEGORIES,
     "platform_access_ban": {MODERATION_PLATFORM_ACTION_CATEGORY},
 }
+MODERATION_POLICY_INTENT_COVERAGE_IDENTITY = (
+    "moderation-policy-intent-local-redemption"
+)
+MODERATION_POLICY_INTENT_ROUTE_IDENTITIES = [
+    "logging-admin-service/POST /moderation/actions",
+    "logging-admin-service/ApplyModerationAction",
+]
+MODERATION_SUPPORT_GATE_REDEMPTION_REQUIREMENT = (
+    "account_issued_authorization_reference_issuance_and_"
+    "contract_declared_receiving_boundary_redemption"
+)
+MODERATION_ACTION_SELECTOR_MAPPING = {
+    "gameplay_ban": "tenant_restriction",
+    "chat_mute": "tenant_restriction",
+    "chat_ban": "tenant_restriction",
+    "platform_access_ban": "platform_access_ban",
+}
+MODERATION_ACTION_SELECTOR_REJECTED_VALUES = {
+    "account_security_lock",
+    "ban",
+    "account_ban",
+    "account_security_ban",
+}
+MODERATION_ENFORCEMENT_OWNER_BY_CATEGORY = {
+    "platform_access_ban": "account-service",
+    "gameplay_ban": "game-session-service",
+    "chat_mute": "social-groups-service",
+    "chat_ban": "social-groups-service",
+}
 EXPECTED_ROUTE_CLASS_BRANCHES = {
     ("account_scoped", "platformAdmin_global"): {
         "scope": "account",
@@ -3125,6 +3154,246 @@ def validate_authority_unavailable_outcomes(
             )
 
 
+def validate_moderation_policy_contract(
+    document: dict[str, Any], routes: list[Any], errors: list[str]
+) -> None:
+    contract = document.get("moderation_policy_intent_authorization")
+    if not isinstance(contract, dict):
+        errors.append(
+            "moderation_policy_intent_authorization must be a mapping"
+        )
+        return
+
+    if contract.get("coverage_identity") != MODERATION_POLICY_INTENT_COVERAGE_IDENTITY:
+        errors.append(
+            "moderation_policy_intent_authorization.coverage_identity must be "
+            f"{MODERATION_POLICY_INTENT_COVERAGE_IDENTITY!r}"
+        )
+    if contract.get("route_identities") != MODERATION_POLICY_INTENT_ROUTE_IDENTITIES:
+        errors.append(
+            "moderation_policy_intent_authorization.route_identities must be "
+            f"{MODERATION_POLICY_INTENT_ROUTE_IDENTITIES!r}"
+        )
+    if contract.get("request_identity") != "policy_intent_request_id":
+        errors.append(
+            "moderation_policy_intent_authorization.request_identity must be "
+            "'policy_intent_request_id'"
+        )
+    if contract.get("digest") != "mutationDigest/v1":
+        errors.append(
+            "moderation_policy_intent_authorization.digest must be "
+            "'mutationDigest/v1'"
+        )
+    if contract.get("digest_field") != "mutation_digest":
+        errors.append(
+            "moderation_policy_intent_authorization.digest_field must be "
+            "'mutation_digest'"
+        )
+
+    authorization_reference = contract.get("authorization_reference")
+    if not isinstance(authorization_reference, dict):
+        errors.append(
+            "moderation_policy_intent_authorization.authorization_reference "
+            "must be a mapping"
+        )
+    else:
+        if (
+            authorization_reference.get("contract")
+            != "account_issued_bounded_reference"
+        ):
+            errors.append(
+                "moderation policy-intent authorization reference must use "
+                "the account_issued_bounded_reference contract"
+            )
+        if (
+            authorization_reference.get("raw_reference_persistence")
+            != "forbidden_for_policy_intent"
+        ):
+            errors.append(
+                "moderation policy-intent authorization reference must forbid "
+                "raw reference persistence"
+            )
+        if authorization_reference.get("fingerprint_field") != "authorization_reference_fingerprint":
+            errors.append(
+                "moderation policy-intent authorization reference must use "
+                "authorization_reference_fingerprint"
+            )
+
+    redemption = contract.get("redemption")
+    if not isinstance(redemption, dict):
+        errors.append(
+            "moderation_policy_intent_authorization.redemption must be a mapping"
+        )
+    else:
+        expected_redemption = {
+            "receiving_boundary": "logging-admin-service",
+            "exactly_once": True,
+            "owner_redemption": "forbidden",
+        }
+        for field, expected in expected_redemption.items():
+            if redemption.get(field) != expected:
+                errors.append(
+                    "moderation policy-intent redemption must declare "
+                    f"{field}={expected!r}"
+                )
+
+    owner_command = contract.get("owner_enforcement_command")
+    if not isinstance(owner_command, dict):
+        errors.append(
+            "moderation_policy_intent_authorization.owner_enforcement_command "
+            "must be a mapping"
+        )
+    else:
+        expected_owner_command = {
+            "request_identity": "owner_enforcement_request_id",
+            "digest": "owner_enforcement_digest",
+            "authorization_reference": "owner_enforcement_authorization_reference",
+            "fingerprint": "owner_enforcement_authorization_reference_fingerprint",
+            "redeemed_by": "selected_enforcement_owner",
+            "distinct_from_policy_intent": True,
+        }
+        for field, expected in expected_owner_command.items():
+            if owner_command.get(field) != expected:
+                errors.append(
+                    "moderation owner-enforcement command must declare "
+                    f"{field}={expected!r}"
+                )
+
+    selector = document.get("moderation_action_selector")
+    if not isinstance(selector, dict):
+        errors.append("moderation_action_selector must be a mapping")
+    else:
+        if selector.get("request_field") != "action":
+            errors.append(
+                "moderation_action_selector.request_field must be 'action'"
+            )
+        if selector.get("branch_field") != "action_category":
+            errors.append(
+                "moderation_action_selector.branch_field must be 'action_category'"
+            )
+        if selector.get("mapping") != MODERATION_ACTION_SELECTOR_MAPPING:
+            errors.append(
+                "moderation_action_selector.mapping must exactly map the closed "
+                f"action set: {MODERATION_ACTION_SELECTOR_MAPPING!r}"
+            )
+        rejected_values = selector.get("rejected_values")
+        if (
+            not isinstance(rejected_values, list)
+            or set(rejected_values) != MODERATION_ACTION_SELECTOR_REJECTED_VALUES
+            or len(rejected_values) != len(set(rejected_values))
+        ):
+            errors.append(
+                "moderation_action_selector.rejected_values must exactly reject "
+                f"{sorted(MODERATION_ACTION_SELECTOR_REJECTED_VALUES)}"
+            )
+        if selector.get("unknown_values") != "reject":
+            errors.append(
+                "moderation_action_selector.unknown_values must be 'reject'"
+            )
+        if selector.get("rejection_phase") != "before_branch_authorization":
+            errors.append(
+                "moderation_action_selector.rejection_phase must be "
+                "'before_branch_authorization'"
+            )
+
+    gate = document.get("operator_mutation_support_gate")
+    gate_applies_to = gate.get("applies_to") if isinstance(gate, dict) else None
+    if not isinstance(gate_applies_to, list):
+        errors.append(
+            "operator_mutation_support_gate.applies_to must include the "
+            "moderation policy-intent authorization identities"
+        )
+    else:
+        missing_gate_identities = sorted(
+            set(MODERATION_POLICY_INTENT_ROUTE_IDENTITIES) - set(gate_applies_to)
+        )
+        if missing_gate_identities:
+            errors.append(
+                "operator mutation gate is missing moderation policy-intent "
+                f"identities: {missing_gate_identities}"
+            )
+        required_before_enablement = gate.get("required_before_enablement")
+        if (
+            not isinstance(required_before_enablement, list)
+            or MODERATION_SUPPORT_GATE_REDEMPTION_REQUIREMENT
+            not in required_before_enablement
+        ):
+            errors.append(
+                "operator mutation gate must require Account reference issuance "
+                "plus contract-declared receiving-boundary redemption"
+            )
+
+    operator_delegation = document.get("operator_delegation")
+    if not isinstance(operator_delegation, dict) or operator_delegation.get(
+        "redeemed_by"
+    ) != "contract_declared_receiving_boundary":
+        errors.append(
+            "operator_delegation.redeemed_by must be "
+            "'contract_declared_receiving_boundary'"
+        )
+
+    moderation_routes = matching_routes(
+        routes, MODERATION_ACTION_ROUTE[0], MODERATION_ACTION_ROUTE[1]
+    )
+    for route in moderation_routes:
+        label = route_label(route)
+        branch = applicability_value(route, "action_category", label, errors)
+        if route.get("action_selector_branch") != branch:
+            errors.append(
+                f"{label} action_selector_branch must link its applicability "
+                f"branch {branch!r}"
+            )
+        if (
+            route.get("moderation_policy_intent_authorization_contract")
+            != MODERATION_POLICY_INTENT_COVERAGE_IDENTITY
+        ):
+            errors.append(
+                f"{label} must link moderation policy-intent authorization "
+                f"coverage {MODERATION_POLICY_INTENT_COVERAGE_IDENTITY!r}"
+            )
+
+    coverage_drift = document.get("coverage_drift")
+    moderation_drift: list[dict[str, Any]] = []
+    if isinstance(coverage_drift, list):
+        moderation_drift = [
+            entry
+            for entry in coverage_drift
+            if isinstance(entry, dict)
+            and entry.get("family") == "moderation-enforcement-owner-call"
+        ]
+    observed_owners: dict[str, str] = {}
+    for entry in moderation_drift:
+        category = entry.get("category")
+        owner = entry.get("target_owner")
+        if category in observed_owners:
+            errors.append(
+                "moderation-enforcement-owner-call coverage must not duplicate "
+                f"category {category!r}"
+            )
+        elif isinstance(category, str) and isinstance(owner, str):
+            observed_owners[category] = owner
+        if entry.get("status") != "drift-found":
+            errors.append(
+                "moderation-enforcement-owner-call coverage must remain "
+                "status drift-found"
+            )
+        if entry.get("target_ingress") != "logging-admin-service":
+            errors.append(
+                "moderation-enforcement-owner-call coverage must target "
+                "logging-admin-service ingress"
+            )
+        if entry.get("current_routes") != []:
+            errors.append(
+                "moderation-enforcement-owner-call coverage must declare "
+                "current_routes=[]"
+            )
+    if observed_owners != MODERATION_ENFORCEMENT_OWNER_BY_CATEGORY:
+        errors.append(
+            "moderation-enforcement-owner-call coverage must exactly map "
+            f"categories to owners: {MODERATION_ENFORCEMENT_OWNER_BY_CATEGORY!r}"
+        )
+
+
 def validate_moderation_action_route_variants(
     routes: list[Any],
     errors: list[str],
@@ -4544,6 +4813,7 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     validate_route_class_branch_table(document, errors)
     validate_authority_evidence_policy(document, errors)
     route_keys = validate_route_variants(routes, set(classifications), errors)
+    validate_moderation_policy_contract(document, routes, errors)
     validate_moderation_action_route_variants(routes, errors, live_checks_cache)
     validate_route_statuses(routes, allowed_route_statuses, errors)
     validate_required_fields(routes, errors, required_fields_cache)

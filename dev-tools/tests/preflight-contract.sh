@@ -112,6 +112,18 @@ assert spec.loader is not None
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 
+expected_rfc8785_digest = "sha256:fd8b688bfa8b71822975ab3519e20b09e43b67d382a9f32831bfa384df21a82d"
+actual_rfc8785_digest = module.canonical_evidence_digest({"\ufffd": 2, "\U0001f600": 1})
+if actual_rfc8785_digest != expected_rfc8785_digest:
+    raise SystemExit(f"RFC 8785 UTF-16 key ordering drifted: {actual_rfc8785_digest}")
+for invalid_record in ({"value": 9_007_199_254_740_992}, {"value": 1.5}):
+    try:
+        module.canonical_evidence_digest(invalid_record)
+    except TypeError:
+        pass
+    else:
+        raise SystemExit(f"non-interoperable evidence number was accepted: {invalid_record}")
+
 requirements = module.expected_preflight_policy_requirements("hobby-self-hosted", None)
 checks = [
     module.CheckResult(
@@ -135,6 +147,27 @@ module.write_report(
     "66666666-6666-4666-8666-666666666666",
     "",
 )
+try:
+    module.write_report(
+        output,
+        "hobby-self-hosted",
+        "contract-hobby",
+        report_timestamp,
+        report_timestamp,
+        checks,
+        "operator",
+        "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
+        "66666666-6666-4666-8666-666666666666",
+        "",
+    )
+except SystemExit as exc:
+    if exc.code != 1:
+        raise SystemExit(f"existing report was rejected for the wrong reason: {exc}") from exc
+else:
+    raise SystemExit("write_report overwrote an existing output")
+for invalid_ref in ("../escape", "UpperCase", "contains/slash", "contains_underscore"):
+    if module.DEPLOYMENT_REF_RE.fullmatch(invalid_ref):
+        raise SystemExit(f"invalid deployment ref was accepted: {invalid_ref}")
 PY
 
 cat >"$RENDERED_MANIFEST" <<'YAML'
@@ -242,6 +275,23 @@ spec:
             secretName: jwt-jwks
 YAML
 
+python3 - <<'PY' "$RENDERED_MANIFEST"
+import pathlib
+import sys
+
+import yaml
+
+path = pathlib.Path(sys.argv[1])
+documents = [
+    document
+    for document in yaml.safe_load_all(path.read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+for document in documents:
+    document.setdefault("metadata", {})["namespace"] = "firemud"
+path.write_text(yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8")
+PY
+
 python3 - <<'PY' "$RENDERED_MANIFEST" "$MIGRATED_RENDERED_MANIFEST"
 import pathlib
 import sys
@@ -271,8 +321,15 @@ for document in documents:
         continue
     pod_spec = document["spec"]["template"]["spec"]
     jwks_volume = next(
-        volume for volume in pod_spec.get("volumes", []) if volume.get("name") == "jwt-jwks"
+        (
+            volume
+            for volume in pod_spec.get("volumes", [])
+            if volume.get("name") == "jwt-jwks"
+        ),
+        None,
     )
+    if jwks_volume is None:
+        raise SystemExit("migrated ConfigMap fixture is missing the Account jwt-jwks volume")
     jwks_volume.pop("secret", None)
     jwks_volume["configMap"] = {"name": "jwt-jwks"}
     account_container = next(
@@ -281,8 +338,15 @@ for document in documents:
         if container.get("name") == "account-service"
     )
     jwks_mount = next(
-        mount for mount in account_container.get("volumeMounts", []) if mount.get("name") == "jwt-jwks"
+        (
+            mount
+            for mount in account_container.get("volumeMounts", [])
+            if mount.get("name") == "jwt-jwks"
+        ),
+        None,
     )
+    if jwks_mount is None:
+        raise SystemExit("migrated ConfigMap fixture is missing the Account jwt-jwks mount")
     if jwks_mount.get("mountPath") != "/var/run/secrets/firemud/jwks":
         raise SystemExit("migrated ConfigMap fixture has an unexpected Account JWKS mount path")
     found_account_wiring = True
@@ -397,10 +461,25 @@ secret_documents = copy.deepcopy(legacy_documents)
 secret_result = jwks_result(secret_documents)
 if secret_result.status != "pass":
     raise SystemExit(f"legacy Secret jwt-jwks did not satisfy the current contract: {secret_result.message}")
+
+wrong_namespace_documents = copy.deepcopy(legacy_documents)
+wrong_namespace_secret = next(
+    document
+    for document in wrong_namespace_documents
+    if document.get("kind") == "Secret"
+    and document.get("metadata", {}).get("name") == "jwt-jwks"
+)
+wrong_namespace_secret["metadata"]["namespace"] = "other"
+wrong_namespace_result = jwks_result(wrong_namespace_documents)
+if wrong_namespace_result.status != "fail" or "expected namespace" not in wrong_namespace_result.message:
+    raise SystemExit(
+        f"same-name jwt-jwks Secret in the wrong namespace was accepted: {wrong_namespace_result.message}"
+    )
 PY
 
 # Legacy Secret-backed hobby fixture is the current player-facing contract.
 set +e
+rm -f "$REPORT_PATH"
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_DEPLOYMENT_REF=contract-hobby \
   FIREMUD_PREFLIGHT_RENDER_PATH="$RENDERED_MANIFEST" \
@@ -553,6 +632,7 @@ if traffic_event_id != preflight_event_id:
     raise SystemExit("traffic-open writer did not preserve the preflight deploymentEventId")
 PY
 
+rm -f "$REPORT_PATH"
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_DEPLOYMENT_REF=contract-hobby \
   FIREMUD_PREFLIGHT_RENDER_PATH="$RENDERED_MANIFEST" \
@@ -920,6 +1000,7 @@ if python3 "$WRITER" production contract-production reopen \
 fi
 grep -Fq "invalid choice: 'production'" "$PRODUCTION_TRAFFIC_WRITER_OUTPUT"
 
+rm -f "$PRODUCTION_REPORT"
 if FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_DEPLOYMENT_REF="contract-production" \
   FIREMUD_PREFLIGHT_OUTPUT="$PRODUCTION_REPORT" \
@@ -1097,6 +1178,13 @@ except module.TIMESTAMP_ERRORS as exc:
         raise SystemExit(f"unexpected overflow fixture exception: {exc!r}")
 else:
     raise SystemExit("offset-aware overflow timestamp unexpectedly normalized")
+try:
+    module.parse_timestamp("2026-01-01T00:00:00", "naive timestamp")
+except module.TIMESTAMP_ERRORS as exc:
+    if "timezone" not in str(exc):
+        raise SystemExit(f"naive timestamp failed for the wrong reason: {exc}")
+else:
+    raise SystemExit("naive timestamp unexpectedly accepted")
 
 original_subprocess_run = module.subprocess.run
 try:
@@ -1174,6 +1262,28 @@ finally:
 issues = module.external_binding_uniqueness_issues(env_root, "staging", staging)
 if not any("backupStorage.bucket matches production" in issue for issue in issues):
     raise SystemExit(f"expected duplicate backupStorage.bucket issue, got: {issues}")
+
+staging["observability"] = {"otelCollectorEndpoint": "https://otel.shared.internal:4317"}
+production["observability"] = {"otelCollectorEndpoint": "https://otel.shared.internal:4317"}
+for env, data in (("staging", staging), ("production", production)):
+    path = env_root / env / "expected-bindings.yaml"
+    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+issues = module.external_binding_uniqueness_issues(env_root, "staging", staging)
+if not any("observability.otelCollectorEndpoint matches production" in issue for issue in issues):
+    raise SystemExit(f"undeclared shared OTEL endpoint was accepted: {issues}")
+shared_otel = {
+    "value": "https://otel.shared.internal:4317",
+    "shared": True,
+    "sharedRationale": "shared collector endpoint",
+}
+staging["observability"]["otelCollectorEndpoint"] = shared_otel
+production["observability"]["otelCollectorEndpoint"] = shared_otel
+for env, data in (("staging", staging), ("production", production)):
+    path = env_root / env / "expected-bindings.yaml"
+    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+issues = module.external_binding_uniqueness_issues(env_root, "staging", staging)
+if any("observability.otelCollectorEndpoint" in issue for issue in issues):
+    raise SystemExit(f"declared shared OTEL endpoint was rejected: {issues}")
 
 disabled_staging = copy.deepcopy(staging)
 disabled_production = copy.deepcopy(production)
@@ -1348,6 +1458,36 @@ current_results = module.expected_binding_checks(
 current_secrets = next(result for result in current_results if result.policy_id == "PREFLIGHT-SECRETS-002")
 if current_secrets.status != "pass":
     raise SystemExit(f"checked-in legacy JWT custody selector did not pass current wiring validation: {current_secrets.message}")
+
+for case_name, mutate, expected_fragment in (
+    (
+        "unknown-top-level",
+        lambda data: data.__setitem__("typoSection", {"enabled": True}),
+        "unknown top-level key",
+    ),
+    (
+        "unknown-nested-field",
+        lambda data: data["internalBindings"]["jwt"].__setitem__("jwksReff", "secret://firemud/jwt-jwks"),
+        "internalBindings.jwt.jwksReff",
+    ),
+):
+    malformed = yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+    mutate(malformed)
+    malformed_path = tmp / f"{case_name}-expected-bindings.yaml"
+    malformed_path.write_text(yaml.safe_dump(malformed, sort_keys=False), encoding="utf-8")
+    malformed_results = module.expected_binding_checks(
+        malformed_path,
+        f"synthetic-{case_name}-expected-bindings.yaml",
+        "hobby-self-hosted",
+        rendered_documents,
+    )
+    malformed_secrets = next(
+        result for result in malformed_results if result.policy_id == "PREFLIGHT-SECRETS-002"
+    )
+    if malformed_secrets.status != "fail" or expected_fragment not in malformed_secrets.message:
+        raise SystemExit(
+            f"{case_name}: unknown expected-bindings key was accepted: {malformed_secrets.message}"
+        )
 
 requirements = module.expected_preflight_policy_requirements("hobby-self-hosted", None)
 if requirements["PREFLIGHT-JWT-001"] or requirements["PREFLIGHT-JWKS-001"]:
@@ -1662,6 +1802,14 @@ verify_binding_ref_contract(
     lambda data: data["backupStorage"].__setitem__("bindingRef", "not-a-binding-ref"),
     "PREFLIGHT-EXTERNAL-001",
     "backupStorage.bindingRef must use <scheme>://<namespace>/<binding> format",
+)
+verify_binding_ref_contract(
+    "wrong-secret-namespace",
+    lambda data: data["internalBindings"]["postgres"].__setitem__(
+        "credentialsRef", "secret://other/postgres-credentials"
+    ),
+    "PREFLIGHT-SECRETS-002",
+    "Rendered workloads do not reference expected Secret bindings",
 )
 
 routine_expected = yaml.safe_load(
@@ -2893,23 +3041,38 @@ staging_expected_bindings.write_text(
 )
 
 secret_evidence_path = promotion_root / "secret-compliance.json"
-secret_evidence_path.write_text(
-    json.dumps(
-        {
-            "records": {
-                class_name: {"immutableArtifactId": f"contract:{class_name}:sha256:{'a' * 64}"}
-                for class_name in (
-                    "jwt-signing-keys-jwks",
-                    "postgres-application-credentials",
-                    "backup-object-store-credentials",
-                    "asset-store-credentials",
-                    "operator-credentials",
-                )
-            }
+def evidence_digest(record):
+    payload = {key: value for key, value in record.items() if key != "immutableArtifactId"}
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return "sha256:" + module.hashlib.sha256(encoded).hexdigest()
+
+
+def make_secret_evidence():
+    records = {}
+    for class_name in (
+        "jwt-signing-keys-jwks",
+        "postgres-application-credentials",
+        "backup-object-store-credentials",
+        "asset-store-credentials",
+        "operator-credentials",
+    ):
+        record = {
+            "targetEnvironment": "staging",
+            "credentialClass": class_name,
+            "evidenceOperationId": f"rotation-staging-{class_name}",
         }
-    ),
-    encoding="utf-8",
-)
+        record["immutableArtifactId"] = evidence_digest(record)
+        records[class_name] = record
+    return {"environment": "staging", "records": records}
+
+
+secret_evidence_path.write_text(json.dumps(make_secret_evidence()), encoding="utf-8")
 staging_event_id = "55555555-5555-4555-8555-555555555555"
 staging_dir = (
     promotion_root
@@ -3141,20 +3304,7 @@ malformed_immutable_status, _, malformed_immutable_message, _, _ = module.promot
 if malformed_immutable_status != "fail" or "not immutable" not in malformed_immutable_message:
     raise SystemExit(f"malformed immutable evidence identifier was accepted: {malformed_immutable_message}")
 secret_evidence_path.write_text(
-    json.dumps(
-        {
-            "records": {
-                class_name: {"immutableArtifactId": f"contract:{class_name}:sha256:{'a' * 64}"}
-                for class_name in (
-                    "jwt-signing-keys-jwks",
-                    "postgres-application-credentials",
-                    "backup-object-store-credentials",
-                    "asset-store-credentials",
-                    "operator-credentials",
-                )
-            }
-        }
-    ),
+    json.dumps(make_secret_evidence()),
     encoding="utf-8",
 )
 

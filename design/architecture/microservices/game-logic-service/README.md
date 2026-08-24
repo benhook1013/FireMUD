@@ -12,7 +12,7 @@ Game Logic is intentionally a replaceable same-type worker rather than a keeper 
 - Stubbed: room and entity context still comes from the deterministic LOOK fixtures, and chat delivery still uses the regression Social & Groups stub so canonical transcripts remain deterministic.
 - Deferred: richer LOOK prose, combat and effect annotations, NPC reply behavior, published closed observer-view declarations, authored partial-observation mechanics, profile-defined bounded `SHOUT`, and profanity-escalation flows remain future slices. No area/region `SHOUT` policy is implied.
 
-### Responsibilities
+## Responsibilities
 
 - Parse player commands and resolve actions
 - Apply combat rules, cooldowns, and environmental effects
