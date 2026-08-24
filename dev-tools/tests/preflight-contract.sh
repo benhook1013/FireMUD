@@ -3,6 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+CHECKED_OUT_SHA="$(git -C "$ROOT_DIR" rev-parse HEAD)"
 SCRIPT="$ROOT_DIR/dev-tools/deploy/preflight.py"
 WRITER="$ROOT_DIR/dev-tools/deploy/write-traffic-open-evidence.py"
 TMP_DIR="$(mktemp -d)"
@@ -27,6 +28,7 @@ HOBBY_TRAFFIC_WRITER_OUTPUT="$TMP_DIR/firemud-preflight-write-traffic-hobby.out"
 PRODUCTION_TRAFFIC_WRITER_OUTPUT="$TMP_DIR/firemud-preflight-write-traffic-production.out"
 
 python3 - <<'PY' "$ROOT_DIR"
+import copy
 import pathlib
 import sys
 import yaml
@@ -102,6 +104,7 @@ for env in ("production", "staging", "hobby-self-hosted"):
 PY
 
 python3 - <<'PY' "$ROOT_DIR" "$OPERATOR_REPORT_PATH"
+import copy
 import importlib.util
 import pathlib
 import sys
@@ -148,6 +151,7 @@ module.write_report(
     "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
     "66666666-6666-4666-8666-666666666666",
     "",
+    module.immutable_file_digest(root / "design/operations/environments/hobby-self-hosted/expected-bindings.yaml"),
 )
 try:
     module.write_report(
@@ -161,6 +165,7 @@ try:
         "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
         "66666666-6666-4666-8666-666666666666",
         "",
+        module.immutable_file_digest(root / "design/operations/environments/hobby-self-hosted/expected-bindings.yaml"),
     )
 except SystemExit as exc:
     if exc.code != 1:
@@ -170,6 +175,205 @@ else:
 for invalid_ref in ("../escape", "UpperCase", "contains/slash", "contains_underscore"):
     if module.DEPLOYMENT_REF_RE.fullmatch(invalid_ref):
         raise SystemExit(f"invalid deployment ref was accepted: {invalid_ref}")
+if module.operator_deployment_ref_is_current("staging", "contract-staging", "a" * 40):
+    raise SystemExit("arbitrary staging deployment ref was accepted")
+if not module.operator_deployment_ref_is_current("staging", "a" * 40, "a" * 40):
+    raise SystemExit("current full staging commit SHA was rejected")
+if not module.operator_deployment_ref_is_current("hobby-self-hosted", "contract-hobby", "a" * 40):
+    raise SystemExit("hobby deployment ref compatibility was lost")
+attestation_sha = "0123456789abcdef" * 2 + "01234567"
+canonical_attestation = module.canonical_promotion_attestation_ref(attestation_sha)
+if canonical_attestation != f"design/operations/deployments/production/attestations/{attestation_sha}.json":
+    raise SystemExit(f"canonical promotion attestation ref drifted: {canonical_attestation}")
+if not module.is_canonical_promotion_attestation_ref(canonical_attestation, attestation_sha, root_dir=root):
+    raise SystemExit("canonical promotion attestation ref was rejected")
+for external_ref in (
+    "/tmp/promotion-attestation.json",
+    "design/operations/deployments/production/attestations/other.json",
+    "../production-attestation.json",
+):
+    if module.is_canonical_promotion_attestation_ref(external_ref, attestation_sha, root_dir=root):
+        raise SystemExit(f"external promotion attestation ref was accepted: {external_ref}")
+for malformed_sha in ("0123456789abcdef", "../" + "a" * 39, "a" * 41):
+    if module.canonical_promotion_attestation_ref(malformed_sha) is not None:
+        raise SystemExit(f"malformed promotion deployment ref was canonicalized: {malformed_sha}")
+owned_document = {
+    "kind": "Deployment",
+    "metadata": {"name": "account-service", "namespace": "firemud"},
+    "spec": {
+        "template": {
+            "spec": {
+                "volumes": [
+                    {"name": "jwt-signing-keys", "secret": {"secretName": "jwt-signing-keys"}},
+                    {"name": "jwt-jwks", "secret": {"secretName": "jwt-jwks"}},
+                ],
+                "containers": [
+                    {
+                        "name": "account-service",
+                        "envFrom": [{"secretRef": {"name": "postgres-credentials"}}],
+                        "volumeMounts": [
+                            {"name": "jwt-signing-keys", "mountPath": "/var/run/secrets/firemud/jwt", "readOnly": True},
+                            {"name": "jwt-jwks", "mountPath": "/var/run/secrets/firemud/jwks", "readOnly": True},
+                        ],
+                    }
+                ],
+            }
+        }
+    },
+}
+if not module.rendered_secret_binding_is_owned(
+    [owned_document], "postgres-credentials", "firemud", "internalBindings.postgres.credentialsRef"
+):
+    raise SystemExit("owning workload postgres binding was not proven")
+if not module.rendered_secret_binding_is_owned(
+    [owned_document], "jwt-signing-keys", "firemud", "internalBindings.jwt.signingKeysRef"
+):
+    raise SystemExit("owning workload JWT signing binding was not proven")
+unrelated_document = copy.deepcopy(owned_document)
+unrelated_document["spec"]["template"]["spec"]["containers"][0]["volumeMounts"][0]["mountPath"] = "/unrelated"
+if module.rendered_secret_binding_is_owned(
+    [unrelated_document], "jwt-signing-keys", "firemud", "internalBindings.jwt.signingKeysRef"
+):
+    raise SystemExit("unrelated Secret reference incorrectly satisfied a JWT binding")
+for binding_path, secret_name in (
+    ("internalBindings.postgres.credentialsRef", "postgres-credentials"),
+    ("internalBindings.jwt.signingKeysRef", "jwt-signing-keys"),
+):
+    unrelated = copy.deepcopy(owned_document)
+    unrelated["metadata"]["name"] = "unrelated-service"
+    unrelated["spec"]["template"]["spec"]["containers"][0]["name"] = "unrelated-service"
+    if module.rendered_secret_binding_is_owned([unrelated], secret_name, "firemud", binding_path):
+        raise SystemExit(f"unrelated workload satisfied {binding_path}")
+missing_name = copy.deepcopy(owned_document)
+missing_name["metadata"].pop("name")
+if module.rendered_secret_binding_is_owned(
+    [missing_name], "postgres-credentials", "firemud", "internalBindings.postgres.credentialsRef"
+):
+    raise SystemExit("workload with missing metadata.name satisfied a Secret binding")
+missing_namespace = copy.deepcopy(owned_document)
+missing_namespace["metadata"].pop("namespace")
+if module.rendered_secret_binding_is_owned(
+    [missing_namespace], "postgres-credentials", "firemud", "internalBindings.postgres.credentialsRef"
+):
+    raise SystemExit("workload with missing metadata.namespace satisfied a Secret binding")
+duplicate_workload = copy.deepcopy(owned_document)
+if module.rendered_secret_binding_is_owned(
+    [owned_document, duplicate_workload],
+    "postgres-credentials",
+    "firemud",
+    "internalBindings.postgres.credentialsRef",
+):
+    raise SystemExit("duplicate owning workloads satisfied a Secret binding")
+duplicate_container = copy.deepcopy(owned_document)
+primary_spec = duplicate_container["spec"]["template"]["spec"]
+primary_spec["containers"].append(copy.deepcopy(primary_spec["containers"][0]))
+if module.rendered_secret_binding_is_owned(
+    [duplicate_container],
+    "postgres-credentials",
+    "firemud",
+    "internalBindings.postgres.credentialsRef",
+):
+    raise SystemExit("duplicate primary containers satisfied a Secret binding")
+wrong_env = copy.deepcopy(owned_document)
+wrong_env["spec"]["template"]["spec"]["containers"][0]["envFrom"] = [
+    {"configMapRef": {"name": "firemud-config"}}
+]
+wrong_env["spec"]["template"]["spec"]["containers"][0]["env"] = [
+    {"name": "POSTGRES_USER", "valueFrom": {"secretKeyRef": {"name": "postgres-credentials", "key": "user"}}}
+]
+if module.rendered_secret_binding_is_owned(
+    [wrong_env], "postgres-credentials", "firemud", "internalBindings.postgres.credentialsRef"
+):
+    raise SystemExit("wrong Secret env binding was accepted")
+
+def assert_binding_rejected(document, secret_name, binding_path, label):
+    if module.rendered_secret_binding_is_owned([document], secret_name, "firemud", binding_path):
+        raise SystemExit(f"{label} incorrectly satisfied {binding_path}")
+
+
+postgres_mount_probe = copy.deepcopy(owned_document)
+postgres_mount_probe["spec"]["template"]["spec"]["volumes"].append(
+    {"name": "postgres-credentials", "secret": {"secretName": "postgres-credentials"}}
+)
+postgres_mount_probe["spec"]["template"]["spec"]["containers"][0]["volumeMounts"].append(
+    {"name": "postgres-credentials", "mountPath": "/var/run/secrets/firemud/postgres", "readOnly": True}
+)
+assert_binding_rejected(
+    postgres_mount_probe,
+    "postgres-credentials",
+    "internalBindings.postgres.credentialsRef",
+    "PostgreSQL envFrom plus same-Secret mount",
+)
+postgres_key_probe = copy.deepcopy(owned_document)
+postgres_key_probe["spec"]["template"]["spec"]["containers"][0].setdefault("env", []).append(
+    {"name": "POSTGRES_PASSWORD", "valueFrom": {"secretKeyRef": {"name": "postgres-credentials", "key": "password"}}}
+)
+assert_binding_rejected(
+    postgres_key_probe,
+    "postgres-credentials",
+    "internalBindings.postgres.credentialsRef",
+    "PostgreSQL envFrom plus same-Secret secretKeyRef",
+)
+signing_env_probe = copy.deepcopy(owned_document)
+signing_env_probe["spec"]["template"]["spec"]["containers"][0]["envFrom"].append(
+    {"secretRef": {"name": "jwt-signing-keys"}}
+)
+assert_binding_rejected(
+    signing_env_probe,
+    "jwt-signing-keys",
+    "internalBindings.jwt.signingKeysRef",
+    "JWT signing mount plus same-Secret envFrom",
+)
+signing_key_probe = copy.deepcopy(owned_document)
+signing_key_probe["spec"]["template"]["spec"]["containers"][0].setdefault("env", []).append(
+    {"name": "JWT_KEY", "valueFrom": {"secretKeyRef": {"name": "jwt-signing-keys", "key": "current.key"}}}
+)
+assert_binding_rejected(
+    signing_key_probe,
+    "jwt-signing-keys",
+    "internalBindings.jwt.signingKeysRef",
+    "JWT signing mount plus same-Secret secretKeyRef",
+)
+signing_wrong_mount_probe = copy.deepcopy(owned_document)
+signing_wrong_mount_probe["spec"]["template"]["spec"]["containers"][0]["volumeMounts"].append(
+    {"name": "jwt-signing-keys", "mountPath": "/var/run/secrets/firemud/other", "readOnly": True}
+)
+assert_binding_rejected(
+    signing_wrong_mount_probe,
+    "jwt-signing-keys",
+    "internalBindings.jwt.signingKeysRef",
+    "JWT signing plus same-Secret wrong mount path",
+)
+jwks_env_probe = copy.deepcopy(owned_document)
+jwks_env_probe["spec"]["template"]["spec"]["containers"][0]["envFrom"].append(
+    {"secretRef": {"name": "jwt-jwks"}}
+)
+assert_binding_rejected(
+    jwks_env_probe,
+    "jwt-jwks",
+    "internalBindings.jwt.jwksRef",
+    "JWKS mount plus same-Secret envFrom",
+)
+jwks_key_probe = copy.deepcopy(owned_document)
+jwks_key_probe["spec"]["template"]["spec"]["containers"][0].setdefault("env", []).append(
+    {"name": "JWKS", "valueFrom": {"secretKeyRef": {"name": "jwt-jwks", "key": "jwks.json"}}}
+)
+assert_binding_rejected(
+    jwks_key_probe,
+    "jwt-jwks",
+    "internalBindings.jwt.jwksRef",
+    "JWKS mount plus same-Secret secretKeyRef",
+)
+jwks_wrong_mount_probe = copy.deepcopy(owned_document)
+jwks_wrong_mount_probe["spec"]["template"]["spec"]["containers"][0]["volumeMounts"].append(
+    {"name": "jwt-jwks", "mountPath": "/var/run/secrets/firemud/other-jwks", "readOnly": True}
+)
+assert_binding_rejected(
+    jwks_wrong_mount_probe,
+    "jwt-jwks",
+    "internalBindings.jwt.jwksRef",
+    "JWKS plus same-Secret wrong mount path",
+)
 PY
 
 cat >"$RENDERED_MANIFEST" <<'YAML'
@@ -436,6 +640,24 @@ assert spec.loader is not None
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 
+helper_root = rendered_path.parent / "attestation-helper-root"
+attestation_dir = helper_root / "design/operations/deployments/production/attestations"
+attestation_dir.mkdir(parents=True)
+helper_sha = "a" * 40
+(helper_root / "outside.json").write_text("{}", encoding="utf-8")
+(attestation_dir / f"{helper_sha}.json").symlink_to(helper_root / "outside.json")
+canonical_helper_ref = module.canonical_promotion_attestation_ref(helper_sha)
+if module.is_canonical_promotion_attestation_ref(
+    canonical_helper_ref, helper_sha, root_dir=helper_root
+):
+    raise SystemExit("symlinked promotion attestation escaped canonical ownership checks")
+if module.is_canonical_promotion_attestation_ref(
+    "design/operations/deployments/production/attestations/../attestations/" + f"{helper_sha}.json",
+    helper_sha,
+    root_dir=helper_root,
+):
+    raise SystemExit("traversal promotion attestation ref was accepted")
+
 legacy_documents = [
     document
     for document in yaml.safe_load_all(rendered_path.read_text(encoding="utf-8"))
@@ -572,12 +794,13 @@ if mutated_binding_result.status != "fail" or "must be exactly" not in mutated_b
 namespace_less_documents = copy.deepcopy(legacy_documents)
 for document in namespace_less_documents:
     document.get("metadata", {}).pop("namespace", None)
-namespace_less_result = jwks_result(namespace_less_documents)
-if namespace_less_result.status != "pass":
-    raise SystemExit(
-        "namespace-less jwt-jwks wiring did not inherit the configured namespace: "
-        f"{namespace_less_result.message}"
-    )
+if module.rendered_secret_binding_is_owned(
+    namespace_less_documents,
+    "jwt-jwks",
+    "firemud",
+    "internalBindings.jwt.jwksRef",
+):
+    raise SystemExit("namespace-less jwt-jwks workload incorrectly satisfied the binding contract")
 
 wrong_namespace_documents = copy.deepcopy(legacy_documents)
 wrong_namespace_secret = next(
@@ -595,7 +818,7 @@ if wrong_namespace_result.status != "fail" or "expected namespace" not in wrong_
 
 namespace_reference_document = {
     "kind": "Deployment",
-    "metadata": {"name": "namespace-reference-contract"},
+    "metadata": {"name": "account-service"},
     "spec": {
         "template": {
             "spec": {
@@ -609,19 +832,19 @@ namespace_reference_document = {
         }
     },
 }
-if not module.rendered_references_secret(
+if module.rendered_secret_binding_is_owned(
     [namespace_reference_document],
     "postgres-credentials",
     "firemud",
-    default_namespace="firemud",
+    "internalBindings.postgres.credentialsRef",
 ):
-    raise SystemExit("namespace-less Secret reference did not inherit the expected namespace")
+    raise SystemExit("namespace-less Secret reference incorrectly satisfied the ownership contract")
 namespace_reference_document["metadata"]["namespace"] = "other"
-if module.rendered_references_secret(
+if module.rendered_secret_binding_is_owned(
     [namespace_reference_document],
     "postgres-credentials",
     "firemud",
-    default_namespace="firemud",
+    "internalBindings.postgres.credentialsRef",
 ):
     raise SystemExit("Secret reference with an explicit wrong namespace was accepted")
 
@@ -1167,7 +1390,7 @@ PY
 # so static preflight must fail closed rather than authorize URL-only wiring.
 set +e
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
-  FIREMUD_DEPLOYMENT_REF="contract-production" \
+  FIREMUD_DEPLOYMENT_REF="$CHECKED_OUT_SHA" \
   FIREMUD_PREFLIGHT_OUTPUT="$PRODUCTION_REPORT" \
   python3 "$SCRIPT" production >"$LEGACY_PRODUCTION_PREFLIGHT_OUTPUT"
 production_preflight_status=$?
@@ -1220,7 +1443,7 @@ grep -Fq "hobby-self-hosted" "$PRODUCTION_TRAFFIC_WRITER_OUTPUT"
 
 rm -f "$PRODUCTION_REPORT"
 if FIREMUD_PREFLIGHT_CONTEXT=ci-static \
-  FIREMUD_DEPLOYMENT_REF="contract-production" \
+  FIREMUD_DEPLOYMENT_REF="$CHECKED_OUT_SHA" \
   FIREMUD_PREFLIGHT_OUTPUT="$PRODUCTION_REPORT" \
   FIREMUD_TRAFFIC_OPEN_EVENT=reopen \
   python3 "$SCRIPT" production >"$GATED_PRODUCTION_PREFLIGHT_OUTPUT" 2>&1; then
@@ -1260,7 +1483,7 @@ JSON
 
 rm -f "$PRODUCTION_REPORT"
 if FIREMUD_PREFLIGHT_CONTEXT=ci-static \
-  FIREMUD_DEPLOYMENT_REF="contract-production" \
+  FIREMUD_DEPLOYMENT_REF="$CHECKED_OUT_SHA" \
   FIREMUD_PREFLIGHT_OUTPUT="$PRODUCTION_REPORT" \
   FIREMUD_PREFLIGHT_WAIVER="$PRODUCTION_WAIVER" \
   FIREMUD_TRAFFIC_OPEN_EVENT=reopen \
@@ -1285,7 +1508,7 @@ for env in staging production; do
   # CI must record that required gap rather than authorize URL-only wiring.
   set +e
   FIREMUD_PREFLIGHT_CONTEXT=ci-static \
-    FIREMUD_DEPLOYMENT_REF="contract-$env" \
+    FIREMUD_DEPLOYMENT_REF="$CHECKED_OUT_SHA" \
     FIREMUD_PREFLIGHT_OUTPUT="$REPORT" \
     python3 "$SCRIPT" "$env" >"$TMP_DIR/firemud-preflight-contract-$env.out"
   preflight_status=$?
@@ -4079,6 +4302,8 @@ staging_expected_data["assetStorage"] = {
 staging_expected_bindings.write_text(
     yaml.safe_dump(staging_expected_data, sort_keys=False), encoding="utf-8"
 )
+expected_bindings_ref = "design/operations/environments/staging/expected-bindings.yaml"
+expected_bindings_digest = module.immutable_file_digest(staging_expected_bindings)
 
 for env in ("production", "hobby-self-hosted"):
     expected_path = promotion_root / "design/operations/environments" / env / "expected-bindings.yaml"
@@ -4224,7 +4449,8 @@ staging_preflight_path.write_text(
     json.dumps(
         {
             "environment": "staging",
-            "expectedBindingsRef": "design/operations/environments/staging/expected-bindings.yaml",
+            "expectedBindingsRef": expected_bindings_ref,
+            "expectedBindingsDigest": expected_bindings_digest,
             "deploymentRef": {"overlayCommitSha": staging_sha},
             "deploymentEventId": staging_event_id,
             "trafficOpenEvent": None,
@@ -4273,6 +4499,8 @@ staging_record = {
     "deployStatus": "pass",
     "smokeStatus": "pass",
     "serviceDigests": {"spring-cloud-gateway": gateway_image, "account-service": account_image},
+    "expectedBindingsRef": expected_bindings_ref,
+    "expectedBindingsDigest": expected_bindings_digest,
     "jwtCustodyProof": jwt_custody_proof,
     "jwtRotationEvidenceRef": rotation_evidence_ref,
     "preflightReportPath": str(staging_preflight_path.relative_to(promotion_root)),
@@ -4325,26 +4553,16 @@ if (
     raise SystemExit(f"valid rollback-compatible promotion did not pass: {promotion_message}")
 
 # Bootstrap evidence is independently authorized by the matching operation ID
-# and provisioning generation; it must not require a rotation evidence ID.
+# and provisioning generation, but it coexists with the required event-scoped
+# JWT rotation evidence for a promotion candidate.
 write_secret_evidence(make_bootstrap_secret_evidence())
 original_attestation_bytes = promotion_attestation_path.read_bytes()
 original_record_bytes = staging_record_path.read_bytes()
 original_preflight_bytes = staging_preflight_path.read_bytes()
 bootstrap_attestation = json.loads(promotion_attestation_path.read_text(encoding="utf-8"))
 bootstrap_record = json.loads(staging_record_path.read_text(encoding="utf-8"))
-bootstrap_preflight = json.loads(staging_preflight_path.read_text(encoding="utf-8"))
-bootstrap_attestation.pop("jwtRotationEvidenceRef", None)
-bootstrap_record.pop("jwtRotationEvidenceRef", None)
-bootstrap_preflight["checkResults"] = [
-    check
-    for check in bootstrap_preflight["checkResults"]
-    if check.get("policyId") != "PREFLIGHT-JWT-ROTATION-001"
-]
 promotion_attestation_path.write_text(json.dumps(bootstrap_attestation), encoding="utf-8")
 staging_record_path.write_text(json.dumps(bootstrap_record), encoding="utf-8")
-staging_preflight_path.write_text(json.dumps(bootstrap_preflight), encoding="utf-8")
-rotation_evidence_backup = rotation_evidence_path.read_bytes()
-rotation_evidence_path.unlink()
 bootstrap_promotion_status, _, bootstrap_promotion_message, _, _ = module.promotion_check(
     promotion_attestation_path,
     [gateway_image, account_image],
@@ -4353,11 +4571,67 @@ bootstrap_promotion_status, _, bootstrap_promotion_message, _, _ = module.promot
 )
 if bootstrap_promotion_status != "pass":
     raise SystemExit(
-        "valid bootstrap secret compliance evidence did not pass: "
+        "bootstrap secret compliance evidence did not coexist with rotation evidence: "
         + bootstrap_promotion_message
     )
-rotation_evidence_path.write_bytes(rotation_evidence_backup)
-staging_record = bootstrap_record
+
+bootstrap_attestation.pop("jwtRotationEvidenceRef", None)
+promotion_attestation_path.write_text(json.dumps(bootstrap_attestation), encoding="utf-8")
+missing_attestation_status, _, missing_attestation_message, _, _ = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if (
+    missing_attestation_status != "fail"
+    or "jwtRotationEvidenceRef" not in missing_attestation_message
+):
+    raise SystemExit(
+        "bootstrap promotion without attestation rotation evidence was accepted: "
+        + missing_attestation_message
+    )
+
+promotion_attestation_path.write_bytes(original_attestation_bytes)
+bootstrap_record.pop("jwtRotationEvidenceRef", None)
+staging_record_path.write_text(json.dumps(bootstrap_record), encoding="utf-8")
+missing_record_status, _, missing_record_message, _, _ = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if (
+    missing_record_status != "fail"
+    or "Staging deployment record missing required canonical fields: jwtRotationEvidenceRef"
+    not in missing_record_message
+):
+    raise SystemExit(
+        "bootstrap staging record without rotation evidence was accepted: "
+        + missing_record_message
+    )
+
+promotion_attestation_path.write_bytes(original_attestation_bytes)
+bootstrap_record["jwtRotationEvidenceRef"] = rotation_evidence_ref + "-mismatch"
+staging_record_path.write_text(json.dumps(bootstrap_record), encoding="utf-8")
+mismatched_record_status, _, mismatched_record_message, _, _ = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if (
+    mismatched_record_status != "fail"
+    or "jwtRotationEvidenceRef does not match the attestation" not in mismatched_record_message
+):
+    raise SystemExit(
+        "bootstrap staging record with mismatched rotation evidence was accepted: "
+        + mismatched_record_message
+    )
+
+promotion_attestation_path.write_bytes(original_attestation_bytes)
+staging_record_path.write_bytes(original_record_bytes)
+staging_record = json.loads(original_record_bytes)
 bootstrap_mismatch = make_bootstrap_secret_evidence()
 bootstrap_mismatch["records"]["operator-credentials"]["provisioningGeneration"] = 8
 bootstrap_mismatch["records"]["operator-credentials"]["immutableArtifactId"] = evidence_digest(
@@ -4429,6 +4703,44 @@ def verify_jwt_lineage_failure(
     )
     if status != "fail" or expected_fragment not in message:
         raise SystemExit(f"{case_name}: JWT lineage failure was not enforced: {message}")
+
+
+verify_jwt_lineage_failure(
+    "missing-expected-bindings-digest",
+    mutate_record=lambda record: record.pop("expectedBindingsDigest"),
+    expected_fragment="Staging deployment record missing required canonical fields",
+)
+verify_jwt_lineage_failure(
+    "mismatched-expected-bindings-digest",
+    mutate_record=lambda record: record.__setitem__(
+        "expectedBindingsDigest", "sha256:" + "0" * 64
+    ),
+    expected_fragment="Staging deployment record expectedBindingsDigest mismatch",
+)
+verify_jwt_lineage_failure(
+    "mismatched-preflight-expected-bindings-digest",
+    mutate_preflight=lambda preflight: preflight.__setitem__(
+        "expectedBindingsDigest", "sha256:" + "1" * 64
+    ),
+    expected_fragment="preflight report expectedBindingsDigest mismatch",
+)
+original_expected_bindings_bytes = staging_expected_bindings.read_bytes()
+promotion_attestation_path.write_bytes(original_attestation_bytes)
+write_secret_evidence(make_secret_evidence())
+staging_record_path.write_text(json.dumps(staging_record), encoding="utf-8")
+staging_preflight_path.write_bytes(original_preflight_bytes)
+staging_expected_bindings.write_bytes(original_expected_bindings_bytes + b"\n# changed bytes\n")
+changed_manifest_status, _, changed_manifest_message, _, _ = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if changed_manifest_status != "fail" or "expectedBindingsDigest mismatch" not in changed_manifest_message:
+    raise SystemExit(
+        "changed expected-bindings bytes were accepted: " + changed_manifest_message
+    )
+staging_expected_bindings.write_bytes(original_expected_bindings_bytes)
 
 
 verify_jwt_lineage_failure(
@@ -4712,7 +5024,7 @@ if malformed_immutable_status != "fail" or "not immutable" not in malformed_immu
 write_secret_evidence(make_secret_evidence())
 
 bad_git_attestation = json.loads(promotion_attestation_path.read_text(encoding="utf-8"))
-bad_git_attestation["stagingOverlayCommitSha"] = "deadbeef"
+bad_git_attestation["stagingOverlayCommitSha"] = "d" * 40
 bad_git_path = promotion_root / "bad-git-attestation.json"
 bad_git_path.write_text(json.dumps(bad_git_attestation), encoding="utf-8")
 bad_git_status, _, bad_git_message, _, _ = module.promotion_check(

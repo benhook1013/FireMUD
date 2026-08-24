@@ -3015,7 +3015,34 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             route["required_fields"],
         )
         self.assertEqual(
-            "action_family", route["mutation_identity_selector"]["selector_field"]
+            ["action_family", "action_family_schema_id", "action_family_schema_version"],
+            route["mutation_identity_selector"]["selector_fields"],
+        )
+        self.assertEqual(
+            "operator_delegation.issuance_paths.human.bindings."
+            "mutation_identity_selector.mapping",
+            route["mutation_identity_selector"]["mapping_ref"],
+        )
+        selector_mapping = document["operator_delegation"]["issuance_paths"][
+            "human"
+        ]["bindings"]["mutation_identity_selector"]["mapping"]
+        self.assertEqual(
+            ["action_family", "action_family_schema_id", "action_family_schema_version"],
+            selector_mapping["key_fields"],
+        )
+        self.assertEqual([], selector_mapping["entries"])
+        self.assertEqual(
+            "no_published_action_family_schema_pairs",
+            selector_mapping["entries_status"],
+        )
+        self.assertEqual(
+            {
+                "unknown": "reject_before_issuance",
+                "duplicate": "reject_before_issuance",
+                "ambiguous": "reject_before_issuance",
+                "mismatched": "reject_before_issuance",
+            },
+            selector_mapping["rejections"],
         )
         self.assertEqual(
             {
@@ -3214,6 +3241,205 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                         for error in errors
                     ),
                     (branch_name, field, errors),
+                )
+
+    def test_operator_issuance_selector_mapping_rejects_unknown_or_ambiguous_entries(
+        self,
+    ):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        valid_entry = {
+            "action_family": "fixture-family",
+            "action_family_schema_id": "fixture-schema",
+            "action_family_schema_version": "v1",
+            "identity_alternative": "non_moderation",
+        }
+        mutations = (
+            (
+                "unknown alternative",
+                lambda mapping: mapping["entries"].append(
+                    {**valid_entry, "identity_alternative": "unknown"}
+                ),
+                "identity_alternative must name exactly one",
+            ),
+            (
+                "duplicate exact selector key",
+                lambda mapping: mapping["entries"].extend(
+                    [valid_entry, dict(valid_entry)]
+                ),
+                "duplicates selector key",
+            ),
+            (
+                "missing exact schema version",
+                lambda mapping: mapping["entries"].append(
+                    {
+                        key: value
+                        for key, value in valid_entry.items()
+                        if key != "action_family_schema_version"
+                    }
+                ),
+                "must contain exactly",
+            ),
+        )
+        for mutation_name, mutate, expected_error in mutations:
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                mapping = document["operator_delegation"]["issuance_paths"]["human"][
+                    "bindings"
+                ]["mutation_identity_selector"]["mapping"]
+                mutate(mapping)
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(expected_error in error for error in errors),
+                    (mutation_name, errors),
+                )
+
+    def test_operator_issuance_selector_mapping_requires_exact_selector_contract(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        mutations = (
+            (
+                "selector fields omit schema pair",
+                lambda selector: selector.__setitem__("selector_fields", ["action_family"]),
+                "selector_fields must equal",
+            ),
+            (
+                "mapping reference points elsewhere",
+                lambda selector: selector.__setitem__("mapping_ref", "route-local"),
+                "mapping_ref must equal",
+            ),
+            (
+                "unknown values are not rejected",
+                lambda mapping: mapping["rejections"].__setitem__("unknown", "allow"),
+                "rejections must equal",
+            ),
+        )
+        for mutation_name, mutate, expected_error in mutations:
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                route = route_for(
+                    document,
+                    "account-service",
+                    "IssueHumanOperatorAuthorizationReference",
+                )
+                if "selector" in mutation_name or "reference" in mutation_name:
+                    mutate(route["mutation_identity_selector"])
+                else:
+                    mapping = document["operator_delegation"]["issuance_paths"]["human"][
+                        "bindings"
+                    ]["mutation_identity_selector"]["mapping"]
+                    mutate(mapping)
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(expected_error in error for error in errors),
+                    (mutation_name, errors),
+                )
+
+    def test_operator_issuance_selector_mapping_rejects_published_or_open_drift(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        valid_entry = {
+            "action_family": "fixture-family",
+            "action_family_schema_id": "fixture-schema",
+            "action_family_schema_version": "v1",
+            "identity_alternative": "non_moderation",
+        }
+        mutations = (
+            (
+                "non-empty published registry",
+                lambda document: (
+                    document["operator_delegation"]["issuance_paths"]["human"][
+                        "bindings"
+                    ]["mutation_identity_selector"]["mapping"]["entries"].append(
+                        valid_entry
+                    ),
+                    document["operator_delegation"]["issuance_paths"]["human"][
+                        "bindings"
+                    ]["mutation_identity_selector"]["mapping"].__setitem__(
+                        "entries_status", "published_action_family_schema_pairs"
+                    ),
+                ),
+                "entries must remain empty",
+            ),
+            (
+                "empty registry claims published",
+                lambda document: document["operator_delegation"]["issuance_paths"][
+                    "human"
+                ]["bindings"]["mutation_identity_selector"]["mapping"].__setitem__(
+                    "entries_status", "published_action_family_schema_pairs"
+                ),
+                "entries_status must be",
+            ),
+            (
+                "issuance route is current",
+                lambda document: route_for(
+                    document,
+                    "account-service",
+                    "IssueHumanOperatorAuthorizationReference",
+                ).__setitem__("route_status", "current_openapi_operator_surface"),
+                "route_status must remain",
+            ),
+        )
+        for mutation_name, mutate, expected_error in mutations:
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                mutate(document)
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(expected_error in error for error in errors),
+                    (mutation_name, errors),
+                )
+
+    def test_operator_issuance_selector_mapping_rejects_ambiguous_or_mismatched_declarations(
+        self,
+    ):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        valid_entry = {
+            "action_family": "fixture-family",
+            "action_family_schema_id": "fixture-schema",
+            "action_family_schema_version": "v1",
+            "identity_alternative": "non_moderation",
+        }
+        mutations = (
+            (
+                "same tuple selects two alternatives",
+                lambda mapping: (
+                    mapping["entries"].extend(
+                        [
+                            valid_entry,
+                            {
+                                **valid_entry,
+                                "identity_alternative": "moderation_policy_intent",
+                            },
+                        ]
+                    ),
+                    mapping.__setitem__(
+                        "entries_status", "published_action_family_schema_pairs"
+                    ),
+                ),
+                "duplicates selector key",
+            ),
+            (
+                "selector key declaration is mismatched",
+                lambda mapping: mapping.__setitem__(
+                    "key_fields",
+                    [
+                        "action_family_schema_id",
+                        "action_family",
+                        "action_family_schema_version",
+                    ],
+                ),
+                "key_fields must equal",
+            ),
+        )
+        for mutation_name, mutate, expected_error in mutations:
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                mapping = document["operator_delegation"]["issuance_paths"]["human"][
+                    "bindings"
+                ]["mutation_identity_selector"]["mapping"]
+                mutate(mapping)
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(expected_error in error for error in errors),
+                    (mutation_name, errors),
                 )
 
     def test_operator_reference_issuance_missing_required_fields_has_one_diagnostic(self):

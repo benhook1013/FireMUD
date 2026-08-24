@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-Kubernetes Secret mounts, cert-manager examples, expected-binding preflight, and secret-compliance evidence exist, but the repository does not satisfy the complete target. Base manifests mount JWT signing material beyond Account, gRPC workloads commonly share one TLS Secret, and production Secret encryption-at-rest/audit proof plus automated rotation/convergence remain incomplete.
+Kubernetes Secret mounts, cert-manager examples, expected-binding preflight, and secret-compliance evidence exist, but the repository does not satisfy the complete target. Base manifests mount JWT signing material beyond Account, gRPC workloads commonly share one TLS Secret, and production Secret encryption-at-rest/audit proof plus automated rotation/convergence remain incomplete. Hosted preview/dev-demo Helm currently uses the shared `firemud-grpc-tls` Secret across gRPC workloads; that proves encrypted transport only, not target per-workload identity or player-facing equivalence. The target remains distinct leaf Secrets per workload with a shared CA, with generic per-workload identity preflight proof still unimplemented.
 
 ## Decision Record
 

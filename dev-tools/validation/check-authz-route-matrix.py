@@ -689,6 +689,22 @@ HUMAN_OPERATOR_ISSUANCE_IDENTITY_ALTERNATIVES = {
         "control_plane_request_id": "correlation_only",
     },
 }
+HUMAN_OPERATOR_ISSUANCE_SELECTOR_KEY_FIELDS = [
+    "action_family",
+    "action_family_schema_id",
+    "action_family_schema_version",
+]
+HUMAN_OPERATOR_ISSUANCE_SELECTOR_MAPPING_REJECTIONS = {
+    "unknown": "reject_before_issuance",
+    "duplicate": "reject_before_issuance",
+    "ambiguous": "reject_before_issuance",
+    "mismatched": "reject_before_issuance",
+}
+HUMAN_OPERATOR_ISSUANCE_SELECTOR_MAPPING_REF = (
+    "operator_delegation.issuance_paths.human.bindings."
+    "mutation_identity_selector.mapping"
+)
+HUMAN_OPERATOR_ISSUANCE_ROUTE_STATUS = "target_not_currently_routable"
 AUTH_UNAVAILABLE = "AUTH_UNAVAILABLE"
 UNAVAILABLE_AUTHORITY_ERROR_ALIASES = {
     "MEMBERSHIP_AUTH_UNAVAILABLE",
@@ -3261,6 +3277,7 @@ def validate_human_operator_issuance_branches(
     routes: list[Any],
     errors: list[str],
     cardinality_errors: set[str] | None = None,
+    document: dict[str, Any] | None = None,
 ) -> None:
     route = resolve_unique_route(
         routes,
@@ -3272,6 +3289,12 @@ def validate_human_operator_issuance_branches(
     if route is None:
         return
     label = route_label(route)
+    if route.get("route_status") != HUMAN_OPERATOR_ISSUANCE_ROUTE_STATUS:
+        errors.append(
+            f"{label} route_status must remain "
+            f"{HUMAN_OPERATOR_ISSUANCE_ROUTE_STATUS!r} while no action-family "
+            "schema pairs are published"
+        )
     if route.get("branch_selector") != "action_category_or_absence":
         errors.append(
             f"{label} branch_selector must be 'action_category_or_absence'"
@@ -3289,8 +3312,16 @@ def validate_human_operator_issuance_branches(
     if not isinstance(identity_selector, dict):
         errors.append(f"{identity_label} must be a mapping")
     else:
-        if identity_selector.get("selector_field") != "action_family":
-            errors.append(f"{identity_label}.selector_field must be action_family")
+        if identity_selector.get("selector_fields") != HUMAN_OPERATOR_ISSUANCE_SELECTOR_KEY_FIELDS:
+            errors.append(
+                f"{identity_label}.selector_fields must equal "
+                f"{HUMAN_OPERATOR_ISSUANCE_SELECTOR_KEY_FIELDS!r}"
+            )
+        if identity_selector.get("mapping_ref") != HUMAN_OPERATOR_ISSUANCE_SELECTOR_MAPPING_REF:
+            errors.append(
+                f"{identity_label}.mapping_ref must equal "
+                f"{HUMAN_OPERATOR_ISSUANCE_SELECTOR_MAPPING_REF!r}"
+            )
         alternatives = identity_selector.get("alternatives")
         expected_names = set(HUMAN_OPERATOR_ISSUANCE_IDENTITY_ALTERNATIVES)
         if not isinstance(alternatives, dict) or set(alternatives) != expected_names:
@@ -3318,6 +3349,151 @@ def validate_human_operator_issuance_branches(
                             f"{expected_value!r}"
                         )
 
+    if document is None:
+        document = {
+            "routes": routes,
+            "operator_delegation": {
+                "issuance_paths": {
+                    "human": {
+                        "bindings": {
+                            "mutation_identity_selector": {
+                                "mapping": {
+                                    "key_fields": HUMAN_OPERATOR_ISSUANCE_SELECTOR_KEY_FIELDS,
+                                    "entries": [],
+                                    "entries_status": "no_published_action_family_schema_pairs",
+                                    "rejections": HUMAN_OPERATOR_ISSUANCE_SELECTOR_MAPPING_REJECTIONS,
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        }
+    validate_human_operator_issuance_selector_mapping_and_branches(document, errors)
+
+
+def validate_human_operator_issuance_selector_mapping_and_branches(
+    document: dict[str, Any], errors: list[str]
+) -> None:
+    label = (
+        "operator_delegation.issuance_paths.human.bindings."
+        "mutation_identity_selector.mapping"
+    )
+    delegation = document.get("operator_delegation")
+    issuance_paths = (
+        delegation.get("issuance_paths")
+        if isinstance(delegation, dict)
+        else None
+    )
+    human_path = (
+        issuance_paths.get("human")
+        if isinstance(issuance_paths, dict)
+        else None
+    )
+    bindings = human_path.get("bindings") if isinstance(human_path, dict) else None
+    identity_selector = (
+        bindings.get("mutation_identity_selector")
+        if isinstance(bindings, dict)
+        else None
+    )
+    mapping = (
+        identity_selector.get("mapping")
+        if isinstance(identity_selector, dict)
+        else None
+    )
+    if not isinstance(mapping, dict):
+        errors.append(f"{label} must be a mapping")
+        return
+
+    expected_mapping_fields = {
+        "key_fields",
+        "entries",
+        "entries_status",
+        "rejections",
+    }
+    if set(mapping) != expected_mapping_fields:
+        errors.append(
+            f"{label} must contain exactly {sorted(expected_mapping_fields)}"
+        )
+
+    if mapping.get("key_fields") != HUMAN_OPERATOR_ISSUANCE_SELECTOR_KEY_FIELDS:
+        errors.append(
+            f"{label}.key_fields must equal "
+            f"{HUMAN_OPERATOR_ISSUANCE_SELECTOR_KEY_FIELDS!r}"
+        )
+    if mapping.get("rejections") != HUMAN_OPERATOR_ISSUANCE_SELECTOR_MAPPING_REJECTIONS:
+        errors.append(
+            f"{label}.rejections must equal "
+            f"{HUMAN_OPERATOR_ISSUANCE_SELECTOR_MAPPING_REJECTIONS!r}"
+        )
+
+    entries = mapping.get("entries")
+    if not isinstance(entries, list):
+        errors.append(f"{label}.entries must be a list")
+        return
+    if entries:
+        errors.append(
+            f"{label}.entries must remain empty while no action-family schema "
+            "pairs are published"
+        )
+        if mapping.get("entries_status") != "published_action_family_schema_pairs":
+            errors.append(
+                f"{label}.entries_status must be "
+                "'published_action_family_schema_pairs' when entries are present"
+            )
+    elif mapping.get("entries_status") != "no_published_action_family_schema_pairs":
+        errors.append(
+            f"{label}.entries_status must be "
+            "'no_published_action_family_schema_pairs' when entries are empty"
+        )
+
+    expected_entry_fields = {
+        "action_family",
+        "action_family_schema_id",
+        "action_family_schema_version",
+        "identity_alternative",
+    }
+    seen_keys: set[tuple[str, str, str]] = set()
+    for index, entry in enumerate(entries):
+        entry_label = f"{label}.entries[{index}]"
+        if not isinstance(entry, dict):
+            errors.append(f"{entry_label} must be a mapping")
+            continue
+        if set(entry) != expected_entry_fields:
+            errors.append(
+                f"{entry_label} must contain exactly "
+                f"{sorted(expected_entry_fields)}"
+            )
+            continue
+        values = tuple(entry.get(field) for field in HUMAN_OPERATOR_ISSUANCE_SELECTOR_KEY_FIELDS)
+        if any(not isinstance(value, str) or not value for value in values):
+            errors.append(
+                f"{entry_label} key fields must be non-empty strings"
+            )
+            continue
+        key = (values[0], values[1], values[2])
+        if key in seen_keys:
+            errors.append(
+                f"{entry_label} duplicates selector key "
+                f"{list(key)!r}"
+            )
+        seen_keys.add(key)
+        if entry.get("identity_alternative") not in HUMAN_OPERATOR_ISSUANCE_IDENTITY_ALTERNATIVES:
+            errors.append(
+                f"{entry_label}.identity_alternative must name exactly one "
+                "declared identity alternative"
+            )
+
+    routes = document.get("routes")
+    route = resolve_unique_route(
+        routes if isinstance(routes, list) else [],
+        "account-service",
+        "IssueHumanOperatorAuthorizationReference",
+        errors,
+    )
+    if route is None:
+        return
+    label = route_label(route)
     branches = route.get("conditional_branches")
     if not isinstance(branches, dict):
         errors.append(f"{label} conditional_branches must be a mapping")
@@ -5379,6 +5555,7 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
         routes,
         errors,
         cardinality_errors,
+        document,
     )
     validate_human_operator_issuance_shared_branch_fields(document, errors)
     validate_operator_issuance_identity_contract(document, errors)

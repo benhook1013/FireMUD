@@ -614,7 +614,7 @@ operator_delegation:
       bindings:
         common: [actor_account_id, control_ui_jti, account_generation, role, action_family, action_family_schema_id, action_family_schema_version, issuance_fence, authority_evidence_bundle, issued_at, expires_at]
         mutation_identity_selector:
-          selector_field: action_family
+          selector_fields: [action_family, action_family_schema_id, action_family_schema_version]
           alternatives:
             non_moderation:
               request_identity: control_plane_request_id
@@ -628,6 +628,15 @@ operator_delegation:
               request_identity: owner_enforcement_request_id
               digest: owner_enforcement_digest
               control_plane_request_id: correlation_only
+          mapping:
+            key_fields: [action_family, action_family_schema_id, action_family_schema_version]
+            entries: []
+            entries_status: no_published_action_family_schema_pairs
+            rejections:
+              unknown: reject_before_issuance
+              duplicate: reject_before_issuance
+              ambiguous: reject_before_issuance
+              mismatched: reject_before_issuance
         branch_fields:
           non_moderation:
             selector: action_category=absent
@@ -1553,7 +1562,7 @@ routes:
     conditional_branch_precedence:
       branch_fields_override_top_level: true
     mutation_identity_selector:
-      selector_field: action_family
+      selector_fields: [action_family, action_family_schema_id, action_family_schema_version]
       alternatives:
         non_moderation:
           request_identity: control_plane_request_id
@@ -1567,6 +1576,7 @@ routes:
           request_identity: owner_enforcement_request_id
           digest: owner_enforcement_digest
           control_plane_request_id: correlation_only
+      mapping_ref: operator_delegation.issuance_paths.human.bindings.mutation_identity_selector.mapping
     conditional_branches:
       non_moderation:
         selector: action_category=absent
