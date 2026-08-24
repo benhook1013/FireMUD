@@ -4,6 +4,10 @@ Store one immutable deployment record per staging overlay apply as:
 
 - `<overlayCommitSha>/<deploymentEventId>.json`
 
+## Implementation Status
+
+The current record producer and validator do not yet emit or enforce the promotion-lineage JWT fields. Production-attestation validation remains blocked until `jwtCustodyProof` and `jwtRotationEvidenceRef` are emitted and enforced.
+
 Required fields:
 
 - `environment` (`staging`)
@@ -28,7 +32,7 @@ Required fields:
 - `secretComplianceEvidenceRef`
 - `smokeEvidence`
 
-Target-state promotion-lineage fields (required when this record is selected as production-attestation or production-promotion evidence; the current record producer and validator do not yet emit or enforce them):
+Target-state promotion-lineage fields (required when this record is selected as production-attestation or production-promotion evidence):
 
 - `jwtCustodyProof` – object with exactly `proofId`, `custodyMode`, and `contractVersion`, copied from the consumed operator preflight report's authorizing `jwtCustodyProof` without substitution or mode reselection.
 - `jwtRotationEvidenceRef` – immutable, digest-qualified reference to the passing `PREFLIGHT-JWT-ROTATION-001` evidence for this staging deployment event and the same custody tuple.

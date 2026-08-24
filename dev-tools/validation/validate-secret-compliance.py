@@ -49,7 +49,13 @@ BOOTSTRAP_OPERATION_FIELDS = {
 def utc_now() -> dt.datetime:
     today_override = os.environ.get("SECRET_COMPLIANCE_TODAY")
     if today_override:
-        return parse_timestamp(today_override)
+        try:
+            return parse_timestamp(today_override)
+        except ValueError as exc:
+            raise SystemExit(
+                "SECRET_COMPLIANCE_TODAY override must be an ISO-8601 timestamp "
+                "with an explicit timezone"
+            ) from exc
     return dt.datetime.now(dt.timezone.utc)
 
 

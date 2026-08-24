@@ -2151,16 +2151,35 @@ def expected_binding_checks(
     env_class: str,
     documents: list[dict[str, Any]],
     context: str = "ci-static",
+    *,
+    expected_bindings: Any | None = None,
+    expected_bindings_error: str | None = None,
 ) -> list[CheckResult]:
-    try:
-        data = load_yaml(expected_bindings_path) or {}
-    except YAML_READ_ERRORS as exc:
+    if expected_bindings_error is not None:
         return [
-            CheckResult("PREFLIGHT-SECRETS-002", True, "fail", f"Expected-bindings manifest is unreadable: {exc}"),
+            CheckResult(
+                "PREFLIGHT-SECRETS-002",
+                True,
+                "fail",
+                f"Expected-bindings manifest is unreadable: {expected_bindings_error}",
+            ),
             CheckResult("PREFLIGHT-BOOTSTRAP-001", True, "fail", "Expected-bindings manifest is unreadable"),
             CheckResult("PREFLIGHT-EXTERNAL-001", True, "fail", "Expected-bindings manifest is unreadable"),
             CheckResult("PREFLIGHT-SERVICES-001", True, "fail", "Expected-bindings manifest is unreadable"),
         ]
+
+    if expected_bindings is None:
+        try:
+            expected_bindings = load_yaml(expected_bindings_path) or {}
+        except YAML_READ_ERRORS as exc:
+            return [
+                CheckResult("PREFLIGHT-SECRETS-002", True, "fail", f"Expected-bindings manifest is unreadable: {exc}"),
+                CheckResult("PREFLIGHT-BOOTSTRAP-001", True, "fail", "Expected-bindings manifest is unreadable"),
+                CheckResult("PREFLIGHT-EXTERNAL-001", True, "fail", "Expected-bindings manifest is unreadable"),
+                CheckResult("PREFLIGHT-SERVICES-001", True, "fail", "Expected-bindings manifest is unreadable"),
+            ]
+
+    data = expected_bindings
 
     if not isinstance(data, dict):
         return [
@@ -3506,6 +3525,12 @@ def main() -> int:
     expected_bindings_path = root_dir / expected_bindings_ref
     if not expected_bindings_path.exists():
         fail(f"Expected-bindings manifest not found: {expected_bindings_path}")
+    expected_bindings_load_error = None
+    try:
+        expected_bindings = load_yaml(expected_bindings_path) or {}
+    except YAML_READ_ERRORS as exc:
+        expected_bindings = {}
+        expected_bindings_load_error = str(exc)
     if env_class == "hobby-self-hosted":
         render_path_env = os.environ.get("FIREMUD_PREFLIGHT_RENDER_PATH")
         if not render_path_env:
@@ -3545,6 +3570,8 @@ def main() -> int:
         env_class,
         documents,
         context=context,
+        expected_bindings=expected_bindings,
+        expected_bindings_error=expected_bindings_load_error,
     ):
         has_required_failure = append_result(
             check_results,
@@ -3628,10 +3655,6 @@ def main() -> int:
                 "Required player-facing Secrets exist in the target cluster",
             ) or has_required_failure
 
-    try:
-        expected_bindings = load_yaml(expected_bindings_path) or {}
-    except YAML_READ_ERRORS:
-        expected_bindings = {}
     jwks_namespace = secret_binding_namespace(
         get(expected_bindings, "internalBindings.jwt.jwksRef")
     )

@@ -18,6 +18,7 @@ WRONG_OPERATION_STATUS_OUTPUT="$TMP_DIR/wrong-operation-status.out"
 NONCOMPLIANT_OUTPUT="$TMP_DIR/noncompliant.out"
 HOBBY_NONCOMPLIANT_OUTPUT="$TMP_DIR/hobby-noncompliant.out"
 MISSING_CREDENTIAL_CLASSES_OUTPUT="$TMP_DIR/missing-credential-classes.out"
+INVALID_TODAY_OUTPUT="$TMP_DIR/invalid-today.out"
 BOOTSTRAP_BINDING_OUTPUT="$TMP_DIR/bootstrap-binding.out"
 ASSET_MISSING_CLASS_OUTPUT="$TMP_DIR/asset-missing-class.out"
 ASSET_INVALID_EVIDENCE_OUTPUT="$TMP_DIR/asset-invalid-evidence.out"
@@ -115,6 +116,17 @@ PY
 }
 
 write_evidence_fixture
+
+if SECRET_COMPLIANCE_ROOT="$TMP_DIR" \
+  SECRET_COMPLIANCE_TODAY=2026-04-24T00:00:00 \
+  SECRET_COMPLIANCE_ENFORCEMENT_MODE=strict \
+  python3 "$VALIDATOR" >"$INVALID_TODAY_OUTPUT" 2>&1; then
+  echo "secret compliance validator accepted a naive SECRET_COMPLIANCE_TODAY override" >&2
+  exit 1
+fi
+grep -q \
+  "SECRET_COMPLIANCE_TODAY override must be an ISO-8601 timestamp with an explicit timezone" \
+  "$INVALID_TODAY_OUTPUT"
 
 python3 - "$ROOT_DIR" <<'PY'
 import importlib.util
