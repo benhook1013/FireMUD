@@ -95,12 +95,22 @@ YAML
 write_expected_binding_files true
 
 write_evidence_fixture() {
-  python3 - "$TMP_DIR" <<'PY'
+  python3 - "$TMP_DIR" "$VALIDATOR" <<'PY'
+import importlib.util
 import json
 import pathlib
 import sys
 
 root = pathlib.Path(sys.argv[1])
+validator_path = pathlib.Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location(
+    "secret_compliance_fixture", validator_path
+)
+if spec is None or spec.loader is None:
+    raise SystemExit("could not load secret-compliance validator")
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
 evidence_dir = root / "design/operations/secret-compliance/evidence"
 classes = (
     "jwt-signing-keys-jwks",
@@ -109,30 +119,6 @@ classes = (
     "asset-store-credentials",
     "operator-credentials",
 )
-expected_digests = {
-    "production": {
-        "jwt-signing-keys-jwks": "sha256:e29a0001ea7fba9bf2f1fa527c2078674207f666ce1331fd3845670996259d3c",
-        "postgres-application-credentials": "sha256:8e1e88e25000ae3ba9395f1a23ab427a06d90b57b0b7cec9e004f1078ec1ec27",
-        "backup-object-store-credentials": "sha256:5ff714d73621d06776373af52e3f00306c774ad21cf3b91b55c3a7171a806b55",
-        "asset-store-credentials": "sha256:7c85a9e53093e33cd2bb6f8ba61f31da5ff848d43b79898424f0858940bf6817",
-        "operator-credentials": "sha256:f53c975d432520385f87759d555e9939642b82a88cd114f30f38a0ef6e68f5a4",
-    },
-    "staging": {
-        "jwt-signing-keys-jwks": "sha256:f72d3145817ccbcbfd632bd132a9e2d5703429d12cd5bbd98d5a8069e9eea859",
-        "postgres-application-credentials": "sha256:d20e162543cfc759cf892b5310d07647ef03a72410b9f3dd85d028ea72a114fc",
-        "backup-object-store-credentials": "sha256:d1c966062b2615c8ba44332de6b69b57e44d53788d7f09baed5dd07e18f53b0c",
-        "asset-store-credentials": "sha256:2b8b24ca8fd7240514b1142bbfa26ba3fb2d0f9e7653f0a05159ae4666d37ba4",
-        "operator-credentials": "sha256:62c2e35dc4206747a507deb6f82b3af78bbf33c653bf6b3610dde493dd503911",
-    },
-    "hobby-self-hosted": {
-        "jwt-signing-keys-jwks": "sha256:ff42e4a1ec3353632a295944acf8aea6685a850c18459e835be4b537a7211e07",
-        "postgres-application-credentials": "sha256:2813c184c0a327e177042849ea4a61616ab10b66270b8561bc7b8e56cce8d172",
-        "backup-object-store-credentials": "sha256:8a8d60e6d1ee3b73036c61d510f5512bf45bf9996a2e9c6c7afcc31f5188791b",
-        "asset-store-credentials": "sha256:eed4584d65f4daab0a6d322d1d202d34a6ba5a3f6538fa7333d52a8b43c4440f",
-        "operator-credentials": "sha256:e275bb6b1d47ecd140ad53c7199a97c2078292166dc2edf3bc37ff3536208b19",
-    },
-}
-
 for env in ("production", "staging", "hobby-self-hosted"):
     evidence = {
         "environment": env,
@@ -153,12 +139,7 @@ for env in ("production", "staging", "hobby-self-hosted"):
                     "provisioningGeneration": 1,
                 }
             )
-        try:
-            record["immutableArtifactId"] = expected_digests[env][class_name]
-        except KeyError as exc:
-            raise SystemExit(
-                f"missing golden evidence digest for {env}/{class_name}"
-            ) from exc
+        record["immutableArtifactId"] = module.canonical_evidence_digest(record)
         evidence["records"][class_name] = record
     (evidence_dir / f"{env}.json").write_text(
         json.dumps(evidence) + "\n", encoding="utf-8"
@@ -273,7 +254,9 @@ mutate_bootstrap_binding() {
   python3 - \
     "$TMP_DIR/design/operations/secret-compliance/production.yaml" \
     "$TMP_DIR/design/operations/secret-compliance/evidence/production.json" \
-    "$mode" <<'PY'
+    "$mode" \
+    "$VALIDATOR" <<'PY'
+import importlib.util
 import json
 import pathlib
 import sys
@@ -281,6 +264,15 @@ import sys
 compliance_path = pathlib.Path(sys.argv[1])
 evidence_path = pathlib.Path(sys.argv[2])
 mode = sys.argv[3]
+validator_path = pathlib.Path(sys.argv[4])
+spec = importlib.util.spec_from_file_location(
+    "secret_compliance_mutation", validator_path
+)
+if spec is None or spec.loader is None:
+    raise SystemExit("could not load secret-compliance validator")
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
 compliance = json.loads(compliance_path.read_text(encoding="utf-8"))
 evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
 credential = compliance["credentialClasses"]["jwt-signing-keys-jwks"]
@@ -301,12 +293,7 @@ elif mode == "mismatched-evidence-payload-generation":
 else:
     raise SystemExit(f"unknown bootstrap binding mutation: {mode}")
 
-mutation_digests = {
-    "missing-evidence-operation-id": "sha256:53e8381f9e4190e9e1089e00c20392d033be728f2be4bb14801bcd8bd498c358",
-    "mismatched-evidence-generation": "sha256:96ad1fa31ccf0db3480342582d081402bcaa47c905e255ce81ef936252ce41cb",
-}
-if mode in mutation_digests:
-    evidence_record["immutableArtifactId"] = mutation_digests[mode]
+evidence_record["immutableArtifactId"] = module.canonical_evidence_digest(evidence_record)
 
 compliance_path.write_text(json.dumps(compliance) + "\n", encoding="utf-8")
 evidence_path.write_text(json.dumps(evidence) + "\n", encoding="utf-8")

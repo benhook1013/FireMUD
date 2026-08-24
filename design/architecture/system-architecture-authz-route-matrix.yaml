@@ -1592,7 +1592,7 @@ routes:
             required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
           - branch: platformAdmin_global
             required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
-        required_fields: [tenant_scope]
+        required_fields: [action_family, action_family_schema_id, action_family_schema_version, tenant_scope]
       tenant_restriction:
         selector: action_category=tenant_restriction
         scope: tenant
@@ -1607,7 +1607,7 @@ routes:
             required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
           - branch: platformAdmin_global
             required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
-        required_fields: [tenant_scope]
+        required_fields: [action_family, action_family_schema_id, action_family_schema_version, tenant_scope]
       platform_access_ban:
         selector: action_category=platform_access_ban
         scope: account
@@ -1621,7 +1621,7 @@ routes:
         tenant_billing_authority_generation_applies: false
         required_live_checks: [issuer_generation, account_generation, current_operator_roles, current_global_role, role_appropriate_assurance]
         forbidden_live_checks: [target_tenant_generation, tenant_generation, membership_when_tenant_role, membership_generation]
-        required_fields: [target_account_id]
+        required_fields: [action_family, action_family_schema_id, action_family_schema_version, target_account_id]
         forbidden_fields: [tenant_scope, tenant_id, target_tenant_generation, membership_version_when_applicable]
     role_assurance: privileged_control_when_global_role
     required_fields: [action_family, action_family_schema_id, action_family_schema_version]

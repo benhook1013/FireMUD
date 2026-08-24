@@ -17,12 +17,20 @@ helm template contract "$CHART_DIR" \
   >"$RENDERED"
 
 awk '
-  /^  jwt:$/ { skip = 1; next }
+  /^previewStack:$/ { in_preview = 1 }
+  /^[^ ]/ && !/^previewStack:$/ { in_preview = 0; skip = 0 }
+  in_preview && /^  jwt:$/ { skip = 1; next }
   skip && /^  [^ ]/ { skip = 0 }
   !skip { print }
 ' \
   "$CHART_DIR/values-hosted-shared.example.yaml" \
   >"$TMP_DIR/values-without-jwt.yaml"
+if grep -q '^  jwt:$' "$TMP_DIR/values-without-jwt.yaml" ||
+  ! grep -q '^  resources:$' "$TMP_DIR/values-without-jwt.yaml" ||
+  ! grep -q '^  seedSql: |$' "$TMP_DIR/values-without-jwt.yaml"; then
+  echo "values-without-jwt fixture did not preserve the surrounding previewStack values" >&2
+  exit 1
+fi
 for jwt_case in omitted null; do
   case "$jwt_case" in
     omitted)

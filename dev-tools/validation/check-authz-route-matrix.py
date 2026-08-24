@@ -569,6 +569,11 @@ OPERATOR_REFERENCE_ISSUANCE_REQUIRED_FIELDS = {
         "mutation_digest",
     },
 }
+HUMAN_OPERATOR_ISSUANCE_COMMON_REQUIRED_FIELDS = {
+    "action_family",
+    "action_family_schema_id",
+    "action_family_schema_version",
+}
 HUMAN_OPERATOR_ISSUANCE_BRANCHES = {
     "non_moderation": {
         "selector": "action_category=absent",
@@ -580,7 +585,8 @@ HUMAN_OPERATOR_ISSUANCE_BRANCHES = {
         },
         "global_platform_admin_reference_generation_binding": "target_tenant_generation",
         "global_platform_admin_membership_required": False,
-        "required_fields": {"tenant_scope"},
+        "required_fields": HUMAN_OPERATOR_ISSUANCE_COMMON_REQUIRED_FIELDS
+        | {"tenant_scope"},
     },
     "tenant_restriction": {
         "selector": "action_category=tenant_restriction",
@@ -592,7 +598,8 @@ HUMAN_OPERATOR_ISSUANCE_BRANCHES = {
         },
         "global_platform_admin_reference_generation_binding": "target_tenant_generation",
         "global_platform_admin_membership_required": False,
-        "required_fields": {"tenant_scope"},
+        "required_fields": HUMAN_OPERATOR_ISSUANCE_COMMON_REQUIRED_FIELDS
+        | {"tenant_scope"},
     },
     "platform_access_ban": {
         "selector": "action_category=platform_access_ban",
@@ -617,7 +624,8 @@ HUMAN_OPERATOR_ISSUANCE_BRANCHES = {
             "membership_when_tenant_role",
             "membership_generation",
         },
-        "required_fields": {"target_account_id"},
+        "required_fields": HUMAN_OPERATOR_ISSUANCE_COMMON_REQUIRED_FIELDS
+        | {"target_account_id"},
         "forbidden_fields": {
             "tenant_scope",
             "tenant_id",
@@ -3277,7 +3285,8 @@ def validate_human_operator_issuance_branches(
     routes: list[Any],
     errors: list[str],
     cardinality_errors: set[str] | None = None,
-    document: dict[str, Any] | None = None,
+    *,
+    document: dict[str, Any],
 ) -> None:
     route = resolve_unique_route(
         routes,
@@ -3349,26 +3358,6 @@ def validate_human_operator_issuance_branches(
                             f"{expected_value!r}"
                         )
 
-    if document is None:
-        document = {
-            "routes": routes,
-            "operator_delegation": {
-                "issuance_paths": {
-                    "human": {
-                        "bindings": {
-                            "mutation_identity_selector": {
-                                "mapping": {
-                                    "key_fields": HUMAN_OPERATOR_ISSUANCE_SELECTOR_KEY_FIELDS,
-                                    "entries": [],
-                                    "entries_status": "no_published_action_family_schema_pairs",
-                                    "rejections": HUMAN_OPERATOR_ISSUANCE_SELECTOR_MAPPING_REJECTIONS,
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-        }
     validate_human_operator_issuance_selector_mapping_and_branches(document, errors)
 
 
@@ -3436,11 +3425,6 @@ def validate_human_operator_issuance_selector_mapping_and_branches(
             f"{label}.entries must remain empty while no action-family schema "
             "pairs are published"
         )
-        if mapping.get("entries_status") != "published_action_family_schema_pairs":
-            errors.append(
-                f"{label}.entries_status must be "
-                "'published_action_family_schema_pairs' when entries are present"
-            )
     elif mapping.get("entries_status") != "no_published_action_family_schema_pairs":
         errors.append(
             f"{label}.entries_status must be "
@@ -5555,7 +5539,7 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
         routes,
         errors,
         cardinality_errors,
-        document,
+        document=document,
     )
     validate_human_operator_issuance_shared_branch_fields(document, errors)
     validate_operator_issuance_identity_contract(document, errors)

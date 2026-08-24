@@ -19,7 +19,7 @@ Current gameplay-connected proof covers `SAY`, `WHISPER`, and `TELL` delivery fr
 - Apply social membership, privacy, moderation, history, and delivery-state rules to authorized communication plans
 - Deliver social-channel and mail notifications through typed delivery state; Game Session remains the connected gameplay transport owner
 - Manage guild/group definitions, declared membership subject type, roles, ownership, and alliances
-- Maintain account-global and tenant-local friend/block relationships and bounded social audiences
+- Maintain target account-global and tenant-local friend/block relationships and bounded social audiences; current direct-service friend reads remain tenant-scoped and the player-facing Gateway friends route is unavailable
 - Store each supported communication type according to its declared history/retention/acknowledgement contract; target state is to enforce owner-local `chat_mute`/`chat_ban` restrictions, while the current `CHAT_SEND` seam synchronously consumes `EvaluateModerationPolicy`; profanity events remain evidence/report input to Logging & Admin
 - Keep Entity-owned containers, items, currency, inventory, and mail attachments outside Social authority; retain ACLs and stable owner references only
 
@@ -30,9 +30,9 @@ Current gameplay-connected proof covers `SAY`, `WHISPER`, and `TELL` delivery fr
 - Asynchronous player-to-player mail
 - Guild creation and membership management
 - Guild ACLs and typed bindings to Entity-owned containers, plus alliance metadata
-- Friend/block relationships scoped either to tenant-free account pairs or distinct tenant-local records; account-level friends may appear in-game when enabled
+- Target friend/block relationships are scoped either to tenant-free account pairs or distinct tenant-local records; account-level friends may appear in-game only when an enabled player-facing surface supports that projection
 - In-game social chat plus account-to-account direct messaging
-- Presence indicators notify when friends come online
+- Target presence indicators notify when friends come online through an enabled player-facing social surface
 - Game creators can broadcast announcements and send out-of-game emails
 - **Target state:** Enforce fixed-category communication restrictions at send, participation, history, and essential-notice boundaries from owner-local state without making Logging & Admin a routine hot-path dependency; the current `CHAT_SEND` seam remains the synchronous `EvaluateModerationPolicy` read described above.
 

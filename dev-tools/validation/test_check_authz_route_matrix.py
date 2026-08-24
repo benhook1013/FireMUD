@@ -1035,6 +1035,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             self.validator.validate_human_operator_issuance_branches(
                 document["routes"],
                 errors,
+                document=document,
             )
             self.assertTrue(
                 any(
@@ -2797,7 +2798,15 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         non_moderation = branches["non_moderation"]
         self.assertEqual("action_category=absent", non_moderation["selector"])
         self.assertEqual("tenant", non_moderation["scope"])
-        self.assertEqual(["tenant_scope"], non_moderation["required_fields"])
+        self.assertEqual(
+            [
+                "action_family",
+                "action_family_schema_id",
+                "action_family_schema_version",
+                "tenant_scope",
+            ],
+            non_moderation["required_fields"],
+        )
         self.assertEqual(
             {"tenant_role", "platformAdmin_global"},
             {
@@ -2806,7 +2815,13 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             },
         )
         self.assertEqual(
-            ["tenant_scope"], branches["tenant_restriction"]["required_fields"]
+            [
+                "action_family",
+                "action_family_schema_id",
+                "action_family_schema_version",
+                "tenant_scope",
+            ],
+            branches["tenant_restriction"]["required_fields"],
         )
         self.assertEqual(
             {"tenant_role", "platformAdmin_global"},
@@ -2819,7 +2834,15 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
         self.assertNotIn("operator_authorization_branches", route)
         platform = branches["platform_access_ban"]
-        self.assertEqual(["target_account_id"], platform["required_fields"])
+        self.assertEqual(
+            [
+                "action_family",
+                "action_family_schema_id",
+                "action_family_schema_version",
+                "target_account_id",
+            ],
+            platform["required_fields"],
+        )
         self.assertEqual("action_category=platform_access_ban", platform["selector"])
         self.assertEqual("account", platform["scope"])
         self.assertEqual("account_scoped", platform["classification"])
@@ -2854,6 +2877,33 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             ],
             platform["forbidden_fields"],
         )
+
+    def test_human_operator_issuance_branches_retain_common_schema_requirements(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        for branch_name in (
+            "non_moderation",
+            "tenant_restriction",
+            "platform_access_ban",
+        ):
+            with self.subTest(branch=branch_name):
+                document = copy.deepcopy(baseline)
+                route = route_for(
+                    document,
+                    "account-service",
+                    "IssueHumanOperatorAuthorizationReference",
+                )
+                route["conditional_branches"][branch_name]["required_fields"].remove(
+                    "action_family_schema_id"
+                )
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(
+                        f"conditional_branches.{branch_name}.required_fields must equal"
+                        in error
+                        for error in errors
+                    ),
+                    (branch_name, errors),
+                )
 
     def test_human_operator_issuance_rejects_cross_scope_branch_drift(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -3298,21 +3348,24 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         mutations = (
             (
                 "selector fields omit schema pair",
+                "selector",
                 lambda selector: selector.__setitem__("selector_fields", ["action_family"]),
                 "selector_fields must equal",
             ),
             (
                 "mapping reference points elsewhere",
+                "selector",
                 lambda selector: selector.__setitem__("mapping_ref", "route-local"),
                 "mapping_ref must equal",
             ),
             (
                 "unknown values are not rejected",
+                "mapping",
                 lambda mapping: mapping["rejections"].__setitem__("unknown", "allow"),
                 "rejections must equal",
             ),
         )
-        for mutation_name, mutate, expected_error in mutations:
+        for mutation_name, target, mutate, expected_error in mutations:
             with self.subTest(mutation=mutation_name):
                 document = copy.deepcopy(baseline)
                 route = route_for(
@@ -3320,7 +3373,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     "account-service",
                     "IssueHumanOperatorAuthorizationReference",
                 )
-                if "selector" in mutation_name or "reference" in mutation_name:
+                if target == "selector":
                     mutate(route["mutation_identity_selector"])
                 else:
                     mapping = document["operator_delegation"]["issuance_paths"]["human"][
@@ -3386,6 +3439,31 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     any(expected_error in error for error in errors),
                     (mutation_name, errors),
                 )
+
+    def test_operator_issuance_selector_mapping_rejects_nonempty_entries_without_status_noise(
+        self,
+    ):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        mapping = document["operator_delegation"]["issuance_paths"]["human"][
+            "bindings"
+        ]["mutation_identity_selector"]["mapping"]
+        mapping["entries"].append(
+            {
+                "action_family": "fixture-family",
+                "action_family_schema_id": "fixture-schema",
+                "action_family_schema_version": "v1",
+                "identity_alternative": "non_moderation",
+            }
+        )
+        errors = validate_document(self.validator, document)
+        self.assertEqual(
+            1,
+            sum("entries must remain empty" in error for error in errors),
+        )
+        self.assertFalse(
+            any("entries_status must be" in error for error in errors),
+            errors,
+        )
 
     def test_operator_issuance_selector_mapping_rejects_ambiguous_or_mismatched_declarations(
         self,

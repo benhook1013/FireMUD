@@ -29,8 +29,8 @@ Chat history cache behavior can be tuned with the following variables:
 | -------- | ------- | ------- |
 | `FIREMUD_CHAT_SAYS_TTL_SECONDS` | Seconds to keep the current sender-account `SAY` projection | `7200` |
 | `FIREMUD_CHAT_SAYS_MAX_MESSAGES` | Max cached messages in the current sender-account `SAY` projection | `50` |
-| `FIREMUD_CHAT_WHISPERS_TTL_SECONDS` | Seconds to keep the target gameplay `whisper` projection per tenant, playable-state namespace, and recipient character | `7200` |
-| `FIREMUD_CHAT_WHISPERS_MAX_MESSAGES` | Max cached target gameplay `whisper` messages per tenant, playable-state namespace, and recipient character | `50` |
+| `FIREMUD_CHAT_WHISPERS_TTL_SECONDS` | Seconds to keep the current account-keyed `whisper` projection; target scope is per tenant, playable-state namespace, and recipient character | `7200` |
+| `FIREMUD_CHAT_WHISPERS_MAX_MESSAGES` | Max cached current account-keyed `whisper` messages; target scope is per tenant, playable-state namespace, and recipient character | `50` |
 | `FIREMUD_CHAT_TELLS_TTL_SECONDS` | Seconds to keep direct tells/messages | `172800` |
 | `FIREMUD_CHAT_TELLS_MAX_MESSAGES` | Max cached tells/messages per player | `50` |
 | `FIREMUD_CHAT_GUILD_TTL_SECONDS` | Seconds to keep guild chat per guild | `172800` |
