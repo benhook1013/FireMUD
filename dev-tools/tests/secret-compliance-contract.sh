@@ -19,8 +19,28 @@ NONCOMPLIANT_OUTPUT="$TMP_DIR/noncompliant.out"
 HOBBY_NONCOMPLIANT_OUTPUT="$TMP_DIR/hobby-noncompliant.out"
 MISSING_CREDENTIAL_CLASSES_OUTPUT="$TMP_DIR/missing-credential-classes.out"
 BOOTSTRAP_BINDING_OUTPUT="$TMP_DIR/bootstrap-binding.out"
+ASSET_MISSING_CLASS_OUTPUT="$TMP_DIR/asset-missing-class.out"
+ASSET_INVALID_EVIDENCE_OUTPUT="$TMP_DIR/asset-invalid-evidence.out"
+BACKUP_MISSING_CLASS_OUTPUT="$TMP_DIR/backup-missing-class.out"
 
 mkdir -p "$TMP_DIR/design/operations/secret-compliance/evidence"
+
+write_expected_binding_files() {
+  local asset_enabled="$1"
+  for env in production staging hobby-self-hosted; do
+    local directory="$TMP_DIR/design/operations/environments/$env"
+    mkdir -p "$directory"
+    cat >"$directory/expected-bindings.yaml" <<YAML
+environment: $env
+backupStorage:
+  enabled: true
+assetStorage:
+  enabled: $asset_enabled
+YAML
+  done
+}
+
+write_expected_binding_files true
 
 write_evidence_fixture() {
   cat >"$TMP_DIR/design/operations/secret-compliance/evidence/evidence.json" <<'JSON'
@@ -38,6 +58,9 @@ write_evidence_fixture() {
       },
       "backup-object-store-credentials": {
         "immutableArtifactId": "test:backup:sha256:3333"
+      },
+      "asset-store-credentials": {
+        "immutableArtifactId": "test:asset:sha256:5555"
       },
       "operator-credentials": {
         "immutableArtifactId": "test:operator:sha256:4444"
@@ -87,6 +110,12 @@ write_compliance_file() {
       "lastRotationAt": "2026-04-20T00:00:00Z",
       "evidenceRef": "design/operations/secret-compliance/evidence/evidence.json",
       "evidenceKey": "backup-object-store-credentials"
+    },
+    "asset-store-credentials": {
+      "maxAgeDays": 30,
+      "lastRotationAt": "2026-04-20T00:00:00Z",
+      "evidenceRef": "design/operations/secret-compliance/evidence/evidence.json",
+      "evidenceKey": "asset-store-credentials"
     },
     "operator-credentials": {
       "maxAgeDays": 30,
@@ -178,6 +207,116 @@ SECRET_COMPLIANCE_ROOT="$TMP_DIR" \
   SECRET_COMPLIANCE_ENFORCEMENT_MODE=strict \
   python3 "$VALIDATOR" >"$VALID_OUTPUT"
 
+python3 - "$TMP_DIR/design/operations/secret-compliance/production.yaml" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+record = json.loads(path.read_text(encoding="utf-8"))
+record["credentialClasses"].pop("asset-store-credentials")
+path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+PY
+if SECRET_COMPLIANCE_ROOT="$TMP_DIR" \
+  SECRET_COMPLIANCE_TODAY=2026-04-24T00:00:00Z \
+  SECRET_COMPLIANCE_ENFORCEMENT_MODE=strict \
+  python3 "$VALIDATOR" >"$ASSET_MISSING_CLASS_OUTPUT" 2>&1; then
+  echo "assetStorage-enabled compliance accepted a missing asset-store-credentials class" >&2
+  exit 1
+fi
+grep -q "missing required credential classes: asset-store-credentials" "$ASSET_MISSING_CLASS_OUTPUT"
+
+write_evidence_fixture
+write_compliance_file production lastRotationAt
+python3 - "$TMP_DIR/design/operations/secret-compliance/evidence/evidence.json" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+evidence = json.loads(path.read_text(encoding="utf-8"))
+evidence["records"]["asset-store-credentials"]["immutableArtifactId"] = "test:asset:missing-digest"
+path.write_text(json.dumps(evidence) + "\n", encoding="utf-8")
+PY
+if SECRET_COMPLIANCE_ROOT="$TMP_DIR" \
+  SECRET_COMPLIANCE_TODAY=2026-04-24T00:00:00Z \
+  SECRET_COMPLIANCE_ENFORCEMENT_MODE=strict \
+  python3 "$VALIDATOR" >"$ASSET_INVALID_EVIDENCE_OUTPUT" 2>&1; then
+  echo "assetStorage-enabled compliance accepted invalid asset evidence" >&2
+  exit 1
+fi
+grep -q "asset-store-credentials: immutableArtifactId" "$ASSET_INVALID_EVIDENCE_OUTPUT"
+
+# Disabled asset storage does not add the conditional class requirement.
+write_expected_binding_files false
+write_evidence_fixture
+write_compliance_file production lastRotationAt
+python3 - "$TMP_DIR/design/operations/secret-compliance/production.yaml" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+record = json.loads(path.read_text(encoding="utf-8"))
+record["credentialClasses"].pop("asset-store-credentials")
+path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+PY
+SECRET_COMPLIANCE_ROOT="$TMP_DIR" \
+  SECRET_COMPLIANCE_TODAY=2026-04-24T00:00:00Z \
+  SECRET_COMPLIANCE_ENFORCEMENT_MODE=strict \
+  python3 "$VALIDATOR" >"$VALID_OUTPUT"
+write_expected_binding_files true
+write_evidence_fixture
+write_compliance_file production lastRotationAt
+
+# Enabled backup storage requires the backup credential class.
+python3 - "$TMP_DIR/design/operations/secret-compliance/staging.yaml" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+record = json.loads(path.read_text(encoding="utf-8"))
+record["credentialClasses"].pop("backup-object-store-credentials")
+path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+PY
+if SECRET_COMPLIANCE_ROOT="$TMP_DIR" \
+  SECRET_COMPLIANCE_TODAY=2026-04-24T00:00:00Z \
+  SECRET_COMPLIANCE_ENFORCEMENT_MODE=strict \
+  python3 "$VALIDATOR" >"$BACKUP_MISSING_CLASS_OUTPUT" 2>&1; then
+  echo "backupStorage-enabled compliance accepted a missing backup credential class" >&2
+  exit 1
+fi
+grep -q "staging: missing required credential classes: backup-object-store-credentials" \
+  "$BACKUP_MISSING_CLASS_OUTPUT"
+
+# Disabled non-production backup storage does not require that class.
+write_compliance_file staging lastRotationAt
+python3 - \
+  "$TMP_DIR/design/operations/environments/staging/expected-bindings.yaml" \
+  "$TMP_DIR/design/operations/secret-compliance/staging.yaml" <<'PY'
+import json
+import pathlib
+import sys
+
+bindings_path = pathlib.Path(sys.argv[1])
+bindings = bindings_path.read_text(encoding="utf-8").replace(
+    "backupStorage:\n  enabled: true", "backupStorage:\n  enabled: false"
+)
+bindings_path.write_text(bindings, encoding="utf-8")
+
+record_path = pathlib.Path(sys.argv[2])
+record = json.loads(record_path.read_text(encoding="utf-8"))
+record["credentialClasses"].pop("backup-object-store-credentials")
+record_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+PY
+SECRET_COMPLIANCE_ROOT="$TMP_DIR" \
+  SECRET_COMPLIANCE_TODAY=2026-04-24T00:00:00Z \
+  SECRET_COMPLIANCE_ENFORCEMENT_MODE=strict \
+  python3 "$VALIDATOR" >"$VALID_OUTPUT"
+write_expected_binding_files true
+write_compliance_file staging lastRotationAt
+
 expect_bootstrap_binding_failure \
   missing-credential-operation-id \
   "bootstrap credential record bootstrapOperationId must exactly match top-level bootstrapOperationId"
@@ -197,6 +336,7 @@ expect_bootstrap_binding_failure \
   mismatched-evidence-payload-generation \
   "bootstrap evidence payload provisioningGeneration must exactly match top-level provisioningGeneration"
 
+write_evidence_fixture
 write_compliance_file production lastRotationAt
 python3 - "$TMP_DIR/design/operations/secret-compliance/production.yaml" <<'PY'
 import json

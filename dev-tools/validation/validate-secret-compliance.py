@@ -13,8 +13,14 @@ import yaml
 REQUIRED = {
     "jwt-signing-keys-jwks",
     "postgres-application-credentials",
-    "backup-object-store-credentials",
     "operator-credentials",
+}
+EXPECTED_BINDING_FILES = {
+    "production": pathlib.Path("design/operations/environments/production/expected-bindings.yaml"),
+    "staging": pathlib.Path("design/operations/environments/staging/expected-bindings.yaml"),
+    "hobby-self-hosted": pathlib.Path(
+        "design/operations/environments/hobby-self-hosted/expected-bindings.yaml"
+    ),
 }
 ENV_FILES = {
     "production": pathlib.Path("design/operations/secret-compliance/production.yaml"),
@@ -129,6 +135,57 @@ def main() -> int:
             record_schema_issue(f"{env}: credentialClasses must be a mapping")
             continue
 
+        expected_binding_path = root / EXPECTED_BINDING_FILES[env]
+        asset_storage_enabled = False
+        backup_storage_enabled = False
+        try:
+            expected_bindings = yaml.safe_load(
+                expected_binding_path.read_text(encoding="utf-8")
+            )
+        except (OSError, UnicodeError, yaml.YAMLError) as exc:
+            record_schema_issue(
+                f"{env}: cannot read canonical expected-bindings manifest "
+                f"{EXPECTED_BINDING_FILES[env]}: {exc}"
+            )
+            expected_bindings = {}
+        if not isinstance(expected_bindings, dict) or expected_bindings.get("environment") != env:
+            record_schema_issue(
+                f"{env}: canonical expected-bindings manifest must target '{env}'"
+            )
+        else:
+            backup_storage = expected_bindings.get("backupStorage")
+            if not isinstance(backup_storage, dict) or not isinstance(
+                backup_storage.get("enabled"), bool
+            ):
+                record_schema_issue(
+                    f"{env}: backupStorage.enabled must be a boolean"
+                )
+            else:
+                backup_storage_enabled = backup_storage["enabled"]
+                if env == "production" and not backup_storage_enabled:
+                    record_schema_issue(
+                        "production: backupStorage.enabled must be true"
+                    )
+            asset_storage = expected_bindings.get("assetStorage")
+            if "assetStorage" in expected_bindings and not isinstance(
+                asset_storage, dict
+            ):
+                record_schema_issue(f"{env}: assetStorage must be a mapping when present")
+            elif isinstance(asset_storage, dict):
+                enabled = asset_storage.get("enabled")
+                if not isinstance(enabled, bool):
+                    record_schema_issue(
+                        f"{env}: assetStorage.enabled must be a boolean when assetStorage is present"
+                    )
+                else:
+                    asset_storage_enabled = enabled
+
+        required_classes = set(REQUIRED)
+        if backup_storage_enabled:
+            required_classes.add("backup-object-store-credentials")
+        if asset_storage_enabled:
+            required_classes.add("asset-store-credentials")
+
         if provisioning_state == "not-provisioned":
             illegal_operation_fields = sorted(
                 BOOTSTRAP_OPERATION_FIELDS & set(data.keys())
@@ -187,21 +244,19 @@ def main() -> int:
             )
             continue
 
-        if not operation_fields_valid:
-            continue
         if bootstrap_status != "completed":
             record_schema_issue(
                 f"{env}: provisioningState=provisioned requires "
                 "bootstrapOperationStatus=completed",
             )
 
-        missing = sorted(REQUIRED - set(classes.keys()))
+        missing = sorted(required_classes - set(classes.keys()))
         if missing:
             record_schema_issue(
                 f"{env}: missing required credential classes: {', '.join(missing)}",
             )
 
-        for cls in sorted(REQUIRED & set(classes.keys())):
+        for cls in sorted(required_classes & set(classes.keys())):
             rec = classes.get(cls, {})
             if not isinstance(rec, dict):
                 record_schema_issue(f"{env}:{cls}: credential record must be a mapping")
@@ -230,7 +285,7 @@ def main() -> int:
 
             evidence_field = evidence_fields[0]
             bootstrap_record = evidence_field == "lastProvisionedAt"
-            if bootstrap_record:
+            if bootstrap_record and operation_fields_valid:
                 if rec.get("bootstrapOperationId") != bootstrap_operation_id:
                     record_schema_issue(
                         f"{env}:{cls}: bootstrap credential record "
@@ -294,7 +349,7 @@ def main() -> int:
                 )
                 continue
 
-            if bootstrap_record:
+            if bootstrap_record and operation_fields_valid:
                 if evidence.get("bootstrapOperationId") != bootstrap_operation_id:
                     record_schema_issue(
                         f"{env}:{cls}: bootstrap evidence payload "
@@ -332,7 +387,7 @@ def main() -> int:
                 )
                 continue
 
-            if bootstrap_record:
+            if bootstrap_record and operation_fields_valid:
                 if record.get("bootstrapOperationId") != bootstrap_operation_id:
                     record_schema_issue(
                         f"{env}:{cls}: bootstrap evidence record "

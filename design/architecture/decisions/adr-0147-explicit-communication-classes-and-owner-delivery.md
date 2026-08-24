@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-This decision is not implemented. Explicit communication-class contracts, Game Logic orchestration, owner-local delivery, and bounded end-to-end proof remain gaps.
+This decision is partially implemented. The bounded authenticated `SAY`, `WHISPER`, and `TELL` gameplay-connected slice is live, but explicit communication-class contracts, complete Game Logic orchestration, owner-local delivery, and bounded end-to-end proof remain gaps.
 
 ## Decision Record
 

@@ -126,7 +126,16 @@ class CommunicationAggregationServiceTest {
 
   @Test
   void rejectsMissingMalformedAndNonPositiveAccountIdsBeforeDownstreamCalls() {
-    for (String accountId : new String[] {"", "not-a-number", "0", "-1"}) {
+    for (String[] accountIdCase :
+        new String[][] {
+          {"empty", ""},
+          {"whitespace-only", "   "},
+          {"malformed", "not-a-number"},
+          {"zero", "0"},
+          {"negative", "-1"},
+        }) {
+      String accountIdCaseDescription = accountIdCase[0];
+      String accountId = accountIdCase[1];
       SendCommunicationResponse resp =
           service.send(
               SendCommunicationRequest.newBuilder()
@@ -139,14 +148,41 @@ class CommunicationAggregationServiceTest {
                   .setText("Hello travelers")
                   .build());
 
-      assertThat(resp.getSuccess()).isFalse();
-      assertThat(resp.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+      assertThat(resp.getSuccess()).as(accountIdCaseDescription).isFalse();
+      assertThat(resp.getError().getCode())
+          .as(accountIdCaseDescription)
+          .isEqualTo("INVALID_ARGUMENT");
       assertThat(resp.getError().getMessage())
+          .as(accountIdCaseDescription)
           .isEqualTo("account_id must be a positive numeric account id");
     }
 
     verify(entityStub, never()).listRoomEntities(any());
     verify(socialStub, never()).sendMessage(any());
+  }
+
+  @Test
+  void normalizesPaddedNoncanonicalAccountIdForSocialSender() {
+    when(socialStub.sendMessage(any()))
+        .thenReturn(SendMessageResponse.newBuilder().setSuccess(true).build());
+
+    SendCommunicationResponse resp =
+        service.send(
+            SendCommunicationRequest.newBuilder()
+                .setTenantId("tenant-1")
+                .setSessionId("sess-1")
+                .setCharacterId("player-0")
+                .setAccountId(" 0042 ")
+                .setType(CommunicationType.TELL)
+                .setTargetCharacterId("player-9")
+                .setTargetCharacterName("Sora")
+                .setText("Meet me outside")
+                .build());
+
+    assertThat(resp.getSuccess()).isTrue();
+    ArgumentCaptor<SendMessageRequest> captor = ArgumentCaptor.forClass(SendMessageRequest.class);
+    verify(socialStub).sendMessage(captor.capture());
+    assertThat(captor.getValue().getSenderId()).isEqualTo("42");
   }
 
   @Test

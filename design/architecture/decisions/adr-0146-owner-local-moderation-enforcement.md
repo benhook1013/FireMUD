@@ -17,7 +17,7 @@ This decision is not implemented. Owner-local moderation state, acknowledged typ
 - Decision date: 2026-07-20
 - Decision key: `MOD-01`
 - Primary capability: `PO-1.2` moderation and safety tooling
-- Affected capabilities: `EA-2.4`, `AA-1.3`, `PO-1.3`, `PO-4.1`
+- Affected capabilities: `EA-2.4`, `AA-1.3`, `PO-1.3`, `PO-4.1`, `SF-2.3`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: human-led adversarial review of moderation authority, hot-path latency, propagation, outage behavior, idempotency, and restriction semantics
 

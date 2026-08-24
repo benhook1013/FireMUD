@@ -12,6 +12,7 @@ helm template contract "$CHART_DIR" \
   >"$RENDERED"
 
 python3 - <<'PY' "$RENDERED"
+import copy
 import pathlib
 import sys
 
@@ -80,6 +81,56 @@ if account_container is None:
     raise SystemExit(
         "account-service Deployment did not declare its account-service container"
     )
+
+jwks_path_prefix = "/var/run/secrets/firemud/jwks/"
+
+
+def validate_account_jwks_path_overrides(container):
+    for env_entry in container.get("env", []):
+        if not isinstance(env_entry, dict) or env_entry.get("name") != "FIREMUD_AUTH_JWKS_PATH":
+            continue
+        value = env_entry.get("value")
+        if (
+            not isinstance(value, str)
+            or not value.startswith(jwks_path_prefix)
+            or value.endswith("/")
+        ):
+            raise SystemExit(
+                "Account FIREMUD_AUTH_JWKS_PATH override must be a file path under "
+                f"{jwks_path_prefix}"
+            )
+
+
+validate_account_jwks_path_overrides(account_container)
+
+positive_override_container = copy.deepcopy(account_container)
+positive_override_container.setdefault("env", []).append(
+    {
+        "name": "FIREMUD_AUTH_JWKS_PATH",
+        "value": "/var/run/secrets/firemud/jwks/override.json",
+    }
+)
+validate_account_jwks_path_overrides(positive_override_container)
+
+for invalid_value in (
+    "/var/run/secrets/firemud/jwks/",
+    "/tmp/override.json",
+    7,
+):
+    negative_override_container = copy.deepcopy(account_container)
+    negative_override_container.setdefault("env", []).append(
+        {"name": "FIREMUD_AUTH_JWKS_PATH", "value": invalid_value}
+    )
+    try:
+        validate_account_jwks_path_overrides(negative_override_container)
+    except SystemExit:
+        pass
+    else:
+        raise SystemExit(
+            "invalid Account FIREMUD_AUTH_JWKS_PATH override unexpectedly passed: "
+            f"{invalid_value!r}"
+        )
+
 jwks_mounts = [
     mount
     for mount in account_container.get("volumeMounts", [])

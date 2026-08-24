@@ -64,6 +64,13 @@ JWT_CUSTODY_MODES = (
 )
 IMPLEMENTED_JWT_CUSTODY_MODE = "LEGACY_SECRET_DIAGNOSTIC"
 CANONICAL_JWKS_REF = "configmap://firemud/jwt-jwks"
+BASE_SECRET_COMPLIANCE_CLASSES = frozenset(
+    {
+        "jwt-signing-keys-jwks",
+        "postgres-application-credentials",
+        "operator-credentials",
+    }
+)
 
 PREFLIGHT_POLICY_CATALOG_VERSION = "preflight-policy-v1"
 PREFLIGHT_POLICY_CATEGORIES = frozenset(
@@ -139,14 +146,12 @@ def validate_preflight_policy_catalog(catalog: Any) -> str | None:
     catalog_ids = set(catalog)
     missing_ids = sorted(DOCUMENTED_PREFLIGHT_POLICY_ID_SET - catalog_ids)
     unknown_ids = sorted(catalog_ids - DOCUMENTED_PREFLIGHT_POLICY_ID_SET)
-    if missing_ids or unknown_ids or len(catalog) != len(DOCUMENTED_PREFLIGHT_POLICY_ID_SET):
+    if missing_ids or unknown_ids:
         details = []
         if missing_ids:
             details.append("missing policy IDs: " + ", ".join(missing_ids))
         if unknown_ids:
             details.append("unknown policy IDs: " + ", ".join(unknown_ids))
-        if not details:
-            details.append("policy IDs must occur exactly once")
         return "invalid preflight policy catalogue: " + "; ".join(details)
     invalid_categories = sorted(
         policy_id
@@ -174,8 +179,6 @@ EXPECTED_PREFLIGHT_POLICY_ID_SET = set(EXPECTED_PREFLIGHT_POLICY_IDS)
 COMMON_REQUIRED_PREFLIGHT_POLICY_IDS = {
     "PREFLIGHT-SECRETS-001",
     "PREFLIGHT-SECRETS-002",
-    "PREFLIGHT-JWT-001",
-    "PREFLIGHT-JWKS-001",
     "PREFLIGHT-BRIDGE-001",
     "PREFLIGHT-REDIS-001",
     "PREFLIGHT-BOOTSTRAP-001",
@@ -1444,8 +1447,11 @@ def validate_preflight_report(
         for check in preflight_results
         if not check["required"]
         and not (
-            environment == "hobby-self-hosted"
-            and check["policyId"] == "PREFLIGHT-DIGEST-002"
+            check["category"] == "advisory"
+            and (
+                check["policyId"] != "PREFLIGHT-DIGEST-002"
+                or environment == "hobby-self-hosted"
+            )
         )
         and check["status"] != "not_applicable"
     )
@@ -1513,6 +1519,153 @@ def player_facing_environments() -> tuple[str, ...]:
     return ("staging", "production", "hobby-self-hosted")
 
 
+def optional_integration_state(
+    data: dict[str, Any], section: str
+) -> tuple[bool, str | None]:
+    """Return enabled state and validate the explicit optional section contract."""
+    if section not in data:
+        return False, None
+    raw_section = data[section]
+    if not isinstance(raw_section, dict):
+        return False, f"{section} must be an object"
+    enabled = raw_section.get("enabled")
+    if not isinstance(enabled, bool):
+        return False, f"{section}.enabled must be a boolean"
+    if not enabled:
+        leftovers = [
+            f"{section}.{field}"
+            for field in sorted(raw_section)
+            if field != "enabled"
+        ]
+        if leftovers:
+            return False, f"{section} fields must be omitted when disabled: {', '.join(leftovers)}"
+        return False, None
+    if section == "assetStorage":
+        missing = [
+            f"assetStorage.{field}"
+            for field in ("bucket", "endpoint")
+            if normalize_binding_value(raw_section.get(field))[0] is None
+        ]
+        if (
+            normalize_binding_value(raw_section.get("bindingRef"))[0] is None
+            and normalize_binding_value(raw_section.get("fingerprint"))[0] is None
+        ):
+            missing.append("assetStorage.bindingRef or assetStorage.fingerprint")
+        if missing:
+            return True, "Missing enabled asset storage binding keys: " + ", ".join(missing)
+    else:
+        smtp_host = raw_section.get("smtpHost")
+        webhook_targets = raw_section.get("webhookTargets")
+        if smtp_host is not None and normalize_binding_value(smtp_host)[0] is None:
+            return True, "outboundComms.smtpHost must be a non-empty binding value when present"
+        if webhook_targets is not None and (
+            not isinstance(webhook_targets, dict) or not webhook_targets
+        ):
+            return True, "outboundComms.webhookTargets must be a non-empty mapping when present"
+        if isinstance(webhook_targets, dict):
+            invalid_targets = [
+                str(target_name)
+                for target_name, target in webhook_targets.items()
+                if normalize_binding_value(target)[0] is None
+            ]
+            if invalid_targets:
+                return (
+                    True,
+                    "outboundComms.webhookTargets entries must be non-empty binding values: "
+                    + ", ".join(sorted(invalid_targets)),
+                )
+        if not smtp_host and not webhook_targets:
+            return True, "Enabled outbound communications require smtpHost or webhookTargets"
+    return True, None
+
+
+# Sharing is a binding-type decision, not a generic escape hatch. Internal
+# state/trust and credential principals are environment-exclusive. Only the
+# non-secret endpoint/target fields below may be conditionally shared.
+BINDING_SHAREABILITY = {
+    "internalBindings.postgres.endpoint": "exclusive",
+    "internalBindings.postgres.credentialsRef": "exclusive",
+    "internalBindings.redis.coordination.endpoint": "exclusive",
+    "internalBindings.redis.cache.endpoint": "exclusive",
+    "internalBindings.jwt.signingKeysRef": "exclusive",
+    "internalBindings.jwt.jwksRef": "exclusive",
+    "internalBindings.certificates.issuerRef": "exclusive",
+    "internalBindings.certificates.workloadMtlsRef": "exclusive",
+    "internalBindings.certificates.gatewayInternalWsListenerRef": "exclusive",
+    "internalBindings.certificates.tcpProxyBridgeClientRef": "exclusive",
+    "internalBindings.certificates.backupControlPlaneClientRef": "exclusive",
+    "internalBindings.registry.imagePullSecretRef": "exclusive",
+    "backupStorage.bucket": "conditional",
+    "backupStorage.endpoint": "conditional",
+    "backupStorage.bindingRef": "exclusive",
+    "backupStorage.fingerprint": "exclusive",
+    "assetStorage.bucket": "conditional",
+    "assetStorage.endpoint": "conditional",
+    "assetStorage.bindingRef": "exclusive",
+    "assetStorage.fingerprint": "exclusive",
+    "outboundComms.smtpHost": "conditional",
+    "observability.otelCollectorEndpoint": "conditional",
+    "operatorCredentials.bindingRef": "exclusive",
+    "operatorCredentials.fingerprint": "exclusive",
+}
+
+
+def binding_declarations(data: dict[str, Any]):
+    for label, shareability in BINDING_SHAREABILITY.items():
+        raw = get(data, label)
+        if raw is not None:
+            yield label, raw, shareability
+    outbound = data.get("outboundComms")
+    if isinstance(outbound, dict) and outbound.get("enabled") is True:
+        targets = outbound.get("webhookTargets")
+        if isinstance(targets, dict):
+            for target_name, raw_target in sorted(targets.items()):
+                yield (
+                    f"outboundComms.webhookTargets.{target_name}",
+                    raw_target,
+                    "conditional",
+                )
+
+
+def binding_shareability_issues(data: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    for label, raw, shareability in binding_declarations(data):
+        _, shared, rationale = normalize_binding_value(raw)
+        if not shared:
+            continue
+        if shareability == "exclusive":
+            issues.append(f"{label} is environment-exclusive and cannot be marked shared")
+        elif not rationale:
+            issues.append(f"{label} is marked shared but missing sharedRationale")
+    return issues
+
+
+def required_secret_compliance_classes(root_dir: Path, environment: str) -> set[str]:
+    expected_path = root_dir / "design/operations/environments" / environment / "expected-bindings.yaml"
+    try:
+        expected_data = load_yaml(expected_path) or {}
+    except YAML_READ_ERRORS as exc:
+        raise ValueError(f"Cannot read canonical expected-bindings manifest: {exc}") from exc
+    if not isinstance(expected_data, dict) or expected_data.get("environment") != environment:
+        raise ValueError(
+            f"Canonical expected-bindings manifest must target {environment}: {expected_path}"
+        )
+    asset_enabled, asset_error = optional_integration_state(expected_data, "assetStorage")
+    if asset_error:
+        raise ValueError(f"Canonical assetStorage configuration is invalid: {asset_error}")
+    required = set(BASE_SECRET_COMPLIANCE_CLASSES)
+    backup_storage = expected_data.get("backupStorage")
+    if not isinstance(backup_storage, dict) or not isinstance(
+        backup_storage.get("enabled"), bool
+    ):
+        raise TypeError("Canonical backupStorage.enabled must be a boolean")
+    if backup_storage["enabled"]:
+        required.add("backup-object-store-credentials")
+    if asset_enabled:
+        required.add("asset-store-credentials")
+    return required
+
+
 def normalize_binding_value(raw: Any) -> tuple[str | None, bool, str]:
     if isinstance(raw, dict):
         shared = bool(raw.get("shared"))
@@ -1540,10 +1693,14 @@ def extract_service_discovery_overrides(rendered_text: str) -> dict[str, str]:
 def external_binding_uniqueness_issues(
     manifests_root: Path, env_class: str, current_data: dict[str, Any]
 ) -> list[str]:
-    current_backup = current_data.get("backupStorage") or {}
-    current_asset = current_data.get("assetStorage") or {}
-    current_outbound = current_data.get("outboundComms") or {}
-    current_operator = current_data.get("operatorCredentials") or {}
+    current_backup = current_data.get("backupStorage")
+    current_asset = current_data.get("assetStorage")
+    current_outbound = current_data.get("outboundComms")
+    current_operator = current_data.get("operatorCredentials")
+    current_backup = current_backup if isinstance(current_backup, dict) else {}
+    current_asset = current_asset if isinstance(current_asset, dict) else {}
+    current_outbound = current_outbound if isinstance(current_outbound, dict) else {}
+    current_operator = current_operator if isinstance(current_operator, dict) else {}
 
     def add_candidate(
         issues: list[str],
@@ -1559,32 +1716,35 @@ def external_binding_uniqueness_issues(
             return
         candidates.append((label, value, shared, rationale))
 
-    issues: list[str] = []
+    issues: list[str] = binding_shareability_issues(current_data)
     candidates: list[tuple[str, str, bool, str]] = []
     current_backup_enabled = (
         isinstance(current_backup, dict) and current_backup.get("enabled") is True
     )
     if current_backup_enabled:
         add_candidate(issues, candidates, "backupStorage.bucket", current_backup.get("bucket"))
+        add_candidate(issues, candidates, "backupStorage.endpoint", current_backup.get("endpoint"))
         add_candidate(
             issues,
             candidates,
             "backupStorage.bindingRef",
             current_backup.get("bindingRef") or current_backup.get("fingerprint"),
         )
-    add_candidate(issues, candidates, "assetStorage.bucket", current_asset.get("bucket"))
-    add_candidate(issues, candidates, "assetStorage.endpoint", current_asset.get("endpoint"))
-    add_candidate(
-        issues,
-        candidates,
-        "assetStorage.bindingRef",
-        current_asset.get("bindingRef") or current_asset.get("fingerprint"),
-    )
-    add_candidate(issues, candidates, "outboundComms.smtpHost", current_outbound.get("smtpHost"))
-    for target_name, raw_target in sorted((current_outbound.get("webhookTargets") or {}).items()):
+    if current_asset.get("enabled") is True:
+        add_candidate(issues, candidates, "assetStorage.bucket", current_asset.get("bucket"))
+        add_candidate(issues, candidates, "assetStorage.endpoint", current_asset.get("endpoint"))
         add_candidate(
-            issues, candidates, f"outboundComms.webhookTargets.{target_name}", raw_target
+            issues,
+            candidates,
+            "assetStorage.bindingRef",
+            current_asset.get("bindingRef") or current_asset.get("fingerprint"),
         )
+    if current_outbound.get("enabled") is True:
+        add_candidate(issues, candidates, "outboundComms.smtpHost", current_outbound.get("smtpHost"))
+        for target_name, raw_target in sorted((current_outbound.get("webhookTargets") or {}).items()):
+            add_candidate(
+                issues, candidates, f"outboundComms.webhookTargets.{target_name}", raw_target
+            )
     add_candidate(
         issues,
         candidates,
@@ -1606,30 +1766,51 @@ def external_binding_uniqueness_issues(
         except YAML_READ_ERRORS as exc:
             issues.append(f"Unreadable expected-bindings manifest for {other_env}: {exc}")
             continue
-        other_backup = other_data.get("backupStorage") or {}
-        other_asset = other_data.get("assetStorage") or {}
-        other_outbound = other_data.get("outboundComms") or {}
-        other_operator = other_data.get("operatorCredentials") or {}
+        other_backup = other_data.get("backupStorage")
+        other_asset = other_data.get("assetStorage")
+        other_outbound = other_data.get("outboundComms")
+        other_operator = other_data.get("operatorCredentials")
+        other_backup = other_backup if isinstance(other_backup, dict) else {}
+        other_asset = other_asset if isinstance(other_asset, dict) else {}
+        other_outbound = other_outbound if isinstance(other_outbound, dict) else {}
+        other_operator = other_operator if isinstance(other_operator, dict) else {}
+        issues.extend(
+            f"{other_env}: {issue}" for issue in binding_shareability_issues(other_data)
+        )
         other_backup_enabled = (
             isinstance(other_backup, dict) and other_backup.get("enabled") is True
+        )
+        other_asset_enabled = (
+            isinstance(other_asset, dict) and other_asset.get("enabled") is True
+        )
+        other_outbound_enabled = (
+            isinstance(other_outbound, dict) and other_outbound.get("enabled") is True
         )
         other_lookup = {
             "backupStorage.bucket": (
                 other_backup.get("bucket") if other_backup_enabled else None
+            ),
+            "backupStorage.endpoint": (
+                other_backup.get("endpoint") if other_backup_enabled else None
             ),
             "backupStorage.bindingRef": (
                 other_backup.get("bindingRef") or other_backup.get("fingerprint")
                 if other_backup_enabled
                 else None
             ),
-            "assetStorage.bucket": other_asset.get("bucket"),
-            "assetStorage.endpoint": other_asset.get("endpoint"),
-            "assetStorage.bindingRef": other_asset.get("bindingRef") or other_asset.get("fingerprint"),
-            "outboundComms.smtpHost": other_outbound.get("smtpHost"),
+            "assetStorage.bucket": other_asset.get("bucket") if other_asset_enabled else None,
+            "assetStorage.endpoint": other_asset.get("endpoint") if other_asset_enabled else None,
+            "assetStorage.bindingRef": (
+                other_asset.get("bindingRef") or other_asset.get("fingerprint")
+                if other_asset_enabled
+                else None
+            ),
+            "outboundComms.smtpHost": other_outbound.get("smtpHost") if other_outbound_enabled else None,
             "operatorCredentials.bindingRef": other_operator.get("bindingRef") or other_operator.get("fingerprint"),
         }
-        for target_name, raw_target in sorted((other_outbound.get("webhookTargets") or {}).items()):
-            other_lookup[f"outboundComms.webhookTargets.{target_name}"] = raw_target
+        if other_outbound_enabled:
+            for target_name, raw_target in sorted((other_outbound.get("webhookTargets") or {}).items()):
+                other_lookup[f"outboundComms.webhookTargets.{target_name}"] = raw_target
 
         for label, value, current_shared, current_rationale in candidates:
             other_value, other_shared, other_rationale = normalize_binding_value(
@@ -1848,8 +2029,10 @@ def append_result(
 ) -> bool:
     if policy_id not in PREFLIGHT_POLICY_CATALOG:
         raise ValueError(f"Unknown preflight policy ID: {policy_id}")
-    check_results.append(CheckResult(policy_id, required, status, message))
-    return required and status == "fail"
+    category = PREFLIGHT_POLICY_CATALOG[policy_id]
+    effective_required = required and category != "advisory"
+    check_results.append(CheckResult(policy_id, effective_required, status, message))
+    return effective_required and status == "fail"
 
 
 def expected_binding_checks(
@@ -1857,6 +2040,7 @@ def expected_binding_checks(
     expected_bindings_ref: str,
     env_class: str,
     documents: list[dict[str, Any]],
+    context: str = "ci-static",
 ) -> list[CheckResult]:
     try:
         data = load_yaml(expected_bindings_path) or {}
@@ -2095,7 +2279,28 @@ def expected_binding_checks(
         if name
     ]
     missing_bootstrap = [name for name in bootstrap_names if not rendered_references_secret(documents, name)]
-    if missing_bootstrap:
+    custody_mode = get(data, "internalBindings.jwt.custodyMode")
+    custody_gate_required = context == "operator" and env_class in player_facing_environments()
+    if custody_gate_required and custody_mode != IMPLEMENTED_JWT_CUSTODY_MODE:
+        results.append(
+            CheckResult(
+                "PREFLIGHT-BOOTSTRAP-001",
+                True,
+                "fail",
+                "No accepted player-facing JWT custody proof is implemented for selected mode: "
+                + str(custody_mode),
+            )
+        )
+    elif custody_gate_required and custody_mode == IMPLEMENTED_JWT_CUSTODY_MODE:
+        results.append(
+            CheckResult(
+                "PREFLIGHT-BOOTSTRAP-001",
+                True,
+                "fail",
+                "Legacy JWT diagnostic wiring has no accepted player-facing JWT custody proof",
+            )
+        )
+    elif missing_bootstrap:
         results.append(
             CheckResult(
                 "PREFLIGHT-BOOTSTRAP-001",
@@ -2141,11 +2346,13 @@ def expected_binding_checks(
             else:
                 backup_storage_error = production_error
 
+    asset_storage_enabled, asset_storage_error = optional_integration_state(
+        data, "assetStorage"
+    )
+    outbound_comms_enabled, outbound_comms_error = optional_integration_state(
+        data, "outboundComms"
+    )
     external_requirements = [
-        ("assetStorage.bucket", None),
-        ("assetStorage.endpoint", None),
-        ("assetStorage.bindingRef", "assetStorage.fingerprint"),
-        ("outboundComms.smtpHost", None),
         ("operatorCredentials.bindingRef", "operatorCredentials.fingerprint"),
     ]
     missing_external = []
@@ -2154,6 +2361,10 @@ def expected_binding_checks(
             missing_external.append("backupStorage.bucket")
         if not backup_storage.get("bindingRef") and not backup_storage.get("fingerprint"):
             missing_external.append("backupStorage.bindingRef or backupStorage.fingerprint")
+    if asset_storage_enabled and asset_storage_error is None:
+        # optional_integration_state performs the complete enabled asset check;
+        # retain these paths here as explicit validation inputs for readability.
+        pass
     for primary, alternate in external_requirements:
         if not get(data, primary) and (alternate is None or not get(data, alternate)):
             missing_external.append(primary if alternate is None else f"{primary} or {alternate}")
@@ -2168,20 +2379,35 @@ def expected_binding_checks(
                 if backup_storage_enabled and get(data, "backupStorage.bindingRef")
                 else None
             ),
-            binding_ref_format_error("assetStorage.bindingRef", get(data, "assetStorage.bindingRef")),
+            (
+                binding_ref_format_error(
+                    "assetStorage.bindingRef", get(data, "assetStorage.bindingRef")
+                )
+                if asset_storage_enabled and get(data, "assetStorage.bindingRef")
+                else None
+            ),
             binding_ref_format_error(
                 "operatorCredentials.bindingRef", get(data, "operatorCredentials.bindingRef")
             ),
         ]
         if error
     ]
-    if backup_storage_error:
+    optional_errors = [
+        error for error in (asset_storage_error, outbound_comms_error) if error
+    ]
+    if backup_storage_error or optional_errors:
         results.append(
             CheckResult(
                 "PREFLIGHT-EXTERNAL-001",
                 True,
                 "fail",
-                f"Expected-bindings external configuration is invalid: {backup_storage_error}",
+                "Expected-bindings external configuration is invalid: "
+                + "; ".join(
+                    error
+                    for error in ([backup_storage_error] if backup_storage_error else [])
+                    + optional_errors
+                    if error
+                ),
             )
         )
     elif missing_external:
@@ -2202,7 +2428,9 @@ def expected_binding_checks(
                 "Expected-bindings external binding refs are invalid: " + "; ".join(invalid_external_refs),
             )
         )
-    elif not isinstance(webhook_targets, dict) or not webhook_targets:
+    elif outbound_comms_enabled and (
+        not isinstance(webhook_targets, dict) or not webhook_targets
+    ) and not get(data, "outboundComms.smtpHost"):
         results.append(
             CheckResult(
                 "PREFLIGHT-EXTERNAL-001",
@@ -2367,12 +2595,12 @@ def jwt_jwks_checks(
 
     results: list[CheckResult] = []
     if inline_secret:
-        results.append(CheckResult("PREFLIGHT-JWT-001", True, "fail", "Inline JWT secret material detected in rendered workloads"))
+        results.append(CheckResult("PREFLIGHT-JWT-001", False, "fail", "Inline JWT secret material detected in rendered workloads"))
     elif missing_secret_path:
         results.append(
             CheckResult(
                 "PREFLIGHT-JWT-001",
-                True,
+                False,
                 "fail",
                 "FIREMUD_AUTH_JWT_SECRET_PATH is missing for workloads: " + ", ".join(missing_secret_path),
             )
@@ -2381,7 +2609,7 @@ def jwt_jwks_checks(
         results.append(
             CheckResult(
                 "PREFLIGHT-JWT-001",
-                True,
+                False,
                 "fail",
                 "JWT signing Secret is not mounted at the configured path for workloads: " + ", ".join(missing_signing_mount),
             )
@@ -2390,7 +2618,7 @@ def jwt_jwks_checks(
         results.append(
             CheckResult(
                 "PREFLIGHT-JWT-001",
-                True,
+                False,
                 "pass",
                 "JWT file-path contract and signing Secret mounts are satisfied",
             )
@@ -2410,7 +2638,7 @@ def jwt_jwks_checks(
         if bound_ref != CANONICAL_JWKS_REF:
             binding_error = f"internalBindings.jwt.jwksRef must be the canonical {CANONICAL_JWKS_REF} reference"
     if binding_error is not None:
-        results.append(CheckResult("PREFLIGHT-JWKS-001", True, "fail", binding_error))
+        results.append(CheckResult("PREFLIGHT-JWKS-001", False, "fail", binding_error))
         return results
 
     jwks_namespace, jwks_name = jwks_binding
@@ -2428,7 +2656,7 @@ def jwt_jwks_checks(
         results.append(
             CheckResult(
                 "PREFLIGHT-JWKS-001",
-                True,
+                False,
                 "fail",
                 f"Rendered manifests do not provide the public {CANONICAL_JWKS_REF} ConfigMap",
             )
@@ -2441,7 +2669,7 @@ def jwt_jwks_checks(
         results.append(
             CheckResult(
                 "PREFLIGHT-JWKS-001",
-                True,
+                False,
                 "fail",
                 "Public jwt-jwks ConfigMap must contain a non-empty data.jwks.json string",
             )
@@ -2450,7 +2678,7 @@ def jwt_jwks_checks(
         results.append(
             CheckResult(
                 "PREFLIGHT-JWKS-001",
-                True,
+                False,
                 "fail",
                 "Account Service does not mount the public jwt-jwks ConfigMap at the configured JWKS path: "
                 + ", ".join(missing_jwks_mount),
@@ -2460,7 +2688,7 @@ def jwt_jwks_checks(
         results.append(
             CheckResult(
                 "PREFLIGHT-JWKS-001",
-                True,
+                False,
                 "pass",
                 "Public jwt-jwks ConfigMap resource and Account Service mount are satisfied",
             )
@@ -2866,12 +3094,10 @@ def _promotion_check(
         secret_evidence = load_json(secret_path)
     except JSON_READ_ERRORS as exc:
         return ("fail", rollback_mode, f"Staging secret compliance evidence unreadable: {exc}")
-    required_secret_classes = {
-        "jwt-signing-keys-jwks",
-        "postgres-application-credentials",
-        "backup-object-store-credentials",
-        "operator-credentials",
-    }
+    try:
+        required_secret_classes = required_secret_compliance_classes(root_dir, "staging")
+    except (TypeError, ValueError) as exc:
+        return ("fail", rollback_mode, str(exc))
     if not isinstance(secret_evidence, dict):
         return ("fail", rollback_mode, "Staging secret compliance evidence must be a JSON object")
     records = secret_evidence.get("records", {})
@@ -3136,7 +3362,13 @@ def main() -> int:
     check_results: list[CheckResult] = []
     has_required_failure = False
 
-    for check in expected_binding_checks(expected_bindings_path, expected_bindings_ref, env_class, documents):
+    for check in expected_binding_checks(
+        expected_bindings_path,
+        expected_bindings_ref,
+        env_class,
+        documents,
+        context=context,
+    ):
         has_required_failure = append_result(
             check_results,
             check.policy_id,

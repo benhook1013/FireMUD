@@ -51,8 +51,13 @@ ADR_LABEL_RE = re.compile(r"^ADR (?P<number>\d{4})$")
 REPLACEMENT_ADR_LABEL_RE = re.compile(r"^replacement ADR (?P<number>\d{4})$")
 DECISION_KEY_TOKEN_RE = r"`[A-Z0-9][A-Z0-9-]*`"
 SUPERSEDED_REPLACEMENT_KEY_FORM_RE = re.compile(
-    rf"^ by {DECISION_KEY_TOKEN_RE}(?:, {DECISION_KEY_TOKEN_RE})*"
-    rf"(?:,? and {DECISION_KEY_TOKEN_RE})?; "
+    rf"^ by {DECISION_KEY_TOKEN_RE}(?:"
+    rf" and {DECISION_KEY_TOKEN_RE}"
+    rf"|, {DECISION_KEY_TOKEN_RE}(?:"
+    rf"(?:, {DECISION_KEY_TOKEN_RE})*"
+    rf"(?:,? and {DECISION_KEY_TOKEN_RE})?"
+    rf")?"
+    rf")?; "
 )
 REPLACEMENT_ADR_ENTRY_RE = re.compile(
     r"^- Replacement ADR: \[ADR (?P<number>\d{4})\]\((?P<target>[^)\r\n]+)\)$"
@@ -397,11 +402,25 @@ def decision_keys_for_inventory(
                 or TABLE_SEPARATOR_CELL_RE.fullmatch(separator) is None
             ):
                 continue
-            for row in visible_lines[index + 2 :]:
+            for row_index, row in enumerate(visible_lines[index + 2 :], start=index + 2):
                 first_cell = first_table_cell(row.text)
                 if first_cell is None:
                     if not row.text.strip():
                         continue
+                    break
+                following_cell = (
+                    first_table_cell(visible_lines[row_index + 1].text)
+                    if row_index + 1 < len(visible_lines)
+                    else None
+                )
+                if (
+                    TABLE_SEPARATOR_CELL_RE.fullmatch(first_cell)
+                    or first_cell in DECISION_KEY_TABLE_HEADERS
+                    or (
+                        following_cell is not None
+                        and TABLE_SEPARATOR_CELL_RE.fullmatch(following_cell)
+                    )
+                ):
                     break
                 for key_match in DECISION_KEY_CELL_RE.finditer(first_cell):
                     key = key_match.group("key")

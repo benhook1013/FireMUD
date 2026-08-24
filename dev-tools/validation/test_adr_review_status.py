@@ -1483,6 +1483,77 @@ class AdrReviewStatusTests(unittest.TestCase):
                 decision_keys,
             )
 
+    def test_decision_inventory_table_stops_before_following_table(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = (
+                root
+                / "design/project-management/design-alignment/"
+                "decision-inventory-cross-cutting.md"
+            )
+            write(
+                path,
+                """
+                # Decision inventory
+
+                | Decision key | Decision |
+                | --- | --- |
+                | `TEST-DECISION` | Fixture decision |
+
+                | Other key | Other decision |
+                | --- | --- |
+                | `SHOULD-NOT-BE-SCANNED` | Following table |
+                """,
+            )
+            decision_keys = self.validator.decision_keys_for_inventory(path, {})
+            self.assertEqual({"TEST-DECISION"}, decision_keys)
+
+    def test_superseded_no_adr_replacement_accepts_multiple_decision_keys(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = (
+                root
+                / "design/project-management/design-alignment/"
+                "decision-inventory-cross-cutting.md"
+            )
+            write(
+                path,
+                """
+                # Decision inventory
+
+                | Decision key | Decision |
+                | --- | --- |
+                | `TEST-DECISION` | Fixture decision |
+                | `SECOND-DECISION` | Second fixture decision |
+                | `THIRD-DECISION` | Third fixture decision |
+                """,
+            )
+            append_provenance_row(
+                root,
+                "- [x] `TEST-SUPERSEDED-MULTI-KEY` — `superseded` on "
+                "2026-07-27 by `TEST-DECISION`, `SECOND-DECISION`, and "
+                "`THIRD-DECISION`; [replacement ADR 0012](../../"
+                "architecture/decisions/adr-0012-reviewed.md); no ADR required",
+            )
+            reviews = checked_reviews(self.validator, root)
+            self.assertEqual({"TEST-01"}, {review.key for review in reviews[12]})
+
+    def test_superseded_no_adr_replacement_rejects_malformed_key_separator(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            append_provenance_row(
+                root,
+                "- [x] `TEST-SUPERSEDED-MALFORMED-SEPARATOR` — `superseded` "
+                "on 2026-07-27 by `TEST-DECISION`, and `SECOND-DECISION`; "
+                "[replacement ADR 0012](../../architecture/decisions/"
+                "adr-0012-reviewed.md); no ADR required",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "must use the documented 'by `DECISION-KEY`' replacement-key form",
+            )
+
     def test_superseded_no_adr_replacement_rejects_taxonomy_tokens(self) -> None:
         for taxonomy_key in ("AA", "EA", "GR"):
             with self.subTest(taxonomy_key=taxonomy_key), fixture_root() as fixture:

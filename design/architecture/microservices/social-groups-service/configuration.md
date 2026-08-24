@@ -2,6 +2,10 @@
 
 This document summarizes the Social & Groups Service configuration contract and proto source location.
 
+## Implementation Status
+
+The target gameplay `WHISPER` projection scope is `{tenantId, playableStateNamespaceId, characterId}`. The live Social DTO/entity/schema/key remains account-keyed, so the cross-service scope migration and its same-account isolation proof remain incomplete. This status note does not replace the canonical target contracts linked below.
+
 ## Core Configuration
 
 The service follows the conventions from [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md). It relies on:
@@ -36,7 +40,7 @@ Chat history cache behavior can be tuned with the following variables:
 | `FIREMUD_CHAT_ACCOUNT_TTL_SECONDS` | Seconds to keep account-to-account messages | `172800` |
 | `FIREMUD_CHAT_ACCOUNT_MAX_MESSAGES` | Max cached account messages | `50` |
 
-The target gameplay `WHISPER` cache scope is `{tenantId, playableStateNamespaceId, characterId}`. The live account-keyed Social DTO/entity/schema/key remains an implementation migration gap and must not be used for history/refill across same-account characters or namespaces. These variables remain the current TTL and message-cap settings during that migration; the canonical scope and disclosure contract are maintained in the [Redis cache reference](../../system-architecture-redis-cache-reference.md#canonical-social--groups-chatwhisper-class-b-contract) and [ADR 0149](../../decisions/adr-0149-communication-type-specific-history-and-retention.md).
+The target gameplay `WHISPER` cache scope is `{tenantId, playableStateNamespaceId, characterId}`. These variables remain the current TTL and message-cap settings during the migration; the canonical scope and disclosure contract are maintained in the [Redis cache reference](../../system-architecture-redis-cache-reference.md#canonical-social--groups-chatwhisper-class-b-contract) and [ADR 0149](../../decisions/adr-0149-communication-type-specific-history-and-retention.md).
 
 ## Proto Files
 

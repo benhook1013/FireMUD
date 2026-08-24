@@ -574,7 +574,7 @@ ADR_ALLOCATION_EXPECTATIONS = {
         "PO-2", "Accepted", "EA-1"
     ),
     "design/architecture/decisions/adr-0146-owner-local-moderation-enforcement.md": adr_allocation(
-        "PO-1", "Accepted", "EA-2", "AA-1", "PO-4"
+        "PO-1", "Accepted", "EA-2", "AA-1", "PO-4", "SF-2"
     ),
     "design/architecture/decisions/adr-0147-explicit-communication-classes-and-owner-delivery.md": adr_allocation(
         "EA-2", "Accepted", "GR-4", "PO-1", "SF-2"

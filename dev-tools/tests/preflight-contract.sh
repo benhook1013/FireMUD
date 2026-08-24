@@ -45,8 +45,10 @@ required_paths = [
     "internalBindings.certificates.gatewayInternalWsListenerRef",
     "internalBindings.certificates.tcpProxyBridgeClientRef",
     "internalBindings.registry.imagePullSecretRef",
+    "assetStorage.enabled",
     "assetStorage.bucket",
     "assetStorage.bindingRef",
+    "outboundComms.enabled",
     "outboundComms.smtpHost",
     "operatorCredentials.bindingRef",
     "serviceDiscovery.mode",
@@ -82,6 +84,19 @@ for env in ("production", "staging", "hobby-self-hosted"):
             backup_missing.append("backupStorage.bindingRef or backupStorage.fingerprint")
         if backup_missing:
             raise SystemExit(f"{ref}: missing enabled backup storage paths: {backup_missing}")
+    for section in ("assetStorage", "outboundComms"):
+        optional = data.get(section)
+        if not isinstance(optional, dict) or not isinstance(optional.get("enabled"), bool):
+            raise SystemExit(f"{ref}: {section}.enabled must be a boolean")
+        if not optional["enabled"]:
+            continue
+        if section == "assetStorage":
+            if not optional.get("bucket") or not optional.get("endpoint"):
+                raise SystemExit(f"{ref}: enabled assetStorage needs bucket and endpoint")
+            if not optional.get("bindingRef") and not optional.get("fingerprint"):
+                raise SystemExit(f"{ref}: enabled assetStorage needs bindingRef or fingerprint")
+        elif not optional.get("smtpHost") and not optional.get("webhookTargets"):
+            raise SystemExit(f"{ref}: enabled outboundComms needs smtpHost or webhookTargets")
 PY
 
 python3 - <<'PY' "$ROOT_DIR" "$OPERATOR_REPORT_PATH"
@@ -235,7 +250,11 @@ import yaml
 
 source = pathlib.Path(sys.argv[1])
 destination = pathlib.Path(sys.argv[2])
-documents = list(yaml.safe_load_all(source.read_text(encoding="utf-8")))
+documents = [
+    document
+    for document in yaml.safe_load_all(source.read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
 found_jwks_resource = False
 found_account_wiring = False
 for document in documents:
@@ -290,7 +309,11 @@ assert spec.loader is not None
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 
-legacy_documents = list(yaml.safe_load_all(rendered_path.read_text(encoding="utf-8")))
+legacy_documents = [
+    document
+    for document in yaml.safe_load_all(rendered_path.read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
 
 
 def account_deployment(documents):
@@ -404,7 +427,7 @@ if secret_result.status != "fail" or "ConfigMap" not in secret_result.message:
     raise SystemExit(f"Secret jwt-jwks incorrectly satisfied the public-resource contract: {secret_result.message}")
 PY
 
-# Legacy Secret-backed hobby fixture: the migration gap must remain explicit.
+# Legacy Secret-backed hobby fixture: the migration gap is advisory in static CI.
 set +e
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_DEPLOYMENT_REF=contract-hobby \
@@ -413,8 +436,8 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   python3 "$SCRIPT" hobby-self-hosted >"$LEGACY_HOBBY_PREFLIGHT_OUTPUT"
 preflight_status=$?
 set -e
-if [ "$preflight_status" -ne 1 ]; then
-  echo "expected legacy Secret jwt-jwks fixture to fail canonical public-resource preflight" >&2
+if [ "$preflight_status" -ne 0 ]; then
+  echo "static CI must not block on the legacy Secret jwt-jwks diagnostic" >&2
   exit 1
 fi
 
@@ -476,7 +499,7 @@ failures = [
     check
     for check in report["checkResults"]
     if check["status"] == "fail"
-    and check["policyId"] not in {"PREFLIGHT-DIGEST-002", "PREFLIGHT-JWKS-001"}
+    and check["policyId"] not in {"PREFLIGHT-DIGEST-002", "PREFLIGHT-JWT-001", "PREFLIGHT-JWKS-001"}
 ]
 if failures:
     raise SystemExit(f"unexpected required preflight failures: {failures}")
@@ -487,6 +510,10 @@ legacy_jwks = [
 ]
 if len(legacy_jwks) != 1 or legacy_jwks[0]["status"] != "fail" or "ConfigMap" not in legacy_jwks[0]["message"]:
     raise SystemExit(f"legacy Secret jwt-jwks fixture did not fail the canonical public-resource check: {legacy_jwks}")
+for policy_id in ("PREFLIGHT-JWT-001", "PREFLIGHT-JWKS-001"):
+    diagnostic = [check for check in report["checkResults"] if check["policyId"] == policy_id]
+    if len(diagnostic) != 1 or diagnostic[0]["required"]:
+        raise SystemExit(f"{policy_id} diagnostic was incorrectly apply-blocking: {diagnostic}")
 PY
 
 # Migrated ConfigMap-backed hobby fixture: the canonical JWKS check must pass.
@@ -691,6 +718,25 @@ complete_status, complete_message = validate_report(
 )
 if complete_status != "pass":
     raise SystemExit(f"complete preflight policy set did not pass: {complete_message}")
+for advisory_status in ("pass", "fail"):
+    advisory_report = {
+        **complete_report,
+        "checkResults": [
+            (
+                {**check, "status": advisory_status}
+                if check["policyId"] == "PREFLIGHT-JWT-001"
+                else check
+            )
+            for check in complete_report["checkResults"]
+        ],
+    }
+    advisory_result, advisory_message = validate_report(
+        advisory_report, "hobby-self-hosted", "contract-hobby"
+    )
+    if advisory_result != "pass":
+        raise SystemExit(
+            f"advisory executable status {advisory_status} was rejected: {advisory_message}"
+        )
 for invalid_catalog in (
     {policy_id: category for policy_id, category in module.PREFLIGHT_POLICY_CATALOG.items() if policy_id != "PREFLIGHT-BACKUP-003"},
     {**module.PREFLIGHT_POLICY_CATALOG, "PREFLIGHT-UNKNOWN-001": "apply-blocking"},
@@ -857,7 +903,8 @@ if not_applicable_status != "fail" or "non-passing required policy IDs" not in n
 
 PY
 
-# The checked-in production overlay remains a separately named legacy-gap case.
+# The checked-in production overlay retains the legacy diagnostics without a
+# static apply block.
 set +e
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_DEPLOYMENT_REF="contract-production" \
@@ -865,8 +912,8 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   python3 "$SCRIPT" production >"$LEGACY_PRODUCTION_PREFLIGHT_OUTPUT"
 production_preflight_status=$?
 set -e
-if [ "$production_preflight_status" -ne 1 ]; then
-  echo "expected checked-in production legacy-gap fixture to fail canonical public-resource preflight" >&2
+if [ "$production_preflight_status" -ne 0 ]; then
+  echo "production advisory legacy-gap diagnostics must not block static CI" >&2
   exit 1
 fi
 
@@ -963,8 +1010,8 @@ fi
 
 for env in staging production; do
   REPORT="$TMP_DIR/preflight-$env.json"
-  # These checked-in overlays remain legacy Secret-backed; the canonical
-  # public-resource check must report their migration gap explicitly.
+  # These checked-in overlays remain legacy Secret-backed; static CI records
+  # the migration gap without treating advisory diagnostics as apply blockers.
   set +e
   FIREMUD_PREFLIGHT_CONTEXT=ci-static \
     FIREMUD_DEPLOYMENT_REF="contract-$env" \
@@ -972,8 +1019,8 @@ for env in staging production; do
     python3 "$SCRIPT" "$env" >"$TMP_DIR/firemud-preflight-contract-$env.out"
   preflight_status=$?
   set -e
-  if [ "$preflight_status" -ne 1 ]; then
-    echo "$env: expected checked-in legacy-gap fixture to fail canonical public-resource preflight" >&2
+  if [ "$preflight_status" -ne 0 ]; then
+    echo "$env: advisory legacy-gap diagnostics must not block static CI" >&2
     exit 1
   fi
 
@@ -990,13 +1037,17 @@ if report.get("expectedBindingsRef") != expected_ref:
 failures = [
     check
     for check in report["checkResults"]
-    if check["status"] == "fail" and check["policyId"] != "PREFLIGHT-JWKS-001"
+    if check["status"] == "fail" and check["policyId"] not in {"PREFLIGHT-JWT-001", "PREFLIGHT-JWKS-001"}
 ]
 if failures:
     raise SystemExit(f"{env}: unexpected preflight failures: {failures}")
 jwks = [check for check in report["checkResults"] if check["policyId"] == "PREFLIGHT-JWKS-001"]
 if len(jwks) != 1 or jwks[0]["status"] != "fail" or "ConfigMap" not in jwks[0]["message"]:
     raise SystemExit(f"{env}: legacy Secret jwt-jwks fixture did not fail the canonical public-resource check: {jwks}")
+for policy_id in ("PREFLIGHT-JWT-001", "PREFLIGHT-JWKS-001"):
+    diagnostic = [check for check in report["checkResults"] if check["policyId"] == policy_id]
+    if len(diagnostic) != 1 or diagnostic[0]["required"]:
+        raise SystemExit(f"{env}: {policy_id} diagnostic was incorrectly apply-blocking: {diagnostic}")
 PY
 done
 
@@ -1022,11 +1073,13 @@ base = {
         "bindingRef": "secret://firemud/unique-backup",
     },
     "assetStorage": {
+        "enabled": True,
         "bucket": "unique-assets",
         "endpoint": "https://assets.unique.internal",
         "bindingRef": "secret://firemud/unique-assets",
     },
     "outboundComms": {
+        "enabled": True,
         "smtpHost": "smtp.unique.internal",
         "webhookTargets": {"accountNotifications": "unique-only"},
     },
@@ -1192,8 +1245,7 @@ if not any("backupStorage.bucket matches production" in issue for issue in issue
 disabled_staging = copy.deepcopy(staging)
 disabled_production = copy.deepcopy(production)
 disabled_staging["backupStorage"] = {"enabled": False}
-disabled_staging["assetStorage"]["bucket"] = "dup-assets"
-disabled_production["assetStorage"]["bucket"] = "dup-assets"
+disabled_staging["assetStorage"] = {"enabled": False}
 for env, data in (("staging", disabled_staging), ("production", disabled_production)):
     path = env_root / env / "expected-bindings.yaml"
     path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
@@ -1203,8 +1255,19 @@ issues = module.external_binding_uniqueness_issues(
 )
 if any(issue.startswith("backupStorage.") for issue in issues):
     raise SystemExit(f"disabled backup storage must be excluded from uniqueness checks: {issues}")
+if any(issue.startswith("assetStorage.") for issue in issues):
+    raise SystemExit(f"disabled asset storage must be excluded from uniqueness checks: {issues}")
+
+active_staging = copy.deepcopy(staging)
+active_production = copy.deepcopy(production)
+active_staging["assetStorage"]["bucket"] = "dup-assets"
+active_production["assetStorage"]["bucket"] = "dup-assets"
+for env, data in (("staging", active_staging), ("production", active_production)):
+    path = env_root / env / "expected-bindings.yaml"
+    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+issues = module.external_binding_uniqueness_issues(env_root, "staging", active_staging)
 if not any("assetStorage.bucket matches production" in issue for issue in issues):
-    raise SystemExit(f"disabled backup storage must not disable other uniqueness checks: {issues}")
+    raise SystemExit(f"enabled asset storage must participate in uniqueness checks: {issues}")
 
 shared_value = {"value": "smtp.shared.internal", "shared": True, "sharedRationale": "shared relay"}
 staging["outboundComms"]["smtpHost"] = shared_value
@@ -1216,6 +1279,31 @@ for env, data in (("staging", staging), ("production", production)):
 issues = module.external_binding_uniqueness_issues(env_root, "staging", staging)
 if any("outboundComms.smtpHost" in issue for issue in issues):
     raise SystemExit(f"shared smtpHost should be allowed, got: {issues}")
+
+exclusive_shared = copy.deepcopy(staging)
+exclusive_shared["operatorCredentials"]["bindingRef"] = {
+    "value": "cert-manager://firemud/shared-operator",
+    "shared": True,
+    "sharedRationale": "incorrectly shared operator identity",
+}
+if not any(
+    "operatorCredentials.bindingRef is environment-exclusive" in issue
+    for issue in module.external_binding_uniqueness_issues(env_root, "staging", exclusive_shared)
+):
+    raise SystemExit("environment-exclusive operator identity sharing was accepted")
+
+missing_shared_rationale = copy.deepcopy(staging)
+missing_shared_rationale["assetStorage"]["bucket"] = {
+    "value": "assets.shared.internal",
+    "shared": True,
+}
+if not any(
+    "assetStorage.bucket is marked shared but missing sharedRationale" in issue
+    for issue in module.external_binding_uniqueness_issues(
+        env_root, "staging", missing_shared_rationale
+    )
+):
+    raise SystemExit("conditional shared asset target without rationale was accepted")
 
 
 def verify_service_override_contract(case_name, rendered_overrides, allowed_overrides, expected_status, expected_fragment):
@@ -1313,6 +1401,46 @@ current_secrets = next(result for result in current_results if result.policy_id 
 if current_secrets.status != "pass":
     raise SystemExit(f"checked-in legacy JWT custody selector did not pass current wiring validation: {current_secrets.message}")
 
+requirements = module.expected_preflight_policy_requirements("hobby-self-hosted", None)
+if requirements["PREFLIGHT-JWT-001"] or requirements["PREFLIGHT-JWKS-001"]:
+    raise SystemExit("JWT/JWKS diagnostics must be catalogued as advisory applicability")
+diagnostic_results = []
+if module.append_result(
+    diagnostic_results,
+    "PREFLIGHT-JWT-001",
+    True,
+    "fail",
+    "synthetic JWT diagnostic",
+):
+    raise SystemExit("advisory JWT diagnostic incorrectly blocked apply")
+if diagnostic_results[0].required:
+    raise SystemExit("append_result did not normalize advisory required applicability")
+
+operator_results = module.expected_binding_checks(
+    current_expected_path,
+    "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
+    "hobby-self-hosted",
+    rendered_documents,
+    context="operator",
+)
+operator_bootstrap = next(
+    result for result in operator_results if result.policy_id == "PREFLIGHT-BOOTSTRAP-001"
+)
+if (
+    operator_bootstrap.status != "fail"
+    or not operator_bootstrap.required
+    or "accepted player-facing JWT custody proof" not in operator_bootstrap.message
+):
+    raise SystemExit(
+        "operator custody gate did not fail closed without accepted proof: "
+        + operator_bootstrap.message
+    )
+static_bootstrap = next(
+    result for result in current_results if result.policy_id == "PREFLIGHT-BOOTSTRAP-001"
+)
+if static_bootstrap.status != "pass":
+    raise SystemExit("ci-static bootstrap diagnostics unexpectedly became an operator custody gate")
+
 
 def verify_jwt_custody_selector(case_name, mutate, expected_fragment):
     expected = yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
@@ -1408,6 +1536,41 @@ def verify_backup_storage_pass(case_name, mutate):
     if policy.status != "pass":
         raise SystemExit(f"{case_name}: expected backup-storage validation to pass: {policy.message}")
 
+def verify_optional_integration_failure(case_name, mutate, expected_fragment):
+    expected_path = root / "design/operations/environments/hobby-self-hosted/expected-bindings.yaml"
+    expected = yaml.safe_load(expected_path.read_text(encoding="utf-8"))
+    mutate(expected)
+    case_path = env_root / "hobby-self-hosted" / f"{case_name}-expected-bindings.yaml"
+    case_path.write_text(yaml.safe_dump(expected, sort_keys=False), encoding="utf-8")
+    results = module.expected_binding_checks(
+        case_path,
+        f"synthetic-{case_name}-expected-bindings.yaml",
+        "hobby-self-hosted",
+        rendered_documents,
+    )
+    policy = next(result for result in results if result.policy_id == "PREFLIGHT-EXTERNAL-001")
+    if policy.status != "fail" or expected_fragment not in policy.message:
+        raise SystemExit(
+            f"{case_name}: expected optional integration failure containing '{expected_fragment}', "
+            f"got {policy.status}: {policy.message}"
+        )
+
+def verify_optional_integration_pass(case_name, mutate):
+    expected_path = root / "design/operations/environments/hobby-self-hosted/expected-bindings.yaml"
+    expected = yaml.safe_load(expected_path.read_text(encoding="utf-8"))
+    mutate(expected)
+    case_path = env_root / "hobby-self-hosted" / f"{case_name}-expected-bindings.yaml"
+    case_path.write_text(yaml.safe_dump(expected, sort_keys=False), encoding="utf-8")
+    results = module.expected_binding_checks(
+        case_path,
+        f"synthetic-{case_name}-expected-bindings.yaml",
+        "hobby-self-hosted",
+        rendered_documents,
+    )
+    policy = next(result for result in results if result.policy_id == "PREFLIGHT-EXTERNAL-001")
+    if policy.status != "pass":
+        raise SystemExit(f"{case_name}: expected optional integration validation to pass: {policy.message}")
+
 verify_backup_storage_failure(
     "missing-backup-enabled",
     lambda data: data["backupStorage"].pop("enabled"),
@@ -1454,6 +1617,84 @@ verify_backup_storage_pass(
     lambda data: (
         data.__setitem__("backupStorage", {"enabled": False}),
     ),
+)
+
+verify_optional_integration_failure(
+    "missing-asset-enabled",
+    lambda data: data["assetStorage"].pop("enabled"),
+    "assetStorage.enabled must be a boolean",
+)
+verify_optional_integration_failure(
+    "wrong-asset-enabled",
+    lambda data: data["assetStorage"].__setitem__("enabled", "true"),
+    "assetStorage.enabled must be a boolean",
+)
+verify_optional_integration_failure(
+    "null-asset-section",
+    lambda data: data.__setitem__("assetStorage", None),
+    "assetStorage must be an object",
+)
+verify_optional_integration_failure(
+    "malformed-asset-bucket-binding",
+    lambda data: data["assetStorage"].__setitem__("bucket", {"shared": True}),
+    "assetStorage.bucket",
+)
+verify_optional_integration_failure(
+    "missing-asset-bucket",
+    lambda data: data["assetStorage"].pop("bucket"),
+    "assetStorage.bucket",
+)
+verify_optional_integration_failure(
+    "missing-asset-binding",
+    lambda data: data["assetStorage"].pop("bindingRef"),
+    "assetStorage.bindingRef or assetStorage.fingerprint",
+)
+verify_optional_integration_failure(
+    "disabled-populated-asset",
+    lambda data: (
+        data["assetStorage"].__setitem__("enabled", False),
+        data["assetStorage"].__setitem__("bucket", "stale-assets"),
+    ),
+    "assetStorage fields must be omitted when disabled",
+)
+verify_optional_integration_failure(
+    "missing-outbound-enabled",
+    lambda data: data["outboundComms"].pop("enabled"),
+    "outboundComms.enabled must be a boolean",
+)
+verify_optional_integration_failure(
+    "null-outbound-section",
+    lambda data: data.__setitem__("outboundComms", None),
+    "outboundComms must be an object",
+)
+verify_optional_integration_failure(
+    "enabled-empty-outbound",
+    lambda data: data.__setitem__("outboundComms", {"enabled": True}),
+    "Enabled outbound communications require smtpHost or webhookTargets",
+)
+verify_optional_integration_failure(
+    "wrong-type-outbound-targets",
+    lambda data: data["outboundComms"].__setitem__("webhookTargets", ["invalid"]),
+    "outboundComms.webhookTargets must be a non-empty mapping when present",
+)
+verify_optional_integration_failure(
+    "malformed-outbound-target-binding",
+    lambda data: data["outboundComms"].__setitem__(
+        "webhookTargets", {"accountNotifications": {"shared": True}}
+    ),
+    "outboundComms.webhookTargets entries must be non-empty binding values",
+)
+verify_optional_integration_failure(
+    "disabled-populated-outbound",
+    lambda data: (
+        data["outboundComms"].__setitem__("enabled", False),
+        data["outboundComms"].__setitem__("smtpHost", "stale-smtp"),
+    ),
+    "outboundComms fields must be omitted when disabled",
+)
+verify_optional_integration_pass(
+    "omitted-optional-integrations",
+    lambda data: (data.pop("assetStorage"), data.pop("outboundComms")),
 )
 
 verify_binding_ref_contract(
@@ -2693,6 +2934,22 @@ if not module.git_commit_exists(promotion_root, staging_sha):
 if module.git_commit_exists(promotion_root, "deadbeef"):
     raise SystemExit("unknown stagingOverlayCommitSha was incorrectly accepted by Git validation")
 
+staging_expected_bindings = (
+    promotion_root / "design/operations/environments/staging/expected-bindings.yaml"
+)
+staging_expected_bindings.parent.mkdir(parents=True)
+staging_expected_bindings.write_text(
+    "environment: staging\n"
+    "backupStorage:\n"
+    "  enabled: true\n"
+    "assetStorage:\n"
+    "  enabled: true\n"
+    "  bucket: contract-staging-assets\n"
+    "  endpoint: https://assets.staging.internal\n"
+    "  bindingRef: secret://firemud/staging-asset-object-store\n",
+    encoding="utf-8",
+)
+
 secret_evidence_path = promotion_root / "secret-compliance.json"
 secret_evidence_path.write_text(
     json.dumps(
@@ -2703,6 +2960,7 @@ secret_evidence_path.write_text(
                     "jwt-signing-keys-jwks",
                     "postgres-application-credentials",
                     "backup-object-store-credentials",
+                    "asset-store-credentials",
                     "operator-credentials",
                 )
             }
@@ -2949,6 +3207,7 @@ secret_evidence_path.write_text(
                     "jwt-signing-keys-jwks",
                     "postgres-application-credentials",
                     "backup-object-store-credentials",
+                    "asset-store-credentials",
                     "operator-credentials",
                 )
             }

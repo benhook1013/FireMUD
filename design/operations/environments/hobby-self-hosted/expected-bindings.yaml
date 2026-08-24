@@ -25,10 +25,12 @@ backupStorage:
   endpoint: https://minio.hobby.internal
   bindingRef: secret://firemud/hobby-backup-object-store
 assetStorage:
+  enabled: true
   bucket: firemud-hobby-assets
   endpoint: https://minio.hobby.internal
   bindingRef: secret://firemud/hobby-asset-object-store
 outboundComms:
+  enabled: true
   smtpHost: smtp.hobby.internal
   webhookTargets:
     accountNotifications: hobby-only

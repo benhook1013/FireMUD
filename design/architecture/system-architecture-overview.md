@@ -633,10 +633,10 @@ The following examples illustrate where key concepts live; the full matrix remai
 | Game assets (published content and exported artifacts) | Game Design Service | Owns game asset publishing to the S3-compatible object store; other services and clients consume published assets via configured URLs rather than writing to the store directly. |
 | Gameplay mechanics (combat, movement, progression) | Game Logic Service | Implements deterministic rules; no persistent ownership. |
 | Live sessions, ticks, command queues | Game Session Service | Owns Redis-backed coordination for active gameplay. |
-| Relationships, groups, audiences, social communication, mail, and applicable history | Social & Groups Service | Owns typed relationship/group policy and envelopes/history/delivery state; Account owns identity and profile policy, Game Session owns presence/transports, and Entity owns containers/items/currency/attachments. |
+| Relationships, groups, audiences, social communication, mail, applicable history, and owner-local chat moderation enforcement | Social & Groups Service | Owns typed relationship/group policy, envelopes/history/delivery state, and `chat_mute`/`chat_ban` enforcement at communication boundaries; Account owns identity and profile policy, Game Session owns presence/transports, and Entity owns containers/items/currency/attachments. |
 | World/gameplay communication semantics | Game Logic Service | Resolves topology, candidate audiences, and closed candidate-specific observer views; it does not own social-channel history or player transports. |
 | Connected gameplay communication delivery | Game Session Service | Owns final delivery to authenticated gameplay transports and player-facing projection; it does not recompute gameplay observer authority. |
-| Moderation events, admin dashboards | Logging & Admin Service | Owns moderation policy and audit state while using logs/metrics/traces for supplemental investigation and dashboards. |
+| Moderation intent, cases, appeals, audit, and admin dashboards | Logging & Admin Service | Owns policy intent, moderation cases, bounded appeal cases/evidence, and audit state while using logs/metrics/traces for supplemental investigation and dashboards; Social & Groups remains the owner-local enforcement authority for `chat_mute` and `chat_ban`. |
 
 ### Game-Authored Defaults and Starter Experience Profiles
 

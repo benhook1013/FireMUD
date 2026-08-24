@@ -15,7 +15,7 @@ The P0 preflight authority is [phased environment-bound preflight and expected b
 
 ## Implementation Status
 
-`./dev-tools/deploy/preflight.py` is the canonical executable preflight entrypoint for the checks it currently implements. The one actual checked-in deployment mode remains legacy Secret-backed JWT signing with fixed public `jwt-jwks` ConfigMap wiring: it consumes `design/operations/environments/<environment>/expected-bindings.yaml`, writes `expectedBindingsRef` and `policyCatalogVersion` into reports, resolves and emits the catalogue `category` for every result, validates consumed reports against the exact catalogue ID set/category vocabulary, validates the mounted JWT path and legacy resource contract, validates expected binding shape, and enforces cross-environment uniqueness for external player-facing bindings unless the manifests explicitly mark them shared with a rationale. In the current executable, `PREFLIGHT-JWT-001` checks the signing path and only requires the canonical `jwt-signing-keys` mount when the resolved private path is under `/var/run/secrets/firemud/jwt/`; `PREFLIGHT-JWKS-001` requires the explicit `configmap://firemud/jwt-jwks` binding, a public `jwt-jwks` `ConfigMap` with a non-empty `data.jwks.json` string, and the Account Service to resolve `FIREMUD_AUTH_JWKS_PATH` under `/var/run/secrets/firemud/jwks/` and mount that ConfigMap at the canonical root. These two results are diagnostic resource/path wiring evidence only; they do not prove runtime JWKS acceptance, validator convergence, or signer custody. The policy separately defines the interim Account-only mounted fallback and target non-exportable signer states, each with deeper mode-specific proof that the executable does not yet emit. The executable does not inspect deployed public Telnet listener topology or emit a public-listener exposure-exclusivity result; TCP Proxy runtime configuration cannot infer deployed exposure. Routine online backup does not require `backupControlPlaneClientRef`; that identity is validated only when an expected-bindings manifest explicitly enables an exceptional maintenance pause workflow.
+`./dev-tools/deploy/preflight.py` is the canonical executable preflight entrypoint for the checks it currently implements. The one actual checked-in deployment mode remains legacy Secret-backed JWT signing with fixed public `jwt-jwks` ConfigMap wiring: it consumes `design/operations/environments/<environment>/expected-bindings.yaml`, writes `expectedBindingsRef` and `policyCatalogVersion` into reports, resolves and emits the catalogue `category` for every result, validates consumed reports against the exact catalogue ID set/category vocabulary, validates the mounted JWT path and legacy resource contract, validates expected binding shape, and enforces the typed binding-shareability matrix. Environment-exclusive internal state/trust, credential principals, and operator identities cannot be marked shared; only matrix-approved non-sensitive endpoints/targets can be shared with matching declarations and rationale. Optional asset and outbound integrations are validated only when their canonical `enabled` selector is true. In the current executable, `PREFLIGHT-JWT-001` checks the signing path and only requires the canonical `jwt-signing-keys` mount when the resolved private path is under `/var/run/secrets/firemud/jwt/`; `PREFLIGHT-JWKS-001` requires the explicit `configmap://firemud/jwt-jwks` binding, a public `jwt-jwks` `ConfigMap` with a non-empty `data.jwks.json` string, and the Account Service to resolve `FIREMUD_AUTH_JWKS_PATH` under `/var/run/secrets/firemud/jwks/` and mount that ConfigMap at the canonical root. These two results are diagnostic resource/path wiring evidence only; they do not prove runtime JWKS acceptance, validator convergence, or signer custody. The policy separately defines the interim Account-only mounted fallback and target non-exportable signer states, each with deeper mode-specific proof that the executable does not yet emit. The executable does not inspect deployed public Telnet listener topology or emit a public-listener exposure-exclusivity result; TCP Proxy runtime configuration cannot infer deployed exposure. Routine online backup does not require `backupControlPlaneClientRef`; that identity is validated only when an expected-bindings manifest explicitly enables an exceptional maintenance pause workflow.
 
 The current report generator and validator now emit and enforce the versioned `policyCatalogVersion` and per-result `category`. They do not yet emit or enforce the target `expectedBindingsDigest`, evaluation `phase`, live target/cluster identity, or conditional authorizing `jwtCustodyProof`. Until those remaining fields and their focused proof are implemented together, current reports remain partial non-authorizing evidence and cannot satisfy a protected player-facing deployment, promotion, first-live, reopen, or fresh-boundary restore gate.
 
@@ -144,7 +144,7 @@ Policy applicability:
 - `PREFLIGHT-DIGEST-001` is required for any flow using Kustomize overlays (`staging`, `production`) and `not_applicable` for `hobby-self-hosted`.
 - `PREFLIGHT-DIGEST-002` is recommended/advisory for `hobby-self-hosted` and `not_applicable` for `staging`/`production`.
 - `PREFLIGHT-SECRETS-002`, `PREFLIGHT-BOOTSTRAP-001`, `PREFLIGHT-EXTERNAL-001`, and `PREFLIGHT-SERVICES-001` are required for all player-facing environments.
-- `PREFLIGHT-JWT-001` and `PREFLIGHT-JWKS-001` may run only as current legacy diagnostic checks; they are not selectable player-facing custody and never satisfy player-facing readiness. Exactly one authenticated accepted player-facing custody proof is required: `PREFLIGHT-JWT-INTERIM-001` for the interim mounted fallback or `PREFLIGHT-JWT-002` for target non-exportable signer custody, with an exact mode-matching `proofId`, `custodyMode`, and `contractVersion`. A missing, unknown, mismatched, or not-yet-implemented selected state or applicable proof fails closed. Post-apply live signer and validator convergence remains separate owner evidence.
+- `PREFLIGHT-JWT-001` and `PREFLIGHT-JWKS-001` are advisory diagnostics: a failing result reports the wiring risk and has `required: false`, so static CI may pass while retaining the failure in the report. They are not selectable player-facing custody and never satisfy player-facing readiness. Exactly one authenticated accepted player-facing custody proof is required: `PREFLIGHT-JWT-INTERIM-001` for the interim mounted fallback or `PREFLIGHT-JWT-002` for target non-exportable signer custody, with an exact mode-matching `proofId`, `custodyMode`, and `contractVersion`. A missing, unknown, mismatched, or not-yet-implemented selected state or applicable proof fails closed through the apply-blocking `PREFLIGHT-BOOTSTRAP-001` result; no duplicate diagnostic policy ID is created. Post-apply live signer and validator convergence remains separate owner evidence.
 - `PREFLIGHT-JWT-ROTATION-001` is event-scoped to first-live, reopen, and production promotion evidence for the selected custody backend.
 - Target-state `PREFLIGHT-TELNET-001` is required for player-facing environments that expose a public Telnet endpoint and is `not_applicable` only when the deployment inputs explicitly declare that no public Telnet endpoint exists.
 
@@ -181,8 +181,9 @@ Minimum required keys:
 - `backupStorage.bucket` when `backupStorage.enabled: true`
 - `backupStorage.endpoint` when enabled and using a non-default S3-compatible endpoint
 - `backupStorage.bindingRef` or `backupStorage.fingerprint` when `backupStorage.enabled: true`
-- `assetStorage.bucket`, `assetStorage.endpoint`, and `assetStorage.bindingRef` or `assetStorage.fingerprint` when published/runtime assets use external object storage
-- `outboundComms.smtpHost` and/or environment-classified webhook target identifiers when email or webhook integrations are enabled
+- `assetStorage.enabled` when the section is present; when true, `assetStorage.bucket`, `assetStorage.endpoint`, and `assetStorage.bindingRef` or `assetStorage.fingerprint` are required, while false requires all target/credential fields to be omitted
+- `outboundComms.enabled` when the section is present; when true, `outboundComms.smtpHost` or a non-empty `outboundComms.webhookTargets` mapping is required, while false requires all target/credential fields to be omitted
+- Asset-storage and outbound-communications sections may be omitted when disabled; no placeholder targets or credentials are required
 - Disabled asset-storage and outbound-communications integrations require neither a section nor placeholder targets or credentials
 - `operatorCredentials.bindingRef` or `operatorCredentials.fingerprint`
 
@@ -214,8 +215,8 @@ Compact schema appendix for `expected-bindings.yaml`:
 - Required top-level sections:
   - `internalBindings`
   - `backupStorage`
-  - `assetStorage` when published/runtime assets use external object storage
-  - `outboundComms` when email or webhook integrations are enabled
+  - `assetStorage` only when the optional asset integration is declared; if present, `assetStorage.enabled` is required
+  - `outboundComms` only when the optional outbound integration is declared; if present, `outboundComms.enabled` is required
   - `operatorCredentials`
   - `serviceDiscovery`
 - Required internal binding keys:
@@ -237,8 +238,8 @@ Compact schema appendix for `expected-bindings.yaml`:
   - `backupStorage.bucket` when `backupStorage.enabled: true`
   - `backupStorage.endpoint` when enabled and non-default
   - `backupStorage.bindingRef` or `backupStorage.fingerprint` when `backupStorage.enabled: true`
-  - `assetStorage.bucket`, `assetStorage.endpoint`, and `assetStorage.bindingRef` or `assetStorage.fingerprint` when published/runtime assets use external object storage
-  - `outboundComms.smtpHost` and/or environment-classified webhook identifiers when enabled
+  - `assetStorage.enabled: true` requires `bucket`, `endpoint`, and `bindingRef` or `fingerprint`; `enabled: false` requires those fields to be absent
+  - `outboundComms.enabled: true` requires `smtpHost` or a non-empty `webhookTargets` mapping; `enabled: false` requires those fields to be absent
   - `operatorCredentials.bindingRef` or `operatorCredentials.fingerprint`
 - Precedence rules:
   - When both `bindingRef` and `fingerprint` are present for the same binding, `bindingRef` is canonical and `fingerprint` is supporting validation detail only.
@@ -279,10 +280,12 @@ backupStorage:
   endpoint: https://minio.staging.internal
   bindingRef: secret://firemud/staging-backup-object-store
 assetStorage:
+  enabled: true
   bucket: firemud-staging-assets
   endpoint: https://minio.staging.internal
   bindingRef: secret://firemud/staging-asset-object-store
 outboundComms:
+  enabled: true
   smtpHost: smtp.staging.internal
   webhookTargets:
     accountNotifications: staging-only
@@ -318,9 +321,9 @@ Validation contract:
 
 - Preflight fails if the manifest is missing for a player-facing environment.
 - The resolved deployment inputs must match the manifest for the target environment.
-- The manifest must prove environment isolation. Staging and production cannot share environment-owned PostgreSQL credential bindings, Redis deployments, JWT/JWKS bindings, certificate issuer bindings, registry pull credentials, bucket names, endpoints, SMTP targets, webhook target classes, or operator credential bindings unless the field is explicitly documented as non-sensitive shared infrastructure.
+- The manifest must prove environment isolation using the binding-shareability matrix. PostgreSQL/Redis state, JWT signing/JWKS trust, certificate issuer/workload identities, registry pull credentials, backup/asset credential principals, and operator identities are environment-exclusive and cannot be shared. Only matrix-approved non-sensitive bucket/endpoint/SMTP/webhook targets may be marked shared.
 - `backupStorage.enabled` is required and must be a boolean. Production fails closed when it is false. An enabled backup declaration must include a bucket and `bindingRef` or `fingerprint`; a disabled declaration must omit backup bucket, endpoint, `bindingRef`, and `fingerprint` fields. The endpoint remains conditional on use of a non-default S3-compatible endpoint. Disabled backup storage is not considered for external-binding uniqueness, while all other applicable external integrations retain their normal checks.
-- When a field is intentionally shared, the manifest must mark it explicitly with `shared: true` plus a short `sharedRationale` string. Absence of those fields means the binding is treated as environment-unique by default.
+- When a conditionally shareable field is intentionally shared, every participating manifest must mark the same value explicitly with `shared: true` plus the same short, non-empty `sharedRationale` string. Absence or mismatch means the binding is treated as environment-unique by default; `shared: true` cannot override an exclusive class.
 - Restore validation tooling may derive shell environment variables such as `EXPECTED_PG_DUMP_BUCKET`, `EXPECTED_ASSET_STORE_BUCKET`, `EXPECTED_ASSET_STORE_ENDPOINT`, `EXPECTED_SMTP_HOST`, and operator-binding fingerprints from this manifest rather than maintaining a second source of truth.
 - When validating operator-only credentials, preflight should compare like-for-like against the expected binding form: compare `bindingRef` values when the manifest declares `bindingRef`, and compare fingerprints when the manifest declares `fingerprint`. Implementations should not invent a second canonical representation during validation.
 - Preflight should validate player-facing internal state/trust inputs from the same manifest rather than treating them as implicit cluster-local defaults. Cluster-local naming alone is not sufficient proof of environment isolation, and identical cluster-local literals may be valid across separate environment boundaries when the underlying cluster, namespace boundary, and bound Secret/trust resources belong to the target environment.
@@ -328,9 +331,9 @@ Validation contract:
 
 Internal-binding comparison rule:
 
-- For cluster-local internal bindings, preflight should validate environment-scoped ownership rather than raw literal uniqueness across environments.
-- Reusing names such as `postgres.firemud.svc.cluster.local`, `secret://firemud/postgres-credentials`, or `secret://firemud/jwt-signing-keys` is allowed when those names resolve inside different environment boundaries with separate cluster credentials and separate underlying resources.
-- Raw literal equality is still insufficient for external or globally addressed bindings such as object-store buckets/endpoints, SMTP targets, webhook targets, and operator credential bindings; those remain environment-unique unless explicitly marked shared.
+- For cluster-local internal bindings, preflight validates the declared environment-exclusive ownership class rather than treating a shared declaration as an escape hatch.
+- Reusing names such as `postgres.firemud.svc.cluster.local`, `secret://firemud/postgres-credentials`, or `secret://firemud/jwt-signing-keys` is allowed only when those names resolve inside separate environment boundaries and the binding is not declared `shared: true`.
+- Raw equality for conditionally shareable external targets such as object-store buckets/endpoints, SMTP targets, and webhook targets requires an explicit identical shared declaration and rationale in every participating manifest; credential principals and operator bindings remain exclusive.
 - When a player-facing external binding is intentionally shared across environment manifests, declare it as an object with `value` (or `bindingRef` / `fingerprint` for credential-shaped fields), `shared: true`, and the same non-empty `sharedRationale` string in every manifest that shares it. Matching values without that explicit declaration must fail preflight.
 
 ## Evidence Contract
