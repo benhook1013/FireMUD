@@ -11,7 +11,7 @@ spec:
       rules:
         - alert: ObservabilityDeadmanHeartbeatStale
           expr: absent(observability_deadman_stale{profile="independent-required"}) or observability_deadman_stale{profile="independent-required"} == 1
-          for: 0m
+          for: 1m
           labels:
             service: external-monitoring
             component: deadman

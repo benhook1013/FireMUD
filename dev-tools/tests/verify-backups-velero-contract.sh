@@ -48,7 +48,7 @@ while (($#)); do
   fi
 done
 
-if [[ "$query" != *'ends_with(Key, `.sql.gz`)'* || "$query" != *'.[LastModified, Key]'* ]]; then
+if [[ "$query" != *'starts_with(Key, `15min/firemud_`)'* || "$query" != *'ends_with(Key, `.sql.gz`)'* || "$query" != *'.[LastModified, Key]'* ]]; then
   echo "the aws query did not emit filtered [LastModified, Key] rows: $query" >&2
   exit 1
 fi
@@ -62,13 +62,14 @@ case "$FAKE_AWS_SCENARIO" in
   global-latest)
     # Page one has an older match and an unrelated object; page two has the
     # global latest match and another unrelated object.
-    printf '2026-08-25T00:01:00Z\t15min/older.sql.gz\n'
+    printf '2026-08-25T00:01:00Z\t15min/firemud_20260825000100.sql.gz\n'
     printf '2026-08-25T00:02:00Z\t15min/not-a-dump.txt\n'
-    printf '2026-08-25T00:03:00Z\t15min/newest.sql.gz\n'
+    printf '2026-08-25T00:03:00Z\t15min/firemud_20260825000300.sql.gz\n'
+    printf '2026-08-25T00:05:00Z\t15min/unrelated-newer.sql.gz\n'
     printf '2026-08-25T00:04:00Z\t15min/not-a-dump.dump\n'
     ;;
   earlier-match-later-empty)
-    printf '2026-08-25T00:05:00Z\t15min/valid-earlier.sql.gz\n'
+    printf '2026-08-25T00:05:00Z\t15min/firemud_20260825000500.sql.gz\n'
     printf '%s\n' 'None'
     ;;
   no-match)
@@ -113,8 +114,8 @@ run_case() {
 }
 
 for script in "$ROOT_DIR/dev-tools/backups/verify-backups.sh" "$EMBEDDED_SCRIPT"; do
-  run_case "$script" global-latest 0 'Latest pg_dump: 15min/newest.sql.gz'
-  run_case "$script" earlier-match-later-empty 0 'Latest pg_dump: 15min/valid-earlier.sql.gz'
+  run_case "$script" global-latest 0 'Latest pg_dump: 15min/firemud_20260825000300.sql.gz'
+  run_case "$script" earlier-match-later-empty 0 'Latest pg_dump: 15min/firemud_20260825000500.sql.gz'
   run_case "$script" no-match 1 'No valid .sql.gz pg_dump files found'
 done
 

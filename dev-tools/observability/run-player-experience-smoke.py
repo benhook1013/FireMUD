@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import copy
 import datetime as dt
+import importlib.util
 import json
 import math
 import os
@@ -17,6 +18,18 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlparse
 
+
+_EVIDENCE_VALIDATOR_PATH = (
+    Path(__file__).resolve().with_name("validate-player-experience-smoke-evidence.py")
+)
+_EVIDENCE_VALIDATOR_SPEC = importlib.util.spec_from_file_location(
+    "player_experience_smoke_evidence_validator", _EVIDENCE_VALIDATOR_PATH
+)
+if _EVIDENCE_VALIDATOR_SPEC is None or _EVIDENCE_VALIDATOR_SPEC.loader is None:
+    raise ImportError(f"Unable to load evidence validator at {_EVIDENCE_VALIDATOR_PATH}")
+_EVIDENCE_VALIDATOR = importlib.util.module_from_spec(_EVIDENCE_VALIDATOR_SPEC)
+_EVIDENCE_VALIDATOR_SPEC.loader.exec_module(_EVIDENCE_VALIDATOR)
+
 METRIC_TARGET_BY_PATH = {"websocket": "gateway", "telnet": "tcp_proxy"}
 PROMETHEUS_MIRRORS_CAPABILITY = "prometheusMirrors"
 PLAYER_FLOW_CANARY_CAPABILITY = "playerFlowCanary"
@@ -27,7 +40,13 @@ PLAYERFLOW_CANARY_FRESHNESS_BUDGET_METRIC = (
     "playerflow_canary_freshness_budget_seconds"
 )
 DEFAULT_SIMULATED_DETECTION_BUDGET_SECONDS = 195
-MIN_CANARY_DETECTION_BUDGET_SECONDS = 180
+CANARY_ALERT_MAX_HOLD_SECONDS = _EVIDENCE_VALIDATOR.CANARY_ALERT_MAX_HOLD_SECONDS
+CANARY_ALERT_EVALUATION_MARGIN_SECONDS = (
+    _EVIDENCE_VALIDATOR.CANARY_ALERT_EVALUATION_MARGIN_SECONDS
+)
+MIN_CANARY_DETECTION_BUDGET_SECONDS = (
+    CANARY_ALERT_MAX_HOLD_SECONDS + CANARY_ALERT_EVALUATION_MARGIN_SECONDS
+)
 CAPABILITY_VALUES = {
     PROMETHEUS_MIRRORS_CAPABILITY: {"published", "omitted"},
     PLAYER_FLOW_CANARY_CAPABILITY: {"advertised", "omitted"},

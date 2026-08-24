@@ -190,7 +190,7 @@ The destructive recovery-point choice and displayed data-loss window require ope
 
 ### Logical Backup Scale and PITR Trigger
 
-Online logical backups remain the initial hosted, hobby, and small-deployment baseline. Hobby/self-hosted operators may select a slower cadence, but operator status and recovery evidence must show the configured policy, effective RPO, and age of the newest verified restorable point.
+Online logical backups remain the initial hosted, hobby, and small-deployment baseline. Hobby/self-hosted operators may select a slower configured cadence, but a compliant online logical-backup posture still requires a successful verified-restorable point no older than 24 hours; a slower schedule never waives that freshness gate and a missing or stale point makes the posture non-compliant or `recovery-unverified`. Operator status and recovery evidence must show the configured policy, effective RPO, and age of the newest verified restorable point.
 
 Hosted production adopts PostgreSQL physical backup with WAL archiving and point-in-time recovery when logical backups cannot reliably maintain the measured 15-minute objective or when dump duration, overlap, storage behavior, or runtime load materially harms the live platform. PITR changes point selection, not the environment-wide quarantine, empty-Redis reset, durable convergence, external reconciliation, hardening, or controlled-reopen boundary.
 

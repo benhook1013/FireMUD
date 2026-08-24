@@ -423,10 +423,17 @@ sys.modules[spec.name] = runner
 spec.loader.exec_module(runner)
 
 original_execute_smoke = runner.execute_smoke
+original_time = runner.time.time
+original_gmtime = runner.time.gmtime
+clock = {"now": original_time()}
+runner.time.time = lambda: clock["now"]
+runner.time.gmtime = lambda seconds=None: original_gmtime(
+    clock["now"] if seconds is None else seconds
+)
 
 
 def delayed_execute_smoke(*args):
-    time.sleep(2.1)
+    clock["now"] += 2.0
     return original_execute_smoke(*args)
 
 
@@ -457,6 +464,8 @@ try:
         raise AssertionError("runner accepted authority that went stale during execution")
 finally:
     sys.argv = original_argv
+    runner.time.time = original_time
+    runner.time.gmtime = original_gmtime
 assert not evidence_path.exists()
 PY
 

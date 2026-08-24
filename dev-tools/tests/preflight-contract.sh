@@ -192,8 +192,8 @@ objects = json.loads(os.environ["FAKE_OBJECTS"])
 if args[:2] == ["s3api", "list-objects-v2"]:
     query = args[args.index("--query") + 1]
     pathlib.Path(os.environ["FAKE_QUERY_LOG"]).write_text(query, encoding="utf-8")
-    if "ends_with" not in query or ".sql.gz" not in query:
-        raise SystemExit("selection query did not filter for .sql.gz")
+    if "starts_with" not in query or "15min/firemud_" not in query or "ends_with" not in query or ".sql.gz" not in query:
+        raise SystemExit("selection query did not filter for scheduled firemud .sql.gz artifacts")
     candidates = [item for item in objects if item["Key"].endswith(".sql.gz")]
     if not candidates:
         print("None")
@@ -233,7 +233,8 @@ for tool in ("aws", "velero", "psql"):
     (fake_bin / tool).chmod(0o755)
 
 objects_with_legacy_newer = [
-    {"Key": "15min/valid-older.sql.gz", "LastModified": "2026-08-24T12:00:00Z"},
+    {"Key": "15min/firemud_20260824120000.sql.gz", "LastModified": "2026-08-24T12:00:00Z"},
+    {"Key": "15min/unrelated-newer.sql.gz", "LastModified": "2026-08-24T12:00:30Z"},
     {"Key": "15min/legacy-newer.dump", "LastModified": "2026-08-24T12:01:00Z"},
     {"Key": "15min/arbitrary-newer-object", "LastModified": "2026-08-24T12:02:00Z"},
 ]
@@ -267,8 +268,8 @@ def run(script, objects, *, expect_success):
             f"stdout={result.stdout!r}, stderr={result.stderr!r}"
         )
     query = query_log.read_text(encoding="utf-8")
-    if "ends_with" not in query or ".sql.gz" not in query:
-        raise SystemExit(f"{script} did not retain the .sql.gz selection query: {query!r}")
+    if "starts_with" not in query or "15min/firemud_" not in query or "ends_with" not in query or ".sql.gz" not in query:
+        raise SystemExit(f"{script} did not retain the scheduled firemud .sql.gz selection query: {query!r}")
     return result, capture
 
 restore_script = root / "dev-tools/restores/restore-latest-db.sh"
@@ -286,14 +287,14 @@ embedded_script.chmod(0o755)
 for script in (restore_script, verify_script, embedded_script):
     result, capture = run(script, objects_with_legacy_newer, expect_success=True)
     if script == restore_script:
-        if "valid-older.sql.gz" not in result.stdout or "legacy-newer.dump" in result.stdout:
+        if "firemud_20260824120000.sql.gz" not in result.stdout or "legacy-newer.dump" in result.stdout:
             raise SystemExit(f"{script} selected the wrong scheduled object: {result.stdout!r}")
         if capture.read_bytes() != b"-- selected valid hosted artifact\n":
             raise SystemExit(f"{script} streamed unexpected artifact bytes")
         psql_args = json.loads((tmp / "restore-latest-db-psql-args.json").read_text(encoding="utf-8"))
         if ["-v", "ON_ERROR_STOP=1"] != psql_args[:2]:
             raise SystemExit(f"{script} did not enable psql ON_ERROR_STOP: {psql_args!r}")
-    elif "valid-older.sql.gz" not in result.stdout or "legacy-newer.dump" in result.stdout:
+    elif "firemud_20260824120000.sql.gz" not in result.stdout or "legacy-newer.dump" in result.stdout:
         raise SystemExit(f"{script} verified the wrong scheduled object: {result.stdout!r}")
 
 for script in (restore_script, verify_script, embedded_script):

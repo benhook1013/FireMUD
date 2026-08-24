@@ -254,7 +254,7 @@ Profiles that advertise the player-flow canary capability must also validate the
 
 - Verify `playerflow_canary_success{flow="login",path=...,target=...,profile=...}` and `playerflow_canary_success{flow="command",path=...,target=...,profile=...}` exist for each exposed public path.
 - Verify `playerflow_canary_latency_ms{flow="command",path=...,target=...,profile=...}` is exported with millisecond semantics, and `playerflow_canary_last_run_timestamp_seconds{flow,path,target,profile}` is current for each required flow/path.
-- Verify the profile-derived `playerflow_canary_freshness_budget_seconds{profile}` matches the authoritative detection budget whenever the canonical Prometheus canary alerts are installed/evaluated.
+- Verify the profile-derived `playerflow_canary_freshness_budget_seconds{profile}` matches the declared `externalAuthority.detectionBudgetSeconds` whenever the canonical Prometheus canary alerts are installed/evaluated. For independently monitored profiles, that value is also the authoritative external-monitoring budget; for `independent-omitted`, compare it only with the declared canary timing budget because it does not establish external-monitoring authority. Preserve the canonical canary alert validation in either case.
 - Verify canary labels remain low-cardinality (`flow`, `path`, `target`, `profile`) and do not include account IDs, tenant IDs, player IDs, or trace IDs.
 - Verify the canonical canary alert path can be exercised in non-production without using production paging destinations:
   - login canary failure trips `PlayerFlowCanaryLoginFailed` with `severity="P0"` (or the documented environment-equivalent canonical alert),

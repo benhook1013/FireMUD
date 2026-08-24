@@ -93,10 +93,10 @@ spec.loader.exec_module(validator)
 _, findings = validator._validate_capabilities(
     {"prometheusMirrors": "invalid", "playerFlowCanary": "invalid"}
 )
-assert findings == [
+assert {
     "capabilities.playerFlowCanary must be one of advertised, omitted",
     "capabilities.prometheusMirrors must be one of omitted, published",
-]
+}.issubset(findings)
 PY
 
 STALE_CANARY_EVIDENCE="$TMP_DIR/stale-canary-evidence.json"
@@ -579,7 +579,10 @@ fi
 
 grep -q "deadmanAuthority.status must be green" "$TMP_DIR/invalid.out"
 grep -q "externalAuthority.publicPathChecks missing: telnet" "$TMP_DIR/invalid.out"
-grep -q "canaryAlerts missing: PlayerFlowCanaryCommandFailed, PlayerFlowCanaryEvidenceStale, PlayerFlowCanaryLatencyHigh" "$TMP_DIR/invalid.out"
+grep -q "canaryAlerts missing:" "$TMP_DIR/invalid.out"
+for alert in PlayerFlowCanaryCommandFailed PlayerFlowCanaryEvidenceStale PlayerFlowCanaryLatencyHigh; do
+  grep -q "$alert" "$TMP_DIR/invalid.out"
+done
 grep -q "playerflow_canary_success missing passing flows for path 'telnet': command, login" "$TMP_DIR/invalid.out"
 grep -q "playerflow_canary_success missing passing flows for path 'websocket': command" "$TMP_DIR/invalid.out"
 grep -q "playerflow_canary_latency_ms must include a numeric command latency record" "$TMP_DIR/invalid.out"

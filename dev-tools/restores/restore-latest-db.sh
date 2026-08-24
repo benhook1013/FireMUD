@@ -20,13 +20,13 @@ if [ -n "$ENDPOINT" ]; then
 fi
 
 # shellcheck disable=SC2016 # AWS JMESPath requires literal backticks.
-AWS_QUERY='Contents[?ends_with(Key, `.sql.gz`)].[LastModified, Key]'
+AWS_QUERY='Contents[?starts_with(Key, `15min/firemud_`) && ends_with(Key, `.sql.gz`)].[LastModified, Key]'
 TAB=$(printf '\t')
 KEY=$(aws s3api list-objects-v2 --bucket "$BUCKET" --prefix "15min/" \
       "${AWS_ENDPOINT_ARGS[@]}" \
       --query "$AWS_QUERY" --output text |
       LC_ALL=C sort -t "$TAB" -k1,1r -k2,2r |
-      awk -F "$TAB" '$1 != "None" && NF >= 2 && $2 ~ /\.sql\.gz$/ { print substr($0, index($0, FS) + 1); exit }')
+      awk -F "$TAB" '$1 != "None" && NF >= 2 && $2 ~ /^15min\/firemud_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]\.sql\.gz$/ { print substr($0, index($0, FS) + 1); exit }')
 
 case "$KEY" in
   *.sql.gz) ;;
