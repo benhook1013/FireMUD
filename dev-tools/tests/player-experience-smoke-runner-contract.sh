@@ -52,9 +52,14 @@ run_smoke_runner_with_deployment_ref() {
 }
 
 run_clean_python() {
-  env "${SMOKE_CONFIG_ENV_UNSETS[@]}" \
-    "${SMOKE_CONFIG_ENV_OVERRIDES[@]}" \
-    python3 "$@"
+  if [ "${#SMOKE_CONFIG_ENV_OVERRIDES[@]}" -gt 0 ]; then
+    env "${SMOKE_CONFIG_ENV_UNSETS[@]}" \
+      "${SMOKE_CONFIG_ENV_OVERRIDES[@]}" \
+      python3 "$@"
+  else
+    env "${SMOKE_CONFIG_ENV_UNSETS[@]}" \
+      python3 "$@"
+  fi
 }
 
 refresh_external_authority_fixture() {

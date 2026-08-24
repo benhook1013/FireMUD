@@ -4315,20 +4315,25 @@ def expected_binding_checks(
                 "Expected-bindings enabled backup storage missing keys: "
                 + ", ".join(missing_backup)
             )
-    external_requirements = [
-        ("operatorCredentials.bindingRef", "operatorCredentials.fingerprint"),
-    ]
+    external_requirements = []
     if backup_storage_enabled:
-        external_requirements[0:0] = [
-            ("backupStorage.bucket", None),
-            ("backupStorage.bindingRef", "backupStorage.fingerprint"),
-        ]
+        external_requirements.extend(
+            [
+                ("backupStorage.bucket", None),
+                ("backupStorage.bindingRef", "backupStorage.fingerprint"),
+            ]
+        )
     if asset_storage_enabled:
-        external_requirements[2:2] = [
-            ("assetStorage.bucket", None),
-            ("assetStorage.endpoint", None),
-            ("assetStorage.bindingRef", "assetStorage.fingerprint"),
-        ]
+        external_requirements.extend(
+            [
+                ("assetStorage.bucket", None),
+                ("assetStorage.endpoint", None),
+                ("assetStorage.bindingRef", "assetStorage.fingerprint"),
+            ]
+        )
+    external_requirements.append(
+        ("operatorCredentials.bindingRef", "operatorCredentials.fingerprint")
+    )
     missing_external = []
     for primary, alternate in external_requirements:
         if not get(data, primary) and (alternate is None or not get(data, alternate)):

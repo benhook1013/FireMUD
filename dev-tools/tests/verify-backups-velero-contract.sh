@@ -76,6 +76,10 @@ case "$FAKE_AWS_SCENARIO" in
     printf '2026-08-25T00:06:00Z\t15min/not-a-dump.dump\n'
     printf '%s\n' 'None'
     ;;
+  aws-error)
+    echo 'simulated AWS listing failure' >&2
+    exit 42
+    ;;
   *)
     echo "unexpected fake aws scenario: $FAKE_AWS_SCENARIO" >&2
     exit 1
@@ -89,6 +93,7 @@ run_case() {
   local scenario="$2"
   local expected_status="$3"
   local expected_output="$4"
+  local forbidden_output="${5:-}"
   local output
   local status
 
@@ -111,12 +116,17 @@ run_case() {
     echo "unexpected output for $scenario: $output" >&2
     exit 1
   fi
+  if [[ -n "$forbidden_output" && "$output" == *"$forbidden_output"* ]]; then
+    echo "forbidden output for $scenario: $output" >&2
+    exit 1
+  fi
 }
 
 for script in "$ROOT_DIR/dev-tools/backups/verify-backups.sh" "$EMBEDDED_SCRIPT"; do
   run_case "$script" global-latest 0 'Latest pg_dump: 15min/firemud_20260825000300.sql.gz'
   run_case "$script" earlier-match-later-empty 0 'Latest pg_dump: 15min/firemud_20260825000500.sql.gz'
   run_case "$script" no-match 1 'No valid .sql.gz pg_dump files found'
+  run_case "$script" aws-error 1 'simulated AWS listing failure' 'No valid .sql.gz pg_dump files found'
 done
 
 echo 'verify-backups Velero pagination contract checks passed'

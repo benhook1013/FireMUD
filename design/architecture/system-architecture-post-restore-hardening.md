@@ -155,6 +155,7 @@ The refresh must include the credential classes affected by restore hardening:
 - `postgres-application-credentials`
 - `backup-storage`
 - `asset-storage` when external asset storage is enabled
+- `outbound-comms` when outbound communications are enabled
 - `operator-credentials`
 
 Each `secretComplianceRefresh.freshness` entry is keyed exactly by its refreshed `credentialClasses` and carries `lineage`, `field`, `value`, `previousField`, and `previousValue`. A new lineage/first issuance uses `lineage=new`, either `rotated` or `reissued`, `field=lastProvisionedAt`, and no previous field/value. An existing-lineage `rotated` or `reissued` replacement uses `lineage=existing`, `field=lastRotationAt`, and an advanced timestamp over the recorded previous value. A binding-only `rebound` or `verified_not_restored` refresh uses `lineage=existing` and preserves the exact previous field/value; its separate operation identity and evidence do not reset credential age. Every selected and previous freshness timestamp must be no later than the recovery record's `finalizedAt`. Missing class entries, an incompatible disposition/lineage/field combination, a future freshness timestamp, or a changed preserved timestamp fails closed. The referenced evidence payload must include an immutable artifact identifier, exact target-environment binding evidence, and material-lineage evidence, and must be linked from the durable recovery-controller state under `secretComplianceRefresh`; the checked-in projection mirrors this after finalization.

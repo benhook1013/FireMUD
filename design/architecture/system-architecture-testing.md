@@ -60,6 +60,10 @@ Illustrative retained evidence shape for a hosted-assurance observability smoke;
       "source": "staging",
       "value": 1773917600
     },
+    "observability_deadman_stale": {
+      "profile": "independent-required",
+      "value": 0
+    },
     "playerflow_canary_success": [
       {"flow": "login", "path": "websocket", "target": "gateway", "profile": "independent-required", "value": 1},
       {"flow": "command", "path": "websocket", "target": "gateway", "profile": "independent-required", "value": 1},
@@ -96,7 +100,7 @@ Illustrative retained evidence shape for a hosted-assurance observability smoke;
 }
 ```
 
-This example is illustrative rather than exhaustive. Equivalent retained evidence is acceptable as long as it preserves the applicable profile's canonical checks and operator accountability. The target independent contract is deadman freshness, each declared exposed browser/WebSocket or Telnet path, and off-cluster page delivery; non-exposed paths remain `not_applicable`. It does not require Prometheus, Alertmanager, Grafana, Kibana, or Jaeger to be externally reachable.
+This example is illustrative rather than exhaustive. Equivalent retained evidence is acceptable as long as it preserves the applicable profile's canonical checks and operator accountability. The target independent contract is deadman freshness, each declared exposed browser/WebSocket or Telnet path, and off-cluster page delivery; non-exposed paths remain `not_applicable`. Where mirrored, `observability_deadman_stale{profile="independent-required"}` is the canonical deadman mirror; the heartbeat timestamp remains diagnostic and cannot substitute for external deadman authority or page delivery. It does not require Prometheus, Alertmanager, Grafana, Kibana, or Jaeger to be externally reachable.
 
 Use `python3 dev-tools/observability/run-player-experience-smoke.py --external-authority-evidence <authority.json> --evidence-out <evidence.json> [--metrics-out <mirrored.prom>]` to generate hosted-assurance smoke evidence and mirrored signal output, then run `python3 dev-tools/observability/validate-player-experience-smoke-evidence.py <evidence.json>` before attaching the result to a traffic-open or recovery record. `authority.json` must be the retained profile-aware result from the authoritative external monitor for the deadman and declared public paths, or an explicit `independent-omitted` record with its degraded-detection reason. Only `--simulate` may synthesize that authority object.
 
