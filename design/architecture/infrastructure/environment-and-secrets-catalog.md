@@ -32,9 +32,9 @@ Shared libraries support overriding default settings with environment variables 
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
-| `SPRING_PROFILES_ACTIVE` | Optional Spring profile override; reserved for cases such as `test` where a service deliberately activates test-only behavior | *(unset)* |
+| `SPRING_PROFILES_ACTIVE` | Spring profile selector; Docker Compose uses `dev`, Kubernetes deployments use `prod`, and automated tests use `test` | `dev` through Docker Compose; *(unset) for supported direct local execution* |
 
-Shared and player-facing environments should normally leave `SPRING_PROFILES_ACTIVE` unset and run the canonical runtime defined by `application.yml`. Do not reintroduce local-vs-production contract drift by using ad hoc runtime profiles outside automated tests.
+Docker Compose local development sets `SPRING_PROFILES_ACTIVE=dev`; supported direct local execution may leave it unset and use the canonical runtime defined by `application.yml`; Kubernetes deployments must set `SPRING_PROFILES_ACTIVE=prod` explicitly; and automated tests may set `SPRING_PROFILES_ACTIVE=test`. Do not introduce ad hoc runtime profiles outside these deployment and test cases.
 
 ---
 

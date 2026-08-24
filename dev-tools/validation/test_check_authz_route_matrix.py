@@ -2705,6 +2705,136 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     (mutation_name, errors),
                 )
 
+    def test_moderation_operator_issuance_uses_dedicated_mutation_identities(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(
+            document, "account-service", "IssueHumanOperatorAuthorizationReference"
+        )
+        self.assertEqual(
+            ["action_family", "action_family_schema_id", "action_family_schema_version"],
+            route["required_fields"],
+        )
+        self.assertEqual(
+            "action_family", route["mutation_identity_selector"]["selector_field"]
+        )
+        self.assertEqual(
+            {
+                "non_moderation",
+                "moderation_policy_intent",
+                "moderation_owner_enforcement",
+            },
+            set(route["mutation_identity_selector"]["alternatives"]),
+        )
+        self.assertEqual(
+            "policy_intent_request_id",
+            route["mutation_identity_selector"]["alternatives"][
+                "moderation_policy_intent"
+            ]["request_identity"],
+        )
+        self.assertEqual(
+            "owner_enforcement_request_id",
+            route["mutation_identity_selector"]["alternatives"][
+                "moderation_owner_enforcement"
+            ]["request_identity"],
+        )
+        identity_contract = document["operator_delegation"]["issuance_idempotency"]
+        self.assertEqual(
+            "control_plane_request_id",
+            identity_contract["non_moderation_key"][0],
+        )
+        self.assertEqual(
+            {
+                "policy_intent",
+                "owner_enforcement",
+            },
+            set(identity_contract["moderation_keys"]),
+        )
+        self.assertEqual(
+            {
+                "policy_intent_request_id",
+                "owner_enforcement_request_id",
+            },
+            {
+                branch["request_identity"]
+                for branch in identity_contract["moderation_keys"].values()
+            },
+        )
+        for branch in identity_contract["moderation_keys"].values():
+            self.assertEqual("correlation_only", branch["control_plane_request_id"])
+            self.assertNotIn("control_plane_request_id", branch["key"])
+
+    def test_moderation_operator_issuance_rejects_identity_aliasing_or_omission(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        mutations = (
+            (
+                "request policy intent aliases control plane",
+                lambda contract: contract["mutation_identity_selector"][
+                    "alternatives"
+                ]["moderation_policy_intent"].__setitem__(
+                    "request_identity", "control_plane_request_id"
+                ),
+                "mutation_identity_selector.alternatives.moderation_policy_intent.request_identity must equal",
+                "route",
+            ),
+            (
+                "request owner identity omitted",
+                lambda contract: contract["mutation_identity_selector"][
+                    "alternatives"
+                ].pop("moderation_owner_enforcement"),
+                "mutation_identity_selector.alternatives must contain exactly",
+                "route",
+            ),
+            (
+                "global policy intent aliases control plane",
+                lambda contract: contract["moderation_keys"]["policy_intent"].__setitem__(
+                    "request_identity", "control_plane_request_id"
+                ),
+                "must equal 'policy_intent_request_id'",
+                "issuance",
+            ),
+            (
+                "owner key uses control plane",
+                lambda contract: contract["moderation_keys"]["owner_enforcement"][
+                    "key"
+                ].append("control_plane_request_id"),
+                "must not use correlation-only control_plane_request_id",
+                "issuance",
+            ),
+            (
+                "appeal identity branch",
+                lambda contract: contract["moderation_keys"].__setitem__(
+                    "appeal_submission",
+                    {
+                        "request_identity": "appeal_submission_request_id",
+                        "digest": "mutation_digest",
+                        "key": ["appeal_submission_request_id"],
+                        "control_plane_request_id": "correlation_only",
+                    },
+                ),
+                "moderation_keys must contain exactly",
+                "issuance",
+            ),
+        )
+        for mutation_name, mutate, expected_error, target in mutations:
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                route = route_for(
+                    document,
+                    "account-service",
+                    "IssueHumanOperatorAuthorizationReference",
+                )
+                contract = (
+                    route
+                    if target == "route"
+                    else document["operator_delegation"]["issuance_idempotency"]
+                )
+                mutate(contract)
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(expected_error in error for error in errors),
+                    (mutation_name, errors),
+                )
+
     def test_operator_reference_issuance_missing_required_fields_has_one_diagnostic(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = route_for(
@@ -2720,8 +2850,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 "account-service IssueHumanOperatorAuthorizationReference "
                 "required_fields must include operator-reference fields: "
                 "['action_family', 'action_family_schema_id', "
-                "'action_family_schema_version', 'control_plane_request_id', "
-                "'mutation_digest']"
+                "'action_family_schema_version']"
             ),
         )
         self.assertFalse(

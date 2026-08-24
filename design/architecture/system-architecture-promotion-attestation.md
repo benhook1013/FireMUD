@@ -10,7 +10,7 @@ This document defines the canonical attestation artifact used to promote image d
 
 ## Implementation Status
 
-The current repository validates checked-in, operator-authored promotion evidence and does not yet prove the target machine-generated evidence producer. The target contract below still requires operator review of evidence grounded in immutable artifacts and observed live state.
+The current repository validates checked-in, operator-authored promotion evidence and does not yet prove the target machine-generated evidence producer or the JWT custody/rotation lineage fields below. The target contract below still requires operator review of evidence grounded in immutable artifacts and observed live state.
 
 ## Artifact Format
 
@@ -33,6 +33,8 @@ Required fields:
 - `environment` – must be `staging`.
 - `stagingOverlayCommitSha` – Git SHA of the staging overlay commit applied.
 - `stagingDeploymentEventId` – canonical UUID selecting the immutable staging apply event being promoted.
+- `jwtCustodyProof` – object with exactly `proofId`, `custodyMode`, and `contractVersion`, copied from the selected staging deployment record and its consumed operator preflight report.
+- `jwtRotationEvidenceRef` – immutable, digest-qualified reference to the passing `PREFLIGHT-JWT-ROTATION-001` evidence carried by the selected staging deployment record.
 - `serviceDigests` – map of service name to immutable OCI manifest or index reference (`image@sha256:...`). A single-architecture service records its manifest reference here; a multi-architecture service records its OCI index reference here.
 - `servicePlatformDigests` – map of service name to a map of canonical lowercase OCI platform keys (`os/architecture` or `os/architecture/variant`, for example `linux/amd64` or `linux/arm64/v8`) to exact child-manifest references (`image@sha256:...`). A multi-architecture service's map keys must exactly equal the production-admitted platform set, with no missing or extra entries, and each index descriptor must prove the recorded platform-to-child binding. A single-architecture service has exactly one admitted-platform entry whose child digest equals its `serviceDigests` manifest digest.
 - `smokeEvidence` – list of URLs or artifact IDs for smoke-test results.
@@ -67,6 +69,7 @@ For `recoveryCompatibility.compatibilityStatus=compatible`, `baselineRecoveryRec
 - Official production release PRs must include exactly one release digest manifest whose `promotionAttestationRef` points to the attestation and whose `serviceDigests` match byte-for-byte.
 - `environment` must be `staging`.
 - `stagingOverlayCommitSha` must exist in Git history and, together with `stagingDeploymentEventId`, select a successful staging deployment record. That record's `overlayCommitSha` must equal `stagingOverlayCommitSha`, and its `deploymentEventId` must equal `stagingDeploymentEventId`.
+- The selected staging deployment record must include `jwtCustodyProof` and `jwtRotationEvidenceRef`; the attestation must copy both exactly. The tuple must exactly match the consumed event-scoped operator preflight report and the production candidate's applicable custody contract, while `jwtRotationEvidenceRef` must resolve to immutable evidence with `policyId=PREFLIGHT-JWT-ROTATION-001`, `status=pass`, the same staging deployment event identity, and the same custody tuple. These staging-lineage fields are supplemental and never replace production event-bound preflight proof.
 - The referenced staging deployment record must include live-state verification (`liveStateEvidence`) proving the running digests matched the reviewed overlay after apply.
 - `liveStateEvidence` must be machine-checkable: status `pass`, the observed overlay SHA, observed running digests, and `observedPlatformDigests` for the promoted services must match the referenced staging deployment record and attestation. The exact `servicePlatformDigests` map is carried in the staging deployment record and candidate attestation, compared with the production overlay's resolved index and child descriptors, and represented by `liveStateEvidence.observedPlatformDigests`.
 - The referenced staging deployment record must include `deployStatus=pass` and `smokeStatus=pass`.
@@ -102,6 +105,8 @@ External-only attestation storage is not allowed for production promotions becau
   - `secretComplianceSnapshotAt`
   - `secretComplianceStatus`
   - `secretComplianceEvidenceRef`
+  - `jwtCustodyProof`
+  - `jwtRotationEvidenceRef`
   - `smokeEvidence` list
 - Producer contract:
   - Target-state tooling emits the candidate deployment evidence from observed staging state for operator review.

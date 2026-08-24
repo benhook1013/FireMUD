@@ -612,7 +612,22 @@ operator_delegation:
       auth_path: exact_mtls_workload_plus_forwarded_control_ui
       issued_token_state: current_exact_active_control_ui_registry_record
       bindings:
-        common: [actor_account_id, control_ui_jti, account_generation, role, action_family, action_family_schema_id, action_family_schema_version, mutation_digest, issuance_fence, authority_evidence_bundle, control_plane_request_id, issued_at, expires_at]
+        common: [actor_account_id, control_ui_jti, account_generation, role, action_family, action_family_schema_id, action_family_schema_version, issuance_fence, authority_evidence_bundle, issued_at, expires_at]
+        mutation_identity_selector:
+          selector_field: action_family
+          alternatives:
+            non_moderation:
+              request_identity: control_plane_request_id
+              digest: mutation_digest
+              control_plane_request_id: mutation_identity
+            moderation_policy_intent:
+              request_identity: policy_intent_request_id
+              digest: mutation_digest
+              control_plane_request_id: correlation_only
+            moderation_owner_enforcement:
+              request_identity: owner_enforcement_request_id
+              digest: owner_enforcement_digest
+              control_plane_request_id: correlation_only
         branch_fields:
           tenant_restriction:
             required: [tenant_scope]
@@ -639,7 +654,18 @@ operator_delegation:
       contents: [authority_scope, applicable_generations, membership_version_when_applicable, issuance_fence, source_transaction_or_outbox_version, projection_status_and_freshness, issuance_operation_identity]
       caller_assertions_are_not_authority: true
   issuance_idempotency:
-    key: [control_plane_request_id, action_family_schema_id, action_family_schema_version, mutation_digest, exact_scope, authority_path_binding]
+    non_moderation_key: [control_plane_request_id, action_family_schema_id, action_family_schema_version, mutation_digest, exact_scope, authority_path_binding]
+    moderation_keys:
+      policy_intent:
+        request_identity: policy_intent_request_id
+        digest: mutation_digest
+        key: [policy_intent_request_id, action_family_schema_id, action_family_schema_version, mutation_digest, exact_scope, authority_path_binding]
+        control_plane_request_id: correlation_only
+      owner_enforcement:
+        request_identity: owner_enforcement_request_id
+        digest: owner_enforcement_digest
+        key: [owner_enforcement_request_id, action_family_schema_id, action_family_schema_version, owner_enforcement_digest, exact_scope, authority_path_binding]
+        control_plane_request_id: correlation_only
     exact_retry: same_reference_or_same_terminal_outcome
     changed_tuple: IDEMPOTENCY_CONFLICT
     ambiguous_response: read_only_reconcile_same_request_without_replacement_reference
@@ -1522,6 +1548,21 @@ routes:
     branch_selector: action_category
     conditional_branch_precedence:
       branch_fields_override_top_level: true
+    mutation_identity_selector:
+      selector_field: action_family
+      alternatives:
+        non_moderation:
+          request_identity: control_plane_request_id
+          digest: mutation_digest
+          control_plane_request_id: mutation_identity
+        moderation_policy_intent:
+          request_identity: policy_intent_request_id
+          digest: mutation_digest
+          control_plane_request_id: correlation_only
+        moderation_owner_enforcement:
+          request_identity: owner_enforcement_request_id
+          digest: owner_enforcement_digest
+          control_plane_request_id: correlation_only
     conditional_branches:
       tenant_restriction:
         selector: action_category=tenant_restriction
@@ -1554,7 +1595,7 @@ routes:
         required_fields: [target_account_id]
         forbidden_fields: [tenant_scope, tenant_id, target_tenant_generation]
     role_assurance: privileged_control_when_global_role
-    required_fields: [action_family, action_family_schema_id, action_family_schema_version, control_plane_request_id, mutation_digest]
+    required_fields: [action_family, action_family_schema_id, action_family_schema_version]
     mutation_contract: create_bounded_human_operator_authorization_reference
     canonical_errors:
       any_of: [IDEMPOTENCY_CONFLICT]

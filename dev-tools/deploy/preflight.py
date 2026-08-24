@@ -1877,10 +1877,18 @@ def rendered_has_resource(
 
 
 def rendered_references_secret(
-    documents: list[dict[str, Any]], name: str, namespace: str | None = None
+    documents: list[dict[str, Any]],
+    name: str,
+    namespace: str | None = None,
+    *,
+    default_namespace: str | None = None,
 ) -> bool:
     for document in documents:
-        if not rendered_namespace_matches(document, namespace):
+        if not rendered_namespace_matches(
+            document,
+            namespace,
+            default_namespace=default_namespace,
+        ):
             continue
         for node in walk(document):
             if not isinstance(node, dict):
@@ -2299,7 +2307,12 @@ def expected_binding_checks(
         for ref_value in secret_refs:
             name = secret_binding_name(ref_value)
             namespace = secret_binding_namespace(ref_value)
-            if name and not rendered_references_secret(documents, name, namespace):
+            if name and not rendered_references_secret(
+                documents,
+                name,
+                namespace,
+                default_namespace=namespace,
+            ):
                 missing_rendered_refs.append(name)
         registry_pull_secret = secret_binding_name(get(data, "internalBindings.registry.imagePullSecretRef"))
         registry_pull_namespace = secret_binding_namespace(
@@ -2404,7 +2417,12 @@ def expected_binding_checks(
     missing_bootstrap = [
         name
         for name, namespace in bootstrap_bindings
-        if name and not rendered_references_secret(documents, name, namespace)
+        if name and not rendered_references_secret(
+            documents,
+            name,
+            namespace,
+            default_namespace=namespace,
+        )
     ]
     custody_mode = get(data, "internalBindings.jwt.custodyMode")
     custody_gate_required = context == "operator" and env_class in player_facing_environments()

@@ -59,7 +59,7 @@ The subsections below are short stubs maintained to keep existing anchors workin
 
 ### Common Application Settings
 
-Common application settings, including the `SPRING_PROFILES_ACTIVE` profile selector, are documented in `environment-and-secrets-catalog.md#common-application-settings`. See the overview’s Operator Quick Reference for the scoped rule: Kubernetes manifests and any shared environment must set `SPRING_PROFILES_ACTIVE` explicitly (do not rely on defaults).
+Common application settings, including the `SPRING_PROFILES_ACTIVE` profile selector, are documented in `environment-and-secrets-catalog.md#common-application-settings`. The canonical rule is: Docker Compose local development sets `dev`; supported direct local execution may leave it unset; Kubernetes deployments set `prod`; automated tests set `test`; and no ad hoc profiles are supported.
 
 ### PostgreSQL Credentials
 

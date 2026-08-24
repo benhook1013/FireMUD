@@ -487,6 +487,38 @@ if wrong_namespace_result.status != "fail" or "expected namespace" not in wrong_
     raise SystemExit(
         f"same-name jwt-jwks Secret in the wrong namespace was accepted: {wrong_namespace_result.message}"
     )
+
+namespace_reference_document = {
+    "kind": "Deployment",
+    "metadata": {"name": "namespace-reference-contract"},
+    "spec": {
+        "template": {
+            "spec": {
+                "containers": [
+                    {
+                        "name": "contract",
+                        "envFrom": [{"secretRef": {"name": "postgres-credentials"}}],
+                    }
+                ]
+            }
+        }
+    },
+}
+if not module.rendered_references_secret(
+    [namespace_reference_document],
+    "postgres-credentials",
+    "firemud",
+    default_namespace="firemud",
+):
+    raise SystemExit("namespace-less Secret reference did not inherit the expected namespace")
+namespace_reference_document["metadata"]["namespace"] = "other"
+if module.rendered_references_secret(
+    [namespace_reference_document],
+    "postgres-credentials",
+    "firemud",
+    default_namespace="firemud",
+):
+    raise SystemExit("Secret reference with an explicit wrong namespace was accepted")
 PY
 
 # Legacy Secret-backed hobby fixture is the current player-facing contract.
@@ -3087,17 +3119,59 @@ staging_expected_bindings = (
     promotion_root / "design/operations/environments/staging/expected-bindings.yaml"
 )
 staging_expected_bindings.parent.mkdir(parents=True)
-staging_expected_bindings.write_text(
-    "environment: staging\n"
-    "backupStorage:\n"
-    "  enabled: true\n"
-    "assetStorage:\n"
-    "  enabled: true\n"
-    "  bucket: contract-staging-assets\n"
-    "  endpoint: https://assets.staging.internal\n"
-    "  bindingRef: secret://firemud/staging-asset-object-store\n",
-    encoding="utf-8",
+staging_expected_data = yaml.safe_load(
+    (root / "design/operations/environments/staging/expected-bindings.yaml").read_text(
+        encoding="utf-8"
+    )
 )
+staging_expected_data["backupStorage"] = {
+    "enabled": True,
+    "bucket": "firemud-staging-backups",
+    "endpoint": "https://minio.staging.internal",
+    "bindingRef": "secret://firemud/staging-backup-object-store",
+}
+staging_expected_data["assetStorage"] = {
+    "enabled": True,
+    "bucket": "contract-staging-assets",
+    "endpoint": "https://assets.staging.internal",
+    "bindingRef": "secret://firemud/staging-asset-object-store",
+}
+staging_expected_bindings.write_text(
+    yaml.safe_dump(staging_expected_data, sort_keys=False), encoding="utf-8"
+)
+
+for env in ("production", "hobby-self-hosted"):
+    expected_path = promotion_root / "design/operations/environments" / env / "expected-bindings.yaml"
+    expected_path.parent.mkdir(parents=True, exist_ok=True)
+    expected_path.write_text(
+        (root / f"design/operations/environments/{env}/expected-bindings.yaml").read_text(
+            encoding="utf-8"
+        ),
+        encoding="utf-8",
+    )
+staging_validation_documents = copy.deepcopy(rendered_documents)
+for document in staging_validation_documents:
+    if document.get("kind") != "ServiceAccount":
+        continue
+    for image_pull_secret in document.get("imagePullSecrets") or []:
+        if image_pull_secret.get("name") == "ghcr-pull-hobby":
+            image_pull_secret["name"] = "ghcr-pull-staging"
+staging_binding_results = module.expected_binding_checks(
+    staging_expected_bindings,
+    "design/operations/environments/staging/expected-bindings.yaml",
+    "staging",
+    staging_validation_documents,
+)
+staging_binding_failures = [
+    result
+    for result in staging_binding_results
+    if result.required and result.status == "fail"
+]
+if staging_binding_failures:
+    raise SystemExit(
+        "staging promotion expected-bindings fixture failed validation: "
+        + "; ".join(result.message for result in staging_binding_failures)
+    )
 
 secret_evidence_path = promotion_root / "secret-compliance.json"
 def evidence_digest(record):

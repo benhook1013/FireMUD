@@ -43,6 +43,8 @@ Before applying the detailed checklists below, follow this high‑level workflow
    - Ensure required metrics and alerts for AOF size/growth, the measured unreplicated-write window, prefix key counts, and script outcomes are covered or updated in the [Redis metrics catalog](./system-architecture-redis-metrics-catalog.md).
    - When the change introduces new state-machine fields or outcome codes, ensure the operations docs and metrics catalog name them explicitly (for example `current_tick_state`, `STALE_SESSION_GENERATION`, and stale automation-dispatch outcomes) rather than relying on generic script-failure buckets.
    - Verify that dashboards and alerts referenced in service docs and the incident runbook line up with the new or changed prefixes/scripts.
+7. **Record validation evidence**
+   - Follow the canonical [validation and runtime-proof workflow](../developer-workflows/validation-and-runtime-proof.md) and record the actual formatting, check, and runtime-proof results in PR/CI or implementation-tracking evidence.
 
 Only after these workflow steps are accounted for should a change be considered “ready” to leave design review and move into implementation.
 

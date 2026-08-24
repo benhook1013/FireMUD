@@ -557,8 +557,6 @@ OPERATOR_REFERENCE_ISSUANCE_REQUIRED_FIELDS = {
         "action_family",
         "action_family_schema_id",
         "action_family_schema_version",
-        "control_plane_request_id",
-        "mutation_digest",
     },
     ("account-service", "IssueAutomationOperatorAuthorizationReference"): {
         "automation_policy_id",
@@ -609,6 +607,49 @@ HUMAN_OPERATOR_ISSUANCE_BRANCHES = {
         },
         "required_fields": {"target_account_id"},
         "forbidden_fields": {"tenant_scope", "tenant_id", "target_tenant_generation"},
+    },
+}
+OPERATOR_ISSUANCE_MODERATION_IDENTITY_KEYS = {
+    "policy_intent": {
+        "request_identity": "policy_intent_request_id",
+        "digest": "mutation_digest",
+        "key": [
+            "policy_intent_request_id",
+            "action_family_schema_id",
+            "action_family_schema_version",
+            "mutation_digest",
+            "exact_scope",
+            "authority_path_binding",
+        ],
+    },
+    "owner_enforcement": {
+        "request_identity": "owner_enforcement_request_id",
+        "digest": "owner_enforcement_digest",
+        "key": [
+            "owner_enforcement_request_id",
+            "action_family_schema_id",
+            "action_family_schema_version",
+            "owner_enforcement_digest",
+            "exact_scope",
+            "authority_path_binding",
+        ],
+    },
+}
+HUMAN_OPERATOR_ISSUANCE_IDENTITY_ALTERNATIVES = {
+    "non_moderation": {
+        "request_identity": "control_plane_request_id",
+        "digest": "mutation_digest",
+        "control_plane_request_id": "mutation_identity",
+    },
+    "moderation_policy_intent": {
+        "request_identity": "policy_intent_request_id",
+        "digest": "mutation_digest",
+        "control_plane_request_id": "correlation_only",
+    },
+    "moderation_owner_enforcement": {
+        "request_identity": "owner_enforcement_request_id",
+        "digest": "owner_enforcement_digest",
+        "control_plane_request_id": "correlation_only",
     },
 }
 AUTH_UNAVAILABLE = "AUTH_UNAVAILABLE"
@@ -3167,6 +3208,34 @@ def validate_human_operator_issuance_branches(
             f"{label} conditional_branch_precedence must override top-level fields"
         )
 
+    identity_selector = route.get("mutation_identity_selector")
+    identity_label = f"{label} mutation_identity_selector"
+    if not isinstance(identity_selector, dict):
+        errors.append(f"{identity_label} must be a mapping")
+    else:
+        if identity_selector.get("selector_field") != "action_family":
+            errors.append(f"{identity_label}.selector_field must be action_family")
+        alternatives = identity_selector.get("alternatives")
+        expected_names = set(HUMAN_OPERATOR_ISSUANCE_IDENTITY_ALTERNATIVES)
+        if not isinstance(alternatives, dict) or set(alternatives) != expected_names:
+            errors.append(
+                f"{identity_label}.alternatives must contain exactly "
+                f"{sorted(expected_names)}"
+            )
+        elif isinstance(alternatives, dict):
+            for name, expected in HUMAN_OPERATOR_ISSUANCE_IDENTITY_ALTERNATIVES.items():
+                alternative_label = f"{identity_label}.alternatives.{name}"
+                alternative = alternatives.get(name)
+                if not isinstance(alternative, dict):
+                    errors.append(f"{alternative_label} must be a mapping")
+                    continue
+                for field, expected_value in expected.items():
+                    if alternative.get(field) != expected_value:
+                        errors.append(
+                            f"{alternative_label}.{field} must equal "
+                            f"{expected_value!r}"
+                        )
+
     branches = route.get("conditional_branches")
     if not isinstance(branches, dict):
         errors.append(f"{label} conditional_branches must be a mapping")
@@ -3207,23 +3276,12 @@ def validate_human_operator_issuance_branches(
                 errors.append(
                     f"{branch_label} must declare {field}={expected_value!r}"
                 )
-        for field in ("required_fields", "forbidden_fields"):
-            if field not in expected:
-                continue
-            value = branch.get(field)
-            if not isinstance(value, list) or any(
-                not isinstance(item, str) for item in value
-            ):
-                errors.append(f"{branch_label}.{field} must be a list of strings")
-                continue
-            actual = set(value)
-            if len(actual) != len(value):
-                errors.append(f"{branch_label}.{field} must not contain duplicates")
-            if actual != expected[field]:
-                errors.append(
-                    f"{branch_label}.{field} must equal {sorted(expected[field])}"
-                )
-        for field in ("required_live_checks", "forbidden_live_checks"):
+        for field in (
+            "required_fields",
+            "forbidden_fields",
+            "required_live_checks",
+            "forbidden_live_checks",
+        ):
             if field not in expected:
                 continue
             value = branch.get(field)
@@ -3287,6 +3345,70 @@ def validate_human_operator_issuance_branches(
                     f"{label} platform_access_ban branch forbids common fields: "
                     f"{common_conflicts}"
                 )
+
+
+def validate_operator_issuance_identity_contract(
+    document: dict[str, Any], errors: list[str]
+) -> None:
+    delegation = document.get("operator_delegation")
+    issuance = delegation.get("issuance_idempotency") if isinstance(delegation, dict) else None
+    label = "operator_delegation.issuance_idempotency"
+    if not isinstance(issuance, dict):
+        errors.append(f"{label} must be a mapping")
+        return
+    expected_non_moderation_key = [
+        "control_plane_request_id",
+        "action_family_schema_id",
+        "action_family_schema_version",
+        "mutation_digest",
+        "exact_scope",
+        "authority_path_binding",
+    ]
+    if issuance.get("non_moderation_key") != expected_non_moderation_key:
+        errors.append(
+            f"{label}.non_moderation_key must use control_plane_request_id "
+            "as the mutation identity"
+        )
+    moderation_keys = issuance.get("moderation_keys")
+    expected_names = set(OPERATOR_ISSUANCE_MODERATION_IDENTITY_KEYS)
+    if not isinstance(moderation_keys, dict) or set(moderation_keys) != expected_names:
+        errors.append(
+            f"{label}.moderation_keys must contain exactly {sorted(expected_names)}"
+        )
+        return
+    identities: set[str] = set()
+    for name, expected in OPERATOR_ISSUANCE_MODERATION_IDENTITY_KEYS.items():
+        branch_label = f"{label}.moderation_keys.{name}"
+        branch = moderation_keys.get(name)
+        if not isinstance(branch, dict):
+            errors.append(f"{branch_label} must be a mapping")
+            continue
+        for field in ("request_identity", "digest", "key"):
+            if branch.get(field) != expected[field]:
+                errors.append(
+                    f"{branch_label}.{field} must equal {expected[field]!r}"
+                )
+        if branch.get("control_plane_request_id") != "correlation_only":
+            errors.append(
+                f"{branch_label}.control_plane_request_id must be correlation_only"
+            )
+        request_identity = branch.get("request_identity")
+        if isinstance(request_identity, str):
+            identities.add(request_identity)
+            key = branch.get("key")
+            if isinstance(key, list) and "control_plane_request_id" in key:
+                errors.append(
+                    f"{branch_label}.key must not use correlation-only "
+                    "control_plane_request_id"
+                )
+    if identities != {
+        "policy_intent_request_id",
+        "owner_enforcement_request_id",
+    }:
+        errors.append(
+            f"{label}.moderation_keys must use exactly the dedicated moderation "
+            "mutation identities"
+        )
 
 
 def validate_authority_unavailable_outcomes(
@@ -5024,6 +5146,7 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
         errors,
         cardinality_errors,
     )
+    validate_operator_issuance_identity_contract(document, errors)
     validate_generation_applicability(routes, errors, live_checks_cache)
     validate_account_export_applicability(document, errors)
     validate_account_export_routes(routes, errors, live_checks_cache)
