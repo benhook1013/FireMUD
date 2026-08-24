@@ -25,8 +25,8 @@ Chat history cache behavior can be tuned with the following variables:
 | -------- | ------- | ------- |
 | `FIREMUD_CHAT_SAYS_TTL_SECONDS` | Seconds to keep `say` messages per player | `7200` |
 | `FIREMUD_CHAT_SAYS_MAX_MESSAGES` | Max cached `say` messages per player | `50` |
-| `FIREMUD_CHAT_WHISPERS_TTL_SECONDS` | Seconds to keep `whisper` messages per account | `7200` |
-| `FIREMUD_CHAT_WHISPERS_MAX_MESSAGES` | Max cached `whisper` messages per account | `50` |
+| `FIREMUD_CHAT_WHISPERS_TTL_SECONDS` | Seconds to keep `whisper` messages per tenant and account | `7200` |
+| `FIREMUD_CHAT_WHISPERS_MAX_MESSAGES` | Max cached `whisper` messages per tenant and account | `50` |
 | `FIREMUD_CHAT_TELLS_TTL_SECONDS` | Seconds to keep direct tells/messages | `172800` |
 | `FIREMUD_CHAT_TELLS_MAX_MESSAGES` | Max cached tells/messages per player | `50` |
 | `FIREMUD_CHAT_GUILD_TTL_SECONDS` | Seconds to keep guild chat per guild | `172800` |
