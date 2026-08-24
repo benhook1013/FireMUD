@@ -1,5 +1,6 @@
 {{- if .Values.previewStack.enabled }}
-{{- if hasKey .Values.previewStack.jwt "jwksResourceKind" }}
+{{- $previewJwt := .Values.previewStack.jwt | default (dict) }}
+{{- if hasKey $previewJwt "jwksResourceKind" }}
 {{- fail "previewStack.jwt.jwksResourceKind is unsupported; public jwt-jwks is always a ConfigMap" }}
 {{- end }}
 apiVersion: v1
@@ -33,7 +34,7 @@ metadata:
 {{ include "firemud.commonLabels" . | indent 4 }}
 type: Opaque
 stringData:
-  current.key: {{ .Values.previewStack.jwt.signingKey | quote }}
+  current.key: {{ $previewJwt.signingKey | quote }}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -42,7 +43,7 @@ metadata:
   labels:
 {{ include "firemud.commonLabels" . | indent 4 }}
 data:
-  jwks.json: {{ .Values.previewStack.jwt.jwksJson | quote }}
+  jwks.json: {{ $previewJwt.jwksJson | quote }}
 ---
 apiVersion: v1
 kind: Secret

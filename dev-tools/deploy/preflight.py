@@ -76,7 +76,16 @@ BRIDGE_WS_PATHS = {
     "FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH": "/tls/client.key",
     "FIREMUD_GATEWAY_WS_CA_CERT_PATH": "/tls/ca.crt",
 }
-BRIDGE_WS_SECRET_KEYS = frozenset({"client.crt", "client.key", "ca.crt"})
+BRIDGE_WS_SECRET_ITEM_PATHS = {
+    "client.crt": "client.crt",
+    "client.key": "client.key",
+    "ca.crt": "ca.crt",
+}
+GRPC_TLS_PATH_NAMES = (
+    "FIREMUD_GRPC_CERT_CHAIN_PATH",
+    "FIREMUD_GRPC_PRIVATE_KEY_PATH",
+    "FIREMUD_GRPC_CA_CERT_PATH",
+)
 BASE_SECRET_COMPLIANCE_CLASSES = frozenset(
     {
         "jwt-signing-keys-jwks",
@@ -435,6 +444,23 @@ def secret_lookup_failure(secret_name: str, namespace: str = "firemud") -> str |
         return f"Missing required Secret in cluster: {namespace}/{secret_name}"
     detail = stderr or "kubectl returned a non-zero status without stderr"
     return f"Secret lookup could not be verified for {namespace}/{secret_name}: {detail}"
+
+
+def expected_player_secret_bindings(
+    expected: dict[str, Any],
+) -> tuple[tuple[str | None, str | None, str], ...]:
+    return tuple(
+        (
+            secret_binding_name(get(expected, binding_path)),
+            secret_binding_namespace(get(expected, binding_path)),
+            binding_path,
+        )
+        for binding_path in (
+            "internalBindings.postgres.credentialsRef",
+            "internalBindings.jwt.signingKeysRef",
+            "internalBindings.jwt.jwksRef",
+        )
+    )
 
 
 def is_missing(value: Any) -> bool:
@@ -2252,9 +2278,34 @@ def config_value(documents: list[dict[str, Any]], name: str) -> str | None:
 
 def normalize_service_endpoint(host: str, port: str, namespace: str) -> str:
     host = host.strip().lower().rstrip(".")
+    if (
+        not host
+        or "://" in host
+        or "/" in host
+        or any(
+            not label or not re.fullmatch(r"[a-z0-9-]+", label)
+            for label in host.split(".")
+        )
+    ):
+        raise ValueError("Redis host must be a DNS host name")
+    port = port.strip()
+    if not port.isdigit() or not 1 <= int(port) <= 65535:
+        raise ValueError("Redis port must be an integer from 1 to 65535")
     if "." not in host:
         host = f"{host}.{namespace}.svc.cluster.local"
-    return f"{host}:{port.strip()}"
+    return f"{host}:{port}"
+
+
+def normalize_redis_url(value: Any, namespace: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("Redis URL must be a non-empty string")
+    parsed = urlsplit(value.strip())
+    if parsed.scheme not in {"redis", "rediss"} or parsed.username or parsed.password:
+        raise ValueError("Redis URL must use redis:// or rediss:// without credentials")
+    if parsed.path not in {"", "/"} or parsed.query or parsed.fragment or not parsed.hostname:
+        raise ValueError("Redis URL must identify only a host and port")
+    port = parsed.port or 6379
+    return normalize_service_endpoint(parsed.hostname, str(port), namespace)
 
 
 def service_override_in_environment(value: Any, namespace: str) -> bool:
@@ -2304,12 +2355,21 @@ def effective_redis_endpoints(
                 continue
             resolved: dict[str, str] = {}
             for role, prefix in (("coordination", "FIREMUD_REDIS_COORD"), ("cache", "FIREMUD_REDIS_CACHE")):
-                host = values.get(prefix + "_HOST")
-                port = values.get(prefix + "_PORT")
-                if not host or not port:
-                    issues.append(f"{prefix} effective host and port are required")
+                url = values.get(prefix + "_URL")
+                try:
+                    if url:
+                        endpoint = normalize_redis_url(url, namespace)
+                    else:
+                        host = values.get(prefix + "_HOST")
+                        port = values.get(prefix + "_PORT")
+                        if not host or not port:
+                            raise ValueError(
+                                f"{prefix} requires URL or host and port"
+                            )
+                        endpoint = normalize_service_endpoint(host, port, namespace)
+                except ValueError as exc:
+                    issues.append(f"{prefix} effective endpoint is invalid: {exc}")
                     continue
-                endpoint = normalize_service_endpoint(host, port, namespace)
                 resolved[role] = endpoint
                 expected_endpoint = expected_coord if role == "coordination" else expected_cache
                 if expected_endpoint != endpoint:
@@ -2377,7 +2437,7 @@ def validate_gateway_ws_values(
                 documents,
                 document,
                 container,
-                relevant_names={"GATEWAY_WS_URL", *BRIDGE_WS_PATHS},
+                relevant_names={"GATEWAY_WS_URL", *BRIDGE_WS_PATHS, *GRPC_TLS_PATH_NAMES},
             )
             issues.extend(env_issues)
             for path_name, expected_path in BRIDGE_WS_PATHS.items():
@@ -2385,25 +2445,43 @@ def validate_gateway_ws_values(
                     issues.append(
                         f"{path_name} must be exactly {expected_path!r} for the player-facing bridge"
                     )
-            grpc_paths = {
-                env.get(name)
-                for name in (
-                    "FIREMUD_GRPC_CERT_CHAIN_PATH",
-                    "FIREMUD_GRPC_PRIVATE_KEY_PATH",
-                    "FIREMUD_GRPC_CA_CERT_PATH",
+            grpc_path_values = {
+                name: env.get(name) for name in GRPC_TLS_PATH_NAMES
+            }
+            missing_grpc_paths = [
+                name
+                for name, path in grpc_path_values.items()
+                if not isinstance(path, str) or not path.startswith("/")
+            ]
+            if missing_grpc_paths:
+                issues.append(
+                    "all canonical gRPC TLS path variables must be configured as absolute paths: "
+                    + ", ".join(missing_grpc_paths)
                 )
-                if env.get(name)
+            grpc_paths = {
+                path
+                for path in grpc_path_values.values()
+                if isinstance(path, str) and path.startswith("/")
             }
 
             def path_is_under(path: str, mount_path: str) -> bool:
                 return path == mount_path or path.startswith(mount_path.rstrip("/") + "/")
 
-            grpc_secret_names = {
-                volumes.get(mount.get("name"))
+            grpc_mounts = [
+                mount
                 for mount in container.get("volumeMounts") or []
                 if isinstance(mount, dict)
+                and mount.get("readOnly") is True
                 and volumes.get(mount.get("name"))
-                and any(path_is_under(path, str(mount.get("mountPath") or "")) for path in grpc_paths)
+                and isinstance(mount.get("mountPath"), str)
+                and any(path_is_under(path, mount["mountPath"]) for path in grpc_paths)
+            ]
+            if len(grpc_mounts) != 1:
+                issues.append(
+                    "exactly one dedicated read-only Secret-backed gRPC TLS mount is required"
+                )
+            grpc_secret_names = {
+                volumes.get(mount.get("name")) for mount in grpc_mounts
             }
             bridge_ref = parse_binding_ref(
                 get(expected, "internalBindings.certificates.tcpProxyBridgeClientRef")
@@ -2457,18 +2535,28 @@ def validate_gateway_ws_values(
                 if not isinstance(secret, dict):
                     return False
                 items = secret.get("items")
-                if items is not None and (
+                expected_item_pairs = set(BRIDGE_WS_SECRET_ITEM_PATHS.items())
+                if (
                     not isinstance(items, list)
-                    or {
-                        item.get("key")
+                    or len(items) != len(expected_item_pairs)
+                    or any(
+                        not isinstance(item, dict)
+                        or set(item) != {"key", "path"}
+                        or not isinstance(item.get("key"), str)
+                        or not isinstance(item.get("path"), str)
                         for item in items
-                        if isinstance(item, dict)
-                    }
-                    < set(BRIDGE_WS_SECRET_KEYS)
+                    )
                 ):
                     issues.append(
-                        "Gateway WebSocket bridge Secret volume items must include "
-                        + ", ".join(sorted(BRIDGE_WS_SECRET_KEYS))
+                        "Gateway WebSocket bridge Secret volume items must select exactly "
+                        "client.crt->client.crt, client.key->client.key, and ca.crt->ca.crt"
+                    )
+                    return False
+                item_pairs = {(item["key"], item["path"]) for item in items}
+                if item_pairs != expected_item_pairs:
+                    issues.append(
+                        "Gateway WebSocket bridge Secret volume items must select exactly "
+                        "client.crt->client.crt, client.key->client.key, and ca.crt->ca.crt"
                     )
                     return False
                 return True
@@ -3652,7 +3740,7 @@ def _promotion_check(
     if recovery_status != "pass":
         return ("fail", rollback_mode, recovery_message)
 
-    if missing_attestation_fields:
+    if any(field != "jwtRotationEvidenceRef" for field in missing_attestation_fields):
         return (
             "fail",
             rollback_mode,
@@ -3724,6 +3812,30 @@ def _promotion_check(
     if not isinstance(record, dict):
         return ("fail", rollback_mode, "Staging deployment record must be a JSON object")
 
+    secret_evidence, secret_evidence_error = load_immutable_json_evidence(
+        root_dir, record.get("secretComplianceEvidenceRef"), "secretComplianceEvidenceRef"
+    )
+    if secret_evidence_error:
+        return ("fail", rollback_mode, secret_evidence_error)
+    assert secret_evidence is not None
+    if secret_evidence.get("environment") != "staging":
+        return ("fail", rollback_mode, "Staging secret compliance evidence environment must be staging")
+    secret_records = secret_evidence.get("records", {})
+    if not isinstance(secret_records, dict):
+        return ("fail", rollback_mode, "Staging secret compliance evidence records must be an object")
+    bootstrap_fields_present = (
+        "bootstrapOperationId" in secret_evidence
+        or "provisioningGeneration" in secret_evidence
+        or any(
+            isinstance(secret_record, dict)
+            and (
+                "bootstrapOperationId" in secret_record
+                or "provisioningGeneration" in secret_record
+            )
+            for secret_record in secret_records.values()
+        )
+    )
+
     required_record_fields = (
         "environment",
         "overlayCommitSha",
@@ -3739,9 +3851,16 @@ def _promotion_check(
         "secretComplianceStatus",
         "secretComplianceEvidenceRef",
         "jwtCustodyProof",
-        "jwtRotationEvidenceRef",
         "smokeEvidence",
     )
+    if not bootstrap_fields_present:
+        required_record_fields += ("jwtRotationEvidenceRef",)
+        if "jwtRotationEvidenceRef" in missing_attestation_fields:
+            return (
+                "fail",
+                rollback_mode,
+                "Attestation missing required canonical fields: jwtRotationEvidenceRef",
+            )
     missing_record_fields = [
         field for field in required_record_fields if field not in record or is_missing(record[field])
     ]
@@ -3762,11 +3881,19 @@ def _promotion_check(
             rollback_mode,
             "Staging deployment record jwtCustodyProof does not match the attestation",
         )
-    if att["jwtRotationEvidenceRef"] != record["jwtRotationEvidenceRef"]:
+    if not bootstrap_fields_present and att.get("jwtRotationEvidenceRef") != record.get("jwtRotationEvidenceRef"):
         return (
             "fail",
             rollback_mode,
             "Staging deployment record jwtRotationEvidenceRef does not match the attestation",
+        )
+    if bootstrap_fields_present and (
+        "jwtRotationEvidenceRef" in att or "jwtRotationEvidenceRef" in record
+    ):
+        return (
+            "fail",
+            rollback_mode,
+            "Bootstrap secret compliance evidence must not carry JWT rotation evidence identity",
         )
     if not isinstance(record.get("appliedBy"), str) or not record["appliedBy"].strip():
         return ("fail", rollback_mode, "Staging deployment record appliedBy must be non-empty")
@@ -3871,58 +3998,59 @@ def _promotion_check(
             rollback_mode,
             "Staging operator preflight report must contain one passing required result for the selected JWT custody policy",
         )
-    rotation_checks = [
-        check
-        for check in preflight_report.get("checkResults", [])
-        if isinstance(check, dict) and check.get("policyId") == JWT_ROTATION_POLICY_ID
-    ]
-    if len(rotation_checks) != 1 or rotation_checks[0].get("status") != "pass":
-        return (
-            "fail",
-            rollback_mode,
-            "Staging operator preflight report must contain one passing PREFLIGHT-JWT-ROTATION-001 result",
-        )
-    if rotation_checks[0].get("required") is not True:
-        return (
-            "fail",
-            rollback_mode,
-            "Staging operator preflight report JWT rotation result must be event-scoped",
-        )
+    if not bootstrap_fields_present:
+        rotation_checks = [
+            check
+            for check in preflight_report.get("checkResults", [])
+            if isinstance(check, dict) and check.get("policyId") == JWT_ROTATION_POLICY_ID
+        ]
+        if len(rotation_checks) != 1 or rotation_checks[0].get("status") != "pass":
+            return (
+                "fail",
+                rollback_mode,
+                "Staging operator preflight report must contain one passing PREFLIGHT-JWT-ROTATION-001 result",
+            )
+        if rotation_checks[0].get("required") is not True:
+            return (
+                "fail",
+                rollback_mode,
+                "Staging operator preflight report JWT rotation result must be event-scoped",
+            )
 
-    rotation_evidence, rotation_evidence_error = load_immutable_json_evidence(
-        root_dir,
-        att["jwtRotationEvidenceRef"],
-        "jwtRotationEvidenceRef",
-    )
-    if rotation_evidence_error:
-        return ("fail", rollback_mode, rotation_evidence_error)
-    assert rotation_evidence is not None
-    if rotation_evidence.get("policyId") != JWT_ROTATION_POLICY_ID:
-        return (
-            "fail",
-            rollback_mode,
-            "jwtRotationEvidenceRef evidence policyId must be PREFLIGHT-JWT-ROTATION-001",
+        rotation_evidence, rotation_evidence_error = load_immutable_json_evidence(
+            root_dir,
+            att["jwtRotationEvidenceRef"],
+            "jwtRotationEvidenceRef",
         )
-    if rotation_evidence.get("status") != "pass":
-        return ("fail", rollback_mode, "jwtRotationEvidenceRef evidence status must be pass")
-    if rotation_evidence.get("deploymentEventId") != staging_event_id:
-        return (
-            "fail",
-            rollback_mode,
-            "jwtRotationEvidenceRef evidence deploymentEventId does not match the staging event",
+        if rotation_evidence_error:
+            return ("fail", rollback_mode, rotation_evidence_error)
+        assert rotation_evidence is not None
+        if rotation_evidence.get("policyId") != JWT_ROTATION_POLICY_ID:
+            return (
+                "fail",
+                rollback_mode,
+                "jwtRotationEvidenceRef evidence policyId must be PREFLIGHT-JWT-ROTATION-001",
+            )
+        if rotation_evidence.get("status") != "pass":
+            return ("fail", rollback_mode, "jwtRotationEvidenceRef evidence status must be pass")
+        if rotation_evidence.get("deploymentEventId") != staging_event_id:
+            return (
+                "fail",
+                rollback_mode,
+                "jwtRotationEvidenceRef evidence deploymentEventId does not match the staging event",
+            )
+        rotation_custody_proof_error = jwt_custody_proof_error(
+            "jwtRotationEvidenceRef evidence jwtCustodyProof",
+            rotation_evidence.get("jwtCustodyProof"),
         )
-    rotation_custody_proof_error = jwt_custody_proof_error(
-        "jwtRotationEvidenceRef evidence jwtCustodyProof",
-        rotation_evidence.get("jwtCustodyProof"),
-    )
-    if rotation_custody_proof_error:
-        return ("fail", rollback_mode, rotation_custody_proof_error)
-    if rotation_evidence.get("jwtCustodyProof") != att["jwtCustodyProof"]:
-        return (
-            "fail",
-            rollback_mode,
-            "jwtRotationEvidenceRef evidence jwtCustodyProof does not match the attestation",
-        )
+        if rotation_custody_proof_error:
+            return ("fail", rollback_mode, rotation_custody_proof_error)
+        if rotation_evidence.get("jwtCustodyProof") != att["jwtCustodyProof"]:
+            return (
+                "fail",
+                rollback_mode,
+                "jwtRotationEvidenceRef evidence jwtCustodyProof does not match the attestation",
+            )
 
     live_state = record.get("liveStateEvidence")
     if not isinstance(live_state, dict):
@@ -3938,29 +4066,13 @@ def _promotion_check(
         return ("fail", rollback_mode, "Staging live-state evidence observedDigests do not match the attestation")
 
     secret_status = record.get("secretComplianceStatus")
-    secret_ref = record.get("secretComplianceEvidenceRef")
     if secret_status != "pass":
         return ("fail", rollback_mode, "Staging deployment record secretComplianceStatus must be pass")
-    if not isinstance(secret_ref, str) or not secret_ref.strip():
-        return ("fail", rollback_mode, "Staging deployment record secretComplianceEvidenceRef must be non-empty")
-    secret_path = resolve_repo_path(root_dir, str(secret_ref))
-    if not secret_path.exists():
-        return ("fail", rollback_mode, f"Staging secret compliance evidence not found: {secret_ref}")
-    try:
-        secret_evidence = load_json(secret_path)
-    except JSON_READ_ERRORS as exc:
-        return ("fail", rollback_mode, f"Staging secret compliance evidence unreadable: {exc}")
     try:
         required_secret_classes = required_secret_compliance_classes(root_dir, "staging")
     except (TypeError, ValueError) as exc:
         return ("fail", rollback_mode, str(exc))
-    if not isinstance(secret_evidence, dict):
-        return ("fail", rollback_mode, "Staging secret compliance evidence must be a JSON object")
-    if secret_evidence.get("environment") != "staging":
-        return ("fail", rollback_mode, "Staging secret compliance evidence environment must be staging")
-    records = secret_evidence.get("records", {})
-    if not isinstance(records, dict):
-        return ("fail", rollback_mode, "Staging secret compliance evidence records must be an object")
+    records = secret_records
 
     # Bootstrap evidence is authorized by the validator through the immutable
     # bootstrap operation and provisioning generation. Rotation evidence uses
@@ -3969,18 +4081,6 @@ def _promotion_check(
     # silently accepted as rotation evidence.
     top_bootstrap_operation_id = secret_evidence.get("bootstrapOperationId")
     top_provisioning_generation = secret_evidence.get("provisioningGeneration")
-    bootstrap_fields_present = (
-        "bootstrapOperationId" in secret_evidence
-        or "provisioningGeneration" in secret_evidence
-        or any(
-            isinstance(record, dict)
-            and (
-                "bootstrapOperationId" in record
-                or "provisioningGeneration" in record
-            )
-            for record in records.values()
-        )
-    )
     if bootstrap_fields_present:
         if (
             not isinstance(top_bootstrap_operation_id, str)
@@ -4391,14 +4491,16 @@ def main() -> int:
                 "PREFLIGHT-SECRETS-001", True, "pass", "Rendered workloads reference required player-facing Secret bindings",
             ) or has_required_failure
     else:
-        secret_bindings = (
-            ("postgres-credentials", "internalBindings.postgres.credentialsRef"),
-            ("jwt-signing-keys", "internalBindings.jwt.signingKeysRef"),
-            ("jwt-jwks", "internalBindings.jwt.jwksRef"),
-        )
-        for secret_name, binding_path in secret_bindings:
-            secret_namespace = secret_binding_namespace(get(expected_bindings, binding_path)) or "firemud"
-            failure_message = secret_lookup_failure(secret_name, secret_namespace)
+        for secret_name, secret_namespace, binding_path in expected_player_secret_bindings(
+            expected_bindings
+        ):
+            if not secret_name or not secret_namespace:
+                failure_message = (
+                    "Cannot resolve required Secret binding from expected bindings: "
+                    + binding_path
+                )
+            else:
+                failure_message = secret_lookup_failure(secret_name, secret_namespace)
             if failure_message is not None:
                 has_required_failure = append_result(
                     check_results,

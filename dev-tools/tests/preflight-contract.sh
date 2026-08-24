@@ -292,6 +292,13 @@ spec:
         - name: hobby-tcp-proxy-bridge
           secret:
             secretName: hobby-tcp-proxy-bridge
+            items:
+              - key: client.crt
+                path: client.crt
+              - key: client.key
+                path: client.key
+              - key: ca.crt
+                path: ca.crt
         - name: grpc-tls
           secret:
             secretName: grpc-tls
@@ -1650,7 +1657,7 @@ verify_service_override_contract(
 verify_service_override_contract(
     "external-host",
     {"FIREMUD_SERVICES_ACCOUNT_SERVICE": "account-service.evil.example:6565"},
-    {"FIREMUD_SERVICES_ACCOUNT_SERVICE": "account-service.evil.example:6565"},
+    {"FIREMUD_SERVICES_ACCOUNT_SERVICE": "account-service.firemud.svc.cluster.local:6565"},
     "fail",
     "Kubernetes environment",
 )
@@ -1737,6 +1744,22 @@ current_results = module.expected_binding_checks(
 current_secrets = next(result for result in current_results if result.policy_id == "PREFLIGHT-SECRETS-002")
 if current_secrets.status != "pass":
     raise SystemExit(f"checked-in legacy JWT custody selector did not pass current wiring validation: {current_secrets.message}")
+
+custom_secret_expected = copy.deepcopy(
+    yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+)
+custom_secret_expected["internalBindings"]["postgres"]["credentialsRef"] = (
+    "secret://staging/custom-postgres-credentials"
+)
+custom_secret_expected["internalBindings"]["jwt"]["signingKeysRef"] = (
+    "secret://staging/custom-jwt-signing-keys"
+)
+custom_secret_bindings = module.expected_player_secret_bindings(custom_secret_expected)
+if custom_secret_bindings[:2] != (
+    ("custom-postgres-credentials", "staging", "internalBindings.postgres.credentialsRef"),
+    ("custom-jwt-signing-keys", "staging", "internalBindings.jwt.signingKeysRef"),
+):
+    raise SystemExit(f"operator Secret lookup did not derive exact expected binding identities: {custom_secret_bindings}")
 
 
 def effective_env_documents(*, config_map=None, config_map_namespace="firemud", secret=None, secret_namespace="firemud", workload_namespace="firemud", env=None, env_from=None):
@@ -1883,7 +1906,11 @@ secret_documents.append(
 secret_values, secret_issues = module.effective_container_env(
     secret_documents, secret_workload, secret_container
 )
-if not secret_issues or secret_values.get("FIREMUD_SERVICES_ACCOUNT_SERVICE") is not None:
+if (
+    not secret_issues
+    or secret_values.get("FIREMUD_SERVICES_ACCOUNT_SERVICE") is not None
+    or any("secret-backed" in issue for issue in secret_issues)
+):
     raise SystemExit(f"Secret-backed service override was not rejected safely: {secret_values}, {secret_issues}")
 secret_overrides, secret_override_issues = module.extract_service_discovery_overrides(secret_documents)
 if not secret_override_issues or secret_overrides:
@@ -1907,7 +1934,11 @@ secret_key_documents.append(
 secret_key_values, secret_key_issues = module.effective_container_env(
     secret_key_documents, secret_key_workload, secret_key_container
 )
-if not secret_key_issues or secret_key_values:
+if (
+    not secret_key_issues
+    or secret_key_values
+    or any("secret-key-backed" in issue for issue in secret_key_issues)
+):
     raise SystemExit(f"Secret-backed service valueFrom was not rejected: {secret_key_values}, {secret_key_issues}")
 
 uninspectable_secret_documents, uninspectable_secret_workload, uninspectable_secret_container = effective_env_documents(
@@ -1965,7 +1996,7 @@ malformed_secret_documents.append(
     {
         "kind": "Secret",
         "metadata": {"name": "malformed-secret", "namespace": "firemud"},
-        "data": ["not-a-mapping"],
+        "data": {"FIREMUD_SERVICES_ACCOUNT_SERVICE": "%%%not-base64%%%"},
     }
 )
 _, malformed_secret_issues = module.effective_container_env(
@@ -1973,8 +2004,8 @@ _, malformed_secret_issues = module.effective_container_env(
     malformed_secret_workload,
     malformed_secret_container,
 )
-if not any("data and stringData must be mappings" in issue for issue in malformed_secret_issues):
-    raise SystemExit(f"malformed Secret data did not fail closed: {malformed_secret_issues}")
+if not malformed_secret_issues or any("%%%not-base64%%%" in issue for issue in malformed_secret_issues):
+    raise SystemExit(f"invalid Secret data was not rejected without leakage: {malformed_secret_issues}")
 
 bridge_values, bridge_issues = module.validate_gateway_ws_values(
     rendered_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
@@ -2180,8 +2211,57 @@ bridge_items_volume["secret"]["items"] = [{"key": "client.crt"}]
 _, bridge_items_issues = module.validate_gateway_ws_values(
     bridge_items_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
 )
-if not any("items must include" in issue for issue in bridge_items_issues):
+if not any("items must select exactly" in issue for issue in bridge_items_issues):
     raise SystemExit(f"restrictive bridge Secret items were accepted: {bridge_items_issues}")
+
+for case_name, mutate in (
+    (
+        "bridge-items-extra",
+        lambda volume: volume["secret"].__setitem__(
+            "items",
+            [
+                {"key": "client.crt", "path": "client.crt"},
+                {"key": "client.key", "path": "client.key"},
+                {"key": "ca.crt", "path": "ca.crt"},
+                {"key": "extra", "path": "extra"},
+            ],
+        ),
+    ),
+    (
+        "bridge-items-wrong-path",
+        lambda volume: volume["secret"]["items"][0].__setitem__("path", "wrong.crt"),
+    ),
+    (
+        "bridge-items-omitted",
+        lambda volume: volume["secret"].pop("items"),
+    ),
+    (
+        "bridge-items-unhashable",
+        lambda volume: volume["secret"].__setitem__(
+            "items",
+            [
+                {"key": ["client.crt"], "path": "client.crt"},
+                {"key": "client.key", "path": "client.key"},
+                {"key": "ca.crt", "path": "ca.crt"},
+            ],
+        ),
+    ),
+):
+    documents = copy.deepcopy(rendered_documents)
+    bridge_volume = next(
+        volume
+        for document in documents
+        if document.get("kind") == "Deployment"
+        and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+        for volume in document["spec"]["template"]["spec"]["volumes"]
+        if volume.get("name") == "hobby-tcp-proxy-bridge"
+    )
+    mutate(bridge_volume)
+    _, issues = module.validate_gateway_ws_values(
+        documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+    )
+    if not any("items must select exactly" in issue for issue in issues):
+        raise SystemExit(f"{case_name} was accepted: {issues}")
 
 bridge_identity_documents = copy.deepcopy(rendered_documents)
 next(
@@ -2196,6 +2276,95 @@ _, bridge_identity_issues = module.validate_gateway_ws_values(
 )
 if not any("dedicated read-only Secret-backed /tls mount" in issue for issue in bridge_identity_issues):
     raise SystemExit(f"bridge client reused the gRPC Secret identity without failing: {bridge_identity_issues}")
+
+bridge_same_identity_documents = copy.deepcopy(rendered_documents)
+bridge_same_identity_deployment = next(
+    document
+    for document in bridge_same_identity_documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+next(
+    volume for volume in bridge_same_identity_deployment["spec"]["template"]["spec"]["volumes"]
+    if volume.get("name") == "grpc-tls"
+)["secret"]["secretName"] = "hobby-tcp-proxy-bridge"
+_, bridge_same_identity_issues = module.validate_gateway_ws_values(
+    bridge_same_identity_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+)
+if not any("dedicated read-only Secret-backed /tls mount" in issue for issue in bridge_same_identity_issues):
+    raise SystemExit(f"bridge client reused the gRPC Secret identity without failing: {bridge_same_identity_issues}")
+
+bridge_missing_grpc_path_documents = copy.deepcopy(rendered_documents)
+bridge_missing_grpc_path_container = next(
+    container
+    for document in bridge_missing_grpc_path_documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    for container in document["spec"]["template"]["spec"]["containers"]
+    if container.get("name") == "tcp-proxy-service"
+)
+bridge_missing_grpc_path_container["env"] = [
+    entry
+    for entry in bridge_missing_grpc_path_container["env"]
+    if entry.get("name") != "FIREMUD_GRPC_CA_CERT_PATH"
+]
+_, bridge_missing_grpc_path_issues = module.validate_gateway_ws_values(
+    bridge_missing_grpc_path_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+)
+if not any("all canonical gRPC TLS path variables" in issue for issue in bridge_missing_grpc_path_issues):
+    raise SystemExit(f"missing gRPC TLS path was accepted: {bridge_missing_grpc_path_issues}")
+
+bridge_missing_grpc_mount_documents = copy.deepcopy(rendered_documents)
+bridge_missing_grpc_mount_container = next(
+    container
+    for document in bridge_missing_grpc_mount_documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    for container in document["spec"]["template"]["spec"]["containers"]
+    if container.get("name") == "tcp-proxy-service"
+)
+bridge_missing_grpc_mount_container["volumeMounts"] = [
+    mount
+    for mount in bridge_missing_grpc_mount_container["volumeMounts"]
+    if mount.get("name") != "grpc-tls"
+]
+_, bridge_missing_grpc_mount_issues = module.validate_gateway_ws_values(
+    bridge_missing_grpc_mount_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+)
+if not any("dedicated read-only Secret-backed gRPC TLS mount" in issue for issue in bridge_missing_grpc_mount_issues):
+    raise SystemExit(f"missing gRPC TLS mount was accepted: {bridge_missing_grpc_mount_issues}")
+
+bridge_writable_grpc_mount_documents = copy.deepcopy(rendered_documents)
+bridge_writable_grpc_mount = next(
+    mount
+    for document in bridge_writable_grpc_mount_documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    for container in document["spec"]["template"]["spec"]["containers"]
+    if container.get("name") == "tcp-proxy-service"
+    for mount in container["volumeMounts"]
+    if mount.get("name") == "grpc-tls"
+)
+bridge_writable_grpc_mount["readOnly"] = False
+_, bridge_writable_grpc_mount_issues = module.validate_gateway_ws_values(
+    bridge_writable_grpc_mount_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+)
+if not any("dedicated read-only Secret-backed gRPC TLS mount" in issue for issue in bridge_writable_grpc_mount_issues):
+    raise SystemExit(f"writable gRPC TLS mount was accepted: {bridge_writable_grpc_mount_issues}")
+
+bridge_namespace_documents = copy.deepcopy(rendered_documents)
+bridge_namespace_deployment = next(
+    document
+    for document in bridge_namespace_documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+bridge_namespace_deployment["metadata"]["namespace"] = "other"
+_, bridge_namespace_issues = module.validate_gateway_ws_values(
+    bridge_namespace_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+)
+if not any("namespace does not match" in issue for issue in bridge_namespace_issues):
+    raise SystemExit(f"bridge workload namespace mismatch was accepted: {bridge_namespace_issues}")
 
 redis_endpoints, redis_issues = module.effective_redis_endpoints(
     rendered_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
@@ -2214,6 +2383,54 @@ _, redis_mutation_issues = module.effective_redis_endpoints(
 )
 if not any("does not match expected" in issue for issue in redis_mutation_issues):
     raise SystemExit("referenced Redis ConfigMap mismatch was accepted")
+
+redis_url_documents = copy.deepcopy(rendered_documents)
+redis_url_config_map = next(
+    document
+    for document in redis_url_documents
+    if document.get("kind") == "ConfigMap" and document.get("metadata", {}).get("name") == "firemud-config"
+)
+for key in (
+    "FIREMUD_REDIS_COORD_HOST",
+    "FIREMUD_REDIS_COORD_PORT",
+    "FIREMUD_REDIS_CACHE_HOST",
+    "FIREMUD_REDIS_CACHE_PORT",
+):
+    redis_url_config_map["data"].pop(key)
+redis_url_config_map["data"].update(
+    {
+        "FIREMUD_REDIS_COORD_URL": "redis://redis-coord.firemud.svc.cluster.local:6379",
+        "FIREMUD_REDIS_CACHE_URL": "redis://redis-cache.firemud.svc.cluster.local:6379",
+    }
+)
+redis_url_endpoints, redis_url_issues = module.effective_redis_endpoints(
+    redis_url_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+)
+if redis_url_issues or redis_url_endpoints != {
+    "redis-coord.firemud.svc.cluster.local:6379",
+    "redis-cache.firemud.svc.cluster.local:6379",
+}:
+    raise SystemExit(f"Redis URL-only configuration did not pass: {redis_url_issues}, {redis_url_endpoints}")
+
+redis_precedence_documents = copy.deepcopy(rendered_documents)
+redis_precedence_config_map = next(
+    document
+    for document in redis_precedence_documents
+    if document.get("kind") == "ConfigMap" and document.get("metadata", {}).get("name") == "firemud-config"
+)
+redis_precedence_config_map["data"].update(
+    {
+        "FIREMUD_REDIS_COORD_URL": "redis://redis-coord.firemud.svc.cluster.local:6379",
+        "FIREMUD_REDIS_CACHE_URL": "redis://redis-cache.firemud.svc.cluster.local:6379",
+        "FIREMUD_REDIS_COORD_HOST": "redis-cache",
+        "FIREMUD_REDIS_CACHE_HOST": "redis-coord",
+    }
+)
+_, redis_precedence_issues = module.effective_redis_endpoints(
+    redis_precedence_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+)
+if redis_precedence_issues:
+    raise SystemExit(f"Redis URL precedence was not honored: {redis_precedence_issues}")
 
 for case_name, field, value in (
     ("cache-host", "FIREMUD_REDIS_CACHE_HOST", "redis-coord"),
@@ -3896,7 +4113,10 @@ if staging_binding_failures:
         + "; ".join(result.message for result in staging_binding_failures)
     )
 
-secret_evidence_path = promotion_root / "secret-compliance.json"
+secret_evidence_path = (
+    promotion_root / "design/operations/deployments/staging/secret-compliance.json"
+)
+secret_evidence_path.parent.mkdir(parents=True, exist_ok=True)
 def evidence_digest(record):
     return module.canonical_evidence_digest(record)
 
@@ -3947,7 +4167,21 @@ def make_bootstrap_secret_evidence():
     }
 
 
-secret_evidence_path.write_text(json.dumps(make_secret_evidence()), encoding="utf-8")
+def write_secret_evidence(evidence):
+    secret_evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+    evidence_ref = (
+        str(secret_evidence_path.relative_to(promotion_root))
+        + "#"
+        + module.canonical_evidence_digest(evidence)
+    )
+    if "staging_record" in globals():
+        staging_record["secretComplianceEvidenceRef"] = evidence_ref
+        if "staging_record_path" in globals():
+            staging_record_path.write_text(json.dumps(staging_record), encoding="utf-8")
+    return evidence_ref
+
+
+secret_compliance_ref = write_secret_evidence(make_secret_evidence())
 staging_event_id = "55555555-5555-4555-8555-555555555555"
 jwt_custody_proof = {
     "proofId": "PREFLIGHT-JWT-INTERIM-001",
@@ -4049,7 +4283,7 @@ staging_record = {
     },
     "secretComplianceSnapshotAt": past_timestamp,
     "secretComplianceStatus": "pass",
-    "secretComplianceEvidenceRef": secret_evidence_path.name,
+    "secretComplianceEvidenceRef": secret_compliance_ref,
     "smokeEvidence": ["contract-smoke"],
 }
 staging_record_path = staging_dir / f"{staging_event_id}.json"
@@ -4092,10 +4326,25 @@ if (
 
 # Bootstrap evidence is independently authorized by the matching operation ID
 # and provisioning generation; it must not require a rotation evidence ID.
-secret_evidence_path.write_text(
-    json.dumps(make_bootstrap_secret_evidence()),
-    encoding="utf-8",
-)
+write_secret_evidence(make_bootstrap_secret_evidence())
+original_attestation_bytes = promotion_attestation_path.read_bytes()
+original_record_bytes = staging_record_path.read_bytes()
+original_preflight_bytes = staging_preflight_path.read_bytes()
+bootstrap_attestation = json.loads(promotion_attestation_path.read_text(encoding="utf-8"))
+bootstrap_record = json.loads(staging_record_path.read_text(encoding="utf-8"))
+bootstrap_preflight = json.loads(staging_preflight_path.read_text(encoding="utf-8"))
+bootstrap_attestation.pop("jwtRotationEvidenceRef", None)
+bootstrap_record.pop("jwtRotationEvidenceRef", None)
+bootstrap_preflight["checkResults"] = [
+    check
+    for check in bootstrap_preflight["checkResults"]
+    if check.get("policyId") != "PREFLIGHT-JWT-ROTATION-001"
+]
+promotion_attestation_path.write_text(json.dumps(bootstrap_attestation), encoding="utf-8")
+staging_record_path.write_text(json.dumps(bootstrap_record), encoding="utf-8")
+staging_preflight_path.write_text(json.dumps(bootstrap_preflight), encoding="utf-8")
+rotation_evidence_backup = rotation_evidence_path.read_bytes()
+rotation_evidence_path.unlink()
 bootstrap_promotion_status, _, bootstrap_promotion_message, _, _ = module.promotion_check(
     promotion_attestation_path,
     [gateway_image, account_image],
@@ -4107,12 +4356,14 @@ if bootstrap_promotion_status != "pass":
         "valid bootstrap secret compliance evidence did not pass: "
         + bootstrap_promotion_message
     )
+rotation_evidence_path.write_bytes(rotation_evidence_backup)
+staging_record = bootstrap_record
 bootstrap_mismatch = make_bootstrap_secret_evidence()
 bootstrap_mismatch["records"]["operator-credentials"]["provisioningGeneration"] = 8
 bootstrap_mismatch["records"]["operator-credentials"]["immutableArtifactId"] = evidence_digest(
     bootstrap_mismatch["records"]["operator-credentials"]
 )
-secret_evidence_path.write_text(json.dumps(bootstrap_mismatch), encoding="utf-8")
+write_secret_evidence(bootstrap_mismatch)
 bootstrap_mismatch_status, _, bootstrap_mismatch_message, _, _ = module.promotion_check(
     promotion_attestation_path,
     [gateway_image, account_image],
@@ -4127,7 +4378,11 @@ if (
         "bootstrap provisioning generation mismatch was accepted: "
         + bootstrap_mismatch_message
     )
-secret_evidence_path.write_text(json.dumps(make_secret_evidence()), encoding="utf-8")
+promotion_attestation_path.write_bytes(original_attestation_bytes)
+staging_record_path.write_bytes(original_record_bytes)
+staging_preflight_path.write_bytes(original_preflight_bytes)
+staging_record = json.loads(original_record_bytes)
+write_secret_evidence(make_secret_evidence())
 
 base_attestation = json.loads(promotion_attestation_path.read_text(encoding="utf-8"))
 base_preflight_report = json.loads(staging_preflight_path.read_text(encoding="utf-8"))
@@ -4197,6 +4452,26 @@ verify_jwt_lineage_failure(
         },
     ),
     expected_fragment="jwtCustodyProof does not match the attestation",
+)
+verify_jwt_lineage_failure(
+    "invalid-custody-proof-tuple",
+    mutate_attestation=lambda attestation: attestation.__setitem__(
+        "jwtCustodyProof",
+        {
+            "proofId": "PREFLIGHT-JWT-ROTATION-001",
+            "custodyMode": "INVALID",
+            "contractVersion": 1,
+        },
+    ),
+    mutate_record=lambda record: record.__setitem__(
+        "jwtCustodyProof",
+        {
+            "proofId": "PREFLIGHT-JWT-ROTATION-001",
+            "custodyMode": "INVALID",
+            "contractVersion": 1,
+        },
+    ),
+    expected_fragment="does not select an accepted JWT custody proof tuple",
 )
 verify_jwt_lineage_failure(
     "extra-custody-proof-field",
@@ -4285,6 +4560,13 @@ verify_jwt_lineage_failure(
     mutate_record=lambda record: record.__setitem__(
         "jwtRotationEvidenceRef",
         "design/operations/deployments/staging/jwt-rotation/evidence.json#sha256:not-immutable",
+    ),
+    expected_fragment="must use <repository-path>#sha256:<digest> format",
+)
+verify_jwt_lineage_failure(
+    "non-immutable-secret-compliance-ref",
+    mutate_record=lambda record: record.__setitem__(
+        "secretComplianceEvidenceRef", secret_evidence_path.name
     ),
     expected_fragment="must use <repository-path>#sha256:<digest> format",
 )
@@ -4418,7 +4700,7 @@ staging_record_path.write_text(json.dumps(staging_record), encoding="utf-8")
 
 malformed_secret_evidence = json.loads(secret_evidence_path.read_text(encoding="utf-8"))
 malformed_secret_evidence["records"]["operator-credentials"]["immutableArtifactId"] = {"note": "sha256:"}
-secret_evidence_path.write_text(json.dumps(malformed_secret_evidence), encoding="utf-8")
+write_secret_evidence(malformed_secret_evidence)
 malformed_immutable_status, _, malformed_immutable_message, _, _ = module.promotion_check(
     promotion_attestation_path,
     [gateway_image, account_image],
@@ -4427,10 +4709,7 @@ malformed_immutable_status, _, malformed_immutable_message, _, _ = module.promot
 )
 if malformed_immutable_status != "fail" or "not immutable" not in malformed_immutable_message:
     raise SystemExit(f"malformed immutable evidence identifier was accepted: {malformed_immutable_message}")
-secret_evidence_path.write_text(
-    json.dumps(make_secret_evidence()),
-    encoding="utf-8",
-)
+write_secret_evidence(make_secret_evidence())
 
 bad_git_attestation = json.loads(promotion_attestation_path.read_text(encoding="utf-8"))
 bad_git_attestation["stagingOverlayCommitSha"] = "deadbeef"

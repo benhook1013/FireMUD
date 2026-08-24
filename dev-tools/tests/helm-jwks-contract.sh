@@ -16,6 +16,37 @@ helm template contract "$CHART_DIR" \
   -f "$CHART_DIR/values-hosted-shared.example.yaml" \
   >"$RENDERED"
 
+awk '
+  /^  jwt:$/ { skip = 1; next }
+  skip && /^  [^ ]/ { skip = 0 }
+  !skip { print }
+' \
+  "$CHART_DIR/values-hosted-shared.example.yaml" \
+  >"$TMP_DIR/values-without-jwt.yaml"
+for jwt_case in omitted null; do
+  case "$jwt_case" in
+    omitted)
+      if ! helm template nil-guard "$CHART_DIR" \
+        -f "$TMP_DIR/values-without-jwt.yaml" \
+        >"$TMP_DIR/nil-guard-$jwt_case.out" 2>"$TMP_DIR/nil-guard-$jwt_case.err"; then
+        echo "full Helm chart failed when previewStack.jwt was $jwt_case" >&2
+        cat "$TMP_DIR/nil-guard-$jwt_case.err" >&2
+        exit 1
+      fi
+      ;;
+    null)
+      if ! helm template nil-guard "$CHART_DIR" \
+        -f "$CHART_DIR/values-hosted-shared.example.yaml" \
+        --set previewStack.jwt=null \
+        >"$TMP_DIR/nil-guard-$jwt_case.out" 2>"$TMP_DIR/nil-guard-$jwt_case.err"; then
+        echo "full Helm chart failed when previewStack.jwt was $jwt_case" >&2
+        cat "$TMP_DIR/nil-guard-$jwt_case.err" >&2
+        exit 1
+      fi
+      ;;
+  esac
+done
+
 python3 - <<'PY' "$RENDERED"
 import copy
 import pathlib

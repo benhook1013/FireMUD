@@ -3135,6 +3135,87 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     (mutation_name, errors),
                 )
 
+    def test_moderation_operator_issuance_rejects_mismatched_or_extra_selector_fields(
+        self,
+    ):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        mutations = (
+            (
+                "non-moderation digest aliases owner enforcement",
+                "non_moderation",
+                "digest",
+                "owner_enforcement_digest",
+            ),
+            (
+                "policy intent digest aliases owner enforcement",
+                "moderation_policy_intent",
+                "digest",
+                "owner_enforcement_digest",
+            ),
+            (
+                "owner enforcement identity aliases policy intent",
+                "moderation_owner_enforcement",
+                "request_identity",
+                "policy_intent_request_id",
+            ),
+            (
+                "policy intent accepts owner digest field",
+                "moderation_policy_intent",
+                "owner_enforcement_digest",
+                "owner-enforcement-digest",
+            ),
+        )
+        for mutation_name, branch_name, field, value in mutations:
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                route = route_for(
+                    document,
+                    "account-service",
+                    "IssueHumanOperatorAuthorizationReference",
+                )
+                alternative = route["mutation_identity_selector"]["alternatives"][
+                    branch_name
+                ]
+                alternative[field] = value
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(
+                        f"mutation_identity_selector.alternatives.{branch_name}"
+                        in error
+                        for error in errors
+                    ),
+                    (mutation_name, errors),
+                )
+
+    def test_moderation_operator_issuance_rejects_missing_selector_pair_fields(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        mutations = (
+            ("non_moderation", "control_plane_request_id"),
+            ("moderation_policy_intent", "digest"),
+            ("moderation_owner_enforcement", "digest"),
+        )
+        for branch_name, field in mutations:
+            with self.subTest(branch=branch_name, field=field):
+                document = copy.deepcopy(baseline)
+                route = route_for(
+                    document,
+                    "account-service",
+                    "IssueHumanOperatorAuthorizationReference",
+                )
+                route["mutation_identity_selector"]["alternatives"][
+                    branch_name
+                ].pop(field)
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(
+                        f"mutation_identity_selector.alternatives.{branch_name} "
+                        "must contain exactly"
+                        in error
+                        for error in errors
+                    ),
+                    (branch_name, field, errors),
+                )
+
     def test_operator_reference_issuance_missing_required_fields_has_one_diagnostic(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = route_for(

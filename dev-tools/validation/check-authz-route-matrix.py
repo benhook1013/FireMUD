@@ -3305,6 +3305,12 @@ def validate_human_operator_issuance_branches(
                 if not isinstance(alternative, dict):
                     errors.append(f"{alternative_label} must be a mapping")
                     continue
+                expected_fields = set(expected)
+                if set(alternative) != expected_fields:
+                    errors.append(
+                        f"{alternative_label} must contain exactly "
+                        f"{sorted(expected_fields)}"
+                    )
                 for field, expected_value in expected.items():
                     if alternative.get(field) != expected_value:
                         errors.append(
