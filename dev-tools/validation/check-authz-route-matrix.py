@@ -594,6 +594,17 @@ LOGGING_ADMIN_IDEMPOTENT_OPERATOR_ROUTES = {
     ("logging-admin-service", "POST /tick-remediation/pause"),
     ("logging-admin-service", "POST /tick-remediation/resume"),
 }
+MODERATION_ACTION_ROUTE = ("logging-admin-service", "POST /moderation/actions")
+MODERATION_TENANT_ACTION_CATEGORIES = {
+    "gameplay_ban",
+    "chat_mute",
+    "chat_ban",
+}
+MODERATION_PLATFORM_ACTION_CATEGORY = "platform_access_ban"
+MODERATION_ACTION_BRANCHES = {
+    "tenant_restriction": MODERATION_TENANT_ACTION_CATEGORIES,
+    "platform_access_ban": {MODERATION_PLATFORM_ACTION_CATEGORY},
+}
 EXPECTED_ROUTE_CLASS_BRANCHES = {
     ("account_scoped", "platformAdmin_global"): {
         "scope": "account",
@@ -2254,6 +2265,12 @@ def validate_conditional_operator_route(
     route_key_value = route_set_key(route)
     if route_key_value not in CONDITIONAL_OPERATOR_ROUTES:
         return
+    action_category = applicability_value(route, "action_category", label, errors)
+    if (
+        route_key_value == MODERATION_ACTION_ROUTE
+        and action_category == MODERATION_PLATFORM_ACTION_CATEGORY
+    ):
+        return
     if value != "conditional_by_operator_role":
         errors.append(
             f"{label} operator ingress must use conditional_by_operator_role "
@@ -3108,6 +3125,200 @@ def validate_authority_unavailable_outcomes(
             )
 
 
+def validate_moderation_action_route_variants(
+    routes: list[Any],
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None = None,
+) -> None:
+    """Keep moderation action categories on their one canonical auth branch."""
+
+    matches = matching_routes(
+        routes, MODERATION_ACTION_ROUTE[0], MODERATION_ACTION_ROUTE[1]
+    )
+    if len(matches) != len(MODERATION_ACTION_BRANCHES):
+        append_unique_error(
+            errors,
+            "logging-admin-service POST /moderation/actions must declare exactly "
+            "one tenant-restriction and one platform-access-ban action branch",
+        )
+
+    observed: dict[str, dict[str, Any]] = {}
+    for route in matches:
+        label = route_label(route)
+        action_category = applicability_value(route, "action_category", label, errors)
+        if action_category not in MODERATION_ACTION_BRANCHES:
+            append_unique_error(
+                errors,
+                f"{label} must select one of the canonical moderation action "
+                f"branches: {sorted(MODERATION_ACTION_BRANCHES)}",
+            )
+            continue
+        if action_category in observed:
+            append_unique_error(
+                errors,
+                f"{label} duplicates moderation action branch {action_category!r}",
+            )
+            continue
+        observed[action_category] = route
+        accepted_categories = route.get("accepted_action_categories")
+        if (
+            not isinstance(accepted_categories, list)
+            or any(not isinstance(category, str) for category in accepted_categories)
+            or set(accepted_categories) != MODERATION_ACTION_BRANCHES[action_category]
+            or len(accepted_categories) != len(set(accepted_categories))
+        ):
+            append_unique_error(
+                errors,
+                f"{label} accepted_action_categories must exactly match the "
+                f"{action_category!r} moderation action branch",
+            )
+
+    if set(observed) != set(MODERATION_ACTION_BRANCHES):
+        return
+
+    tenant_route = observed["tenant_restriction"]
+    tenant_label = route_label(tenant_route)
+    if tenant_route.get("classification") != "tenant_regular":
+        append_unique_error(
+            errors,
+            f"{tenant_label} tenant-restriction branch must use classification "
+            "tenant_regular",
+        )
+    if tenant_route.get("scope") != "tenant":
+        append_unique_error(
+            errors,
+            f"{tenant_label} tenant-restriction branch must use scope=tenant",
+        )
+    tenant_required_fields = tenant_route.get("required_fields")
+    if (
+        not isinstance(tenant_required_fields, list)
+        or "tenant_id" not in tenant_required_fields
+    ):
+        append_unique_error(
+            errors,
+            f"{tenant_label} tenant-restriction branch required_fields must include tenant_id",
+        )
+
+    platform_route = observed["platform_access_ban"]
+    platform_label = route_label(platform_route)
+    if platform_route.get("classification") != "account_scoped":
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must use classification "
+            "account_scoped",
+        )
+    if platform_route.get("scope") != "account":
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must use scope=account",
+        )
+    if platform_route.get("global_platform_admin_membership_required") is not False:
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must set "
+            "global_platform_admin_membership_required=false",
+        )
+    if platform_route.get("tenant_billing_authority_generation_applies") is not False:
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must disable tenant "
+            "billing authority generation",
+        )
+    if platform_route.get("membership_authority_generation_applies") is not False:
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must disable membership "
+            "authority generation",
+        )
+    if "membership_authority_generation_condition" in platform_route:
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must not declare a "
+            "membership authority-generation condition",
+        )
+    if "operator_authorization_branches" in platform_route:
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must not declare "
+            "operator_authorization_branches",
+        )
+    if platform_route.get("account_authority_generation_applies") is not True:
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must apply account "
+            "authority generation",
+        )
+    if platform_route.get("issuer_authority_generation_applies") is not True:
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must apply issuer "
+            "authority generation",
+        )
+
+    platform_checks = route_live_checks(
+        platform_route, platform_label, errors, live_checks_cache
+    )
+    forbidden_checks = platform_checks & {
+        "membership",
+        "membership_generation",
+        "tenant_generation",
+        "target_tenant_generation",
+    }
+    if forbidden_checks:
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must not require tenant "
+            f"or membership checks: {sorted(forbidden_checks)}",
+        )
+    expected_platform_checks = {
+        "current_operator_authorization",
+        "issuer_generation",
+        "account_generation",
+        "current_global_role",
+        "role_appropriate_assurance",
+    }
+    if platform_checks != expected_platform_checks:
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must require exactly "
+            f"{sorted(expected_platform_checks)}",
+        )
+
+    roles = platform_route.get("roles")
+    if not isinstance(roles, dict) or roles.get("any_of") != ["platformAdmin"]:
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must authorize only "
+            "platformAdmin",
+        )
+    if platform_route.get("role_assurance") != PRIVILEGED_OPERATOR_ROLE_ASSURANCE:
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must require "
+            f"{PRIVILEGED_OPERATOR_ROLE_ASSURANCE}",
+        )
+    if platform_route.get("target_subject_binding") != "explicit_target_account_id":
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must bind "
+            "explicit_target_account_id",
+        )
+    if platform_route.get("platform_scope_action_contract") != {
+        "category": MODERATION_PLATFORM_ACTION_CATEGORY,
+        "status": "target_not_currently_routable",
+        "required_scope": "platform",
+        "required_operator_authorization_branch": "platformAdmin_global",
+        "tenant_role_authorization": "forbidden",
+        "target_subject": "global_account",
+        "tenant_id": "forbidden",
+    }:
+        append_unique_error(
+            errors,
+            f"{platform_label} platform_access_ban branch must declare the "
+            "platform-jurisdiction target-account contract",
+        )
+
+
 def validate_generation_applicability(
     routes: list[Any],
     errors: list[str],
@@ -3277,14 +3488,27 @@ def validate_logging_admin_idempotency(
     required_fields_cache: RequiredFieldsCache | None = None,
 ) -> None:
     for service, route_name in sorted(LOGGING_ADMIN_IDEMPOTENT_OPERATOR_ROUTES):
-        route = resolve_unique_route(
-            routes,
-            service,
-            route_name,
-            errors,
-            cardinality_errors,
-        )
-        if route is not None:
+        if (service, route_name) == MODERATION_ACTION_ROUTE:
+            matching = matching_routes(routes, service, route_name)
+            if not matching:
+                resolve_unique_route(
+                    routes,
+                    service,
+                    route_name,
+                    errors,
+                    cardinality_errors,
+                )
+            routes_to_validate = matching
+        else:
+            route = resolve_unique_route(
+                routes,
+                service,
+                route_name,
+                errors,
+                cardinality_errors,
+            )
+            routes_to_validate = [route] if route is not None else []
+        for route in routes_to_validate:
             validate_idempotency_contract(
                 route,
                 f"{service} {route_name}",
@@ -4314,6 +4538,7 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     validate_route_class_branch_table(document, errors)
     validate_authority_evidence_policy(document, errors)
     route_keys = validate_route_variants(routes, set(classifications), errors)
+    validate_moderation_action_route_variants(routes, errors, live_checks_cache)
     validate_route_statuses(routes, allowed_route_statuses, errors)
     validate_required_fields(routes, errors, required_fields_cache)
     cardinality_errors: set[str] = set()

@@ -2838,6 +2838,9 @@ routes:
     route: POST /moderation/actions
     scope: tenant
     classification: tenant_regular
+    applicability:
+      action_category: tenant_restriction
+    accepted_action_categories: [gameplay_ban, chat_mute, chat_ban]
     route_status: target_not_currently_routable
     tenant_billing_authority_generation_applies: true
     membership_authority_generation_applies: conditional_by_operator_role
@@ -2860,13 +2863,51 @@ routes:
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_moderation_record_idempotency
-    required_fields: [control_plane_request_id, actor_from_session, reason, target_account_id, action, mutation_digest]
+    required_fields: [control_plane_request_id, actor_from_session, reason, tenant_id, target_account_id, action, mutation_digest]
     operator_authorization_reference: account_issued_bounded_reference
     owner_call_status: coverage_drift_no_current_enforcement_owner_rpc
     canonical_errors:
       any_of: [IDEMPOTENCY_CONFLICT]
     roles:
       any_of: [moderator, tenantAdmin, platformAdmin]
+  - service: logging-admin-service
+    route: POST /moderation/actions
+    scope: account
+    classification: account_scoped
+    applicability:
+      action_category: platform_access_ban
+    accepted_action_categories: [platform_access_ban]
+    route_status: target_not_currently_routable
+    issuer_authority_generation_applies: true
+    account_authority_generation_applies: true
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
+    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
+    accepted_token_profiles: [control-ui]
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    role_assurance: privileged_control_when_global_role
+    subject_binding: authenticated_operator
+    target_subject_binding: explicit_target_account_id
+    required_live_checks: [current_operator_authorization, issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
+    global_platform_admin_membership_required: false
+    mutation_contract: durable_intent_then_moderation_record_idempotency
+    required_fields: [control_plane_request_id, actor_from_session, reason, target_account_id, action, mutation_digest]
+    operator_authorization_reference: account_issued_bounded_reference
+    owner_call_status: coverage_drift_no_current_enforcement_owner_rpc
+    platform_scope_action_contract:
+      category: platform_access_ban
+      status: target_not_currently_routable
+      required_scope: platform
+      required_operator_authorization_branch: platformAdmin_global
+      tenant_role_authorization: forbidden
+      target_subject: global_account
+      tenant_id: forbidden
+    canonical_errors:
+      any_of: [IDEMPOTENCY_CONFLICT]
+    roles:
+      any_of: [platformAdmin]
   - service: logging-admin-service
     route: POST /tick-remediation/pause
     scope: tenant

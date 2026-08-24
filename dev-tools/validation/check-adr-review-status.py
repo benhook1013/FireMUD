@@ -49,6 +49,11 @@ ADR_LINK_RE = re.compile(r"\[ADR (?P<number>\d{4})\]\((?P<target>[^)\r\n]+)\)")
 MARKDOWN_LINK_RE = re.compile(r"\[(?P<label>[^\]\r\n]+)\]\((?P<target>[^)\r\n]+)\)")
 ADR_LABEL_RE = re.compile(r"^ADR (?P<number>\d{4})$")
 REPLACEMENT_ADR_LABEL_RE = re.compile(r"^replacement ADR (?P<number>\d{4})$")
+DECISION_KEY_TOKEN_RE = r"`[A-Z0-9][A-Z0-9-]*`"
+SUPERSEDED_REPLACEMENT_KEY_FORM_RE = re.compile(
+    rf"^ by {DECISION_KEY_TOKEN_RE}(?:, {DECISION_KEY_TOKEN_RE})*"
+    rf"(?:,? and {DECISION_KEY_TOKEN_RE})?; "
+)
 REPLACEMENT_ADR_ENTRY_RE = re.compile(
     r"^- Replacement ADR: \[ADR (?P<number>\d{4})\]\((?P<target>[^)\r\n]+)\)$"
 )
@@ -72,8 +77,30 @@ REVIEW_PROVENANCE_HEADING_RE = re.compile(r"^## Applied Review Provenance[ \t]*$
 RETIRED_REVIEW_QUEUE_HEADING_RE = re.compile(
     r"^## (?:Prioritized )?Adversarial Review Queue[ \t]*$"
 )
-SUPERSEDED_SCAN_ALIAS_KEY_RE = re.compile(r"^MS-[A-Z0-9]+(?:-[A-Z0-9]+)+$")
+SUPERSEDED_SCAN_ALIAS_KEYS = frozenset({"MS-AA-TOKEN-REVOCATION"})
 SUPERSEDED_SCAN_ALIAS_SUFFIX = "; retained as a historical service-scan alias."
+DECISION_INVENTORY_PATHS = (
+    Path("design/project-management/design-alignment/decision-inventory-cross-cutting.md"),
+    Path("design/project-management/design-alignment/decision-inventory-microservices.md"),
+    Path("design/project-management/design-alignment/decision-inventory-specialized-runtime.md"),
+    Path("design/project-management/design-alignment/decision-inventory-product-operations.md"),
+)
+DECISION_KEY_CELL_RE = re.compile(r"`(?P<key>[A-Z0-9][A-Z0-9-]*)`")
+CANONICAL_DECISION_KEY_RE = re.compile(r"[A-Z0-9]+(?:-[A-Z0-9]+)+")
+DECISION_KEY_HEADING_RE = re.compile(
+    r"^#{3,6} `(?P<key>[A-Z0-9][A-Z0-9-]*)`(?:\s+-\s+.+)?$"
+)
+DECISION_KEY_TABLE_HEADERS = frozenset(
+    {
+        "Decision key",
+        "Key",
+        "Decision keys",
+        "Existing key",
+        "Existing key(s)",
+        "Existing key and preserved service decision label",
+        "Stable proposed key",
+    }
+)
 NO_ADR_OUTCOME_SUFFIX = "; no ADR required"
 NO_ADR_LINK_LABEL = "canonical contract"
 
@@ -309,25 +336,105 @@ def validate_decision_key_target(
     path: Path,
     repository_root: Path,
     line_number: int,
+    label: str,
     target: str,
+    decision_key_indexes: dict[Path, set[str]] | None = None,
 ) -> None:
+    if decision_key_indexes is None:
+        decision_key_indexes = {}
     _target_ref, target_path, resolved_target, _ = parse_adr_target(path, target)
-    try:
-        resolved_target.relative_to(repository_root.resolve())
-    except ValueError:
-        resolved_inside_repository = False
-    else:
-        resolved_inside_repository = True
+    approved_targets = {
+        (repository_root / inventory_path).resolve()
+        for inventory_path in DECISION_INVENTORY_PATHS
+    }
     if (
         target_path.is_absolute()
         or target_path.suffix.lower() != ".md"
-        or not resolved_inside_repository
+        or resolved_target not in approved_targets
         or not resolved_target.is_file()
     ):
         fail(
             f"{path}: superseded scan-alias replacement at line {line_number} "
-            f"must target an existing Markdown decision document: {target!r}"
+            "must target an existing Markdown decision document in the canonical "
+            f"decision inventory: {target!r}"
         )
+
+    decision_keys = decision_keys_for_inventory(resolved_target, decision_key_indexes)
+    if label not in decision_keys:
+        fail(
+            f"{path}: superseded scan-alias replacement at line {line_number} "
+            f"decision-key label {label!r} is not present in the canonical "
+            "decision inventory"
+        )
+
+
+def decision_keys_for_inventory(
+    inventory_path: Path,
+    decision_key_indexes: dict[Path, set[str]],
+) -> set[str]:
+    decision_keys = decision_key_indexes.get(inventory_path)
+    if decision_keys is None:
+        visible_lines = visible_markdown_lines(
+            inventory_path.read_text(encoding="utf-8"), inventory_path
+        )
+        decision_keys = set()
+        for line in visible_lines:
+            heading_match = DECISION_KEY_HEADING_RE.fullmatch(line.text)
+            if heading_match is not None:
+                key = heading_match.group("key")
+                if (
+                    CANONICAL_DECISION_KEY_RE.fullmatch(key)
+                    and key not in SUPERSEDED_SCAN_ALIAS_KEYS
+                ):
+                    decision_keys.add(key)
+
+        for index, line in enumerate(visible_lines[:-1]):
+            header = first_table_cell(line.text)
+            separator = first_table_cell(visible_lines[index + 1].text)
+            if (
+                header not in DECISION_KEY_TABLE_HEADERS
+                or separator is None
+                or TABLE_SEPARATOR_CELL_RE.fullmatch(separator) is None
+            ):
+                continue
+            for row in visible_lines[index + 2 :]:
+                first_cell = first_table_cell(row.text)
+                if first_cell is None:
+                    if not row.text.strip():
+                        continue
+                    break
+                key_match = re.match(
+                    r"^`(?P<key>[A-Z0-9][A-Z0-9-]*)`", first_cell
+                )
+                if key_match is None:
+                    continue
+                key = key_match.group("key")
+                if (
+                    CANONICAL_DECISION_KEY_RE.fullmatch(key)
+                    and key not in SUPERSEDED_SCAN_ALIAS_KEYS
+                ):
+                    decision_keys.add(key)
+        decision_key_indexes[inventory_path] = decision_keys
+    return decision_keys
+
+
+def first_table_cell(text: str) -> str | None:
+    stripped = text.strip()
+    if not (stripped.startswith("|") and "|" in stripped[1:]):
+        return None
+    return stripped[1:].split("|", 1)[0].strip()
+
+
+def canonical_decision_keys(
+    repository_root: Path,
+    decision_key_indexes: dict[Path, set[str]],
+) -> set[str]:
+    keys: set[str] = set()
+    for inventory_path in DECISION_INVENTORY_PATHS:
+        resolved_inventory_path = (repository_root / inventory_path).resolve()
+        if resolved_inventory_path.is_file():
+            keys.update(decision_keys_for_inventory(resolved_inventory_path, decision_key_indexes))
+    return keys
 
 
 def validate_superseded_scan_alias_outcome(
@@ -336,7 +443,10 @@ def validate_superseded_scan_alias_outcome(
     adr_dir: Path,
     line_number: int,
     outcome: str,
+    decision_key_indexes: dict[Path, set[str]] | None = None,
 ) -> None:
+    if decision_key_indexes is None:
+        decision_key_indexes = {}
     links = list(MARKDOWN_LINK_RE.finditer(outcome))
     if not links:
         fail(
@@ -371,7 +481,9 @@ def validate_superseded_scan_alias_outcome(
             path,
             repository_root,
             line_number,
+            label,
             target,
+            decision_key_indexes,
         )
 
 
@@ -428,10 +540,83 @@ def validate_no_adr_outcome(
         )
 
 
+def validate_superseded_no_adr_outcome(
+    path: Path,
+    repository_root: Path,
+    adr_dir: Path,
+    line_number: int,
+    outcome: str,
+    decision_key_indexes: dict[Path, set[str]],
+) -> None:
+    replacement_key_match = SUPERSEDED_REPLACEMENT_KEY_FORM_RE.match(outcome)
+    if replacement_key_match is None:
+        fail(
+            f"{path}: superseded no-ADR row at line {line_number} must use "
+            "the documented 'by `DECISION-KEY`' replacement-key form"
+        )
+    replacement_keys = {
+        match.group("key")
+        for match in DECISION_KEY_CELL_RE.finditer(replacement_key_match.group(0))
+    }
+    unknown_keys = sorted(
+        replacement_keys - canonical_decision_keys(repository_root, decision_key_indexes)
+    )
+    if unknown_keys:
+        fail(
+            f"{path}: superseded no-ADR row at line {line_number} contains "
+            "replacement key(s) not present in the canonical decision inventories: "
+            + ", ".join(unknown_keys)
+        )
+    if not outcome.endswith(NO_ADR_OUTCOME_SUFFIX):
+        fail(
+            f"{path}: checked no-ADR row at line {line_number} must end "
+            f"exactly with {NO_ADR_OUTCOME_SUFFIX!r}"
+        )
+
+    links = list(MARKDOWN_LINK_RE.finditer(outcome))
+    if not links:
+        fail(
+            f"{path}: superseded no-ADR row at line {line_number} must "
+            "contain replacement ADR Markdown links"
+        )
+
+    replacement_numbers: set[int] = set()
+    for link in links:
+        label = link.group("label")
+        target = link.group("target")
+        if ADR_LABEL_RE.fullmatch(label):
+            fail(
+                f"{path}: superseded no-ADR row at line {line_number} "
+                "must not use exact [ADR NNNN] provenance labels"
+            )
+        replacement_adr = REPLACEMENT_ADR_LABEL_RE.fullmatch(label)
+        if replacement_adr is None:
+            fail(
+                f"{path}: superseded no-ADR row at line {line_number} "
+                f"has non-replacement link label {label!r}"
+            )
+        replacement_number = int(replacement_adr.group("number"))
+        if replacement_number in replacement_numbers:
+            fail(
+                f"{path}: superseded no-ADR row at line {line_number} "
+                f"contains duplicate replacement ADR {replacement_number:04d} "
+                "links"
+            )
+        validate_replacement_adr_target(
+            path,
+            adr_dir,
+            line_number,
+            replacement_number,
+            target,
+            relationship="superseded no-ADR replacement",
+        )
+        replacement_numbers.add(replacement_number)
+
+
 def is_superseded_scan_alias(key: str, outcome: str, disposition: str) -> bool:
     return (
         disposition == "Superseded"
-        and SUPERSEDED_SCAN_ALIAS_KEY_RE.fullmatch(key) is not None
+        and key in SUPERSEDED_SCAN_ALIAS_KEYS
         and outcome.endswith(SUPERSEDED_SCAN_ALIAS_SUFFIX)
     )
 
@@ -793,6 +978,7 @@ def checked_reviews(
             f"{section.open_fence.opening_line} with {section.open_fence.marker}"
         )
 
+    decision_key_indexes: dict[Path, set[str]] = {}
     for markdown_line in section.visible_lines:
         line_number = markdown_line.number
         line = markdown_line.text
@@ -823,6 +1009,12 @@ def checked_reviews(
             outcome,
             review.disposition,
         )
+        if review.key in SUPERSEDED_SCAN_ALIAS_KEYS and not is_scan_alias:
+            fail(
+                f"{path}: historical service-scan alias {review.key!r} at line "
+                f"{line_number} must use the Superseded disposition and end "
+                f"with {SUPERSEDED_SCAN_ALIAS_SUFFIX!r}"
+            )
         if is_scan_alias:
             validate_superseded_scan_alias_outcome(
                 path,
@@ -830,6 +1022,7 @@ def checked_reviews(
                 adr_dir,
                 line_number,
                 outcome,
+                decision_key_indexes,
             )
         outcome_adr_numbers: list[int] = []
         for adr_match in ADR_LINK_RE.finditer(outcome):
@@ -848,6 +1041,11 @@ def checked_reviews(
             )
 
         is_no_adr = False
+        outcome_links = list(MARKDOWN_LINK_RE.finditer(outcome))
+        has_replacement_adr_label = any(
+            REPLACEMENT_ADR_LABEL_RE.fullmatch(link.group("label"))
+            for link in outcome_links
+        )
         if (
             review.disposition in {"Accepted", "Revised"}
             and not is_scan_alias
@@ -859,6 +1057,26 @@ def checked_reviews(
                 adr_dir,
                 line_number,
                 outcome,
+            )
+            is_no_adr = True
+        elif (
+            review.disposition == "Superseded"
+            and not is_scan_alias
+            and outcome.endswith(NO_ADR_OUTCOME_SUFFIX)
+        ):
+            if not has_replacement_adr_label:
+                fail(
+                    f"{path}: checked Superseded row at line {line_number} "
+                    "must use exact [ADR NNNN] provenance or the documented "
+                    "replacement-map no-ADR form"
+                )
+            validate_superseded_no_adr_outcome(
+                path,
+                repository_root,
+                adr_dir,
+                line_number,
+                outcome,
+                decision_key_indexes,
             )
             is_no_adr = True
 
@@ -882,7 +1100,9 @@ def checked_reviews(
         # A superseded scan alias points to replacement decisions; those ADRs
         # are not provenance for the historical alias row itself.
         review_adr_numbers = (
-            [] if is_scan_alias or is_no_adr else outcome_adr_numbers
+            []
+            if is_scan_alias or is_no_adr
+            else outcome_adr_numbers
         )
         for number in review_adr_numbers:
             existing = reviews.setdefault(number, [])

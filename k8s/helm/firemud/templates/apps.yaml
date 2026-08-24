@@ -138,13 +138,8 @@ spec:
             secretName: jwt-signing-keys
         {{- if eq $service.name "account-service" }}
         - name: jwt-jwks
-          {{- if eq (default "ConfigMap" $.Values.previewStack.jwt.jwksResourceKind) "Secret" }}
-          secret:
-            secretName: jwt-jwks
-          {{- else }}
           configMap:
             name: jwt-jwks
-          {{- end }}
         {{- end }}
         {{- end }}
       {{- end }}

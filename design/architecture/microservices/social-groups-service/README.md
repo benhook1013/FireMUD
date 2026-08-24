@@ -2,21 +2,26 @@
 
 ## Overview
 
-Provides chat, guild, and social networking features across games. Basic REST APIs are implemented for guilds, friends, mail, and chat; REST `/chat` is implemented and Gateway-routed, with its current caller-binding and moderation limitations documented in [API Contracts](./api-contracts.md). Real-time WebSocket delivery is available.
+Provides relationships, groups, audiences, social-channel communication, mail, applicable history, and social delivery state across games. Basic REST and gRPC APIs are implemented for guilds, friends, chat, and mail; the player-facing Gateway `/api/social/friends` edge route is currently gated until directional block-state modeling and revalidation exist, while the service-local friend implementation remains available for direct-service and future non-edge use. REST `/chat` is implemented, but its Gateway edge route is currently gated until authenticated-sender binding and `mutationDigest/v1` conflict proof exist. Its current caller-binding, block-state, and moderation limitations are documented in [API Contracts](./api-contracts.md). Real-time delivery is available through the transport owner; Social & Groups does not own connected gameplay transports.
 
 ## Implementation Status
 
-The current live moderation seam is `SendMessage` consuming the synchronous `EvaluateModerationPolicy` read at `CHAT_SEND`; it fails closed when required policy evidence is unavailable or stale, but only after a cache/replay miss. The REST `/chat` controller currently checks the request's `senderAccountId` through the Social access guard (current-account or tenant access), and chat replay is keyed only by `{tenantId,effectId}` with no authenticated-caller or canonical full-request-digest binding. Target owner-local `chat_mute`/`chat_ban` restriction tables, commands, durable revisions, notices, and bounded appeal outcomes are target-only/partial and are not current persisted controls. Every REST and gRPC write must eventually traverse that same owner-local restriction boundary before persistence/publication. The target owner-local enforcement model avoids making Logging & Admin a routine chat hot-path dependency; until that target model is implemented, the current `CHAT_SEND` path depends synchronously on the `EvaluateModerationPolicy` read. Logging & Admin remains the policy-input, case, evidence, and audit owner.
+The current friend-presence implementation reads tenant-scoped reciprocal-active links but has no directional block-state model or block revalidation. The player-facing Gateway `/api/social/friends` route is therefore gated; direct service-local friend reads retain the current reciprocal-active filtering for direct-service and future non-edge use and do not claim the target player-facing safety boundary. The current live moderation seam is `SendMessage` consuming the synchronous `EvaluateModerationPolicy` read at `CHAT_SEND`; it fails closed when required policy evidence is unavailable or stale, but only after a cache/replay miss. The externally reachable Gateway `/api/social/chat` route is currently gated until authenticated-sender binding and `mutationDigest/v1` conflict proof exist. The direct REST `/chat` controller currently checks the request's `senderAccountId` through the Social access guard (current-account or tenant access), and chat replay is keyed only by `{tenantId,effectId}` with no authenticated-caller or canonical full-request-digest binding. Target owner-local `chat_mute`/`chat_ban` restriction tables, commands, durable revisions, notices, and bounded appeal outcomes are target-only/partial and are not current persisted controls. Every REST and gRPC chat write must eventually traverse that same owner-local restriction boundary before persistence/publication. The target owner-local enforcement model avoids making Logging & Admin a routine chat hot-path dependency; until that target model is implemented, the current `CHAT_SEND` path depends synchronously on the `EvaluateModerationPolicy` read. Logging & Admin remains the policy-input, case, evidence, and audit owner.
 
 Target player-safe outcomes remain distinct: `CHAT_MUTE_SEND_DENIED` denies sending while ordinary receipt remains available; `CHAT_BAN_PARTICIPATION_DENIED` denies ordinary participation, sending, and history while essential system and moderation notices remain deliverable. These target codes do not claim that the current read seam has converged on durable owner-local enforcement.
 
+## Gameplay Proof Status
+
+Current gameplay-connected proof covers `SAY`, `WHISPER`, and `TELL` delivery from Game Session through Game Logic into the Social & Groups stub, including canonical actor and live-recipient views. Target typed memberships, Entity-owned value/attachments, and communication-type-specific storage/history/acknowledgement are not complete runtime proof.
+
 ### Responsibilities
 
-- Deliver real-time chat notifications
-- Synchronize guild and friend lists in real time
-- Manage guild creation, membership, and roles
-- Maintain friend lists and cross-game social graphs
-- **Target state:** Store chat logs locally and enforce owner-local `chat_mute`/`chat_ban` restrictions. Current implementation status is recorded above. Profanity events remain evidence/report input to Logging & Admin.
+- Apply social membership, privacy, moderation, history, and delivery-state rules to authorized communication plans
+- Deliver social-channel and mail notifications through typed delivery state; Game Session remains the connected gameplay transport owner
+- Manage guild/group definitions, declared membership subject type, roles, ownership, and alliances
+- Maintain account-global and tenant-local friend/block relationships and bounded social audiences
+- Store each supported communication type according to its declared history/retention/acknowledgement contract; target state is to enforce owner-local `chat_mute`/`chat_ban` restrictions, while the current `CHAT_SEND` seam synchronously consumes `EvaluateModerationPolicy`; profanity events remain evidence/report input to Logging & Admin
+- Keep Entity-owned containers, items, currency, inventory, and mail attachments outside Social authority; retain ACLs and stable owner references only
 
 ## Key Features
 
@@ -24,8 +29,8 @@ Target player-safe outcomes remain distinct: `CHAT_MUTE_SEND_DENIED` denies send
 - Private messaging between players
 - Asynchronous player-to-player mail
 - Guild creation and membership management
-- Shared guild storage and alliance system
-- Friend lists scoped both to individual games and to overall accounts; account-level friends automatically appear in-game when enabled
+- Guild ACLs and typed bindings to Entity-owned containers, plus alliance metadata
+- Friend/block relationships scoped either to tenant-free account pairs or distinct tenant-local records; account-level friends may appear in-game when enabled
 - In-game social chat plus account-to-account direct messaging
 - Presence indicators notify when friends come online
 - Game creators can broadcast announcements and send out-of-game emails
@@ -37,16 +42,11 @@ The gameplay `WHO` command is intentionally a current-game-instance presence vie
 
 ## Current Scope Notes
 
-- The current gameplay-connected communication slice is intentionally narrow in implementation: it proves room-local `say` delivery from Game Session through Game Logic into Social & Groups, including canonical sender/listener room speech, while establishing the broader shared communication model.
-- Future communication work is expected to broaden this into a richer communication model that distinguishes:
-  - the communication act/type (`say`, `whisper`, `tell`, `shout`, guild/system/game-defined variants),
-  - the target or propagation scope (room, area, region, map, continent, guild/group, account-directed, and other configured channels),
-  - recipient resolution owned by that target/scope,
-  - and per-recipient presentation for ordinary listeners versus observer/interceptor roles.
-- Those broader scope and routing semantics should be modeled explicitly rather than treating all verbs as cosmetic aliases of one generic room broadcast.
-- In particular, in-world communication should usually target a room, area, or other scope object and let that scope resolve listeners, overhearers, spies, magical observers, and similar mechanics.
-- The target-state observer model should be layered: communication type sets baseline observability, the target/scope resolves qualified listeners and observers, and recipient capabilities/effects determine whether a qualified observer gets full content, partial content, or only metadata.
-- Even for communication types that obviously need Social & Groups for membership, history, moderation, or fanout, the action should still enter through Game Logic first so gameplay interception, surveillance, magical listening, or similar mechanics can participate consistently.
+- World/gameplay communication enters Game Logic when topology, perception, abilities, effects, authored interception, or other gameplay state determines its meaning. Social & Groups then applies social audience, moderation, history, and delivery-state rules; Game Session owns final connected gameplay transport delivery.
+- Account messaging, ordinary guild/group channels, browser social interactions, and ordinary account or social mail enter Social & Groups directly after authentication and applicable membership, privacy, and moderation checks. An in-game adapter does not turn those operations into Game Logic actions or expose private content to tenant-authored scripts; world-specific mail with explicit gameplay semantics follows the gameplay communication class in [ADR 0147](../../decisions/adr-0147-explicit-communication-classes-and-owner-delivery.md), while [ADR 0148](../../decisions/adr-0148-social-relationship-authority-and-entity-owned-value.md) remains the authority for social relationships and Entity-owned value/attachments.
+- Target gameplay communication uses explicit type/version and target/scope metadata. Candidate-specific observer views are selected from a closed type-declared vocabulary; Social does not infer spatial observers or broaden a Game Logic plan. Gameplay `TELL` is non-observable by default. The target declarations and mechanics remain deferred as recorded in [Implementation Status](#implementation-status).
+- `SHOUT` remains deferred until a selected game profile publishes a named bounded topology scope and fanout limits. No area/region policy or platform-global scope is implied.
+- Active [ADR 0147](../../decisions/adr-0147-explicit-communication-classes-and-owner-delivery.md), [ADR 0148](../../decisions/adr-0148-social-relationship-authority-and-entity-owned-value.md), [ADR 0149](../../decisions/adr-0149-communication-type-specific-history-and-retention.md), and [ADR 0150](../../decisions/adr-0150-closed-observer-views-and-profile-scoped-shout.md) record the reviewed outcomes mapped from archive ADRs 0134–0137. The former room-local `SOCIAL-01` staging assumption is superseded provenance, not a competing owner contract.
 
 ## Document Map
 
@@ -62,9 +62,11 @@ The gameplay `WHO` command is intentionally a current-game-instance presence vie
 ## Dependencies
 
 - **Internal:**
-  - Account Service for user identities
-  - Logging & Admin Service consumes chat logs for moderation
-- **External:** PostgreSQL for social data
+  - Account Service for identity, profile-visibility policy, and account security facts
+  - Game Session Service for raw gameplay presence and connected transport delivery
+  - Entity Management Service for containers, items, currency, inventory, and mail attachment/escrow operations
+  - Logging & Admin Service for moderation intent, cases, bounded appeals/evidence, and audit
+- **External:** PostgreSQL for social state; Cache/Rate-Limit Redis for rebuildable fanout/history projections, delivery queues, and rate limits
 
 ## Related Documentation
 

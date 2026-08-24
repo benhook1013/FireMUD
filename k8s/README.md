@@ -40,7 +40,7 @@ PRs that modify `k8s/` run `.github/workflows/validate-kustomize-overlays.yml`, 
 Player-facing bootstrap bindings are intentionally environment-owned rather than rendered inline in the overlays. The canonical Kustomize path expects:
 
 - `base/firemud-db-env.yaml` for the shared `firemud-config` `ConfigMap`
-- externally managed `postgres-credentials`, `jwt-signing-keys`, and `jwt-jwks` Secrets
+- externally managed `postgres-credentials` and `jwt-signing-keys` Secrets plus the public `jwt-jwks` ConfigMap
 - externally managed workload mTLS material such as `firemud-grpc-tls`
 - expected-binding manifests under `design/operations/environments/*` plus `dev-tools/deploy/preflight.py` to validate that those bindings match the target environment contract
 

@@ -139,6 +139,203 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     def test_current_matrix_passes(self):
         self.assertEqual([], self.validator.validate(MATRIX))
 
+    def test_moderation_action_categories_select_exact_authorization_branch(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        routes = [
+            route
+            for route in document["routes"]
+            if route.get("service") == "logging-admin-service"
+            and route.get("route") == "POST /moderation/actions"
+        ]
+        self.assertEqual(2, len(routes))
+        branches = {
+            route["applicability"]["action_category"]: route for route in routes
+        }
+        self.assertEqual(
+            {"tenant_restriction", "platform_access_ban"}, set(branches)
+        )
+        self.assertEqual(
+            ["gameplay_ban", "chat_mute", "chat_ban"],
+            branches["tenant_restriction"]["accepted_action_categories"],
+        )
+        self.assertEqual(
+            ["platform_access_ban"],
+            branches["platform_access_ban"]["accepted_action_categories"],
+        )
+        platform = branches["platform_access_ban"]
+        self.assertEqual("account_scoped", platform["classification"])
+        self.assertEqual("account", platform["scope"])
+        self.assertEqual(["platformAdmin"], platform["roles"]["any_of"])
+        self.assertEqual("explicit_target_account_id", platform["target_subject_binding"])
+        self.assertFalse(platform["tenant_billing_authority_generation_applies"])
+        self.assertFalse(platform["membership_authority_generation_applies"])
+        self.assertNotIn("target_tenant_generation", platform["required_live_checks"])
+
+    def test_platform_moderation_branch_rejects_tenant_authority_regressions(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        mutations = (
+            (
+                "classification",
+                lambda route: route.__setitem__("classification", "tenant_regular"),
+                "platform_access_ban branch must use classification account_scoped",
+            ),
+            (
+                "scope",
+                lambda route: route.__setitem__("scope", "tenant"),
+                "platform_access_ban branch must use scope=account",
+            ),
+            (
+                "global platform admin membership",
+                lambda route: route.__setitem__(
+                    "global_platform_admin_membership_required", True
+                ),
+                (
+                    "platform_access_ban branch must set "
+                    "global_platform_admin_membership_required=false"
+                ),
+            ),
+            (
+                "tenant billing generation",
+                lambda route: route.__setitem__(
+                    "tenant_billing_authority_generation_applies", True
+                ),
+                "platform_access_ban branch must disable tenant billing authority generation",
+            ),
+            (
+                "membership generation",
+                lambda route: route.__setitem__(
+                    "membership_authority_generation_applies", True
+                ),
+                "platform_access_ban branch must disable membership authority generation",
+            ),
+            (
+                "target tenant generation check",
+                lambda route: route["required_live_checks"].append(
+                    "target_tenant_generation"
+                ),
+                "platform_access_ban branch must not require tenant or membership checks",
+            ),
+            (
+                "tenant role",
+                lambda route: route.__setitem__(
+                    "roles", {"any_of": ["moderator", "platformAdmin"]}
+                ),
+                "platform_access_ban branch must authorize only platformAdmin",
+            ),
+            (
+                "operator authorization branches",
+                lambda route: route.__setitem__(
+                    "operator_authorization_branches",
+                    [
+                        {
+                            "branch": "tenant_role",
+                            "required_live_checks": [
+                                "membership_when_tenant_role",
+                                "membership_generation",
+                                "tenant_generation",
+                            ],
+                        },
+                        {
+                            "branch": "platformAdmin_global",
+                            "required_live_checks": [
+                                "current_operator_roles",
+                                "current_global_role",
+                                "role_appropriate_assurance",
+                                "target_tenant_generation",
+                            ],
+                        },
+                    ],
+                ),
+                "platform_access_ban branch must not declare operator_authorization_branches",
+            ),
+        )
+        for mutation_name, mutate, expected_error in mutations:
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                platform = next(
+                    route
+                    for route in document["routes"]
+                    if route.get("service") == "logging-admin-service"
+                    and route.get("route") == "POST /moderation/actions"
+                    and route.get("applicability", {}).get("action_category")
+                    == "platform_access_ban"
+                )
+                mutate(platform)
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(expected_error in error for error in errors),
+                    (mutation_name, errors),
+                )
+
+    def test_tenant_moderation_branch_requires_explicit_tenant_id(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        tenant = next(
+            route
+            for route in baseline["routes"]
+            if route.get("service") == "logging-admin-service"
+            and route.get("route") == "POST /moderation/actions"
+            and route.get("applicability", {}).get("action_category")
+            == "tenant_restriction"
+        )
+        self.assertIn("tenant_id", tenant["required_fields"])
+
+        tenant["required_fields"].remove("tenant_id")
+        errors = validate_document(self.validator, baseline)
+
+        self.assertTrue(
+            any(
+                "tenant-restriction branch required_fields must include tenant_id"
+                in error
+                for error in errors
+            ),
+            errors,
+        )
+
+    def test_malformed_moderation_applicability_fails_closed_without_exception(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        platform = next(
+            route
+            for route in document["routes"]
+            if route.get("service") == "logging-admin-service"
+            and route.get("route") == "POST /moderation/actions"
+            and route.get("applicability", {}).get("action_category")
+            == "platform_access_ban"
+        )
+        platform["applicability"] = []
+
+        errors = validate_document(self.validator, document)
+
+        self.assertTrue(
+            any(
+                "must select one of the canonical moderation action branches"
+                in error
+                for error in errors
+            ),
+            errors,
+        )
+
+    def test_malformed_platform_moderation_live_checks_use_canonical_diagnostic(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        platform = next(
+            route
+            for route in document["routes"]
+            if route.get("service") == "logging-admin-service"
+            and route.get("route") == "POST /moderation/actions"
+            and route.get("applicability", {}).get("action_category")
+            == "platform_access_ban"
+        )
+        platform["required_live_checks"] = None
+
+        errors = validate_document(self.validator, document)
+
+        self.assertTrue(
+            any(
+                "required_live_checks must be a list of strings" in error
+                for error in errors
+            ),
+            errors,
+        )
+
     def test_owner_route_metadata_is_explicit(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         routes = grouped_routes(document, "game-session-service")
@@ -173,7 +370,19 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         routes = grouped_routes(document, "logging-admin-service")
         for route_name in route_names:
             self.assertTrue(routes[route_name])
-            for route in routes[route_name]:
+            variants = routes[route_name]
+            if route_name == "POST /moderation/actions":
+                variants = [
+                    route
+                    for route in variants
+                    if route["applicability"]["action_category"]
+                    == "tenant_restriction"
+                ]
+                self.assertTrue(
+                    variants,
+                    f"{route_name} must define a tenant_restriction variant",
+                )
+            for route in variants:
                 self.assertEqual(
                     "conditional_by_operator_role",
                     route["membership_authority_generation_applies"],
@@ -400,7 +609,20 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         for service, route_name in sorted(self.validator.CONDITIONAL_OPERATOR_ROUTES):
             with self.subTest(service=service, route=route_name):
                 document = copy.deepcopy(baseline)
-                route = route_for(document, service, route_name)
+                if (service, route_name) == (
+                    "logging-admin-service",
+                    "POST /moderation/actions",
+                ):
+                    route = next(
+                        route
+                        for route in document["routes"]
+                        if route.get("service") == service
+                        and route.get("route") == route_name
+                        and route.get("applicability", {}).get("action_category")
+                        == "tenant_restriction"
+                    )
+                else:
+                    route = route_for(document, service, route_name)
                 branches = {
                     branch["branch"]: set(branch["required_live_checks"])
                     for branch in route["operator_authorization_branches"]
@@ -783,12 +1005,28 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         for service, route_name in sorted(
             self.validator.LOGGING_ADMIN_IDEMPOTENT_OPERATOR_ROUTES
         ):
-            route = route_for(document, service, route_name)
-            self.assertIn("mutation_digest", route["required_fields"])
-            self.assertIn(
-                "IDEMPOTENCY_CONFLICT",
-                route["canonical_errors"]["any_of"],
-            )
+            if (service, route_name) == (
+                "logging-admin-service",
+                "POST /moderation/actions",
+            ):
+                variants = [
+                    route
+                    for route in document["routes"]
+                    if route.get("service") == service
+                    and route.get("route") == route_name
+                ]
+                self.assertTrue(
+                    variants,
+                    f"{service} {route_name} must define at least one moderation-action variant",
+                )
+            else:
+                variants = [route_for(document, service, route_name)]
+            for route in variants:
+                self.assertIn("mutation_digest", route["required_fields"])
+                self.assertIn(
+                    "IDEMPOTENCY_CONFLICT",
+                    route["canonical_errors"]["any_of"],
+                )
 
         route = route_for(
             document,

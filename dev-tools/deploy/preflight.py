@@ -53,6 +53,13 @@ JSON_READ_ERRORS = (OSError, UnicodeError, json.JSONDecodeError)
 YAML_READ_ERRORS = (OSError, UnicodeError, yaml.YAMLError)
 TIMESTAMP_ERRORS = (TypeError, ValueError, AttributeError, OverflowError)
 SECRET_LOOKUP_TIMEOUT_SECONDS = 30
+JWT_CUSTODY_MODES = (
+    "LEGACY_SECRET_DIAGNOSTIC",
+    "INTERIM_ACCOUNT_ONLY_MOUNTED_FALLBACK",
+    "TARGET_NON_EXPORTABLE_SIGNER",
+)
+IMPLEMENTED_JWT_CUSTODY_MODE = "LEGACY_SECRET_DIAGNOSTIC"
+CANONICAL_JWKS_REF = "configmap://firemud/jwt-jwks"
 
 # These are the policy results emitted by this executable. The two JWT policies
 # documented as target-state-only are deliberately not included until they are
@@ -313,6 +320,38 @@ def secret_lookup_failure(secret_name: str) -> str | None:
         return f"Missing required Secret in cluster: firemud/{secret_name}"
     detail = stderr or "kubectl returned a non-zero status without stderr"
     return f"Secret lookup could not be verified for firemud/{secret_name}: {detail}"
+
+
+def config_map_lookup_failure(config_map_name: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["kubectl", "get", "configmap", "-n", "firemud", config_map_name, "-o", "json"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=SECRET_LOOKUP_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired, UnicodeError) as exc:
+        return f"ConfigMap lookup could not be verified for firemud/{config_map_name}: {exc}"
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        if "(NotFound)" in stderr:
+            return f"Missing required ConfigMap in cluster: firemud/{config_map_name}"
+        detail = stderr or "kubectl returned a non-zero status without stderr"
+        return f"ConfigMap lookup could not be verified for firemud/{config_map_name}: {detail}"
+
+    try:
+        resource = json.loads(result.stdout)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        return f"ConfigMap lookup could not be verified for firemud/{config_map_name}: invalid JSON: {exc}"
+    data = resource.get("data") if isinstance(resource, dict) else None
+    jwks_json = data.get("jwks.json") if isinstance(data, dict) else None
+    if not isinstance(jwks_json, str) or not jwks_json.strip():
+        return (
+            f"Required ConfigMap in cluster firemud/{config_map_name} must contain a non-empty "
+            "data.jwks.json string"
+        )
+    return None
 
 
 def is_missing(value: Any) -> bool:
@@ -1564,6 +1603,17 @@ def secret_binding_name(ref: Any) -> str | None:
     return segments[0] or None
 
 
+def config_map_binding_name(ref: Any) -> tuple[str, str] | None:
+    parsed = parse_binding_ref(ref)
+    if parsed is None:
+        return None
+    scheme, namespace, segments = parsed
+    if scheme != "configmap" or len(segments) != 1:
+        return None
+    name = segments[0]
+    return (namespace, name) if name else None
+
+
 def rendered_references_image_pull_secret(documents: list[dict[str, Any]], name: str) -> bool:
     for document in documents:
         if document.get("kind") == "ServiceAccount":
@@ -1627,6 +1677,26 @@ def has_secret_mount(
     return False
 
 
+def has_config_map_mount(
+    document: dict[str, Any],
+    container: dict[str, Any],
+    config_map_name: str,
+    required_mount: str,
+) -> bool:
+    spec = (((document.get("spec") or {}).get("template") or {}).get("spec") or {})
+    config_maps = {
+        volume.get("name"): ((volume.get("configMap") or {}).get("name"))
+        for volume in spec.get("volumes") or []
+        if isinstance(volume, dict)
+    }
+    for mount in container.get("volumeMounts") or []:
+        mounted_config_map = config_maps.get(mount.get("name"))
+        mount_path = str(mount.get("mountPath") or "")
+        if mounted_config_map == config_map_name and mount_path == required_mount:
+            return True
+    return False
+
+
 def has_secret_reference(documents: list[dict[str, Any]], name: str) -> bool:
     for document in documents:
         for _, container, volumes in primary_containers(document):
@@ -1686,6 +1756,7 @@ def expected_binding_checks(
             "internalBindings.postgres.credentialsRef",
             "internalBindings.redis.coordination.endpoint",
             "internalBindings.redis.cache.endpoint",
+            "internalBindings.jwt.custodyMode",
             "internalBindings.jwt.signingKeysRef",
             "internalBindings.jwt.jwksRef",
             "internalBindings.certificates.issuerRef",
@@ -1723,10 +1794,13 @@ def expected_binding_checks(
         if exceptional_pause_enabled:
             required_internal.append("internalBindings.certificates.backupControlPlaneClientRef")
         missing = [key for key in required_internal if not get(data, key)]
+        custody_mode = get(data, "internalBindings.jwt.custodyMode")
+        custody_mode_invalid = (
+            not isinstance(custody_mode, str) or custody_mode not in JWT_CUSTODY_MODES
+        )
         secret_refs = [
             get(data, "internalBindings.postgres.credentialsRef"),
             get(data, "internalBindings.jwt.signingKeysRef"),
-            get(data, "internalBindings.jwt.jwksRef"),
         ]
         invalid_internal_refs = [
             error
@@ -1746,7 +1820,7 @@ def expected_binding_checks(
                 binding_ref_format_error(
                     "internalBindings.jwt.jwksRef",
                     get(data, "internalBindings.jwt.jwksRef"),
-                    allowed_schemes={"secret"},
+                    allowed_schemes={"configmap"},
                     exact_segment_count=1,
                 ),
                 binding_ref_format_error(
@@ -1798,8 +1872,43 @@ def expected_binding_checks(
             name = secret_binding_name(ref_value)
             if name and not rendered_references_secret(documents, name):
                 missing_rendered_refs.append(name)
+        jwks_ref = get(data, "internalBindings.jwt.jwksRef")
+        jwks_binding = config_map_binding_name(jwks_ref)
+        if jwks_binding is not None and f"configmap://{jwks_binding[0]}/{jwks_binding[1]}" != CANONICAL_JWKS_REF:
+            invalid_internal_refs.append(
+                f"internalBindings.jwt.jwksRef must be the canonical {CANONICAL_JWKS_REF} reference"
+            )
         registry_pull_secret = secret_binding_name(get(data, "internalBindings.registry.imagePullSecretRef"))
-        if pause_config_error:
+        if missing and "internalBindings.jwt.custodyMode" in missing:
+            results.append(
+                CheckResult(
+                    "PREFLIGHT-SECRETS-002",
+                    True,
+                    "fail",
+                    "Expected-bindings missing internal keys: " + ", ".join(missing),
+                )
+            )
+        elif custody_mode_invalid:
+            results.append(
+                CheckResult(
+                    "PREFLIGHT-SECRETS-002",
+                    True,
+                    "fail",
+                    "Expected-bindings internalBindings.jwt.custodyMode must be one of: "
+                    + ", ".join(JWT_CUSTODY_MODES),
+                )
+            )
+        elif custody_mode != IMPLEMENTED_JWT_CUSTODY_MODE:
+            results.append(
+                CheckResult(
+                    "PREFLIGHT-SECRETS-002",
+                    True,
+                    "fail",
+                    f"JWT custody mode {custody_mode} is recognized but not currently implemented; "
+                    f"only {IMPLEMENTED_JWT_CUSTODY_MODE} is supported by this executable",
+                )
+            )
+        elif pause_config_error:
             results.append(
                 CheckResult(
                     "PREFLIGHT-SECRETS-002",
@@ -1859,7 +1968,6 @@ def expected_binding_checks(
         for name in (
             secret_binding_name(get(data, "internalBindings.postgres.credentialsRef")),
             secret_binding_name(get(data, "internalBindings.jwt.signingKeysRef")),
-            secret_binding_name(get(data, "internalBindings.jwt.jwksRef")),
         )
         if name
     ]
@@ -2046,35 +2154,48 @@ def expected_binding_checks(
     return results
 
 
-def jwt_jwks_checks(documents: list[dict[str, Any]]) -> list[CheckResult]:
+def jwt_jwks_checks(
+    documents: list[dict[str, Any]], expected_jwks_ref: Any = CANONICAL_JWKS_REF
+) -> list[CheckResult]:
     inline_secret = False
     missing_secret_path: list[str] = []
     missing_signing_mount: list[str] = []
     missing_jwks_mount: list[str] = []
+    account_jwks_workloads: list[str] = []
     global_secret_path = config_value(documents, "FIREMUD_AUTH_JWT_SECRET_PATH")
     global_jwks_path = config_value(documents, "FIREMUD_AUTH_JWKS_PATH")
-    for workload_name, container, volumes in [item for document in documents for item in primary_containers(document)]:
-        container_name = container.get("name") or "<unknown>"
-        if env_value(container, "FIREMUD_AUTH_JWT_SECRET") is not None:
-            inline_secret = True
-        secret_path = env_value(container, "FIREMUD_AUTH_JWT_SECRET_PATH") or global_secret_path
-        if not secret_path:
-            missing_secret_path.append(f"{workload_name}/{container_name}")
-        elif str(secret_path).startswith("/var/run/secrets/firemud/jwt/") and not has_secret_mount(
-            container,
-            volumes,
-            "jwt-signing-keys",
-            "/var/run/secrets/firemud/jwt",
-        ):
-            missing_signing_mount.append(f"{workload_name}/{container_name}")
-        jwks_path = env_value(container, "FIREMUD_AUTH_JWKS_PATH") or global_jwks_path
-        if (
-            container_name == "account-service"
-            and jwks_path
-            and str(jwks_path).startswith("/var/run/secrets/firemud/jwks/")
-            and not has_secret_mount(container, volumes, "jwt-jwks", "/var/run/secrets/firemud/jwks")
-        ):
-            missing_jwks_mount.append(f"{workload_name}/{container_name}")
+    for document in documents:
+        for workload_name, container, volumes in primary_containers(document):
+            container_name = container.get("name") or "<unknown>"
+            if env_value(container, "FIREMUD_AUTH_JWT_SECRET") is not None:
+                inline_secret = True
+            secret_path = env_value(container, "FIREMUD_AUTH_JWT_SECRET_PATH") or global_secret_path
+            if not secret_path:
+                missing_secret_path.append(f"{workload_name}/{container_name}")
+            elif str(secret_path).startswith("/var/run/secrets/firemud/jwt/") and not has_secret_mount(
+                container,
+                volumes,
+                "jwt-signing-keys",
+                "/var/run/secrets/firemud/jwt",
+            ):
+                missing_signing_mount.append(f"{workload_name}/{container_name}")
+            if container_name == "account-service":
+                account_label = f"{workload_name}/{container_name}"
+                account_jwks_workloads.append(account_label)
+                jwks_path = env_value(container, "FIREMUD_AUTH_JWKS_PATH") or global_jwks_path
+                if (
+                    not jwks_path
+                    or not str(jwks_path).startswith("/var/run/secrets/firemud/jwks/")
+                    or not has_config_map_mount(
+                        document,
+                        container,
+                        "jwt-jwks",
+                        "/var/run/secrets/firemud/jwks",
+                    )
+                ):
+                    missing_jwks_mount.append(account_label)
+    if not account_jwks_workloads:
+        missing_jwks_mount.append("<missing account-service>")
 
     results: list[CheckResult] = []
     if inline_secret:
@@ -2107,17 +2228,64 @@ def jwt_jwks_checks(documents: list[dict[str, Any]]) -> list[CheckResult]:
             )
         )
 
-    if rendered_has_resource(documents, "ConfigMap", "jwt-jwks"):
-        results.append(CheckResult("PREFLIGHT-JWKS-001", True, "fail", "jwt-jwks is configured as a ConfigMap in player-facing context"))
-    elif not rendered_has_resource(documents, "Secret", "jwt-jwks") and not has_secret_reference(documents, "jwt-jwks"):
-        results.append(CheckResult("PREFLIGHT-JWKS-001", True, "fail", "Rendered workloads do not reference jwt-jwks as a Secret"))
+    binding_error = binding_ref_format_error(
+        "internalBindings.jwt.jwksRef",
+        expected_jwks_ref,
+        allowed_schemes={"configmap"},
+        exact_segment_count=1,
+    )
+    jwks_binding = config_map_binding_name(expected_jwks_ref)
+    if binding_error is not None:
+        binding_error = f"internalBindings.jwt.jwksRef must be the canonical {CANONICAL_JWKS_REF} reference"
+    elif jwks_binding is not None:
+        bound_ref = f"configmap://{jwks_binding[0]}/{jwks_binding[1]}"
+        if bound_ref != CANONICAL_JWKS_REF:
+            binding_error = f"internalBindings.jwt.jwksRef must be the canonical {CANONICAL_JWKS_REF} reference"
+    if binding_error is not None:
+        results.append(CheckResult("PREFLIGHT-JWKS-001", True, "fail", binding_error))
+        return results
+
+    jwks_namespace, jwks_name = jwks_binding
+    jwks_config_map = next(
+        (
+            document
+            for document in documents
+            if document.get("kind") == "ConfigMap"
+            and metadata_name(document) == jwks_name
+            and (document.get("metadata") or {}).get("namespace") in {None, jwks_namespace}
+        ),
+        None,
+    )
+    if jwks_config_map is None:
+        results.append(
+            CheckResult(
+                "PREFLIGHT-JWKS-001",
+                True,
+                "fail",
+                f"Rendered manifests do not provide the public {CANONICAL_JWKS_REF} ConfigMap",
+            )
+        )
+    elif (
+        not isinstance(jwks_config_map.get("data"), dict)
+        or not isinstance(jwks_config_map["data"].get("jwks.json"), str)
+        or not jwks_config_map["data"]["jwks.json"].strip()
+    ):
+        results.append(
+            CheckResult(
+                "PREFLIGHT-JWKS-001",
+                True,
+                "fail",
+                "Public jwt-jwks ConfigMap must contain a non-empty data.jwks.json string",
+            )
+        )
     elif missing_jwks_mount:
         results.append(
             CheckResult(
                 "PREFLIGHT-JWKS-001",
                 True,
                 "fail",
-                "Account Service does not mount jwt-jwks at the configured JWKS path: " + ", ".join(missing_jwks_mount),
+                "Account Service does not mount the public jwt-jwks ConfigMap at the configured JWKS path: "
+                + ", ".join(missing_jwks_mount),
             )
         )
     else:
@@ -2126,7 +2294,7 @@ def jwt_jwks_checks(documents: list[dict[str, Any]]) -> list[CheckResult]:
                 "PREFLIGHT-JWKS-001",
                 True,
                 "pass",
-                "jwt-jwks Secret contract and Account Service mount are satisfied",
+                "Public jwt-jwks ConfigMap resource and Account Service mount are satisfied",
             )
         )
     return results
@@ -2759,6 +2927,11 @@ def main() -> int:
     expected_bindings_path = root_dir / expected_bindings_ref
     if not expected_bindings_path.exists():
         fail(f"Expected-bindings manifest not found: {expected_bindings_path}")
+    try:
+        expected_bindings_data = load_yaml(expected_bindings_path) or {}
+    except YAML_READ_ERRORS:
+        expected_bindings_data = {}
+    expected_jwks_ref = get(expected_bindings_data, "internalBindings.jwt.jwksRef")
 
     if env_class == "hobby-self-hosted":
         render_path_env = os.environ.get("FIREMUD_PREFLIGHT_RENDER_PATH")
@@ -2846,7 +3019,7 @@ def main() -> int:
 
     secret_check_failed = False
     if context == "ci-static":
-        for secret_name in ("postgres-credentials", "jwt-signing-keys", "jwt-jwks"):
+        for secret_name in ("postgres-credentials", "jwt-signing-keys"):
             if not rendered_references_secret(documents, secret_name):
                 has_required_failure = append_result(
                     check_results,
@@ -2860,7 +3033,7 @@ def main() -> int:
                 "PREFLIGHT-SECRETS-001", True, "pass", "Rendered workloads reference required player-facing Secret bindings",
             ) or has_required_failure
     else:
-        for secret_name in ("postgres-credentials", "jwt-signing-keys", "jwt-jwks"):
+        for secret_name in ("postgres-credentials", "jwt-signing-keys"):
             failure_message = secret_lookup_failure(secret_name)
             if failure_message is not None:
                 has_required_failure = append_result(
@@ -2870,12 +3043,20 @@ def main() -> int:
                 secret_check_failed = True
                 break
         if not secret_check_failed:
+            failure_message = config_map_lookup_failure("jwt-jwks")
+            if failure_message is not None:
+                has_required_failure = append_result(
+                    check_results, "PREFLIGHT-SECRETS-001", True, "fail", failure_message,
+                ) or has_required_failure
+                secret_check_failed = True
+        if not secret_check_failed:
             has_required_failure = append_result(
                 check_results,
-                "PREFLIGHT-SECRETS-001", True, "pass", "Required player-facing Secrets exist in the target cluster",
+                "PREFLIGHT-SECRETS-001", True, "pass",
+                "Required player-facing Secrets and public JWKS ConfigMap exist in the target cluster",
             ) or has_required_failure
 
-    for check in jwt_jwks_checks(documents):
+    for check in jwt_jwks_checks(documents, expected_jwks_ref):
         has_required_failure = append_result(
             check_results,
             check.policy_id, check.required, check.status, check.message,

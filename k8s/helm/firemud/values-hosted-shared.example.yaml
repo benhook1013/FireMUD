@@ -94,7 +94,6 @@ previewStack:
 
   jwt:
     enabled: true
-    jwksResourceKind: ConfigMap
     signingKey: __JWT_SIGNING_KEY__
     jwksJson: '__JWKS_JSON__'
 

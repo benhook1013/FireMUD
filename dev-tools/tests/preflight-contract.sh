@@ -27,6 +27,7 @@ required_paths = [
     "internalBindings.postgres.credentialsRef",
     "internalBindings.redis.coordination.endpoint",
     "internalBindings.redis.cache.endpoint",
+    "internalBindings.jwt.custodyMode",
     "internalBindings.jwt.signingKeysRef",
     "internalBindings.jwt.jwksRef",
     "internalBindings.certificates.issuerRef",
@@ -204,11 +205,138 @@ spec:
             secretName: jwt-jwks
 YAML
 
+python3 - <<'PY' "$RENDERED_MANIFEST" "$SCRIPT"
+import copy
+import importlib.util
+import pathlib
+import sys
+
+import yaml
+
+rendered_path = pathlib.Path(sys.argv[1])
+preflight_path = pathlib.Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location("preflight_jwt_jwks_contract", preflight_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+legacy_documents = list(yaml.safe_load_all(rendered_path.read_text(encoding="utf-8")))
+
+
+def account_deployment(documents):
+    for document in documents:
+        if document.get("kind") != "Deployment" or document.get("metadata", {}).get("name") != "account-service":
+            continue
+        return document
+    raise SystemExit("JWT/JWKS fixture is missing account-service deployment")
+
+
+def public_config_map_documents():
+    documents = copy.deepcopy(legacy_documents)
+    jwks = next(
+        document
+        for document in documents
+        if document.get("metadata", {}).get("name") == "jwt-jwks"
+    )
+    jwks["kind"] = "ConfigMap"
+    jwks.pop("type", None)
+    jwks["data"] = jwks.pop("stringData")
+    account = account_deployment(documents)
+    pod_spec = account["spec"]["template"]["spec"]
+    jwks_volume = next(volume for volume in pod_spec["volumes"] if volume.get("name") == "jwt-jwks")
+    jwks_volume.pop("secret", None)
+    jwks_volume["configMap"] = {"name": "jwt-jwks"}
+    return documents
+
+
+def jwks_result(documents, expected_ref=module.CANONICAL_JWKS_REF):
+    results = {
+        result.policy_id: result
+        for result in module.jwt_jwks_checks(documents, expected_ref)
+    }
+    return results["PREFLIGHT-JWKS-001"]
+
+
+public_documents = public_config_map_documents()
+public_result = jwks_result(public_documents)
+if public_result.status != "pass":
+    raise SystemExit(f"public jwt-jwks ConfigMap with Account mount did not pass: {public_result.message}")
+
+secret_binding_result = jwks_result(public_documents, "secret://firemud/jwt-jwks")
+if secret_binding_result.status != "fail" or "configmap://firemud/jwt-jwks" not in secret_binding_result.message:
+    raise SystemExit(
+        "Secret-backed jwksRef did not fail the canonical binding contract: "
+        f"{secret_binding_result.message}"
+    )
+
+noncanonical_binding_result = jwks_result(public_documents, "configmap://other/jwt-jwks")
+if noncanonical_binding_result.status != "fail" or "configmap://firemud/jwt-jwks" not in noncanonical_binding_result.message:
+    raise SystemExit(
+        "noncanonical public jwksRef did not fail the fixed-name binding contract: "
+        f"{noncanonical_binding_result.message}"
+    )
+
+for case_name, mutate in (
+    ("missing-data", lambda jwks: jwks.pop("data")),
+    ("empty-data", lambda jwks: jwks.__setitem__("data", {})),
+    ("wrong-data-type", lambda jwks: jwks.__setitem__("data", {"jwks.json": 7})),
+):
+    malformed_documents = copy.deepcopy(public_documents)
+    malformed_jwks = next(
+        document
+        for document in malformed_documents
+        if document.get("kind") == "ConfigMap"
+        and document.get("metadata", {}).get("name") == "jwt-jwks"
+    )
+    mutate(malformed_jwks)
+    malformed_result = jwks_result(malformed_documents)
+    if malformed_result.status != "fail" or "data.jwks.json" not in malformed_result.message:
+        raise SystemExit(
+            f"{case_name} jwt-jwks ConfigMap data did not fail closed: {malformed_result.message}"
+        )
+
+missing_mount_documents = copy.deepcopy(public_documents)
+missing_account = account_deployment(missing_mount_documents)
+missing_account["spec"]["template"]["spec"]["containers"][0]["volumeMounts"] = [
+    mount
+    for mount in missing_account["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]
+    if mount.get("name") != "jwt-jwks"
+]
+missing_mount_result = jwks_result(missing_mount_documents)
+if missing_mount_result.status != "fail" or "does not mount" not in missing_mount_result.message:
+    raise SystemExit(f"missing Account jwt-jwks mount did not fail closed: {missing_mount_result.message}")
+
+wrong_mount_documents = copy.deepcopy(public_documents)
+wrong_account = account_deployment(wrong_mount_documents)
+wrong_mount = next(
+    mount
+    for mount in wrong_account["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]
+    if mount.get("name") == "jwt-jwks"
+)
+wrong_mount["mountPath"] = "/var/run/secrets/firemud/wrong-jwks"
+wrong_mount_result = jwks_result(wrong_mount_documents)
+if wrong_mount_result.status != "fail" or "does not mount" not in wrong_mount_result.message:
+    raise SystemExit(f"wrong Account jwt-jwks mount did not fail closed: {wrong_mount_result.message}")
+
+secret_documents = copy.deepcopy(legacy_documents)
+secret_result = jwks_result(secret_documents)
+if secret_result.status != "fail" or "ConfigMap" not in secret_result.message:
+    raise SystemExit(f"Secret jwt-jwks incorrectly satisfied the public-resource contract: {secret_result.message}")
+PY
+
+set +e
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_DEPLOYMENT_REF=contract-hobby \
   FIREMUD_PREFLIGHT_RENDER_PATH="$RENDERED_MANIFEST" \
   FIREMUD_PREFLIGHT_OUTPUT="$REPORT_PATH" \
   python3 "$SCRIPT" hobby-self-hosted >/tmp/firemud-preflight-contract.out
+preflight_status=$?
+set -e
+if [ "$preflight_status" -ne 1 ]; then
+  echo "expected legacy Secret jwt-jwks fixture to fail canonical public-resource preflight" >&2
+  exit 1
+fi
 
 python3 - <<'PY' "$REPORT_PATH"
 import json
@@ -253,10 +381,18 @@ if any(not isinstance(check.get("required"), bool) for check in report["checkRes
 failures = [
     check
     for check in report["checkResults"]
-    if check["status"] == "fail" and check["policyId"] != "PREFLIGHT-DIGEST-002"
+    if check["status"] == "fail"
+    and check["policyId"] not in {"PREFLIGHT-DIGEST-002", "PREFLIGHT-JWKS-001"}
 ]
 if failures:
     raise SystemExit(f"unexpected required preflight failures: {failures}")
+legacy_jwks = [
+    check
+    for check in report["checkResults"]
+    if check["policyId"] == "PREFLIGHT-JWKS-001"
+]
+if len(legacy_jwks) != 1 or legacy_jwks[0]["status"] != "fail" or "ConfigMap" not in legacy_jwks[0]["message"]:
+    raise SystemExit(f"legacy Secret jwt-jwks fixture did not fail the canonical public-resource check: {legacy_jwks}")
 PY
 
 python3 "$WRITER" hobby-self-hosted contract-hobby first-live \
@@ -523,10 +659,17 @@ if not_applicable_status != "fail" or "non-passing required policy IDs" not in n
 
 PY
 
+set +e
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_DEPLOYMENT_REF="contract-production" \
   FIREMUD_PREFLIGHT_OUTPUT="$PRODUCTION_REPORT" \
   python3 "$SCRIPT" production >/tmp/firemud-preflight-contract-production-traffic.out
+production_preflight_status=$?
+set -e
+if [ "$production_preflight_status" -ne 1 ]; then
+  echo "expected legacy Secret jwt-jwks fixture to fail canonical public-resource preflight" >&2
+  exit 1
+fi
 
 cat >"$LEGACY_PRODUCTION_TRAFFIC_EVIDENCE" <<'JSON'
 {
@@ -621,10 +764,19 @@ fi
 
 for env in staging production; do
   REPORT="$TMP_DIR/preflight-$env.json"
+  # These checked-in overlays remain legacy Secret-backed; the canonical
+  # public-resource check must report their migration gap explicitly.
+  set +e
   FIREMUD_PREFLIGHT_CONTEXT=ci-static \
     FIREMUD_DEPLOYMENT_REF="contract-$env" \
     FIREMUD_PREFLIGHT_OUTPUT="$REPORT" \
     python3 "$SCRIPT" "$env" >/tmp/firemud-preflight-contract-"$env".out
+  preflight_status=$?
+  set -e
+  if [ "$preflight_status" -ne 1 ]; then
+    echo "$env: expected legacy Secret jwt-jwks fixture to fail canonical public-resource preflight" >&2
+    exit 1
+  fi
 
   python3 - <<'PY' "$REPORT" "$env"
 import json
@@ -636,9 +788,16 @@ env = sys.argv[2]
 expected_ref = f"design/operations/environments/{env}/expected-bindings.yaml"
 if report.get("expectedBindingsRef") != expected_ref:
     raise SystemExit(f"{env}: expectedBindingsRef mismatch: {report.get('expectedBindingsRef')}")
-failures = [check for check in report["checkResults"] if check["status"] == "fail"]
+failures = [
+    check
+    for check in report["checkResults"]
+    if check["status"] == "fail" and check["policyId"] != "PREFLIGHT-JWKS-001"
+]
 if failures:
     raise SystemExit(f"{env}: unexpected preflight failures: {failures}")
+jwks = [check for check in report["checkResults"] if check["policyId"] == "PREFLIGHT-JWKS-001"]
+if len(jwks) != 1 or jwks[0]["status"] != "fail" or "ConfigMap" not in jwks[0]["message"]:
+    raise SystemExit(f"{env}: legacy Secret jwt-jwks fixture did not fail the canonical public-resource check: {jwks}")
 PY
 done
 
@@ -768,6 +927,46 @@ try:
     )
     if os_error_message != expected_os_error:
         raise SystemExit(f"OSError Secret lookup reported incorrectly: {os_error_message}")
+
+    def config_map_lookup(stdout, returncode=0, stderr=""):
+        def lookup(args, **kwargs):
+            if kwargs.get("timeout") != module.SECRET_LOOKUP_TIMEOUT_SECONDS:
+                raise SystemExit("ConfigMap lookup did not receive its deployment timeout")
+            if args[-2:] != ["-o", "json"]:
+                raise SystemExit(f"ConfigMap lookup did not request JSON output: {args}")
+            return module.subprocess.CompletedProcess(args, returncode, stdout, stderr)
+
+        return lookup
+
+    module.subprocess.run = config_map_lookup(
+        "", 1, 'Error from server (NotFound): configmaps "missing" not found'
+    )
+    config_map_missing_message = module.config_map_lookup_failure("missing")
+    if config_map_missing_message != "Missing required ConfigMap in cluster: firemud/missing":
+        raise SystemExit(
+            f"NotFound ConfigMap lookup reported incorrectly: {config_map_missing_message}"
+        )
+
+    for name, payload in (
+        ("empty", {"data": {}}),
+        ("non-string", {"data": {"jwks.json": 7}}),
+    ):
+        module.subprocess.run = config_map_lookup(json.dumps(payload))
+        config_map_invalid_message = module.config_map_lookup_failure("jwt-jwks")
+        if (
+            config_map_invalid_message is None
+            or "data.jwks.json" not in config_map_invalid_message
+            or "non-empty" not in config_map_invalid_message
+        ):
+            raise SystemExit(
+                f"{name} ConfigMap lookup did not fail closed: {config_map_invalid_message}"
+            )
+
+    module.subprocess.run = config_map_lookup(
+        json.dumps({"data": {"jwks.json": '{"keys":[]}'}})
+    )
+    if module.config_map_lookup_failure("jwt-jwks") is not None:
+        raise SystemExit("valid ConfigMap JSON lookup did not pass")
 finally:
     module.subprocess.run = original_subprocess_run
 
@@ -863,6 +1062,64 @@ verify_service_override_contract(
 
 rendered_documents = module.parse_documents(pathlib.Path(tmp / "hobby-rendered.yaml").read_text(encoding="utf-8"))
 
+for env in ("production", "staging", "hobby-self-hosted"):
+    expected = yaml.safe_load(
+        (root / f"design/operations/environments/{env}/expected-bindings.yaml").read_text(encoding="utf-8")
+    )
+    custody_mode = expected.get("internalBindings", {}).get("jwt", {}).get("custodyMode")
+    if custody_mode != module.IMPLEMENTED_JWT_CUSTODY_MODE:
+        raise SystemExit(f"{env}: checked-in manifest selected unexpected JWT custody mode: {custody_mode}")
+
+current_expected_path = root / "design/operations/environments/hobby-self-hosted/expected-bindings.yaml"
+current_results = module.expected_binding_checks(
+    current_expected_path,
+    "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
+    "hobby-self-hosted",
+    rendered_documents,
+)
+current_secrets = next(result for result in current_results if result.policy_id == "PREFLIGHT-SECRETS-002")
+if current_secrets.status != "pass":
+    raise SystemExit(f"checked-in legacy JWT custody selector did not pass current wiring validation: {current_secrets.message}")
+
+
+def verify_jwt_custody_selector(case_name, mutate, expected_fragment):
+    expected = yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+    mutate(expected)
+    case_path = tmp / f"{case_name}-jwt-custody-bindings.yaml"
+    case_path.write_text(yaml.safe_dump(expected, sort_keys=False), encoding="utf-8")
+    results = module.expected_binding_checks(
+        case_path,
+        f"synthetic-{case_name}-jwt-custody-bindings.yaml",
+        "hobby-self-hosted",
+        rendered_documents,
+    )
+    secrets = next(result for result in results if result.policy_id == "PREFLIGHT-SECRETS-002")
+    if secrets.status != "fail" or expected_fragment not in secrets.message:
+        raise SystemExit(
+            f"{case_name}: JWT custody selector did not fail as expected: {secrets.message}"
+        )
+
+
+verify_jwt_custody_selector(
+    "missing",
+    lambda data: data["internalBindings"]["jwt"].pop("custodyMode"),
+    "internalBindings.jwt.custodyMode",
+)
+verify_jwt_custody_selector(
+    "unknown",
+    lambda data: data["internalBindings"]["jwt"].__setitem__("custodyMode", "UNKNOWN_MODE"),
+    "must be one of:",
+)
+for target_mode in (
+    "INTERIM_ACCOUNT_ONLY_MOUNTED_FALLBACK",
+    "TARGET_NON_EXPORTABLE_SIGNER",
+):
+    verify_jwt_custody_selector(
+        target_mode.lower(),
+        lambda data, mode=target_mode: data["internalBindings"]["jwt"].__setitem__("custodyMode", mode),
+        "not currently implemented",
+    )
+
 def verify_binding_ref_contract(case_name, mutate, policy_id, expected_fragment):
     expected_path = root / "design/operations/environments/hobby-self-hosted/expected-bindings.yaml"
     expected = yaml.safe_load(expected_path.read_text(encoding="utf-8"))
@@ -890,6 +1147,18 @@ verify_binding_ref_contract(
     lambda data: data["internalBindings"]["certificates"].__setitem__("issuerRef", "cert-manager://firemud/not-a-kind/firemud-hobby"),
     "PREFLIGHT-SECRETS-002",
     "internalBindings.certificates.issuerRef must use one of the allowed binding kinds",
+)
+verify_binding_ref_contract(
+    "secret-jwks-binding-ref",
+    lambda data: data["internalBindings"]["jwt"].__setitem__("jwksRef", "secret://firemud/jwt-jwks"),
+    "PREFLIGHT-SECRETS-002",
+    "internalBindings.jwt.jwksRef must use one of the allowed schemes: configmap",
+)
+verify_binding_ref_contract(
+    "noncanonical-jwks-binding-ref",
+    lambda data: data["internalBindings"]["jwt"].__setitem__("jwksRef", "configmap://other/jwt-jwks"),
+    "PREFLIGHT-SECRETS-002",
+    "internalBindings.jwt.jwksRef must be the canonical configmap://firemud/jwt-jwks reference",
 )
 verify_binding_ref_contract(
     "invalid-external-binding-ref",

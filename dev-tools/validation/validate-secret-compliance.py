@@ -23,7 +23,13 @@ ENV_FILES = {
         "design/operations/secret-compliance/hobby-self-hosted.yaml"
     ),
 }
-PROVISIONING_STATES = {"not-provisioned", "provisioned"}
+PROVISIONING_STATES = {"not-provisioned", "noncompliant", "provisioned"}
+BOOTSTRAP_OPERATION_STATUSES = {"pending", "blocked", "failed", "completed"}
+BOOTSTRAP_OPERATION_FIELDS = {
+    "bootstrapOperationId",
+    "bootstrapOperationStatus",
+    "provisioningGeneration",
+}
 
 
 def utc_now() -> dt.datetime:
@@ -105,24 +111,88 @@ def main() -> int:
             continue
 
         provisioning_state = data.get("provisioningState")
-        if provisioning_state not in PROVISIONING_STATES:
+        if (
+            not isinstance(provisioning_state, str)
+            or provisioning_state not in PROVISIONING_STATES
+        ):
             record_schema_issue(
                 f"{env}: provisioningState must be one of "
                 f"{', '.join(sorted(PROVISIONING_STATES))}",
             )
             continue
 
-        classes = data.get("credentialClasses", {})
+        if "credentialClasses" not in data:
+            record_schema_issue(f"{env}: credentialClasses must be present")
+            continue
+        classes = data["credentialClasses"]
         if not isinstance(classes, dict):
             record_schema_issue(f"{env}: credentialClasses must be a mapping")
             continue
 
         if provisioning_state == "not-provisioned":
+            illegal_operation_fields = sorted(
+                BOOTSTRAP_OPERATION_FIELDS & set(data.keys())
+            )
+            if illegal_operation_fields:
+                record_schema_issue(
+                    f"{env}: not-provisioned compliance records must not contain "
+                    "bootstrap operation fields: "
+                    f"{', '.join(illegal_operation_fields)}",
+                )
             if classes:
                 record_schema_issue(
                     f"{env}: not-provisioned compliance records must not list "
                     "credential classes",
                 )
+            continue
+
+        bootstrap_status = data.get("bootstrapOperationStatus")
+        bootstrap_operation_id = data.get("bootstrapOperationId")
+        provisioning_generation = data.get("provisioningGeneration")
+        operation_fields_valid = True
+
+        if (
+            not isinstance(bootstrap_status, str)
+            or bootstrap_status not in BOOTSTRAP_OPERATION_STATUSES
+        ):
+            record_schema_issue(
+                f"{env}: bootstrapOperationStatus must be one of "
+                f"{', '.join(sorted(BOOTSTRAP_OPERATION_STATUSES))}",
+            )
+            operation_fields_valid = False
+        if (
+            not isinstance(bootstrap_operation_id, str)
+            or not bootstrap_operation_id.strip()
+        ):
+            record_schema_issue(
+                f"{env}: {provisioning_state} records require a non-empty "
+                "bootstrapOperationId",
+            )
+            operation_fields_valid = False
+        if (
+            isinstance(provisioning_generation, bool)
+            or not isinstance(provisioning_generation, int)
+            or provisioning_generation <= 0
+        ):
+            record_schema_issue(
+                f"{env}: {provisioning_state} records require a positive integer "
+                "provisioningGeneration",
+            )
+            operation_fields_valid = False
+
+        if provisioning_state == "noncompliant":
+            record_schema_issue(
+                f"{env}: provisioningState=noncompliant cannot satisfy a "
+                "provisioning compliance gate",
+            )
+            continue
+
+        if bootstrap_status != "completed":
+            record_schema_issue(
+                f"{env}: provisioningState=provisioned requires "
+                "bootstrapOperationStatus=completed",
+            )
+        if not operation_fields_valid:
             continue
 
         missing = sorted(REQUIRED - set(classes.keys()))
@@ -133,6 +203,10 @@ def main() -> int:
 
         for cls in sorted(REQUIRED & set(classes.keys())):
             rec = classes.get(cls, {})
+            if not isinstance(rec, dict):
+                record_schema_issue(f"{env}:{cls}: credential record must be a mapping")
+                continue
+
             max_age = rec.get("maxAgeDays")
             last_rotation = rec.get("lastRotationAt")
             last_provisioned = rec.get("lastProvisionedAt")
@@ -155,6 +229,20 @@ def main() -> int:
                 continue
 
             evidence_field = evidence_fields[0]
+            bootstrap_record = evidence_field == "lastProvisionedAt"
+            if bootstrap_record:
+                if rec.get("bootstrapOperationId") != bootstrap_operation_id:
+                    record_schema_issue(
+                        f"{env}:{cls}: bootstrap credential record "
+                        "bootstrapOperationId must exactly match top-level "
+                        "bootstrapOperationId",
+                    )
+                if rec.get("provisioningGeneration") != provisioning_generation:
+                    record_schema_issue(
+                        f"{env}:{cls}: bootstrap credential record "
+                        "provisioningGeneration must exactly match top-level "
+                        "provisioningGeneration",
+                    )
             evidence_time = (
                 last_rotation if evidence_field == "lastRotationAt" else last_provisioned
             )
@@ -198,7 +286,36 @@ def main() -> int:
                 record_issue(env, f"{env}:{cls}: evidence file unreadable: {exc}")
                 continue
 
-            records = (evidence or {}).get("records", {})
+            if not isinstance(evidence, dict):
+                record_issue(
+                    env,
+                    f"{env}:{cls}: evidence payload must be a mapping in "
+                    f"{evidence_ref}",
+                )
+                continue
+
+            if bootstrap_record:
+                if evidence.get("bootstrapOperationId") != bootstrap_operation_id:
+                    record_schema_issue(
+                        f"{env}:{cls}: bootstrap evidence payload "
+                        "bootstrapOperationId must exactly match top-level "
+                        "bootstrapOperationId",
+                    )
+                if evidence.get("provisioningGeneration") != provisioning_generation:
+                    record_schema_issue(
+                        f"{env}:{cls}: bootstrap evidence payload "
+                        "provisioningGeneration must exactly match top-level "
+                        "provisioningGeneration",
+                    )
+
+            records = evidence.get("records", {})
+            if not isinstance(records, dict):
+                record_issue(
+                    env,
+                    f"{env}:{cls}: evidence records must be a mapping in "
+                    f"{evidence_ref}",
+                )
+                continue
             record = records.get(evidence_key)
             if not record:
                 record_issue(
@@ -207,6 +324,27 @@ def main() -> int:
                     f"in {evidence_ref}",
                 )
                 continue
+            if not isinstance(record, dict):
+                record_issue(
+                    env,
+                    f"{env}:{cls}: evidence record must be a mapping in "
+                    f"{evidence_ref}",
+                )
+                continue
+
+            if bootstrap_record:
+                if record.get("bootstrapOperationId") != bootstrap_operation_id:
+                    record_schema_issue(
+                        f"{env}:{cls}: bootstrap evidence record "
+                        "bootstrapOperationId must exactly match top-level "
+                        "bootstrapOperationId",
+                    )
+                if record.get("provisioningGeneration") != provisioning_generation:
+                    record_schema_issue(
+                        f"{env}:{cls}: bootstrap evidence record "
+                        "provisioningGeneration must exactly match top-level "
+                        "provisioningGeneration",
+                    )
 
             immutable_id = str(record.get("immutableArtifactId", ""))
             if not immutable_id or "sha256:" not in immutable_id:

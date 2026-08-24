@@ -312,13 +312,13 @@ This structured payload should not be treated as the final platform abstraction 
 
 - a communication intent emitted by the actor,
 - a game-configured communication type definition,
-- one or more targets/scopes such as room, area, region, direct target, guild, or account,
-- recipient resolution owned by those targets/scopes,
-- and per-recipient presentation for emitters, ordinary listeners, and observer/interceptor roles.
+- one or more targets/scopes such as room, named profile topology, direct target, guild, or account,
+- gameplay candidate resolution in Game Logic or social audience/membership resolution in Social & Groups,
+- and per-recipient presentation for emitters, ordinary listeners, and any closed observer-view class permitted by the exact type version.
 
-All communication actions should enter through Game Logic. Game Logic resolves gameplay context, communication type, target/scope, and gameplay interception/perception rules, then dispatches to Social & Groups or other owning services as needed for membership checks, moderation, persistence, and delivery fanout.
+World/gameplay communication enters Game Logic when topology, perception, abilities, effects, authored interception, or other gameplay state determines its meaning. Game Logic emits a bounded authorized plan; Social & Groups applies social authorization, moderation, applicable history, and delivery-state rules; Game Session owns final delivery to connected gameplay transports. Account messaging, ordinary guild/group channels, browser social actions, and ordinary account/social mail enter Social & Groups directly after authentication and applicable membership/privacy/moderation checks. An in-game adapter does not reclassify private platform communication as gameplay or expose it to tenant-authored scripts. Active [ADR 0147](../../decisions/adr-0147-explicit-communication-classes-and-owner-delivery.md) records this owner split, mapped from reviewed archive record `archive-ADR-0134`.
 
-For in-world communication, the command should usually target the room/area/etc. rather than precomputing the final recipient list in the sender path. That keeps room-local speech extensible for eavesdropping, spy skills, magical listening, and other target-owned delivery rules.
+For in-world communication, the command should usually target the room or another published scope rather than precomputing an unverified final recipient list in the sender path. Game Logic resolves ordinary listeners and candidate observers, and Game Session consumes the resulting candidate-specific authorized views without recomputing observation. Social & Groups must not broaden a plan or claim connected-player delivery because history or moderation committed.
 
 The first standard built-ins should be understood as:
 
@@ -326,7 +326,7 @@ The first standard built-ins should be understood as:
 - `whisper` -> direct target in the current room
 - `tell` -> direct target outside room scope by default
 
-`shout` should be treated as a future built-in, but not implemented until the game-settings model can describe whether its propagation should be region-wide, map-wide, or otherwise topology-dependent.
+`shout` is a future built-in, but remains unimplemented until a selected game profile publishes a named bounded topology scope and fanout limits. The platform does not invent area-versus-region policy, select one global scope, or silently treat `SHOUT` as a room/radius/map broadcast. Active [ADR 0150](../../decisions/adr-0150-closed-observer-views-and-profile-scoped-shout.md) records this boundary, mapped from reviewed archive record `archive-ADR-0137`.
 
 The built-in communication parser enforces that `SAY`, `WHISPER`, and `TELL` include the required message and target fields for their mode. `WHISPER` and `TELL` now flow through the same shared communication path as `SAY` instead of acting as room-speech aliases. Submitting an empty payload or exceeding the configured message limit, currently 512 characters, yields `ERROR INVALID_ARGUMENT Message text must be 1-512 characters long`.
 
@@ -336,7 +336,7 @@ Canonical baseline prose for the built-in communication modes is:
 - `say` listener view: `Emberline says, "Hello travelers."`
 - `whisper` sender view: `You whisper to Sora, "Keep quiet."`
 - `whisper` target view: `Emberline whispers to you, "Keep quiet."`
-- `whisper` metadata-only observer view: `Emberline whispers something to Sora.`
+- `whisper` metadata-only observer view (only when the published type permits it): `Emberline whispers something to Sora.`
 - `tell` sender view: `You tell Sora, "Meet me at the forge."`
 - `tell` target view: `Emberline tells you, "Meet me at the forge."`
 
@@ -416,13 +416,13 @@ Metrics `gamesession.command.look.invocations` and `gamesession.command.look.fai
 ### Communication request flow
 
 1. Game Session validates the same admitted gameplay session context leveraged by `LOOK`; callers still in the login/menu stages receive stage-aware `LOGIN_REQUIRED` or `PLAY_REQUIRED` guidance rather than a generic protocol-auth failure.
-2. **Target:** Authenticated `SAY`, `WHISPER`, and `TELL` commands route through `CommunicationCommandHandler` with the complete validated typed `PlayerExecutionContext`, which Game Logic forwards unchanged to downstream delivery. **Current:** the live `SendCommunication` request remains flat (`tenantId`, `gameInstanceId`, `sessionId`, `characterId`, `accountId`, `speakerName`, `roomInstance`, normalized text, target metadata, and `effectId`) plus legacy `session_attestation`; the current proto does not yet carry typed `playableStateNamespaceId`, `playableStateScope`, region/epoch, pointer, or admitted-bundle fields.
+2. **Target:** Authenticated world/gameplay `SAY`, `WHISPER`, and `TELL` commands route through `CommunicationCommandHandler` with the complete validated typed `PlayerExecutionContext`, which Game Logic resolves into one bounded authorized plan. **Current:** the live `SendCommunication` request remains flat (`tenantId`, `gameInstanceId`, `sessionId`, `characterId`, `accountId`, `speakerName`, `roomInstance`, normalized text, target metadata, and `effectId`) plus legacy `session_attestation`; the current proto does not yet carry typed `playableStateNamespaceId`, `playableStateScope`, region/epoch, pointer, or admitted-bundle fields.
 3. Game Logic resolves the communication type and target/scope, validates message constraints, and produces the baseline delivery metadata:
    - `say` targets the current room;
    - `whisper` targets one character in the current room;
    - `tell` targets one online character directly outside room scope by default.
-4. Game Logic forwards the normalized communication to Social & Groups Service with explicit type and recipient metadata for delivery logging, history, moderation, and downstream fanout where applicable.
-5. Backend failures propagate protocol-mapped errors such as `ERROR COMMUNICATION_NOT_DELIVERED`, while pre-flight stage failures are surfaced as `LOGIN_REQUIRED` or `PLAY_REQUIRED` before the communication request is attempted.
+4. Social & Groups applies its local moderation, social-audience, history, retention, and acknowledgement contract to the accepted plan; Game Session owns connected gameplay transport delivery and reports transport outcome separately from semantic or history acceptance. Account messaging, ordinary group/channel communication, and ordinary account/social mail use direct Social ingress and do not require Game Logic or a running world. Active [ADR 0149](../../decisions/adr-0149-communication-type-specific-history-and-retention.md) records the type-specific history/retention boundary, mapped from reviewed archive record `archive-ADR-0136`.
+5. Backend failures propagate protocol-mapped errors such as `ERROR COMMUNICATION_NOT_DELIVERED`, while pre-flight stage failures are surfaced as `LOGIN_REQUIRED` or `PLAY_REQUIRED` before a gameplay communication request is attempted. A Social history commit is not a connected-player delivery acknowledgement.
 
 ## Response Format
 

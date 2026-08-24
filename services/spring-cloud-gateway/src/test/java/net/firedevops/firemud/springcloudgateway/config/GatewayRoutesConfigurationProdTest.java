@@ -52,8 +52,6 @@ class GatewayRoutesConfigurationProdTest {
           "account-profiles",
           "account-ping",
           "account-jwks",
-          "social-chat",
-          "social-friends",
           "social-guilds",
           "social-mail",
           "social-ping",
@@ -76,6 +74,28 @@ class GatewayRoutesConfigurationProdTest {
   void publicRouteAllowlistExposesOnlyCuratedEdgeRoutes() {
     assertThat(gatewayProperties.getRoutes().stream().map(RouteDefinition::getId))
         .containsExactlyInAnyOrderElementsOf(ROUTE_IDS);
+  }
+
+  @Test
+  void socialChatRouteIdIsEdgeGatedUntilCallerBindingExists() {
+    assertThat(gatewayProperties.getRoutes().stream().map(RouteDefinition::getId))
+        .doesNotContain("social-chat");
+  }
+
+  @Test
+  void socialChatPathIsEdgeGatedUntilCallerBindingExists() {
+    assertNoConfiguredPathStartsWith(gatewayProperties, "/api/social/chat");
+  }
+
+  @Test
+  void socialFriendsRouteIdIsEdgeGatedUntilDirectionalBlockStateExists() {
+    assertThat(gatewayProperties.getRoutes().stream().map(RouteDefinition::getId))
+        .doesNotContain("social-friends");
+  }
+
+  @Test
+  void socialFriendsPathIsEdgeGatedUntilDirectionalBlockStateExists() {
+    assertNoConfiguredPathStartsWith(gatewayProperties, "/api/social/friends");
   }
 
   @Test
@@ -118,13 +138,11 @@ class GatewayRoutesConfigurationProdTest {
     assertHasMethod(gatewayProperties, "admin-tick-remediation", "GET");
     assertHasPath(gatewayProperties, "design", "/api/design/**");
     assertHasPath(gatewayProperties, "account-auth", "/api/account/auth/**");
-    assertHasPath(gatewayProperties, "social-chat", "/api/social/chat/**");
     assertHasStripPrefixTwo(gatewayProperties, "admin-ping");
     assertHasStripPrefixTwo(gatewayProperties, "admin-admission-pointers");
     assertHasStripPrefixTwo(gatewayProperties, "admin-remote-followups");
     assertHasStripPrefixTwo(gatewayProperties, "admin-tick-remediation");
     assertHasStripPrefixTwo(gatewayProperties, "design");
     assertHasStripPrefixTwo(gatewayProperties, "account-auth");
-    assertHasStripPrefixTwo(gatewayProperties, "social-chat");
   }
 }

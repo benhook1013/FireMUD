@@ -19,6 +19,8 @@ This file intentionally owns the allocation validation history; do not duplicate
 - Prior validation record on 2026-08-21 (Pacific/Auckland), before this ADR allocation import: ADR review `123` reviewed / `11` pre-formal; architecture contracts `184` tests; link check `5,475` links (`5,437` OK, `38` excluded, `0` errors); Markdown lint `486` files (`0` issues); `git diff --check` clean; allocation validator reported `309` sources (`306` allocated, `3` explicit exemptions`). This thirteen-file import has not run validation; consolidated validation is deferred to the root thread. The five Packet 5 moderation/commerce/frontend/protocol ADR records are allocated below.
 - Final Packet 5 validation evidence on 2026-08-23 (Pacific/Auckland): all nine ADRs 0137–0145 are allocated; `linkCheck` checked `5,687` total links (`5,650` OK, `37` excluded, `0` errors); `lintMarkdown` checked `495` files (`0` issues); design allocation reported `318` sources (`315` allocated, `3` explicit exemptions); ADR review status was `132` reviewed / `11` pre-formal; allocation regression passed `28` tests; ADR regression passed `119` tests; architecture doc contracts passed `184` tests; implementation tracking covered `79` leaves across `10` trackers; the authz matrix passed; and `git diff --check` was clean.
 - Runtime proof is not applicable to this allocation ledger itself; frontend runtime, static host/public-site routing, and browser proof remain owned by the player-experience implementation tracker.
+- Front Packet 6 P0 allocation import: the expected arithmetic with active ADRs 0146-0152 is `325` discovered sources (`322` allocated, `3` explicit exemptions), including `150` ADR records (`139` reviewed and `11` pre-formal); final validation evidence is recorded below.
+- Runtime proof is not applicable to this documentation-only allocation change.
 - Implementation and verification evidence do not belong in this allocation ledger. The initial cross-capability baseline is preserved in the frozen [capability implementation reconciliation snapshot](./capability-implementation-reconciliation.md); live status and focused-proof anchors are maintained in the permanent implementation trackers.
 
 ## Allocation Rules
@@ -36,16 +38,16 @@ This file intentionally owns the allocation validation history; do not duplicate
 | Infrastructure | 6 | 6 | 0 | 100% classified |
 | Generated references | 2 | 2 | 0 | 100% classified |
 | Microservice architecture | 76 | 74 | 0; 2 explicit governance/template exemptions | 100% classified |
-| Architecture decisions | 144 | 143 | 0; 1 registry exemption | 100% classified |
+| Architecture decisions | 151 | 150 | 0; 1 registry exemption | 100% classified |
 | Product documentation | 7 | 7 | 0 | 100% classified |
-| **Total** | **318** | **315** | **0; 3 explicit exemptions** | **100% classified** |
+| **Total** | **325** | **322** | **0; 3 explicit exemptions** | **100% classified** |
 
 ## Allocation Ledger
 
 | Design source | Heading or scope | Primary capability | Secondary handoffs | Source class | Notes or gap |
 | --- | --- | --- | --- | --- | --- |
 | [Microservice architecture allocation](./design-capability-allocation-microservices.md) | All 76 files under `design/architecture/microservices/**` | Per-source allocation | Per-source handoffs | Service design, contract, runtime/data, configuration, operations, and reference sources | All 76 files are accounted for as 74 allocated sources plus 2 exempt governance/template files: `service-documentation-structure.md` and `service-template.md`; complete path-set coverage |
-| [Architecture decision registry](../../architecture/decisions/README.md) | Registry plus 143 ADRs | Per-record allocation | Per-record affected capabilities | Decision record | The registry is an index; accepted, superseded, and withdrawn records remain distinguishable |
+| [Architecture decision registry](../../architecture/decisions/README.md) | Registry plus 150 ADRs | Per-record allocation | Per-record affected capabilities | Decision record | The registry is an index; reviewed, accepted, superseded, and withdrawn records remain distinguishable |
 | [System architecture allocation](./design-capability-allocation-system.md) | All 83 direct architecture, 6 infrastructure, and 2 generated sources | Per-source allocation | Per-source handoffs | Normative design, runbook, reference, index, and generated sources | Complete path-set coverage |
 | [Product documentation](../../product/README.md#canonical-sources) | All 7 files under `design/product/**` | Per-source allocation | Per-source product behavior scope | Requirements, taxonomy, index, and observable product behavior | Complete path-set coverage |
 
@@ -197,6 +199,13 @@ This file intentionally owns the allocation validation history; do not duplicate
 | `design/architecture/decisions/adr-0143-stripe-v1-hosting-billing-and-deferred-creator-monetization.md` | `AA-1` | `PO-1`, `EA-3` | Accepted |
 | `design/architecture/decisions/adr-0144-stateless-first-party-frontend-application-boundary.md` | `EA-3` | `PO-3`, `PO-2` | Accepted |
 | `design/architecture/decisions/adr-0145-plain-text-gameplay-and-deferred-classic-client-extensions.md` | `PO-2` | `EA-1` | Accepted |
+| `design/architecture/decisions/adr-0146-owner-local-moderation-enforcement.md` | `PO-1` | `EA-2`, `AA-1`, `PO-4` | Accepted |
+| `design/architecture/decisions/adr-0147-explicit-communication-classes-and-owner-delivery.md` | `EA-2` | `GR-4`, `PO-1`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0148-social-relationship-authority-and-entity-owned-value.md` | `EA-2` | `AA-1`, `PO-1`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0149-communication-type-specific-history-and-retention.md` | `EA-2` | `PO-1`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0150-closed-observer-views-and-profile-scoped-shout.md` | `EA-2` | `GR-4`, `SF-2`, `PO-4` | Accepted |
+| `design/architecture/decisions/adr-0151-event-scoped-automated-tier-a-credential-compliance.md` | `PO-3` | `PO-1`, `PO-4`, `SF-1` | Accepted |
+| `design/architecture/decisions/adr-0152-phased-environment-bound-deployment-preflight-and-expected-bindings.md` | `PO-3` | `PO-4`, `SF-1` | Accepted |
 
 ADR 0121 is superseded by [ADR 0114](../../architecture/decisions/adr-0114-command-plan-preview-dry-run-isolation.md); its historical capability allocation remains recorded above.
 
