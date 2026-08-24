@@ -2863,7 +2863,16 @@ routes:
     global_platform_admin_membership_required: false
     global_platform_admin_reference_generation_binding: target_tenant_generation
     mutation_contract: durable_intent_then_moderation_record_idempotency
-    required_fields: [control_plane_request_id, actor_from_session, reason, tenant_id, target_account_id, action, mutation_digest]
+    required_fields: [policy_intent_request_id, control_plane_request_id, actor_from_session, reason, tenant_id, target_account_id, action, mutation_digest]
+    idempotency_contract:
+      key: policy_intent_request_id
+      digest: mutationDigest/v1
+      digest_field: mutation_digest
+      exact_retry: same_policy_intent_request_id_and_digest_returns_stored_outcome
+      changed_digest: IDEMPOTENCY_CONFLICT
+      changed_request_id: distinct_policy_intent_operation
+      control_plane_request_id: correlation_only
+      owner_enforcement_request_id: distinct_future_owner_command_identity
     operator_authorization_reference: account_issued_bounded_reference
     owner_call_status: coverage_drift_no_current_enforcement_owner_rpc
     canonical_errors:
@@ -2894,7 +2903,16 @@ routes:
     required_live_checks: [current_operator_authorization, issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
     global_platform_admin_membership_required: false
     mutation_contract: durable_intent_then_moderation_record_idempotency
-    required_fields: [control_plane_request_id, actor_from_session, reason, target_account_id, action, mutation_digest]
+    required_fields: [policy_intent_request_id, control_plane_request_id, actor_from_session, reason, target_account_id, action, mutation_digest]
+    idempotency_contract:
+      key: policy_intent_request_id
+      digest: mutationDigest/v1
+      digest_field: mutation_digest
+      exact_retry: same_policy_intent_request_id_and_digest_returns_stored_outcome
+      changed_digest: IDEMPOTENCY_CONFLICT
+      changed_request_id: distinct_policy_intent_operation
+      control_plane_request_id: correlation_only
+      owner_enforcement_request_id: distinct_future_owner_command_identity
     operator_authorization_reference: account_issued_bounded_reference
     owner_call_status: coverage_drift_no_current_enforcement_owner_rpc
     platform_scope_action_contract:

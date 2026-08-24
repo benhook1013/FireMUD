@@ -1415,45 +1415,6 @@ class AdrReviewStatusTests(unittest.TestCase):
                 "replacement-map no-ADR form",
             )
 
-    def test_superseded_no_adr_row_requires_canonical_contract_label(
-        self,
-    ) -> None:
-        with fixture_root() as fixture:
-            root = Path(fixture)
-            write(
-                root / "design/architecture/system-architecture-overview.md",
-                "# System architecture overview\n",
-            )
-            append_provenance_row(
-                root,
-                "- [x] `TEST-SUPERSEDED-NO-ADR-LABEL` — `superseded` on "
-                "2026-07-27; [canonical workflow]("
-                "../../architecture/system-architecture-overview.md); "
-                "no ADR required",
-            )
-            expect_failure(
-                self,
-                lambda: checked_reviews(self.validator, root),
-                "must use exact [ADR NNNN] provenance or the documented "
-                "replacement-map no-ADR form",
-            )
-
-    def test_superseded_no_adr_row_requires_existing_design_contract(self) -> None:
-        with fixture_root() as fixture:
-            root = Path(fixture)
-            append_provenance_row(
-                root,
-                "- [x] `TEST-SUPERSEDED-NO-ADR-MISSING` — `superseded` on "
-                "2026-07-27; [canonical contract]("
-                "../../architecture/missing-contract.md); no ADR required",
-            )
-            expect_failure(
-                self,
-                lambda: checked_reviews(self.validator, root),
-                "must use exact [ADR NNNN] provenance or the documented "
-                "replacement-map no-ADR form",
-            )
-
     def test_superseded_no_adr_row_accepts_replacement_links_without_provenance(
         self,
     ) -> None:

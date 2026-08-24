@@ -171,6 +171,35 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertFalse(platform["membership_authority_generation_applies"])
         self.assertNotIn("target_tenant_generation", platform["required_live_checks"])
 
+    def test_moderation_routes_bind_policy_intent_identity_and_distinct_owner_identity(
+        self,
+    ):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        routes = [
+            route
+            for route in document["routes"]
+            if route.get("service") == "logging-admin-service"
+            and route.get("route") == "POST /moderation/actions"
+        ]
+
+        self.assertEqual(2, len(routes))
+        for route in routes:
+            with self.subTest(
+                action_category=route["applicability"]["action_category"]
+            ):
+                self.assertIn("policy_intent_request_id", route["required_fields"])
+                self.assertIn("control_plane_request_id", route["required_fields"])
+                self.assertIn("mutation_digest", route["required_fields"])
+                contract = route["idempotency_contract"]
+                self.assertEqual("policy_intent_request_id", contract["key"])
+                self.assertEqual("mutationDigest/v1", contract["digest"])
+                self.assertEqual("mutation_digest", contract["digest_field"])
+                self.assertEqual("correlation_only", contract["control_plane_request_id"])
+                self.assertEqual(
+                    "distinct_future_owner_command_identity",
+                    contract["owner_enforcement_request_id"],
+                )
+
     def test_platform_moderation_branch_rejects_tenant_authority_regressions(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         mutations = (
