@@ -11,7 +11,7 @@ internalBindings:
   jwt:
     custodyMode: LEGACY_SECRET_DIAGNOSTIC
     signingKeysRef: secret://firemud/jwt-signing-keys
-    jwksRef: configmap://firemud/jwt-jwks
+    jwksRef: secret://firemud/jwt-jwks
   certificates:
     issuerRef: cert-manager://firemud/clusterissuers/firemud-hobby
     workloadMtlsRef: cert-manager://firemud/hobby-workload-mtls

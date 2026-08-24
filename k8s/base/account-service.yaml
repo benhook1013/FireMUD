@@ -114,8 +114,8 @@ spec:
           secret:
             secretName: jwt-signing-keys
         - name: jwt-jwks
-          configMap:
-            name: jwt-jwks
+          secret:
+            secretName: jwt-jwks
         - name: varlog
           hostPath:
             path: /var/log

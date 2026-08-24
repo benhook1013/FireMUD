@@ -32,7 +32,7 @@ All deployments include readiness probes against `/actuator/health/readiness`, l
 
 ## Database Settings
 
-All Spring Boot services expect PostgreSQL and Redis connection details via environment variables. The baseline set also expects the auth-related `jwt-signing-keys` Secret and public `jwt-jwks` ConfigMap where applicable. `firemud-db-env.yaml` supplies the shared non-secret `firemud-config` `ConfigMap`; example bootstrap Secret/TLS manifests now live in `bootstrap-secrets.example.yaml` and `grpc-bootstrap.example.yaml` for ad hoc bring-up only. Player-facing environments should supply those bindings through environment-owned resources instead of applying the example files verbatim:
+All Spring Boot services expect PostgreSQL and Redis connection details via environment variables. The baseline set also expects additional auth-related Secrets such as `jwt-signing-keys` and `jwt-jwks` where applicable. `firemud-db-env.yaml` supplies the shared non-secret `firemud-config` `ConfigMap`; example bootstrap Secret/TLS manifests now live in `bootstrap-secrets.example.yaml` and `grpc-bootstrap.example.yaml` for ad hoc bring-up only. Player-facing environments should supply those bindings through environment-owned resources instead of applying the example files verbatim:
 
 ```bash
 FIREMUD_POSTGRES_HOST=postgres
