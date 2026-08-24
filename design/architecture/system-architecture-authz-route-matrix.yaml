@@ -2874,6 +2874,7 @@ routes:
     route: POST /moderation/actions
     scope: account
     classification: account_scoped
+    platform_admin_override: platformAdmin_only
     applicability:
       action_category: platform_access_ban
     accepted_action_categories: [platform_access_ban]

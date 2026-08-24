@@ -232,6 +232,14 @@ def account_deployment(documents):
     raise SystemExit("JWT/JWKS fixture is missing account-service deployment")
 
 
+def account_container(document):
+    containers = document["spec"]["template"]["spec"].get("containers") or []
+    for container in containers:
+        if container.get("name") == "account-service":
+            return container
+    raise SystemExit("JWT/JWKS fixture is missing account-service container")
+
+
 def public_config_map_documents():
     documents = copy.deepcopy(legacy_documents)
     jwks = next(
@@ -298,9 +306,10 @@ for case_name, mutate in (
 
 missing_mount_documents = copy.deepcopy(public_documents)
 missing_account = account_deployment(missing_mount_documents)
-missing_account["spec"]["template"]["spec"]["containers"][0]["volumeMounts"] = [
+missing_account_container = account_container(missing_account)
+missing_account_container["volumeMounts"] = [
     mount
-    for mount in missing_account["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]
+    for mount in missing_account_container["volumeMounts"]
     if mount.get("name") != "jwt-jwks"
 ]
 missing_mount_result = jwks_result(missing_mount_documents)
@@ -309,9 +318,10 @@ if missing_mount_result.status != "fail" or "does not mount" not in missing_moun
 
 wrong_mount_documents = copy.deepcopy(public_documents)
 wrong_account = account_deployment(wrong_mount_documents)
+wrong_account_container = account_container(wrong_account)
 wrong_mount = next(
     mount
-    for mount in wrong_account["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]
+    for mount in wrong_account_container["volumeMounts"]
     if mount.get("name") == "jwt-jwks"
 )
 wrong_mount["mountPath"] = "/var/run/secrets/firemud/wrong-jwks"

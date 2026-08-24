@@ -21,10 +21,27 @@ FIREMUD_SMOKE_COMPOSE_SERVICES="${FIREMUD_SMOKE_COMPOSE_SERVICES:-}"
 FIREMUD_SMOKE_VALIDATE_ONLY="${FIREMUD_SMOKE_VALIDATE_ONLY:-0}"
 
 bash "$ENSURE_ENV_SCRIPT"
+COMPOSE_SERVICES=()
 if [[ -n "$FIREMUD_SMOKE_COMPOSE_SERVICES" ]]; then
-  readarray -t COMPOSE_SERVICES <<<"$FIREMUD_SMOKE_COMPOSE_SERVICES"
+  while IFS= read -r service; do
+    if [[ -n "$service" ]]; then
+      COMPOSE_SERVICES+=("$service")
+    fi
+  done <<<"$FIREMUD_SMOKE_COMPOSE_SERVICES"
 else
-  readarray -t COMPOSE_SERVICES < <(docker compose "${COMPOSE_FILES[@]}" config --services)
+  if ! compose_services_output="$(docker compose "${COMPOSE_FILES[@]}" config --services)"; then
+    echo "Docker Compose service discovery failed." >&2
+    exit 1
+  fi
+  while IFS= read -r service; do
+    if [[ -n "$service" ]]; then
+      COMPOSE_SERVICES+=("$service")
+    fi
+  done <<<"$compose_services_output"
+fi
+if ((${#COMPOSE_SERVICES[@]} == 0)); then
+  echo "No Docker Compose services were discovered." >&2
+  exit 1
 fi
 
 declare -A ALL_COMPOSE_SERVICES=()

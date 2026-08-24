@@ -403,17 +403,13 @@ def decision_keys_for_inventory(
                     if not row.text.strip():
                         continue
                     break
-                key_match = re.match(
-                    r"^`(?P<key>[A-Z0-9][A-Z0-9-]*)`", first_cell
-                )
-                if key_match is None:
-                    continue
-                key = key_match.group("key")
-                if (
-                    CANONICAL_DECISION_KEY_RE.fullmatch(key)
-                    and key not in SUPERSEDED_SCAN_ALIAS_KEYS
-                ):
-                    decision_keys.add(key)
+                for key_match in DECISION_KEY_CELL_RE.finditer(first_cell):
+                    key = key_match.group("key")
+                    if (
+                        CANONICAL_DECISION_KEY_RE.fullmatch(key)
+                        and key not in SUPERSEDED_SCAN_ALIAS_KEYS
+                    ):
+                        decision_keys.add(key)
         decision_key_indexes[inventory_path] = decision_keys
     return decision_keys
 
@@ -1047,7 +1043,7 @@ def checked_reviews(
             for link in outcome_links
         )
         if (
-            review.disposition in {"Accepted", "Revised"}
+            review.disposition in {"Accepted", "Revised", "Deferred"}
             and not is_scan_alias
             and outcome.endswith(NO_ADR_OUTCOME_SUFFIX)
         ):
@@ -1079,6 +1075,18 @@ def checked_reviews(
                 decision_key_indexes,
             )
             is_no_adr = True
+
+        if (
+            review.disposition == "Deferred"
+            and not outcome_adr_numbers
+            and not is_scan_alias
+            and not is_no_adr
+        ):
+            fail(
+                f"{path}: checked deferred row at line {line_number} must "
+                "contain exact [ADR NNNN] provenance or use the strict "
+                "no-ADR form"
+            )
 
         if (
             review.disposition in {"Accepted", "Revised", "Superseded", "Withdrawn"}

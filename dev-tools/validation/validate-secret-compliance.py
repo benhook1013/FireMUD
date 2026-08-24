@@ -187,13 +187,13 @@ def main() -> int:
             )
             continue
 
+        if not operation_fields_valid:
+            continue
         if bootstrap_status != "completed":
             record_schema_issue(
                 f"{env}: provisioningState=provisioned requires "
                 "bootstrapOperationStatus=completed",
             )
-        if not operation_fields_valid:
-            continue
 
         missing = sorted(REQUIRED - set(classes.keys()))
         if missing:

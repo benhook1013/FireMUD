@@ -1176,15 +1176,38 @@ class AdrReviewStatusTests(unittest.TestCase):
             set_review_status(root, "Accepted", "Deferred")
             self.validator.validate(root)
 
-    def test_checked_deferred_row_without_adr_provenance_remains_valid(self) -> None:
+    def test_checked_deferred_row_without_adr_provenance_accepts_strict_no_adr(
+        self,
+    ) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            write(
+                root / "design/architecture/system-architecture-transactions.md",
+                "# Transactions\n",
+            )
+            append_provenance_row(
+                root,
+                "- [x] `TEST-DEFERRED` — `deferred` on 2026-07-27; "
+                "[canonical contract](../../architecture/"
+                "system-architecture-transactions.md); no ADR required",
+            )
+            self.validator.validate(root)
+
+    def test_checked_deferred_row_without_adr_provenance_rejects_arbitrary_link(
+        self,
+    ) -> None:
         with fixture_root() as fixture:
             root = Path(fixture)
             append_provenance_row(
                 root,
-                "- [x] `TEST-DEFERRED` — `deferred` on 2026-07-27; "
+                "- [x] `TEST-DEFERRED-NOTES` — `deferred` on 2026-07-27; "
                 "[notes](https://example.com)",
             )
-            self.validator.validate(root)
+            expect_failure(
+                self,
+                lambda: self.validator.validate(root),
+                "checked deferred row at line",
+            )
 
     def test_checked_deferred_adr_provenance_requires_accepted_status(self) -> None:
         with fixture_root() as fixture:
@@ -1471,6 +1494,33 @@ class AdrReviewStatusTests(unittest.TestCase):
             )
             reviews = checked_reviews(self.validator, root)
             self.assertEqual({"TEST-01"}, {review.key for review in reviews[12]})
+
+    def test_decision_inventory_table_scans_all_canonical_keys_in_first_cell(
+        self,
+    ) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            path = (
+                root
+                / "design/project-management/design-alignment/"
+                "decision-inventory-cross-cutting.md"
+            )
+            write(
+                path,
+                """
+                # Decision inventory
+
+                | Existing key(s) | Evidence |
+                | --- | --- |
+                | `TEST-DECISION`, `SECOND-DECISION`, `AA`, `MS-AA-TOKEN-REVOCATION` | Fixture decision |
+                | `AFTER-ROW` | Another fixture decision |
+                """,
+            )
+            decision_keys = self.validator.decision_keys_for_inventory(path, {})
+            self.assertEqual(
+                {"TEST-DECISION", "SECOND-DECISION", "AFTER-ROW"},
+                decision_keys,
+            )
 
     def test_superseded_no_adr_replacement_rejects_taxonomy_tokens(self) -> None:
         for taxonomy_key in ("AA", "EA", "GR"):
