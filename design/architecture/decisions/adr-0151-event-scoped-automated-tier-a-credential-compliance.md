@@ -103,6 +103,8 @@ Focused proof must cover successful unattended evidence generation, missing and 
 
 No implementation or proof may infer compliance solely from a Git commit, record timestamp, successful playbook process exit, or the presence of a secret-manager integration.
 
+Select validation and runtime evidence according to [`validation and runtime proof`](../../developer-workflows/validation-and-runtime-proof.md); record actual execution results in PR/CI evidence or implementation-tracking documents, not in this ADR.
+
 ## Reversibility and Revisit Triggers
 
 Revisit the Tier A measurements when credential technology, threat models, or operating environments change. Revisit the automation boundary if real recovery exercises identify a step that cannot safely run unattended. Consider making an external secret manager part of a future deployment profile only when measured operational or security needs justify its additional dependency; it does not replace this evidence contract.

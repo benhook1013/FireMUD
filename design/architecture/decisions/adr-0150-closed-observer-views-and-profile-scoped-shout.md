@@ -52,7 +52,7 @@ The type declaration is a ceiling, not a grant. A capability or authored mechani
 
 ### Game Logic Resolves Candidate-Specific Authorized Views
 
-Game Logic resolves authoritative world topology, communication scope, recipient location, capabilities, senses, effects, and explicit authored interception mechanics. It emits one bounded resolved plan containing the authorized view for each ordinary recipient and qualified observer candidate. The plan is bound to the communication type version and the freshness or fence evidence used for resolution.
+Game Logic resolves authoritative world topology, communication scope, recipient location, capabilities, senses, effects, and explicit authored interception mechanics. It emits one bounded resolved plan containing the authorized view for each ordinary recipient and qualified observer candidate. The plan is bound to the communication type version and the freshness or fence evidence used for resolution. [ADR 0147](./adr-0147-explicit-communication-classes-and-owner-delivery.md#world-and-gameplay-communication) owns the shared maximum of 100 recipient-view entries, including the actor and every observer view, and the whole-action `AUDIENCE_LIMIT_EXCEEDED` outcome before any persistence or delivery. Observer expansion cannot obtain a separate allowance, and no over-limit path truncates or partially delivers the audience.
 
 `WHISPER` interception requires an explicit published mechanic such as eavesdropping or magical listening. The current boolean eligibility and entity observer flag are only an initial implementation seam; they are not the final authoring, capability, freshness, or privacy contract.
 
@@ -117,6 +117,8 @@ The current implementation is partial. `SendCommunication` accepts `SAY`, `WHISP
 Proof must cover every allowed view class, rejection of undeclared and unknown fields, no-observer types, metadata-only and full observers, a concretely defined partial mechanic, capability loss, stale topology or effect evidence, missing resolution, duplicate plans, oversized candidates, retry, and cross-pod delivery without over-delivery. It must also prove that private social communication never enters gameplay observation and that default gameplay `TELL` has no observer candidates.
 
 `WHISPER` proof must replace the initial boolean or flag with a published mechanic and test ordinary recipients, unauthorized bystanders, qualifying observers, stale capability state, and history retrieval. `SHOUT` proof must use at least two profile declarations with intentionally different scopes, including area-wide and map-wide examples; validate named topology resolution and operator caps; exercise chunking and backpressure; emit diagnostics and metrics; and prove that no over-limit path silently truncates the audience.
+
+Select validation and runtime evidence according to [`validation and runtime proof`](../../developer-workflows/validation-and-runtime-proof.md); record actual execution results in PR/CI evidence or implementation-tracking documents, not in this ADR.
 
 ## Reversibility and Revisit Triggers
 

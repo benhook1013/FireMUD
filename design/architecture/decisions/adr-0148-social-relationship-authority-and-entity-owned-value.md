@@ -114,6 +114,8 @@ Proof must cover bilateral friendship transitions; directional blocks; duplicate
 
 Value proof must cover caller authorization plus Entity ownership, concurrent deposits and withdrawals, retries after every ambiguous handoff, sender or recipient disconnect, mail cancellation, claim, return, expiry, deletion, and owner restart without duplication or loss. World-specific mail tests must prove Game Logic participation only for that declared class and prove ordinary private mail is unavailable to tenant-authored scripts.
 
+Select validation and runtime evidence according to [`validation and runtime proof`](../../developer-workflows/validation-and-runtime-proof.md); record actual execution results in PR/CI evidence or implementation-tracking documents, not in this ADR.
+
 ## Reversibility and Revisit Triggers
 
 Relationship schemas, group types, ACL representation, projection caches, and transfer protocol details may evolve while preserving their named owner boundaries. A separate social-graph service should be reconsidered only if measured graph scale, query shape, deployment independence, or a distinct security boundary cannot be served by the existing Social & Groups service. Mixed-subject groups require a deliberate product and authorization decision. Social must not acquire independent item, currency, or attachment value authority as a shortcut.

@@ -143,6 +143,8 @@ Automated playbooks must generate evidence for ordinary staging, production, and
 
 Current static and operator tooling is partial. Existing reports and expected-binding checks do not yet prove every live binding or target-boundary identity, do not content-digest-bind the expected manifest throughout all phases, and do not implement the complete shareability matrix, phase taxonomy, or waiver validation described here. Existing static success must not be treated as proof that these obligations are complete.
 
+Select validation and runtime evidence according to [`validation and runtime proof`](../../developer-workflows/validation-and-runtime-proof.md); record actual execution results in PR/CI evidence or implementation-tracking documents, not in this ADR.
+
 ## Reversibility and Revisit Triggers
 
 Policy IDs, report versions, validator modules, provider adapters, and the shareability matrix may evolve through explicit versioning while preserving phase separation and event-bound evidence. Revisit the single-operator trust model before accepting evidence from independent operators, untrusted build or deployment actors, multiple administrative trust domains, externally supplied production artifacts, or a regulatory separation-of-duties requirement. Those triggers require independently verifiable provenance without removing the portable expected-binding contract.

@@ -447,8 +447,14 @@ def canonical_decision_keys(
     keys: set[str] = set()
     for inventory_path in DECISION_INVENTORY_PATHS:
         resolved_inventory_path = (repository_root / inventory_path).resolve()
-        if resolved_inventory_path.is_file():
-            keys.update(decision_keys_for_inventory(resolved_inventory_path, decision_key_indexes))
+        if not resolved_inventory_path.is_file():
+            fail(
+                "canonical decision inventory is missing or not a file: "
+                f"{inventory_path.as_posix()}"
+            )
+        keys.update(
+            decision_keys_for_inventory(resolved_inventory_path, decision_key_indexes)
+        )
     return keys
 
 

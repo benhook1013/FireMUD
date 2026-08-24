@@ -109,6 +109,8 @@ Proof must cover durable acknowledgement before mail, account direct-message, an
 
 Privacy proof must exercise ordinary recipients, non-recipients, full-content observers, metadata-only observers, redacted or partial views, blocks or later access changes, export, erasure, tombstones, cache refill, and case evidence. No history or export path may return a richer view than the recipient originally received.
 
+Select validation and runtime evidence according to [`validation and runtime proof`](../../developer-workflows/validation-and-runtime-proof.md); record actual execution results in PR/CI evidence or implementation-tracking documents, not in this ADR.
+
 ## Reversibility and Revisit Triggers
 
 Storage schemas, lifecycle workers, retention values, and cache representations may evolve while preserving explicit type contracts, purpose separation, durable-before-ack promises, and original-view disclosure bounds. Revisit a communication type's history or evidence policy when a concrete player, safety, legal, or operator requirement justifies it; do not broaden retention merely because content is already technically available during delivery.

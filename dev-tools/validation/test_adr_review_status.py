@@ -82,6 +82,15 @@ def fixture_root() -> tempfile.TemporaryDirectory[str]:
         | `TEST-DECISION` | Fixture decision |
         """,
     )
+    for inventory_name in (
+        "decision-inventory-microservices.md",
+        "decision-inventory-specialized-runtime.md",
+        "decision-inventory-product-operations.md",
+    ):
+        write(
+            root / "design/project-management/design-alignment" / inventory_name,
+            "# Decision inventory\n",
+        )
     write(
         root / "design/architecture/decisions/adr-0001-legacy.md",
         """
@@ -1481,6 +1490,18 @@ class AdrReviewStatusTests(unittest.TestCase):
             self.assertEqual(
                 {"TEST-DECISION", "SECOND-DECISION", "AFTER-ROW"},
                 decision_keys,
+            )
+
+    def test_canonical_decision_keys_rejects_missing_inventory(self) -> None:
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            missing_inventory = self.validator.DECISION_INVENTORY_PATHS[-1]
+            (root / missing_inventory).unlink()
+            expect_failure(
+                self,
+                lambda: self.validator.canonical_decision_keys(root, {}),
+                "canonical decision inventory is missing or not a file: "
+                f"{missing_inventory.as_posix()}",
             )
 
     def test_decision_inventory_table_stops_before_following_table(self) -> None:

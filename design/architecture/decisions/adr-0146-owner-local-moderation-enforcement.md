@@ -95,6 +95,8 @@ Proof must cover authorization and exact scope; durable intent before forwarding
 
 Availability and performance proof must demonstrate no Logging & Admin call on routine enforcement paths, continued enforcement during Logging & Admin and observability outages, indexed local-read behavior, and truthful fail-closed outcomes when the owner's required local state cannot be read. Any cache requires separate evidence that owner durability remains authoritative and cache loss or invalidation lag cannot permit a forbidden action.
 
+Select validation and runtime evidence according to [`validation and runtime proof`](../../developer-workflows/validation-and-runtime-proof.md); record actual execution results in PR/CI evidence or implementation-tracking documents, not in this ADR.
+
 ## Reversibility and Revisit Triggers
 
 Record schemas, indexes, command transport, and optional owner-local caches may evolve while preserving owner-local durable authority, monotonic transitions, ADR 0048 idempotency, and the no-routine-remote-check rule. Revisit snapshot distribution only if moderation grows into high-cardinality policies that genuinely require continuous runtime evaluation and measurements show typed state-transition commands are insufficient. Revisit cancellation of already admitted work only with a domain-wide compensating-transaction design that can avoid partial writes.

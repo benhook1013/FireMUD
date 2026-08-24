@@ -2292,10 +2292,6 @@ def expected_binding_checks(
             missing_external.append("backupStorage.bucket")
         if not backup_storage.get("bindingRef") and not backup_storage.get("fingerprint"):
             missing_external.append("backupStorage.bindingRef or backupStorage.fingerprint")
-    if asset_storage_enabled and asset_storage_error is None:
-        # optional_integration_state performs the complete enabled asset check;
-        # retain these paths here as explicit validation inputs for readability.
-        pass
     for primary, alternate in external_requirements:
         if not get(data, primary) and (alternate is None or not get(data, alternate)):
             missing_external.append(primary if alternate is None else f"{primary} or {alternate}")
