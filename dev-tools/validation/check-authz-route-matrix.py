@@ -3546,11 +3546,15 @@ def validate_moderation_action_route_variants(
         "current_global_role",
         "role_appropriate_assurance",
     }
-    if platform_checks != expected_platform_checks:
+    missing_platform_checks = expected_platform_checks - platform_checks
+    unexpected_platform_checks = platform_checks - expected_platform_checks - forbidden_checks
+    if missing_platform_checks or unexpected_platform_checks:
         append_unique_error(
             errors,
-            f"{platform_label} platform_access_ban branch must require exactly "
-            f"{sorted(expected_platform_checks)}",
+            f"{platform_label} platform_access_ban branch has missing or unexpected "
+            "live checks after tenant/membership exclusions: "
+            f"missing={sorted(missing_platform_checks)}, "
+            f"unexpected={sorted(unexpected_platform_checks)}",
         )
 
     roles = platform_route.get("roles")

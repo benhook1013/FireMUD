@@ -83,6 +83,7 @@ if account_container is None:
     )
 
 jwks_path_prefix = "/var/run/secrets/firemud/jwks/"
+jwks_mount_path = jwks_path_prefix.rstrip("/")
 
 
 def validate_account_jwks_path_overrides(container):
@@ -107,13 +108,13 @@ positive_override_container = copy.deepcopy(account_container)
 positive_override_container.setdefault("env", []).append(
     {
         "name": "FIREMUD_AUTH_JWKS_PATH",
-        "value": "/var/run/secrets/firemud/jwks/override.json",
+        "value": f"{jwks_path_prefix}override.json",
     }
 )
 validate_account_jwks_path_overrides(positive_override_container)
 
 for invalid_value in (
-    "/var/run/secrets/firemud/jwks/",
+    jwks_path_prefix,
     "/tmp/override.json",
     7,
 ):
@@ -136,10 +137,10 @@ jwks_mounts = [
     for mount in account_container.get("volumeMounts", [])
     if isinstance(mount, dict) and mount.get("name") == "jwt-jwks"
 ]
-if len(jwks_mounts) != 1 or jwks_mounts[0].get("mountPath") != "/var/run/secrets/firemud/jwks":
+if len(jwks_mounts) != 1 or jwks_mounts[0].get("mountPath") != jwks_mount_path:
     raise SystemExit(
         "Account jwt-jwks volume must be mounted exactly once at "
-        "/var/run/secrets/firemud/jwks"
+        f"{jwks_mount_path}"
     )
 
 config_map_refs = [
@@ -167,12 +168,12 @@ config_data = firemud_config.get("data")
 jwks_path = config_data.get("FIREMUD_AUTH_JWKS_PATH") if isinstance(config_data, dict) else None
 if (
     not isinstance(jwks_path, str)
-    or not jwks_path.startswith("/var/run/secrets/firemud/jwks/")
+    or not jwks_path.startswith(jwks_path_prefix)
     or jwks_path.endswith("/")
 ):
     raise SystemExit(
         "FIREMUD_AUTH_JWKS_PATH must be a file path under "
-        "/var/run/secrets/firemud/jwks"
+        f"{jwks_mount_path}"
     )
 PY
 

@@ -195,6 +195,7 @@ mutate_bootstrap_binding() {
     "$TMP_DIR/design/operations/secret-compliance/production.yaml" \
     "$TMP_DIR/design/operations/secret-compliance/evidence/production.json" \
     "$mode" <<'PY'
+import hashlib
 import json
 import pathlib
 import sys
@@ -206,6 +207,17 @@ compliance = json.loads(compliance_path.read_text(encoding="utf-8"))
 evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
 credential = compliance["credentialClasses"]["jwt-signing-keys-jwks"]
 evidence_record = evidence["records"]["jwt-signing-keys-jwks"]
+
+def digest(record):
+    payload = {key: value for key, value in record.items() if key != "immutableArtifactId"}
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
 if mode == "missing-credential-operation-id":
     credential.pop("bootstrapOperationId", None)
@@ -221,6 +233,9 @@ elif mode == "mismatched-evidence-payload-generation":
     evidence["provisioningGeneration"] = 2
 else:
     raise SystemExit(f"unknown bootstrap binding mutation: {mode}")
+
+if mode in {"missing-evidence-operation-id", "mismatched-evidence-generation"}:
+    evidence_record["immutableArtifactId"] = digest(evidence_record)
 
 compliance_path.write_text(json.dumps(compliance) + "\n", encoding="utf-8")
 evidence_path.write_text(json.dumps(evidence) + "\n", encoding="utf-8")
@@ -377,6 +392,8 @@ if SECRET_COMPLIANCE_ROOT="$TMP_DIR" \
 fi
 grep -q "timestamp must include an explicit timezone" "$INVALID_OUTPUT"
 
+write_evidence_fixture
+write_compliance_file production lastRotationAt
 python3 - "$TMP_DIR/design/operations/secret-compliance/production.yaml" <<'PY'
 import json
 import pathlib
@@ -469,11 +486,12 @@ import json
 import pathlib
 import sys
 
+import yaml
+
 bindings_path = pathlib.Path(sys.argv[1])
-bindings = bindings_path.read_text(encoding="utf-8").replace(
-    "backupStorage:\n  enabled: true", "backupStorage:\n  enabled: false"
-)
-bindings_path.write_text(bindings, encoding="utf-8")
+bindings = yaml.safe_load(bindings_path.read_text(encoding="utf-8"))
+bindings["backupStorage"]["enabled"] = False
+bindings_path.write_text(yaml.safe_dump(bindings, sort_keys=False), encoding="utf-8")
 
 record_path = pathlib.Path(sys.argv[2])
 record = json.loads(record_path.read_text(encoding="utf-8"))
@@ -606,6 +624,16 @@ if SECRET_COMPLIANCE_ROOT="$TMP_DIR" \
 fi
 grep -q "provisioningState=noncompliant cannot satisfy a provisioning compliance gate" \
   "$NONCOMPLIANT_OUTPUT"
+if ! SECRET_COMPLIANCE_ROOT="$TMP_DIR" \
+  SECRET_COMPLIANCE_TODAY=2026-12-20T00:00:00Z \
+  SECRET_COMPLIANCE_ENFORCEMENT_MODE=advisory \
+  python3 "$VALIDATOR" >"$NONCOMPLIANT_OUTPUT" 2>&1; then
+  echo "secret compliance advisory mode rejected a noncompliant projection" >&2
+  exit 1
+fi
+grep -q "provisioningState=noncompliant cannot satisfy a provisioning compliance gate" \
+  "$NONCOMPLIANT_OUTPUT"
+grep -q "authorization/readiness was not established for: production" "$NONCOMPLIANT_OUTPUT"
 
 write_not_provisioned_file production
 write_not_provisioned_file staging

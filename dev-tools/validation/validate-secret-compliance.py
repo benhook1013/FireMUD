@@ -116,17 +116,26 @@ def main() -> int:
             return today >= staging_hard_gate_date
         return False
 
+    def mark_non_authorizing(env: str) -> None:
+        if env not in non_authorizing_environments:
+            non_authorizing_environments.append(env)
+
     def record_issue(env: str, msg: str) -> None:
         if enforcement_mode == "strict" and hard_gated(env):
             failures.append(msg)
         else:
             warnings.append(msg)
+            mark_non_authorizing(env)
 
     def record_schema_issue(msg: str) -> None:
         if enforcement_mode == "strict":
             failures.append(msg)
         else:
             warnings.append(msg)
+            issue_env = msg.partition(":")[0]
+            if issue_env not in ENV_FILES:
+                raise ValueError(f"schema issue lacks an environment prefix: {msg}")
+            mark_non_authorizing(issue_env)
 
     for env, relative_path in ENV_FILES.items():
         path = root / relative_path
@@ -244,7 +253,7 @@ def main() -> int:
                     f"{env}: not-provisioned compliance records must not list "
                     "credential classes",
                 )
-            non_authorizing_environments.append(env)
+            mark_non_authorizing(env)
             continue
 
         if not expected_bindings_valid:

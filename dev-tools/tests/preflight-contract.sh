@@ -86,7 +86,9 @@ for env in ("production", "staging", "hobby-self-hosted"):
             raise SystemExit(f"{ref}: missing enabled backup storage paths: {backup_missing}")
     for section in ("assetStorage", "outboundComms"):
         optional = data.get(section)
-        if not isinstance(optional, dict) or not isinstance(optional.get("enabled"), bool):
+        if not isinstance(optional, dict):
+            raise SystemExit(f"{ref}: {section} must be an object")
+        if not isinstance(optional.get("enabled"), bool):
             raise SystemExit(f"{ref}: {section}.enabled must be a boolean")
         if not optional["enabled"]:
             continue
@@ -422,7 +424,7 @@ def public_config_map_documents():
 def jwks_result(documents):
     results = {
         result.policy_id: result
-        for result in module.jwt_jwks_checks(documents)
+        for result in module.jwt_jwks_checks(documents, "firemud")
     }
     return results["PREFLIGHT-JWKS-001"]
 
@@ -789,14 +791,33 @@ for advisory_status in ("pass", "fail"):
         raise SystemExit(
             f"advisory executable status {advisory_status} was rejected: {advisory_message}"
         )
-for invalid_catalog in (
-    {policy_id: category for policy_id, category in module.PREFLIGHT_POLICY_CATALOG.items() if policy_id != "PREFLIGHT-BACKUP-003"},
-    {**module.PREFLIGHT_POLICY_CATALOG, "PREFLIGHT-UNKNOWN-001": "apply-blocking"},
-    {**module.PREFLIGHT_POLICY_CATALOG, "PREFLIGHT-BACKUP-003": "invalid"},
+fixture_policy_id = "PREFLIGHT-BACKUP-003"
+if fixture_policy_id not in module.PREFLIGHT_POLICY_CATALOG:
+    raise SystemExit(f"invalid preflight policy catalogue fixture ID is missing: {fixture_policy_id}")
+for invalid_catalog, expected_fragment in (
+    (
+        {
+            policy_id: category
+            for policy_id, category in module.PREFLIGHT_POLICY_CATALOG.items()
+            if policy_id != fixture_policy_id
+        },
+        f"missing policy IDs: {fixture_policy_id}",
+    ),
+    (
+        {**module.PREFLIGHT_POLICY_CATALOG, "PREFLIGHT-UNKNOWN-001": "apply-blocking"},
+        "unknown policy IDs: PREFLIGHT-UNKNOWN-001",
+    ),
+    (
+        {**module.PREFLIGHT_POLICY_CATALOG, fixture_policy_id: "invalid"},
+        f"invalid preflight policy catalogue categories for policy IDs: {fixture_policy_id}",
+    ),
 ):
     catalog_message = module.validate_preflight_policy_catalog(invalid_catalog)
-    if catalog_message is None:
-        raise SystemExit(f"invalid preflight policy catalogue was accepted: {invalid_catalog}")
+    if catalog_message is None or expected_fragment not in catalog_message:
+        raise SystemExit(
+            "invalid preflight policy catalogue failed for the wrong reason: "
+            f"expected '{expected_fragment}', got {catalog_message!r}"
+        )
 for invalid_version in (None, "preflight-policy-v0"):
     invalid_version_report = {**complete_report}
     if invalid_version is None:
@@ -3042,15 +3063,7 @@ staging_expected_bindings.write_text(
 
 secret_evidence_path = promotion_root / "secret-compliance.json"
 def evidence_digest(record):
-    payload = {key: value for key, value in record.items() if key != "immutableArtifactId"}
-    encoded = json.dumps(
-        payload,
-        ensure_ascii=False,
-        allow_nan=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return "sha256:" + module.hashlib.sha256(encoded).hexdigest()
+    return module.canonical_evidence_digest(record)
 
 
 def make_secret_evidence():

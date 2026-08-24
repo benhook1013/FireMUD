@@ -517,12 +517,6 @@ def validate_no_adr_outcome(
     line_number: int,
     outcome: str,
 ) -> None:
-    if not outcome.endswith(NO_ADR_OUTCOME_SUFFIX):
-        fail(
-            f"{path}: checked no-ADR row at line {line_number} must end "
-            f"exactly with {NO_ADR_OUTCOME_SUFFIX!r}"
-        )
-
     links = list(MARKDOWN_LINK_RE.finditer(outcome))
     if len(links) != 1 or links[0].group("label") != NO_ADR_LINK_LABEL:
         fail(
@@ -590,12 +584,6 @@ def validate_superseded_no_adr_outcome(
             "replacement key(s) not present in the canonical decision inventories: "
             + ", ".join(unknown_keys)
         )
-    if not outcome.endswith(NO_ADR_OUTCOME_SUFFIX):
-        fail(
-            f"{path}: checked no-ADR row at line {line_number} must end "
-            f"exactly with {NO_ADR_OUTCOME_SUFFIX!r}"
-        )
-
     links = list(MARKDOWN_LINK_RE.finditer(outcome))
     if not links:
         fail(

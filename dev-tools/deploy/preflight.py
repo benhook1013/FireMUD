@@ -2668,7 +2668,7 @@ def expected_binding_checks(
 
 
 def jwt_jwks_checks(
-    documents: list[dict[str, Any]], jwks_namespace: str = "firemud"
+    documents: list[dict[str, Any]], jwks_namespace: str
 ) -> list[CheckResult]:
     inline_secret = False
     missing_secret_path: list[str] = []
@@ -3590,11 +3590,27 @@ def main() -> int:
                 "Required player-facing Secrets exist in the target cluster",
             ) or has_required_failure
 
-    for check in jwt_jwks_checks(documents):
+    try:
+        expected_bindings = load_yaml(expected_bindings_path) or {}
+    except YAML_READ_ERRORS:
+        expected_bindings = {}
+    jwks_namespace = secret_binding_namespace(
+        get(expected_bindings, "internalBindings.jwt.jwksRef")
+    )
+    if jwks_namespace is None:
         has_required_failure = append_result(
             check_results,
-            check.policy_id, check.required, check.status, check.message,
+            "PREFLIGHT-JWKS-001",
+            False,
+            "fail",
+            "Cannot resolve the jwt-jwks namespace from the expected binding",
         ) or has_required_failure
+    else:
+        for check in jwt_jwks_checks(documents, jwks_namespace):
+            has_required_failure = append_result(
+                check_results,
+                check.policy_id, check.required, check.status, check.message,
+            ) or has_required_failure
 
     gw_value = None
     for document in documents:

@@ -1576,33 +1576,32 @@ class AdrReviewStatusTests(unittest.TestCase):
             )
 
     def test_superseded_no_adr_replacement_rejects_taxonomy_tokens(self) -> None:
-        for taxonomy_key in ("CAPABILITY-GROUP",):
-            with self.subTest(taxonomy_key=taxonomy_key), fixture_root() as fixture:
-                root = Path(fixture)
-                write(
-                    root
-                    / "design/project-management/design-alignment/"
-                    "decision-inventory-product-operations.md",
-                    """
-                    # Product And Operations Decision Inventory
+        with fixture_root() as fixture:
+            root = Path(fixture)
+            write(
+                root
+                / "design/project-management/design-alignment/"
+                "decision-inventory-product-operations.md",
+                """
+                # Product And Operations Decision Inventory
 
-                    | Capability group | Primary | Secondary-only |
-                    | --- | --- | --- |
-                    | Accounts and Access (`CAPABILITY-GROUP`) | `AA-1.1` | `EA-2.1`, `GR-1.1` |
-                    """,
-                )
-                append_provenance_row(
-                    root,
-                    "- [x] `TEST-SUPERSEDED-TAXONOMY-KEY` — `superseded` on "
-                    f"2026-07-27 by `{taxonomy_key}`; [replacement ADR 0012](../../"
-                    "architecture/decisions/adr-0012-reviewed.md); no ADR required",
-                )
-                expect_failure(
-                    self,
-                    lambda root=root: checked_reviews(self.validator, root),
-                    "replacement key(s) not present in the canonical decision inventories: "
-                    + taxonomy_key,
-                )
+                | Capability group | Primary | Secondary-only |
+                | --- | --- | --- |
+                | Accounts and Access (`CAPABILITY-GROUP`) | `AA-1.1` | `EA-2.1`, `GR-1.1` |
+                """,
+            )
+            append_provenance_row(
+                root,
+                "- [x] `TEST-SUPERSEDED-TAXONOMY-KEY` — `superseded` on "
+                "2026-07-27 by `CAPABILITY-GROUP`; [replacement ADR 0012](../../"
+                "architecture/decisions/adr-0012-reviewed.md); no ADR required",
+            )
+            expect_failure(
+                self,
+                lambda: checked_reviews(self.validator, root),
+                "replacement key(s) not present in the canonical decision inventories: "
+                "CAPABILITY-GROUP",
+            )
 
     def test_superseded_no_adr_replacement_row_rejects_unknown_decision_key(
         self,
