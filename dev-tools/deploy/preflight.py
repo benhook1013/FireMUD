@@ -2500,8 +2500,12 @@ def expected_binding_checks(
                 if asset_storage_enabled and get(data, "assetStorage.bindingRef")
                 else None
             ),
-            binding_ref_format_error(
-                "operatorCredentials.bindingRef", get(data, "operatorCredentials.bindingRef")
+            (
+                binding_ref_format_error(
+                    "operatorCredentials.bindingRef", get(data, "operatorCredentials.bindingRef")
+                )
+                if get(data, "operatorCredentials.bindingRef")
+                else None
             ),
         ]
         if error

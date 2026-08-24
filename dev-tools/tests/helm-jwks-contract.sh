@@ -7,6 +7,11 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 RENDERED="$TMP_DIR/rendered.yaml"
+if ! command -v helm >/dev/null 2>&1; then
+  echo "helm is required to render the JWKS contract" >&2
+  exit 1
+fi
+
 helm template contract "$CHART_DIR" \
   -f "$CHART_DIR/values-hosted-shared.example.yaml" \
   >"$RENDERED"

@@ -554,7 +554,6 @@ PLATFORM_ADMIN_ROLE_ASSURANCE_ROUTE_IDENTITIES = {
 }
 OPERATOR_REFERENCE_ISSUANCE_REQUIRED_FIELDS = {
     ("account-service", "IssueHumanOperatorAuthorizationReference"): {
-        "tenant_scope",
         "action_family",
         "action_family_schema_id",
         "action_family_schema_version",
@@ -570,6 +569,46 @@ OPERATOR_REFERENCE_ISSUANCE_REQUIRED_FIELDS = {
         "action_family_schema_version",
         "control_plane_request_id",
         "mutation_digest",
+    },
+}
+HUMAN_OPERATOR_ISSUANCE_BRANCHES = {
+    "tenant_restriction": {
+        "selector": "action_category=tenant_restriction",
+        "scope": "tenant",
+        "membership_authority_generation_applies": "conditional_by_operator_role",
+        "membership_authority_generation_condition": {
+            "tenant_role": True,
+            "platformAdmin_global": False,
+        },
+        "global_platform_admin_reference_generation_binding": "target_tenant_generation",
+        "global_platform_admin_membership_required": False,
+        "required_fields": {"tenant_scope"},
+    },
+    "platform_access_ban": {
+        "selector": "action_category=platform_access_ban",
+        "scope": "account",
+        "classification": "account_scoped",
+        "target_subject_binding": "explicit_target_account_id",
+        "role_assurance": PRIVILEGED_OPERATOR_ROLE_ASSURANCE,
+        "roles": {"any_of": ["platformAdmin"]},
+        "membership_authority_generation_applies": False,
+        "global_platform_admin_membership_required": False,
+        "tenant_billing_authority_generation_applies": False,
+        "required_live_checks": {
+            "issuer_generation",
+            "account_generation",
+            "current_operator_roles",
+            "current_global_role",
+            "role_appropriate_assurance",
+        },
+        "forbidden_live_checks": {
+            "target_tenant_generation",
+            "tenant_generation",
+            "membership_when_tenant_role",
+            "membership_generation",
+        },
+        "required_fields": {"target_account_id"},
+        "forbidden_fields": {"tenant_scope", "tenant_id", "target_tenant_generation"},
     },
 }
 AUTH_UNAVAILABLE = "AUTH_UNAVAILABLE"
@@ -3103,6 +3142,153 @@ def validate_operator_reference_issuance(
             )
 
 
+def validate_human_operator_issuance_branches(
+    routes: list[Any],
+    errors: list[str],
+    cardinality_errors: set[str] | None = None,
+) -> None:
+    route = resolve_unique_route(
+        routes,
+        "account-service",
+        "IssueHumanOperatorAuthorizationReference",
+        errors,
+        cardinality_errors,
+    )
+    if route is None:
+        return
+    label = route_label(route)
+    if route.get("branch_selector") != "action_category":
+        errors.append(f"{label} branch_selector must be 'action_category'")
+    precedence = route.get("conditional_branch_precedence")
+    if not isinstance(precedence, dict) or precedence.get(
+        "branch_fields_override_top_level"
+    ) is not True:
+        errors.append(
+            f"{label} conditional_branch_precedence must override top-level fields"
+        )
+
+    branches = route.get("conditional_branches")
+    if not isinstance(branches, dict):
+        errors.append(f"{label} conditional_branches must be a mapping")
+        return
+    if "operator_authorization_branches" in route:
+        errors.append(
+            f"{label} operator_authorization_branches must be branch-specific "
+            "under conditional_branches.tenant_restriction"
+        )
+    expected_names = set(HUMAN_OPERATOR_ISSUANCE_BRANCHES)
+    if set(branches) != expected_names:
+        errors.append(
+            f"{label} conditional_branches must contain exactly "
+            f"{sorted(expected_names)}"
+        )
+
+    top_level_fields = route.get("required_fields")
+    top_level_field_set = (
+        {field for field in top_level_fields if isinstance(field, str)}
+        if isinstance(top_level_fields, list)
+        else set()
+    )
+    if "tenant_scope" in top_level_field_set:
+        errors.append(
+            f"{label} tenant_scope must be branch-specific, not a common required field"
+        )
+
+    for branch_name, expected in HUMAN_OPERATOR_ISSUANCE_BRANCHES.items():
+        branch_label = f"{label} conditional_branches.{branch_name}"
+        branch = branches.get(branch_name)
+        if not isinstance(branch, dict):
+            errors.append(f"{branch_label} must be a mapping")
+            continue
+        for field, expected_value in expected.items():
+            if field in {"required_fields", "required_live_checks", "forbidden_live_checks", "forbidden_fields"}:
+                continue
+            if branch.get(field) != expected_value:
+                errors.append(
+                    f"{branch_label} must declare {field}={expected_value!r}"
+                )
+        for field in ("required_fields", "forbidden_fields"):
+            if field not in expected:
+                continue
+            value = branch.get(field)
+            if not isinstance(value, list) or any(
+                not isinstance(item, str) for item in value
+            ):
+                errors.append(f"{branch_label}.{field} must be a list of strings")
+                continue
+            actual = set(value)
+            if len(actual) != len(value):
+                errors.append(f"{branch_label}.{field} must not contain duplicates")
+            if actual != expected[field]:
+                errors.append(
+                    f"{branch_label}.{field} must equal {sorted(expected[field])}"
+                )
+        for field in ("required_live_checks", "forbidden_live_checks"):
+            if field not in expected:
+                continue
+            value = branch.get(field)
+            if not isinstance(value, list) or any(
+                not isinstance(item, str) for item in value
+            ):
+                errors.append(f"{branch_label}.{field} must be a list of strings")
+                continue
+            actual = set(value)
+            if len(actual) != len(value):
+                errors.append(f"{branch_label}.{field} must not contain duplicates")
+            if actual != expected[field]:
+                errors.append(
+                    f"{branch_label}.{field} must equal {sorted(expected[field])}"
+                )
+        required_fields = branch.get("required_fields")
+        forbidden_fields = branch.get("forbidden_fields", [])
+        if isinstance(required_fields, list) and isinstance(forbidden_fields, list):
+            overlap = sorted(set(required_fields) & set(forbidden_fields))
+            if overlap:
+                errors.append(
+                    f"{branch_label} required_fields must not be forbidden: {overlap}"
+                )
+        required_checks = branch.get("required_live_checks", [])
+        forbidden_checks = branch.get("forbidden_live_checks", [])
+        if isinstance(required_checks, list) and isinstance(forbidden_checks, list):
+            overlap = sorted(set(required_checks) & set(forbidden_checks))
+            if overlap:
+                errors.append(
+                    f"{branch_label} required_live_checks must not be forbidden: {overlap}"
+                )
+
+    tenant_branch = branches.get("tenant_restriction")
+    if isinstance(tenant_branch, dict):
+        if "operator_authorization_branches" not in tenant_branch:
+            errors.append(
+                f"{label} tenant_restriction branch must declare "
+                "operator_authorization_branches"
+            )
+        else:
+            operator_authorization_branch_checks(
+                tenant_branch,
+                f"{label} conditional_branches.tenant_restriction",
+                errors,
+            )
+
+    platform_branch = branches.get("platform_access_ban")
+    if isinstance(platform_branch, dict):
+        if "operator_authorization_branches" in platform_branch:
+            errors.append(
+                f"{label} platform_access_ban branch must not declare "
+                "operator_authorization_branches"
+            )
+        forbidden_fields = platform_branch.get("forbidden_fields")
+        if isinstance(forbidden_fields, list):
+            common_conflicts = sorted(
+                top_level_field_set & set(forbidden_fields)
+            )
+            if common_conflicts:
+                errors.append(
+                    f"{label} platform_access_ban branch forbids common fields: "
+                    f"{common_conflicts}"
+                )
+
+
 def validate_authority_unavailable_outcomes(
     routes: list[Any],
     errors: list[str],
@@ -4831,6 +5017,11 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
         routes,
         errors,
         required_fields_cache,
+        cardinality_errors,
+    )
+    validate_human_operator_issuance_branches(
+        routes,
+        errors,
         cardinality_errors,
     )
     validate_generation_applicability(routes, errors, live_checks_cache)

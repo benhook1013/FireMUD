@@ -5,7 +5,7 @@ This cheat sheet is the **front door** for Redis-related design and operations. 
 Treat it as a **routing map and curated subset**:
 
 - Canonical coordination/reset details (including reset-tolerance classes) live in the reset policy matrix and any extended catalogs in `system-architecture-redis-reset-and-recovery.md`.
-- Canonical cache/rate-limit prefix details (including correctness class and reset behavior) live in the [Cache/Rate-Limit Key Catalog](./system-architecture-redis-cache-reference.md#cache-rate-limit-key-catalog).
+- Canonical cache/rate-limit prefix details (including correctness class and reset behavior) live in the [Cache/Rate-Limit Key Catalog](./system-architecture-redis-cache-reference.md#cacherate-limit-key-catalog).
 - Cache policy and Class-B contract guidance live in [Redis Cache & Rate Limiting](./system-architecture-redis-cache.md); when adding new prefixes, update the canonical reference catalog first, then reflect representative entries here as needed for discoverability.
 
 ## Implementation Status

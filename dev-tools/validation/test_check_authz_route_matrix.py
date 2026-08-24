@@ -845,23 +845,25 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 "account-service",
                 "IssueHumanOperatorAuthorizationReference",
             )
+            tenant_branch = route["conditional_branches"]["tenant_restriction"]
             branches = {
                 branch["branch"]: set(branch["required_live_checks"])
-                for branch in route["operator_authorization_branches"]
+                for branch in tenant_branch["operator_authorization_branches"]
             }
             self.assertEqual(expected, branches)
 
             platform_admin_branch = next(
                 branch
-                for branch in route["operator_authorization_branches"]
+                for branch in tenant_branch["operator_authorization_branches"]
                 if branch["branch"] == "platformAdmin_global"
             )
             platform_admin_branch["required_live_checks"].remove(
                 "target_tenant_generation"
             )
             errors = []
-            self.validator.validate_generation_applicability(
-                document["routes"], errors
+            self.validator.validate_human_operator_issuance_branches(
+                document["routes"],
+                errors,
             )
             self.assertTrue(
                 any(
@@ -2584,6 +2586,125 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors,
         )
 
+    def test_human_operator_issuance_scopes_fields_by_action_branch(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(
+            document, "account-service", "IssueHumanOperatorAuthorizationReference"
+        )
+        self.assertNotIn("tenant_scope", route["required_fields"])
+        branches = route["conditional_branches"]
+        self.assertEqual(
+            ["tenant_scope"], branches["tenant_restriction"]["required_fields"]
+        )
+        self.assertEqual(
+            {"tenant_role", "platformAdmin_global"},
+            {
+                branch["branch"]
+                for branch in branches["tenant_restriction"][
+                    "operator_authorization_branches"
+                ]
+            },
+        )
+        self.assertNotIn("operator_authorization_branches", route)
+        platform = branches["platform_access_ban"]
+        self.assertEqual(["target_account_id"], platform["required_fields"])
+        self.assertEqual("action_category=platform_access_ban", platform["selector"])
+        self.assertEqual("account", platform["scope"])
+        self.assertEqual("account_scoped", platform["classification"])
+        self.assertEqual(
+            "explicit_target_account_id", platform["target_subject_binding"]
+        )
+        self.assertEqual(
+            [
+                "issuer_generation",
+                "account_generation",
+                "current_operator_roles",
+                "current_global_role",
+                "role_appropriate_assurance",
+            ],
+            platform["required_live_checks"],
+        )
+        self.assertEqual(
+            [
+                "target_tenant_generation",
+                "tenant_generation",
+                "membership_when_tenant_role",
+                "membership_generation",
+            ],
+            platform["forbidden_live_checks"],
+        )
+        self.assertEqual(
+            ["tenant_scope", "tenant_id", "target_tenant_generation"],
+            platform["forbidden_fields"],
+        )
+
+    def test_human_operator_issuance_rejects_cross_scope_branch_drift(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        mutations = (
+            (
+                "common tenant scope",
+                lambda route: route["required_fields"].append("tenant_scope"),
+                "tenant_scope must be branch-specific, not a common required field",
+            ),
+            (
+                "platform tenant field",
+                lambda route: route["conditional_branches"]["platform_access_ban"][
+                    "required_fields"
+                ].append("tenant_scope"),
+                "conditional_branches.platform_access_ban.required_fields must equal",
+            ),
+            (
+                "platform target tenant generation",
+                lambda route: route["conditional_branches"]["platform_access_ban"][
+                    "required_live_checks"
+                ].append("target_tenant_generation"),
+                "conditional_branches.platform_access_ban.required_live_checks must equal",
+            ),
+            (
+                "missing platform branch",
+                lambda route: route["conditional_branches"].pop("platform_access_ban"),
+                "conditional_branches must contain exactly",
+            ),
+            (
+                "top-level operator branches",
+                lambda route: route.__setitem__(
+                    "operator_authorization_branches",
+                    copy.deepcopy(
+                        route["conditional_branches"]["tenant_restriction"][
+                            "operator_authorization_branches"
+                        ]
+                    ),
+                ),
+                "operator_authorization_branches must be branch-specific",
+            ),
+            (
+                "platform operator branches",
+                lambda route: route["conditional_branches"]["platform_access_ban"].__setitem__(
+                    "operator_authorization_branches",
+                    copy.deepcopy(
+                        route["conditional_branches"]["tenant_restriction"][
+                            "operator_authorization_branches"
+                        ]
+                    ),
+                ),
+                "platform_access_ban branch must not declare operator_authorization_branches",
+            ),
+        )
+        for mutation_name, mutate, expected_error in mutations:
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                route = route_for(
+                    document,
+                    "account-service",
+                    "IssueHumanOperatorAuthorizationReference",
+                )
+                mutate(route)
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(expected_error in error for error in errors),
+                    (mutation_name, errors),
+                )
+
     def test_operator_reference_issuance_missing_required_fields_has_one_diagnostic(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = route_for(
@@ -2600,7 +2721,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 "required_fields must include operator-reference fields: "
                 "['action_family', 'action_family_schema_id', "
                 "'action_family_schema_version', 'control_plane_request_id', "
-                "'mutation_digest', 'tenant_scope']"
+                "'mutation_digest']"
             ),
         )
         self.assertFalse(

@@ -612,7 +612,14 @@ operator_delegation:
       auth_path: exact_mtls_workload_plus_forwarded_control_ui
       issued_token_state: current_exact_active_control_ui_registry_record
       bindings:
-        [actor_account_id, control_ui_jti, account_generation, role, tenant_scope, action_family, action_family_schema_id, action_family_schema_version, mutation_digest, membership_version_when_applicable, issuance_fence, authority_evidence_bundle, control_plane_request_id, issued_at, expires_at]
+        common: [actor_account_id, control_ui_jti, account_generation, role, action_family, action_family_schema_id, action_family_schema_version, mutation_digest, issuance_fence, authority_evidence_bundle, control_plane_request_id, issued_at, expires_at]
+        branch_fields:
+          tenant_restriction:
+            required: [tenant_scope]
+            optional: [membership_version_when_applicable]
+          platform_access_ban:
+            required: [target_account_id]
+            forbidden: [tenant_scope, tenant_id, target_tenant_generation, membership_version_when_applicable]
     unattended_automation:
       auth_path: exact_mtls_workload_plus_versioned_automation_policy
       bindings:
@@ -1512,19 +1519,42 @@ routes:
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/logging-admin-service"]
     required_live_checks: [current_account_generation, current_token_generation]
-    membership_authority_generation_applies: conditional_by_operator_role
-    membership_authority_generation_condition:
-      tenant_role: true
-      platformAdmin_global: false
+    branch_selector: action_category
+    conditional_branch_precedence:
+      branch_fields_override_top_level: true
+    conditional_branches:
+      tenant_restriction:
+        selector: action_category=tenant_restriction
+        scope: tenant
+        membership_authority_generation_applies: conditional_by_operator_role
+        membership_authority_generation_condition:
+          tenant_role: true
+          platformAdmin_global: false
+        global_platform_admin_reference_generation_binding: target_tenant_generation
+        global_platform_admin_membership_required: false
+        operator_authorization_branches:
+          - branch: tenant_role
+            required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
+          - branch: platformAdmin_global
+            required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
+        required_fields: [tenant_scope]
+      platform_access_ban:
+        selector: action_category=platform_access_ban
+        scope: account
+        classification: account_scoped
+        target_subject_binding: explicit_target_account_id
+        role_assurance: privileged_control_when_global_role
+        roles:
+          any_of: [platformAdmin]
+        membership_authority_generation_applies: false
+        global_platform_admin_membership_required: false
+        tenant_billing_authority_generation_applies: false
+        required_live_checks: [issuer_generation, account_generation, current_operator_roles, current_global_role, role_appropriate_assurance]
+        forbidden_live_checks: [target_tenant_generation, tenant_generation, membership_when_tenant_role, membership_generation]
+        required_fields: [target_account_id]
+        forbidden_fields: [tenant_scope, tenant_id, target_tenant_generation]
     role_assurance: privileged_control_when_global_role
-    operator_authorization_branches:
-      - branch: tenant_role
-        required_live_checks: [membership_when_tenant_role, membership_generation, tenant_generation]
-      - branch: platformAdmin_global
-        required_live_checks: [current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation]
-    global_platform_admin_membership_required: false
-    global_platform_admin_reference_generation_binding: target_tenant_generation
-    required_fields: [tenant_scope, action_family, action_family_schema_id, action_family_schema_version, control_plane_request_id, mutation_digest]
+    required_fields: [action_family, action_family_schema_id, action_family_schema_version, control_plane_request_id, mutation_digest]
     mutation_contract: create_bounded_human_operator_authorization_reference
     canonical_errors:
       any_of: [IDEMPOTENCY_CONFLICT]

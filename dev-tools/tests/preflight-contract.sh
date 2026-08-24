@@ -1621,6 +1621,28 @@ def verify_binding_ref_contract(case_name, mutate, policy_id, expected_fragment)
             f"{case_name}: expected {policy_id} message to include '{expected_fragment}', got '{policy.message}'"
         )
 
+def verify_operator_credentials_fingerprint_pass():
+    expected_path = root / "design/operations/environments/hobby-self-hosted/expected-bindings.yaml"
+    expected = yaml.safe_load(expected_path.read_text(encoding="utf-8"))
+    expected["operatorCredentials"].pop("bindingRef")
+    expected["operatorCredentials"]["fingerprint"] = "sha256:operator-identity"
+    case_path = env_root / "hobby-self-hosted" / "fingerprint-only-operator-credentials.yaml"
+    case_path.write_text(yaml.safe_dump(expected, sort_keys=False), encoding="utf-8")
+    results = module.expected_binding_checks(
+        case_path,
+        "synthetic-fingerprint-only-operator-credentials.yaml",
+        "hobby-self-hosted",
+        rendered_documents,
+    )
+    policy = next(result for result in results if result.policy_id == "PREFLIGHT-EXTERNAL-001")
+    if policy.status != "pass":
+        raise SystemExit(
+            "fingerprint-only operator credentials should pass external preflight: "
+            + policy.message
+        )
+
+verify_operator_credentials_fingerprint_pass()
+
 def verify_backup_storage_failure(case_name, mutate, expected_fragment, env_class="hobby-self-hosted"):
     expected_path = root / f"design/operations/environments/{env_class}/expected-bindings.yaml"
     expected = yaml.safe_load(expected_path.read_text(encoding="utf-8"))
@@ -1833,6 +1855,12 @@ verify_binding_ref_contract(
     lambda data: data["backupStorage"].__setitem__("bindingRef", "not-a-binding-ref"),
     "PREFLIGHT-EXTERNAL-001",
     "backupStorage.bindingRef must use <scheme>://<namespace>/<binding> format",
+)
+verify_binding_ref_contract(
+    "invalid-operator-credentials-binding-ref",
+    lambda data: data["operatorCredentials"].__setitem__("bindingRef", "not-a-binding-ref"),
+    "PREFLIGHT-EXTERNAL-001",
+    "operatorCredentials.bindingRef must use <scheme>://<namespace>/<binding> format",
 )
 verify_binding_ref_contract(
     "wrong-secret-namespace",

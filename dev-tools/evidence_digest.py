@@ -17,6 +17,7 @@ def canonical_evidence_digest(record: dict[str, Any]) -> str:
         if isinstance(value, bool):
             return "true" if value else "false"
         if isinstance(value, str):
+            # Lone surrogates are intentionally rejected: RFC 8785 canonical input must be valid Unicode/UTF-8.
             value.encode("utf-8")
             return json.dumps(value, ensure_ascii=False)
         if isinstance(value, int):
