@@ -31,6 +31,15 @@ The required assurance depends on the deployment profile. A hosted production se
 
 ## Decision
 
+### Canonical Monitoring-Profile Enum
+
+The serialized monitoring-profile enum is defined here and is shared verbatim by retained evidence (`externalAuthority.profile`), Prometheus canary and deadman labels (`profile`), and profile-aware monitoring rules:
+
+- `independent-required` — the deployment claims independent external detection, public-path coverage, and off-cluster paging.
+- `independent-omitted` — the deployment explicitly accepts common-failure-domain or operator-dependent detection and makes no independent availability claim.
+
+The unqualified words “required” and “omitted” are prose descriptions only; they are not alternate serialized profile values.
+
 ### Independent Monitoring Is Required for Hosted External-Availability Claims
 
 A hosted production deployment profile that claims externally verified availability or monitoring-resilient readiness must operate an off-cluster monitoring and paging path outside the monitored environment's ordinary cluster and observability failure domain.

@@ -22,6 +22,8 @@ Illustrative retained evidence shape for a hosted-assurance observability smoke;
   "verifiedAt": "2026-03-19T10:55:00Z",
   "verifiedBy": "operator@example",
   "preflightEvidenceRef": "ci://observability-smoke/2026-03-19T10:40:00Z",
+  "executionMode": "live",
+  "externalAuthorityProvenance": "retained-external",
   "capabilities": {
     "prometheusMirrors": "published",
     "playerFlowCanary": "advertised"

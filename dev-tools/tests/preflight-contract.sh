@@ -70,7 +70,11 @@ def get(data, dotted):
 def checked_in_manifest_error(ref, data, expected_environment):
     if data.get("environment") != expected_environment:
         return f"{ref}: environment mismatch"
-    missing = [path for path in required_paths if get(data, path) is None]
+    missing = [
+        path
+        for path in required_paths
+        if (get(data, path) is None if path.endswith(".enabled") else not get(data, path))
+    ]
     if "assetStorage" in data:
         missing.extend(
             path
@@ -162,6 +166,16 @@ disabled_error = checked_in_manifest_error(
 )
 if disabled_error is None or "checked-in backupStorage.enabled must be true" not in disabled_error:
     raise SystemExit(f"explicitly disabled backupStorage changed its diagnostic: {disabled_error}")
+
+falsey_data = copy.deepcopy(checked_in_hobby)
+falsey_data["internalBindings"]["postgres"]["endpoint"] = ""
+falsey_error = checked_in_manifest_error(
+    pathlib.Path("synthetic-empty-postgres-endpoint.yaml"),
+    falsey_data,
+    "hobby-self-hosted",
+)
+if falsey_error is None or "internalBindings.postgres.endpoint" not in falsey_error:
+    raise SystemExit(f"falsey required binding changed its diagnostic: {falsey_error}")
 PY
 
 python3 - <<'PY' "$ROOT_DIR" "$TMP_DIR"
@@ -221,7 +235,7 @@ else:
     encoding="utf-8",
 )
 (fake_bin / "velero").write_text(
-    "#!/usr/bin/env python3\nprint('backup-1 Completed')\n",
+    "#!/usr/bin/env python3\nprint('NAME STATUS')\nprint('backup-1 Completed')\n",
     encoding="utf-8",
 )
 (fake_bin / "psql").write_text(
@@ -4087,6 +4101,22 @@ baseline_status, baseline_message = module.validate_recovery_baseline(
 if baseline_status != "pass":
     raise SystemExit(f"valid recovery baseline did not pass: {baseline_message}")
 
+if set(module.canonical_recovery_allowed_not_applicable_classes("production")) != {
+    "asset-storage",
+    "outbound-comms",
+}:
+    raise SystemExit("production recovery applicability profile allowed the wrong not-applicable classes")
+for non_production_environment in ("staging", "hobby-self-hosted"):
+    if set(module.canonical_recovery_allowed_not_applicable_classes(non_production_environment)) != {
+        "backup-storage",
+        "asset-storage",
+        "outbound-comms",
+        "operator-credentials",
+    }:
+        raise SystemExit(
+            f"{non_production_environment} recovery applicability profile did not allow absent external bindings"
+        )
+
 legacy_refresh_class_names = copy.deepcopy(valid_baseline)
 legacy_refresh_class_names["secretComplianceRefresh"]["credentialClasses"] = [
     "backupStorage",
@@ -4176,6 +4206,38 @@ if (
     raise SystemExit(
         "not-applicable production backup-storage was accepted: "
         + not_applicable_backup_storage_message
+    )
+
+not_applicable_operator_credentials = copy.deepcopy(valid_baseline)
+not_applicable_operator_credentials["credentialApplicability"]["operator-credentials"] = "not_applicable"
+del not_applicable_operator_credentials["credentialDispositions"]["operator-credentials"]
+not_applicable_operator_credentials["externalCredentialValidation"]["records"]["operator-credentials"] = {
+    "status": "not_applicable",
+    "reason": "credential-class-not-present",
+    "evidenceRef": "evidence/operator-credentials-not-applicable.json",
+}
+not_applicable_operator_credentials_path = recovery_dir / "not-applicable-operator-credentials-baseline.json"
+not_applicable_operator_credentials_path.write_text(
+    json.dumps(not_applicable_operator_credentials),
+    encoding="utf-8",
+)
+not_applicable_operator_credentials_status, not_applicable_operator_credentials_message = (
+    module.validate_recovery_baseline(
+        tmp,
+        str(not_applicable_operator_credentials_path.relative_to(tmp)),
+        "sha256:recovery-contract",
+        now,
+        now,
+    )
+)
+if (
+    not_applicable_operator_credentials_status != "fail"
+    or "required credential classes must be applicable" not in not_applicable_operator_credentials_message
+    or "operator-credentials" not in not_applicable_operator_credentials_message
+):
+    raise SystemExit(
+        "not-applicable production operator-credentials was accepted: "
+        + not_applicable_operator_credentials_message
     )
 
 missing_recovery_evidence_refs = copy.deepcopy(valid_baseline)

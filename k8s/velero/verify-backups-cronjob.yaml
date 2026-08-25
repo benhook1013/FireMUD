@@ -43,11 +43,11 @@ data:
     }
 
     # List backups and ensure at least one exists
-    if ! BACKUP_LIST=$(velero backup get -n "$NAMESPACE" --no-headers); then
+    if ! BACKUP_LIST=$(velero backup get -n "$NAMESPACE"); then
       echo "Unable to list Velero backups in namespace $NAMESPACE" >&2
       exit 1
     fi
-    BACKUP_COUNT=$(printf '%s\n' "$BACKUP_LIST" | awk 'NF { count++ } END { print count + 0 }')
+    BACKUP_COUNT=$(printf '%s\n' "$BACKUP_LIST" | awk 'NR > 1 && NF { count++ } END { print count + 0 }')
     if [ "$BACKUP_COUNT" -eq 0 ]; then
       echo "No Velero backups found in namespace $NAMESPACE" >&2
       exit 1

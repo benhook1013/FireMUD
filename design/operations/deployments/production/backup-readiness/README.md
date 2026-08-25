@@ -8,6 +8,8 @@ Store one full record per `roll-forward-only` production promotion, or when the 
 
 The field list below is the target-state contract. The target `PREFLIGHT-BACKUP-001` integration validates the richer backup lineage for production promotion; `PREFLIGHT-BACKUP-002` separately reads the durable recovery controller before production first-live or reopen. The current executable intentionally fails the traffic-open gate closed because that controller read is not implemented. Production promotion currently blocks at the incomplete finalized-baseline authority check before `PREFLIGHT-BACKUP-001` reaches the expanded envelope, freshness, digest, attestation, inventory, or nested evidence validation described below. Operators must not treat checked-in field shape or that fail-closed result as proof that the complete target contract was evaluated.
 
+The compact verified-point helper validates only the caller-selected immutable record, its digest, and its freshness. It does not enumerate the owner-authoritative verified-point set, select the greatest eligible `backupArtifact.snapshotAt`, or reject a tie at that timestamp. Until the producer/controller inventory and tie rejection exist, newest-point selection is an explicit implementation gap and cannot be inferred from a path, timestamp, verification time, or digest ordering.
+
 Required fields:
 
 - `environment` (`production`)

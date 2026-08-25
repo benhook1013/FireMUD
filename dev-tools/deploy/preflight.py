@@ -362,7 +362,13 @@ CANONICAL_RECOVERY_CREDENTIAL_DISPOSITION_CLASSES = (
 CANONICAL_RECOVERY_REQUIRED_APPLICABLE_CLASSES = (
     *CANONICAL_RECOVERY_CREDENTIAL_DISPOSITION_CLASSES,
     "backup-storage",
+    "operator-credentials",
 )
+CANONICAL_RECOVERY_REQUIRED_APPLICABLE_CLASSES_BY_ENVIRONMENT = {
+    "production": frozenset(CANONICAL_RECOVERY_REQUIRED_APPLICABLE_CLASSES),
+    "staging": frozenset(CANONICAL_RECOVERY_CREDENTIAL_DISPOSITION_CLASSES),
+    "hobby-self-hosted": frozenset(CANONICAL_RECOVERY_CREDENTIAL_DISPOSITION_CLASSES),
+}
 CANONICAL_RECOVERY_CREDENTIAL_UNIVERSE = (
     *CANONICAL_RECOVERY_CREDENTIAL_DISPOSITION_CLASSES,
     *CANONICAL_RECOVERY_CREDENTIAL_CLASSES,
@@ -374,6 +380,27 @@ RECOVERY_CREDENTIAL_DISPOSITIONS = {
     "rebound",
     "verified_not_restored",
 }
+
+
+def canonical_recovery_required_applicable_classes(environment: str) -> frozenset[str]:
+    """Return the environment-specific required-applicable recovery classes."""
+
+    return CANONICAL_RECOVERY_REQUIRED_APPLICABLE_CLASSES_BY_ENVIRONMENT.get(
+        environment,
+        frozenset(CANONICAL_RECOVERY_CREDENTIAL_DISPOSITION_CLASSES),
+    )
+
+
+def canonical_recovery_allowed_not_applicable_classes(environment: str) -> frozenset[str]:
+    """Return external recovery classes that may be absent in an environment."""
+
+    required_external_classes = (
+        canonical_recovery_required_applicable_classes(environment)
+        & frozenset(CANONICAL_RECOVERY_CREDENTIAL_CLASSES)
+    )
+    return frozenset(CANONICAL_RECOVERY_CREDENTIAL_CLASSES) - required_external_classes
+
+
 JWT_COMPROMISE_EVIDENCE_FIELDS = (
     "compromisedKid",
     "candidateKid",
@@ -2035,9 +2062,12 @@ def validate_recovery_baseline(
             "value for: "
             + ", ".join(sorted(invalid_applicability)),
         )
+    required_applicable_classes = canonical_recovery_required_applicable_classes(
+        str(baseline.get("environment"))
+    )
     non_applicable_required_classes = [
         class_name
-        for class_name in CANONICAL_RECOVERY_REQUIRED_APPLICABLE_CLASSES
+        for class_name in required_applicable_classes
         if credential_applicability[class_name] != "applicable"
     ]
     if non_applicable_required_classes:
@@ -2045,6 +2075,23 @@ def validate_recovery_baseline(
             "fail",
             "Recovery compatibility baseline required credential classes must be applicable: "
             + ", ".join(sorted(non_applicable_required_classes)),
+        )
+    allowed_not_applicable_classes = canonical_recovery_allowed_not_applicable_classes(
+        str(baseline.get("environment"))
+    )
+    disallowed_not_applicable_classes = [
+        class_name
+        for class_name in CANONICAL_RECOVERY_CREDENTIAL_CLASSES
+        if credential_applicability[class_name] == "not_applicable"
+        and class_name not in allowed_not_applicable_classes
+    ]
+    if disallowed_not_applicable_classes:
+        return (
+            "fail",
+            "Recovery compatibility baseline not-applicable credential classes are not allowed for "
+            + str(baseline.get("environment"))
+            + ": "
+            + ", ".join(sorted(disallowed_not_applicable_classes)),
         )
 
     credential_validation = baseline.get("externalCredentialValidation")

@@ -29,6 +29,7 @@ PLAYERFLOW_CANARY_REQUIRED_LABELS = {
     "path": "{{ $labels.path }}",
     "target": "{{ $labels.target }}",
 }
+PROFILE_DEPENDENT_ALERTS = {"ObservabilityDeadmanHeartbeatStale"}
 DISALLOWED_ALERT_SERVICE_LABELS = {"gateway", "game-session"}
 GRAFANA_DIR = REPO_ROOT / "design" / "observability" / "grafana"
 CORE_ALERT_SNIPPET_PATHS = [
@@ -1125,7 +1126,10 @@ def _validate_doc_semantics() -> list[Finding]:
 
 
 def _validate_reference_prometheus_rules(
-    path: Path, required_alerts: set[str] | None = None
+    path: Path,
+    required_alerts: set[str] | None = None,
+    *,
+    allow_profile_dependent_alerts: bool = False,
 ) -> list[Finding]:
     findings: list[Finding] = []
     text = _read_text(path)
@@ -1139,6 +1143,19 @@ def _validate_reference_prometheus_rules(
         if not alert_name:
             findings.append(Finding(path=path, message="alert rule is missing name"))
             continue
+        if (
+            alert_name in PROFILE_DEPENDENT_ALERTS
+            and not allow_profile_dependent_alerts
+        ):
+            findings.append(
+                Finding(
+                    path=path,
+                    message=(
+                        "base Prometheus rules must not include profile-dependent alert "
+                        f"{alert_name}; install it only through the matching profile overlay"
+                    ),
+                )
+            )
         rule_lines = entry.lines
         expr = _parse_expr(rule_lines)
         if not expr:
@@ -1444,6 +1461,7 @@ def main() -> int:
         _validate_reference_prometheus_rules(
             independent_required_rules,
             {"ObservabilityDeadmanHeartbeatStale"},
+            allow_profile_dependent_alerts=True,
         )
     )
 

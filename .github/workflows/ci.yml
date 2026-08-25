@@ -234,6 +234,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 🧰 Set up kubectl
+        if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
         uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
 
       - name: 🐍 Set Up Python

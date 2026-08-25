@@ -172,22 +172,26 @@ def main() -> int:
     evaluation_epoch = dt.datetime.fromisoformat(
         authority_verified_at.replace("Z", "+00:00")
     ).timestamp()
-    external_authority = resolve_external_authority(
+    initial_external_authority = resolve_external_authority(
         config, injected, args.simulate, evaluation_epoch
     )
 
     mirrored_signals = execute_smoke(
-        config, args.simulate, injected, external_authority
+        config, args.simulate, injected, initial_external_authority
     )
     verified_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     final_evaluation_epoch = dt.datetime.fromisoformat(
         verified_at.replace("Z", "+00:00")
     ).timestamp()
-    # Re-read retained authority after the smoke run so final freshness checks
-    # cannot trust a snapshot that changed while the run was executing.
-    external_authority = resolve_external_authority(
+    # Re-read retained authority after the smoke run and require the stable
+    # profile/path/budget fields to match the snapshot used for mirrors.
+    reread_external_authority = resolve_external_authority(
         config, injected, args.simulate, final_evaluation_epoch
     )
+    compare_external_authority_snapshots(
+        initial_external_authority, reread_external_authority
+    )
+    external_authority = reread_external_authority
     validate_external_authority_freshness(
         external_authority,
         config.external_authority_evidence or Path("<synthetic external authority>"),
@@ -850,6 +854,23 @@ def resolve_external_authority(
         if path in injected and path in exposed_paths:
             value["status"] = "red"
     return authority
+
+
+def compare_external_authority_snapshots(
+    initial: dict[str, Any], reread: dict[str, Any]
+) -> None:
+    for field in (
+        "profile",
+        "exposedPublicPlayerPaths",
+        "detectionBudgetSeconds",
+    ):
+        initial_value = initial.get(field)
+        reread_value = reread.get(field)
+        if initial_value != reread_value:
+            raise RuntimeError(
+                "External authority changed between smoke execution and evidence "
+                f"build: {field} changed from {initial_value!r} to {reread_value!r}"
+            )
 
 
 def load_external_authority(

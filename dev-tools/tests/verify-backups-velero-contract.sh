@@ -31,16 +31,21 @@ PY
 cat > "$BIN_DIR/velero" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ " $* " == *' --no-headers '* ]]; then
+  echo 'simulated Velero CLI does not support --no-headers' >&2
+  exit 64
+fi
 case "${FAKE_AWS_SCENARIO:-}" in
   velero-error)
     echo 'simulated Velero listing failure' >&2
     exit 42
     ;;
   velero-empty)
+    printf '%s\n' 'NAME STATUS'
     exit 0
     ;;
   *)
-    printf '%s\n' 'backup-1 Completed'
+    printf '%s\n' 'NAME STATUS' 'backup-1 Completed' 'backup-2 Completed'
     ;;
 esac
 EOF
@@ -113,6 +118,7 @@ run_case() {
   local expected_status="$3"
   local expected_output="$4"
   local forbidden_output="${5:-}"
+  local additional_output="${6:-}"
   local output
   local status
 
@@ -139,10 +145,14 @@ run_case() {
     echo "forbidden output for $scenario: $output" >&2
     exit 1
   fi
+  if [[ -n "$additional_output" && "$output" != *"$additional_output"* ]]; then
+    echo "additional expected output missing for $scenario: $output" >&2
+    exit 1
+  fi
 }
 
 for script in "$ROOT_DIR/dev-tools/backups/verify-backups.sh" "$EMBEDDED_SCRIPT"; do
-  run_case "$script" global-latest 0 'Latest pg_dump: 15min/firemud_20260825000300.sql.gz'
+  run_case "$script" global-latest 0 'Latest pg_dump: 15min/firemud_20260825000300.sql.gz' '' 'Found 2 Velero backups in firemud'
   run_case "$script" earlier-match-later-empty 0 'Latest pg_dump: 15min/firemud_20260825000500.sql.gz'
   run_case "$script" large-listing 0 'Latest pg_dump: 15min/firemud_00000000200000.sql.gz'
   run_case "$script" no-match 1 'No valid .sql.gz pg_dump files found'

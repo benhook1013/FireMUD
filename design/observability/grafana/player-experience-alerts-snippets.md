@@ -6,6 +6,8 @@ This file contains reference PromQL expressions and Alertmanager rule snippets f
 
 These example rules enforce the target-state player-centric SLOs defined in the Logging & Monitoring architecture doc. Thresholds and severities may be tuned per environment, but the underlying metric shapes should remain consistent once the producers and approved `scope` label are implemented.
 
+The `profile` label uses ADR 0159's canonical monitoring-profile enum, `independent-required` or `independent-omitted`, across canary metrics, retained evidence, and profile-aware rules. Do not serialize the prose abbreviations `required` or `omitted` as profile values.
+
 ```yaml
 - alert: LoginSuccessRatioLowGateway
   expr: (

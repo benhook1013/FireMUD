@@ -67,6 +67,16 @@ required_rules_path = (
     / "prometheus-rules-firemud-independent-required.yaml"
 )
 required_rules_text = required_rules_path.read_text(encoding="utf-8")
+published_overlay_findings = validator._validate_reference_prometheus_rules(
+    required_rules_path,
+    {"ObservabilityDeadmanHeartbeatStale"},
+    allow_profile_dependent_alerts=True,
+)
+if published_overlay_findings:
+    raise AssertionError(
+        "published profile overlay was rejected when profile-dependent alerts were allowed: "
+        f"{published_overlay_findings!r}"
+    )
 deadman_start = required_rules_text.find(
     "        - alert: ObservabilityDeadmanHeartbeatStale"
 )
@@ -130,6 +140,30 @@ def require_message(findings, expected):
     messages = [finding.message for finding in findings]
     if expected not in messages:
         raise AssertionError(f"expected {expected!r}, got {messages!r}")
+
+
+profile_dependent_alert = """    - name: firemud.alerts.profile-dependent
+      rules:
+        - alert: ObservabilityDeadmanHeartbeatStale
+          expr: observability_deadman_stale{profile="independent-required"} == 1
+          labels:
+            service: external-monitoring
+            severity: P0
+            owner: platform
+            runbook: design/architecture/system-architecture-observability-incident-runbook.md#deadman-freshness-contract
+"""
+base_with_profile_dependent_alert = valid_text.replace(
+    "    - name: firemud.alerts.observability\n",
+    profile_dependent_alert + "    - name: firemud.alerts.observability\n",
+    1,
+)
+require_message(
+    findings_for(
+        base_with_profile_dependent_alert,
+        validator._validate_reference_prometheus_rules,
+    ),
+    "base Prometheus rules must not include profile-dependent alert ObservabilityDeadmanHeartbeatStale; install it only through the matching profile overlay",
+)
 
 
 require_message(

@@ -511,7 +511,7 @@ original_execute_smoke = runner.execute_smoke
 
 def changed_execute_smoke(*args):
     source = json.loads(authority_path.read_text(encoding="utf-8"))
-    source["evidenceObservedAt"] = "2099-03-19T10:55:00Z"
+    source["detectionBudgetSeconds"] += 1
     authority_path.write_text(json.dumps(source), encoding="utf-8")
     return original_execute_smoke(*args)
 
@@ -538,9 +538,9 @@ try:
     try:
         runner.main()
     except RuntimeError as exc:
-        assert "evidenceObservedAt cannot be in the future" in str(exc)
+        assert "detectionBudgetSeconds changed from 195 to 196" in str(exc)
     else:
-        raise AssertionError("runner accepted authority changed during execution")
+        raise AssertionError("runner accepted authority snapshot changed during execution")
 finally:
     sys.argv = original_argv
 assert not evidence_path.exists()

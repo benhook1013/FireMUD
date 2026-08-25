@@ -416,9 +416,9 @@ Observability backends are best-effort enrichments for gameplay and moderation w
 
 #### External Probe and Deadman Contract (Normative)
 
-Deployment profiles must declare the complete bounded `exposedPublicPlayerPaths` set (`websocket` and/or `telnet`) and whether independent external detection is `required` or `omitted`. The path set also scopes any advertised player-flow canary capability. Hosted production profiles that claim externally verified availability use `required`; hobby, single-node, and small profiles may use `omitted` with a non-blocking preflight warning and an explicit degraded-detection status.
+Deployment profiles must declare the complete bounded `exposedPublicPlayerPaths` set (`websocket` and/or `telnet`) and one value from ADR 0159's canonical monitoring-profile enum: `independent-required` or `independent-omitted`. The path set also scopes any advertised player-flow canary capability. Hosted production profiles that claim externally verified availability use `independent-required`; hobby, single-node, and small profiles may use `independent-omitted` with a non-blocking preflight warning and an explicit degraded-detection status. These serialized values are not shortened to `required` or `omitted` in evidence, metric labels, or rules.
 
-For a `required` profile, the independent monitor:
+For an `independent-required` profile, the independent monitor:
 
 - runs outside the monitored cluster and its Prometheus + Alertmanager failure domain;
 - evaluates the freshness of the canonical in-cluster heartbeat;

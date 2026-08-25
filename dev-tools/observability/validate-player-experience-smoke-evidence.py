@@ -11,7 +11,9 @@ from pathlib import Path
 from typing import Any
 
 REQUIRED_PLAYERFLOW_FLOWS = {"login", "command"}
-REQUIRED_EXTERNAL_PROFILES = {"independent-required", "independent-omitted"}
+# Canonical serialized monitoring-profile enum from ADR 0159. Keep these values
+# identical in externalAuthority.profile, metric profile labels, and rules.
+MONITORING_PROFILES = frozenset({"independent-required", "independent-omitted"})
 REQUIRED_PUBLIC_PATHS = {"websocket", "telnet"}
 METRIC_TARGET_BY_PATH = {"websocket": "gateway", "telnet": "tcp_proxy"}
 PLAYERFLOW_CANARY_LAST_RUN_TIMESTAMP_METRIC = (
@@ -173,7 +175,7 @@ def _validate_external_authority(
     allow_synthetic_refs = (
         execution_mode == "simulated" and authority_provenance == "synthetic"
     )
-    if profile not in REQUIRED_EXTERNAL_PROFILES:
+    if profile not in MONITORING_PROFILES:
         return [
             "externalAuthority.profile must be independent-required or independent-omitted"
         ]
