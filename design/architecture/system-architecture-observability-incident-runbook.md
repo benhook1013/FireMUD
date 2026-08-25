@@ -23,14 +23,15 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 
 ### Deadman Freshness Contract
 
-- The canonical independent heartbeat signal for profiles declaring independent monitoring `required` is `observability_deadman_heartbeat_timestamp_seconds{source}` as defined in `design/architecture/system-architecture-logging-monitoring.md#external-probe-and-deadman-contract-normative`.
-- `source` should identify the emitting environment or bounded heartbeat source and remain low-cardinality; retain the exact external monitor identity in evidence rather than this label.
+- When the environment publishes the Prometheus mirror, the canonical local stale-state signal for profiles declaring independent monitoring `required` is `observability_deadman_stale{profile="independent-required"}`. The independent monitor applies the profile's configured stale threshold and evaluation window before publishing that boolean-like state; local Prometheus rules and runbook classification consume the published state rather than recomputing a universal threshold.
+- `observability_deadman_heartbeat_timestamp_seconds{source}` is diagnostic/raw timestamp evidence for the latest externally observed heartbeat, not the local stale-state authority. `source` should identify the emitting environment or bounded heartbeat source and remain low-cardinality; retain the exact external monitor identity in evidence rather than this label.
+- The off-cluster monitor remains authoritative for deadman freshness and paging even when the Prometheus mirror is published. When `prometheusMirrors=omitted`, do not infer local stale state from an absent mirror; retrieve and validate the authoritative off-cluster result instead.
 - For profiles declaring independent monitoring `required`, deadman paging must use the profile's configured heartbeat interval, stale threshold, probe cadence, and derived maximum detection budget. The configured values—not a universal `3 * heartbeat_interval_seconds` rule—are the authority for stale/unknown classification.
 - Default target-state guidance for profiles declaring independent monitoring `required`:
   - `heartbeat_interval_seconds = 60`
   - page when the heartbeat age exceeds `180` seconds
 - If a profile declaring independent monitoring `required` uses a hosted monitoring product that cannot expose the canonical metric name directly, it must document an equivalent query and threshold that preserves the profile's configured stale-threshold and detection-budget semantics, including the retained configuration and evidence used to evaluate freshness.
-- For those profiles, the authoritative external monitor must also retain its own native check definition and paging rule; the Prometheus mirror is only a secondary representation of that state.
+- For those profiles, the authoritative external monitor must also retain its own native check definition and paging rule; the Prometheus mirrors are only secondary representations of that state. An `independent-omitted` profile does not emit the required-profile stale mirror or alert and retains its explicit degraded/operator-dependent posture.
 
 ## Common Fallbacks (When Dashboards Are Unavailable)
 
@@ -77,7 +78,7 @@ For an `independent-required` profile, use the [player-experience direct externa
 4. Confirm alerts re-evaluate and resolve/firing states change as expected.
 5. Confirm the cadence-derived compatibility diagnostics `redis_coordination_tail_loss_budget_ms` and `redis_coordination_tail_loss_slo_breached` plus the short-window and 1-day entry-path availability rules are evaluating again. Do not treat the compatibility pair as measured-SLO proof. When implemented, verify the target measured `redis_unreplicated_write_window_slo_ms` and `redis_unreplicated_write_window_slo_breached{scope}` series separately.
 6. For a profile declaring independent monitoring `required`, confirm the independent deadman/heartbeat monitor recovers so future total-Prometheus outages will page again.
-   - Verify that `observability_deadman_heartbeat_timestamp_seconds{source=...}` (or the documented equivalent external signal) advances again.
+   - Verify that `observability_deadman_heartbeat_timestamp_seconds{source=...}` (or the documented equivalent external signal) advances again as diagnostic/raw evidence, and when `prometheusMirrors=published` verify that `observability_deadman_stale{profile="independent-required"}` reflects the external monitor's current profile-aware decision.
    - Verify the profile's configured heartbeat interval, stale threshold, probe cadence, and derived maximum detection budget against the retained external-monitor evidence. Profiles declaring independent monitoring `omitted` retain their documented degraded-detection posture instead.
 7. For a profile declaring independent monitoring `required`, verify fresh authoritative off-cluster synthetic-probe evidence and successful page delivery for every path in `exposedPublicPlayerPaths`, including the externally routed WebSocket and Telnet detectors when exposed. Keep recovery and independent-assurance status `unknown`/degraded until every exposed-path check and its page-delivery evidence is current and successful; Prometheus mirrors are optional and do not substitute for this external evidence.
 
@@ -246,7 +247,8 @@ When external reachability or total monitoring-stack failure is in question for 
 
 - `entrypath_blackbox_probe_success{path="websocket",target="gateway"}` when the mirror is published and `websocket` is exposed, otherwise absent or `not_applicable` as appropriate
 - `entrypath_blackbox_probe_success{path="telnet",target="tcp_proxy"}` when the mirror is published and `telnet` is exposed, otherwise absent or `not_applicable` as appropriate
-- `observability_deadman_heartbeat_timestamp_seconds{source=...}` when the external-monitoring owner publishes that mirror
+- `observability_deadman_stale{profile="independent-required"}` when `prometheusMirrors=published`; this is the canonical Prometheus stale-state mirror for local classification and does not replace the off-cluster authority
+- `observability_deadman_heartbeat_timestamp_seconds{source=...}` when the external-monitoring owner publishes that diagnostic/raw timestamp mirror
 - `playerflow_canary_success{flow="login",path=...,target=...,profile=...}` only for an advertised canary capability and exposed path
 - `playerflow_canary_success{flow="command",path=...,target=...,profile=...}` only for an advertised canary capability and exposed path
 - `playerflow_canary_latency_ms{flow="command",path=...,target=...,profile=...}` only for an advertised canary capability and exposed path
