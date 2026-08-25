@@ -10,13 +10,13 @@ This directory contains FireMUD backup tooling for three different lanes:
 
 - `backup-db.sh`
   - Creates a local PostgreSQL custom-format logical dump with `pg_dump -Fc`.
-  - This ad hoc `.dump` lane is paired with `dev-tools/restores/restore-db.sh` and `pg_restore`; it is separate from the hosted scheduled artifact lane.
+  - This ad hoc `.dump` lane is paired only with `dev-tools/restores/restore-db.sh` and `pg_restore`; it is separate from the hosted scheduled artifact lane.
   - Uses `FIREMUD_POSTGRES_HOST`, `FIREMUD_POSTGRES_USER`, and `FIREMUD_POSTGRES_DB`.
   - Accepts an optional output directory argument and defaults to a local `backups/` folder.
 
 - `pg-dump-rotate.sh`
   - Creates rolling plain-SQL PostgreSQL dumps (`pg_dump -Fp | gzip`) for the scheduled `pg-dump-cron` lane.
-  - The hosted readiness artifact contract is immutable `.sql.gz` content once published; its matching restore consumer is `gunzip -c | psql`.
+  - The hosted readiness artifact contract is immutable `.sql.gz` content once published; its scheduled restore consumer is `dev-tools/restores/restore-latest-db.sh`, which uses `gunzip -c | psql`.
   - Maintains 15-minute, daily, weekly, and monthly retention folders.
   - Optionally uploads dumps to S3 or MinIO when `PG_DUMP_BUCKET` is configured.
   - This script is built into the `pg-dump-cron` Docker image.

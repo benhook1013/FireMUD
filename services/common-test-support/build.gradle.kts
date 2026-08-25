@@ -12,7 +12,7 @@ dependencies {
     testFixturesImplementation(libs.spring.boot.starter.websocket)
     testFixturesImplementation(libs.testcontainers.junit.jupiter)
     testFixturesImplementation(libs.testcontainers.postgresql)
-    testFixturesCompileOnly("com.github.spotbugs:spotbugs-annotations:4.10.4")
+    testFixturesCompileOnly(libs.spotbugs.annotations)
     testFixturesCompileOnly(libs.grpc.spring.boot.starter)
     testFixturesImplementation("io.grpc:grpc-netty-shaded:${libs.versions.grpc.get()}")
 }

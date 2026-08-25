@@ -22,6 +22,6 @@ dependencies {
     compileOnly("com.fasterxml.jackson.core:jackson-annotations")
     compileOnly(libs.grpc.spring.boot.starter)
 
-    compileOnly("com.github.spotbugs:spotbugs-annotations:4.10.4")
+    compileOnly(libs.spotbugs.annotations)
     testImplementation(libs.spring.boot.starter.test)
 }

@@ -19,7 +19,11 @@ if ! grep -q "alert: ObservabilityDeadmanHeartbeatMissing" <<<"$required_publish
   echo "published independent-required monitoring overlay is missing the required ObservabilityDeadmanHeartbeatMissing alert" >&2
   exit 1
 fi
-shared_alerts="$(grep '^        - alert:' "$ROOT_DIR/k8s/monitoring/prometheus-rules-firemud.yaml" | sed 's/.*- alert: //')"
+shared_alerts="$(grep '^        - alert:' "$ROOT_DIR/k8s/monitoring/prometheus-rules-firemud.yaml" | sed 's/.*- alert: //' || true)"
+if [[ -z "${shared_alerts//[[:space:]]/}" ]]; then
+  echo "shared Prometheus rules parsing yielded no alert names" >&2
+  exit 1
+fi
 for render in "$required_published_render" "$required_omitted_render" "$independent_omitted_render"; do
   while IFS= read -r alert_name; do
     if ! grep -q "alert: $alert_name" <<<"$render"; then

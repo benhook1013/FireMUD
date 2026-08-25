@@ -412,7 +412,7 @@ import sys
 from pathlib import Path
 
 source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-source["detectionBudgetSeconds"] = 1.5
+source["detectionBudgetSeconds"] = 20
 Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
 PY
 refresh_external_authority_fixture "$POST_EXECUTION_STALE_AUTHORITY"
@@ -443,7 +443,7 @@ runner.time.gmtime = lambda seconds=None: original_gmtime(
 
 
 def delayed_execute_smoke(*args):
-    clock["now"] += 2.0
+    clock["now"] += 30.0
     return original_execute_smoke(*args)
 
 

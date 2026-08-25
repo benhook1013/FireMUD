@@ -7,7 +7,7 @@ plugins {
 }
 
 dependencies {
-    compileOnly("com.github.spotbugs:spotbugs-annotations:4.10.4")
+    compileOnly(libs.spotbugs.annotations)
     implementation(project(":common-security"))
     annotationProcessor(libs.spring.boot.configuration.processor)
 }

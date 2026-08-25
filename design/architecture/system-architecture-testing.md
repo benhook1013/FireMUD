@@ -278,8 +278,11 @@ Profiles that advertise the player-flow canary capability must also validate the
   - representative command failure trips `PlayerFlowCanaryCommandFailed` with `severity="P1"`,
   - controlled latency degradation trips `PlayerFlowCanaryLatencyHigh` with `severity="P1"`,
   - stale available run evidence trips `PlayerFlowCanaryEvidenceStale` with `severity="P1"` and is treated as unknown/degraded rather than a player-flow failure,
+  - when canary result series are present but the matching profile budget series is removed, `PlayerFlowCanaryFreshnessBudgetMissing` trips with `severity="P1"`, retaining the bounded `profile` label (and its canonical Prometheus/platform/runbook routing labels) without inventing flow, path, or target labels for the profile-grouped condition,
+  - target state: once a deployment-owned expected-series inventory exists, omitting one advertised flow/path/target/profile run timestamp trips `PlayerFlowCanaryEvidenceMissing` with `severity="P1"`, retaining only the bounded expected-tuple labels (`flow`, `path`, `target`, `profile`) and preserving the declared profile semantics; this is a non-production proof obligation, not a claim that the expected-series inventory or alert is implemented today,
   - alert labels preserve `owner`, `severity`, and `runbook` from the architecture contract.
 - These checks are required only for profiles advertising player-flow canaries because live-traffic SLIs alone are not sufficient in low-traffic periods. Independent-monitoring profiles still retain their required deadman and public-path evidence even when they do not advertise player-flow canary metrics.
+- The freshness-budget and target-state missing-evidence checks apply to both `independent-required` and `independent-omitted` profiles when player-flow canaries are advertised. For `independent-omitted`, the profile label and canary timing budget remain meaningful, but they do not establish external-monitoring authority; omission of the canary capability remains `not_applicable`.
 
 #### Where These Checks Run (Decision)
 

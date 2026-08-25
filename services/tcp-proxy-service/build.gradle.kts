@@ -30,7 +30,7 @@ dependencies {
     testImplementation(project(":social-groups-service"))
     testImplementation(project(":spring-cloud-gateway"))
     testImplementation(project(":world-management-service"))
-    testCompileOnly("com.github.spotbugs:spotbugs-annotations:4.10.4")
+    testCompileOnly(libs.spotbugs.annotations)
     testRuntimeOnly(libs.postgresql)
 
     testFixturesImplementation(testFixtures(project(":common-test-support")))

@@ -12,16 +12,29 @@ PREFIX=firemud
 mkdir -p "$BACKUP_DIR/15min" "$BACKUP_DIR/daily" "$BACKUP_DIR/weekly" "$BACKUP_DIR/monthly"
 TS=$(date +%Y%m%d%H%M%S)
 DUMP="$BACKUP_DIR/15min/${PREFIX}_${TS}.sql.gz"
+PARTIAL_DUMP=$(mktemp "$BACKUP_DIR/15min/.${PREFIX}_${TS}.XXXXXX.sql.gz")
+
+cleanup_partial_dump() {
+  rm -f -- "$PARTIAL_DUMP"
+}
+
+trap cleanup_partial_dump EXIT
 
 # Install awscli if bucket upload is enabled and aws command missing
 if [ -n "$BUCKET" ] && ! command -v aws >/dev/null 2>&1; then
   apt-get update -y >/dev/null && apt-get install -y awscli >/dev/null
 fi
 
-pg_dump -Fp \
+if pg_dump -Fp \
   -h "$FIREMUD_POSTGRES_HOST" \
   -U "$FIREMUD_POSTGRES_USER" \
-  -d "$FIREMUD_POSTGRES_DB" | gzip > "$DUMP"
+  -d "$FIREMUD_POSTGRES_DB" | gzip > "$PARTIAL_DUMP"; then
+  mv -f -- "$PARTIAL_DUMP" "$DUMP"
+  trap - EXIT
+else
+  echo "Failed to create pg_dump artifact" >&2
+  exit 1
+fi
 
 HOUR=$(date +%H)
 # keep last 96 15min dumps

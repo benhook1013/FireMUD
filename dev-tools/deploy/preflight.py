@@ -492,11 +492,12 @@ RECOVERY_COMPATIBILITY_VERIFIED_POINT_FIELDS = (
 def canonical_verified_restorable_point_bytes(record: Any) -> bytes:
     """Return the RFC 8785 payload bytes for a verified-point record.
 
-    The v1 schema intentionally contains only non-empty ASCII strings and
-    objects. For that schema, compact ``json.dumps`` with lexicographic member
-    ordering is the RFC 8785 representation: it has no number-format or
-    Unicode-normalization ambiguity. The recordDigest member is the sole
-    excluded member from the hash preimage.
+    The v1 schema intentionally contains only non-empty ASCII strings in fixed
+    object shapes. Python code-point ordering and JCS UTF-16 code-unit ordering
+    are identical for those fixed ASCII member names. Restricting values to
+    ASCII strings means compact ``json.dumps`` with ``sort_keys=True`` has no
+    numeric-formatting, escaping, or Unicode-normalization ambiguity. The
+    recordDigest member is the sole excluded member from the hash preimage.
     """
 
     if not isinstance(record, dict):
