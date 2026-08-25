@@ -3764,6 +3764,28 @@ point_status, point_message = module.validate_verified_restorable_point(
 )
 if point_status != "pass":
     raise SystemExit(f"verified-point consumer rejected the golden vector: {point_message}")
+future_verified_point = copy.deepcopy(verified_point)
+future_verified_point["verification"]["verifiedAt"] = "2026-08-24T12:05:00Z"
+future_verified_point["recordDigest"] = "sha256:" + hashlib.sha256(
+    module.canonical_verified_restorable_point_bytes(future_verified_point)
+).hexdigest()
+future_verified_status, future_verified_message = module.validate_verified_restorable_point(
+    future_verified_point,
+    "production",
+    "2026-08-24T12:00:00Z",
+    "2026-08-24T12:05:00Z",
+    future_verified_point["recordDigest"],
+    future_verified_point["backupArtifact"]["artifactRef"],
+    assessed_at=module.dt.datetime.fromisoformat("2026-08-24T12:04:00+00:00"),
+)
+if (
+    future_verified_status != "fail"
+    or "verifiedAt must not be later than the assessment/evaluation time" not in future_verified_message
+):
+    raise SystemExit(
+        "verified-point consumer accepted verification after assessment time: "
+        + future_verified_message
+    )
 tampered_point = {
     **verified_point,
     "backupArtifact": {
@@ -5918,6 +5940,23 @@ future_compact_status, future_compact_message = module.recovery_compatibility_ch
 if future_compact_status != "fail" or "newestVerifiedRestorablePointAt is future-dated" not in future_compact_message:
     raise SystemExit(f"future compact verified point did not fail closed: {future_compact_message}")
 
+as_of_compact_point = compatibility_result("compatible")
+as_of_compact_point["evaluatedAt"] = timestamp(now - module.dt.timedelta(minutes=10))
+as_of_compact_status, as_of_compact_message = module.recovery_compatibility_check(
+    {"generatedAt": past_timestamp, "recoveryCompatibility": as_of_compact_point},
+    "rollback-compatible",
+    tmp,
+    now,
+)
+if (
+    as_of_compact_status != "fail"
+    or "must not be later than the assessment/evaluation time" not in as_of_compact_message
+):
+    raise SystemExit(
+        "verified point after recovery evaluation time did not fail closed: "
+        + as_of_compact_message
+    )
+
 stale_compact_point = compatibility_result("compatible")
 stale_compact_point["newestVerifiedRestorablePointAt"] = timestamp(now - module.dt.timedelta(minutes=20))
 stale_compact_status, stale_compact_message = module.recovery_compatibility_check(
@@ -7345,6 +7384,9 @@ legacy_status, legacy_message = module.backup_readiness_check(
 if legacy_status != "fail" or "required target-state fields" not in legacy_message:
     raise SystemExit(f"incomplete legacy roll-forward evidence did not fail closed: {legacy_message}")
 
+roll_forward_deployment_sha = "b" * 40
+canonical_attestation_dir = tmp / "design/operations/deployments/production/attestations"
+canonical_attestation_dir.mkdir(parents=True)
 future_attestation = write_json(
     "future-roll-forward-attestation.json",
     {
@@ -7359,12 +7401,14 @@ future_attestation = write_json(
         },
     },
 )
+canonical_future_attestation_path = canonical_attestation_dir / f"{roll_forward_deployment_sha}.json"
+canonical_future_attestation_path.write_bytes(future_attestation.read_bytes())
 future_readiness = write_json(
     "future-roll-forward-readiness.json",
     {
         "environment": "production",
-        "deploymentRef": "contract-roll-forward",
-        "promotionAttestationRef": future_attestation.name,
+        "deploymentRef": roll_forward_deployment_sha,
+        "promotionAttestationRef": str(canonical_future_attestation_path.relative_to(tmp)),
         "assessedAt": past_timestamp,
         "assessedBy": "preflight-contract",
         "rollbackMode": "roll-forward-only",
@@ -7393,6 +7437,53 @@ future_readiness = write_json(
         "evidenceRefs": ["contract-evidence"],
     },
 )
+noncanonical_attestation_readiness_data = json.loads(future_readiness.read_text(encoding="utf-8"))
+noncanonical_attestation_readiness_data["backupLastSuccessAt"] = past_timestamp
+noncanonical_attestation_readiness_data["promotionAttestationRef"] = "../nonexistent-attestation.json"
+noncanonical_attestation_readiness = write_json(
+    "noncanonical-attestation-readiness.json",
+    noncanonical_attestation_readiness_data,
+)
+noncanonical_attestation_status, noncanonical_attestation_message = module.backup_readiness_check(
+    noncanonical_attestation_readiness,
+    now.isoformat().replace("+00:00", "Z"),
+    roll_forward_deployment_sha,
+    tmp,
+)
+if (
+    noncanonical_attestation_status != "fail"
+    or "promotionAttestationRef must be the canonical repository-relative" not in noncanonical_attestation_message
+):
+    raise SystemExit(
+        "backup readiness accepted a noncanonical promotion-attestation path: "
+        + noncanonical_attestation_message
+    )
+duplicate_attestation_readiness_data = json.loads(future_readiness.read_text(encoding="utf-8"))
+duplicate_attestation_readiness_data["backupLastSuccessAt"] = past_timestamp
+duplicate_attestation_readiness_data["promotionAttestationRef"] = str(
+    canonical_future_attestation_path.relative_to(tmp)
+)
+duplicate_attestation_readiness = write_json(
+    "duplicate-attestation-readiness.json",
+    duplicate_attestation_readiness_data,
+)
+duplicate_attestation_bytes = future_attestation.read_bytes().replace(
+    b'"environment": "staging"',
+    b'"environment": "staging", "environment": "duplicate"',
+    1,
+)
+canonical_future_attestation_path.write_bytes(duplicate_attestation_bytes)
+duplicate_attestation_status, duplicate_attestation_message = module.backup_readiness_check(
+    duplicate_attestation_readiness,
+    now.isoformat().replace("+00:00", "Z"),
+    roll_forward_deployment_sha,
+    tmp,
+)
+if duplicate_attestation_status != "fail" or "duplicate JSON member: environment" not in duplicate_attestation_message:
+    raise SystemExit(
+        "backup readiness accepted duplicate promotion-attestation JSON members: "
+        + duplicate_attestation_message
+    )
 missing_restore_high_water_data = json.loads(future_readiness.read_text(encoding="utf-8"))
 missing_restore_high_water_data.pop("restoreHighWater")
 missing_restore_high_water = write_json(
@@ -7402,7 +7493,7 @@ missing_restore_high_water = write_json(
 missing_restore_status, missing_restore_message = module.backup_readiness_check(
     missing_restore_high_water,
     now.isoformat().replace("+00:00", "Z"),
-    "contract-roll-forward",
+    roll_forward_deployment_sha,
     tmp,
 )
 if (
@@ -7417,7 +7508,7 @@ if (
 future_status, future_message = module.backup_readiness_check(
     future_readiness,
     now.isoformat().replace("+00:00", "Z"),
-    "contract-roll-forward",
+    roll_forward_deployment_sha,
     tmp,
 )
 if future_status != "fail" or "future-dated timestamps" not in future_message:
@@ -7432,7 +7523,7 @@ stale_snapshot_readiness = write_json("stale-snapshot-readiness.json", stale_sna
 stale_snapshot_status, stale_snapshot_message = module.backup_readiness_check(
     stale_snapshot_readiness,
     now.isoformat().replace("+00:00", "Z"),
-    "contract-roll-forward",
+    roll_forward_deployment_sha,
     tmp,
 )
 if (
@@ -7459,9 +7550,12 @@ for compact_field, compact_value in (
         f"mismatched-{compact_field}-attestation.json",
         mismatch_attestation_data,
     )
+    canonical_future_attestation_path.write_bytes(mismatch_attestation.read_bytes())
     mismatched_readiness_data = json.loads(future_readiness.read_text(encoding="utf-8"))
     mismatched_readiness_data["backupLastSuccessAt"] = past_timestamp
-    mismatched_readiness_data["promotionAttestationRef"] = mismatch_attestation.name
+    mismatched_readiness_data["promotionAttestationRef"] = str(
+        canonical_future_attestation_path.relative_to(tmp)
+    )
     mismatched_readiness_data[compact_field] = compact_value
     mismatched_readiness = write_json(
         mismatch_name,
@@ -7470,7 +7564,7 @@ for compact_field, compact_value in (
     mismatched_status, mismatched_message = module.backup_readiness_check(
         mismatched_readiness,
         now.isoformat().replace("+00:00", "Z"),
-        "contract-roll-forward",
+        roll_forward_deployment_sha,
         tmp,
     )
     if mismatched_status != "fail" or f"{compact_field} does not match the attestation" not in mismatched_message:
@@ -7492,18 +7586,22 @@ blocked_attestation = write_json(
         },
     },
 )
+blocked_deployment_sha = "a" * 40
+canonical_blocked_attestation_path = canonical_attestation_dir / f"{blocked_deployment_sha}.json"
+canonical_blocked_attestation_path.write_bytes(blocked_attestation.read_bytes())
 blocked_readiness = write_json(
     "blocked-roll-forward-readiness.json",
     {
         **json.loads(future_readiness.read_text(encoding="utf-8")),
-        "promotionAttestationRef": blocked_attestation.name,
+        "deploymentRef": blocked_deployment_sha,
+        "promotionAttestationRef": str(canonical_blocked_attestation_path.relative_to(tmp)),
         "backupLastSuccessAt": past_timestamp,
     },
 )
 blocked_status, blocked_message = module.backup_readiness_check(
     blocked_readiness,
     now.isoformat().replace("+00:00", "Z"),
-    "contract-roll-forward",
+    blocked_deployment_sha,
     tmp,
 )
 if blocked_status != "fail" or "remains blocked until canonical recovery-controller" not in blocked_message:

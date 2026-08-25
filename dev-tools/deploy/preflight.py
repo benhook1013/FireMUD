@@ -575,6 +575,7 @@ def _validate_verified_restorable_point_reference(
     expected_artifact_ref: str | None,
     *,
     context: str,
+    assessed_at: dt.datetime | None = None,
     schema_invalid_message: str | None = None,
 ) -> tuple[str, str]:
     point_ref_path = Path(point_ref)
@@ -606,6 +607,7 @@ def _validate_verified_restorable_point_reference(
             expected_verified_at,
             expected_digest,
             expected_artifact_ref,
+            assessed_at=assessed_at,
         )
     except (KeyError, TypeError):
         if schema_invalid_message is None:
@@ -623,6 +625,8 @@ def validate_verified_restorable_point(
     expected_verified_at: str,
     expected_digest: str,
     expected_artifact_ref: str,
+    *,
+    assessed_at: dt.datetime | None = None,
 ) -> tuple[str, str]:
     try:
         canonical_bytes = canonical_verified_restorable_point_bytes(record)
@@ -652,6 +656,17 @@ def validate_verified_restorable_point(
         return ("fail", "Verified restorable point verifiedAt does not match backupVerifyLastSuccessAt")
     if verified_at < snapshot_at:
         return ("fail", "Verified restorable point verifiedAt must not precede backupArtifact.snapshotAt")
+    if assessed_at is not None:
+        if snapshot_at > assessed_at:
+            return (
+                "fail",
+                "Verified restorable point snapshotAt must not be later than the assessment/evaluation time",
+            )
+        if verified_at > assessed_at:
+            return (
+                "fail",
+                "Verified restorable point verifiedAt must not be later than the assessment/evaluation time",
+            )
 
     record_digest = record["recordDigest"]
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", record_digest):
@@ -672,6 +687,7 @@ def validate_compact_verified_restorable_point(
     recovery_compatibility: dict[str, Any],
     root_dir: Path,
     now_dt: dt.datetime,
+    evaluated_at: dt.datetime | None = None,
 ) -> tuple[str, str]:
     """Validate promotion freshness/integrity without claiming artifact authority.
 
@@ -720,6 +736,7 @@ def validate_compact_verified_restorable_point(
         point_digest,
         None,
         context="recoveryCompatibility verified-point",
+        assessed_at=evaluated_at,
         schema_invalid_message="recoveryCompatibility verified-point record is schema-invalid",
     )
     if point_status != "pass":
@@ -4892,6 +4909,7 @@ def recovery_compatibility_check(
         recovery_compatibility,
         root_dir,
         now_dt,
+        evaluated_at,
     )
     if point_status != "pass":
         return ("fail", point_message)
@@ -5498,11 +5516,6 @@ def backup_readiness_check(path: Path, now: str, deployment_ref: str, root_dir: 
         return ("fail", "Backup-readiness evidence missing required target-state fields: " + ", ".join(missing_fields))
     if deployment_ref and str(data.get("deploymentRef")) != str(deployment_ref):
         return ("fail", "Backup-readiness evidence deploymentRef does not match the current deployment")
-    attestation_ref = str(data.get("promotionAttestationRef", ""))
-    attestation_path = (root_dir / attestation_ref).resolve()
-    if not attestation_path.exists():
-        return ("fail", "Backup-readiness evidence references missing promotionAttestationRef")
-
     if not isinstance(data.get("evidenceRefs"), list) or not data["evidenceRefs"]:
         return ("fail", "Backup-readiness evidence evidenceRefs must be a non-empty list")
     if data.get("backupCoverage") != "environment-wide-postgresql":
@@ -5547,9 +5560,25 @@ def backup_readiness_check(path: Path, now: str, deployment_ref: str, root_dir: 
     if (now_dt - drill_ts).total_seconds() > 30 * 24 * 60 * 60:
         return ("fail", "Backup-readiness evidence is stale: restoreDrillLastSuccessAt older than 30 days")
 
+    attestation_ref = data.get("promotionAttestationRef")
+    if not isinstance(attestation_ref, str) or not attestation_ref.strip():
+        return ("fail", "Backup-readiness evidence references missing promotionAttestationRef")
+    if not is_canonical_promotion_attestation_ref(
+        attestation_ref,
+        str(data.get("deploymentRef", "")),
+        root_dir=root_dir,
+    ):
+        return (
+            "fail",
+            "Backup-readiness evidence promotionAttestationRef must be the canonical repository-relative production attestation path",
+        )
+    attestation_path = (root_dir / attestation_ref).resolve()
+    if not attestation_path.exists():
+        return ("fail", "Backup-readiness evidence references missing promotionAttestationRef")
+
     try:
-        attestation = load_json(attestation_path)
-    except JSON_READ_ERRORS as exc:
+        attestation = load_json_rejecting_duplicate_keys(attestation_path)
+    except RECOVERY_JSON_READ_ERRORS as exc:
         return ("fail", f"Backup-readiness attestation unreadable: {exc}")
     if not isinstance(attestation, dict):
         return ("fail", "Backup-readiness attestation must be a JSON object")
@@ -5599,6 +5628,7 @@ def backup_readiness_check(path: Path, now: str, deployment_ref: str, root_dir: 
         str(data["newestVerifiedRestorablePointDigest"]),
         str(data["backupArtifactRef"]),
         context="Verified restorable point",
+        assessed_at=evidence_timestamps["assessedAt"],
     )
     if point_status != "pass":
         return ("fail", point_message)

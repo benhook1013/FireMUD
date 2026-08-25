@@ -48,9 +48,21 @@ def main() -> int:
         description="Validate retained prod-like player-experience smoke evidence."
     )
     parser.add_argument("evidence", type=Path, help="Path to the smoke evidence JSON file")
+    parser.add_argument(
+        "--allow-failure-evidence",
+        action="store_true",
+        help=(
+            "Accept fresh structurally complete canary/path results, including "
+            "zero-valued failures, for incident evidence. "
+            "External-authority/deadman checks remain strict; readiness and promotion "
+            "consumers intentionally omit this option."
+        ),
+    )
     args = parser.parse_args()
 
-    findings = validate_evidence(args.evidence)
+    findings = validate_evidence(
+        args.evidence, allow_failure_evidence=args.allow_failure_evidence
+    )
     if findings:
         for finding in findings:
             print(f"ERROR: {finding}", file=sys.stderr)
@@ -59,7 +71,9 @@ def main() -> int:
     return 0
 
 
-def validate_evidence(path: Path) -> list[str]:
+def validate_evidence(
+    path: Path, *, allow_failure_evidence: bool = False
+) -> list[str]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -94,6 +108,7 @@ def validate_evidence(path: Path) -> list[str]:
             exposed_paths,
             capabilities,
             data.get("verifiedAt"),
+            allow_failure_evidence,
         )
     )
     findings.extend(
@@ -385,6 +400,7 @@ def _validate_mirrored_signals(
     exposed_paths: set[str],
     capabilities: dict[str, str],
     verified_at: Any,
+    allow_failure_evidence: bool = False,
 ) -> list[str]:
     if not isinstance(value, dict):
         return ["mirroredSignals is required"]
@@ -395,7 +411,7 @@ def _validate_mirrored_signals(
     if mirrors_published:
         findings.extend(
             _validate_entrypath_signals(
-                value.get(entrypath_key), exposed_paths
+                value.get(entrypath_key), exposed_paths, allow_failure_evidence
             )
         )
     elif entrypath_key in value:
@@ -407,7 +423,9 @@ def _validate_mirrored_signals(
         if deadman_key in value:
             findings.append(f"mirroredSignals.{deadman_key} must be absent for independent-omitted")
     elif mirrors_published:
-        findings.extend(_validate_deadman_signal(value.get(deadman_key)))
+        findings.extend(
+            _validate_deadman_signal(value.get(deadman_key), verified_at)
+        )
     elif deadman_key in value:
         findings.append(
             f"mirroredSignals.{deadman_key} requires capabilities.prometheusMirrors=published"
@@ -424,7 +442,10 @@ def _validate_mirrored_signals(
     if canary_advertised:
         findings.extend(
             _validate_playerflow_success(
-                value.get("playerflow_canary_success"), exposed_paths, profile
+                value.get("playerflow_canary_success"),
+                exposed_paths,
+                profile,
+                allow_failure_evidence,
             )
         )
         findings.extend(
@@ -461,7 +482,9 @@ def _validate_mirrored_signals(
     return findings
 
 
-def _validate_entrypath_signals(value: Any, exposed_paths: set[str]) -> list[str]:
+def _validate_entrypath_signals(
+    value: Any, exposed_paths: set[str], allow_failure_evidence: bool = False
+) -> list[str]:
     records = _records(value)
     if records is None:
         return ["mirroredSignals.entrypath_blackbox_probe_success must be a list"]
@@ -473,18 +496,30 @@ def _validate_entrypath_signals(value: Any, exposed_paths: set[str]) -> list[str
     extra = sorted(set(record_paths) - exposed_paths)
     if extra:
         return ["entrypath_blackbox_probe_success contains non-exposed paths: " + ", ".join(extra)]
-    target_findings = []
+    missing_records = sorted(exposed_paths - set(record_paths))
+    if missing_records:
+        target_findings = [
+            "entrypath_blackbox_probe_success must contain one record per exposed path: "
+            + ", ".join(missing_records)
+        ]
+    else:
+        target_findings = []
     for record in records:
         target_findings.extend(
             _validate_metric_target(
                 record, record["path"], "entrypath_blackbox_probe_success"
             )
         )
+        target_findings.extend(
+            _validate_boolean_like_metric(
+                record.get("value"), "entrypath_blackbox_probe_success"
+            )
+        )
     passing_paths = {
         record["path"] for record in records if record.get("value") == 1
     }
     missing = sorted(exposed_paths - passing_paths)
-    if missing:
+    if missing and not allow_failure_evidence:
         target_findings.append(
             "entrypath_blackbox_probe_success missing passing paths: "
             + ", ".join(missing)
@@ -492,19 +527,37 @@ def _validate_entrypath_signals(value: Any, exposed_paths: set[str]) -> list[str
     return target_findings
 
 
-def _validate_deadman_signal(value: Any) -> list[str]:
+def _validate_deadman_signal(value: Any, verified_at: Any) -> list[str]:
     if not isinstance(value, dict):
         return ["mirroredSignals.observability_deadman_heartbeat_timestamp_seconds is required"]
     findings: list[str] = []
     if not isinstance(value.get("source"), str) or not value.get("source").strip():
         findings.append("observability_deadman_heartbeat_timestamp_seconds.source is required")
-    if not isinstance(value.get("value"), (int, float)) or value.get("value") <= 0:
-        findings.append("observability_deadman_heartbeat_timestamp_seconds.value must be positive")
+    timestamp = value.get("value")
+    if (
+        isinstance(timestamp, bool)
+        or not isinstance(timestamp, (int, float))
+        or not math.isfinite(timestamp)
+        or timestamp <= 0
+    ):
+        findings.append(
+            "observability_deadman_heartbeat_timestamp_seconds.value must be a positive finite number"
+        )
+    elif (
+        (verified_epoch := _timestamp_epoch(verified_at)) is not None
+        and timestamp > verified_epoch
+    ):
+        findings.append(
+            "observability_deadman_heartbeat_timestamp_seconds.value cannot be in the future relative to verifiedAt"
+        )
     return findings
 
 
 def _validate_playerflow_success(
-    value: Any, exposed_paths: set[str], profile: Any
+    value: Any,
+    exposed_paths: set[str],
+    profile: Any,
+    allow_failure_evidence: bool = False,
 ) -> list[str]:
     records = _records(value)
     if records is None:
@@ -546,16 +599,40 @@ def _validate_playerflow_success(
                 record, path, "playerflow_canary_success", profile
             )
         )
+        findings.extend(
+            _validate_boolean_like_metric(record.get("value"), "playerflow_canary_success")
+        )
         if record.get("value") == 1:
             passing_flows[path].add(flow)
     for path in sorted(exposed_paths):
         missing = sorted(REQUIRED_PLAYERFLOW_FLOWS - passing_flows[path])
-        if missing:
+        missing_records = sorted(
+            flow
+            for flow in REQUIRED_PLAYERFLOW_FLOWS
+            if (flow, path) not in seen
+        )
+        if missing_records:
+            findings.append(
+                f"playerflow_canary_success must contain one record per required flow/path for {path!r}: "
+                + ", ".join(missing_records)
+            )
+        if missing and not allow_failure_evidence:
             findings.append(
                 f"playerflow_canary_success missing passing flows for path {path!r}: "
                 + ", ".join(missing)
             )
     return findings
+
+
+def _validate_boolean_like_metric(value: Any, metric: str) -> list[str]:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value not in {0, 1}
+    ):
+        return [f"{metric} values must be finite numeric 0 or 1"]
+    return []
 
 
 def _validate_playerflow_latency(

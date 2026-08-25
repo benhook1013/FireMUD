@@ -1291,9 +1291,7 @@ assert data["mirroredSignals"] == {}
 assert "canaryAlerts" not in data
 PY
 
-if grep -q "observability_deadman_heartbeat_timestamp_seconds" "$SUCCESS_METRICS"; then
-  :
-else
+if ! grep -q "observability_deadman_heartbeat_timestamp_seconds" "$SUCCESS_METRICS"; then
   echo "required profile metrics unexpectedly omitted the deadman mirror" >&2
   exit 1
 fi
@@ -1398,5 +1396,96 @@ if run_smoke_runner \
   exit 1
 fi
 grep -q "independent-omitted must not include external authority fields" "$TMP_DIR/synthesized.out"
+
+run_clean_python - "$RUNNER" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+runner_path = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("player_experience_smoke_failure_capture", runner_path)
+assert spec is not None and spec.loader is not None
+runner = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = runner
+spec.loader.exec_module(runner)
+
+config = runner.SmokeConfig.from_env("contract-test", "websocket", None)
+
+def fail_canary(*args):
+    raise runner.PlayerFlowProbeFailure("simulated live canary transport failure")
+
+
+runner.run_playerflow_canary = fail_canary
+success, latency, last_run = runner.run_playerflow_canaries(
+    config, set(), {"websocket"}, "independent-required"
+)
+assert {record["flow"] for record in success} == {"login", "command"}
+assert all(record["value"] == 0 for record in success)
+assert latency[0]["value"] == 0
+assert {record["flow"] for record in last_run} == {"login", "command"}
+
+
+def fail_entrypath(*args):
+    raise runner.PlayerFlowProbeFailure("simulated live blackbox failure")
+
+
+signals = runner.entrypath_signals(
+    config, set(), {"websocket"}, fail_entrypath
+)
+assert signals["entrypath_blackbox_probe_success"] == [
+    {"path": "websocket", "target": "gateway", "value": 0}
+]
+
+def programmer_fault(*args):
+    raise ValueError("malformed probe configuration")
+
+
+try:
+    runner.entrypath_signals(config, set(), {"websocket"}, programmer_fault)
+except ValueError as exc:
+    assert str(exc) == "malformed probe configuration"
+else:
+    raise AssertionError("programmer/configuration fault was incorrectly converted to zero evidence")
+
+
+original_create_connection = runner.socket.create_connection
+
+
+def arbitrary_runtime_fault(*args, **kwargs):
+    raise RuntimeError("unexpected programmer failure")
+
+
+runner.socket.create_connection = arbitrary_runtime_fault
+try:
+    try:
+        runner.blackbox_telnet_record(config, set())
+    except RuntimeError as exc:
+        assert str(exc) == "unexpected programmer failure"
+    else:
+        raise AssertionError("arbitrary RuntimeError was incorrectly converted")
+finally:
+    runner.socket.create_connection = original_create_connection
+
+
+def classified_operational_failure(*args, **kwargs):
+    raise runner.ProbeOperationalFailure("expected telnet transport failure")
+
+
+runner.socket.create_connection = classified_operational_failure
+try:
+    signals = runner.entrypath_signals(
+        config,
+        set(),
+        {"telnet"},
+        lambda current_config, injected, _path: runner.blackbox_telnet_record(
+            current_config, injected
+        ),
+    )
+finally:
+    runner.socket.create_connection = original_create_connection
+assert signals["entrypath_blackbox_probe_success"] == [
+    {"path": "telnet", "target": "tcp_proxy", "value": 0}
+]
+PY
 
 echo "player-experience smoke runner contract checks passed"

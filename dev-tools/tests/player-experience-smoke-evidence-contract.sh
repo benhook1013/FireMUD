@@ -1057,4 +1057,102 @@ if python3 "$VALIDATOR" "$NON_APPLICABLE_MISREPRESENTED" >"$TMP_DIR/not-applicab
 fi
 grep -q "publicPathChecks.telnet must be exactly" "$TMP_DIR/not-applicable.out"
 
+FRESH_FAILURE_EVIDENCE="$TMP_DIR/fresh-failure-evidence.json"
+python3 - "$VALID_EVIDENCE" "$FRESH_FAILURE_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+for record in source["mirroredSignals"]["entrypath_blackbox_probe_success"]:
+    record["value"] = 0
+for record in source["mirroredSignals"]["playerflow_canary_success"]:
+    record["value"] = 0
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if python3 "$VALIDATOR" "$FRESH_FAILURE_EVIDENCE" >"$TMP_DIR/fresh-failure-readiness.out" 2>&1; then
+  echo "readiness validator unexpectedly accepted fresh failure evidence" >&2
+  exit 1
+fi
+grep -q "missing passing paths" "$TMP_DIR/fresh-failure-readiness.out"
+python3 "$VALIDATOR" --allow-failure-evidence "$FRESH_FAILURE_EVIDENCE" \
+  >"$TMP_DIR/fresh-failure-incident.out"
+
+MIXED_FAILURE_EVIDENCE="$TMP_DIR/mixed-failure-evidence.json"
+python3 - "$VALID_EVIDENCE" "$MIXED_FAILURE_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+entrypath = source["mirroredSignals"]["entrypath_blackbox_probe_success"]
+canary = source["mirroredSignals"]["playerflow_canary_success"]
+for record in entrypath:
+    record["value"] = 0 if record["path"] == "websocket" else 1
+for record in canary:
+    record["value"] = 0 if record["path"] == "websocket" else 1
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+python3 "$VALIDATOR" --allow-failure-evidence "$MIXED_FAILURE_EVIDENCE" \
+  >"$TMP_DIR/mixed-failure-incident.out"
+
+EMPTY_FAILURE_EVIDENCE="$TMP_DIR/empty-failure-evidence.json"
+python3 - "$FRESH_FAILURE_EVIDENCE" "$EMPTY_FAILURE_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["mirroredSignals"]["entrypath_blackbox_probe_success"] = []
+source["mirroredSignals"]["playerflow_canary_success"] = []
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if python3 "$VALIDATOR" --allow-failure-evidence "$EMPTY_FAILURE_EVIDENCE" \
+  >"$TMP_DIR/empty-failure.out" 2>&1; then
+  echo "incident validator unexpectedly accepted empty failure arrays" >&2
+  exit 1
+fi
+grep -q "must contain one record per exposed path" "$TMP_DIR/empty-failure.out"
+grep -q "must contain one record per required flow/path" "$TMP_DIR/empty-failure.out"
+
+BOOL_DEADMAN_EVIDENCE="$TMP_DIR/bool-deadman-evidence.json"
+python3 - "$VALID_EVIDENCE" "$BOOL_DEADMAN_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["mirroredSignals"]["observability_deadman_heartbeat_timestamp_seconds"]["value"] = True
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if python3 "$VALIDATOR" --allow-failure-evidence "$BOOL_DEADMAN_EVIDENCE" >"$TMP_DIR/bool-deadman.out" 2>&1; then
+  echo "boolean deadman timestamp unexpectedly accepted" >&2
+  exit 1
+fi
+grep -q "value must be a positive finite number" "$TMP_DIR/bool-deadman.out"
+
+FUTURE_DEADMAN_EVIDENCE="$TMP_DIR/future-deadman-evidence.json"
+python3 - "$VALID_EVIDENCE" "$FUTURE_DEADMAN_EVIDENCE" <<'PY'
+import datetime as dt
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+source = json.loads(path.read_text(encoding="utf-8"))
+verified = dt.datetime.fromisoformat(source["verifiedAt"].replace("Z", "+00:00"))
+source["mirroredSignals"]["observability_deadman_heartbeat_timestamp_seconds"]["value"] = verified.timestamp() + 2
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if python3 "$VALIDATOR" --allow-failure-evidence "$FUTURE_DEADMAN_EVIDENCE" >"$TMP_DIR/future-deadman.out" 2>&1; then
+  echo "future deadman timestamp unexpectedly accepted" >&2
+  exit 1
+fi
+grep -q "cannot be in the future relative to verifiedAt" "$TMP_DIR/future-deadman.out"
+
 echo "player-experience smoke evidence contract checks passed"

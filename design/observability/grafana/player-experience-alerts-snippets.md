@@ -256,7 +256,7 @@ The `profile` label uses ADR 0159's canonical monitoring-profile enum, `independ
     runbook: design/architecture/system-architecture-observability-incident-runbook.md#prometheus-down-or-stale
   annotations:
     summary: Synthetic player-flow canary evidence stale
-    description: The advertised player-flow canary run evidence is older than the profile-derived freshness budget; treat player-flow health as unknown or degraded until a fresh run is retained.
+    description: The advertised player-flow canary run evidence is future-dated or older than the profile-derived freshness budget; treat player-flow health as unknown or degraded until a fresh run is retained.
 
 - alert: WebSocketEntryPathBlackboxUnavailable
   expr: max_over_time(entrypath_blackbox_probe_success{path="websocket"}[2m]) == 0

@@ -56,6 +56,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "dev-tools" / "smoke"))
 
 from smoke_common import (
+    ProbeOperationalFailure,
     http_request_json,
     http_request_json_with_headers,
     login_play_look_steps,
@@ -66,6 +67,10 @@ from smoke_common import (
     wait_for_account_schema,
     wait_for_http_readiness,
 )
+
+
+class PlayerFlowProbeFailure(ProbeOperationalFailure):
+    """Expected transport/upstream failure captured as zero-valued evidence."""
 
 
 def main() -> int:
@@ -524,13 +529,23 @@ def entrypath_signals(
 ) -> dict[str, Any]:
     if config.prometheus_mirrors != "published":
         return {}
-    return {
-        "entrypath_blackbox_probe_success": [
-            record_producer(config, injected, path)
-            for path in ("websocket", "telnet")
-            if path in exposed_paths
-        ]
-    }
+    records: list[dict[str, Any]] = []
+    for path in ("websocket", "telnet"):
+        if path not in exposed_paths:
+            continue
+        try:
+            records.append(record_producer(config, injected, path))
+        except PlayerFlowProbeFailure:
+            # A failed live probe is itself actionable evidence. Keep the
+            # artifact and let the freshness-gated alert classify the path.
+            records.append(
+                {
+                    "path": path,
+                    "target": metric_target_for_path(path),
+                    "value": 0,
+                }
+            )
+    return {"entrypath_blackbox_probe_success": records}
 
 
 def live_entrypath_record(
@@ -557,35 +572,41 @@ def blackbox_websocket_record(config: SmokeConfig, injected: set[str]) -> dict[s
     try:
         import websocket  # type: ignore
     except ImportError as exc:  # pragma: no cover - exercised in live use, not tests
-        raise RuntimeError(
+        raise PlayerFlowProbeFailure(
             "The python 'websocket-client' package is required for WebSocket canary smoke"
         ) from exc
 
-    first_party = first_party_connect_context(config)
-    ws = websocket.create_connection(
-        config.websocket_url,
-        timeout=config.timeout_seconds,
-        header=[f"Cookie: {first_party['connectCookie']}"],
-    )
     try:
-        return {"path": "websocket", "target": metric_target_for_path("websocket"), "value": 1}
-    finally:
-        ws.close()
+        first_party = first_party_connect_context(config)
+        ws = websocket.create_connection(
+            config.websocket_url,
+            timeout=config.timeout_seconds,
+            header=[f"Cookie: {first_party['connectCookie']}"],
+        )
+        try:
+            return {"path": "websocket", "target": metric_target_for_path("websocket"), "value": 1}
+        finally:
+            ws.close()
+    except (OSError, ProbeOperationalFailure, websocket.WebSocketException) as exc:
+        raise PlayerFlowProbeFailure(f"WebSocket blackbox probe failed: {exc}") from exc
 
 
 def blackbox_telnet_record(config: SmokeConfig, injected: set[str]) -> dict[str, Any]:
     if "telnet" in injected:
         return {"path": "telnet", "target": metric_target_for_path("telnet"), "value": 0}
-    with socket.create_connection(
-        (config.telnet_host, config.telnet_port), timeout=config.timeout_seconds
-    ) as sock:
-        recv_until_socket(sock, "\n", config.timeout_seconds)
-        run_telnet_command_plan(
-            sock,
-            [("WORLDS", ["OK WORLDS"], "WORLDS")],
-            config.timeout_seconds,
-        )
-        return {"path": "telnet", "target": metric_target_for_path("telnet"), "value": 1}
+    try:
+        with socket.create_connection(
+            (config.telnet_host, config.telnet_port), timeout=config.timeout_seconds
+        ) as sock:
+            recv_until_socket(sock, "\n", config.timeout_seconds)
+            run_telnet_command_plan(
+                sock,
+                [("WORLDS", ["OK WORLDS"], "WORLDS")],
+                config.timeout_seconds,
+            )
+            return {"path": "telnet", "target": metric_target_for_path("telnet"), "value": 1}
+    except (OSError, ProbeOperationalFailure) as exc:
+        raise PlayerFlowProbeFailure(f"Telnet blackbox probe failed: {exc}") from exc
 
 
 def run_playerflow_canary(
@@ -608,13 +629,38 @@ def run_playerflow_canaries(
     for path in ordered_canary_paths(config, exposed_paths):
         path_config = copy.copy(config)
         path_config.canary_path = path
-        path_success, path_latency = run_playerflow_canary(path_config, injected)
+        try:
+            path_success, path_latency = run_playerflow_canary(path_config, injected)
+        except PlayerFlowProbeFailure:
+            # Preserve a current failed attempt instead of aborting before the
+            # runner can publish the zero-valued, freshness-gated canary state.
+            path_success, path_latency = failed_canary_records(path_config)
         path_success = canary_records_with_profile(path_success, profile)
         path_latency = canary_records_with_profile(path_latency, profile)
         success.extend(path_success)
         latency.extend(path_latency)
         last_run.extend(canary_last_run_records(path_success, int(time.time()), profile))
     return success, latency, last_run
+
+
+def failed_canary_records(
+    config: SmokeConfig,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    target = canary_target(config)
+    return (
+        [
+            {"flow": flow, "path": config.canary_path, "target": target, "value": 0}
+            for flow in ("login", "command")
+        ],
+        [
+            {
+                "flow": "command",
+                "path": config.canary_path,
+                "target": target,
+                "value": 0,
+            }
+        ],
+    )
 
 
 def simulated_playerflow_canaries(
@@ -667,24 +713,27 @@ def run_websocket_canary(
     try:
         import websocket  # type: ignore
     except ImportError as exc:  # pragma: no cover
-        raise RuntimeError(
+        raise PlayerFlowProbeFailure(
             "The python 'websocket-client' package is required for WebSocket canary smoke"
         ) from exc
 
-    first_party = first_party_connect_context(config)
-    step_results: list[dict[str, Any]] = []
-    ws = websocket.create_connection(
-        config.websocket_url,
-        timeout=config.timeout_seconds,
-        header=[f"Cookie: {first_party['connectCookie']}"],
-    )
     try:
-        run_first_party_websocket_canary(
-            ws, config, first_party.get("characterName"), step_results
+        first_party = first_party_connect_context(config)
+        step_results: list[dict[str, Any]] = []
+        ws = websocket.create_connection(
+            config.websocket_url,
+            timeout=config.timeout_seconds,
+            header=[f"Cookie: {first_party['connectCookie']}"],
         )
-    finally:
-        ws.close()
-    return canary_records_from_steps(config, step_results)
+        try:
+            run_first_party_websocket_canary(
+                ws, config, first_party.get("characterName"), step_results
+            )
+        finally:
+            ws.close()
+        return canary_records_from_steps(config, step_results)
+    except (OSError, ProbeOperationalFailure, websocket.WebSocketException) as exc:
+        raise PlayerFlowProbeFailure(f"WebSocket player-flow canary failed: {exc}") from exc
 
 
 def run_telnet_canary(
@@ -692,28 +741,31 @@ def run_telnet_canary(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if "login" in injected or "command" in injected:
         return simulated_canary_records(config, injected)
-    step_results: list[dict[str, Any]] = []
-    with socket.create_connection(
-        (config.telnet_host, config.telnet_port), timeout=config.timeout_seconds
-    ) as sock:
-        recv_until_socket(sock, "\n", config.timeout_seconds)
-        run_telnet_command_plan(
-            sock,
-            login_play_look_steps(
-                config.username,
-                config.password,
-                config.world,
-                "OK WORLDS",
-                "OK LOGIN",
-                "OK PLAY",
-                "OK LOOK",
-                realm=config.realm_slug,
-                character=config.character_name,
-            ),
-            config.timeout_seconds,
-            step_results=step_results,
-        )
-    return canary_records_from_steps(config, step_results)
+    try:
+        step_results: list[dict[str, Any]] = []
+        with socket.create_connection(
+            (config.telnet_host, config.telnet_port), timeout=config.timeout_seconds
+        ) as sock:
+            recv_until_socket(sock, "\n", config.timeout_seconds)
+            run_telnet_command_plan(
+                sock,
+                login_play_look_steps(
+                    config.username,
+                    config.password,
+                    config.world,
+                    "OK WORLDS",
+                    "OK LOGIN",
+                    "OK PLAY",
+                    "OK LOOK",
+                    realm=config.realm_slug,
+                    character=config.character_name,
+                ),
+                config.timeout_seconds,
+                step_results=step_results,
+            )
+        return canary_records_from_steps(config, step_results)
+    except (OSError, ProbeOperationalFailure) as exc:
+        raise PlayerFlowProbeFailure(f"Telnet player-flow canary failed: {exc}") from exc
 
 
 def simulated_canary_records(
@@ -1331,7 +1383,7 @@ def resolve_connect_scope_id(config: SmokeConfig, bootstrap_token: str) -> str:
     for realm in response["data"]:
         if realm.get("realmSlug") == config.realm_slug:
             return realm["connectScopeId"]
-    raise RuntimeError(
+    raise ProbeOperationalFailure(
         f"Realm {config.realm_slug!r} was not visible during bootstrap discovery for world {config.world!r}"
     )
 
@@ -1345,7 +1397,7 @@ def require_visible_world(config: SmokeConfig, bootstrap_token: str) -> None:
     for world in response["data"]:
         if world.get("worldSlug") == config.world:
             return
-    raise RuntimeError(
+    raise ProbeOperationalFailure(
         f"World {config.world!r} was not visible during bootstrap discovery"
     )
 
@@ -1370,7 +1422,7 @@ def resolve_character_name(
         for character in characters:
             if character.get("characterName") == config.character_name:
                 return config.character_name
-        raise RuntimeError(
+        raise ProbeOperationalFailure(
             f"Character {config.character_name!r} was not visible during bootstrap discovery"
         )
     if not characters:
@@ -1393,7 +1445,7 @@ def issue_connect_token(
     )
     cookie = headers.get("Set-Cookie", "")
     if "Firemud-Connect-Token=" not in cookie:
-        raise RuntimeError(
+        raise ProbeOperationalFailure(
             "Connect-token response did not issue the Firemud-Connect-Token cookie"
         )
     return {
@@ -1467,9 +1519,11 @@ def await_structured_command_result(ws: Any, command_type: str, timeout_seconds:
         ):
             if not parsed.get("accepted", False):
                 error_code = parsed.get("errorCode") or "UNKNOWN"
-                raise RuntimeError(f"{command_type} failed with {error_code}: {payload}")
+                raise ProbeOperationalFailure(
+                    f"{command_type} failed with {error_code}: {payload}"
+                )
             return payload
-    raise RuntimeError(f"Timed out waiting for structured {command_type} result")
+    raise ProbeOperationalFailure(f"Timed out waiting for structured {command_type} result")
 
 
 def play_command(config: SmokeConfig, character_name: str | None) -> str:

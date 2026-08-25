@@ -115,6 +115,8 @@ This example is illustrative rather than exhaustive. Equivalent retained evidenc
 
 Use `python3 dev-tools/observability/run-player-experience-smoke.py --external-authority-evidence <authority.json> --evidence-out <evidence.json> [--metrics-out <mirrored.prom>]` to generate hosted-assurance smoke evidence and mirrored signal output, then run `python3 dev-tools/observability/validate-player-experience-smoke-evidence.py <evidence.json>` before attaching the result to a traffic-open or recovery record. `authority.json` must be the retained profile-aware result from the authoritative external monitor for the deadman and declared public paths, or an explicit `independent-omitted` record with its degraded-detection reason. Only `--simulate` may synthesize that authority object.
 
+The default validator invocation is readiness-strict: every exposed path and advertised canary flow must be green, so promotion and recovery consumers fail closed on a current failure. For incident capture and alert-path diagnosis only, a fresh failure artifact may be checked with `--allow-failure-evidence`; that mode accepts structurally complete current path/canary records, including zero-valued records for failed paths or flows alongside passing records. It does not waive external-authority shape, freshness, deadman, or public-path requirements, and must not be used as traffic-open or recovery authority.
+
 ---
 
 ## Testing Scope
