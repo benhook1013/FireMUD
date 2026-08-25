@@ -85,22 +85,22 @@ Entry format:
   - Observation: treating an ADR packet as a bulk copy either loses exact checked decision provenance or spreads normative detail into secondary documents before the family is ready.
   - Expected pattern: import only the selected reviewed family, preserve its exact checked disposition and source keys, consolidate normative detail at the canonical owner with links and local consequences elsewhere, and defer broad residual drift to the planned whole-corpus authority review.
 
-- `2026-08-22`: Preserve canonical-contract provenance for superseded keys without unique ADRs
-  - Context: a reviewed superseded key had no unique ADR during alignment import.
-  - Observation: use the canonical-contract `; no ADR required` provenance path; exact ADR links are direct review metadata and must not be repurposed as replacement-only links.
-  - Expected pattern: retain that provenance distinction in future alignment imports.
-
 - `2026-08-23`: Bind safety, entitlement, and actor/session identity to explicit owners
   - Context: Packet 5 alignment in the [system overview](../architecture/system-architecture-overview.md), [Entity Management boundary](../architecture/microservices/entity-management-service/README.md), and [Game Session boundary](../architecture/microservices/game-session-service/README.md).
   - Observation: fixed safety categories keep independent owner lifecycles; tenant runtime entitlements require explicit tenant binding for account-scoped grants; Entity owns persisted actor and fork-local character identity while Game Session owns attachment and controller fencing.
   - Expected pattern: carry explicit scope and owner/fence evidence across each seam, treating source character IDs as provenance rather than authority.
 
-- `2026-08-24`: Progressive rollout and rollback need durable transition identity
-  - Context: Packet 6 aligned progressive rollout and compatibility-bounded rollback contracts while the current implementation remained partial.
-  - Observation: a safe rollout is a durable operation with server-enforced expected-state preconditions and bounded promotion steps; rollback authority remains limited by the declared compatibility boundary rather than by an operator's ability to redeploy an older image.
-  - Expected pattern: keep target transition semantics distinct from current implementation status, and require one durable operation identity plus explicit preconditions at every rollout or rollback step.
-
 - `2026-08-24`: Expected-binding declarations are intent, not deployment proof
   - Context: Packet 6 environment-bound preflight and expected-binding work.
   - Observation: binding declarations classify shareability and enabled integrations, but production state or trust material cannot be made shareable by a generic flag, and declaration alone does not prove a concrete deployment event.
   - Expected pattern: require applicable integrations only when enabled, and retain the manifest digest, event identity, and observed target binding in event-scoped evidence.
+
+- `2026-08-22`: Preserve canonical-contract provenance for superseded keys without unique ADRs
+  - Context: a reviewed superseded key had no unique ADR during alignment import.
+  - Observation: use the canonical-contract `; no ADR required` provenance path; exact ADR links are direct review metadata and must not be repurposed as replacement-only links.
+  - Expected pattern: retain that provenance distinction in future alignment imports.
+
+- `2026-08-24`: Progressive rollout and rollback need durable transition identity
+  - Context: Packet 6 aligned progressive rollout and compatibility-bounded rollback contracts while the current implementation remained partial.
+  - Observation: a safe rollout is a durable operation with server-enforced expected-state preconditions and bounded promotion steps; rollback authority remains limited by the declared compatibility boundary rather than by an operator's ability to redeploy an older image.
+  - Expected pattern: keep target transition semantics distinct from current implementation status, and require one durable operation identity plus explicit preconditions at every rollout or rollback step.
