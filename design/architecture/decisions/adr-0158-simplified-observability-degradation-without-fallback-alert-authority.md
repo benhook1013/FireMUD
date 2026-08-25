@@ -103,6 +103,8 @@ This avoids an empty operator view but cannot distinguish a continuing incident 
 
 ## Implementation and Proof Obligations
 
+Select and report the required checks and evidence under the shared [Validation and Runtime Proof](../../developer-workflows/validation-and-runtime-proof.md) workflow; record execution results in PR/CI evidence or the owning implementation tracker rather than in this decision record.
+
 Current authoritative gameplay and control services, health surfaces, alert rules, and incident runbooks provide partial foundations. Logging & Admin does not currently implement the proposed merged Alertmanager/Prometheus fallback alert surface, so no compatibility layer for that unimplemented model is required.
 
 Architecture documents, runbooks, dashboards, Prometheus rules, and Logging & Admin contracts must remove the fallback active-alert authority, family-equivalence, duplicate-suppression, and cross-source merge requirements. Recording rules retained for diagnostics or Alertmanager evaluation must be described according to that actual purpose.

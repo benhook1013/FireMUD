@@ -90,7 +90,7 @@ Workflow coordination, evidence writes, observations, and other owner-defined re
 
 The current single-operator model requires human authorization for:
 
-- selecting and accepting the destructive recovery point and displayed data-loss window, unless a separately accepted automatic-DR policy pre-authorizes it; and
+- selecting and accepting the destructive `recoveryPointId` with its controller-owned `recoveryPointDecisionAt` and exact `effectiveDataLossWindow` approval under [Backup Recovery Evidence and Compliance](../system-architecture-backup-recovery-evidence-and-compliance.md#canonical-recovery-record), unless a separately accepted automatic-DR policy pre-authorizes that same point/decision/window; and
 - the final player-facing reopen after the automated recovery record reaches the proved ready state.
 
 Routine classification, quarantine, trust disposition, convergence, validation, evidence generation, retries, and isolated drills do not require separate security, database, platform, or operations approvers. Those responsibilities are automated controls within the current single administrative trust domain, not independent human approval domains.

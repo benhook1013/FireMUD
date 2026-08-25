@@ -138,6 +138,8 @@ Rejected because the architecture requires failure-domain independence and measu
 
 ## Implementation and Proof Obligations
 
+Select and report the required checks and evidence under the shared [Validation and Runtime Proof](../../developer-workflows/validation-and-runtime-proof.md) workflow; record execution results in PR/CI evidence or the owning implementation tracker rather than in this decision record.
+
 Define deployment-profile configuration for independent monitoring, including whether it is required or omitted, the complete `exposedPublicPlayerPaths` set, heartbeat interval, stale threshold, public-probe cadence, maximum detection budget, external monitor identity, paging evidence identity, and the degraded-detection claim exposed when omitted. The configuration and retained evidence must identify every exposed path, record non-exposed paths as `not_applicable`, and reject a stronger assurance claim when any exposed path lacks its real public probe.
 
 For hosted production profiles claiming the stronger assurance, implement an off-cluster monitor that evaluates the canonical in-cluster heartbeat plus every real public gameplay path declared in `exposedPublicPlayerPaths`. Retain current evidence of probe execution for each exposed path, explicit `not_applicable` results for non-exposed paths, heartbeat freshness, monitor health, paging-route validation, failure and recovery timestamps, and the configured detection budget outside the monitored environment. Evidence must expire when the monitor, probe, route, or paging validation becomes stale.

@@ -108,6 +108,8 @@ This avoids probe complexity but knowingly admits new players into paths already
 
 ## Implementation and Proof Obligations
 
+Select and report the required checks and evidence under the shared [Validation and Runtime Proof](../../developer-workflows/validation-and-runtime-proof.md) workflow; record execution results in PR/CI evidence or the owning implementation tracker rather than in this decision record.
+
 Current shared readiness result shapes, transition metrics, local liveness separation, and focused Game Session, Game Logic, Gateway, and TCP Proxy checks provide partial implementation. They do not prove the complete classification and admission model.
 
 Implementation must inventory existing health checks and classify each dependency; separate route-local failures from whole-pod readiness; add route gates or distinct Services where required; align probe deadlines, cache age, hysteresis, Kubernetes thresholds, and client-visible timeouts; and document safe existing-session behavior for each admission-critical failure.

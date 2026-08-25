@@ -414,6 +414,7 @@ JWT_REPLACEMENT_EVIDENCE_FIELDS = {
     "candidateKidAccepted",
     "validatorEvidenceRef",
 }
+JWT_OLD_OR_RESTORED_KEY_IDS_FIELD = "oldOrRestoredKeyIds"
 RECOVERY_FRESHNESS_ENTRY_FIELDS = {
     "lineage",
     "field",
@@ -878,6 +879,16 @@ def validate_jwt_hardening_contract(
                 "Recovery compatibility baseline compromise-classified JWT hardening missing fields: "
                 + ", ".join(missing_fields),
             )
+        prohibited_replacement_fields = {
+            "replacementEvidence",
+            JWT_OLD_OR_RESTORED_KEY_IDS_FIELD,
+        } & set(value)
+        if prohibited_replacement_fields:
+            return (
+                "fail",
+                "Recovery compatibility baseline replacement evidence is prohibited for compromise-classified JWT hardening: "
+                + ", ".join(sorted(prohibited_replacement_fields)),
+            )
         if value["compromisedKid"] == value["candidateKid"]:
             return (
                 "fail",
@@ -915,59 +926,106 @@ def validate_jwt_hardening_contract(
             + ", ".join(compromise_fields_present),
         )
     if not compromise_classified and jwt_disposition != "verified_not_restored":
-        replacement_evidence = value.get("replacementEvidence")
-        if not isinstance(replacement_evidence, dict) or set(replacement_evidence) != JWT_REPLACEMENT_EVIDENCE_FIELDS:
-            return (
-                "fail",
-                "Recovery compatibility baseline ordinary JWT hardening replacementEvidence must contain exactly oldKid, candidateKid, oldKidRejected, candidateKidAccepted, and validatorEvidenceRef",
-            )
-        old_kid = replacement_evidence.get("oldKid")
-        candidate_kid = replacement_evidence.get("candidateKid")
+        old_or_restored_key_ids = value.get(JWT_OLD_OR_RESTORED_KEY_IDS_FIELD)
         if (
-            not isinstance(old_kid, str)
-            or not old_kid.strip()
-            or not isinstance(candidate_kid, str)
-            or not candidate_kid.strip()
+            not isinstance(old_or_restored_key_ids, list)
+            or not old_or_restored_key_ids
+            or any(
+                not isinstance(key_id, str) or not key_id.strip()
+                for key_id in old_or_restored_key_ids
+            )
+            or len(old_or_restored_key_ids) != len(set(old_or_restored_key_ids))
         ):
             return (
                 "fail",
-                "Recovery compatibility baseline ordinary JWT hardening replacementEvidence IDs must be non-empty strings",
+                "Recovery compatibility baseline ordinary JWT hardening oldOrRestoredKeyIds must be a non-empty unique list of strings",
             )
-        if old_kid == candidate_kid:
+        replacement_evidence = value.get("replacementEvidence")
+        if not isinstance(replacement_evidence, list) or not replacement_evidence:
             return (
                 "fail",
-                "Recovery compatibility baseline ordinary JWT hardening replacementEvidence IDs must be distinct",
+                "Recovery compatibility baseline ordinary JWT hardening replacementEvidence must be a non-empty list of per-key records",
             )
-        if replacement_evidence.get("oldKidRejected") is not True or replacement_evidence.get("candidateKidAccepted") is not True:
+        observed_old_kids: list[str] = []
+        for index, replacement_record in enumerate(replacement_evidence):
+            record_label = f"replacementEvidence[{index}]"
+            if not isinstance(replacement_record, dict) or set(replacement_record) != JWT_REPLACEMENT_EVIDENCE_FIELDS:
+                return (
+                    "fail",
+                    "Recovery compatibility baseline ordinary JWT hardening "
+                    + record_label
+                    + " must contain exactly oldKid, candidateKid, oldKidRejected, candidateKidAccepted, and validatorEvidenceRef",
+                )
+            old_kid = replacement_record.get("oldKid")
+            candidate_kid = replacement_record.get("candidateKid")
+            if (
+                not isinstance(old_kid, str)
+                or not old_kid.strip()
+                or not isinstance(candidate_kid, str)
+                or not candidate_kid.strip()
+            ):
+                return (
+                    "fail",
+                    "Recovery compatibility baseline ordinary JWT hardening replacementEvidence IDs must be non-empty strings",
+                )
+            if old_kid == candidate_kid:
+                return (
+                    "fail",
+                    "Recovery compatibility baseline ordinary JWT hardening replacementEvidence IDs must be distinct",
+                )
+            if old_kid in observed_old_kids:
+                return (
+                    "fail",
+                    "Recovery compatibility baseline ordinary JWT hardening replacementEvidence oldKid must be unique",
+                )
+            observed_old_kids.append(old_kid)
+            if replacement_record.get("oldKidRejected") is not True or replacement_record.get("candidateKidAccepted") is not True:
+                return (
+                    "fail",
+                    "Recovery compatibility baseline ordinary JWT hardening replacementEvidence rejection/acceptance flags must be true",
+                )
+            if replacement_record.get("validatorEvidenceRef") != value.get("validatorConvergenceEvidence"):
+                return (
+                    "fail",
+                    "Recovery compatibility baseline ordinary JWT hardening replacementEvidence.validatorEvidenceRef must match validatorConvergenceEvidence",
+                )
+            if candidate_kid not in resulting_key_ids:
+                return (
+                    "fail",
+                    "Recovery compatibility baseline ordinary JWT hardening replacementEvidence candidateKid must be present in resultingKeyIds",
+                )
+            if old_kid in resulting_key_ids:
+                return (
+                    "fail",
+                    "Recovery compatibility baseline ordinary JWT hardening replacementEvidence oldKid must be absent from resultingKeyIds",
+                )
+        expected_old_kids = set(old_or_restored_key_ids)
+        observed_old_kid_set = set(observed_old_kids)
+        if observed_old_kid_set != expected_old_kids:
+            missing = sorted(expected_old_kids - observed_old_kid_set)
+            extra = sorted(observed_old_kid_set - expected_old_kids)
+            details = []
+            if missing:
+                details.append("missing: " + ", ".join(missing))
+            if extra:
+                details.append("unlisted: " + ", ".join(extra))
             return (
                 "fail",
-                "Recovery compatibility baseline ordinary JWT hardening replacementEvidence rejection/acceptance flags must be true",
+                "Recovery compatibility baseline ordinary JWT hardening replacementEvidence must cover every old or restored key ("
+                + "; ".join(details)
+                + ")",
             )
-        if replacement_evidence.get("validatorEvidenceRef") != value.get("validatorConvergenceEvidence"):
-            return (
-                "fail",
-                "Recovery compatibility baseline ordinary JWT hardening replacementEvidence.validatorEvidenceRef must match validatorConvergenceEvidence",
-            )
-        if candidate_kid not in resulting_key_ids:
-            return (
-                "fail",
-                "Recovery compatibility baseline ordinary JWT hardening replacementEvidence candidateKid must be present in resultingKeyIds",
-            )
-        if old_kid in resulting_key_ids:
-            return (
-                "fail",
-                "Recovery compatibility baseline ordinary JWT hardening replacementEvidence oldKid must be absent from resultingKeyIds",
-            )
-    elif "replacementEvidence" in value:
+    elif "replacementEvidence" in value or JWT_OLD_OR_RESTORED_KEY_IDS_FIELD in value:
         return (
             "fail",
-            "Recovery compatibility baseline replacementEvidence is prohibited for compromise-classified or verified_not_restored JWT hardening",
+            "Recovery compatibility baseline replacement evidence is prohibited for compromise-classified or verified_not_restored JWT hardening",
         )
     return ("pass", "")
 
 
 def validate_recovery_freshness(
     value: Any,
+    credential_applicability: dict[str, str],
     credential_dispositions: dict[str, str],
     finalized_at: dt.datetime,
 ) -> tuple[str, str]:
@@ -994,6 +1052,25 @@ def validate_recovery_freshness(
             "Recovery compatibility baseline secretComplianceRefresh.freshness must be a non-empty object",
         )
     refreshed_class_set = set(refreshed_classes)
+    expected_refreshed_class_set = {
+        class_name
+        for class_name, applicability in credential_applicability.items()
+        if applicability == "applicable"
+    }
+    if refreshed_class_set != expected_refreshed_class_set:
+        missing = sorted(expected_refreshed_class_set - refreshed_class_set)
+        extra = sorted(refreshed_class_set - expected_refreshed_class_set)
+        details = []
+        if missing:
+            details.append("missing: " + ", ".join(missing))
+        if extra:
+            details.append("extra: " + ", ".join(extra))
+        return (
+            "fail",
+            "Recovery compatibility baseline secretComplianceRefresh.credentialClasses must exactly cover applicable credential classes derived from credentialApplicability ("
+            + "; ".join(details)
+            + ")",
+        )
     freshness_class_set = set(freshness)
     if refreshed_class_set != freshness_class_set:
         missing = sorted(refreshed_class_set - freshness_class_set)
@@ -2292,6 +2369,7 @@ def validate_recovery_baseline(
         return ("fail", jwt_message)
     freshness_status, freshness_message = validate_recovery_freshness(
         baseline.get("secretComplianceRefresh"),
+        credential_applicability,
         credential_dispositions,
         finalized_at,
     )

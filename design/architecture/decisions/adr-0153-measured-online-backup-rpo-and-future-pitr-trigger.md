@@ -106,6 +106,8 @@ The logical artifact covers the complete shared database and cross-service workf
 
 ## Implementation and Proof Obligations
 
+Select and report the required checks and evidence under the shared [Validation and Runtime Proof](../../developer-workflows/validation-and-runtime-proof.md) workflow; record execution results in PR/CI evidence or the owning implementation tracker rather than in this decision record.
+
 - Measure backup freshness using the snapshot time of the newest artifact that has passed the supported restore-readability and lineage checks.
 - Require every production promotion and production first-live/reopen event to consume a current environment-bound reference and complete digest for that verified point, with observed age within 15 minutes; object existence alone is insufficient.
 - Configure hosted backup and verification frequency with enough margin to maintain the 15-minute objective under normal duration and scheduling variance.

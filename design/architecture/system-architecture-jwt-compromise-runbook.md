@@ -72,8 +72,8 @@ Before reopening player-facing traffic, incident records must include:
 
 Validation selection and reporting follow [Validation and Runtime Proof](../developer-workflows/validation-and-runtime-proof.md); execution evidence remains in tracker, PR, and CI artifacts rather than a duplicate runbook ledger.
 
-- `./system-architecture-security.md#jwt-key-compromise-response`
-- `./system-architecture-jwt-and-token-contracts.md#signing-key-rotation-contract-normative`
-- `./decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md`
-- `./decisions/adr-0155-automated-event-classified-post-restore-trust-reset.md`
-- `./system-architecture-post-restore-hardening.md#post-restore-secret-hardening`
+- [JWT key compromise response](./system-architecture-security.md#jwt-key-compromise-response)
+- [Signing-key rotation contract](./system-architecture-jwt-and-token-contracts.md#signing-key-rotation-contract-normative)
+- [ADR 0014: phased JWT signing-key rotation and readiness](./decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md)
+- [ADR 0155: automated event-classified post-restore trust reset](./decisions/adr-0155-automated-event-classified-post-restore-trust-reset.md)
+- [Post-restore secret hardening](./system-architecture-post-restore-hardening.md#post-restore-secret-hardening)

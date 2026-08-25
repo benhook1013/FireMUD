@@ -54,8 +54,10 @@ def main() -> int:
         help=(
             "Accept fresh structurally complete canary/path results, including "
             "zero-valued failures, for incident evidence. "
-            "External-authority/deadman checks remain strict; readiness and promotion "
-            "consumers intentionally omit this option."
+            "External-authority/deadman structure, provenance, chronology, completeness, "
+            "and freshness remain strict; current red outcomes are permitted only as "
+            "non-authorizing incident evidence. Readiness and promotion consumers "
+            "intentionally omit this option."
         ),
     )
     args = parser.parse_args()
@@ -99,6 +101,7 @@ def validate_evidence(
         authority_provenance,
         data.get("verifiedAt"),
         capabilities.get("playerFlowCanary") == "advertised",
+        allow_failure_evidence,
     )
     findings.extend(external_authority_findings)
     findings.extend(
@@ -183,6 +186,7 @@ def _validate_external_authority(
     authority_provenance: Any,
     verified_at: Any,
     canary_advertised: bool,
+    allow_failure_evidence: bool = False,
 ) -> tuple[list[str], set[str]]:
     if not isinstance(value, dict):
         return ["externalAuthority is required"], set()
@@ -246,6 +250,7 @@ def _validate_external_authority(
                 "externalAuthority.deadmanAuthority",
                 require_green=True,
                 allow_synthetic_refs=allow_synthetic_refs,
+                allow_failure_evidence=allow_failure_evidence,
             )
         )
 
@@ -270,6 +275,7 @@ def _validate_external_authority(
                     record,
                     f"externalAuthority.publicPathChecks.{path}",
                     allow_synthetic_refs,
+                    allow_failure_evidence,
                 )
             )
         else:
@@ -315,14 +321,18 @@ def _validate_authority_record(
     key: str,
     require_green: bool,
     allow_synthetic_refs: bool,
+    allow_failure_evidence: bool = False,
 ) -> list[str]:
     findings: list[str] = []
     status = record.get("status")
     if status not in {"green", "red"}:
         findings.append(f"{key}.status must be green or red")
-    elif require_green and status != "green":
+    elif require_green and status != "green" and not allow_failure_evidence:
         findings.append(f"{key}.status must be green")
-    for field in ("evidenceRef", "pageEvidenceRef", "target", "checkRef"):
+    required_fields = ("evidenceRef", "target", "checkRef")
+    if status == "green" or not allow_failure_evidence:
+        required_fields = (*required_fields, "pageEvidenceRef")
+    for field in required_fields:
         value = record.get(field)
         if not isinstance(value, str) or not value.strip():
             findings.append(f"{key}.{field} is required")
@@ -332,17 +342,33 @@ def _validate_authority_record(
                     value, f"{key}.{field}", allow_synthetic_refs
                 )
             )
+    if status == "red" and allow_failure_evidence and "pageEvidenceRef" in record:
+        page_evidence_ref = record["pageEvidenceRef"]
+        if not isinstance(page_evidence_ref, str) or not page_evidence_ref.strip():
+            findings.append(f"{key}.pageEvidenceRef must be a non-empty string when present")
+        else:
+            findings.extend(
+                _validate_reference_provenance(
+                    page_evidence_ref, f"{key}.pageEvidenceRef", allow_synthetic_refs
+                )
+            )
     return findings
 
 
 def _validate_public_path_record(
-    record: dict[str, Any], key: str, allow_synthetic_refs: bool
+    record: dict[str, Any],
+    key: str,
+    allow_synthetic_refs: bool,
+    allow_failure_evidence: bool = False,
 ) -> list[str]:
     findings: list[str] = []
     status = record.get("status")
-    if status != "green":
+    if status != "green" and not (status == "red" and allow_failure_evidence):
         findings.append(f"{key}.status must be green")
-    for field in ("evidenceRef", "pageEvidenceRef", "target"):
+    required_fields = ("evidenceRef", "target")
+    if status == "green" or not allow_failure_evidence:
+        required_fields = (*required_fields, "pageEvidenceRef")
+    for field in required_fields:
         value = record.get(field)
         if not isinstance(value, str) or not value.strip():
             findings.append(f"{key}.{field} is required")
@@ -350,6 +376,16 @@ def _validate_public_path_record(
             findings.extend(
                 _validate_reference_provenance(
                     value, f"{key}.{field}", allow_synthetic_refs
+                )
+            )
+    if status == "red" and allow_failure_evidence and "pageEvidenceRef" in record:
+        page_evidence_ref = record["pageEvidenceRef"]
+        if not isinstance(page_evidence_ref, str) or not page_evidence_ref.strip():
+            findings.append(f"{key}.pageEvidenceRef must be a non-empty string when present")
+        else:
+            findings.extend(
+                _validate_reference_provenance(
+                    page_evidence_ref, f"{key}.pageEvidenceRef", allow_synthetic_refs
                 )
             )
     return findings

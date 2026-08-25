@@ -310,8 +310,10 @@ for script in (restore_script, verify_script):
         if capture.read_bytes() != b"-- selected valid hosted artifact\n":
             raise SystemExit(f"{script} streamed unexpected artifact bytes")
         psql_args = json.loads((tmp / "restore-latest-db-psql-args.json").read_text(encoding="utf-8"))
-        if ["-v", "ON_ERROR_STOP=1"] != psql_args[:2]:
-            raise SystemExit(f"{script} did not enable psql ON_ERROR_STOP: {psql_args!r}")
+        if ["-v", "ON_ERROR_STOP=1", "--single-transaction"] != psql_args[:3]:
+            raise SystemExit(
+                f"{script} did not enable fail-closed transactional psql restore: {psql_args!r}"
+            )
     elif "firemud_20260824120000.sql.gz" not in result.stdout or "legacy-newer.dump" in result.stdout:
         raise SystemExit(f"{script} verified the wrong scheduled object: {result.stdout!r}")
 
@@ -3737,6 +3739,8 @@ for label, content in (("scheduled backup script", scheduled_backup_script),):
         raise SystemExit(f"{label} must not select pg_restore for the hosted plain-SQL artifact")
 if 'gunzip -c "$FILE" | psql' not in scheduled_restore_script:
     raise SystemExit("hosted scheduled restore script does not consume .sql.gz with gunzip | psql")
+if "--single-transaction" not in scheduled_restore_script:
+    raise SystemExit("hosted scheduled restore script must keep the plain-SQL restore atomic")
 if "pg_dump" not in local_backup_script or "-Fc" not in local_backup_script or "pg_restore" not in local_restore_script:
     raise SystemExit("local custom-format .dump/pg_restore lane is not preserved")
 expected_verified_point_bytes = (
@@ -4003,13 +4007,14 @@ def canonical_recovery_record(finalized_at):
             "revocationWatermarkEvidence": "evidence/jwt-revocation",
             "validatorConvergenceEvidence": "evidence/jwt-validators",
             "compromiseClassified": False,
-            "replacementEvidence": {
+            "oldOrRestoredKeyIds": ["kid-old"],
+            "replacementEvidence": [{
                 "oldKid": "kid-old",
                 "candidateKid": "kid-1",
                 "oldKidRejected": True,
                 "candidateKidAccepted": True,
                 "validatorEvidenceRef": "evidence/jwt-validators",
-            },
+            }],
         },
         "databaseCredentialRotation": {
             "rotationJobRef": "jobs/postgres-rotation",
@@ -4029,8 +4034,13 @@ def canonical_recovery_record(finalized_at):
             "credentialClasses": [
                 "jwt-signing-keys-jwks",
                 "postgres-application-credentials",
+                "workload-leaf",
+                "bridge-leaf",
+                "operator-leaf",
                 "backup-storage",
                 "asset-storage",
+                "outbound-comms",
+                "operator-credentials",
             ],
             "freshness": {
                 "jwt-signing-keys-jwks": {
@@ -4047,6 +4057,27 @@ def canonical_recovery_record(finalized_at):
                     "previousField": "lastRotationAt",
                     "previousValue": freshness_timestamp,
                 },
+                "workload-leaf": {
+                    "lineage": "existing",
+                    "field": "lastRotationAt",
+                    "value": freshness_timestamp,
+                    "previousField": "lastRotationAt",
+                    "previousValue": "2026-03-01T00:00:00Z",
+                },
+                "bridge-leaf": {
+                    "lineage": "existing",
+                    "field": "lastRotationAt",
+                    "value": freshness_timestamp,
+                    "previousField": "lastRotationAt",
+                    "previousValue": "2026-03-01T00:00:00Z",
+                },
+                "operator-leaf": {
+                    "lineage": "existing",
+                    "field": "lastProvisionedAt",
+                    "value": freshness_timestamp,
+                    "previousField": "lastProvisionedAt",
+                    "previousValue": freshness_timestamp,
+                },
                 "backup-storage": {
                     "lineage": "existing",
                     "field": "lastRotationAt",
@@ -4060,6 +4091,20 @@ def canonical_recovery_record(finalized_at):
                     "value": freshness_timestamp,
                     "previousField": "lastRotationAt",
                     "previousValue": freshness_timestamp,
+                },
+                "outbound-comms": {
+                    "lineage": "existing",
+                    "field": "lastRotationAt",
+                    "value": freshness_timestamp,
+                    "previousField": "lastRotationAt",
+                    "previousValue": "2026-03-01T00:00:00Z",
+                },
+                "operator-credentials": {
+                    "lineage": "existing",
+                    "field": "lastRotationAt",
+                    "value": freshness_timestamp,
+                    "previousField": "lastRotationAt",
+                    "previousValue": "2026-03-01T00:00:00Z",
                 },
             },
         },
@@ -4206,7 +4251,7 @@ legacy_refresh_class_names_status, legacy_refresh_class_names_message = module.v
 )
 if (
     legacy_refresh_class_names_status != "fail"
-    or "references a class without a disposition" not in legacy_refresh_class_names_message
+    or "credentialClasses must exactly cover applicable credential classes" not in legacy_refresh_class_names_message
 ):
     raise SystemExit(
         "legacy refresh class aliases were accepted: " + legacy_refresh_class_names_message
@@ -4444,6 +4489,36 @@ if not_applicable_external_credential_status != "pass":
     raise SystemExit(
         "not-applicable external credential class did not pass with explicit evidence shape: "
         + not_applicable_external_credential_message
+    )
+
+not_applicable_outbound_credential = copy.deepcopy(valid_baseline)
+not_applicable_outbound_credential["credentialApplicability"]["outbound-comms"] = "not_applicable"
+del not_applicable_outbound_credential["credentialDispositions"]["outbound-comms"]
+not_applicable_outbound_credential["secretComplianceRefresh"]["credentialClasses"].remove(
+    "outbound-comms"
+)
+del not_applicable_outbound_credential["secretComplianceRefresh"]["freshness"]["outbound-comms"]
+not_applicable_outbound_credential["externalCredentialValidation"]["records"]["outbound-comms"] = {
+    "status": "not_applicable",
+    "reason": "credential-class-not-present",
+    "evidenceRef": "evidence/outbound-comms-not-applicable.json",
+}
+not_applicable_outbound_path = recovery_dir / "not-applicable-outbound-credential-baseline.json"
+not_applicable_outbound_path.write_text(
+    json.dumps(not_applicable_outbound_credential),
+    encoding="utf-8",
+)
+not_applicable_outbound_status, not_applicable_outbound_message = module.validate_recovery_baseline(
+    tmp,
+    str(not_applicable_outbound_path.relative_to(tmp)),
+    "sha256:recovery-contract",
+    now,
+    now,
+)
+if not_applicable_outbound_status != "pass":
+    raise SystemExit(
+        "not-applicable outbound credential class did not pass with explicit evidence shape: "
+        + not_applicable_outbound_message
     )
 
 non_applicable_external_disposition = copy.deepcopy(not_applicable_external_credential)
@@ -4783,6 +4858,7 @@ valid_jwt_compromise["jwtHardening"].update(
     }
 )
 del valid_jwt_compromise["jwtHardening"]["replacementEvidence"]
+del valid_jwt_compromise["jwtHardening"]["oldOrRestoredKeyIds"]
 valid_jwt_compromise_status, valid_jwt_compromise_message = validate_recovery_variant(
     "valid-jwt-compromise-baseline.json",
     valid_jwt_compromise,
@@ -4866,7 +4942,7 @@ missing_replacement_status, missing_replacement_message = validate_recovery_vari
 )
 if (
     missing_replacement_status != "fail"
-    or "replacementEvidence must contain exactly" not in missing_replacement_message
+    or "replacementEvidence must be a non-empty list" not in missing_replacement_message
 ):
     raise SystemExit(
         "ordinary JWT hardening without replacement evidence was accepted: "
@@ -4874,14 +4950,14 @@ if (
     )
 
 malformed_replacement_evidence = copy.deepcopy(valid_baseline)
-malformed_replacement_evidence["jwtHardening"]["replacementEvidence"] = {"oldKid": "kid-old"}
+malformed_replacement_evidence["jwtHardening"]["replacementEvidence"] = [{"oldKid": "kid-old"}]
 malformed_replacement_status, malformed_replacement_message = validate_recovery_variant(
     "malformed-replacement-evidence-baseline.json",
     malformed_replacement_evidence,
 )
 if (
     malformed_replacement_status != "fail"
-    or "replacementEvidence must contain exactly" not in malformed_replacement_message
+    or "replacementEvidence[0] must contain exactly" not in malformed_replacement_message
 ):
     raise SystemExit(
         "malformed ordinary JWT replacement evidence was accepted: "
@@ -4889,7 +4965,7 @@ if (
     )
 
 mismatched_replacement_evidence = copy.deepcopy(valid_baseline)
-mismatched_replacement_evidence["jwtHardening"]["replacementEvidence"][
+mismatched_replacement_evidence["jwtHardening"]["replacementEvidence"][0][
     "validatorEvidenceRef"
 ] = "evidence/other-jwt-validators"
 mismatched_replacement_status, mismatched_replacement_message = validate_recovery_variant(
@@ -4906,7 +4982,7 @@ if (
     )
 
 false_replacement_evidence = copy.deepcopy(valid_baseline)
-false_replacement_evidence["jwtHardening"]["replacementEvidence"]["oldKidRejected"] = False
+false_replacement_evidence["jwtHardening"]["replacementEvidence"][0]["oldKidRejected"] = False
 false_replacement_status, false_replacement_message = validate_recovery_variant(
     "false-replacement-evidence-baseline.json",
     false_replacement_evidence,
@@ -4952,17 +5028,55 @@ if (
         + retained_replacement_message
     )
 
+missing_old_key_replacement = copy.deepcopy(valid_baseline)
+missing_old_key_replacement["jwtHardening"]["oldOrRestoredKeyIds"] = [
+    "kid-old",
+    "kid-restored",
+]
+missing_old_key_status, missing_old_key_message = validate_recovery_variant(
+    "missing-old-key-replacement-evidence-baseline.json",
+    missing_old_key_replacement,
+)
+if (
+    missing_old_key_status != "fail"
+    or "must cover every old or restored key" not in missing_old_key_message
+    or "missing: kid-restored" not in missing_old_key_message
+):
+    raise SystemExit(
+        "ordinary JWT replacement accepted incomplete old/restored-key coverage: "
+        + missing_old_key_message
+    )
+
+unlisted_old_key_replacement = copy.deepcopy(valid_baseline)
+unlisted_old_key_replacement["jwtHardening"]["replacementEvidence"][0]["oldKid"] = (
+    "kid-unlisted"
+)
+unlisted_old_key_status, unlisted_old_key_message = validate_recovery_variant(
+    "unlisted-old-key-replacement-evidence-baseline.json",
+    unlisted_old_key_replacement,
+)
+if (
+    unlisted_old_key_status != "fail"
+    or "must cover every old or restored key" not in unlisted_old_key_message
+    or "unlisted: kid-unlisted" not in unlisted_old_key_message
+):
+    raise SystemExit(
+        "ordinary JWT replacement accepted an unlisted old/restored key: "
+        + unlisted_old_key_message
+    )
+
 compromise_with_replacement_evidence = copy.deepcopy(valid_jwt_compromise)
 compromise_with_replacement_evidence["jwtHardening"]["replacementEvidence"] = copy.deepcopy(
     valid_baseline["jwtHardening"]["replacementEvidence"]
 )
+compromise_with_replacement_evidence["jwtHardening"]["oldOrRestoredKeyIds"] = ["kid-old"]
 compromise_with_replacement_status, compromise_with_replacement_message = validate_recovery_variant(
     "compromise-with-replacement-evidence-baseline.json",
     compromise_with_replacement_evidence,
 )
 if (
     compromise_with_replacement_status != "fail"
-    or "replacementEvidence is prohibited" not in compromise_with_replacement_message
+    or "replacement evidence is prohibited" not in compromise_with_replacement_message
 ):
     raise SystemExit(
         "compromise-classified JWT hardening with ordinary replacement evidence was accepted: "
@@ -4979,7 +5093,7 @@ verified_with_replacement_status, verified_with_replacement_message = validate_r
 )
 if (
     verified_with_replacement_status != "fail"
-    or "replacementEvidence is prohibited" not in verified_with_replacement_message
+    or "replacement evidence is prohibited" not in verified_with_replacement_message
 ):
     raise SystemExit(
         "verified_not_restored JWT hardening with ordinary replacement evidence was accepted: "

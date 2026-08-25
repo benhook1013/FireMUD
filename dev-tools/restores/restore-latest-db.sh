@@ -44,7 +44,8 @@ aws s3 cp "s3://$BUCKET/$KEY" "$FILE" "${AWS_ENDPOINT_ARGS[@]}"
 
 echo "Restoring $KEY"
 
-gunzip -c "$FILE" | psql -v ON_ERROR_STOP=1 -h "${FIREMUD_POSTGRES_HOST:-localhost}" \
+gunzip -c "$FILE" | psql -v ON_ERROR_STOP=1 --single-transaction \
+                    -h "${FIREMUD_POSTGRES_HOST:-localhost}" \
                     -U "${FIREMUD_POSTGRES_USER:-firemud}" \
                     -d "${FIREMUD_POSTGRES_DB:-firemud}"
 

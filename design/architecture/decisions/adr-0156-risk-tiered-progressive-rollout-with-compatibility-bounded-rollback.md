@@ -112,6 +112,8 @@ Rejected because readiness answers whether a pod may accept its current traffic 
 
 ## Implementation and Proof Obligations
 
+Select and report the required checks and evidence under the shared [Validation and Runtime Proof](../../developer-workflows/validation-and-runtime-proof.md) workflow; record execution results in PR/CI evidence or the owning implementation tracker rather than in this decision record.
+
 Make the multi-replica rollout strategy explicit in canonical staging and production manifests. Provide a canonical deployment playbook that consumes the exact candidate and known-good digest sets, rollback classification and compatibility evidence, risk classification, smoke contract, SLO observation inputs, and target environment.
 
 The playbook must distinguish pause, abort, compatible restoration, forward remediation, and successful progression as separate recorded outcomes. It must refuse automatic known-good restoration for a `roll-forward-only` release or for missing, stale, or mismatched compatibility evidence. Any restoration must reapply the exact predeclared digest set and record the trigger, observations, action, actor or automation identity, and resulting health. Before any progression, pause, abort, or restoration mutation, it must compare the active `rolloutOperationId`, candidate digest set, target environment, Deployment UID, Deployment generation, and `resourceVersion` where available against the durable operation tuple and submit the server-side `resourceVersion` or equivalent owner CAS token as the mutation precondition; a mismatch or failed precondition records a stale-operation conflict and performs no mutation.

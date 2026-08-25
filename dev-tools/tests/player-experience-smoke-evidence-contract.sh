@@ -6,6 +6,13 @@ VALIDATOR="$ROOT_DIR/dev-tools/observability/validate-player-experience-smoke-ev
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
+HELP_OUTPUT="$TMP_DIR/help.out"
+python3 "$VALIDATOR" --help >"$HELP_OUTPUT"
+grep -q "evidence. External-authority/deadman structure," "$HELP_OUTPUT"
+grep -q "provenance, chronology, completeness, and freshness" "$HELP_OUTPUT"
+grep -q "current red outcomes are permitted only" "$HELP_OUTPUT"
+grep -q "non-authorizing incident evidence." "$HELP_OUTPUT"
+
 VALID_EVIDENCE="$TMP_DIR/valid-evidence.json"
 INVALID_EVIDENCE="$TMP_DIR/invalid-evidence.json"
 
@@ -1078,6 +1085,31 @@ fi
 grep -q "missing passing paths" "$TMP_DIR/fresh-failure-readiness.out"
 python3 "$VALIDATOR" --allow-failure-evidence "$FRESH_FAILURE_EVIDENCE" \
   >"$TMP_DIR/fresh-failure-incident.out"
+
+RED_EXTERNAL_INCIDENT_EVIDENCE="$TMP_DIR/red-external-incident-evidence.json"
+python3 - "$VALID_EVIDENCE" "$RED_EXTERNAL_INCIDENT_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["externalAuthority"]["deadmanAuthority"]["status"] = "red"
+source["externalAuthority"]["deadmanAuthority"].pop("pageEvidenceRef")
+for record in source["externalAuthority"]["publicPathChecks"].values():
+    if record["status"] != "not_applicable":
+        record["status"] = "red"
+        record.pop("pageEvidenceRef", None)
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if python3 "$VALIDATOR" "$RED_EXTERNAL_INCIDENT_EVIDENCE" \
+  >"$TMP_DIR/red-external-readiness.out" 2>&1; then
+  echo "readiness validator unexpectedly accepted red external incident evidence" >&2
+  exit 1
+fi
+grep -q "deadmanAuthority.status must be green" "$TMP_DIR/red-external-readiness.out"
+python3 "$VALIDATOR" --allow-failure-evidence "$RED_EXTERNAL_INCIDENT_EVIDENCE" \
+  >"$TMP_DIR/red-external-incident.out"
 
 MIXED_FAILURE_EVIDENCE="$TMP_DIR/mixed-failure-evidence.json"
 python3 - "$VALID_EVIDENCE" "$MIXED_FAILURE_EVIDENCE" <<'PY'

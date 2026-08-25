@@ -124,11 +124,13 @@ PostgreSQL evidence, workload state, fencing, and traffic routing do not share o
 
 ## Implementation and Proof Obligations
 
+Select and report the required checks and evidence under the shared [Validation and Runtime Proof](../../developer-workflows/validation-and-runtime-proof.md) workflow; record execution results in PR/CI evidence or the owning implementation tracker rather than in this decision record.
+
 - Implement automated scheduled isolated restore drills and immutable recovery-evidence generation for hosted production.
 - Implement the compact compatibility evaluator and require an exact candidate drill for every `roll-forward-only` production candidate.
 - Keep routine non-rewind restart automation separate from the destructive restore controller.
 - Implement a resumable actual-rewind workflow covering quarantine, old-authority fencing, candidate verification, restore, empty Redis, convergence, hardening, validation, smoke, and reopen preparation. Bind each destructive PostgreSQL restore attempt to its durable attempt ID, target-boundary fingerprint, and recovery-point ID, and validate an ambiguous target before retrying.
-- Require operator authorization for the selected recovery point and displayed data-loss window unless a separately configured and proved automatic-DR policy pre-authorizes that window.
+- Require operator authorization for the selected `recoveryPointId` and its controller-owned `recoveryPointDecisionAt`/computed `effectiveDataLossWindow`, exact-bound through the immutable approval evidence defined by [Backup Recovery Evidence and Compliance](../system-architecture-backup-recovery-evidence-and-compliance.md#canonical-recovery-record), unless a separately configured and proved automatic-DR policy pre-authorizes that same point/decision/window. The owner contract defines the timestamp ordering, ceiling calculation, closed approval record, and branch fields; this decision does not duplicate that schema.
 - Implement controlled reopen as a durable crash-recoverable state machine with fail-closed uncertainty and actionable step-level diagnostics.
 - Provide the supported automated local restore rehearsal for hobby deployments and visibly record `recovery-unverified` first-live operation when explicitly chosen.
 - Remove verified hobby recovery status when required periodic evidence becomes stale, without shutting down a healthy non-verified hobby game.
