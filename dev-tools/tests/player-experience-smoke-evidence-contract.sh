@@ -82,25 +82,28 @@ JSON
 
 python3 "$VALIDATOR" "$VALID_EVIDENCE" >"$TMP_DIR/valid.out"
 
-python3 - "$VALIDATOR" <<'PY'
-import importlib.util
+INVALID_CAPABILITIES_EVIDENCE="$TMP_DIR/invalid-capabilities-evidence.json"
+python3 - "$VALID_EVIDENCE" "$INVALID_CAPABILITIES_EVIDENCE" <<'PY'
+import json
 import sys
 from pathlib import Path
 
-validator_path = Path(sys.argv[1])
-spec = importlib.util.spec_from_file_location("player_experience_evidence_validator", validator_path)
-assert spec is not None and spec.loader is not None
-validator = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(validator)
-
-_, findings = validator._validate_capabilities(
-    {"prometheusMirrors": "invalid", "playerFlowCanary": "invalid"}
-)
-assert {
-    "capabilities.playerFlowCanary must be one of advertised, omitted",
-    "capabilities.prometheusMirrors must be one of omitted, published",
-}.issubset(findings)
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["capabilities"] = {
+    "prometheusMirrors": "invalid",
+    "playerFlowCanary": "invalid",
+}
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
 PY
+
+if python3 "$VALIDATOR" "$INVALID_CAPABILITIES_EVIDENCE" >"$TMP_DIR/invalid-capabilities.out" 2>&1; then
+  echo "invalid capabilities unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "capabilities.playerFlowCanary must be one of advertised, omitted" \
+  "$TMP_DIR/invalid-capabilities.out"
+grep -q "capabilities.prometheusMirrors must be one of omitted, published" \
+  "$TMP_DIR/invalid-capabilities.out"
 
 STALE_CANARY_EVIDENCE="$TMP_DIR/stale-canary-evidence.json"
 python3 - "$VALID_EVIDENCE" "$STALE_CANARY_EVIDENCE" <<'PY'

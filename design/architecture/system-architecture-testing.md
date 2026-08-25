@@ -28,11 +28,14 @@ Illustrative retained evidence shape for a hosted-assurance observability smoke;
     "profile": "independent-required",
     "exposedPublicPlayerPaths": ["websocket", "telnet"],
     "detectionBudgetSeconds": 195,
+    "staleThresholdSeconds": 180,
     "evidenceObservedAt": "2026-03-19T10:55:00Z",
     "lastSuccessfulHeartbeatObservedAt": "2026-03-19T10:54:00Z",
+    "observedStalenessSeconds": 60,
     "deadmanAuthority": {
       "status": "green",
       "evidenceRef": "pager://staging/player-experience/2026-03-19T10:50:00Z",
+      "pageEvidenceRef": "pager://staging/player-experience/2026-03-19T10:50:00Z/delivery",
       "target": "staging-deadman-authority",
       "checkRef": "check://staging/deadman"
     },
@@ -40,12 +43,14 @@ Illustrative retained evidence shape for a hosted-assurance observability smoke;
       "websocket": {
         "status": "green",
         "evidenceRef": "probe://staging/websocket/2026-03-19T10:51:00Z",
+        "pageEvidenceRef": "pager://staging/websocket/2026-03-19T10:50:00Z/delivery",
         "target": "staging-websocket",
         "lastSuccessfulProbeObservedAt": "2026-03-19T10:53:00Z"
       },
       "telnet": {
         "status": "green",
         "evidenceRef": "probe://staging/telnet/2026-03-19T10:51:00Z",
+        "pageEvidenceRef": "pager://staging/telnet/2026-03-19T10:50:00Z/delivery",
         "target": "staging-telnet",
         "lastSuccessfulProbeObservedAt": "2026-03-19T10:53:00Z"
       }

@@ -197,7 +197,11 @@ if args[:2] == ["s3api", "list-objects-v2"]:
     if os.environ.get("FAKE_LIST_FAILURE") == "1":
         print("Unable to reach object storage", file=sys.stderr)
         raise SystemExit(42)
-    candidates = [item for item in objects if item["Key"].endswith(".sql.gz")]
+    candidates = [
+        item
+        for item in objects
+        if item["Key"].startswith("15min/firemud_") and item["Key"].endswith(".sql.gz")
+    ]
     if not candidates:
         print("None")
     elif ".[LastModified, Key]" in query:
@@ -6460,6 +6464,8 @@ opaque_smoke_status, _, opaque_smoke_message, _, _ = module.promotion_check(
     promotion_root,
     expected_production_overlay_ref="contract-production",
 )
+if opaque_smoke_status != "fail" or "retained evidence file not found" not in opaque_smoke_message:
+    raise SystemExit(f"opaque smoke evidence was accepted: {opaque_smoke_message}")
 write_secret_evidence(
     make_bootstrap_secret_evidence(),
     staging_record=staging_record,
@@ -6808,8 +6814,6 @@ rotation_evidence_path.write_text(json.dumps(rotation_evidence), encoding="utf-8
 staging_record_path.write_text(json.dumps(staging_record), encoding="utf-8")
 staging_preflight_path.write_text(json.dumps(base_preflight_report), encoding="utf-8")
 promotion_attestation_path.write_text(json.dumps(base_attestation), encoding="utf-8")
-if opaque_smoke_status != "fail" or "retained evidence file not found" not in opaque_smoke_message:
-    raise SystemExit(f"opaque smoke evidence was accepted: {opaque_smoke_message}")
 
 malformed_smoke_path = promotion_root / "evidence/malformed-player-experience-smoke.json"
 malformed_smoke_path.write_text("{not-json", encoding="utf-8")
