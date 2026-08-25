@@ -5575,8 +5575,8 @@ def _promotion_check(
 
 def backup_readiness_check(path: Path, now: str, deployment_ref: str, root_dir: Path) -> tuple[str, str]:
     try:
-        data = load_json(path)
-    except JSON_READ_ERRORS as exc:
+        data = load_json_rejecting_duplicate_keys(path)
+    except RECOVERY_JSON_READ_ERRORS as exc:
         return ("fail", f"Backup-readiness evidence unreadable: {exc}")
     if not isinstance(data, dict):
         return ("fail", "Backup-readiness evidence must be a JSON object")
@@ -5702,7 +5702,7 @@ def backup_readiness_check(path: Path, now: str, deployment_ref: str, root_dir: 
         str(data["newestVerifiedRestorablePointRef"]),
         str(data["environment"]),
         str(data["newestVerifiedRestorablePointAt"]),
-        str(data["backupVerifyLastSuccessAt"]),
+        None,
         str(data["newestVerifiedRestorablePointDigest"]),
         str(data["backupArtifactRef"]),
         context="Verified restorable point",

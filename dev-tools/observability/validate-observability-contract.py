@@ -1457,13 +1457,24 @@ def main() -> int:
         / "independent-required-prometheus-published"
         / "prometheus-rules-firemud-independent-required.yaml"
     )
-    findings.extend(
-        _validate_reference_prometheus_rules(
-            independent_required_rules,
-            {"ObservabilityDeadmanHeartbeatStale"},
-            allow_profile_dependent_alerts=True,
+    if not independent_required_rules.exists():
+        findings.append(
+            Finding(
+                path=independent_required_rules,
+                message=(
+                    "profile overlay rules file is missing; the independent-required "
+                    "deadman alert cannot be installed"
+                ),
+            )
         )
-    )
+    else:
+        findings.extend(
+            _validate_reference_prometheus_rules(
+                independent_required_rules,
+                {"ObservabilityDeadmanHeartbeatStale"},
+                allow_profile_dependent_alerts=True,
+            )
+        )
 
     if not findings:
         print("Observability contract validation: OK")

@@ -15,6 +15,19 @@ if ! grep -q "alert: ObservabilityDeadmanHeartbeatStale" <<<"$required_published
   echo "published independent-required monitoring overlay is missing the required ObservabilityDeadmanHeartbeatStale alert" >&2
   exit 1
 fi
+if ! grep -q "alert: ObservabilityDeadmanHeartbeatMissing" <<<"$required_published_render"; then
+  echo "published independent-required monitoring overlay is missing the required ObservabilityDeadmanHeartbeatMissing alert" >&2
+  exit 1
+fi
+shared_alerts="$(grep '^        - alert:' "$ROOT_DIR/k8s/monitoring/prometheus-rules-firemud.yaml" | sed 's/.*- alert: //')"
+for render in "$required_published_render" "$required_omitted_render" "$independent_omitted_render"; do
+  while IFS= read -r alert_name; do
+    if ! grep -q "alert: $alert_name" <<<"$render"; then
+      echo "monitoring overlay render is missing shared alert $alert_name" >&2
+      exit 1
+    fi
+  done <<<"$shared_alerts"
+done
 for render in "$required_omitted_render" "$independent_omitted_render"; do
   if grep -q "alert: ObservabilityDeadmanHeartbeatStale" <<<"$render"; then
     echo "a non-published or independent-omitted monitoring overlay installed the deadman alert" >&2
@@ -92,16 +105,27 @@ deadman_rule = (
     else required_rules_text[deadman_start:deadman_next]
 )
 if (
-    'expr: absent(observability_deadman_stale{profile="independent-required"}) '
-    'or observability_deadman_stale{profile="independent-required"} == 1'
+    'expr: observability_deadman_stale{profile="independent-required"} == 1'
     not in deadman_rule
 ):
-    raise AssertionError(
-        "deadman alert must fail closed on an absent required-profile stale mirror "
-        "or a stale value of 1"
-    )
+    raise AssertionError("deadman stale alert must fire on a published stale value of 1")
 if "for: 2m" in deadman_rule or "> 180" in deadman_rule:
     raise AssertionError("deadman alert must not hard-code the legacy 180s/2m timing")
+missing_start = required_rules_text.find(
+    "        - alert: ObservabilityDeadmanHeartbeatMissing"
+)
+if missing_start == -1:
+    raise AssertionError("ObservabilityDeadmanHeartbeatMissing alert is missing")
+missing_next = required_rules_text.find("        - alert:", missing_start + 1)
+missing_rule = (
+    required_rules_text[missing_start:]
+    if missing_next == -1
+    else required_rules_text[missing_start:missing_next]
+)
+if 'expr: absent(observability_deadman_stale{profile="independent-required"})' not in missing_rule:
+    raise AssertionError("deadman missing alert must fail closed on an absent required-profile stale mirror")
+if "for: 1m" not in missing_rule:
+    raise AssertionError("deadman missing alert must retain its one-minute hold")
 
 for alert_name in (
     "PlayerFlowCanaryLoginFailed",

@@ -77,7 +77,7 @@ Validator cache behavior, environment modes, evidence age, planned overlap, and 
 Restore-hardening exception:
 
 - When rotating keys during post-restore hardening for a player-facing environment, use restore-mode cutover semantics instead of overlap semantics.
-- For `rotated`, `reissued`, or applicable `rebound` dispositions, and for any `compromiseClassified=true` hard cutover, quarantine JWT issuance and JWT-protected traffic, have Account publish only fresh uncompromised keys in JWKS, invalidate environment-wide issuer authority, and require validator-convergence evidence before traffic reopen. A same-boundary PostgreSQL-only rewind with a proved-current, unchanged trust boundary may retain the current JWKS set and issuer generation under the `verified_not_restored` disposition defined by post-restore hardening.
+- For `rotated`, `reissued`, or applicable `rebound` dispositions, and for any `compromiseClassified=true` hard cutover, quarantine JWT issuance and JWT-protected traffic, have Account publish only fresh uncompromised keys in JWKS, invalidate environment-wide issuer authority, and require validator-convergence evidence before traffic reopen. A same-boundary PostgreSQL-only rewind with a proved-current, unchanged trust boundary may retain current JWKS material only when its trust material and any generation source remain outside the restore artifact. Account must still invalidate restored issuer authority and apply the required generation or cutoff transition under the `verified_not_restored` disposition defined by post-restore hardening.
 - This avoids re-trusting snapshot-era keys resurrected by restore.
 
 Post-restore certificate policy:

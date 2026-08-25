@@ -263,6 +263,10 @@ objects_without_valid = [
     {"Key": "15min/legacy-newer.dump", "LastModified": "2026-08-24T12:01:00Z"},
     {"Key": "15min/arbitrary-object", "LastModified": "2026-08-24T12:02:00Z"},
 ]
+objects_with_overlapping_runs = [
+    {"Key": "15min/firemud_20260824120000.sql.gz", "LastModified": "2026-08-24T12:05:00Z"},
+    {"Key": "15min/firemud_20260824120100.sql.gz", "LastModified": "2026-08-24T12:04:00Z"},
+]
 
 def run(script, objects, *, expect_success, list_failure=False):
     query_log = tmp / (pathlib.Path(script).stem + "-query.txt")
@@ -316,6 +320,13 @@ for script in (restore_script, verify_script):
             )
     elif "firemud_20260824120000.sql.gz" not in result.stdout or "legacy-newer.dump" in result.stdout:
         raise SystemExit(f"{script} verified the wrong scheduled object: {result.stdout!r}")
+
+overlap_result, _ = run(restore_script, objects_with_overlapping_runs, expect_success=True)
+if "firemud_20260824120100.sql.gz" not in overlap_result.stdout:
+    raise SystemExit(
+        f"{restore_script} prioritized object LastModified over capture timestamp: "
+        f"{overlap_result.stdout!r}"
+    )
 
 for script in (restore_script, verify_script):
     result, _ = run(script, objects_without_valid, expect_success=False)
@@ -3768,8 +3779,31 @@ point_status, point_message = module.validate_verified_restorable_point(
 )
 if point_status != "pass":
     raise SystemExit(f"verified-point consumer rejected the golden vector: {point_message}")
+per_point_verified = copy.deepcopy(verified_point)
+per_point_verified["verification"]["verifiedAt"] = timestamp(now - module.dt.timedelta(hours=10))
+per_point_verified["recordDigest"] = "sha256:" + hashlib.sha256(
+    module.canonical_verified_restorable_point_bytes(per_point_verified)
+).hexdigest()
+per_point_verified_path = verified_point_dir / "per-point-verification.json"
+per_point_verified_path.write_text(json.dumps(per_point_verified), encoding="utf-8")
+per_point_status, per_point_message = module._validate_verified_restorable_point_reference(
+    tmp,
+    str(per_point_verified_path.relative_to(tmp)),
+    "production",
+    "2026-08-24T12:00:00Z",
+    None,
+    per_point_verified["recordDigest"],
+    per_point_verified["backupArtifact"]["artifactRef"],
+    context="Per-point verified-point",
+    assessed_at=now,
+)
+if per_point_status != "pass":
+    raise SystemExit(
+        "verified-point consumer rejected an independently fresh per-point verification timestamp: "
+        + per_point_message
+    )
 future_verified_point = copy.deepcopy(verified_point)
-future_verified_point["verification"]["verifiedAt"] = "2026-08-24T12:05:00Z"
+future_verified_point["verification"]["verifiedAt"] = "2026-08-24T12:05:01Z"
 future_verified_point["recordDigest"] = "sha256:" + hashlib.sha256(
     module.canonical_verified_restorable_point_bytes(future_verified_point)
 ).hexdigest()
@@ -3777,10 +3811,10 @@ future_verified_status, future_verified_message = module.validate_verified_resto
     future_verified_point,
     "production",
     "2026-08-24T12:00:00Z",
-    "2026-08-24T12:05:00Z",
+    "2026-08-24T12:05:01Z",
     future_verified_point["recordDigest"],
     future_verified_point["backupArtifact"]["artifactRef"],
-    assessed_at=module.dt.datetime.fromisoformat("2026-08-24T12:04:00+00:00"),
+    assessed_at=module.dt.datetime.fromisoformat("2026-08-24T12:05:00+00:00"),
 )
 if (
     future_verified_status != "fail"
@@ -6443,6 +6477,27 @@ promotion_smoke_entry = {
     "ref": smoke_evidence_ref,
     "contentDigest": "sha256:" + hashlib.sha256(promotion_smoke_evidence_path.read_bytes()).hexdigest(),
 }
+second_promotion_smoke_path = promotion_root / "evidence/player-experience-smoke-second.json"
+second_promotion_smoke_path.write_bytes(promotion_smoke_evidence_path.read_bytes())
+second_promotion_smoke_entries = [
+    promotion_smoke_entry,
+    {
+        "ref": str(second_promotion_smoke_path.relative_to(promotion_root)),
+        "contentDigest": "sha256:" + hashlib.sha256(second_promotion_smoke_path.read_bytes()).hexdigest(),
+    },
+]
+shared_event_status, shared_event_message = module.validate_promotion_smoke_evidence(
+    promotion_root,
+    second_promotion_smoke_entries,
+    "Multiple-event smokeEvidence",
+    staging_sha,
+    staging_event_id,
+)
+if shared_event_status != "pass":
+    raise SystemExit(
+        "multiple smoke artifacts sharing the selected deployment event were rejected: "
+        + shared_event_message
+    )
 promotion_baseline_smoke_path = promotion_root / "evidence/recovery-baseline-smoke.json"
 promotion_baseline_smoke_path.write_bytes(smoke_evidence_path.read_bytes())
 promotion_baseline_smoke_entry = {
@@ -7551,6 +7606,25 @@ future_readiness = write_json(
         "evidenceRefs": ["contract-evidence"],
     },
 )
+duplicate_readiness_path = tmp / "duplicate-backup-readiness.json"
+duplicate_readiness_path.write_bytes(
+    future_readiness.read_bytes().replace(
+        b'"environment": "production"',
+        b'"environment": "production", "environment": "production"',
+        1,
+    )
+)
+duplicate_readiness_status, duplicate_readiness_message = module.backup_readiness_check(
+    duplicate_readiness_path,
+    now.isoformat().replace("+00:00", "Z"),
+    roll_forward_deployment_sha,
+    tmp,
+)
+if duplicate_readiness_status != "fail" or "duplicate JSON member: environment" not in duplicate_readiness_message:
+    raise SystemExit(
+        "backup readiness accepted duplicate top-level JSON members: "
+        + duplicate_readiness_message
+    )
 noncanonical_attestation_readiness_data = json.loads(future_readiness.read_text(encoding="utf-8"))
 noncanonical_attestation_readiness_data["backupLastSuccessAt"] = past_timestamp
 noncanonical_attestation_readiness_data["promotionAttestationRef"] = "../nonexistent-attestation.json"

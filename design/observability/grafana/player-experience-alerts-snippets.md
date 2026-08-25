@@ -253,7 +253,7 @@ The `profile` label uses ADR 0159's canonical monitoring-profile enum, `independ
     profile: '{{ $labels.profile }}'
     severity: P1
     owner: platform
-    runbook: design/architecture/system-architecture-observability-incident-runbook.md#prometheus-down-or-stale
+    runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#incident-types
   annotations:
     summary: Synthetic player-flow canary evidence stale
     description: The advertised player-flow canary run evidence is future-dated or older than the profile-derived freshness budget; treat player-flow health as unknown or degraded until a fresh run is retained.

@@ -19,7 +19,7 @@ Required fields:
 - `deployStatus` (`pass`)
 - `smokeStatus` (`pass`)
 - `serviceDigests` (map of each service to its exact staged immutable manifest or index reference)
-- `servicePlatformDigests` (same service key set, with each service mapped from its exact admitted platform keys to immutable child-manifest references; for a single-platform direct-manifest `serviceDigests` reference, the one child entry equals that manifest, while for a single-platform index reference the entry is the index's sole child-manifest digest)
+- `servicePlatformDigests` (same service key set, with each service mapped from its exact admitted platform keys to immutable child-manifest references; for a single-platform direct-manifest `serviceDigests` reference, the one platform entry binds that same manifest, while for an index-backed reference, each entry binds the index descriptor's selected child manifest and never the index digest)
 - `preflightReportPath`
   - must equal `design/operations/deployments/staging/preflight/<overlayCommitSha>/<deploymentEventId>.json`
   - report `completedAt` must not be later than `appliedAt`

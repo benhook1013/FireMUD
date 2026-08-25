@@ -559,6 +559,7 @@ grep -q 'observability_deadman_heartbeat_timestamp_seconds{source="contract-test
 
 REQUIRED_180_MIRRORS_OMITTED_AUTHORITY="$TMP_DIR/required-180-mirrors-omitted-authority.json"
 REQUIRED_180_MIRRORS_OMITTED_EVIDENCE="$TMP_DIR/required-180-mirrors-omitted-evidence.json"
+refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
 python3 - "$AUTHORITY_EVIDENCE" "$REQUIRED_180_MIRRORS_OMITTED_AUTHORITY" <<'PY'
 import json
 import sys
@@ -596,6 +597,7 @@ assert "observability_deadman_heartbeat_timestamp_seconds" not in data["mirrored
 PY
 
 REQUIRED_179_CANARY_AUTHORITY="$TMP_DIR/required-179-canary-authority.json"
+refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
 python3 - "$AUTHORITY_EVIDENCE" "$REQUIRED_179_CANARY_AUTHORITY" <<'PY'
 import json
 import sys
@@ -620,6 +622,7 @@ fi
 grep -q "detectionBudgetSeconds must be at least 180 seconds" "$TMP_DIR/required-179-canary.out"
 
 MISSING_TIMESTAMP_AUTHORITY="$TMP_DIR/missing-timestamp-authority.json"
+refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
 python3 - "$AUTHORITY_EVIDENCE" "$MISSING_TIMESTAMP_AUTHORITY" <<'PY'
 import json
 import sys
@@ -642,6 +645,7 @@ fi
 grep -q "must define evidenceObservedAt" "$TMP_DIR/missing-timestamp.out"
 
 MISSING_STALE_THRESHOLD_AUTHORITY="$TMP_DIR/missing-stale-threshold-authority.json"
+refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
 python3 - "$AUTHORITY_EVIDENCE" "$MISSING_STALE_THRESHOLD_AUTHORITY" <<'PY'
 import json
 import sys
@@ -664,6 +668,7 @@ fi
 grep -q "must define a positive finite staleThresholdSeconds" "$TMP_DIR/missing-stale-threshold.out"
 
 INVALID_STALE_THRESHOLD_AUTHORITY="$TMP_DIR/invalid-stale-threshold-authority.json"
+refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
 python3 - "$AUTHORITY_EVIDENCE" "$INVALID_STALE_THRESHOLD_AUTHORITY" <<'PY'
 import json
 import sys
@@ -686,6 +691,7 @@ fi
 grep -q "must define a positive finite staleThresholdSeconds" "$TMP_DIR/invalid-stale-threshold.out"
 
 OVER_THRESHOLD_DEADMAN_AUTHORITY="$TMP_DIR/over-threshold-deadman-authority.json"
+refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
 python3 - "$AUTHORITY_EVIDENCE" "$OVER_THRESHOLD_DEADMAN_AUTHORITY" <<'PY'
 import json
 import sys
@@ -716,6 +722,7 @@ grep -q "green deadman observedStalenessSeconds must be no greater than staleThr
   "$TMP_DIR/over-threshold-deadman.out"
 
 MISMATCHED_STALENESS_AUTHORITY="$TMP_DIR/mismatched-staleness-authority.json"
+refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
 python3 - "$AUTHORITY_EVIDENCE" "$MISMATCHED_STALENESS_AUTHORITY" <<'PY'
 import json
 import sys
@@ -739,6 +746,7 @@ grep -q "observedStalenessSeconds must equal evidenceObservedAt minus lastSucces
   "$TMP_DIR/mismatched-staleness.out"
 
 MISSING_PAGE_AUTHORITY="$TMP_DIR/missing-page-authority.json"
+refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
 python3 - "$AUTHORITY_EVIDENCE" "$MISSING_PAGE_AUTHORITY" <<'PY'
 import json
 import sys
@@ -761,6 +769,7 @@ fi
 grep -q "publicPathChecks.websocket.pageEvidenceRef" "$TMP_DIR/missing-page.out"
 
 MISSING_DEADMAN_PAGE_AUTHORITY="$TMP_DIR/missing-deadman-page-authority.json"
+refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
 python3 - "$AUTHORITY_EVIDENCE" "$MISSING_DEADMAN_PAGE_AUTHORITY" <<'PY'
 import json
 import sys
@@ -783,6 +792,7 @@ fi
 grep -q "deadmanAuthority.pageEvidenceRef" "$TMP_DIR/missing-deadman-page.out"
 
 MISSING_PROBE_AGE_AUTHORITY="$TMP_DIR/missing-probe-age-authority.json"
+refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
 python3 - "$AUTHORITY_EVIDENCE" "$MISSING_PROBE_AGE_AUTHORITY" <<'PY'
 import json
 import sys
@@ -806,6 +816,7 @@ grep -q "must define a nonnegative finite publicPathChecks.websocket.observedPro
   "$TMP_DIR/missing-probe-age.out"
 
 INVALID_PROBE_AGE_AUTHORITY="$TMP_DIR/invalid-probe-age-authority.json"
+refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
 python3 - "$AUTHORITY_EVIDENCE" "$INVALID_PROBE_AGE_AUTHORITY" <<'PY'
 import json
 import sys
@@ -829,6 +840,7 @@ grep -q "must define a nonnegative finite publicPathChecks.websocket.observedPro
   "$TMP_DIR/invalid-probe-age.out"
 
 MISMATCHED_PROBE_AGE_AUTHORITY="$TMP_DIR/mismatched-probe-age-authority.json"
+refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
 python3 - "$AUTHORITY_EVIDENCE" "$MISMATCHED_PROBE_AGE_AUTHORITY" <<'PY'
 import json
 import sys
@@ -852,6 +864,7 @@ grep -q "publicPathChecks.websocket.observedProbeAgeSeconds must equal evidenceO
   "$TMP_DIR/mismatched-probe-age.out"
 
 OVER_BUDGET_PROBE_AGE_AUTHORITY="$TMP_DIR/over-budget-probe-age-authority.json"
+refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
 python3 - "$AUTHORITY_EVIDENCE" "$OVER_BUDGET_PROBE_AGE_AUTHORITY" <<'PY'
 import json
 import sys
@@ -883,6 +896,7 @@ grep -q "green publicPathChecks.websocket.observedProbeAgeSeconds must be no gre
   "$TMP_DIR/over-budget-probe-age.out"
 
 STALE_TIMESTAMP_AUTHORITY="$TMP_DIR/stale-timestamp-authority.json"
+refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
 python3 - "$AUTHORITY_EVIDENCE" "$STALE_TIMESTAMP_AUTHORITY" <<'PY'
 import json
 import sys
@@ -913,6 +927,7 @@ fi
 grep -q "evidenceObservedAt is older than detectionBudgetSeconds" "$TMP_DIR/stale-timestamp.out"
 
 FUTURE_TIMESTAMP_AUTHORITY="$TMP_DIR/future-timestamp-authority.json"
+refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
 python3 - "$AUTHORITY_EVIDENCE" "$FUTURE_TIMESTAMP_AUTHORITY" <<'PY'
 import json
 import sys
@@ -935,6 +950,7 @@ fi
 grep -q "evidenceObservedAt cannot be in the future" "$TMP_DIR/future-timestamp.out"
 
 FUTURE_HEARTBEAT_AUTHORITY="$TMP_DIR/future-heartbeat-authority.json"
+refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
 python3 - "$AUTHORITY_EVIDENCE" "$FUTURE_HEARTBEAT_AUTHORITY" <<'PY'
 import json
 import sys
@@ -958,6 +974,7 @@ grep -q "lastSuccessfulHeartbeatObservedAt cannot be later than evidenceObserved
   "$TMP_DIR/future-heartbeat.out"
 
 FUTURE_PROBE_AUTHORITY="$TMP_DIR/future-probe-authority.json"
+refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
 python3 - "$AUTHORITY_EVIDENCE" "$FUTURE_PROBE_AUTHORITY" <<'PY'
 import json
 import sys
@@ -981,6 +998,7 @@ grep -q "publicPathChecks.websocket.lastSuccessfulProbeObservedAt cannot be late
   "$TMP_DIR/future-probe.out"
 
 MISSING_HEARTBEAT_AUTHORITY="$TMP_DIR/missing-heartbeat-authority.json"
+refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
 python3 - "$AUTHORITY_EVIDENCE" "$MISSING_HEARTBEAT_AUTHORITY" <<'PY'
 import json
 import sys
@@ -1004,6 +1022,7 @@ grep -q "lastSuccessfulHeartbeatObservedAt is required for independent-required"
   "$TMP_DIR/missing-heartbeat.out"
 
 MISSING_PROBE_AUTHORITY="$TMP_DIR/missing-probe-authority.json"
+refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
 python3 - "$AUTHORITY_EVIDENCE" "$MISSING_PROBE_AUTHORITY" <<'PY'
 import json
 import sys
@@ -1027,6 +1046,7 @@ grep -q "publicPathChecks.websocket.lastSuccessfulProbeObservedAt is required fo
   "$TMP_DIR/missing-probe.out"
 
 MALFORMED_HEARTBEAT_AUTHORITY="$TMP_DIR/malformed-heartbeat-authority.json"
+refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
 python3 - "$AUTHORITY_EVIDENCE" "$MALFORMED_HEARTBEAT_AUTHORITY" <<'PY'
 import json
 import sys
@@ -1050,6 +1070,7 @@ grep -q "lastSuccessfulHeartbeatObservedAt must be an RFC3339 UTC timestamp endi
   "$TMP_DIR/malformed-heartbeat.out"
 
 MALFORMED_PROBE_AUTHORITY="$TMP_DIR/malformed-probe-authority.json"
+refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
 python3 - "$AUTHORITY_EVIDENCE" "$MALFORMED_PROBE_AUTHORITY" <<'PY'
 import json
 import sys

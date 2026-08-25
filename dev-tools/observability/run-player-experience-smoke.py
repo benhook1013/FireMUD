@@ -458,8 +458,7 @@ def execute_smoke(
         signals["playerflow_canary_latency_ms"] = playerflow_latency
         signals[PLAYERFLOW_CANARY_LAST_RUN_TIMESTAMP_METRIC] = playerflow_last_run
         freshness_budget = canary_freshness_budget_record(external_authority)
-        if freshness_budget is not None:
-            signals[PLAYERFLOW_CANARY_FRESHNESS_BUDGET_METRIC] = freshness_budget
+        signals[PLAYERFLOW_CANARY_FRESHNESS_BUDGET_METRIC] = freshness_budget
     if (
         config.prometheus_mirrors == "published"
         and external_authority["profile"] == "independent-required"
@@ -492,8 +491,7 @@ def simulated_signals(
             config, injected, exposed_paths, external_authority["profile"]
         )
         freshness_budget = canary_freshness_budget_record(external_authority)
-        if freshness_budget is not None:
-            signals[PLAYERFLOW_CANARY_FRESHNESS_BUDGET_METRIC] = freshness_budget
+        signals[PLAYERFLOW_CANARY_FRESHNESS_BUDGET_METRIC] = freshness_budget
     if (
         config.prometheus_mirrors == "published"
         and external_authority["profile"] == "independent-required"
@@ -837,10 +835,13 @@ def deadman_record(config: SmokeConfig, injected: set[str]) -> dict[str, Any]:
 
 def canary_freshness_budget_record(
     external_authority: dict[str, Any]
-) -> dict[str, Any] | None:
+) -> dict[str, Any]:
     budget = external_authority.get("detectionBudgetSeconds")
     if budget is None:
-        return None
+        raise RuntimeError(
+            "An advertised player-flow canary requires detectionBudgetSeconds "
+            "to publish playerflow_canary_freshness_budget_seconds"
+        )
     return {"profile": external_authority["profile"], "value": budget}
 
 
