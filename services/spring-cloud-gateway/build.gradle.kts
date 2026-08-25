@@ -28,7 +28,7 @@ dependencies {
     testImplementation("io.projectreactor:reactor-test:3.8.7")
     testImplementation(libs.spring.boot.starter.websocket)
     testImplementation(libs.spring.boot.starter.webflux)
-    testImplementation("com.h2database:h2:2.4.240")
+    testImplementation(libs.h2)
     testRuntimeOnly("io.grpc:grpc-netty:${libs.versions.grpc.get()}")
 }
 

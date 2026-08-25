@@ -6,7 +6,7 @@ Store one immutable deployment record per staging overlay apply as:
 
 ## Implementation Status
 
-The current record producer does not yet emit the promotion-lineage JWT fields. Production-attestation validation now enforces `jwtCustodyProof` and `jwtRotationEvidenceRef` for a selected staging record, so promotion remains blocked until the producer and its underlying custody/rotation proof are implemented.
+The current record producer does not yet emit the promotion-lineage JWT fields. Production-attestation validation now enforces `jwtCustodyProof` and `jwtRotationEvidenceRef` for a selected staging record, so promotion remains blocked until the producer and its underlying custody/rotation proof are implemented. The current `_promotion_check` validates `serviceDigests`/`observedDigests` but does not validate `servicePlatformDigests`/`observedPlatformDigests`; the platform-child fields below are target-state contract coverage and remain an implementation gap rather than a reason to expand this docs-focused change.
 
 Required fields:
 

@@ -232,6 +232,16 @@ subprojects {
         }
     }
 
+    val testcontainersVersion = libs.findVersion("testcontainers").get().requiredVersion
+    configurations.configureEach {
+        resolutionStrategy.eachDependency {
+            if (requested.group == "org.testcontainers") {
+                useVersion(testcontainersVersion)
+                because("Testcontainers modules must resolve on one catalog-managed version train")
+            }
+        }
+    }
+
     spotless {
         java {
             googleJavaFormat()

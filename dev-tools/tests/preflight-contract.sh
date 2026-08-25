@@ -341,6 +341,7 @@ if "Unable to list pg_dump objects" not in listing_failure.stderr or "AWS creden
 PY
 
 python3 - <<'PY' "$ROOT_DIR" "$TMP_DIR"
+import json
 import os
 import pathlib
 import subprocess
@@ -357,12 +358,14 @@ script = root / "dev-tools/backups/pg-dump-rotate.sh"
 import sys
 
 values = {
-    "+%Y%m%d%H%M%S": "20260824123456",
-    "+%H": "12",
-    "+%u": "1",
-    "+%d": "02",
+    "+%Y%m%d%H%M%S": "20260801001234",
+    "+%H": "00",
+    "+%u": "7",
+    "+%d": "01",
 }
-print(values[sys.argv[1]])
+if sys.argv[1] != "-u" or sys.argv[2] not in values:
+    raise SystemExit(f"date was not invoked in UTC: {sys.argv[1:]!r}")
+print(values[sys.argv[2]])
 """,
     encoding="utf-8",
 )
@@ -393,7 +396,48 @@ if os.environ.get("FAKE_MODE") == "fail_gzip":
 """,
     encoding="utf-8",
 )
-for tool in ("date", "pg_dump", "gzip"):
+(fake_bin / "aws").write_text(
+    """#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import shutil
+import sys
+
+args = sys.argv[1:]
+if args[:2] != ["s3api", "put-object"]:
+    raise SystemExit(f"unexpected aws command: {args!r}")
+
+def option(name):
+    index = args.index(name)
+    return args[index + 1]
+
+bucket = option("--bucket")
+key = option("--key")
+body = pathlib.Path(option("--body"))
+if_none_match = option("--if-none-match")
+endpoint = option("--endpoint-url") if "--endpoint-url" in args else None
+state_dir = pathlib.Path(os.environ["FAKE_AWS_STATE"])
+state_dir.mkdir(parents=True, exist_ok=True)
+object_path = state_dir / key.replace("/", "__")
+log_path = pathlib.Path(os.environ["FAKE_AWS_LOG"])
+with log_path.open("a", encoding="utf-8") as log:
+    log.write(json.dumps({
+        "args": args,
+        "bucket": bucket,
+        "key": key,
+        "body": str(body),
+        "if_none_match": if_none_match,
+        "endpoint": endpoint,
+    }) + "\\n")
+if object_path.exists() and if_none_match == "*":
+    print(f"Precondition failed for s3://{bucket}/{key}", file=sys.stderr)
+    raise SystemExit(412)
+shutil.copyfile(body, object_path)
+""",
+    encoding="utf-8",
+)
+for tool in ("date", "pg_dump", "gzip", "aws"):
     (fake_bin / tool).chmod(0o755)
 
 def run(mode, backup_dir, run_id):
@@ -416,7 +460,7 @@ for mode in ("fail_pg_dump", "fail_gzip"):
     result = run(mode, backup_dir, mode)
     if result.returncode == 0:
         raise SystemExit(f"{mode} unexpectedly succeeded: {result.stdout!r} {result.stderr!r}")
-    final = backup_dir / "15min/firemud_20260824123456.sql.gz"
+    final = backup_dir / "15min/firemud_20260801001234.sql.gz"
     partials = list((backup_dir / "15min").glob(".firemud_*.sql.gz"))
     if final.exists() or partials:
         raise SystemExit(f"{mode} left a published or partial artifact: {final} {partials}")
@@ -442,12 +486,66 @@ results = [process.communicate(timeout=30) for process in processes]
 statuses = [process.returncode for process in processes]
 if sorted(statuses) != [0, 1]:
     raise SystemExit(f"same-second successes did not produce one winner and one loser: {statuses} {results}")
-final = backup_dir / "15min/firemud_20260824123456.sql.gz"
+final = backup_dir / "15min/firemud_20260801001234.sql.gz"
 partials = list((backup_dir / "15min").glob(".firemud_*.sql.gz"))
 if not final.exists() or partials:
     raise SystemExit(f"same-second publication did not leave exactly one final artifact: {final} {partials}")
 if final.read_text(encoding="utf-8") not in ("dump-one", "dump-two"):
     raise SystemExit(f"same-second winner contains unexpected bytes: {final.read_text(encoding='utf-8')!r}")
+
+def run_upload(backup_dir, run_id, state_dir, log_path):
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "BACKUP_DIR": str(backup_dir),
+            "FIREMUD_POSTGRES_HOST": "localhost",
+            "FIREMUD_POSTGRES_USER": "firemud",
+            "FIREMUD_POSTGRES_DB": "firemud",
+            "FAKE_MODE": "success",
+            "FAKE_RUN": run_id,
+            "PG_DUMP_BUCKET": "firemud-backups",
+            "PG_DUMP_ENDPOINT": "http://minio.example.test:9000",
+            "FAKE_AWS_STATE": str(state_dir),
+            "FAKE_AWS_LOG": str(log_path),
+        }
+    )
+    return subprocess.run([str(script)], env=env, text=True, capture_output=True, timeout=30)
+
+upload_root = tmp / "s3-publication"
+state_dir = upload_root / "objects"
+log_path = upload_root / "aws.jsonl"
+first_upload = run_upload(upload_root / "first", "first", state_dir, log_path)
+if first_upload.returncode != 0:
+    raise SystemExit(f"S3 publication unexpectedly failed: {first_upload.stdout!r} {first_upload.stderr!r}")
+calls = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+expected_key_suffix = "firemud_20260801001234.sql.gz"
+expected_keys = {
+    "15min/" + expected_key_suffix,
+    "daily/" + expected_key_suffix,
+    "weekly/" + expected_key_suffix,
+    "monthly/" + expected_key_suffix,
+}
+if {call["key"] for call in calls} != expected_keys or len(calls) != 4:
+    raise SystemExit(f"S3 publication used unexpected keys or count: {calls!r}")
+for call in calls:
+    if call["bucket"] != "firemud-backups":
+        raise SystemExit(f"S3 publication used the wrong bucket: {call!r}")
+    if call["if_none_match"] != "*":
+        raise SystemExit(f"S3 publication omitted If-None-Match '*': {call!r}")
+    if call["endpoint"] != "http://minio.example.test:9000":
+        raise SystemExit(f"S3 publication omitted the configured endpoint: {call!r}")
+    if pathlib.Path(call["body"]).read_text(encoding="utf-8") != "dump-first":
+        raise SystemExit(f"S3 publication used the wrong body: {call!r}")
+
+second_upload = run_upload(upload_root / "second", "second", state_dir, log_path)
+if second_upload.returncode == 0 or "Failed to upload 15min dump" not in second_upload.stderr:
+    raise SystemExit(
+        "an existing S3 object did not fail closed: "
+        f"{second_upload.returncode} {second_upload.stdout!r} {second_upload.stderr!r}"
+    )
+if (state_dir / ("15min__" + expected_key_suffix)).read_text(encoding="utf-8") != "dump-first":
+    raise SystemExit("an S3 precondition conflict silently overwrote the existing object")
 PY
 
 python3 - <<'PY' "$ROOT_DIR" "$OPERATOR_REPORT_PATH"
@@ -3868,6 +3966,21 @@ for label, content in (("scheduled backup script", scheduled_backup_script),):
         raise SystemExit(f"{label} must not replace a same-second artifact with mv -f")
     if "pg_restore" in content:
         raise SystemExit(f"{label} must not select pg_restore for the hosted plain-SQL artifact")
+    for required in (
+        "TS=$(date -u +%Y%m%d%H%M%S)",
+        "HOUR=$(date -u +%H)",
+        "DOW=$(date -u +%u)",
+        "DOM=$(date -u +%d)",
+        "aws s3api put-object",
+        '--if-none-match \'*\'',
+        '--bucket "$BUCKET"',
+        '--key "$key"',
+        '--body "$DUMP"',
+    ):
+        if required not in content:
+            raise SystemExit(f"{label} does not declare required immutable UTC S3 publication contract: {required}")
+    if "aws s3 cp" in content:
+        raise SystemExit(f"{label} must not use overwrite-capable aws s3 cp publication")
 if 'gunzip -c "$FILE" | psql' not in scheduled_restore_script:
     raise SystemExit("hosted scheduled restore script does not consume .sql.gz with gunzip | psql")
 if "--single-transaction" not in scheduled_restore_script:

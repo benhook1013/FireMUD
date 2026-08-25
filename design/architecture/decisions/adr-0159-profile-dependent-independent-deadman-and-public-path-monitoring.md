@@ -59,6 +59,8 @@ The default heartbeat interval is 60 seconds and the default stale threshold is 
 
 Each deployment profile using independent monitoring records its configured heartbeat interval, stale threshold, expected probe cadence, and resulting maximum detection budget. A deployment may choose tighter or looser values for its environment, but it must make the resulting detection promise explicit and validate freshness against those configured values. Changing the cadence without updating the corresponding threshold, evidence, and operational claim is non-compliant.
 
+Whenever `playerFlowCanary` is advertised, retained evidence must also carry the exact positive `externalAuthority.detectionBudgetSeconds` for that profile, including `independent-omitted`. For `independent-required`, that value participates in the independent-monitoring freshness contract; for `independent-omitted`, it governs only local canary timing and does not create deadman, public-path, or other external-monitoring authority.
+
 ### Monitoring Components Need Not Be Publicly Reachable
 
 This decision does not require public or off-cluster network reachability to Prometheus, Grafana, Kibana, Jaeger, the OpenTelemetry Collector, or Alertmanager. Those components may remain private to the environment.

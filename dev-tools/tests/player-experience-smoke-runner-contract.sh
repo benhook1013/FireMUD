@@ -295,6 +295,7 @@ assert data["capabilities"] == {
     "prometheusMirrors": "published",
     "playerFlowCanary": "advertised",
 }
+assert "observability_deadman_stale" not in data["mirroredSignals"]
 assert {
     (record["flow"], record["path"])
     for record in data["mirroredSignals"]["playerflow_canary_success"]
@@ -1314,6 +1315,10 @@ PY
 
 if ! grep -q "observability_deadman_heartbeat_timestamp_seconds" "$SUCCESS_METRICS"; then
   echo "required profile metrics unexpectedly omitted the deadman mirror" >&2
+  exit 1
+fi
+if grep -q "observability_deadman_stale" "$SUCCESS_METRICS"; then
+  echo "required profile metrics unexpectedly included the monitor-owned stale decision" >&2
   exit 1
 fi
 

@@ -11,22 +11,22 @@ fi
 required_published_render="$(kubectl kustomize "$ROOT_DIR/k8s/overlays/monitoring/independent-required-prometheus-published")"
 required_omitted_render="$(kubectl kustomize "$ROOT_DIR/k8s/overlays/monitoring/independent-required-prometheus-omitted")"
 independent_omitted_render="$(kubectl kustomize "$ROOT_DIR/k8s/overlays/monitoring/independent-omitted")"
-if ! grep -q "alert: ObservabilityDeadmanHeartbeatStale" <<<"$required_published_render"; then
+if ! grep -Fqx -- "- alert: ObservabilityDeadmanHeartbeatStale" <(awk '{ sub(/^[[:space:]]*/, ""); print }' <<<"$required_published_render"); then
   echo "published independent-required monitoring overlay is missing the required ObservabilityDeadmanHeartbeatStale alert" >&2
   exit 1
 fi
-if ! grep -q "alert: ObservabilityDeadmanHeartbeatMissing" <<<"$required_published_render"; then
+if ! grep -Fqx -- "- alert: ObservabilityDeadmanHeartbeatMissing" <(awk '{ sub(/^[[:space:]]*/, ""); print }' <<<"$required_published_render"); then
   echo "published independent-required monitoring overlay is missing the required ObservabilityDeadmanHeartbeatMissing alert" >&2
   exit 1
 fi
-shared_alerts="$(grep '^        - alert:' "$ROOT_DIR/k8s/monitoring/prometheus-rules-firemud.yaml" | sed 's/.*- alert: //' || true)"
+shared_alerts="$(sed -n 's/^[[:space:]]*- alert: \([^[:space:]]\+\)[[:space:]]*$/\1/p' "$ROOT_DIR/k8s/monitoring/prometheus-rules-firemud.yaml")"
 if [[ -z "${shared_alerts//[[:space:]]/}" ]]; then
   echo "shared Prometheus rules parsing yielded no alert names" >&2
   exit 1
 fi
 for render in "$required_published_render" "$required_omitted_render" "$independent_omitted_render"; do
   while IFS= read -r alert_name; do
-    if ! grep -q "alert: $alert_name" <<<"$render"; then
+    if ! grep -Fqx -- "- alert: $alert_name" <(awk '{ sub(/^[[:space:]]*/, ""); print }' <<<"$render"); then
       echo "monitoring overlay render is missing shared alert $alert_name" >&2
       exit 1
     fi
@@ -34,7 +34,7 @@ for render in "$required_published_render" "$required_omitted_render" "$independ
 done
 for render in "$required_omitted_render" "$independent_omitted_render"; do
   for profile_alert in ObservabilityDeadmanHeartbeatStale ObservabilityDeadmanHeartbeatMissing; do
-    if grep -q "alert: $profile_alert" <<<"$render"; then
+    if grep -Fqx -- "- alert: $profile_alert" <(awk '{ sub(/^[[:space:]]*/, ""); print }' <<<"$render"); then
       echo "a non-published or independent-omitted monitoring overlay installed $profile_alert" >&2
       exit 1
     fi
@@ -115,6 +115,8 @@ if (
     not in deadman_rule
 ):
     raise AssertionError("deadman stale alert must fire on a published stale value of 1")
+if "for: 0m" not in deadman_rule:
+    raise AssertionError("deadman stale alert must retain its zero-minute hold")
 if "for: 2m" in deadman_rule or "> 180" in deadman_rule:
     raise AssertionError("deadman alert must not hard-code the legacy 180s/2m timing")
 missing_start = required_rules_text.find(

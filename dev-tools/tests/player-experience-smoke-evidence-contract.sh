@@ -7,7 +7,7 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 HELP_OUTPUT="$TMP_DIR/help.out"
-python3 "$VALIDATOR" --help >"$HELP_OUTPUT"
+COLUMNS=80 python3 "$VALIDATOR" --help >"$HELP_OUTPUT"
 grep -q "evidence. External-authority/deadman structure," "$HELP_OUTPUT"
 grep -q "provenance, chronology, completeness, and freshness" "$HELP_OUTPUT"
 grep -q "current red outcomes are permitted only" "$HELP_OUTPUT"

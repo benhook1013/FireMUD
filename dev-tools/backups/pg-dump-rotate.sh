@@ -10,7 +10,7 @@ ENDPOINT=${PG_DUMP_ENDPOINT:-}
 PREFIX=firemud
 
 mkdir -p "$BACKUP_DIR/15min" "$BACKUP_DIR/daily" "$BACKUP_DIR/weekly" "$BACKUP_DIR/monthly"
-TS=$(date +%Y%m%d%H%M%S)
+TS=$(date -u +%Y%m%d%H%M%S)
 DUMP="$BACKUP_DIR/15min/${PREFIX}_${TS}.sql.gz"
 PARTIAL_DUMP=$(mktemp "$BACKUP_DIR/15min/.${PREFIX}_${TS}.XXXXXX.sql.gz")
 
@@ -43,13 +43,13 @@ else
   exit 1
 fi
 
-HOUR=$(date +%H)
+HOUR=$(date -u +%H)
 # keep last 96 15min dumps
 cd "$BACKUP_DIR/15min"
 find . -maxdepth 1 -name "${PREFIX}_*.sql.gz" -printf '%T@ %p\n' | sort -nr | tail -n +97 | cut -d' ' -f2- | xargs -r rm --
 
-DOW=$(date +%u) # 1-7 (Mon-Sun)
-DOM=$(date +%d)
+DOW=$(date -u +%u) # 1-7 (Mon-Sun)
+DOM=$(date -u +%d)
 
 if [ "$HOUR" = "00" ]; then
   DAILY_DEST="$BACKUP_DIR/daily/${PREFIX}_${TS}.sql.gz"
@@ -77,26 +77,38 @@ if [ -n "$BUCKET" ]; then
   if [ -n "$ENDPOINT" ]; then
     AWS_ENDPOINT_ARGS=(--endpoint-url "$ENDPOINT")
   fi
-  echo "Uploading $DUMP to s3://$BUCKET"
-  if ! aws s3 cp "$DUMP" "s3://$BUCKET/15min/" "${AWS_ENDPOINT_ARGS[@]}"; then
-    echo "Failed to upload 15min dump" >&2
+
+  upload_object() {
+    local category=$1
+    local key="$category/${PREFIX}_${TS}.sql.gz"
+
+    echo "Uploading $DUMP to s3://$BUCKET/$key"
+    if ! aws s3api put-object \
+      --bucket "$BUCKET" \
+      --key "$key" \
+      --body "$DUMP" \
+      --if-none-match '*' \
+      "${AWS_ENDPOINT_ARGS[@]}"; then
+      echo "Failed to upload $category dump; an existing object was kept" >&2
+      return 1
+    fi
+  }
+
+  if ! upload_object 15min; then
     exit 1
   fi
   if [ "$HOUR" = "00" ]; then
-    if ! aws s3 cp "$DUMP" "s3://$BUCKET/daily/" "${AWS_ENDPOINT_ARGS[@]}"; then
-      echo "Failed to upload daily dump" >&2
+    if ! upload_object daily; then
       exit 1
     fi
   fi
   if [ "$DOW" = "7" ]; then
-    if ! aws s3 cp "$DUMP" "s3://$BUCKET/weekly/" "${AWS_ENDPOINT_ARGS[@]}"; then
-      echo "Failed to upload weekly dump" >&2
+    if ! upload_object weekly; then
       exit 1
     fi
   fi
   if [ "$DOM" = "01" ]; then
-    if ! aws s3 cp "$DUMP" "s3://$BUCKET/monthly/" "${AWS_ENDPOINT_ARGS[@]}"; then
-      echo "Failed to upload monthly dump" >&2
+    if ! upload_object monthly; then
       exit 1
     fi
   fi
