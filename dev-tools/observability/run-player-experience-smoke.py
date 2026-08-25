@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlparse
 
-
 _EVIDENCE_VALIDATOR_PATH = (
     Path(__file__).resolve().with_name("validate-player-experience-smoke-evidence.py")
 )
@@ -1214,7 +1213,7 @@ def validate_public_path_freshness(
     record: dict[str, Any],
     key: str,
     evidence_observed_epoch: float,
-    detection_budget: int | float,
+    detection_budget: float,
     path: Path,
 ) -> None:
     observed_probe_age = record.get("observedProbeAgeSeconds")

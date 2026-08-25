@@ -11,7 +11,10 @@ fi
 required_published_render="$(kubectl kustomize "$ROOT_DIR/k8s/overlays/monitoring/independent-required-prometheus-published")"
 required_omitted_render="$(kubectl kustomize "$ROOT_DIR/k8s/overlays/monitoring/independent-required-prometheus-omitted")"
 independent_omitted_render="$(kubectl kustomize "$ROOT_DIR/k8s/overlays/monitoring/independent-omitted")"
-grep -q "alert: ObservabilityDeadmanHeartbeatStale" <<<"$required_published_render"
+if ! grep -q "alert: ObservabilityDeadmanHeartbeatStale" <<<"$required_published_render"; then
+  echo "published independent-required monitoring overlay is missing the required ObservabilityDeadmanHeartbeatStale alert" >&2
+  exit 1
+fi
 for render in "$required_omitted_render" "$independent_omitted_render"; do
   if grep -q "alert: ObservabilityDeadmanHeartbeatStale" <<<"$render"; then
     echo "a non-published or independent-omitted monitoring overlay installed the deadman alert" >&2

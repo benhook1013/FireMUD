@@ -2,7 +2,7 @@
 
 This document defines FireMUD’s canonical backup model, restore-mode selection, and environment recovery workflow.
 
-The owner contracts consolidated here are [measured online-backup RPO](./decisions/adr-0153-measured-online-backup-rpo-and-future-pitr-trigger.md), [automated recovery proof and differentiated traffic-open gates](./decisions/adr-0154-automated-recovery-proof-and-differentiated-traffic-open-gates.md), and [event-classified post-restore trust reset](./decisions/adr-0155-automated-event-classified-post-restore-trust-reset.md). This document owns the recovery mode, backup boundary, and controller lifecycle; evidence fields and credential dispositions remain detailed in the linked owner documents.
+The owner contracts consolidated here are [measured online-backup RPO](./decisions/adr-0153-measured-online-backup-rpo-and-future-pitr-trigger.md), [automated recovery proof and differentiated traffic-open gates](./decisions/adr-0154-automated-recovery-proof-and-differentiated-traffic-open-gates.md), and [event-classified post-restore trust reset](./decisions/adr-0155-automated-event-classified-post-restore-trust-reset.md). This document owns the recovery mode, backup boundary, and controller lifecycle; evidence fields and credential dispositions remain detailed in the linked owner documents. Validation selection and runtime-proof reporting follow the [Validation and Runtime Proof workflow](../developer-workflows/validation-and-runtime-proof.md). This normative contract does not store execution results: command output belongs in the relevant PR or CI evidence, or in the implementation tracker when it records durable implementation status.
 
 Backup expectations are defined by environment class:
 

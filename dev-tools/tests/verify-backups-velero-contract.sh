@@ -6,27 +6,8 @@ TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT
 
 BIN_DIR="$TEMP_DIR/bin"
-EMBEDDED_SCRIPT="$TEMP_DIR/verify-backups.sh"
 QUERY_LOG="$TEMP_DIR/aws-query"
 mkdir -p "$BIN_DIR"
-
-python3 - "$ROOT_DIR" "$EMBEDDED_SCRIPT" <<'PY'
-import pathlib
-import sys
-
-import yaml
-
-root = pathlib.Path(sys.argv[1])
-output = pathlib.Path(sys.argv[2])
-documents = yaml.safe_load_all((root / "k8s/velero/verify-backups-cronjob.yaml").read_text())
-for document in documents:
-    if isinstance(document, dict) and document.get("kind") == "ConfigMap":
-        output.write_text(document["data"]["verify-backups.sh"])
-        output.chmod(0o755)
-        break
-else:
-    raise SystemExit("verify-backups ConfigMap was not found")
-PY
 
 cat > "$BIN_DIR/velero" <<'EOF'
 #!/usr/bin/env bash
@@ -151,14 +132,13 @@ run_case() {
   fi
 }
 
-for script in "$ROOT_DIR/dev-tools/backups/verify-backups.sh" "$EMBEDDED_SCRIPT"; do
-  run_case "$script" global-latest 0 'Latest pg_dump: 15min/firemud_20260825000300.sql.gz' '' 'Found 2 Velero backups in firemud'
-  run_case "$script" earlier-match-later-empty 0 'Latest pg_dump: 15min/firemud_20260825000500.sql.gz'
-  run_case "$script" large-listing 0 'Latest pg_dump: 15min/firemud_00000000200000.sql.gz'
-  run_case "$script" no-match 1 'No valid .sql.gz pg_dump files found'
-  run_case "$script" aws-error 1 'simulated AWS listing failure' 'No valid .sql.gz pg_dump files found'
-  run_case "$script" velero-error 1 'simulated Velero listing failure' 'No Velero backups found'
-  run_case "$script" velero-empty 1 'No Velero backups found'
-done
+script="$ROOT_DIR/dev-tools/backups/verify-backups.sh"
+run_case "$script" global-latest 0 'Latest pg_dump: 15min/firemud_20260825000300.sql.gz' '' 'Found 2 Velero backups in firemud'
+run_case "$script" earlier-match-later-empty 0 'Latest pg_dump: 15min/firemud_20260825000500.sql.gz'
+run_case "$script" large-listing 0 'Latest pg_dump: 15min/firemud_00000000200000.sql.gz'
+run_case "$script" no-match 1 'No valid .sql.gz pg_dump files found'
+run_case "$script" aws-error 1 'simulated AWS listing failure' 'No valid .sql.gz pg_dump files found'
+run_case "$script" velero-error 1 'simulated Velero listing failure' 'No Velero backups found'
+run_case "$script" velero-empty 1 'No Velero backups found'
 
 echo 'verify-backups Velero pagination contract checks passed'

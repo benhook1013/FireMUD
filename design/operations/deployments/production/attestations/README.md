@@ -1,5 +1,11 @@
 # Production Promotion Attestations
 
+## Implementation Status
+
+The repository has live validation seams for this artifact boundary: production-applicable overlay validation requires exactly one changed attestation file, and `dev-tools/deploy/preflight.py` resolves the canonical deployment-ref path and validates the attestation fields, digest bindings, staging-event references, and recovery-compatibility result that its current enforcement path reaches. These checks are fail-closed diagnostics and promotion gates where explicitly enabled; they do not prove that the referenced staging or production state actually exists or converged.
+
+The attestation producer and the complete target promotion authority remain incomplete. In particular, no repository implementation currently produces the full staging live-state, recovery-controller, backup-readiness, secret-compliance, or controlled-reopen evidence required by the target contract, and the current preflight intentionally stops before the complete nested recovery and live-environment validation. Those are target-only gaps, not evidence that a checked-in attestation or a passing structural check authorizes production traffic.
+
 Store exactly one attestation artifact per production promotion PR as:
 
 - `<deployment-ref>.json`

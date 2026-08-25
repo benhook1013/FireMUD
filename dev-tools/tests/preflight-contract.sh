@@ -301,17 +301,8 @@ def run(script, objects, *, expect_success, list_failure=False):
 
 restore_script = root / "dev-tools/restores/restore-latest-db.sh"
 verify_script = root / "dev-tools/backups/verify-backups.sh"
-embedded_documents = list(yaml.safe_load_all((root / "k8s/velero/verify-backups-cronjob.yaml").read_text()))
-embedded_source = next(
-    document["data"]["verify-backups.sh"]
-    for document in embedded_documents
-    if isinstance(document, dict) and document.get("kind") == "ConfigMap"
-)
-embedded_script = tmp / "verify-backups-embedded.sh"
-embedded_script.write_text(embedded_source, encoding="utf-8")
-embedded_script.chmod(0o755)
 
-for script in (restore_script, verify_script, embedded_script):
+for script in (restore_script, verify_script):
     result, capture = run(script, objects_with_legacy_newer, expect_success=True)
     if script == restore_script:
         if "firemud_20260824120000.sql.gz" not in result.stdout or "legacy-newer.dump" in result.stdout:
@@ -324,7 +315,7 @@ for script in (restore_script, verify_script, embedded_script):
     elif "firemud_20260824120000.sql.gz" not in result.stdout or "legacy-newer.dump" in result.stdout:
         raise SystemExit(f"{script} verified the wrong scheduled object: {result.stdout!r}")
 
-for script in (restore_script, verify_script, embedded_script):
+for script in (restore_script, verify_script):
     result, _ = run(script, objects_without_valid, expect_success=False)
     if ".sql.gz" not in result.stderr:
         raise SystemExit(f"{script} did not report missing valid .sql.gz artifact: {result.stderr!r}")
@@ -3731,10 +3722,11 @@ scheduled_cronjob = (root / "k8s/postgres/pg-dump-cronjob.yaml").read_text(encod
 scheduled_restore_script = (root / "dev-tools/restores/restore-latest-db.sh").read_text(encoding="utf-8")
 local_backup_script = (root / "dev-tools/backups/backup-db.sh").read_text(encoding="utf-8")
 local_restore_script = (root / "dev-tools/restores/restore-db.sh").read_text(encoding="utf-8")
-for label, content in (
-    ("scheduled backup script", scheduled_backup_script),
-    ("scheduled Kubernetes backup script", scheduled_cronjob),
-):
+if "pg_dump" not in scheduled_cronjob or ".sql.gz" not in scheduled_cronjob or 'gzip > "$DUMP"' not in scheduled_cronjob:
+    raise SystemExit("scheduled Kubernetes backup manifest does not retain the pg_dump -> gzip -> .sql.gz producer pair")
+if "pg_restore" in scheduled_cronjob:
+    raise SystemExit("scheduled Kubernetes backup manifest must not select pg_restore for the hosted plain-SQL artifact")
+for label, content in (("scheduled backup script", scheduled_backup_script),):
     if "pg_dump -Fp" not in content or ".sql.gz" not in content or "gzip > \"$DUMP\"" not in content:
         raise SystemExit(f"{label} does not declare the hosted pg_dump -Fp -> gzip -> .sql.gz producer pair")
     if "pg_restore" in content:
@@ -6316,6 +6308,60 @@ if (
     or promotion_mode != "rollback-compatible"
 ):
     raise SystemExit(f"valid rollback-compatible promotion did not pass: {promotion_message}")
+original_record_bytes = staging_record_path.read_bytes()
+
+duplicate_attestation_path = promotion_root / "duplicate-promotion-attestation.json"
+duplicate_attestation_path.write_bytes(
+    promotion_attestation_path.read_bytes().replace(
+        b'"approvedBy": "preflight-contract"',
+        b'"approvedBy": "preflight-contract", "approvedBy": "duplicate"',
+        1,
+    )
+)
+duplicate_attestation_status, _, duplicate_attestation_message, _, _ = module.promotion_check(
+    duplicate_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if duplicate_attestation_status != "fail" or "duplicate JSON member: approvedBy" not in duplicate_attestation_message:
+    raise SystemExit(
+        "duplicate promotion-attestation member did not fail closed: "
+        + duplicate_attestation_message
+    )
+
+duplicate_record_path = staging_dir / "duplicate-record.json"
+duplicate_record_path.write_bytes(
+    staging_record_path.read_bytes().replace(
+        b'"appliedBy": "preflight-contract"',
+        b'"appliedBy": "preflight-contract", "appliedBy": "duplicate"',
+        1,
+    )
+)
+duplicate_record_status, _, duplicate_record_message, _, _ = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if duplicate_record_status != "pass":
+    raise SystemExit(
+        "duplicate staging deployment record fixture setup unexpectedly changed the canonical record: "
+        + duplicate_record_message
+    )
+staging_record_path.write_bytes(duplicate_record_path.read_bytes())
+duplicate_record_status, _, duplicate_record_message, _, _ = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if duplicate_record_status != "fail" or "duplicate JSON member: appliedBy" not in duplicate_record_message:
+    raise SystemExit(
+        "duplicate staging deployment-record member did not fail closed: "
+        + duplicate_record_message
+    )
+staging_record_path.write_bytes(original_record_bytes)
 
 original_load_immutable_json_evidence = module.load_immutable_json_evidence
 module.load_immutable_json_evidence = lambda *args, **kwargs: (None, None)

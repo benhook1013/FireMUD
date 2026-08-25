@@ -1715,7 +1715,7 @@ def validate_recovery_baseline(
         field
         for field in CANONICAL_RECOVERY_REQUIRED_FIELDS
         if field not in baseline
-        or (is_missing(baseline[field]) and field != "credentialDispositions")
+        or is_missing(baseline[field])
     ]
     if missing_fields:
         return (
@@ -1740,7 +1740,7 @@ def validate_recovery_baseline(
         field
         for field in CANONICAL_RECOVERY_OBJECT_FIELDS
         if not isinstance(baseline.get(field), (dict, list))
-        or (not baseline[field] and field != "credentialDispositions")
+        or not baseline[field]
     ]
     if invalid_object_fields:
         return (
@@ -4918,8 +4918,8 @@ def promotion_check(
     expected_production_overlay_ref: str | None = None,
 ) -> tuple[str, str, str, str, str]:
     try:
-        att = load_json(attestation_path)
-    except JSON_READ_ERRORS as exc:
+        att = load_json_rejecting_duplicate_keys(attestation_path)
+    except RECOVERY_JSON_READ_ERRORS as exc:
         message = f"Attestation unreadable: {exc}"
         return ("fail", "unknown", message, "fail", f"Recovery compatibility attestation unreadable: {exc}")
 
@@ -5085,8 +5085,8 @@ def _promotion_check(
         return ("fail", rollback_mode, f"Staging deployment record not found: {record_path}")
 
     try:
-        record = load_json(record_path)
-    except JSON_READ_ERRORS as exc:
+        record = load_json_rejecting_duplicate_keys(record_path)
+    except RECOVERY_JSON_READ_ERRORS as exc:
         return ("fail", rollback_mode, f"Staging deployment record unreadable: {exc}")
 
     if not isinstance(record, dict):
