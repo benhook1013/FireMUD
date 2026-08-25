@@ -567,12 +567,7 @@ def simulated_entrypath_record(
 def blackbox_websocket_record(config: SmokeConfig, injected: set[str]) -> dict[str, Any]:
     if "websocket" in injected:
         return {"path": "websocket", "target": metric_target_for_path("websocket"), "value": 0}
-    try:
-        import websocket  # type: ignore
-    except ImportError as exc:  # pragma: no cover - exercised in live use, not tests
-        raise PlayerFlowProbeFailure(
-            "The python 'websocket-client' package is required for WebSocket canary smoke"
-        ) from exc
+    import websocket  # type: ignore
 
     try:
         first_party = first_party_connect_context(config)
@@ -708,12 +703,7 @@ def run_websocket_canary(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if "login" in injected or "command" in injected:
         return simulated_canary_records(config, injected)
-    try:
-        import websocket  # type: ignore
-    except ImportError as exc:  # pragma: no cover
-        raise PlayerFlowProbeFailure(
-            "The python 'websocket-client' package is required for WebSocket canary smoke"
-        ) from exc
+    import websocket  # type: ignore
 
     try:
         first_party = first_party_connect_context(config)

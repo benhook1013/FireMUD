@@ -7723,6 +7723,41 @@ if (
         f"{stale_snapshot_message}"
     )
 
+mismatched_verification_readiness_data = json.loads(future_readiness.read_text(encoding="utf-8"))
+mismatched_verification_readiness_data["backupLastSuccessAt"] = past_timestamp
+mismatched_verification_readiness_data["backupVerifyLastSuccessAt"] = timestamp(
+    now - module.dt.timedelta(minutes=7)
+)
+mismatched_verification_attestation_data = json.loads(future_attestation.read_text(encoding="utf-8"))
+mismatched_verification_attestation_data["recoveryCompatibility"]["backupReadinessRef"] = (
+    "mismatched-verification-readiness.json"
+)
+mismatched_verification_attestation = write_json(
+    "mismatched-verification-attestation.json", mismatched_verification_attestation_data
+)
+mismatched_verification_attestation_path = canonical_attestation_dir / f"{roll_forward_deployment_sha}.json"
+mismatched_verification_attestation_path.write_bytes(mismatched_verification_attestation.read_bytes())
+mismatched_verification_readiness_data["promotionAttestationRef"] = str(
+    mismatched_verification_attestation_path.relative_to(tmp)
+)
+mismatched_verification_readiness = write_json(
+    "mismatched-verification-readiness.json", mismatched_verification_readiness_data
+)
+mismatched_verification_status, mismatched_verification_message = module.backup_readiness_check(
+    mismatched_verification_readiness,
+    now.isoformat().replace("+00:00", "Z"),
+    roll_forward_deployment_sha,
+    tmp,
+)
+if (
+    mismatched_verification_status != "fail"
+    or "verifiedAt does not match backupVerifyLastSuccessAt" not in mismatched_verification_message
+):
+    raise SystemExit(
+        "backup readiness accepted a verified point with a mismatched verification timestamp: "
+        + mismatched_verification_message
+    )
+
 for compact_field, compact_value in (
     (
         "newestVerifiedRestorablePointRef",

@@ -5702,7 +5702,7 @@ def backup_readiness_check(path: Path, now: str, deployment_ref: str, root_dir: 
         str(data["newestVerifiedRestorablePointRef"]),
         str(data["environment"]),
         str(data["newestVerifiedRestorablePointAt"]),
-        None,
+        str(data["backupVerifyLastSuccessAt"]),
         str(data["newestVerifiedRestorablePointDigest"]),
         str(data["backupArtifactRef"]),
         context="Verified restorable point",

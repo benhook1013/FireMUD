@@ -274,6 +274,8 @@ To keep advertised synthetic canaries actionable instead of merely visible, prof
   - `PlayerFlowCanaryCommandFailed`
   - `PlayerFlowCanaryLatencyHigh`
   - `PlayerFlowCanaryEvidenceStale`
+  - `PlayerFlowCanaryFreshnessBudgetMissing`
+  - `PlayerFlowCanaryEvidenceMissing`
 - Label and routing requirements:
   - `owner="platform"` for login and entry-path availability of the synthetic path.
   - `owner="gameplay"` for representative command success/latency once the canary is authenticated and in-session.
@@ -285,11 +287,15 @@ To keep advertised synthetic canaries actionable instead of merely visible, prof
   - `PlayerFlowCanaryCommandFailed` should use `severity="P1"` because it indicates in-session gameplay degradation on a monitored public path, but does not by itself prove a total entry outage.
   - `PlayerFlowCanaryLatencyHigh` should use `severity="P1"` because it indicates sustained player-visible degradation on a monitored public path without requiring a total failure.
   - `PlayerFlowCanaryEvidenceStale` should use `severity="P1"` because it indicates that advertised canary evidence is degraded and cannot establish current player-flow health.
+  - `PlayerFlowCanaryFreshnessBudgetMissing` should use `severity="P1"` because canary result series without their profile budget cannot safely drive the failure, latency, or stale-evidence alerts.
+  - `PlayerFlowCanaryEvidenceMissing` should use `severity="P1"` because an advertised canary has not produced its first run and cannot establish current player-flow health.
 - The canonical Prometheus canary alerts use a maximum `for: 2m` hold. Every profile advertising player-flow canaries must declare a positive `detectionBudgetSeconds` of at least 180 seconds: the two-minute longest hold plus a 60-second evaluation margin. The validator rejects a smaller authoritative budget rather than allowing an alert hold to outlive fresh evidence.
 - Detection requirements:
   - Success/failure alerts must evaluate on short windows suitable for outage detection and must not rely on live-traffic volume. They are installed and evaluated only for advertised canary capability and exposed paths; omitted capabilities and non-exposed paths are `not_applicable`, while missing or stale advertised evidence is `unknown`/degraded. A failure alert may use a `value=0` or high-latency result only while its matching `playerflow_canary_last_run_timestamp_seconds{...,profile}` is within the same profile's freshness budget; an expired or absent timestamp must never leave a prior success green or turn stale evidence into a failure.
   - Latency alerts must evaluate `playerflow_canary_latency_ms{flow,path,target,profile}` using millisecond thresholds and preserve the bounded `flow`, `path`, `target`, and `profile` labels, gated by the matching fresh run timestamp and the same-profile `playerflow_canary_freshness_budget_seconds{profile}`.
-  - `PlayerFlowCanaryEvidenceStale` must preserve the bounded `flow`, `path`, `target`, and `profile` labels and fire when an available run timestamp exceeds the same profile's freshness budget. An absent timestamp remains the independent deadman/missing-runner condition and is not synthesized into this alert.
+  - `PlayerFlowCanaryEvidenceStale` must preserve the bounded `flow`, `path`, `target`, and `profile` labels and fire when an available run timestamp exceeds the same profile's freshness budget. An absent timestamp is handled by the separate profile-local `PlayerFlowCanaryEvidenceMissing` condition and is not synthesized into this alert.
+  - `PlayerFlowCanaryFreshnessBudgetMissing` must preserve `profile` and fire when canary result series exist for that profile without a matching `playerflow_canary_freshness_budget_seconds{profile}` series. It remains quiet when the canary capability is omitted.
+  - `PlayerFlowCanaryEvidenceMissing` must use a deployment-owned expected-series inventory for every advertised flow/path/target/profile tuple and fire when that expected tuple has no matching `playerflow_canary_last_run_timestamp_seconds` series after the profile's first-run grace period. This expected-series/first-run gate is required for `independent-omitted` profiles as well as `independent-required` profiles; it does not depend on an external deadman and remains quiet when the canary capability is omitted or a path is not exposed.
   - Controlled non-production failure injection for each required canary path must be testable without paging production destinations.
 - Relationship to live-traffic SLIs:
   - Canary alerts complement, but do not replace, the live-traffic SLO alerts for `login_requests_total` and `command_end_to_end_latency_ms_bucket`.

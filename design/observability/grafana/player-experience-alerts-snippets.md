@@ -236,6 +236,23 @@ The `profile` label uses ADR 0159's canonical monitoring-profile enum, `independ
     summary: Synthetic command canary latency high
     description: The independent player-flow representative command canary has exceeded 1000ms for at least one monitored public path.
 
+- alert: PlayerFlowCanaryFreshnessBudgetMissing
+  expr: >-
+    count by (profile) (playerflow_canary_success)
+    unless on (profile)
+    count by (profile) (playerflow_canary_freshness_budget_seconds)
+  for: 2m
+  labels:
+    service: prometheus
+    component: playerflow-canary
+    profile: '{{ $labels.profile }}'
+    severity: P1
+    owner: platform
+    runbook: design/architecture/system-architecture-observability-incident-runbook.md#prometheus-down-or-stale
+  annotations:
+    summary: Player-flow canary freshness budget series missing
+    description: Canary result series are present without a matching freshness budget for this profile, so the canary failure and latency alerts cannot evaluate. Treat player-flow health as unknown until the budget mirror is restored.
+
 - alert: PlayerFlowCanaryEvidenceStale
   expr: >-
     time() - playerflow_canary_last_run_timestamp_seconds < 0

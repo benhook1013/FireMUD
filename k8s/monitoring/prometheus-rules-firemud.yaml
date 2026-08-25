@@ -612,6 +612,22 @@ spec:
           annotations:
             summary: Synthetic login canary failing
             description: The independent player-flow login canary is failing on at least one monitored public path.
+        - alert: PlayerFlowCanaryFreshnessBudgetMissing
+          expr: >-
+            count by (profile) (playerflow_canary_success)
+            unless on (profile)
+            count by (profile) (playerflow_canary_freshness_budget_seconds)
+          for: 2m
+          labels:
+            service: prometheus
+            component: playerflow-canary
+            profile: '{{ $labels.profile }}'
+            severity: P1
+            owner: platform
+            runbook: design/architecture/system-architecture-observability-incident-runbook.md#prometheus-down-or-stale
+          annotations:
+            summary: Player-flow canary freshness budget series missing
+            description: Canary result series are present without a matching freshness budget for this profile, so the canary failure and latency alerts cannot evaluate. Treat player-flow health as unknown until the budget mirror is restored.
         - alert: PlayerFlowCanaryCommandFailed
           expr: >-
             playerflow_canary_success{flow="command"} == 0

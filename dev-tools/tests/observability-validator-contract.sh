@@ -29,10 +29,12 @@ for render in "$required_published_render" "$required_omitted_render" "$independ
   done <<<"$shared_alerts"
 done
 for render in "$required_omitted_render" "$independent_omitted_render"; do
-  if grep -q "alert: ObservabilityDeadmanHeartbeatStale" <<<"$render"; then
-    echo "a non-published or independent-omitted monitoring overlay installed the deadman alert" >&2
-    exit 1
-  fi
+  for profile_alert in ObservabilityDeadmanHeartbeatStale ObservabilityDeadmanHeartbeatMissing; do
+    if grep -q "alert: $profile_alert" <<<"$render"; then
+      echo "a non-published or independent-omitted monitoring overlay installed $profile_alert" >&2
+      exit 1
+    fi
+  done
 done
 
 python3 - "$ROOT_DIR" <<'PY'
@@ -145,6 +147,30 @@ for alert_name in (
         raise AssertionError(f"{alert_name} must gate on canary run freshness")
     if "playerflow_canary_freshness_budget_seconds" not in block:
         raise AssertionError(f"{alert_name} must use the profile-derived freshness budget")
+
+budget_missing_start = valid_text.find(
+    "        - alert: PlayerFlowCanaryFreshnessBudgetMissing"
+)
+if budget_missing_start == -1:
+    raise AssertionError("PlayerFlowCanaryFreshnessBudgetMissing fixture is missing")
+budget_missing_next = valid_text.find("        - alert:", budget_missing_start + 1)
+budget_missing_rule = (
+    valid_text[budget_missing_start:]
+    if budget_missing_next == -1
+    else valid_text[budget_missing_start:budget_missing_next]
+)
+for required_text in (
+    "count by (profile) (playerflow_canary_success)",
+    "unless on (profile)",
+    "count by (profile) (playerflow_canary_freshness_budget_seconds)",
+    "profile: '{{ $labels.profile }}'",
+    "for: 2m",
+):
+    if required_text not in budget_missing_rule:
+        raise AssertionError(
+            "PlayerFlowCanaryFreshnessBudgetMissing is missing "
+            + repr(required_text)
+        )
 
 stale_start = valid_text.find("        - alert: PlayerFlowCanaryEvidenceStale")
 if stale_start == -1:

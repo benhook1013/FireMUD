@@ -1272,6 +1272,7 @@ def _validate_reference_prometheus_rules(
             "PlayerFlowCanaryLoginFailed",
             "PlayerFlowCanaryCommandFailed",
             "PlayerFlowCanaryLatencyHigh",
+            "PlayerFlowCanaryFreshnessBudgetMissing",
             "PlayerFlowCanaryEvidenceStale",
             "WebSocketEntryPathBlackboxUnavailable",
             "TelnetEntryPathBlackboxUnavailable",

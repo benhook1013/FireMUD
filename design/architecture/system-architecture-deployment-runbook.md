@@ -200,6 +200,7 @@ If a deployment causes instability:
 - Evaluate rollback mode from deployment evidence before taking action:
   - `rollback-compatible`: roll back to the previous known-good digest set for affected services only when that release is still compatible with the current schema, secret/config contract, mounted file-path contract, and external bindings.
   - `roll-forward-only`: do not re-apply old binaries; execute the documented forward remediation or restore-point recovery path.
+- Reapplying an exact predeclared known-good digest set for a still-`rollback-compatible` release is a binary-only restoration, not a PostgreSQL rewind or a new promotion. It does not wait for the ordinary 15-minute verified-backup freshness gate, but it also does not authorize a first-live or reopen event; retain the current traffic/quarantine posture, record the incident and restoration evidence, and restore backup compliance before the next ordinary promotion or reopen.
 - If database schema changes were applied, follow the guidance in `design/architecture/system-architecture-database-migrations.md` for downgrade or compatibility handling.
 - Use the Redis and tick system runbooks to recover any affected coordination state, ensuring idempotent replay where required.
 

@@ -200,7 +200,7 @@ Hobby/self-hosted operators must run equivalent one-shot hardening automation wi
 
 ## Planned DB Credential Rotation
 
-In addition to post-restore hardening, operators may periodically rotate application database credentials as routine security hygiene. Planned DB credential rotation reuses the same `db-credential-rotation` job and Secrets described above but runs outside of a disaster recovery event.
+In the target state, operators may periodically rotate application database credentials as routine security hygiene. Planned DB credential rotation reuses the same `db-credential-rotation` job and Secrets described above but runs outside of a disaster recovery event; it is not currently available.
 
 This procedure is target-only and blocked in the current repository. Do not execute it or represent it as an available operational path until the `db-credential-rotation` workload and the target-bound rotation controller/proxy described above both exist, are deployed for the target environment, and have the required workload-identity, operation-binding, mutation, and consumer-convergence proof. The current implementation gap keeps quarantine closed and does not authorize manual substitution.
 

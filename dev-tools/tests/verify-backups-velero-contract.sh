@@ -81,6 +81,9 @@ case "$FAKE_AWS_SCENARIO" in
     printf '2026-08-25T00:06:00Z\t15min/not-a-dump.dump\n'
     printf '%s\n' 'None'
     ;;
+  velero-error|velero-empty)
+    printf '2026-08-25T00:01:00Z\t15min/firemud_20260825000100.sql.gz\n'
+    ;;
   aws-error)
     echo 'simulated AWS listing failure' >&2
     exit 42
