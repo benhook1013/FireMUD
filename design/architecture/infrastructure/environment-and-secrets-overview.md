@@ -220,7 +220,10 @@ Minimum credential classes to track (canonical record keys shown in parentheses)
 | PostgreSQL application credentials (`postgres-application-credentials`) | Last rotation timestamp, rollout restart completion evidence |
 | Backup/object-store credentials (`backup-object-store-credentials`) | Validation of expected bucket/endpoint and non-production isolation |
 | Asset-store credentials (`asset-store-credentials`) | Validation of expected bucket/endpoint, binding identity, and non-production isolation when external asset storage is enabled |
+| Outbound communications credentials (`outbound-communications-credentials`) | Validation of provider/account binding and non-production isolation when outbound communications are enabled |
 | Operator credentials (`operator-credentials`) | Last issuance/rotation timestamp and revocation traceability |
+
+The certificate leaf classes `workload-leaf`, `bridge-leaf`, and `operator-leaf` are intentionally not secret-compliance record keys. Recovery owns their `certificateReissuance` disposition and peer-convergence evidence; `operator-credentials` is the single external binding mapping for `operator-leaf`, not a duplicate certificate-compliance row. The recovery-to-compliance projector therefore maps only the six secret-compliance classes above and fails closed on missing, extra, or cross-namespace keys.
 
 If a required compliance record is missing or stale, the environment is non-compliant for the applicable readiness claim. It alerts immediately and blocks the next production promotion, production first-live/reopen, staging evidence used for production, or disaster-recovery-readiness gate. It does not automatically stop existing sessions, routine new admission, or routine gameplay, or block credential rotation, remediation, rollback, detached testing, or quarantined recovery, unless another runtime authority independently fails.
 

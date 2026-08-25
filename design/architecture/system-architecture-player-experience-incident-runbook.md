@@ -51,7 +51,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 
 - Alert: `LoginSuccessRatioLowGateway` or `LoginSuccessRatioLowTcpProxy` fires (for example, success ratio < 99.5% over 15 minutes).
 - Where the profile advertises the player-flow canary capability, and only for paths in its complete `exposedPublicPlayerPaths` set, `playerflow_canary_success{flow="login",path=...,target=...,profile=...}` alerts may fire before live-traffic SLIs move materially in low-traffic environments. Use the matching `playerflow_canary_last_run_timestamp_seconds{flow="login",path=...,target=...,profile=...}` and profile-derived freshness budget before treating the result as actionable. An omitted capability or non-exposed path is `not_applicable`; missing, stale, or unavailable advertised evidence is `unknown`/degraded rather than a canary failure.
-- `PlayerFlowCanaryEvidenceStale` means the available canary evidence exceeded the matching profile budget; treat player-flow health as unknown/degraded until a fresh run is retained, rather than as a synthetic login or command failure.
+- `PlayerFlowCanaryEvidenceStale` means the available canary evidence exceeded the matching profile budget, or a present `playerflow_canary_success` result has no matching last-run timestamp; treat player-flow health as unknown/degraded until a fresh run is retained, rather than as a synthetic login or command failure. A wholly absent expected flow/path/target/profile tuple belongs to `PlayerFlowCanaryEvidenceMissing` once its deployment-owned expected-series inventory exists; that inventory remains an implementation gap.
 - Player reports: widespread login failures or timeouts.
 - Metrics:
   - Player Experience dashboard shows a drop in the login success panel.

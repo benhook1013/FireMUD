@@ -8,10 +8,9 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 HELP_OUTPUT="$TMP_DIR/help.out"
 COLUMNS=80 python3 "$VALIDATOR" --help >"$HELP_OUTPUT"
-grep -q "evidence. External-authority/deadman structure," "$HELP_OUTPUT"
-grep -q "provenance, chronology, completeness, and freshness" "$HELP_OUTPUT"
-grep -q "current red outcomes are permitted only" "$HELP_OUTPUT"
-grep -q "non-authorizing incident evidence." "$HELP_OUTPUT"
+NORMALIZED_HELP_OUTPUT="$(tr '\n' ' ' <"$HELP_OUTPUT" | tr -s '[:space:]' ' ')"
+grep -q "evidence. External-authority/deadman structure, provenance, chronology, completeness, and freshness" <<<"$NORMALIZED_HELP_OUTPUT"
+grep -q "current red outcomes are permitted only as non-authorizing incident evidence." <<<"$NORMALIZED_HELP_OUTPUT"
 
 VALID_EVIDENCE="$TMP_DIR/valid-evidence.json"
 INVALID_EVIDENCE="$TMP_DIR/invalid-evidence.json"

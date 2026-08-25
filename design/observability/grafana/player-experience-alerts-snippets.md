@@ -238,7 +238,11 @@ The `profile` label uses ADR 0159's canonical monitoring-profile enum, `independ
 
 - alert: PlayerFlowCanaryFreshnessBudgetMissing
   expr: >-
-    count by (profile) (playerflow_canary_success)
+    count by (profile) (
+      playerflow_canary_success
+      or playerflow_canary_latency_ms
+      or playerflow_canary_last_run_timestamp_seconds
+    )
     unless on (profile)
     count by (profile) (playerflow_canary_freshness_budget_seconds)
   for: 2m

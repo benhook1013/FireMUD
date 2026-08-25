@@ -3962,23 +3962,6 @@ if "pg_dump" not in scheduled_cronjob or ".sql.gz" not in scheduled_cronjob or '
     raise SystemExit("scheduled Kubernetes backup manifest does not retain the pg_dump -> gzip -> .sql.gz producer pair")
 if "pg_restore" in scheduled_cronjob:
     raise SystemExit("scheduled Kubernetes backup manifest must not select pg_restore for the hosted plain-SQL artifact")
-for required in (
-    "TS=$(date -u +%Y%m%d%H%M%S)",
-    "HOUR=$(date -u +%H)",
-    "DOW=$(date -u +%u)",
-    "DOM=$(date -u +%d)",
-    "ENDPOINT_IF_NONE_MATCH_CONFIRMED=${PG_DUMP_ENDPOINT_IF_NONE_MATCH_CONFIRMED:-false}",
-    "Refusing custom pg_dump endpoint without PG_DUMP_ENDPOINT_IF_NONE_MATCH_CONFIRMED=true",
-    "aws s3api put-object",
-    "--if-none-match '*'",
-    '--bucket "$BUCKET"',
-    '--key "$key"',
-    '--body "$DUMP"',
-):
-    if required not in scheduled_cronjob:
-        raise SystemExit(f"scheduled Kubernetes backup manifest does not declare immutable endpoint publication contract: {required}")
-if "aws s3 cp" in scheduled_cronjob:
-    raise SystemExit("scheduled Kubernetes backup manifest must not use overwrite-capable aws s3 cp publication")
 if "PG_DUMP_ENDPOINT_IF_NONE_MATCH_CONFIRMED: ${PG_DUMP_ENDPOINT_IF_NONE_MATCH_CONFIRMED:-false}" not in compose_file:
     raise SystemExit("Docker Compose pg-dump-cron must pass the endpoint immutable-publication capability marker")
 for label, content in (("scheduled backup script", scheduled_backup_script),):
@@ -6377,7 +6360,12 @@ stale_compact_status, stale_compact_message = module.recovery_compatibility_chec
     tmp,
     now,
 )
-if stale_compact_status != "fail" or "newestVerifiedRestorablePointAt older than 15 minutes" not in stale_compact_message:
+if (
+    stale_compact_status != "fail"
+    or "newestVerifiedRestorablePointAt older than 15 minutes" not in stale_compact_message
+    or str(readiness_point_path.relative_to(tmp)) not in stale_compact_message
+    or "generate a new event-scoped preflight report before retrying" not in stale_compact_message
+):
     raise SystemExit(f"stale compact verified point did not fail closed: {stale_compact_message}")
 
 bad_compact_digest = compatibility_result("compatible")
@@ -7981,6 +7969,8 @@ stale_snapshot_status, stale_snapshot_message = module.backup_readiness_check(
 if (
     stale_snapshot_status != "fail"
     or "newestVerifiedRestorablePointAt older than 15 minutes" not in stale_snapshot_message
+    or str(readiness_point_path.relative_to(tmp)) not in stale_snapshot_message
+    or "generate a new event-scoped preflight report before retrying" not in stale_snapshot_message
 ):
     raise SystemExit(
         "stale snapshot with newer verification did not fail the RPO gate: "

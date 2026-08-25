@@ -726,7 +726,9 @@ def validate_compact_verified_restorable_point(
     if (now_dt - point_at_dt).total_seconds() > VERIFIED_RESTORABLE_POINT_MAX_AGE_SECONDS:
         return (
             "fail",
-            "recoveryCompatibility.newestVerifiedRestorablePointAt older than 15 minutes",
+            "recoveryCompatibility.newestVerifiedRestorablePointAt older than 15 minutes; "
+            f"record: {point_ref}; remediation: refresh the verified restorable point "
+            "and generate a new event-scoped preflight report before retrying",
         )
 
     point_status, point_message = _validate_verified_restorable_point_reference(
@@ -5632,7 +5634,9 @@ def backup_readiness_check(path: Path, now: str, deployment_ref: str, root_dir: 
     if (now_dt - newest_verified_point_ts).total_seconds() > VERIFIED_RESTORABLE_POINT_MAX_AGE_SECONDS:
         return (
             "fail",
-            "Backup-readiness evidence is stale: newestVerifiedRestorablePointAt older than 15 minutes",
+            "Backup-readiness evidence is stale: newestVerifiedRestorablePointAt older than 15 minutes; "
+            f"record: {data['newestVerifiedRestorablePointRef']}; remediation: refresh the verified "
+            "restorable point and generate a new event-scoped preflight report before retrying",
         )
     if (now_dt - verify_ts).total_seconds() > 36 * 60 * 60:
         return ("fail", "Backup-readiness evidence is stale: backupVerifyLastSuccessAt older than 36 hours")

@@ -214,7 +214,11 @@ def stub_entrypath_signals(config, *args):
 runner.entrypath_signals = stub_entrypath_signals
 
 published_mirrors_config = runner.SmokeConfig.from_env(
-    "contract-test", "telnet", None, "published", "omitted"
+    "contract-test",
+    "telnet",
+    None,
+    prometheus_mirrors="published",
+    player_flow_canary="omitted",
 )
 assert published_mirrors_config.deployment_event_id is None
 signals = runner.execute_smoke(
@@ -231,7 +235,11 @@ assert "observability_deadman_heartbeat_timestamp_seconds" in signals
 
 readiness_calls.clear()
 omitted_mirrors_config = runner.SmokeConfig.from_env(
-    "contract-test", "telnet", None, "omitted", "omitted"
+    "contract-test",
+    "telnet",
+    None,
+    prometheus_mirrors="omitted",
+    player_flow_canary="omitted",
 )
 signals = runner.execute_smoke(omitted_mirrors_config, False, set(), authority)
 assert "tcp-proxy-service" not in readiness_calls

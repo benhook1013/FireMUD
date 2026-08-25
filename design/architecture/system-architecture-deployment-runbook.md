@@ -23,6 +23,8 @@ This runbook describes the required deployment flow. Current automation is execu
 
 Operators must treat missing real-environment evidence as a blocker even when static preflight policy IDs are present. A successful static report without the required traffic-open, restore, release-manifest, and secret-compliance evidence is not enough to open player-facing traffic.
 
+Select and report the applicable validation, runtime-proof, and smoke checks under the [Validation and Runtime Proof workflow](../developer-workflows/validation-and-runtime-proof.md). Retain their execution results in PR/CI evidence or the owning implementation tracker; this runbook selects the operational boundary but does not duplicate that workflow's proof requirements.
+
 ### Quarantined Apply Versus Player-Facing Authorization
 
 An apply may proceed for isolated repair, investigation, or a quarantined drill when the environment remains fenced from player traffic and no promotion, first-live, reopen, or fresh-boundary restore claim is being made. This operational apply boundary does not waive any required evidence or convert advisory/legacy diagnostics into authorization. Promotion, first-live, reopen-after-restore, and fresh-boundary restore remain closed until their applicable non-waivable preflight, recovery, custody, secret-compliance, and binding evidence passes; only the owner-defined finalized recovery-controller state may release player-facing exposure.

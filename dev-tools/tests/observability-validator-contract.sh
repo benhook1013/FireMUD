@@ -19,9 +19,41 @@ if ! grep -Fqx -- "- alert: ObservabilityDeadmanHeartbeatMissing" <(awk '{ sub(/
   echo "published independent-required monitoring overlay is missing the required ObservabilityDeadmanHeartbeatMissing alert" >&2
   exit 1
 fi
+shared_alert_declarations="$(sed -n '/^[[:space:]]*- alert:/p' "$ROOT_DIR/k8s/monitoring/prometheus-rules-firemud.yaml")"
+if [[ -z "${shared_alert_declarations//[[:space:]]/}" ]]; then
+  echo "shared Prometheus rules parsing yielded no alert names" >&2
+  exit 1
+fi
+# Keep extraction strict: a declaration with trailing tokens must not become a
+# silently accepted alert name. Count every declaration separately so the
+# parser fails closed when its strict name extraction skips one.
 shared_alerts="$(sed -n 's/^[[:space:]]*- alert: \([^[:space:]]\+\)[[:space:]]*$/\1/p' "$ROOT_DIR/k8s/monitoring/prometheus-rules-firemud.yaml")"
 if [[ -z "${shared_alerts//[[:space:]]/}" ]]; then
   echo "shared Prometheus rules parsing yielded no alert names" >&2
+  exit 1
+fi
+shared_alert_declaration_count="$(awk '/^[[:space:]]*- alert:/ { count += 1 } END { print count + 0 }' "$ROOT_DIR/k8s/monitoring/prometheus-rules-firemud.yaml")"
+shared_alert_name_count="$(awk 'NF { count += 1 } END { print count + 0 }' <<<"$shared_alerts")"
+if (( shared_alert_declaration_count != shared_alert_name_count )); then
+  echo "shared Prometheus rules alert parser skipped one or more declared alert lines" >&2
+  exit 1
+fi
+# Regression-proof the fail-closed boundary without mutating the source file:
+# a trailing token must increase the declaration count but not the strict name
+# count.
+malformed_shared_alert_text="$(awk '
+  !replaced && /^[[:space:]]*- alert:/ {
+    print "        - alert: BackupPipelineNoRecentBackup trailing-token"
+    replaced = 1
+    next
+  }
+  { print }
+' "$ROOT_DIR/k8s/monitoring/prometheus-rules-firemud.yaml")"
+malformed_shared_alert_declaration_count="$(awk '/^[[:space:]]*- alert:/ { count += 1 } END { print count + 0 }' <<<"$malformed_shared_alert_text")"
+malformed_shared_alerts="$(sed -n 's/^[[:space:]]*- alert: \([^[:space:]]\+\)[[:space:]]*$/\1/p' <<<"$malformed_shared_alert_text")"
+malformed_shared_alert_name_count="$(awk 'NF { count += 1 } END { print count + 0 }' <<<"$malformed_shared_alerts")"
+if (( malformed_shared_alert_declaration_count == malformed_shared_alert_name_count )); then
+  echo "shared Prometheus rules parser accepted a malformed trailing-token alert declaration" >&2
   exit 1
 fi
 for render in "$required_published_render" "$required_omitted_render" "$independent_omitted_render"; do
@@ -169,7 +201,10 @@ budget_missing_rule = (
     else valid_text[budget_missing_start:budget_missing_next]
 )
 for required_text in (
-    "count by (profile) (playerflow_canary_success)",
+    "count by (profile)",
+    "playerflow_canary_success",
+    "or playerflow_canary_latency_ms",
+    "or playerflow_canary_last_run_timestamp_seconds",
     "unless on (profile)",
     "count by (profile) (playerflow_canary_freshness_budget_seconds)",
     "profile: '{{ $labels.profile }}'",
@@ -482,6 +517,41 @@ valid_snippet = snippet_path.read_text(encoding="utf-8")
 
 playerflow_snippet_path = root / "design/observability/grafana/player-experience-alerts-snippets.md"
 valid_playerflow_snippet = playerflow_snippet_path.read_text(encoding="utf-8")
+
+expected_budget_missing_expr = validator._compact_promql(
+    """
+    count by (profile) (
+      playerflow_canary_success
+      or playerflow_canary_latency_ms
+      or playerflow_canary_last_run_timestamp_seconds
+    )
+    unless on (profile)
+    count by (profile) (playerflow_canary_freshness_budget_seconds)
+    """
+)
+for source_text in (valid_playerflow_snippet, valid_text):
+    yaml_blocks = validator._extract_fenced_blocks(source_text, "yaml")
+    parsed_rules = [
+        entry
+        for block in (yaml_blocks or [source_text])
+        for entry in validator._split_alert_rules(block)
+    ]
+    budget_entries = [
+        entry
+        for entry in parsed_rules
+        if entry.name == "PlayerFlowCanaryFreshnessBudgetMissing"
+    ]
+    if len(budget_entries) != 1:
+        raise AssertionError(
+            "PlayerFlowCanaryFreshnessBudgetMissing must have exactly one parsed rule"
+        )
+    actual_budget_missing_expr = validator._compact_promql(
+        validator._parse_expr(budget_entries[0].lines) or ""
+    )
+    if actual_budget_missing_expr != expected_budget_missing_expr:
+        raise AssertionError(
+            "PlayerFlowCanaryFreshnessBudgetMissing must union all canary families before profile-level budget matching"
+        )
 
 
 def replace_canary_label(text, alert_name, label, replacement):
