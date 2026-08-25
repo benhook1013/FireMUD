@@ -28,6 +28,8 @@ if ! LISTING=$(aws s3api list-objects-v2 --bucket "$BUCKET" --prefix "15min/" \
   echo "Unable to list pg_dump objects in bucket $BUCKET; check AWS credentials, endpoint, and network access" >&2
   exit 1
 fi
+# The capture timestamp in the canonical key is the artifact ordering
+# authority; LastModified is only a deterministic tie-breaker.
 KEY=$(printf '%s\n' "$LISTING" |
       LC_ALL=C sort -t "$TAB" -k2,2r -k1,1r |
       awk -F "$TAB" '

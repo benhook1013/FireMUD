@@ -56,11 +56,11 @@ mapstruct-processor = { module = "org.mapstruct:mapstruct-processor", version.re
 lombok = { module = "org.projectlombok:lombok", version.ref = "lombok" }
 lombok-mapstruct-binding = { module = "org.projectlombok:lombok-mapstruct-binding", version.ref = "lombok-mapstruct-binding" }
 
-grpc-netty-shaded = { module = "io.grpc:grpc-netty-shaded", version = "1.83.1" }
-grpc-protobuf = { module = "io.grpc:grpc-protobuf", version = "1.83.1" }
-grpc-stub = { module = "io.grpc:grpc-stub", version = "1.83.1" }
-grpc-inprocess = { module = "io.grpc:grpc-inprocess", version = "1.83.1" }
-protoc-gen-grpc-java = { module = "io.grpc:protoc-gen-grpc-java", version = "1.83.1" }
+grpc-netty-shaded = { module = "io.grpc:grpc-netty-shaded", version.ref = "grpc" }
+grpc-protobuf = { module = "io.grpc:grpc-protobuf", version.ref = "grpc" }
+grpc-stub = { module = "io.grpc:grpc-stub", version.ref = "grpc" }
+grpc-inprocess = { module = "io.grpc:grpc-inprocess", version.ref = "grpc" }
+protoc-gen-grpc-java = { module = "io.grpc:protoc-gen-grpc-java", version.ref = "grpc" }
 
 protobuf-java = { module = "com.google.protobuf:protobuf-java", version.ref = "protobuf" }
 protoc = { module = "com.google.protobuf:protoc", version.ref = "protobuf" }

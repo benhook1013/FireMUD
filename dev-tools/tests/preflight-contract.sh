@@ -321,12 +321,13 @@ for script in (restore_script, verify_script):
     elif "firemud_20260824120000.sql.gz" not in result.stdout or "legacy-newer.dump" in result.stdout:
         raise SystemExit(f"{script} verified the wrong scheduled object: {result.stdout!r}")
 
-overlap_result, _ = run(restore_script, objects_with_overlapping_runs, expect_success=True)
-if "firemud_20260824120100.sql.gz" not in overlap_result.stdout:
-    raise SystemExit(
-        f"{restore_script} prioritized object LastModified over capture timestamp: "
-        f"{overlap_result.stdout!r}"
-    )
+for script in (restore_script, verify_script):
+    overlap_result, _ = run(script, objects_with_overlapping_runs, expect_success=True)
+    if "firemud_20260824120100.sql.gz" not in overlap_result.stdout:
+        raise SystemExit(
+            f"{script} prioritized object LastModified over capture timestamp: "
+            f"{overlap_result.stdout!r}"
+        )
 
 for script in (restore_script, verify_script):
     result, _ = run(script, objects_without_valid, expect_success=False)
@@ -337,6 +338,116 @@ listing_failure, _ = run(restore_script, objects_without_valid, expect_success=F
 if "Unable to list pg_dump objects" not in listing_failure.stderr or "AWS credentials" not in listing_failure.stderr \
         or "endpoint" not in listing_failure.stderr or "network access" not in listing_failure.stderr:
     raise SystemExit(f"{restore_script} did not report an explicit AWS listing diagnostic: {listing_failure.stderr!r}")
+PY
+
+python3 - <<'PY' "$ROOT_DIR" "$TMP_DIR"
+import os
+import pathlib
+import subprocess
+import sys
+
+root = pathlib.Path(sys.argv[1])
+tmp = pathlib.Path(sys.argv[2]) / "pg-dump-publication-contract"
+fake_bin = tmp / "bin"
+fake_bin.mkdir(parents=True)
+script = root / "dev-tools/backups/pg-dump-rotate.sh"
+
+(fake_bin / "date").write_text(
+    """#!/usr/bin/env python3
+import sys
+
+values = {
+    "+%Y%m%d%H%M%S": "20260824123456",
+    "+%H": "12",
+    "+%u": "1",
+    "+%d": "02",
+}
+print(values[sys.argv[1]])
+""",
+    encoding="utf-8",
+)
+(fake_bin / "pg_dump").write_text(
+    """#!/usr/bin/env python3
+import os
+import sys
+import time
+
+time.sleep(0.15)
+sys.stdout.write("dump-" + os.environ.get("FAKE_RUN", "unknown"))
+if os.environ.get("FAKE_MODE") == "fail_pg_dump":
+    sys.exit(17)
+""",
+    encoding="utf-8",
+)
+(fake_bin / "gzip").write_text(
+    """#!/usr/bin/env python3
+import os
+import sys
+import time
+
+payload = sys.stdin.buffer.read()
+time.sleep(0.15)
+sys.stdout.buffer.write(payload)
+if os.environ.get("FAKE_MODE") == "fail_gzip":
+    sys.exit(23)
+""",
+    encoding="utf-8",
+)
+for tool in ("date", "pg_dump", "gzip"):
+    (fake_bin / tool).chmod(0o755)
+
+def run(mode, backup_dir, run_id):
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "BACKUP_DIR": str(backup_dir),
+            "FIREMUD_POSTGRES_HOST": "localhost",
+            "FIREMUD_POSTGRES_USER": "firemud",
+            "FIREMUD_POSTGRES_DB": "firemud",
+            "FAKE_MODE": mode,
+            "FAKE_RUN": run_id,
+        }
+    )
+    return subprocess.run([str(script)], env=env, text=True, capture_output=True, timeout=30)
+
+for mode in ("fail_pg_dump", "fail_gzip"):
+    backup_dir = tmp / mode
+    result = run(mode, backup_dir, mode)
+    if result.returncode == 0:
+        raise SystemExit(f"{mode} unexpectedly succeeded: {result.stdout!r} {result.stderr!r}")
+    final = backup_dir / "15min/firemud_20260824123456.sql.gz"
+    partials = list((backup_dir / "15min").glob(".firemud_*.sql.gz"))
+    if final.exists() or partials:
+        raise SystemExit(f"{mode} left a published or partial artifact: {final} {partials}")
+
+backup_dir = tmp / "same-second-successes"
+envs = []
+for run_id in ("one", "two"):
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "BACKUP_DIR": str(backup_dir),
+            "FIREMUD_POSTGRES_HOST": "localhost",
+            "FIREMUD_POSTGRES_USER": "firemud",
+            "FIREMUD_POSTGRES_DB": "firemud",
+            "FAKE_MODE": "success",
+            "FAKE_RUN": run_id,
+        }
+    )
+    envs.append(env)
+processes = [subprocess.Popen([str(script)], env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE) for env in envs]
+results = [process.communicate(timeout=30) for process in processes]
+statuses = [process.returncode for process in processes]
+if sorted(statuses) != [0, 1]:
+    raise SystemExit(f"same-second successes did not produce one winner and one loser: {statuses} {results}")
+final = backup_dir / "15min/firemud_20260824123456.sql.gz"
+partials = list((backup_dir / "15min").glob(".firemud_*.sql.gz"))
+if not final.exists() or partials:
+    raise SystemExit(f"same-second publication did not leave exactly one final artifact: {final} {partials}")
+if final.read_text(encoding="utf-8") not in ("dump-one", "dump-two"):
+    raise SystemExit(f"same-second winner contains unexpected bytes: {final.read_text(encoding='utf-8')!r}")
 PY
 
 python3 - <<'PY' "$ROOT_DIR" "$OPERATOR_REPORT_PATH"
@@ -3744,8 +3855,17 @@ if "pg_dump" not in scheduled_cronjob or ".sql.gz" not in scheduled_cronjob or '
 if "pg_restore" in scheduled_cronjob:
     raise SystemExit("scheduled Kubernetes backup manifest must not select pg_restore for the hosted plain-SQL artifact")
 for label, content in (("scheduled backup script", scheduled_backup_script),):
-    if "pg_dump -Fp" not in content or ".sql.gz" not in content or "gzip > \"$DUMP\"" not in content:
-        raise SystemExit(f"{label} does not declare the hosted pg_dump -Fp -> gzip -> .sql.gz producer pair")
+    if (
+        "pg_dump -Fp" not in content
+        or ".sql.gz" not in content
+        or 'gzip > "$PARTIAL_DUMP"' not in content
+        or 'ln -- "$PARTIAL_DUMP" "$DUMP"' not in content
+    ):
+        raise SystemExit(
+            f"{label} does not declare the hosted pg_dump -Fp -> gzip -> atomic no-clobber .sql.gz producer pair"
+        )
+    if "mv -f" in content:
+        raise SystemExit(f"{label} must not replace a same-second artifact with mv -f")
     if "pg_restore" in content:
         raise SystemExit(f"{label} must not select pg_restore for the hosted plain-SQL artifact")
 if 'gunzip -c "$FILE" | psql' not in scheduled_restore_script:

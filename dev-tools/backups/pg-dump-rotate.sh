@@ -29,7 +29,14 @@ if pg_dump -Fp \
   -h "$FIREMUD_POSTGRES_HOST" \
   -U "$FIREMUD_POSTGRES_USER" \
   -d "$FIREMUD_POSTGRES_DB" | gzip > "$PARTIAL_DUMP"; then
-  mv -f -- "$PARTIAL_DUMP" "$DUMP"
+  # A same-second run has the same canonical destination. A hard link is an
+  # atomic, no-clobber publication on the same filesystem and cannot replace a
+  # complete artifact published by a competing run.
+  if ! ln -- "$PARTIAL_DUMP" "$DUMP"; then
+    echo "Failed to publish $DUMP; an existing artifact was kept" >&2
+    exit 1
+  fi
+  rm -f -- "$PARTIAL_DUMP"
   trap - EXIT
 else
   echo "Failed to create pg_dump artifact" >&2
