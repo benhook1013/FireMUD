@@ -255,6 +255,12 @@ The `profile` label uses ADR 0159's canonical monitoring-profile enum, `independ
 
 - alert: PlayerFlowCanaryEvidenceStale
   expr: >-
+    (
+      playerflow_canary_success
+      unless on (flow, path, target, profile)
+      playerflow_canary_last_run_timestamp_seconds
+    )
+    or
     time() - playerflow_canary_last_run_timestamp_seconds < 0
     or on (flow, path, target, profile)
     time() - playerflow_canary_last_run_timestamp_seconds
@@ -273,7 +279,7 @@ The `profile` label uses ADR 0159's canonical monitoring-profile enum, `independ
     runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#incident-types
   annotations:
     summary: Synthetic player-flow canary evidence stale
-    description: The advertised player-flow canary run evidence is future-dated or older than the profile-derived freshness budget; treat player-flow health as unknown or degraded until a fresh run is retained.
+    description: The advertised player-flow canary run evidence is missing its matching last-run timestamp, future-dated, or older than the profile-derived freshness budget; treat player-flow health as unknown or degraded until a fresh run is retained.
 
 - alert: WebSocketEntryPathBlackboxUnavailable
   expr: max_over_time(entrypath_blackbox_probe_success{path="websocket"}[2m]) == 0

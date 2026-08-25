@@ -240,7 +240,7 @@ The decisions below have applied human-review provenance. They are not pending p
 
 ### Pending Decisions Requiring Product Or Operations Consultation
 
-No additional product or operations consultation rows remain in this ledger. OPS-02 and OPS-03 have applied human-review provenance; only their implementation and focused-proof obligations remain in the applied follow-up table above. Existing canonical ADR/design authority remains in force.
+This cross-cutting ledger has no additional product or operations consultation rows of its own. The companion [Product and Operations inventory](./decision-inventory-product-operations.md) still retains these explicitly `proposed/deferred` rows whose `Human consultation: Yes` status is unchanged: `OBS-02`, `OBS-03`, `OBS-06`, `CAPACITY-01`, `CAPACITY-02`, and `TEST-02`. They remain consultation questions in that owner inventory and are not converted into applied decisions or implementation-only follow-ups here. `OPS-02` and `OPS-03` have applied human-review provenance; only their implementation and focused-proof obligations remain in the applied follow-up table above. Existing canonical ADR/design authority remains in force.
 
 ## Coverage By Exact Capability
 

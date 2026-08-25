@@ -29,7 +29,10 @@ PLAYERFLOW_CANARY_REQUIRED_LABELS = {
     "path": "{{ $labels.path }}",
     "target": "{{ $labels.target }}",
 }
-PROFILE_DEPENDENT_ALERTS = {"ObservabilityDeadmanHeartbeatStale"}
+PROFILE_DEPENDENT_ALERTS = {
+    "ObservabilityDeadmanHeartbeatMissing",
+    "ObservabilityDeadmanHeartbeatStale",
+}
 DISALLOWED_ALERT_SERVICE_LABELS = {"gateway", "game-session"}
 GRAFANA_DIR = REPO_ROOT / "design" / "observability" / "grafana"
 CORE_ALERT_SNIPPET_PATHS = [
@@ -1472,7 +1475,10 @@ def main() -> int:
         findings.extend(
             _validate_reference_prometheus_rules(
                 independent_required_rules,
-                {"ObservabilityDeadmanHeartbeatStale"},
+                {
+                    "ObservabilityDeadmanHeartbeatMissing",
+                    "ObservabilityDeadmanHeartbeatStale",
+                },
                 allow_profile_dependent_alerts=True,
             )
         )

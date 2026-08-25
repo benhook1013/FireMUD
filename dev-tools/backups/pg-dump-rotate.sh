@@ -6,6 +6,12 @@ set -euo pipefail
 BACKUP_DIR=${BACKUP_DIR:-/backups}
 BUCKET=${PG_DUMP_BUCKET:-}
 ENDPOINT=${PG_DUMP_ENDPOINT:-}
+ENDPOINT_IF_NONE_MATCH_CONFIRMED=${PG_DUMP_ENDPOINT_IF_NONE_MATCH_CONFIRMED:-false}
+
+if [ -n "$BUCKET" ] && [ -n "$ENDPOINT" ] && [ "$ENDPOINT_IF_NONE_MATCH_CONFIRMED" != "true" ]; then
+  echo "Refusing custom pg_dump endpoint without PG_DUMP_ENDPOINT_IF_NONE_MATCH_CONFIRMED=true" >&2
+  exit 1
+fi
 
 PREFIX=firemud
 

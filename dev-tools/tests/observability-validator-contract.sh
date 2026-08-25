@@ -91,7 +91,10 @@ required_rules_path = (
 required_rules_text = required_rules_path.read_text(encoding="utf-8")
 published_overlay_findings = validator._validate_reference_prometheus_rules(
     required_rules_path,
-    {"ObservabilityDeadmanHeartbeatStale"},
+    {
+        "ObservabilityDeadmanHeartbeatMissing",
+        "ObservabilityDeadmanHeartbeatStale",
+    },
     allow_profile_dependent_alerts=True,
 )
 if published_overlay_findings:
@@ -201,10 +204,36 @@ def require_message(findings, expected):
         raise AssertionError(f"expected {expected!r}, got {messages!r}")
 
 
+without_missing = required_rules_text[:missing_start] + (
+    "" if missing_next == -1 else required_rules_text[missing_next:]
+)
+require_message(
+    findings_for(
+        without_missing,
+        lambda path: validator._validate_reference_prometheus_rules(
+            path,
+            {
+                "ObservabilityDeadmanHeartbeatMissing",
+                "ObservabilityDeadmanHeartbeatStale",
+            },
+            allow_profile_dependent_alerts=True,
+        ),
+    ),
+    "reference rules are missing required alerts: ObservabilityDeadmanHeartbeatMissing",
+)
+
+
 profile_dependent_alert = """    - name: firemud.alerts.profile-dependent
       rules:
         - alert: ObservabilityDeadmanHeartbeatStale
           expr: observability_deadman_stale{profile="independent-required"} == 1
+          labels:
+            service: external-monitoring
+            severity: P0
+            owner: platform
+            runbook: design/architecture/system-architecture-observability-incident-runbook.md#deadman-freshness-contract
+        - alert: ObservabilityDeadmanHeartbeatMissing
+          expr: absent(observability_deadman_stale{profile="independent-required"})
           labels:
             service: external-monitoring
             severity: P0
@@ -216,13 +245,18 @@ base_with_profile_dependent_alert = valid_text.replace(
     profile_dependent_alert + "    - name: firemud.alerts.observability\n",
     1,
 )
-require_message(
-    findings_for(
-        base_with_profile_dependent_alert,
-        validator._validate_reference_prometheus_rules,
-    ),
-    "base Prometheus rules must not include profile-dependent alert ObservabilityDeadmanHeartbeatStale; install it only through the matching profile overlay",
+base_profile_findings = findings_for(
+    base_with_profile_dependent_alert,
+    validator._validate_reference_prometheus_rules,
 )
+for profile_alert in (
+    "ObservabilityDeadmanHeartbeatStale",
+    "ObservabilityDeadmanHeartbeatMissing",
+):
+    require_message(
+        base_profile_findings,
+        f"base Prometheus rules must not include profile-dependent alert {profile_alert}; install it only through the matching profile overlay",
+    )
 
 
 require_message(
@@ -661,6 +695,8 @@ for source_text in (valid_playerflow_snippet, valid_text):
         "flow: '{{ $labels.flow }}'",
         "path: '{{ $labels.path }}'",
         "target: '{{ $labels.target }}'",
+        "playerflow_canary_success",
+        "unless on (flow, path, target, profile)",
         "time() - playerflow_canary_last_run_timestamp_seconds",
         "playerflow_canary_freshness_budget_seconds",
     ):
@@ -678,6 +714,10 @@ for source_text in (valid_playerflow_snippet, valid_text):
     if "or on (flow, path, target, profile)" not in stale_body:
         raise AssertionError(
             "PlayerFlowCanaryEvidenceStale must preserve full canary label matching"
+        )
+    if "absent(" in stale_body:
+        raise AssertionError(
+            "PlayerFlowCanaryEvidenceStale must not claim total tuple-absence detection"
         )
 
 standalone_alert = """alert: StandaloneBackupAlert

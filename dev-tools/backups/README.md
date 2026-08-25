@@ -19,6 +19,7 @@ This directory contains FireMUD backup tooling for three different lanes:
   - The hosted readiness artifact contract is immutable `.sql.gz` content once published; its scheduled restore consumer is `dev-tools/restores/restore-latest-db.sh`, which uses `gunzip -c | psql`.
   - Maintains 15-minute, daily, weekly, and monthly retention folders.
   - Optionally uploads dumps to S3 or MinIO when `PG_DUMP_BUCKET` is configured.
+  - AWS's default endpoint is the canonical immutable-publication path. A custom `PG_DUMP_ENDPOINT` fails closed unless `PG_DUMP_ENDPOINT_IF_NONE_MATCH_CONFIRMED=true` is injected by the operator/preflight contract after provider-specific evidence proves that `If-None-Match: *` is enforced; the URL alone is not capability evidence and the script does not run a per-backup probe.
   - This script is built into the `pg-dump-cron` Docker image.
 
 - `setup-local-backup.sh`

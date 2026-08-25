@@ -36,9 +36,13 @@ cat > "$BIN_DIR/aws" <<'EOF'
 set -euo pipefail
 
 query=''
+endpoint=''
 while (($#)); do
   if [[ "$1" == '--query' ]]; then
     query="$2"
+    shift 2
+  elif [[ "$1" == '--endpoint-url' ]]; then
+    endpoint="$2"
     shift 2
   else
     shift
@@ -51,6 +55,10 @@ if [[ "$query" != *'starts_with(Key, `15min/firemud_`)'* || "$query" != *'ends_w
 fi
 if [[ "$query" == *'sort_by('* ]]; then
   echo "the aws query still performs a per-page sort: $query" >&2
+  exit 1
+fi
+if [[ -n "${EXPECTED_ENDPOINT:-}" && "$endpoint" != "$EXPECTED_ENDPOINT" ]]; then
+  echo "the endpoint argument was not preserved: expected $EXPECTED_ENDPOINT, got $endpoint" >&2
   exit 1
 fi
 printf '%s\n' "$query" > "$FAKE_QUERY_LOG"
@@ -83,6 +91,10 @@ case "$FAKE_AWS_SCENARIO" in
     printf '2026-08-25T00:06:00Z\t15min/not-a-dump.dump\n'
     printf '%s\n' 'None'
     ;;
+  invalid-timestamp)
+    printf '2026-08-25T00:06:00Z\t15min/firemud_2026082500010.sql.gz\n'
+    printf '2026-08-25T00:07:00Z\t15min/firemud_202608250001000.sql.gz\n'
+    ;;
   velero-error|velero-empty)
     printf '2026-08-25T00:01:00Z\t15min/firemud_20260825000100.sql.gz\n'
     ;;
@@ -105,6 +117,7 @@ run_case() {
   local expected_output="$4"
   local forbidden_output="${5:-}"
   local additional_output="${6:-}"
+  local expected_endpoint="${7:-}"
   local output
   local status
 
@@ -112,6 +125,8 @@ run_case() {
   output=$(
     PATH="$BIN_DIR:$PATH" \
       PG_DUMP_BUCKET='firemud-test' \
+      PG_DUMP_ENDPOINT="$expected_endpoint" \
+      EXPECTED_ENDPOINT="$expected_endpoint" \
       FAKE_AWS_SCENARIO="$scenario" \
       FAKE_QUERY_LOG="$QUERY_LOG" \
       "$script" 2>&1
@@ -139,9 +154,11 @@ run_case() {
 
 script="$ROOT_DIR/dev-tools/backups/verify-backups.sh"
 run_case "$script" global-latest 0 'Latest pg_dump: 15min/firemud_20260825000400.sql.gz' '' 'Found 2 Velero backups in firemud'
+run_case "$script" global-latest 0 'Latest pg_dump: 15min/firemud_20260825000400.sql.gz' '' '' 'https://s3.example.test'
 run_case "$script" earlier-match-later-empty 0 'Latest pg_dump: 15min/firemud_20260825000500.sql.gz'
 run_case "$script" large-listing 0 'Latest pg_dump: 15min/firemud_00000000200000.sql.gz'
 run_case "$script" no-match 1 'No valid .sql.gz pg_dump files found'
+run_case "$script" invalid-timestamp 1 'No valid .sql.gz pg_dump files found'
 run_case "$script" aws-error 1 'simulated AWS listing failure' 'No valid .sql.gz pg_dump files found'
 run_case "$script" velero-error 1 'simulated Velero listing failure' 'No Velero backups found'
 run_case "$script" velero-empty 1 'No Velero backups found'

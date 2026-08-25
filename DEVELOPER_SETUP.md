@@ -347,7 +347,9 @@ The Docker Compose stack includes a `pg-dump-cron` service that runs
 `dev-tools/backups/pg-dump-rotate.sh` every 15 minutes. Dumps are written to the
 `docker/backups/` directory and follow the same 15min/daily/weekly/monthly rotation policy as
 production. Set `PG_DUMP_BUCKET` and `PG_DUMP_ENDPOINT` to automatically upload
-the files to your object store.
+the files to your object store; custom endpoints also require
+`PG_DUMP_ENDPOINT_IF_NONE_MATCH_CONFIRMED=true` only when you have provider-specific
+evidence that conditional immutable publication is enforced.
 
 ### Optional Redis Persistence
 

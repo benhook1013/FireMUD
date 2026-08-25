@@ -419,6 +419,7 @@ services:
       <<: *service-env
       PG_DUMP_BUCKET: ${PG_DUMP_BUCKET:-}
       PG_DUMP_ENDPOINT: ${PG_DUMP_ENDPOINT:-}
+      PG_DUMP_ENDPOINT_IF_NONE_MATCH_CONFIRMED: ${PG_DUMP_ENDPOINT_IF_NONE_MATCH_CONFIRMED:-false}
       BACKUP_DIR: /backups
     volumes:
       - ./backups:/backups

@@ -1,0 +1,40 @@
+# shellcheck shell=bash
+# Shared sourced helper for selecting the newest scheduled PostgreSQL dump.
+# Callers own the aws-availability check and the user-facing error handling.
+
+select_latest_pg_dump_key() {
+  local bucket="$1"
+  shift
+  local listing
+  local sorted_listing
+  local tab
+
+  # shellcheck disable=SC2016 # AWS JMESPath requires literal backticks.
+  local aws_query='Contents[?starts_with(Key, `15min/firemud_`) && ends_with(Key, `.sql.gz`)].[LastModified, Key]'
+  if ! listing=$(aws s3api list-objects-v2 --bucket "$bucket" --prefix "15min/" \
+        "$@" \
+        --query "$aws_query" --output text); then
+    return 1
+  fi
+
+  # The capture timestamp in the canonical key is the artifact ordering
+  # authority; LastModified is only a deterministic tie-breaker. Keep the
+  # sort as a separate capture so a large listing cannot turn an early
+  # consumer exit into a pipefail failure.
+  tab=$(printf '\t')
+  if ! sorted_listing=$(printf '%s\n' "$listing" |
+        LC_ALL=C sort -t "$tab" -k2,2r -k1,1r); then
+    return 1
+  fi
+  awk -F "$tab" '
+    $1 != "None" && NF >= 2 && $2 ~ /^15min\/firemud_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]\.sql\.gz$/ {
+      if (first_key == "") {
+        first_key = substr($0, index($0, FS) + 1)
+      }
+    }
+    END {
+      if (first_key != "") {
+        print first_key
+      }
+    }' <<< "$sorted_listing"
+}

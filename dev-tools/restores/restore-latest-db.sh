@@ -3,6 +3,9 @@
 # Requires PG_DUMP_BUCKET; PG_DUMP_ENDPOINT is optional (useful for MinIO or other S3-compatible endpoints).
 set -euo pipefail
 
+# shellcheck disable=SC1090,SC1091 # The helper path is resolved from this script.
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/../backups/pg-dump-s3-selection.shlib"
+
 BUCKET=${PG_DUMP_BUCKET:?PG_DUMP_BUCKET must be set}
 ENDPOINT=${PG_DUMP_ENDPOINT:-}
 
@@ -19,30 +22,10 @@ if [ -n "$ENDPOINT" ]; then
   AWS_ENDPOINT_ARGS=(--endpoint-url "$ENDPOINT")
 fi
 
-# shellcheck disable=SC2016 # AWS JMESPath requires literal backticks.
-AWS_QUERY='Contents[?starts_with(Key, `15min/firemud_`) && ends_with(Key, `.sql.gz`)].[LastModified, Key]'
-TAB=$(printf '\t')
-if ! LISTING=$(aws s3api list-objects-v2 --bucket "$BUCKET" --prefix "15min/" \
-      "${AWS_ENDPOINT_ARGS[@]}" \
-      --query "$AWS_QUERY" --output text); then
+if ! KEY=$(select_latest_pg_dump_key "$BUCKET" "${AWS_ENDPOINT_ARGS[@]}"); then
   echo "Unable to list pg_dump objects in bucket $BUCKET; check AWS credentials, endpoint, and network access" >&2
   exit 1
 fi
-# The capture timestamp in the canonical key is the artifact ordering
-# authority; LastModified is only a deterministic tie-breaker.
-KEY=$(printf '%s\n' "$LISTING" |
-      LC_ALL=C sort -t "$TAB" -k2,2r -k1,1r |
-      awk -F "$TAB" '
-        $1 != "None" && NF >= 2 && $2 ~ /^15min\/firemud_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]\.sql\.gz$/ {
-          if (first_key == "") {
-            first_key = substr($0, index($0, FS) + 1)
-          }
-        }
-        END {
-          if (first_key != "") {
-            print first_key
-          }
-        }')
 
 case "$KEY" in
   *.sql.gz) ;;

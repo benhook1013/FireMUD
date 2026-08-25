@@ -262,6 +262,8 @@ objects_with_legacy_newer = [
 objects_without_valid = [
     {"Key": "15min/legacy-newer.dump", "LastModified": "2026-08-24T12:01:00Z"},
     {"Key": "15min/arbitrary-object", "LastModified": "2026-08-24T12:02:00Z"},
+    {"Key": "15min/firemud_2026082412000.sql.gz", "LastModified": "2026-08-24T12:03:00Z"},
+    {"Key": "15min/firemud_202608241200000.sql.gz", "LastModified": "2026-08-24T12:04:00Z"},
 ]
 objects_with_overlapping_runs = [
     {"Key": "15min/firemud_20260824120000.sql.gz", "LastModified": "2026-08-24T12:05:00Z"},
@@ -493,7 +495,7 @@ if not final.exists() or partials:
 if final.read_text(encoding="utf-8") not in ("dump-one", "dump-two"):
     raise SystemExit(f"same-second winner contains unexpected bytes: {final.read_text(encoding='utf-8')!r}")
 
-def run_upload(backup_dir, run_id, state_dir, log_path):
+def run_upload(backup_dir, run_id, state_dir, log_path, endpoint_capability=False):
     env = os.environ.copy()
     env.update(
         {
@@ -506,6 +508,7 @@ def run_upload(backup_dir, run_id, state_dir, log_path):
             "FAKE_RUN": run_id,
             "PG_DUMP_BUCKET": "firemud-backups",
             "PG_DUMP_ENDPOINT": "http://minio.example.test:9000",
+            "PG_DUMP_ENDPOINT_IF_NONE_MATCH_CONFIRMED": "true" if endpoint_capability else "false",
             "FAKE_AWS_STATE": str(state_dir),
             "FAKE_AWS_LOG": str(log_path),
         }
@@ -515,7 +518,13 @@ def run_upload(backup_dir, run_id, state_dir, log_path):
 upload_root = tmp / "s3-publication"
 state_dir = upload_root / "objects"
 log_path = upload_root / "aws.jsonl"
-first_upload = run_upload(upload_root / "first", "first", state_dir, log_path)
+unsafe_upload = run_upload(upload_root / "unconfirmed", "unconfirmed", state_dir, log_path)
+if unsafe_upload.returncode == 0 or "PG_DUMP_ENDPOINT_IF_NONE_MATCH_CONFIRMED=true" not in unsafe_upload.stderr:
+    raise SystemExit(
+        "custom S3 endpoint without immutable-publication capability proof did not fail closed: "
+        f"{unsafe_upload.returncode} {unsafe_upload.stdout!r} {unsafe_upload.stderr!r}"
+    )
+first_upload = run_upload(upload_root / "first", "first", state_dir, log_path, endpoint_capability=True)
 if first_upload.returncode != 0:
     raise SystemExit(f"S3 publication unexpectedly failed: {first_upload.stdout!r} {first_upload.stderr!r}")
 calls = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
@@ -538,7 +547,7 @@ for call in calls:
     if pathlib.Path(call["body"]).read_text(encoding="utf-8") != "dump-first":
         raise SystemExit(f"S3 publication used the wrong body: {call!r}")
 
-second_upload = run_upload(upload_root / "second", "second", state_dir, log_path)
+second_upload = run_upload(upload_root / "second", "second", state_dir, log_path, endpoint_capability=True)
 if second_upload.returncode == 0 or "Failed to upload 15min dump" not in second_upload.stderr:
     raise SystemExit(
         "an existing S3 object did not fail closed: "
@@ -3945,6 +3954,7 @@ verified_point = {
 }
 scheduled_backup_script = (root / "dev-tools/backups/pg-dump-rotate.sh").read_text(encoding="utf-8")
 scheduled_cronjob = (root / "k8s/postgres/pg-dump-cronjob.yaml").read_text(encoding="utf-8")
+compose_file = (root / "docker/docker-compose.yml").read_text(encoding="utf-8")
 scheduled_restore_script = (root / "dev-tools/restores/restore-latest-db.sh").read_text(encoding="utf-8")
 local_backup_script = (root / "dev-tools/backups/backup-db.sh").read_text(encoding="utf-8")
 local_restore_script = (root / "dev-tools/restores/restore-db.sh").read_text(encoding="utf-8")
@@ -3952,6 +3962,25 @@ if "pg_dump" not in scheduled_cronjob or ".sql.gz" not in scheduled_cronjob or '
     raise SystemExit("scheduled Kubernetes backup manifest does not retain the pg_dump -> gzip -> .sql.gz producer pair")
 if "pg_restore" in scheduled_cronjob:
     raise SystemExit("scheduled Kubernetes backup manifest must not select pg_restore for the hosted plain-SQL artifact")
+for required in (
+    "TS=$(date -u +%Y%m%d%H%M%S)",
+    "HOUR=$(date -u +%H)",
+    "DOW=$(date -u +%u)",
+    "DOM=$(date -u +%d)",
+    "ENDPOINT_IF_NONE_MATCH_CONFIRMED=${PG_DUMP_ENDPOINT_IF_NONE_MATCH_CONFIRMED:-false}",
+    "Refusing custom pg_dump endpoint without PG_DUMP_ENDPOINT_IF_NONE_MATCH_CONFIRMED=true",
+    "aws s3api put-object",
+    "--if-none-match '*'",
+    '--bucket "$BUCKET"',
+    '--key "$key"',
+    '--body "$DUMP"',
+):
+    if required not in scheduled_cronjob:
+        raise SystemExit(f"scheduled Kubernetes backup manifest does not declare immutable endpoint publication contract: {required}")
+if "aws s3 cp" in scheduled_cronjob:
+    raise SystemExit("scheduled Kubernetes backup manifest must not use overwrite-capable aws s3 cp publication")
+if "PG_DUMP_ENDPOINT_IF_NONE_MATCH_CONFIRMED: ${PG_DUMP_ENDPOINT_IF_NONE_MATCH_CONFIRMED:-false}" not in compose_file:
+    raise SystemExit("Docker Compose pg-dump-cron must pass the endpoint immutable-publication capability marker")
 for label, content in (("scheduled backup script", scheduled_backup_script),):
     if (
         "pg_dump -Fp" not in content
@@ -3971,6 +4000,8 @@ for label, content in (("scheduled backup script", scheduled_backup_script),):
         "HOUR=$(date -u +%H)",
         "DOW=$(date -u +%u)",
         "DOM=$(date -u +%d)",
+        "ENDPOINT_IF_NONE_MATCH_CONFIRMED=${PG_DUMP_ENDPOINT_IF_NONE_MATCH_CONFIRMED:-false}",
+        'Refusing custom pg_dump endpoint without PG_DUMP_ENDPOINT_IF_NONE_MATCH_CONFIRMED=true',
         "aws s3api put-object",
         '--if-none-match \'*\'',
         '--bucket "$BUCKET"',
