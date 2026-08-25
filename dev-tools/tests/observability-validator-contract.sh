@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 if ! command -v kubectl >/dev/null 2>&1; then
   echo "kubectl is required to render the observability monitoring overlays" >&2
-  exit 1
+  exit 2
 fi
 
 required_published_render="$(kubectl kustomize "$ROOT_DIR/k8s/overlays/monitoring/independent-required-prometheus-published")"

@@ -11,6 +11,7 @@ spec:
       rules:
         - alert: ObservabilityDeadmanHeartbeatStale
           expr: absent(observability_deadman_stale{profile="independent-required"}) or observability_deadman_stale{profile="independent-required"} == 1
+          # The external monitor has already applied the profile's configured stale threshold and evaluation window before publishing this mirror. This fixed hold only debounces a missing mirror/transport and does not replace or preempt those profile-derived timings.
           for: 1m
           labels:
             service: external-monitoring
@@ -20,4 +21,4 @@ spec:
             runbook: design/architecture/system-architecture-observability-incident-runbook.md#deadman-freshness-contract
           annotations:
             summary: Independent observability deadman heartbeat stale
-            description: The profile-aware external deadman mirror has applied its configured stale threshold and evaluation window; confirm the authoritative external monitor and paging path immediately.
+            description: The profile-aware external deadman mirror has applied its configured stale threshold and evaluation window; the one-minute local hold only debounces mirror loss, so confirm the authoritative external monitor and paging path immediately.

@@ -3564,6 +3564,7 @@ smoke_evidence_path.write_text(
                         "pageEvidenceRef": "pager://staging-contract/websocket/page",
                         "target": "staging-contract-websocket",
                         "lastSuccessfulProbeObservedAt": past_timestamp,
+                        "observedProbeAgeSeconds": 0,
                     },
                     "telnet": {
                         "status": "green",
@@ -3571,6 +3572,7 @@ smoke_evidence_path.write_text(
                         "pageEvidenceRef": "pager://staging-contract/telnet/page",
                         "target": "staging-contract-telnet",
                         "lastSuccessfulProbeObservedAt": past_timestamp,
+                        "observedProbeAgeSeconds": 0,
                     },
                 },
             },

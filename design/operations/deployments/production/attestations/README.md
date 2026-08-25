@@ -13,7 +13,7 @@ Required fields:
 - `productionOverlayRef`
 - `serviceDigests`
 - `servicePlatformDigests`
-- `smokeEvidence` (non-empty list of closed `{ref, contentDigest}` entries; `smokeEvidence.contentDigest` is lowercase `sha256:<64 hex>` over the exact retained JSON bytes, each artifact's `deploymentRef` matches the selected `stagingOverlayCommitSha`, each artifact's `deploymentEventId` equals the selected `stagingDeploymentEventId`, and `ref` values are unique)
+- `smokeEvidence` (non-empty list of closed `{ref, contentDigest}` entries; each `contentDigest` is the SHA-256 digest of the exact retained JSON bytes, encoded exactly as `sha256:<64 lowercase hexadecimal characters>`, each artifact's `deploymentRef` matches the selected `stagingOverlayCommitSha`, each artifact's `deploymentEventId` equals the selected `stagingDeploymentEventId`, and `ref` values are unique)
 - `generatedAt`
 - `approvedBy`
 - `rollbackMode`

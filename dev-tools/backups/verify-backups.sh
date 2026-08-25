@@ -48,7 +48,7 @@ if [ -n "${PG_DUMP_BUCKET:-}" ]; then
   fi
   KEY=$(printf '%s\n' "$LISTING" |
         LC_ALL=C sort -t "$TAB" -k1,1r -k2,2r |
-        awk -F "$TAB" '$1 != "None" && NF >= 2 && $2 ~ /^15min\/firemud_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]\.sql\.gz$/ { print substr($0, index($0, FS) + 1); exit }') || KEY=
+        awk -F "$TAB" '$1 != "None" && NF >= 2 && $2 ~ /^15min\/firemud_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]\.sql\.gz$/ { if (!key) key = substr($0, index($0, FS) + 1) } END { if (key) print key }') || KEY=
   case "$KEY" in
     *.sql.gz) ;;
     *)

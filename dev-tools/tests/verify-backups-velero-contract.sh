@@ -83,6 +83,14 @@ case "$FAKE_AWS_SCENARIO" in
     printf '2026-08-25T00:05:00Z\t15min/firemud_20260825000500.sql.gz\n'
     printf '%s\n' 'None'
     ;;
+  large-listing)
+    # Keep enough sorted output to expose an early consumer exit as sort SIGPIPE under pipefail.
+    awk 'BEGIN {
+      for (i = 1; i <= 200000; i++) {
+        printf "2026-08-25T00:00:00Z\t15min/firemud_%014d.sql.gz\n", i
+      }
+    }'
+    ;;
   no-match)
     printf '2026-08-25T00:06:00Z\t15min/not-a-dump.dump\n'
     printf '%s\n' 'None'
@@ -136,6 +144,7 @@ run_case() {
 for script in "$ROOT_DIR/dev-tools/backups/verify-backups.sh" "$EMBEDDED_SCRIPT"; do
   run_case "$script" global-latest 0 'Latest pg_dump: 15min/firemud_20260825000300.sql.gz'
   run_case "$script" earlier-match-later-empty 0 'Latest pg_dump: 15min/firemud_20260825000500.sql.gz'
+  run_case "$script" large-listing 0 'Latest pg_dump: 15min/firemud_00000000200000.sql.gz'
   run_case "$script" no-match 1 'No valid .sql.gz pg_dump files found'
   run_case "$script" aws-error 1 'simulated AWS listing failure' 'No valid .sql.gz pg_dump files found'
   run_case "$script" velero-error 1 'simulated Velero listing failure' 'No Velero backups found'

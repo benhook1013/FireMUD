@@ -4,6 +4,8 @@ This runbook covers operational scenarios where observability backends (Promethe
 
 It complements the degraded-mode expectations in `design/architecture/system-architecture-logging-monitoring.md` and focuses on what operators should do when the tooling used to diagnose incidents is itself failing.
 
+Validation and runtime-proof selection for changes to this runbook follows the shared [Validation and Runtime Proof](../developer-workflows/validation-and-runtime-proof.md) workflow. Record execution results in PR/CI evidence or the owning implementation tracker; this normative runbook is not a validation ledger.
+
 ## Objectives
 
 - Preserve player-facing operation using authoritative systems (services, PostgreSQL, coordination rules) even when observability backends are impaired.

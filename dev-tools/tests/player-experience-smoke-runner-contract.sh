@@ -81,6 +81,7 @@ source["observedStalenessSeconds"] = 0
 for record in source.get("publicPathChecks", {}).values():
     if record.get("status") == "green":
         record["lastSuccessfulProbeObservedAt"] = observed_at
+        record["observedProbeAgeSeconds"] = 0
 path.write_text(json.dumps(source), encoding="utf-8")
 PY
 }
@@ -261,8 +262,8 @@ cat >"$AUTHORITY_EVIDENCE" <<'JSON'
     "checkRef": "check://contract/deadman"
   },
   "publicPathChecks": {
-    "websocket": {"status": "green", "evidenceRef": "probe://contract/websocket/2026-03-19T10:51:00Z", "pageEvidenceRef": "pager://contract/websocket/2026-03-19T10:50:00Z/delivery", "target": "contract-websocket", "lastSuccessfulProbeObservedAt": "2026-03-19T10:51:00Z"},
-    "telnet": {"status": "green", "evidenceRef": "probe://contract/telnet/2026-03-19T10:51:00Z", "pageEvidenceRef": "pager://contract/telnet/2026-03-19T10:50:00Z/delivery", "target": "contract-telnet", "lastSuccessfulProbeObservedAt": "2026-03-19T10:51:00Z"}
+    "websocket": {"status": "green", "evidenceRef": "probe://contract/websocket/2026-03-19T10:53:00Z", "pageEvidenceRef": "pager://contract/websocket/2026-03-19T10:50:00Z/delivery", "target": "contract-websocket", "lastSuccessfulProbeObservedAt": "2026-03-19T10:53:00Z", "observedProbeAgeSeconds": 120},
+    "telnet": {"status": "green", "evidenceRef": "probe://contract/telnet/2026-03-19T10:53:00Z", "pageEvidenceRef": "pager://contract/telnet/2026-03-19T10:50:00Z/delivery", "target": "contract-telnet", "lastSuccessfulProbeObservedAt": "2026-03-19T10:53:00Z", "observedProbeAgeSeconds": 120}
   }
 }
 JSON
@@ -781,6 +782,106 @@ if run_smoke_runner \
 fi
 grep -q "deadmanAuthority.pageEvidenceRef" "$TMP_DIR/missing-deadman-page.out"
 
+MISSING_PROBE_AGE_AUTHORITY="$TMP_DIR/missing-probe-age-authority.json"
+python3 - "$AUTHORITY_EVIDENCE" "$MISSING_PROBE_AGE_AUTHORITY" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+del source["publicPathChecks"]["websocket"]["observedProbeAgeSeconds"]
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if run_smoke_runner \
+  --simulate \
+  --external-authority-evidence "$MISSING_PROBE_AGE_AUTHORITY" \
+  --evidence-out "$TMP_DIR/missing-probe-age-evidence.json" \
+  --source "contract-test" \
+  --canary-path websocket >"$TMP_DIR/missing-probe-age.out" 2>&1; then
+  echo "runner unexpectedly accepted missing observed probe age" >&2
+  exit 1
+fi
+grep -q "must define a nonnegative finite publicPathChecks.websocket.observedProbeAgeSeconds" \
+  "$TMP_DIR/missing-probe-age.out"
+
+INVALID_PROBE_AGE_AUTHORITY="$TMP_DIR/invalid-probe-age-authority.json"
+python3 - "$AUTHORITY_EVIDENCE" "$INVALID_PROBE_AGE_AUTHORITY" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["publicPathChecks"]["websocket"]["observedProbeAgeSeconds"] = -1
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if run_smoke_runner \
+  --simulate \
+  --external-authority-evidence "$INVALID_PROBE_AGE_AUTHORITY" \
+  --evidence-out "$TMP_DIR/invalid-probe-age-evidence.json" \
+  --source "contract-test" \
+  --canary-path websocket >"$TMP_DIR/invalid-probe-age.out" 2>&1; then
+  echo "runner unexpectedly accepted invalid observed probe age" >&2
+  exit 1
+fi
+grep -q "must define a nonnegative finite publicPathChecks.websocket.observedProbeAgeSeconds" \
+  "$TMP_DIR/invalid-probe-age.out"
+
+MISMATCHED_PROBE_AGE_AUTHORITY="$TMP_DIR/mismatched-probe-age-authority.json"
+python3 - "$AUTHORITY_EVIDENCE" "$MISMATCHED_PROBE_AGE_AUTHORITY" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["publicPathChecks"]["websocket"]["observedProbeAgeSeconds"] = 1
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if run_smoke_runner \
+  --simulate \
+  --external-authority-evidence "$MISMATCHED_PROBE_AGE_AUTHORITY" \
+  --evidence-out "$TMP_DIR/mismatched-probe-age-evidence.json" \
+  --source "contract-test" \
+  --canary-path websocket >"$TMP_DIR/mismatched-probe-age.out" 2>&1; then
+  echo "runner unexpectedly accepted mismatched observed probe age" >&2
+  exit 1
+fi
+grep -q "publicPathChecks.websocket.observedProbeAgeSeconds must equal evidenceObservedAt minus lastSuccessfulProbeObservedAt" \
+  "$TMP_DIR/mismatched-probe-age.out"
+
+OVER_BUDGET_PROBE_AGE_AUTHORITY="$TMP_DIR/over-budget-probe-age-authority.json"
+python3 - "$AUTHORITY_EVIDENCE" "$OVER_BUDGET_PROBE_AGE_AUTHORITY" <<'PY'
+import json
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+observed_at = datetime.fromisoformat(
+    source["evidenceObservedAt"].replace("Z", "+00:00")
+)
+record = source["publicPathChecks"]["websocket"]
+record["lastSuccessfulProbeObservedAt"] = (
+    observed_at - timedelta(seconds=196)
+).astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+record["observedProbeAgeSeconds"] = 196
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if run_smoke_runner \
+  --simulate \
+  --external-authority-evidence "$OVER_BUDGET_PROBE_AGE_AUTHORITY" \
+  --evidence-out "$TMP_DIR/over-budget-probe-age-evidence.json" \
+  --source "contract-test" \
+  --canary-path websocket >"$TMP_DIR/over-budget-probe-age.out" 2>&1; then
+  echo "runner unexpectedly accepted green public path over detection budget" >&2
+  exit 1
+fi
+grep -q "green publicPathChecks.websocket.observedProbeAgeSeconds must be no greater than detectionBudgetSeconds" \
+  "$TMP_DIR/over-budget-probe-age.out"
+
 STALE_TIMESTAMP_AUTHORITY="$TMP_DIR/stale-timestamp-authority.json"
 python3 - "$AUTHORITY_EVIDENCE" "$STALE_TIMESTAMP_AUTHORITY" <<'PY'
 import json
@@ -1227,7 +1328,7 @@ cat >"$REQUIRED_SINGLE_PATH_AUTHORITY_EVIDENCE" <<'JSON'
     "checkRef": "check://contract/single-path/deadman"
   },
   "publicPathChecks": {
-    "websocket": {"status": "green", "evidenceRef": "probe://contract/single-path/websocket/2026-03-19T10:51:00Z", "pageEvidenceRef": "pager://contract/single-path/websocket/2026-03-19T10:50:00Z/delivery", "target": "contract-single-path-websocket"},
+    "websocket": {"status": "green", "evidenceRef": "probe://contract/single-path/websocket/2026-03-19T10:53:00Z", "pageEvidenceRef": "pager://contract/single-path/websocket/2026-03-19T10:50:00Z/delivery", "target": "contract-single-path-websocket", "lastSuccessfulProbeObservedAt": "2026-03-19T10:53:00Z", "observedProbeAgeSeconds": 120},
     "telnet": {"status": "not_applicable"}
   }
 }

@@ -37,8 +37,8 @@ cat >"$VALID_EVIDENCE" <<'JSON'
       "checkRef": "check://staging/deadman"
     },
     "publicPathChecks": {
-      "websocket": {"status": "green", "evidenceRef": "probe://staging/websocket/2026-03-19T10:51:00Z", "pageEvidenceRef": "pager://staging/websocket/2026-03-19T10:50:00Z/delivery", "target": "staging-websocket", "lastSuccessfulProbeObservedAt": "2026-03-19T10:51:00Z"},
-      "telnet": {"status": "green", "evidenceRef": "probe://staging/telnet/2026-03-19T10:51:00Z", "pageEvidenceRef": "pager://staging/telnet/2026-03-19T10:50:00Z/delivery", "target": "staging-telnet", "lastSuccessfulProbeObservedAt": "2026-03-19T10:51:00Z"}
+      "websocket": {"status": "green", "evidenceRef": "probe://staging/websocket/2026-03-19T10:53:00Z", "pageEvidenceRef": "pager://staging/websocket/2026-03-19T10:50:00Z/delivery", "target": "staging-websocket", "lastSuccessfulProbeObservedAt": "2026-03-19T10:53:00Z", "observedProbeAgeSeconds": 120},
+      "telnet": {"status": "green", "evidenceRef": "probe://staging/telnet/2026-03-19T10:53:00Z", "pageEvidenceRef": "pager://staging/telnet/2026-03-19T10:50:00Z/delivery", "target": "staging-telnet", "lastSuccessfulProbeObservedAt": "2026-03-19T10:53:00Z", "observedProbeAgeSeconds": 120}
     }
   },
   "mirroredSignals": {
@@ -230,6 +230,80 @@ if python3 "$VALIDATOR" "$MISSING_DEADMAN_PAGE_EVIDENCE" >"$TMP_DIR/missing-dead
 fi
 grep -q "externalAuthority.deadmanAuthority.pageEvidenceRef is required" \
   "$TMP_DIR/missing-deadman-page.out"
+
+MISSING_PROBE_AGE_EVIDENCE="$TMP_DIR/missing-probe-age-evidence.json"
+python3 - "$VALID_EVIDENCE" "$MISSING_PROBE_AGE_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+del source["externalAuthority"]["publicPathChecks"]["websocket"]["observedProbeAgeSeconds"]
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if python3 "$VALIDATOR" "$MISSING_PROBE_AGE_EVIDENCE" >"$TMP_DIR/missing-probe-age.out" 2>&1; then
+  echo "missing observed probe age unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "externalAuthority.publicPathChecks.websocket.observedProbeAgeSeconds must be a nonnegative finite number" \
+  "$TMP_DIR/missing-probe-age.out"
+
+INVALID_PROBE_AGE_EVIDENCE="$TMP_DIR/invalid-probe-age-evidence.json"
+python3 - "$VALID_EVIDENCE" "$INVALID_PROBE_AGE_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["externalAuthority"]["publicPathChecks"]["websocket"]["observedProbeAgeSeconds"] = -1
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if python3 "$VALIDATOR" "$INVALID_PROBE_AGE_EVIDENCE" >"$TMP_DIR/invalid-probe-age.out" 2>&1; then
+  echo "invalid observed probe age unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "externalAuthority.publicPathChecks.websocket.observedProbeAgeSeconds must be a nonnegative finite number" \
+  "$TMP_DIR/invalid-probe-age.out"
+
+MISMATCHED_PROBE_AGE_EVIDENCE="$TMP_DIR/mismatched-probe-age-evidence.json"
+python3 - "$VALID_EVIDENCE" "$MISMATCHED_PROBE_AGE_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["externalAuthority"]["publicPathChecks"]["websocket"]["observedProbeAgeSeconds"] = 121
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if python3 "$VALIDATOR" "$MISMATCHED_PROBE_AGE_EVIDENCE" >"$TMP_DIR/mismatched-probe-age.out" 2>&1; then
+  echo "mismatched observed probe age unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "externalAuthority.publicPathChecks.websocket.observedProbeAgeSeconds must equal" \
+  "$TMP_DIR/mismatched-probe-age.out"
+
+OVER_BUDGET_PROBE_AGE_EVIDENCE="$TMP_DIR/over-budget-probe-age-evidence.json"
+python3 - "$VALID_EVIDENCE" "$OVER_BUDGET_PROBE_AGE_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+record = source["externalAuthority"]["publicPathChecks"]["websocket"]
+record["lastSuccessfulProbeObservedAt"] = "2026-03-19T10:51:44Z"
+record["observedProbeAgeSeconds"] = 196
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if python3 "$VALIDATOR" "$OVER_BUDGET_PROBE_AGE_EVIDENCE" >"$TMP_DIR/over-budget-probe-age.out" 2>&1; then
+  echo "green public path over detection budget unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "externalAuthority.publicPathChecks.websocket.green observedProbeAgeSeconds must be no greater than detectionBudgetSeconds" \
+  "$TMP_DIR/over-budget-probe-age.out"
 
 MISSING_EXTERNAL_EVIDENCE_TIMESTAMP="$TMP_DIR/missing-external-evidence-timestamp.json"
 python3 - "$VALID_EVIDENCE" "$MISSING_EXTERNAL_EVIDENCE_TIMESTAMP" <<'PY'

@@ -32,7 +32,7 @@ Required fields:
 - `secretComplianceSnapshotAt`
 - `secretComplianceStatus`
 - `secretComplianceEvidenceRef`
-- `smokeEvidence` (non-empty list of closed `{ref, contentDigest}` entries; each `contentDigest` is the lowercase SHA-256 of the exact retained JSON bytes, each artifact's `deploymentRef` matches `overlayCommitSha`, each artifact's `deploymentEventId` equals the deployment record's `deploymentEventId`, and `ref` values are unique)
+- `smokeEvidence` (non-empty list of closed `{ref, contentDigest}` entries; each `contentDigest` is the SHA-256 digest of the exact retained JSON bytes, encoded exactly as `sha256:<64 lowercase hexadecimal characters>`, each artifact's `deploymentRef` matches `overlayCommitSha`, each artifact's `deploymentEventId` equals the deployment record's `deploymentEventId`, and `ref` values are unique)
 
 Target-state promotion-lineage fields (required when this record is selected as production-attestation or production-promotion evidence):
 

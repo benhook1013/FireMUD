@@ -30,7 +30,7 @@ if _EVIDENCE_VALIDATOR_SPEC is None or _EVIDENCE_VALIDATOR_SPEC.loader is None:
 _EVIDENCE_VALIDATOR = importlib.util.module_from_spec(_EVIDENCE_VALIDATOR_SPEC)
 _EVIDENCE_VALIDATOR_SPEC.loader.exec_module(_EVIDENCE_VALIDATOR)
 
-METRIC_TARGET_BY_PATH = {"websocket": "gateway", "telnet": "tcp_proxy"}
+METRIC_TARGET_BY_PATH = _EVIDENCE_VALIDATOR.METRIC_TARGET_BY_PATH
 PROMETHEUS_MIRRORS_CAPABILITY = "prometheusMirrors"
 PLAYER_FLOW_CANARY_CAPABILITY = "playerFlowCanary"
 PLAYERFLOW_CANARY_LAST_RUN_TIMESTAMP_METRIC = (
@@ -911,6 +911,7 @@ def simulated_external_authority(evidence_observed_at: str | None = None) -> dic
                 "pageEvidenceRef": f"synthetic://external-authority/{path}-page",
                 "target": f"synthetic-{path}",
                 "lastSuccessfulProbeObservedAt": observed_at,
+                "observedProbeAgeSeconds": 0,
             }
             for path in ("websocket", "telnet")
         },
@@ -1174,6 +1175,59 @@ def validate_external_authority_freshness(
     ):
         raise RuntimeError(
             f"External authority evidence at {path} green deadman observedStalenessSeconds must be no greater than staleThresholdSeconds"
+        )
+    if isinstance(checks, dict):
+        exposed_paths = set(data.get("exposedPublicPlayerPaths", []))
+        for name, record in checks.items():
+            if isinstance(record, dict) and name in exposed_paths:
+                validate_public_path_freshness(
+                    record,
+                    f"publicPathChecks.{name}",
+                    observed_epoch,
+                    detection_budget,
+                    path,
+                )
+
+
+def validate_public_path_freshness(
+    record: dict[str, Any],
+    key: str,
+    evidence_observed_epoch: float,
+    detection_budget: int | float,
+    path: Path,
+) -> None:
+    observed_probe_age = record.get("observedProbeAgeSeconds")
+    if (
+        isinstance(observed_probe_age, bool)
+        or not isinstance(observed_probe_age, (int, float))
+        or not math.isfinite(observed_probe_age)
+        or observed_probe_age < 0
+    ):
+        raise RuntimeError(
+            f"External authority evidence at {path} must define a nonnegative finite {key}.observedProbeAgeSeconds"
+        )
+    source_timestamp = record.get("lastSuccessfulProbeObservedAt")
+    if source_timestamp is None:
+        return
+    probe_epoch = dt.datetime.fromisoformat(
+        source_timestamp.replace("Z", "+00:00")
+    ).timestamp()
+    expected_probe_age = evidence_observed_epoch - probe_epoch
+    if not math.isclose(
+        observed_probe_age,
+        expected_probe_age,
+        rel_tol=0.0,
+        abs_tol=STALE_NUMERIC_TOLERANCE_SECONDS,
+    ):
+        raise RuntimeError(
+            f"External authority evidence at {path} {key}.observedProbeAgeSeconds must equal evidenceObservedAt minus lastSuccessfulProbeObservedAt within numeric tolerance"
+        )
+    if (
+        record.get("status") == "green"
+        and observed_probe_age > detection_budget + STALE_NUMERIC_TOLERANCE_SECONDS
+    ):
+        raise RuntimeError(
+            f"External authority evidence at {path} green {key}.observedProbeAgeSeconds must be no greater than detectionBudgetSeconds"
         )
 
 

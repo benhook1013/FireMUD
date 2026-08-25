@@ -818,6 +818,14 @@ def _validate_external_authority_freshness(
                     "externalAuthority.staleThresholdSeconds"
                 )
         checks = value.get("publicPathChecks")
+        exposed_paths = _declared_exposed_paths(value) or set()
+        budget = value.get("detectionBudgetSeconds")
+        budget_valid = (
+            not isinstance(budget, bool)
+            and isinstance(budget, (int, float))
+            and math.isfinite(budget)
+            and budget > 0
+        )
         if isinstance(checks, dict):
             for path, record in checks.items():
                 if isinstance(record, dict):
@@ -828,6 +836,47 @@ def _validate_external_authority_freshness(
                             observed_epoch,
                         )
                     )
+                    if path not in exposed_paths:
+                        continue
+                    observed_probe_age = record.get("observedProbeAgeSeconds")
+                    findings.extend(
+                        _validate_nonnegative_finite_number(
+                            observed_probe_age,
+                            f"externalAuthority.publicPathChecks.{path}.observedProbeAgeSeconds",
+                        )
+                    )
+                    probe_epoch = _timestamp_epoch(
+                        record.get("lastSuccessfulProbeObservedAt")
+                    )
+                    if probe_epoch is None or probe_epoch > observed_epoch:
+                        continue
+                    expected_probe_age = observed_epoch - probe_epoch
+                    if (
+                        isinstance(observed_probe_age, (int, float))
+                        and not isinstance(observed_probe_age, bool)
+                        and math.isfinite(observed_probe_age)
+                        and not math.isclose(
+                            observed_probe_age,
+                            expected_probe_age,
+                            rel_tol=0.0,
+                            abs_tol=STALE_NUMERIC_TOLERANCE_SECONDS,
+                        )
+                    ):
+                        findings.append(
+                            f"externalAuthority.publicPathChecks.{path}.observedProbeAgeSeconds must equal evidenceObservedAt minus lastSuccessfulProbeObservedAt within numeric tolerance"
+                        )
+                    if (
+                        record.get("status") == "green"
+                        and budget_valid
+                        and isinstance(observed_probe_age, (int, float))
+                        and not isinstance(observed_probe_age, bool)
+                        and math.isfinite(observed_probe_age)
+                        and observed_probe_age
+                        > budget + STALE_NUMERIC_TOLERANCE_SECONDS
+                    ):
+                        findings.append(
+                            f"externalAuthority.publicPathChecks.{path}.green observedProbeAgeSeconds must be no greater than detectionBudgetSeconds"
+                        )
     budget = value.get("detectionBudgetSeconds")
     if observed_epoch is None or verified_epoch is None:
         return findings
