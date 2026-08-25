@@ -12,7 +12,7 @@ dependencies {
     compileOnly(libs.spring.boot.starter.web)
     implementation(libs.aspectjweaver)
     compileOnly(libs.grpc.spring.boot.starter)
-    compileOnly("com.github.spotbugs:spotbugs-annotations:4.10.3")
+    compileOnly("com.github.spotbugs:spotbugs-annotations:4.10.4")
     runtimeOnly(libs.jjwt.impl)
     runtimeOnly(libs.jjwt.jackson)
 

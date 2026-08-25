@@ -67,7 +67,7 @@ dependencies {
     testFixturesImplementation(libs.spring.boot.starter.test)
     testFixturesImplementation(libs.spring.boot.starter.web)
     testFixturesImplementation(libs.grpc.spring.boot.starter)
-    testFixturesCompileOnly("com.github.spotbugs:spotbugs-annotations:4.10.3")
+    testFixturesCompileOnly("com.github.spotbugs:spotbugs-annotations:4.10.4")
     testFixturesImplementation("io.grpc:grpc-netty-shaded:${libs.versions.grpc.get()}")
     testFixturesImplementation("io.grpc:grpc-protobuf:${libs.versions.grpc.get()}")
     testFixturesImplementation("io.grpc:grpc-stub:${libs.versions.grpc.get()}")

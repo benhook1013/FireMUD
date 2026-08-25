@@ -12,6 +12,6 @@ firemudJooq {
 }
 
 dependencies {
-    compileOnly("com.github.spotbugs:spotbugs-annotations:4.10.3")
+    compileOnly("com.github.spotbugs:spotbugs-annotations:4.10.4")
     implementation(libs.aws.sdk.s3)
 }
