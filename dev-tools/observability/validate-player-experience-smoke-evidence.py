@@ -79,19 +79,19 @@ def validate_evidence(path: Path) -> list[str]:
     capabilities, capability_findings = _validate_capabilities(data.get("capabilities"))
     findings.extend(capability_findings)
     external_authority = data.get("externalAuthority")
-    findings.extend(
-        _validate_external_authority(
-            external_authority,
-            execution_mode,
-            authority_provenance,
-            data.get("verifiedAt"),
-            capabilities.get("playerFlowCanary") == "advertised",
-        )
+    external_authority_findings, exposed_paths = _validate_external_authority(
+        external_authority,
+        execution_mode,
+        authority_provenance,
+        data.get("verifiedAt"),
+        capabilities.get("playerFlowCanary") == "advertised",
     )
+    findings.extend(external_authority_findings)
     findings.extend(
         _validate_mirrored_signals(
             data.get("mirroredSignals"),
             external_authority,
+            exposed_paths,
             capabilities,
             data.get("verifiedAt"),
         )
@@ -168,9 +168,9 @@ def _validate_external_authority(
     authority_provenance: Any,
     verified_at: Any,
     canary_advertised: bool,
-) -> list[str]:
+) -> tuple[list[str], set[str]]:
     if not isinstance(value, dict):
-        return ["externalAuthority is required"]
+        return ["externalAuthority is required"], set()
     profile = value.get("profile")
     allow_synthetic_refs = (
         execution_mode == "simulated" and authority_provenance == "synthetic"
@@ -178,7 +178,7 @@ def _validate_external_authority(
     if profile not in MONITORING_PROFILES:
         return [
             "externalAuthority.profile must be independent-required or independent-omitted"
-        ]
+        ], set()
     findings, exposed_paths = _validate_exposed_paths(value)
     if profile == "independent-omitted":
         findings.extend(_validate_omitted_authority(value))
@@ -197,7 +197,7 @@ def _validate_external_authority(
                 "externalAuthority.independent-omitted must not include external authority fields: "
                 + ", ".join(unexpected)
             )
-        return findings
+        return findings, exposed_paths
 
     findings.extend(
         _validate_positive_finite_number(
@@ -217,7 +217,9 @@ def _validate_external_authority(
             "externalAuthority.observedStalenessSeconds",
         )
     )
-    findings.extend(_validate_external_authority_freshness(value, verified_at))
+    findings.extend(
+        _validate_external_authority_freshness(value, verified_at, exposed_paths)
+    )
 
     deadman = value.get("deadmanAuthority")
     if not isinstance(deadman, dict):
@@ -235,7 +237,7 @@ def _validate_external_authority(
     checks = value.get("publicPathChecks")
     if not isinstance(checks, dict):
         findings.append("externalAuthority.publicPathChecks is required")
-        return findings
+        return findings, exposed_paths
     missing = sorted(REQUIRED_PUBLIC_PATHS - checks.keys())
     if missing:
         findings.append("externalAuthority.publicPathChecks missing: " + ", ".join(missing))
@@ -262,7 +264,7 @@ def _validate_external_authority(
                 )
             )
     findings.extend(_validate_required_source_timestamps(value, exposed_paths))
-    return findings
+    return findings, exposed_paths
 
 
 def _validate_exposed_paths(value: dict[str, Any]) -> tuple[list[str], set[str]]:
@@ -380,14 +382,12 @@ def _validate_required_source_timestamps(
 def _validate_mirrored_signals(
     value: Any,
     external_authority: Any,
+    exposed_paths: set[str],
     capabilities: dict[str, str],
     verified_at: Any,
 ) -> list[str]:
     if not isinstance(value, dict):
         return ["mirroredSignals is required"]
-    exposed_paths = _declared_exposed_paths(external_authority)
-    if exposed_paths is None:
-        exposed_paths = set()
     profile = external_authority.get("profile") if isinstance(external_authority, dict) else None
     findings: list[str] = []
     mirrors_published = capabilities.get("prometheusMirrors") == "published"
@@ -459,15 +459,6 @@ def _validate_mirrored_signals(
             "mirroredSignals player-flow canary records require capabilities.playerFlowCanary=advertised"
         )
     return findings
-
-
-def _declared_exposed_paths(value: Any) -> set[str] | None:
-    if not isinstance(value, dict):
-        return None
-    paths = value.get("exposedPublicPlayerPaths")
-    if not isinstance(paths, list) or any(not isinstance(path, str) for path in paths):
-        return None
-    return set(paths)
 
 
 def _validate_entrypath_signals(value: Any, exposed_paths: set[str]) -> list[str]:
@@ -608,15 +599,11 @@ def _validate_playerflow_latency(
             )
             continue
         seen.add(key)
-        if not isinstance(record.get("value"), (int, float)):
-            findings.append(
-                "playerflow_canary_latency_ms command values must be numeric"
+        findings.extend(
+            _validate_nonnegative_finite_number(
+                record.get("value"), "playerflow_canary_latency_ms values"
             )
-            continue
-        if record["value"] < 0:
-            findings.append(
-                "playerflow_canary_latency_ms values must be non-negative"
-            )
+        )
         findings.extend(
             _validate_metric_target(
                 record, path, "playerflow_canary_latency_ms", profile
@@ -762,7 +749,7 @@ def _validate_canary_detection_budget_minimum(value: Any) -> list[str]:
 
 
 def _validate_external_authority_freshness(
-    value: dict[str, Any], verified_at: Any
+    value: dict[str, Any], verified_at: Any, exposed_paths: set[str]
 ) -> list[str]:
     key = "externalAuthority.evidenceObservedAt"
     findings = _validate_timestamp(value.get("evidenceObservedAt"), key)
@@ -820,7 +807,6 @@ def _validate_external_authority_freshness(
                     "externalAuthority.staleThresholdSeconds"
                 )
         checks = value.get("publicPathChecks")
-        exposed_paths = _declared_exposed_paths(value) or set()
         budget = value.get("detectionBudgetSeconds")
         budget_valid = (
             not isinstance(budget, bool)

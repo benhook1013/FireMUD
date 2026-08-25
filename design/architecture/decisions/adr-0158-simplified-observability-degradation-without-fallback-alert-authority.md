@@ -121,6 +121,7 @@ Revisit the optional diagnostic snapshot only if operators demonstrate that dire
 
 - [design/architecture/system-architecture-logging-monitoring.md](../system-architecture-logging-monitoring.md)
 - [design/architecture/system-architecture-observability-incident-runbook.md](../system-architecture-observability-incident-runbook.md)
+- [k8s/overlays/monitoring/independent-required-prometheus-published/prometheus-rules-firemud-independent-required.yaml](../../../k8s/overlays/monitoring/independent-required-prometheus-published/prometheus-rules-firemud-independent-required.yaml)
 - [design/architecture/microservices/logging-admin-service/README.md](../microservices/logging-admin-service/README.md)
 - [design/architecture/microservices/logging-admin-service/admin-ui.md](../microservices/logging-admin-service/admin-ui.md)
 - [design/observability/README.md](../../observability/README.md)

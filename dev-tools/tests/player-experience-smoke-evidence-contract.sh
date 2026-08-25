@@ -105,6 +105,24 @@ grep -q "capabilities.playerFlowCanary must be one of advertised, omitted" \
 grep -q "capabilities.prometheusMirrors must be one of omitted, published" \
   "$TMP_DIR/invalid-capabilities.out"
 
+INVALID_LIVE_PROVENANCE_EVIDENCE="$TMP_DIR/invalid-live-provenance-evidence.json"
+python3 - "$VALID_EVIDENCE" "$INVALID_LIVE_PROVENANCE_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["externalAuthorityProvenance"] = "synthetic"
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if python3 "$VALIDATOR" "$INVALID_LIVE_PROVENANCE_EVIDENCE" >"$TMP_DIR/invalid-live-provenance.out" 2>&1; then
+  echo "live evidence with synthetic authority provenance unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "live evidence must use retained-external authority provenance" \
+  "$TMP_DIR/invalid-live-provenance.out"
+
 STALE_CANARY_EVIDENCE="$TMP_DIR/stale-canary-evidence.json"
 python3 - "$VALID_EVIDENCE" "$STALE_CANARY_EVIDENCE" <<'PY'
 import json
@@ -583,6 +601,32 @@ if python3 "$VALIDATOR" "$DUPLICATE_CANARY_LATENCY_EVIDENCE" >"$TMP_DIR/duplicat
 fi
 grep -q "playerflow_canary_latency_ms must not duplicate flow/path: command/websocket" \
   "$TMP_DIR/duplicate-canary-latency.out"
+
+for invalid_latency_kind in bool nan infinity; do
+  INVALID_CANARY_LATENCY_EVIDENCE="$TMP_DIR/invalid-canary-latency-$invalid_latency_kind.json"
+  python3 - "$VALID_EVIDENCE" "$INVALID_CANARY_LATENCY_EVIDENCE" "$invalid_latency_kind" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+invalid_latency = {
+    "bool": True,
+    "nan": float("nan"),
+    "infinity": float("inf"),
+}[sys.argv[3]]
+source["mirroredSignals"]["playerflow_canary_latency_ms"][0]["value"] = invalid_latency
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+  if python3 "$VALIDATOR" "$INVALID_CANARY_LATENCY_EVIDENCE" \
+    >"$TMP_DIR/invalid-canary-latency-$invalid_latency_kind.out" 2>&1; then
+    echo "$invalid_latency_kind canary latency unexpectedly passed" >&2
+    exit 1
+  fi
+  grep -q "playerflow_canary_latency_ms values must be a nonnegative finite number" \
+    "$TMP_DIR/invalid-canary-latency-$invalid_latency_kind.out"
+done
 
 MINIMUM_CANARY_BUDGET_EVIDENCE="$TMP_DIR/minimum-canary-budget-evidence.json"
 python3 - "$VALID_EVIDENCE" "$MINIMUM_CANARY_BUDGET_EVIDENCE" <<'PY'

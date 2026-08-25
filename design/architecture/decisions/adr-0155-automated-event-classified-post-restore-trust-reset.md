@@ -136,6 +136,8 @@ This creates procedural evidence without a production-data risk when the source 
 
 Current implementation does not satisfy this decision. The existing cluster restore helper restarts workloads without enforcing quarantine; no resumable recovery controller or post-restore trust-disposition orchestrator exists; JWT and database credential rotation and certificate convergence are not automated; external-binding validation still consumes legacy evidence fields; and no production-equivalent proof exercises the complete boundary.
 
+Select and report the required checks and evidence under the shared [Validation and Runtime Proof](../../developer-workflows/validation-and-runtime-proof.md) workflow; record execution results in PR/CI evidence or the owning implementation tracker rather than in this decision record.
+
 Implementation must:
 
 - represent restore classification, universal controls, per-credential dispositions, diagnostics, and controlled-reopen progress in durable monotonic recovery state;

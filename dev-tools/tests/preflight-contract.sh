@@ -3621,6 +3621,10 @@ smoke_evidence_path.write_text(
     ),
     encoding="utf-8",
 )
+recovery_smoke_entry = {
+    "ref": smoke_evidence_ref,
+    "contentDigest": "sha256:" + hashlib.sha256(smoke_evidence_path.read_bytes()).hexdigest(),
+}
 
 original_subprocess_run = module.subprocess.run
 
@@ -4038,7 +4042,7 @@ def canonical_recovery_record(finalized_at):
             },
         },
         "smokeStatus": "pass",
-        "smokeEvidence": [smoke_evidence_ref],
+        "smokeEvidence": [recovery_smoke_entry],
         "evidenceRefs": ["evidence/recovery-baseline.json"],
         "reopenApprovedBy": "preflight-contract",
     }
@@ -4081,6 +4085,53 @@ if stub_status != "fail" or "canonical finalized projection fields" not in stub_
     raise SystemExit(f"seven-field recovery baseline was accepted: {stub_message}")
 
 valid_baseline = canonical_recovery_record(now - module.dt.timedelta(minutes=10))
+malformed_recovery_smoke_path = recovery_dir / "malformed-smoke-baseline.json"
+malformed_recovery_smoke_path.write_text(
+    json.dumps({**valid_baseline, "smokeEvidence": [smoke_evidence_ref]}),
+    encoding="utf-8",
+)
+malformed_recovery_smoke_status, malformed_recovery_smoke_message = module.validate_recovery_baseline(
+    tmp,
+    str(malformed_recovery_smoke_path.relative_to(tmp)),
+    "sha256:recovery-contract",
+    now,
+    now,
+)
+if (
+    malformed_recovery_smoke_status != "fail"
+    or "exactly ref and contentDigest" not in malformed_recovery_smoke_message
+):
+    raise SystemExit(
+        "string recovery smoke evidence was accepted: " + malformed_recovery_smoke_message
+    )
+
+wrong_recovery_digest_path = recovery_dir / "wrong-digest-smoke-baseline.json"
+wrong_recovery_digest_path.write_text(
+    json.dumps(
+        {
+            **valid_baseline,
+            "smokeEvidence": [
+                {**recovery_smoke_entry, "contentDigest": "sha256:" + "0" * 64}
+            ],
+        }
+    ),
+    encoding="utf-8",
+)
+wrong_recovery_digest_status, wrong_recovery_digest_message = module.validate_recovery_baseline(
+    tmp,
+    str(wrong_recovery_digest_path.relative_to(tmp)),
+    "sha256:recovery-contract",
+    now,
+    now,
+)
+if (
+    wrong_recovery_digest_status != "fail"
+    or "contentDigest does not match" not in wrong_recovery_digest_message
+):
+    raise SystemExit(
+        "recovery smoke evidence digest mismatch was accepted: " + wrong_recovery_digest_message
+    )
+
 baseline_path = recovery_dir / "baseline.json"
 baseline_path.write_text(json.dumps(valid_baseline), encoding="utf-8")
 baseline_status, baseline_message = module.validate_recovery_baseline(
@@ -6239,6 +6290,12 @@ promotion_smoke_entry = {
     "ref": smoke_evidence_ref,
     "contentDigest": "sha256:" + hashlib.sha256(promotion_smoke_evidence_path.read_bytes()).hexdigest(),
 }
+promotion_baseline_smoke_path = promotion_root / "evidence/recovery-baseline-smoke.json"
+promotion_baseline_smoke_path.write_bytes(smoke_evidence_path.read_bytes())
+promotion_baseline_smoke_entry = {
+    "ref": str(promotion_baseline_smoke_path.relative_to(promotion_root)),
+    "contentDigest": "sha256:" + hashlib.sha256(promotion_baseline_smoke_path.read_bytes()).hexdigest(),
+}
 staging_record = {
     "environment": "staging",
     "overlayCommitSha": staging_sha,
@@ -6267,7 +6324,8 @@ staging_record_path = staging_dir / f"{staging_event_id}.json"
 staging_record_path.write_text(json.dumps(staging_record), encoding="utf-8")
 promotion_recovery_dir = promotion_root / "design/operations/deployments/production/recovery"
 promotion_recovery_dir.mkdir(parents=True)
-(promotion_recovery_dir / "baseline.json").write_text(json.dumps(valid_baseline), encoding="utf-8")
+promotion_baseline = {**valid_baseline, "smokeEvidence": [promotion_baseline_smoke_entry]}
+(promotion_recovery_dir / "baseline.json").write_text(json.dumps(promotion_baseline), encoding="utf-8")
 promotion_verified_point_dir = promotion_root / module.VERIFIED_RESTORABLE_POINT_DIRECTORY
 promotion_verified_point_dir.mkdir(parents=True)
 promotion_verified_point_path = promotion_verified_point_dir / "current.json"
@@ -6465,7 +6523,7 @@ if (
     )
 
 recovery_independent_omitted_path = promotion_recovery_dir / "independent-omitted-baseline.json"
-recovery_independent_omitted = {**valid_baseline, "smokeEvidence": [smoke_evidence_ref]}
+recovery_independent_omitted = {**valid_baseline, "smokeEvidence": [independent_omitted_entry]}
 recovery_independent_omitted_path.write_text(json.dumps(recovery_independent_omitted), encoding="utf-8")
 recovery_independent_omitted_status, recovery_independent_omitted_message = module.validate_recovery_baseline(
     promotion_root,
@@ -6981,9 +7039,14 @@ simulated_smoke_status, _, simulated_smoke_message, _, _ = module.promotion_chec
 if simulated_smoke_status != "fail" or "executionMode must be live" not in simulated_smoke_message:
     raise SystemExit(f"simulated smoke evidence was accepted for promotion: {simulated_smoke_message}")
 
+simulated_recovery_baseline_path = promotion_recovery_dir / "simulated-baseline.json"
+simulated_recovery_baseline_path.write_text(
+    json.dumps({**valid_baseline, "smokeEvidence": [simulated_smoke_entry]}),
+    encoding="utf-8",
+)
 simulated_recovery_status, simulated_recovery_message = module.validate_recovery_baseline(
     promotion_root,
-    str((promotion_recovery_dir / "baseline.json").relative_to(promotion_root)),
+    str(simulated_recovery_baseline_path.relative_to(promotion_root)),
     "sha256:recovery-contract",
     now,
     now,

@@ -2014,10 +2014,22 @@ def validate_recovery_baseline(
         return ("fail", "Recovery compatibility baseline smokeStatus must be pass")
     if not isinstance(baseline.get("smokeEvidence"), list) or not baseline["smokeEvidence"]:
         return ("fail", "Recovery compatibility baseline smokeEvidence must be a non-empty list")
-    smoke_status, smoke_message = validate_retained_smoke_evidence(
-        root_dir,
+    smoke_shape_status, smoke_shape_message = validate_promotion_smoke_evidence_entry_shape(
         baseline["smokeEvidence"],
         "Recovery compatibility baseline smokeEvidence",
+    )
+    if smoke_shape_status != "pass":
+        return ("fail", smoke_shape_message)
+    smoke_references = [entry["ref"] for entry in baseline["smokeEvidence"]]
+    smoke_expected_content_digests = [
+        entry["contentDigest"] for entry in baseline["smokeEvidence"]
+    ]
+    smoke_status, smoke_message, _ = _load_validated_retained_smoke_evidence(
+        root_dir,
+        smoke_references,
+        "Recovery compatibility baseline smokeEvidence",
+        smoke_expected_content_digests,
+        reference_diagnostic_suffix=".ref",
     )
     if smoke_status != "pass":
         return ("fail", smoke_message)

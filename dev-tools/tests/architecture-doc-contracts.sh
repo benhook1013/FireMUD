@@ -1424,6 +1424,9 @@ require_section_contains(
     "Hobby Traffic-Open Evidence",
     [
         "`trafficOpenStatus` (`finalized` in the checked-in projection",
+        "`backupComplianceRecordVersion`",
+        "`backupComplianceRecordDigest`",
+        "must not dereference a mutable current `backup-compliance.yaml` alias",
         "it does not perform or authorize controller continuation or release",
         "cannot be reused for a later event",
     ],
