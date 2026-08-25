@@ -6160,7 +6160,6 @@ promotion_smoke_entry = {
     "ref": smoke_evidence_ref,
     "contentDigest": "sha256:" + hashlib.sha256(promotion_smoke_evidence_path.read_bytes()).hexdigest(),
 }
-staging_record_path = staging_dir / f"{staging_event_id}.json"
 staging_record = {
     "environment": "staging",
     "overlayCommitSha": staging_sha,
@@ -6275,6 +6274,82 @@ if (
 promotion_attestation_data = json.loads(promotion_attestation_path.read_text(encoding="utf-8"))
 valid_smoke_evidence = json.loads(promotion_smoke_evidence_path.read_text(encoding="utf-8"))
 valid_promotion_smoke_bytes = promotion_smoke_evidence_path.read_bytes()
+
+independent_omitted_smoke = {
+    **valid_smoke_evidence,
+    "externalAuthority": {
+        "profile": "independent-omitted",
+        "reason": "contract test omits independent external authority",
+        "exposedPublicPlayerPaths": ["websocket", "telnet"],
+        "detectionBudgetSeconds": 195,
+    },
+}
+independent_omitted_smoke["mirroredSignals"] = {
+    **independent_omitted_smoke["mirroredSignals"],
+}
+independent_omitted_smoke["mirroredSignals"].pop(
+    "observability_deadman_heartbeat_timestamp_seconds", None
+)
+for signal_name in (
+    "playerflow_canary_success",
+    "playerflow_canary_latency_ms",
+    "playerflow_canary_last_run_timestamp_seconds",
+):
+    independent_omitted_smoke["mirroredSignals"][signal_name] = [
+        {**signal, "profile": "independent-omitted"}
+        for signal in independent_omitted_smoke["mirroredSignals"][signal_name]
+    ]
+independent_omitted_smoke["mirroredSignals"]["playerflow_canary_freshness_budget_seconds"] = {
+    "profile": "independent-omitted",
+    "value": 195,
+}
+promotion_smoke_evidence_path.write_text(json.dumps(independent_omitted_smoke), encoding="utf-8")
+independent_omitted_entry = {
+    "ref": smoke_evidence_ref,
+    "contentDigest": "sha256:" + hashlib.sha256(promotion_smoke_evidence_path.read_bytes()).hexdigest(),
+}
+promotion_attestation_path.write_text(
+    json.dumps({**promotion_attestation_data, "smokeEvidence": [independent_omitted_entry]}),
+    encoding="utf-8",
+)
+staging_record_path.write_text(
+    json.dumps({**staging_record, "smokeEvidence": [independent_omitted_entry]}),
+    encoding="utf-8",
+)
+independent_omitted_status, _, independent_omitted_message, _, _ = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if (
+    independent_omitted_status != "fail"
+    or "independent-omitted cannot satisfy promotion smoke evidence" not in independent_omitted_message
+):
+    raise SystemExit(
+        "independent-omitted promotion smoke evidence was accepted: "
+        + independent_omitted_message
+    )
+
+recovery_independent_omitted_path = promotion_recovery_dir / "independent-omitted-baseline.json"
+recovery_independent_omitted = {**valid_baseline, "smokeEvidence": [smoke_evidence_ref]}
+recovery_independent_omitted_path.write_text(json.dumps(recovery_independent_omitted), encoding="utf-8")
+recovery_independent_omitted_status, recovery_independent_omitted_message = module.validate_recovery_baseline(
+    promotion_root,
+    str(recovery_independent_omitted_path.relative_to(promotion_root)),
+    "sha256:recovery-contract",
+    now,
+    now,
+)
+if recovery_independent_omitted_status != "pass":
+    raise SystemExit(
+        "independent-omitted recovery-baseline smoke evidence was rejected: "
+        + recovery_independent_omitted_message
+    )
+
+promotion_smoke_evidence_path.write_bytes(valid_promotion_smoke_bytes)
+promotion_attestation_path.write_text(json.dumps(promotion_attestation_data), encoding="utf-8")
+staging_record_path.write_text(json.dumps(staging_record), encoding="utf-8")
 
 malformed_entry_attestation = {
     **promotion_attestation_data,

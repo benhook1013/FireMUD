@@ -182,6 +182,11 @@ def main() -> int:
     final_evaluation_epoch = dt.datetime.fromisoformat(
         verified_at.replace("Z", "+00:00")
     ).timestamp()
+    # Re-read retained authority after the smoke run so final freshness checks
+    # cannot trust a snapshot that changed while the run was executing.
+    external_authority = resolve_external_authority(
+        config, injected, args.simulate, final_evaluation_epoch
+    )
     validate_external_authority_freshness(
         external_authority,
         config.external_authority_evidence or Path("<synthetic external authority>"),

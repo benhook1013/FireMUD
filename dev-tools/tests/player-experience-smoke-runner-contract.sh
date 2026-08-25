@@ -474,6 +474,73 @@ finally:
 assert not evidence_path.exists()
 PY
 
+POST_EXECUTION_CHANGED_AUTHORITY="$TMP_DIR/post-execution-changed-authority.json"
+refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
+python3 - "$AUTHORITY_EVIDENCE" "$POST_EXECUTION_CHANGED_AUTHORITY" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+refresh_external_authority_fixture "$POST_EXECUTION_CHANGED_AUTHORITY"
+
+run_clean_python - "$RUNNER" "$POST_EXECUTION_CHANGED_AUTHORITY" "$TMP_DIR/post-execution-changed-evidence.json" <<'PY'
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+runner_path = Path(sys.argv[1])
+authority_path = Path(sys.argv[2])
+evidence_path = Path(sys.argv[3])
+spec = importlib.util.spec_from_file_location("player_experience_smoke_changed_authority", runner_path)
+assert spec is not None and spec.loader is not None
+runner = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = runner
+spec.loader.exec_module(runner)
+
+original_execute_smoke = runner.execute_smoke
+
+
+def changed_execute_smoke(*args):
+    source = json.loads(authority_path.read_text(encoding="utf-8"))
+    source["evidenceObservedAt"] = "2099-03-19T10:55:00Z"
+    authority_path.write_text(json.dumps(source), encoding="utf-8")
+    return original_execute_smoke(*args)
+
+
+runner.execute_smoke = changed_execute_smoke
+original_argv = sys.argv
+sys.argv = [
+    str(runner_path),
+    "--simulate",
+    "--external-authority-evidence",
+    str(authority_path),
+    "--prometheus-mirrors",
+    "omitted",
+    "--player-flow-canary",
+    "omitted",
+    "--evidence-out",
+    str(evidence_path),
+    "--source",
+    "contract-test",
+    "--canary-path",
+    "websocket",
+]
+try:
+    try:
+        runner.main()
+    except RuntimeError as exc:
+        assert "evidenceObservedAt cannot be in the future" in str(exc)
+    else:
+        raise AssertionError("runner accepted authority changed during execution")
+finally:
+    sys.argv = original_argv
+assert not evidence_path.exists()
+PY
+
 grep -q 'playerflow_canary_success{flow="login",path="websocket",target="gateway",profile="independent-required"} 1' "$SUCCESS_METRICS"
 grep -q 'playerflow_canary_success{flow="command",path="websocket",target="gateway",profile="independent-required"} 1' "$SUCCESS_METRICS"
 grep -q 'playerflow_canary_success{flow="login",path="telnet",target="tcp_proxy",profile="independent-required"} 1' "$SUCCESS_METRICS"

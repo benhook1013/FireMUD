@@ -1453,11 +1453,13 @@ def validate_erasure_overlay_reconciliation(
     )
 
 
-def validate_retained_smoke_evidence(
+def _load_validated_retained_smoke_evidence(
     root_dir: Path,
     smoke_evidence: Any,
     label: str,
-) -> tuple[str, str]:
+    expected_content_digests: list[str] | None = None,
+    reference_diagnostic_suffix: str = "",
+) -> tuple[str, str, list[tuple[int, Path, dict[str, Any]]]]:
     """Validate smoke evidence through the canonical player-experience validator.
 
     Promotion and recovery authorization currently support retained JSON evidence
@@ -1467,34 +1469,67 @@ def validate_retained_smoke_evidence(
     """
 
     if not isinstance(smoke_evidence, list) or not smoke_evidence:
-        return ("fail", f"{label} must be a non-empty list")
+        return ("fail", f"{label} must be a non-empty list", [])
+    if expected_content_digests is not None and len(expected_content_digests) != len(smoke_evidence):
+        return ("fail", f"{label} content digest count does not match evidence count", [])
 
     resolved_root = root_dir.resolve()
+    loaded_evidence: list[tuple[int, Path, dict[str, Any]]] = []
     for index, evidence_ref in enumerate(smoke_evidence):
         entry_label = f"{label}[{index}]"
+        reference_label = f"{entry_label}{reference_diagnostic_suffix}"
         if not isinstance(evidence_ref, str) or not evidence_ref.strip():
-            return ("fail", f"{entry_label} must be a non-empty repository-relative JSON reference")
+            return (
+                "fail",
+                f"{reference_label} must be a non-empty repository-relative JSON reference",
+                [],
+            )
         reference_path = Path(evidence_ref)
         if reference_path.is_absolute():
-            return ("fail", f"{entry_label} must be a repository-relative JSON reference")
+            return (
+                "fail",
+                f"{reference_label} must be a repository-relative JSON reference",
+                [],
+            )
 
         evidence_path = resolve_repo_path(root_dir, evidence_ref).resolve()
         if not evidence_path.is_relative_to(resolved_root):
-            return ("fail", f"{entry_label} must resolve within the repository")
+            return (
+                "fail",
+                f"{reference_label} must resolve within the repository",
+                [],
+            )
         if not evidence_path.is_file():
-            return ("fail", f"{entry_label} retained evidence file not found: {evidence_ref}")
+            return ("fail", f"{entry_label} retained evidence file not found: {evidence_ref}", [])
+        evidence_bytes: bytes | None = None
+        if expected_content_digests is not None:
+            try:
+                evidence_bytes = evidence_path.read_bytes()
+            except (OSError, UnicodeError) as exc:
+                return ("fail", f"{entry_label} retained evidence file could not be read: {exc}", [])
+            actual_digest = "sha256:" + hashlib.sha256(evidence_bytes).hexdigest()
+            if expected_content_digests[index] != actual_digest:
+                return (
+                    "fail",
+                    f"{entry_label}.contentDigest does not match the exact retained evidence file bytes",
+                    [],
+                )
         try:
-            evidence = load_json(evidence_path)
+            if evidence_bytes is not None:
+                evidence = json.loads(evidence_bytes.decode("utf-8"))
+            else:
+                evidence = load_json(evidence_path)
         except JSON_READ_ERRORS as exc:
-            return ("fail", f"{entry_label} retained evidence JSON unreadable: {exc}")
+            return ("fail", f"{entry_label} retained evidence JSON unreadable: {exc}", [])
         if not isinstance(evidence, dict):
-            return ("fail", f"{entry_label} retained evidence must be a JSON object")
+            return ("fail", f"{entry_label} retained evidence must be a JSON object", [])
         if evidence.get("executionMode") != "live":
-            return ("fail", f"{entry_label} executionMode must be live for promotion or recovery authority")
+            return ("fail", f"{entry_label} executionMode must be live for promotion or recovery authority", [])
         if evidence.get("externalAuthorityProvenance") != "retained-external":
             return (
                 "fail",
                 f"{entry_label} externalAuthorityProvenance must be retained-external for promotion or recovery authority",
+                [],
             )
 
         try:
@@ -1509,21 +1544,38 @@ def validate_retained_smoke_evidence(
             return (
                 "fail",
                 f"{entry_label} canonical player-experience smoke evidence validation timed out",
+                [],
             )
         except (OSError, UnicodeError) as exc:
             detail = " ".join(str(exc).split())
             return (
                 "fail",
                 f"{entry_label} canonical player-experience smoke evidence validation could not run: {detail}",
+                [],
             )
         if validation.returncode != 0:
             detail = " ".join((validation.stderr or validation.stdout).split())
             return (
                 "fail",
                 f"{entry_label} failed canonical player-experience smoke evidence validation: {detail}",
+                [],
             )
+        loaded_evidence.append((index, evidence_path, evidence))
 
-    return ("pass", f"{label} is valid retained player-experience smoke evidence")
+    return ("pass", f"{label} is valid retained player-experience smoke evidence", loaded_evidence)
+
+
+def validate_retained_smoke_evidence(
+    root_dir: Path,
+    smoke_evidence: Any,
+    label: str,
+) -> tuple[str, str]:
+    status, message, _ = _load_validated_retained_smoke_evidence(
+        root_dir,
+        smoke_evidence,
+        label,
+    )
+    return (status, message)
 
 
 def validate_promotion_smoke_evidence_entry_shape(
@@ -1571,47 +1623,27 @@ def validate_promotion_smoke_evidence(
     if shape_status != "pass":
         return (shape_status, shape_message)
 
-    resolved_root = root_dir.resolve()
-    references: list[str] = []
-    loaded_evidence: list[tuple[int, Path, dict[str, Any]]] = []
-    for index, entry in enumerate(smoke_evidence):
-        entry_label = f"{label}[{index}]"
-        reference = entry["ref"]
-        reference_path = Path(reference)
-        if reference_path.is_absolute():
-            return ("fail", f"{entry_label}.ref must be a repository-relative JSON reference")
-        evidence_path = resolve_repo_path(root_dir, reference).resolve()
-        if not evidence_path.is_relative_to(resolved_root):
-            return ("fail", f"{entry_label}.ref must resolve within the repository")
-        if not evidence_path.is_file():
-            return ("fail", f"{entry_label} retained evidence file not found: {reference}")
-        try:
-            evidence_bytes = evidence_path.read_bytes()
-        except (OSError, UnicodeError) as exc:
-            return ("fail", f"{entry_label} retained evidence file could not be read: {exc}")
-        actual_digest = "sha256:" + hashlib.sha256(evidence_bytes).hexdigest()
-        if entry["contentDigest"] != actual_digest:
-            return (
-                "fail",
-                f"{entry_label}.contentDigest does not match the exact retained evidence file bytes",
-            )
-        try:
-            evidence = load_json(evidence_path)
-        except JSON_READ_ERRORS as exc:
-            return ("fail", f"{entry_label} retained evidence JSON unreadable: {exc}")
-        if not isinstance(evidence, dict):
-            return ("fail", f"{entry_label} retained evidence must be a JSON object")
-        references.append(reference)
-        loaded_evidence.append((index, evidence_path, evidence))
-
-    retained_status, retained_message = validate_retained_smoke_evidence(
+    references = [entry["ref"] for entry in smoke_evidence]
+    expected_content_digests = [entry["contentDigest"] for entry in smoke_evidence]
+    retained_status, retained_message, loaded_evidence = _load_validated_retained_smoke_evidence(
         root_dir,
         references,
         label,
+        expected_content_digests,
+        reference_diagnostic_suffix=".ref",
     )
     if retained_status != "pass":
         return (retained_status, retained_message)
     for index, _, evidence in loaded_evidence:
+        external_authority = evidence.get("externalAuthority")
+        if (
+            isinstance(external_authority, dict)
+            and external_authority.get("profile") == "independent-omitted"
+        ):
+            return (
+                "fail",
+                f"{label}[{index}] externalAuthority.profile independent-omitted cannot satisfy promotion smoke evidence",
+            )
         if evidence.get("deploymentRef") != staging_deployment_ref:
             return (
                 "fail",

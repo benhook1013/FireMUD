@@ -31,7 +31,18 @@ PY
 cat > "$BIN_DIR/velero" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' 'backup-1 Completed'
+case "${FAKE_AWS_SCENARIO:-}" in
+  velero-error)
+    echo 'simulated Velero listing failure' >&2
+    exit 42
+    ;;
+  velero-empty)
+    exit 0
+    ;;
+  *)
+    printf '%s\n' 'backup-1 Completed'
+    ;;
+esac
 EOF
 
 cat > "$BIN_DIR/aws" <<'EOF'
@@ -127,6 +138,8 @@ for script in "$ROOT_DIR/dev-tools/backups/verify-backups.sh" "$EMBEDDED_SCRIPT"
   run_case "$script" earlier-match-later-empty 0 'Latest pg_dump: 15min/firemud_20260825000500.sql.gz'
   run_case "$script" no-match 1 'No valid .sql.gz pg_dump files found'
   run_case "$script" aws-error 1 'simulated AWS listing failure' 'No valid .sql.gz pg_dump files found'
+  run_case "$script" velero-error 1 'simulated Velero listing failure' 'No Velero backups found'
+  run_case "$script" velero-empty 1 'No Velero backups found'
 done
 
 echo 'verify-backups Velero pagination contract checks passed'

@@ -58,7 +58,7 @@ Illustrative retained evidence shape for a hosted-assurance observability smoke;
     ],
     "observability_deadman_heartbeat_timestamp_seconds": {
       "source": "staging",
-      "value": 1773917600
+      "value": 1773917640
     },
     "observability_deadman_stale": {
       "profile": "independent-required",
