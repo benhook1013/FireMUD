@@ -6812,6 +6812,10 @@ promotion_attestation_path.write_text(
     json.dumps({**promotion_attestation_data, "smokeEvidence": [missing_deployment_event_entry]}),
     encoding="utf-8",
 )
+staging_record_path.write_text(
+    json.dumps({**staging_record, "smokeEvidence": [missing_deployment_event_entry]}),
+    encoding="utf-8",
+)
 missing_deployment_event_status, _, missing_deployment_event_message, _, _ = module.promotion_check(
     promotion_attestation_path,
     [gateway_image, account_image],
@@ -6832,6 +6836,10 @@ wrong_deployment_event_entry = {
 }
 promotion_attestation_path.write_text(
     json.dumps({**promotion_attestation_data, "smokeEvidence": [wrong_deployment_event_entry]}),
+    encoding="utf-8",
+)
+staging_record_path.write_text(
+    json.dumps({**staging_record, "smokeEvidence": [wrong_deployment_event_entry]}),
     encoding="utf-8",
 )
 wrong_deployment_event_status, _, wrong_deployment_event_message, _, _ = module.promotion_check(

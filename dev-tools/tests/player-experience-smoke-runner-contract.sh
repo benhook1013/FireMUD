@@ -533,6 +533,7 @@ source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 source["detectionBudgetSeconds"] = 179
 Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
 PY
+refresh_external_authority_fixture "$REQUIRED_179_CANARY_AUTHORITY"
 
 if run_smoke_runner \
   --simulate \
