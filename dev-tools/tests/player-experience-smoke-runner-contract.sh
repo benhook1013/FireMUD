@@ -77,6 +77,7 @@ observed_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().repl
 )
 source["evidenceObservedAt"] = observed_at
 source["lastSuccessfulHeartbeatObservedAt"] = observed_at
+source["observedStalenessSeconds"] = 0
 for record in source.get("publicPathChecks", {}).values():
     if record.get("status") == "green":
         record["lastSuccessfulProbeObservedAt"] = observed_at
@@ -249,16 +250,19 @@ cat >"$AUTHORITY_EVIDENCE" <<'JSON'
   "profile": "independent-required",
   "exposedPublicPlayerPaths": ["websocket", "telnet"],
   "detectionBudgetSeconds": 195,
+  "staleThresholdSeconds": 180,
+  "observedStalenessSeconds": 60,
   "lastSuccessfulHeartbeatObservedAt": "2026-03-19T10:54:00Z",
   "deadmanAuthority": {
     "status": "green",
     "evidenceRef": "pager://contract/deadman/2026-03-19T10:50:00Z",
+    "pageEvidenceRef": "pager://contract/deadman/2026-03-19T10:50:00Z/delivery",
     "target": "contract-deadman-authority",
     "checkRef": "check://contract/deadman"
   },
   "publicPathChecks": {
-    "websocket": {"status": "green", "evidenceRef": "probe://contract/websocket/2026-03-19T10:51:00Z", "target": "contract-websocket", "lastSuccessfulProbeObservedAt": "2026-03-19T10:51:00Z"},
-    "telnet": {"status": "green", "evidenceRef": "probe://contract/telnet/2026-03-19T10:51:00Z", "target": "contract-telnet", "lastSuccessfulProbeObservedAt": "2026-03-19T10:51:00Z"}
+    "websocket": {"status": "green", "evidenceRef": "probe://contract/websocket/2026-03-19T10:51:00Z", "pageEvidenceRef": "pager://contract/websocket/2026-03-19T10:50:00Z/delivery", "target": "contract-websocket", "lastSuccessfulProbeObservedAt": "2026-03-19T10:51:00Z"},
+    "telnet": {"status": "green", "evidenceRef": "probe://contract/telnet/2026-03-19T10:51:00Z", "pageEvidenceRef": "pager://contract/telnet/2026-03-19T10:50:00Z/delivery", "target": "contract-telnet", "lastSuccessfulProbeObservedAt": "2026-03-19T10:51:00Z"}
   }
 }
 JSON
@@ -635,6 +639,147 @@ if run_smoke_runner \
   exit 1
 fi
 grep -q "must define evidenceObservedAt" "$TMP_DIR/missing-timestamp.out"
+
+MISSING_STALE_THRESHOLD_AUTHORITY="$TMP_DIR/missing-stale-threshold-authority.json"
+python3 - "$AUTHORITY_EVIDENCE" "$MISSING_STALE_THRESHOLD_AUTHORITY" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+del source["staleThresholdSeconds"]
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if run_smoke_runner \
+  --simulate \
+  --external-authority-evidence "$MISSING_STALE_THRESHOLD_AUTHORITY" \
+  --evidence-out "$TMP_DIR/missing-stale-threshold-evidence.json" \
+  --source "contract-test" \
+  --canary-path websocket >"$TMP_DIR/missing-stale-threshold.out" 2>&1; then
+  echo "runner unexpectedly accepted missing stale threshold" >&2
+  exit 1
+fi
+grep -q "must define a positive finite staleThresholdSeconds" "$TMP_DIR/missing-stale-threshold.out"
+
+INVALID_STALE_THRESHOLD_AUTHORITY="$TMP_DIR/invalid-stale-threshold-authority.json"
+python3 - "$AUTHORITY_EVIDENCE" "$INVALID_STALE_THRESHOLD_AUTHORITY" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["staleThresholdSeconds"] = 0
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if run_smoke_runner \
+  --simulate \
+  --external-authority-evidence "$INVALID_STALE_THRESHOLD_AUTHORITY" \
+  --evidence-out "$TMP_DIR/invalid-stale-threshold-evidence.json" \
+  --source "contract-test" \
+  --canary-path websocket >"$TMP_DIR/invalid-stale-threshold.out" 2>&1; then
+  echo "runner unexpectedly accepted invalid stale threshold" >&2
+  exit 1
+fi
+grep -q "must define a positive finite staleThresholdSeconds" "$TMP_DIR/invalid-stale-threshold.out"
+
+OVER_THRESHOLD_DEADMAN_AUTHORITY="$TMP_DIR/over-threshold-deadman-authority.json"
+python3 - "$AUTHORITY_EVIDENCE" "$OVER_THRESHOLD_DEADMAN_AUTHORITY" <<'PY'
+import json
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+observed_at = datetime.fromisoformat(
+    source["evidenceObservedAt"].replace("Z", "+00:00")
+)
+source["lastSuccessfulHeartbeatObservedAt"] = (
+    observed_at - timedelta(seconds=181)
+).astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+source["observedStalenessSeconds"] = 181
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if run_smoke_runner \
+  --simulate \
+  --external-authority-evidence "$OVER_THRESHOLD_DEADMAN_AUTHORITY" \
+  --evidence-out "$TMP_DIR/over-threshold-deadman-evidence.json" \
+  --source "contract-test" \
+  --canary-path websocket >"$TMP_DIR/over-threshold-deadman.out" 2>&1; then
+  echo "runner unexpectedly accepted green deadman over stale threshold" >&2
+  exit 1
+fi
+grep -q "green deadman observedStalenessSeconds must be no greater than staleThresholdSeconds" \
+  "$TMP_DIR/over-threshold-deadman.out"
+
+MISMATCHED_STALENESS_AUTHORITY="$TMP_DIR/mismatched-staleness-authority.json"
+python3 - "$AUTHORITY_EVIDENCE" "$MISMATCHED_STALENESS_AUTHORITY" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["observedStalenessSeconds"] = 1
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if run_smoke_runner \
+  --simulate \
+  --external-authority-evidence "$MISMATCHED_STALENESS_AUTHORITY" \
+  --evidence-out "$TMP_DIR/mismatched-staleness-evidence.json" \
+  --source "contract-test" \
+  --canary-path websocket >"$TMP_DIR/mismatched-staleness.out" 2>&1; then
+  echo "runner unexpectedly accepted mismatched observed staleness" >&2
+  exit 1
+fi
+grep -q "observedStalenessSeconds must equal evidenceObservedAt minus lastSuccessfulHeartbeatObservedAt" \
+  "$TMP_DIR/mismatched-staleness.out"
+
+MISSING_PAGE_AUTHORITY="$TMP_DIR/missing-page-authority.json"
+python3 - "$AUTHORITY_EVIDENCE" "$MISSING_PAGE_AUTHORITY" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+del source["publicPathChecks"]["websocket"]["pageEvidenceRef"]
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if run_smoke_runner \
+  --simulate \
+  --external-authority-evidence "$MISSING_PAGE_AUTHORITY" \
+  --evidence-out "$TMP_DIR/missing-page-evidence.json" \
+  --source "contract-test" \
+  --canary-path websocket >"$TMP_DIR/missing-page.out" 2>&1; then
+  echo "runner unexpectedly accepted missing per-path page evidence" >&2
+  exit 1
+fi
+grep -q "publicPathChecks.websocket.pageEvidenceRef" "$TMP_DIR/missing-page.out"
+
+MISSING_DEADMAN_PAGE_AUTHORITY="$TMP_DIR/missing-deadman-page-authority.json"
+python3 - "$AUTHORITY_EVIDENCE" "$MISSING_DEADMAN_PAGE_AUTHORITY" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+del source["deadmanAuthority"]["pageEvidenceRef"]
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if run_smoke_runner \
+  --simulate \
+  --external-authority-evidence "$MISSING_DEADMAN_PAGE_AUTHORITY" \
+  --evidence-out "$TMP_DIR/missing-deadman-page-evidence.json" \
+  --source "contract-test" \
+  --canary-path websocket >"$TMP_DIR/missing-deadman-page.out" 2>&1; then
+  echo "runner unexpectedly accepted missing deadman page evidence" >&2
+  exit 1
+fi
+grep -q "deadmanAuthority.pageEvidenceRef" "$TMP_DIR/missing-deadman-page.out"
 
 STALE_TIMESTAMP_AUTHORITY="$TMP_DIR/stale-timestamp-authority.json"
 python3 - "$AUTHORITY_EVIDENCE" "$STALE_TIMESTAMP_AUTHORITY" <<'PY'
@@ -1072,14 +1217,17 @@ cat >"$REQUIRED_SINGLE_PATH_AUTHORITY_EVIDENCE" <<'JSON'
   "profile": "independent-required",
   "exposedPublicPlayerPaths": ["websocket"],
   "detectionBudgetSeconds": 195,
+  "staleThresholdSeconds": 180,
+  "observedStalenessSeconds": 60,
   "deadmanAuthority": {
     "status": "green",
     "evidenceRef": "pager://contract/single-path/deadman/2026-03-19T10:50:00Z",
+    "pageEvidenceRef": "pager://contract/single-path/deadman/2026-03-19T10:50:00Z/delivery",
     "target": "contract-single-path-deadman-authority",
     "checkRef": "check://contract/single-path/deadman"
   },
   "publicPathChecks": {
-    "websocket": {"status": "green", "evidenceRef": "probe://contract/single-path/websocket/2026-03-19T10:51:00Z", "target": "contract-single-path-websocket"},
+    "websocket": {"status": "green", "evidenceRef": "probe://contract/single-path/websocket/2026-03-19T10:51:00Z", "pageEvidenceRef": "pager://contract/single-path/websocket/2026-03-19T10:50:00Z/delivery", "target": "contract-single-path-websocket"},
     "telnet": {"status": "not_applicable"}
   }
 }

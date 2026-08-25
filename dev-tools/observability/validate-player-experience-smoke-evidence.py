@@ -28,6 +28,7 @@ REQUIRED_CANARY_ALERTS = {
 }
 CANARY_ALERT_MAX_HOLD_SECONDS = 2 * 60
 CANARY_ALERT_EVALUATION_MARGIN_SECONDS = 60
+STALE_NUMERIC_TOLERANCE_SECONDS = 1e-6
 MIN_CANARY_DETECTION_BUDGET_SECONDS = (
     CANARY_ALERT_MAX_HOLD_SECONDS + CANARY_ALERT_EVALUATION_MARGIN_SECONDS
 )
@@ -202,6 +203,18 @@ def _validate_external_authority(
             "externalAuthority.detectionBudgetSeconds",
         )
     )
+    findings.extend(
+        _validate_positive_finite_number(
+            value.get("staleThresholdSeconds"),
+            "externalAuthority.staleThresholdSeconds",
+        )
+    )
+    findings.extend(
+        _validate_nonnegative_finite_number(
+            value.get("observedStalenessSeconds"),
+            "externalAuthority.observedStalenessSeconds",
+        )
+    )
     findings.extend(_validate_external_authority_freshness(value, verified_at))
 
     deadman = value.get("deadmanAuthority")
@@ -290,7 +303,7 @@ def _validate_authority_record(
         findings.append(f"{key}.status must be green or red")
     elif require_green and status != "green":
         findings.append(f"{key}.status must be green")
-    for field in ("evidenceRef", "target", "checkRef"):
+    for field in ("evidenceRef", "pageEvidenceRef", "target", "checkRef"):
         value = record.get(field)
         if not isinstance(value, str) or not value.strip():
             findings.append(f"{key}.{field} is required")
@@ -310,7 +323,7 @@ def _validate_public_path_record(
     status = record.get("status")
     if status != "green":
         findings.append(f"{key}.status must be green")
-    for field in ("evidenceRef", "target"):
+    for field in ("evidenceRef", "pageEvidenceRef", "target"):
         value = record.get(field)
         if not isinstance(value, str) or not value.strip():
             findings.append(f"{key}.{field} is required")
@@ -763,6 +776,47 @@ def _validate_external_authority_freshness(
                 observed_epoch,
             )
         )
+        heartbeat_epoch = _timestamp_epoch(
+            value.get("lastSuccessfulHeartbeatObservedAt")
+        )
+        if heartbeat_epoch is not None and heartbeat_epoch <= observed_epoch:
+            expected_staleness = observed_epoch - heartbeat_epoch
+            observed_staleness = value.get("observedStalenessSeconds")
+            if (
+                isinstance(observed_staleness, (int, float))
+                and not isinstance(observed_staleness, bool)
+                and math.isfinite(observed_staleness)
+                and not math.isclose(
+                    observed_staleness,
+                    expected_staleness,
+                    rel_tol=0.0,
+                    abs_tol=STALE_NUMERIC_TOLERANCE_SECONDS,
+                )
+            ):
+                findings.append(
+                    "externalAuthority.observedStalenessSeconds must equal "
+                    "externalAuthority.evidenceObservedAt - "
+                    "externalAuthority.lastSuccessfulHeartbeatObservedAt within numeric tolerance"
+                )
+            deadman = value.get("deadmanAuthority")
+            stale_threshold = value.get("staleThresholdSeconds")
+            if (
+                isinstance(deadman, dict)
+                and deadman.get("status") == "green"
+                and isinstance(observed_staleness, (int, float))
+                and not isinstance(observed_staleness, bool)
+                and math.isfinite(observed_staleness)
+                and isinstance(stale_threshold, (int, float))
+                and not isinstance(stale_threshold, bool)
+                and math.isfinite(stale_threshold)
+                and observed_staleness
+                > stale_threshold + STALE_NUMERIC_TOLERANCE_SECONDS
+            ):
+                findings.append(
+                    "externalAuthority.deadmanAuthority green "
+                    "observedStalenessSeconds must be no greater than "
+                    "externalAuthority.staleThresholdSeconds"
+                )
         checks = value.get("publicPathChecks")
         if isinstance(checks, dict):
             for path, record in checks.items():
@@ -818,6 +872,17 @@ def _validate_positive_finite_number(value: Any, key: str) -> list[str]:
         or value <= 0
     ):
         return [f"{key} must be a positive finite number"]
+    return []
+
+
+def _validate_nonnegative_finite_number(value: Any, key: str) -> list[str]:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value < 0
+    ):
+        return [f"{key} must be a nonnegative finite number"]
     return []
 
 

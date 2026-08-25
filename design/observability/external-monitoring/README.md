@@ -35,13 +35,13 @@ Profiles claiming independent monitoring must configure the following checks in 
   - `heartbeat_interval_seconds = 60`
   - page when stale for more than `180s`
 
-Each profile records its actual heartbeat interval, stale threshold, probe cadence, timeout values where applicable, ingestion/observation delay, evaluation cadence, and resulting maximum detection budget. Retained evidence includes the last successful heartbeat/probe observation timestamp and the timestamp at which the evidence was observed. A source observation timestamp must not be later than `evidenceObservedAt`; validators reject that chronology error before computing age by direct subtraction, without clamping negative ages to zero. `observedStalenessSeconds` is the nonnegative result of the valid difference between `evidenceObservedAt` and `lastSuccessfulHeartbeatObservedAt`; each public-path probe records the analogous valid difference between `evidenceObservedAt` and its `lastSuccessfulProbeObservedAt`. The profile's `detectionBudgetSeconds` is derived from the declared heartbeat interval and timeout, probe cadence and timeout, stale threshold, ingestion/observation delay, and evaluation cadence; it is not a universal constant.
+Each profile records its actual heartbeat interval, stale threshold, probe cadence, timeout values where applicable, ingestion/observation delay, evaluation cadence, and resulting maximum detection budget. Retained `independent-required` evidence includes the last successful heartbeat/probe observation timestamp and the timestamp at which the evidence was observed. A source observation timestamp must not be later than `evidenceObservedAt`; validators reject that chronology error before computing age by direct subtraction, without clamping negative ages to zero. `observedStalenessSeconds` is the nonnegative result of the valid difference between `evidenceObservedAt` and `lastSuccessfulHeartbeatObservedAt`, within the established numeric tolerance. A green deadman is valid only when that observed staleness is no greater than the positive finite `staleThresholdSeconds`. Each public-path probe records the analogous valid difference between `evidenceObservedAt` and its `lastSuccessfulProbeObservedAt`. The profile's `detectionBudgetSeconds` is derived from the declared heartbeat interval and timeout, probe cadence and timeout, stale threshold, ingestion/observation delay, and evaluation cadence; it remains the outer retained-evidence transport-freshness bound rather than the green-deadman threshold, and is not a universal constant.
 
 This check exists so FireMUD can still detect a broad cluster or observability-stack failure even when Prometheus cannot evaluate internal rules.
 
 ### 2. Public Player Entry-Path Reachability
 
-Each profile declares the complete `exposedPublicPlayerPaths` list from the bounded set `websocket` and `telnet`, without duplicates. For a required profile, retained `publicPathChecks` must contain exactly both bounded paths: exposed paths have green real-probe records, while non-exposed paths have exactly `{ "status": "not_applicable" }`.
+Each profile declares the complete `exposedPublicPlayerPaths` list from the bounded set `websocket` and `telnet`, without duplicates. For an `independent-required` profile, retained `publicPathChecks` must contain exactly both bounded paths: exposed paths have green real-probe records with per-check `pageEvidenceRef`, while non-exposed paths have exactly `{ "status": "not_applicable" }` and no page reference.
 
 The external monitor must probe every path the profile actually exposes:
 
@@ -127,23 +127,18 @@ Retained evidence for the stronger profile must identify the configured detectio
   "evidenceObservedAt": "2026-03-19T10:50:00Z",
   "lastSuccessfulHeartbeatObservedAt": "2026-03-19T10:49:18Z",
   "observedStalenessSeconds": 42,
-  "independentPagerDelivery": {
-    "status": "green",
-    "evidenceRef": "pager://staging/player-experience/2026-03-19T10:50:00Z/delivery"
-  },
   "deadmanAuthority": {
     "status": "green",
     "evidenceRef": "pager://staging/player-experience/2026-03-19T10:50:00Z",
     "pageEvidenceRef": "pager://staging/player-experience/2026-03-19T10:50:00Z/delivery",
     "target": "staging-deadman-authority",
-    "checkRef": "check://staging/deadman",
-    "observedStalenessSeconds": 42,
-    "detectionBudgetSeconds": 195
+    "checkRef": "check://staging/deadman"
   },
   "publicPathChecks": {
     "websocket": {
       "status": "green",
       "evidenceRef": "probe://staging/websocket/2026-03-19T10:49:40Z",
+      "pageEvidenceRef": "pager://staging/websocket/2026-03-19T10:50:00Z/delivery",
       "target": "staging-websocket",
       "lastSuccessfulProbeObservedAt": "2026-03-19T10:49:40Z",
       "observedProbeAgeSeconds": 20
@@ -151,6 +146,7 @@ Retained evidence for the stronger profile must identify the configured detectio
     "telnet": {
       "status": "green",
       "evidenceRef": "probe://staging/telnet/2026-03-19T10:49:43Z",
+      "pageEvidenceRef": "pager://staging/telnet/2026-03-19T10:50:00Z/delivery",
       "target": "staging-telnet",
       "lastSuccessfulProbeObservedAt": "2026-03-19T10:49:43Z",
       "observedProbeAgeSeconds": 17
@@ -171,13 +167,13 @@ Only simulation may synthesize green authority. Real hosted-assurance smoke poin
 }
 ```
 
-They do not include `deadmanAuthority`, `publicPathChecks`, or any other synthesized external authority fields in that omitted record. Hosted profiles claiming independent monitoring retain the external deadman, independent pager-delivery evidence, and complete bounded path-check map above.
+They do not include `deadmanAuthority`, `publicPathChecks`, or any other synthesized external authority fields in that omitted record. Hosted profiles claiming independent monitoring retain the external deadman, per-check page-delivery evidence, and complete bounded path-check map above. The canonical shape has no separate monitor-level pager-delivery field: each authoritative check carries its own `pageEvidenceRef`.
 
 Freshness decision at the current repository boundary:
 
 - the checked-in runner and validator consume this profile-aware shape; `publicPathChecks` replaces the obsolete observability-entrypoint checks, and `independent-omitted` is accepted without synthesizing green authority;
 - for `independent-required`, the checked-in runner and validator require the explicit `evidenceObservedAt` timestamp and reject future or over-budget evidence relative to the retained evidence evaluation timestamp `verifiedAt`;
-- the repository does not parse or freshness-validate authoritative timestamps from `evidenceRef` or `checkRef`, because those references are intentionally product-specific opaque handles owned by the external monitoring system;
+- the repository does not parse or freshness-validate authoritative timestamps from `evidenceRef`, `pageEvidenceRef`, or `checkRef`, because those references are intentionally product-specific opaque handles owned by the external monitoring system; retained evidence must use real references, while synthetic references are allowed only for simulated evidence;
 - choosing retained evidence that is contemporaneous with the smoke execution window remains an environment readiness obligation and must be documented in the environment’s own monitoring evidence.
 
 ## Compatibility Mapping

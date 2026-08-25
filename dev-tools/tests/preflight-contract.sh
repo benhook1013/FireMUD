@@ -194,6 +194,9 @@ if args[:2] == ["s3api", "list-objects-v2"]:
     pathlib.Path(os.environ["FAKE_QUERY_LOG"]).write_text(query, encoding="utf-8")
     if "starts_with" not in query or "15min/firemud_" not in query or "ends_with" not in query or ".sql.gz" not in query:
         raise SystemExit("selection query did not filter for scheduled firemud .sql.gz artifacts")
+    if os.environ.get("FAKE_LIST_FAILURE") == "1":
+        print("Unable to reach object storage", file=sys.stderr)
+        raise SystemExit(42)
     candidates = [item for item in objects if item["Key"].endswith(".sql.gz")]
     if not candidates:
         print("None")
@@ -243,7 +246,7 @@ objects_without_valid = [
     {"Key": "15min/arbitrary-object", "LastModified": "2026-08-24T12:02:00Z"},
 ]
 
-def run(script, objects, *, expect_success):
+def run(script, objects, *, expect_success, list_failure=False):
     query_log = tmp / (pathlib.Path(script).stem + "-query.txt")
     capture = tmp / (pathlib.Path(script).stem + "-psql.sql")
     args_capture = tmp / (pathlib.Path(script).stem + "-psql-args.json")
@@ -259,9 +262,15 @@ def run(script, objects, *, expect_success):
             "FAKE_QUERY_LOG": str(query_log),
             "PSQL_CAPTURE": str(capture),
             "PSQL_ARGS_CAPTURE": str(args_capture),
+            "FAKE_LIST_FAILURE": "1" if list_failure else "0",
         }
     )
-    result = subprocess.run([str(script)], env=env, text=True, capture_output=True)
+    try:
+        result = subprocess.run(
+            [str(script)], env=env, text=True, capture_output=True, timeout=60
+        )
+    except subprocess.TimeoutExpired as error:
+        raise SystemExit(f"{script} selection test timed out after 60 seconds") from error
     if (result.returncode == 0) != expect_success:
         raise SystemExit(
             f"{script} selection outcome was unexpected: rc={result.returncode}, "
@@ -301,6 +310,11 @@ for script in (restore_script, verify_script, embedded_script):
     result, _ = run(script, objects_without_valid, expect_success=False)
     if ".sql.gz" not in result.stderr:
         raise SystemExit(f"{script} did not report missing valid .sql.gz artifact: {result.stderr!r}")
+
+listing_failure, _ = run(restore_script, objects_without_valid, expect_success=False, list_failure=True)
+if "Unable to list pg_dump objects" not in listing_failure.stderr or "AWS credentials" not in listing_failure.stderr \
+        or "endpoint" not in listing_failure.stderr or "network access" not in listing_failure.stderr:
+    raise SystemExit(f"{restore_script} did not report an explicit AWS listing diagnostic: {listing_failure.stderr!r}")
 PY
 
 python3 - <<'PY' "$ROOT_DIR" "$OPERATOR_REPORT_PATH"
@@ -3528,11 +3542,14 @@ smoke_evidence_path.write_text(
                 "profile": "independent-required",
                 "exposedPublicPlayerPaths": ["websocket", "telnet"],
                 "detectionBudgetSeconds": 195,
+                "staleThresholdSeconds": 180,
                 "evidenceObservedAt": past_timestamp,
                 "lastSuccessfulHeartbeatObservedAt": past_timestamp,
+                "observedStalenessSeconds": 0,
                 "deadmanAuthority": {
                     "status": "green",
                     "evidenceRef": "pager://staging-contract/deadman",
+                    "pageEvidenceRef": "pager://staging-contract/deadman/page",
                     "target": "staging-contract-deadman",
                     "checkRef": "check://staging-contract/deadman",
                 },
@@ -3540,12 +3557,14 @@ smoke_evidence_path.write_text(
                     "websocket": {
                         "status": "green",
                         "evidenceRef": "probe://staging-contract/websocket",
+                        "pageEvidenceRef": "pager://staging-contract/websocket/page",
                         "target": "staging-contract-websocket",
                         "lastSuccessfulProbeObservedAt": past_timestamp,
                     },
                     "telnet": {
                         "status": "green",
                         "evidenceRef": "probe://staging-contract/telnet",
+                        "pageEvidenceRef": "pager://staging-contract/telnet/page",
                         "target": "staging-contract-telnet",
                         "lastSuccessfulProbeObservedAt": past_timestamp,
                     },
@@ -6814,7 +6833,18 @@ malformed_smoke_status, _, malformed_smoke_message, _, _ = module.promotion_chec
 if malformed_smoke_status != "fail" or "retained evidence JSON unreadable" not in malformed_smoke_message:
     raise SystemExit(f"malformed smoke evidence was accepted: {malformed_smoke_message}")
 
-simulated_smoke_evidence = {**valid_smoke_evidence, "executionMode": "simulated", "externalAuthorityProvenance": "synthetic"}
+simulated_smoke_evidence = copy.deepcopy(valid_smoke_evidence)
+simulated_smoke_evidence["executionMode"] = "simulated"
+simulated_smoke_evidence["externalAuthorityProvenance"] = "synthetic"
+simulated_authority = simulated_smoke_evidence["externalAuthority"]
+for authority_key, authority_record in {
+    "deadman": simulated_authority["deadmanAuthority"],
+    "websocket": simulated_authority["publicPathChecks"]["websocket"],
+    "telnet": simulated_authority["publicPathChecks"]["telnet"],
+}.items():
+    for field in ("evidenceRef", "pageEvidenceRef", "target", "checkRef"):
+        if field in authority_record:
+            authority_record[field] = f"synthetic://preflight/{authority_key}/{field}"
 promotion_smoke_evidence_path.write_text(json.dumps(simulated_smoke_evidence), encoding="utf-8")
 simulated_smoke_entry = {
     "ref": smoke_evidence_ref,

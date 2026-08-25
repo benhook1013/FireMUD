@@ -25,17 +25,20 @@ cat >"$VALID_EVIDENCE" <<'JSON'
     "profile": "independent-required",
     "exposedPublicPlayerPaths": ["websocket", "telnet"],
     "detectionBudgetSeconds": 195,
+    "staleThresholdSeconds": 180,
     "evidenceObservedAt": "2026-03-19T10:55:00Z",
     "lastSuccessfulHeartbeatObservedAt": "2026-03-19T10:54:00Z",
+    "observedStalenessSeconds": 60,
     "deadmanAuthority": {
       "status": "green",
       "evidenceRef": "pager://staging/player-experience/2026-03-19T10:50:00Z",
+      "pageEvidenceRef": "pager://staging/player-experience/2026-03-19T10:50:00Z/delivery",
       "target": "staging-deadman-authority",
       "checkRef": "check://staging/deadman"
     },
     "publicPathChecks": {
-      "websocket": {"status": "green", "evidenceRef": "probe://staging/websocket/2026-03-19T10:51:00Z", "target": "staging-websocket", "lastSuccessfulProbeObservedAt": "2026-03-19T10:51:00Z"},
-      "telnet": {"status": "green", "evidenceRef": "probe://staging/telnet/2026-03-19T10:51:00Z", "target": "staging-telnet", "lastSuccessfulProbeObservedAt": "2026-03-19T10:51:00Z"}
+      "websocket": {"status": "green", "evidenceRef": "probe://staging/websocket/2026-03-19T10:51:00Z", "pageEvidenceRef": "pager://staging/websocket/2026-03-19T10:50:00Z/delivery", "target": "staging-websocket", "lastSuccessfulProbeObservedAt": "2026-03-19T10:51:00Z"},
+      "telnet": {"status": "green", "evidenceRef": "probe://staging/telnet/2026-03-19T10:51:00Z", "pageEvidenceRef": "pager://staging/telnet/2026-03-19T10:50:00Z/delivery", "target": "staging-telnet", "lastSuccessfulProbeObservedAt": "2026-03-19T10:51:00Z"}
     }
   },
   "mirroredSignals": {
@@ -115,6 +118,115 @@ if python3 "$VALIDATOR" "$STALE_CANARY_EVIDENCE" >"$TMP_DIR/stale-canary.out" 2>
   exit 1
 fi
 grep -q "value is older than the configured detection budget" "$TMP_DIR/stale-canary.out"
+
+MISSING_STALE_THRESHOLD_EVIDENCE="$TMP_DIR/missing-stale-threshold-evidence.json"
+python3 - "$VALID_EVIDENCE" "$MISSING_STALE_THRESHOLD_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+del source["externalAuthority"]["staleThresholdSeconds"]
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if python3 "$VALIDATOR" "$MISSING_STALE_THRESHOLD_EVIDENCE" >"$TMP_DIR/missing-stale-threshold.out" 2>&1; then
+  echo "missing stale threshold unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "externalAuthority.staleThresholdSeconds must be a positive finite number" \
+  "$TMP_DIR/missing-stale-threshold.out"
+
+INVALID_STALE_THRESHOLD_EVIDENCE="$TMP_DIR/invalid-stale-threshold-evidence.json"
+python3 - "$VALID_EVIDENCE" "$INVALID_STALE_THRESHOLD_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["externalAuthority"]["staleThresholdSeconds"] = 0
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if python3 "$VALIDATOR" "$INVALID_STALE_THRESHOLD_EVIDENCE" >"$TMP_DIR/invalid-stale-threshold.out" 2>&1; then
+  echo "invalid stale threshold unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "externalAuthority.staleThresholdSeconds must be a positive finite number" \
+  "$TMP_DIR/invalid-stale-threshold.out"
+
+OVER_THRESHOLD_DEADMAN_EVIDENCE="$TMP_DIR/over-threshold-deadman-evidence.json"
+python3 - "$VALID_EVIDENCE" "$OVER_THRESHOLD_DEADMAN_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["externalAuthority"]["lastSuccessfulHeartbeatObservedAt"] = "2026-03-19T10:51:59Z"
+source["externalAuthority"]["observedStalenessSeconds"] = 181
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if python3 "$VALIDATOR" "$OVER_THRESHOLD_DEADMAN_EVIDENCE" >"$TMP_DIR/over-threshold-deadman.out" 2>&1; then
+  echo "green deadman over stale threshold unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "deadmanAuthority green observedStalenessSeconds must be no greater than externalAuthority.staleThresholdSeconds" \
+  "$TMP_DIR/over-threshold-deadman.out"
+
+MISMATCHED_STALENESS_EVIDENCE="$TMP_DIR/mismatched-staleness-evidence.json"
+python3 - "$VALID_EVIDENCE" "$MISMATCHED_STALENESS_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["externalAuthority"]["observedStalenessSeconds"] = 61
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if python3 "$VALIDATOR" "$MISMATCHED_STALENESS_EVIDENCE" >"$TMP_DIR/mismatched-staleness.out" 2>&1; then
+  echo "mismatched observed staleness unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "externalAuthority.observedStalenessSeconds must equal" \
+  "$TMP_DIR/mismatched-staleness.out"
+
+MISSING_PAGE_EVIDENCE="$TMP_DIR/missing-page-evidence.json"
+python3 - "$VALID_EVIDENCE" "$MISSING_PAGE_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+del source["externalAuthority"]["publicPathChecks"]["websocket"]["pageEvidenceRef"]
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if python3 "$VALIDATOR" "$MISSING_PAGE_EVIDENCE" >"$TMP_DIR/missing-page.out" 2>&1; then
+  echo "missing per-path page evidence unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "externalAuthority.publicPathChecks.websocket.pageEvidenceRef is required" \
+  "$TMP_DIR/missing-page.out"
+
+MISSING_DEADMAN_PAGE_EVIDENCE="$TMP_DIR/missing-deadman-page-evidence.json"
+python3 - "$VALID_EVIDENCE" "$MISSING_DEADMAN_PAGE_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+del source["externalAuthority"]["deadmanAuthority"]["pageEvidenceRef"]
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if python3 "$VALIDATOR" "$MISSING_DEADMAN_PAGE_EVIDENCE" >"$TMP_DIR/missing-deadman-page.out" 2>&1; then
+  echo "missing deadman page evidence unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "externalAuthority.deadmanAuthority.pageEvidenceRef is required" \
+  "$TMP_DIR/missing-deadman-page.out"
 
 MISSING_EXTERNAL_EVIDENCE_TIMESTAMP="$TMP_DIR/missing-external-evidence-timestamp.json"
 python3 - "$VALID_EVIDENCE" "$MISSING_EXTERNAL_EVIDENCE_TIMESTAMP" <<'PY'

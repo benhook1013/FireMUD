@@ -40,6 +40,7 @@ PLAYERFLOW_CANARY_FRESHNESS_BUDGET_METRIC = (
     "playerflow_canary_freshness_budget_seconds"
 )
 DEFAULT_SIMULATED_DETECTION_BUDGET_SECONDS = 195
+STALE_NUMERIC_TOLERANCE_SECONDS = _EVIDENCE_VALIDATOR.STALE_NUMERIC_TOLERANCE_SECONDS
 CANARY_ALERT_MAX_HOLD_SECONDS = _EVIDENCE_VALIDATOR.CANARY_ALERT_MAX_HOLD_SECONDS
 CANARY_ALERT_EVALUATION_MARGIN_SECONDS = (
     _EVIDENCE_VALIDATOR.CANARY_ALERT_EVALUATION_MARGIN_SECONDS
@@ -892,11 +893,14 @@ def simulated_external_authority(evidence_observed_at: str | None = None) -> dic
         "profile": "independent-required",
         "exposedPublicPlayerPaths": ["websocket", "telnet"],
         "detectionBudgetSeconds": DEFAULT_SIMULATED_DETECTION_BUDGET_SECONDS,
+        "staleThresholdSeconds": 180,
         "evidenceObservedAt": observed_at,
         "lastSuccessfulHeartbeatObservedAt": observed_at,
+        "observedStalenessSeconds": 0,
         "deadmanAuthority": {
             "status": "green",
             "evidenceRef": "synthetic://external-authority/deadman",
+            "pageEvidenceRef": "synthetic://external-authority/deadman-page",
             "target": "synthetic-deadman-authority",
             "checkRef": "synthetic-deadman-check",
         },
@@ -904,6 +908,7 @@ def simulated_external_authority(evidence_observed_at: str | None = None) -> dic
             path: {
                 "status": "green",
                 "evidenceRef": f"synthetic://external-authority/{path}",
+                "pageEvidenceRef": f"synthetic://external-authority/{path}-page",
                 "target": f"synthetic-{path}",
                 "lastSuccessfulProbeObservedAt": observed_at,
             }
@@ -991,6 +996,26 @@ def validate_external_authority_shape(
     if canary_advertised and detection_budget < MIN_CANARY_DETECTION_BUDGET_SECONDS:
         raise RuntimeError(
             f"External authority evidence at {path} detectionBudgetSeconds must be at least {MIN_CANARY_DETECTION_BUDGET_SECONDS} seconds for an advertised player-flow canary"
+        )
+    stale_threshold = data.get("staleThresholdSeconds")
+    if (
+        isinstance(stale_threshold, bool)
+        or not isinstance(stale_threshold, (int, float))
+        or not math.isfinite(stale_threshold)
+        or stale_threshold <= 0
+    ):
+        raise RuntimeError(
+            f"External authority evidence at {path} must define a positive finite staleThresholdSeconds"
+        )
+    observed_staleness = data.get("observedStalenessSeconds")
+    if (
+        isinstance(observed_staleness, bool)
+        or not isinstance(observed_staleness, (int, float))
+        or not math.isfinite(observed_staleness)
+        or observed_staleness < 0
+    ):
+        raise RuntimeError(
+            f"External authority evidence at {path} must define a nonnegative finite observedStalenessSeconds"
         )
     if data.get("lastSuccessfulHeartbeatObservedAt") is None:
         raise RuntimeError(
@@ -1126,6 +1151,30 @@ def validate_external_authority_freshness(
         raise RuntimeError(
             f"External authority evidence at {path} evidenceObservedAt is older than detectionBudgetSeconds"
         )
+    heartbeat_epoch = dt.datetime.fromisoformat(
+        data["lastSuccessfulHeartbeatObservedAt"].replace("Z", "+00:00")
+    ).timestamp()
+    observed_staleness = data["observedStalenessSeconds"]
+    expected_staleness = observed_epoch - heartbeat_epoch
+    if not math.isclose(
+        observed_staleness,
+        expected_staleness,
+        rel_tol=0.0,
+        abs_tol=STALE_NUMERIC_TOLERANCE_SECONDS,
+    ):
+        raise RuntimeError(
+            f"External authority evidence at {path} observedStalenessSeconds must equal evidenceObservedAt minus lastSuccessfulHeartbeatObservedAt within numeric tolerance"
+        )
+    deadman = data.get("deadmanAuthority")
+    if (
+        isinstance(deadman, dict)
+        and deadman.get("status") == "green"
+        and observed_staleness
+        > data["staleThresholdSeconds"] + STALE_NUMERIC_TOLERANCE_SECONDS
+    ):
+        raise RuntimeError(
+            f"External authority evidence at {path} green deadman observedStalenessSeconds must be no greater than staleThresholdSeconds"
+        )
 
 
 def validate_authority_record(record: dict[str, Any], key: str, path: Path) -> None:
@@ -1134,7 +1183,7 @@ def validate_authority_record(record: dict[str, Any], key: str, path: Path) -> N
         raise RuntimeError(
             f"External authority evidence at {path} requires {key}.status=green"
         )
-    for field in ("evidenceRef", "target", "checkRef"):
+    for field in ("evidenceRef", "pageEvidenceRef", "target", "checkRef"):
         value = record.get(field)
         if not isinstance(value, str) or not value.strip():
             raise RuntimeError(
@@ -1151,7 +1200,7 @@ def validate_public_path_record(record: dict[str, Any], key: str, path: Path) ->
         raise RuntimeError(
             f"External authority evidence at {path} requires {key}.status=green"
         )
-    for field in ("evidenceRef", "target"):
+    for field in ("evidenceRef", "pageEvidenceRef", "target"):
         value = record.get(field)
         if not isinstance(value, str) or not value.strip():
             raise RuntimeError(
