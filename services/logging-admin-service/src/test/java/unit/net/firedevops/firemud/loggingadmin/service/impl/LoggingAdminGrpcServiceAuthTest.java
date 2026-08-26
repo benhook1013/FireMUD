@@ -261,7 +261,7 @@ class LoggingAdminGrpcServiceAuthTest {
     assertNotNull(response);
     assertFalse(response.getSuccess());
     assertEquals("INVALID_ARGUMENT", response.getError().getCode());
-    assertEquals("name size must be between 0 and 100", response.getError().getMessage());
+    assertEquals("name size must be between 1 and 100", response.getError().getMessage());
   }
 
   private ToggleFeatureFlagResponse invokeToggleFeatureFlag(String name) {

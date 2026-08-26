@@ -1044,6 +1044,36 @@ require_contains(
     [
         "non-admissible provisional renewal",
         "cannot extend the deadline",
+        "complete finite positive inventory of the affected canonical key families",
+        "read back every expected affected key through those same builders/descriptors",
+        "Validation and Runtime Proof",
+        "direct execution results must be recorded in PR/CI evidence",
+        "supplementary diagnostics",
+    ],
+)
+
+require_contains(
+    "design/architecture/system-architecture-logging-monitoring.md",
+    [
+        "canonical new-record emit-and-query check is conditional",
+        "current fallback records capability `UNAVAILABLE`",
+        "keeps only the applicable indexed-queryability claim or gate closed",
+    ],
+)
+
+require_contains(
+    "design/architecture/system-architecture-logging-monitoring.md",
+    [
+        "any required evidence input is `unknown`, regardless of whether that profile otherwise permits unknown evidence",
+        "`unknown` is an explicit non-SLI state",
+    ],
+)
+require_contains(
+    "design/architecture/decisions/adr-0160-staged-profile-aware-player-experience-slo-contract.md",
+    [
+        "any unknown required evidence input",
+        "explicit `unknown`/non-SLI",
+        "cannot turn an unknown required input into a healthy or breached SLI result",
     ],
 )
 

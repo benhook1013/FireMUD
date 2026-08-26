@@ -119,7 +119,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
       throw new IllegalArgumentException("name must not be blank");
     }
     if (name.length() > 100) {
-      throw new IllegalArgumentException("name size must be between 0 and 100");
+      throw new IllegalArgumentException("name size must be between 1 and 100");
     }
   }
 

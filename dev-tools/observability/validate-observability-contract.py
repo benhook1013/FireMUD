@@ -59,17 +59,31 @@ PLAYERFLOW_CANARY_REQUIRED_LABELS = {
 PROFILE_DEPENDENT_ALERTS = {
     "ObservabilityDeadmanHeartbeatMissing",
     "ObservabilityDeadmanHeartbeatStale",
+    "WebSocketEntryPathBlackboxMetricsAbsent",
     "WebSocketEntryPathBlackboxUnavailable",
+    "TelnetEntryPathBlackboxMetricsAbsent",
     "TelnetEntryPathBlackboxUnavailable",
 }
 ENTRY_PATH_BLACKBOX_ALERT_CONTRACTS = {
+    "WebSocketEntryPathBlackboxMetricsAbsent": {
+        "path": "websocket",
+        "service": "spring-cloud-gateway",
+        "expression": "absent",
+    },
     "WebSocketEntryPathBlackboxUnavailable": {
         "path": "websocket",
         "service": "spring-cloud-gateway",
+        "expression": "zero",
+    },
+    "TelnetEntryPathBlackboxMetricsAbsent": {
+        "path": "telnet",
+        "service": "tcp-proxy-service",
+        "expression": "absent",
     },
     "TelnetEntryPathBlackboxUnavailable": {
         "path": "telnet",
         "service": "tcp-proxy-service",
+        "expression": "zero",
     },
 }
 DISALLOWED_ALERT_SERVICE_LABELS = {"gateway", "game-session"}
@@ -1184,12 +1198,15 @@ def _entry_path_blackbox_findings(
     if contract is None:
         return []
 
+    metric_selector = f'entrypath_blackbox_probe_success{{path="{contract["path"]}"}}'
     expected_expr = _compact_promql(
-        f'entrypath_blackbox_probe_success{{path="{contract["path"]}"}} == 0'
+        f"absent({metric_selector})"
+        if contract["expression"] == "absent"
+        else f"{metric_selector} == 0"
     )
     findings: list[Finding] = []
     expected_labels = {
-        "severity": "P0",
+        "severity": "P1" if contract["expression"] == "absent" else "P0",
         "component": "entrypath",
         "service": contract["service"],
     }
@@ -1209,12 +1226,17 @@ def _entry_path_blackbox_findings(
             )
         )
     if _compact_promql(expr) != expected_expr:
+        expression_description = (
+            "entrypath_blackbox_probe_success selector with absent()"
+            if contract["expression"] == "absent"
+            else "entrypath_blackbox_probe_success selector and compare it to zero"
+        )
         findings.append(
             Finding(
                 path=path,
                 message=(
                     f'{alert_name} must use only the exact path="{contract["path"]}" '
-                    "entrypath_blackbox_probe_success selector and compare it to zero"
+                    f"{expression_description}"
                 ),
             )
         )
@@ -2397,6 +2419,7 @@ def _validate_reference_prometheus_rules(
     findings: list[Finding] = []
     text = _read_text(path)
     alerts_seen: set[str] = set()
+    alert_occurrences: dict[str, int] = {}
 
     for entry in _split_alert_rules(text):
         if entry.key is None:
@@ -2406,6 +2429,7 @@ def _validate_reference_prometheus_rules(
         if not alert_name:
             findings.append(Finding(path=path, message="alert rule is missing name"))
             continue
+        alert_occurrences[alert_name] = alert_occurrences.get(alert_name, 0) + 1
         if (
             alert_name in PROFILE_DEPENDENT_ALERTS
             and not allow_profile_dependent_alerts
@@ -2584,6 +2608,24 @@ def _validate_reference_prometheus_rules(
                 message=f"reference rules are missing required alerts: {', '.join(missing_required)}",
             )
         )
+
+    if allow_profile_dependent_alerts:
+        duplicate_profile_alerts = sorted(
+            alert_name
+            for alert_name in ENTRY_PATH_BLACKBOX_ALERT_CONTRACTS
+            if alert_occurrences.get(alert_name, 0) > 1
+        )
+        if duplicate_profile_alerts:
+            findings.append(
+                Finding(
+                    path=path,
+                    message=(
+                        "profile-dependent entry-path blackbox alerts must appear exactly once; "
+                        "duplicate declarations: "
+                        + ", ".join(duplicate_profile_alerts)
+                    ),
+                )
+            )
 
     if "LoginSuccessRatioLow" in alerts_seen:
         findings.append(Finding(path=path, message="reference rules must not include legacy LoginSuccessRatioLow; use split ingress alerts"))
@@ -2796,7 +2838,9 @@ def main() -> int:
                 {
                     "ObservabilityDeadmanHeartbeatMissing",
                     "ObservabilityDeadmanHeartbeatStale",
+                    "WebSocketEntryPathBlackboxMetricsAbsent",
                     "WebSocketEntryPathBlackboxUnavailable",
+                    "TelnetEntryPathBlackboxMetricsAbsent",
                     "TelnetEntryPathBlackboxUnavailable",
                 },
                 allow_profile_dependent_alerts=True,

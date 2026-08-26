@@ -97,7 +97,7 @@ The producer records whether all eligible recipients reached that boundary. Mode
 
 ### No Data and Minimum Samples Produce Unknown
 
-Every evaluated SLI has a documented, profile-specific minimum eligible sample count. With no eligible traffic or fewer than that minimum, the result is `unknown`, not green, compliant, breached, or zero-percent availability.
+Every evaluated SLI has a documented, profile-specific minimum eligible sample count. With no eligible traffic, fewer than that minimum, or any unknown required evidence input, the result is explicit `unknown`/non-SLI, not green, compliant, breached, or zero-percent availability. A profile may tolerate absent optional evidence, but its policy cannot turn an unknown required input into a healthy or breached SLI result.
 
 Synthetic canaries may provide independent outage detection during low traffic, but their success does not manufacture a live-traffic SLO result. Dashboards, alerts, release evidence, and user-facing availability claims preserve the distinction between `unknown`, provisional calibration, and an enforceable evaluated result.
 

@@ -59,7 +59,7 @@ Logging & Admin owns fixed safety policy intent, moderation cases, bounded appea
   - Account Service forwards account events and payment notifications.
   - Game Session Service streams session lifecycle metrics and owns runtime coordination state.
   - Social & Groups Service delivers chat logs for moderation.
-- **External, profile-dependent:** the default indexed profile uses Elasticsearch, Fluent Bit, Kibana, Prometheus, Grafana, and Alertmanager for collection, storage, visualization, embedding, and alerting. Compatible profiles declare equivalent dependencies and evidence mappings; reduced profiles omit unavailable indexed-search dependencies and retain their explicit operator limitations.
+- **External, profile-dependent:** the default indexed profile uses Fluent Bit, Elasticsearch, Kibana, Prometheus, Grafana, Alertmanager, the OpenTelemetry Collector, and Jaeger for log collection/storage/querying, metrics/dashboards, alerting, and trace collection/analysis. Compatible profiles declare equivalent dependencies and evidence mappings; reduced profiles omit unavailable indexed-search dependencies and retain their explicit operator limitations.
 
 See [Gateway Architecture](../../system-architecture-gateway.md), [Deployment Environments](../../infrastructure/deployment-environments.md), and [Protocol Bridging](../../system-architecture-protocol-bridging.md) for details on shared infrastructure components.
 

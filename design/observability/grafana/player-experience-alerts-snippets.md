@@ -8,7 +8,7 @@ These example rules are calibration and degradation signals for the target-state
 
 The `profile` label uses ADR 0159's canonical monitoring-profile enum, `independent-required` or `independent-omitted`, across canary metrics, retained evidence, and profile-aware rules. Do not serialize the prose abbreviations `required` or `omitted` as profile values.
 
-The P0 `WebSocketEntryPathBlackboxUnavailable` and `TelnetEntryPathBlackboxUnavailable` rules are owned by the `independent-required-prometheus-published` overlay; keep these reference snippets aligned with that overlay. They must not be installed by the shared rules, the `independent-omitted` overlay, or an `independent-required` deployment with `prometheusMirrors=omitted`.
+The P0 `WebSocketEntryPathBlackboxUnavailable` and `TelnetEntryPathBlackboxUnavailable` rules, together with the P1 `WebSocketEntryPathBlackboxMetricsAbsent` and `TelnetEntryPathBlackboxMetricsAbsent` unknown/degraded evidence rules, are owned by the `independent-required-prometheus-published` overlay; keep these reference snippets aligned with that overlay. They must not be installed by the shared rules, the `independent-omitted` overlay, or an `independent-required` deployment with `prometheusMirrors=omitted`.
 
 ```yaml
 - alert: LoginSuccessRatioLowGateway
@@ -312,6 +312,21 @@ The P0 `WebSocketEntryPathBlackboxUnavailable` and `TelnetEntryPathBlackboxUnava
     summary: WebSocket entry path unreachable from external probe
     description: Independent blackbox probes cannot reach the public WebSocket gameplay path; this catches LB, DNS, TLS, and ingress failures before traffic reaches Gateway.
 
+- alert: WebSocketEntryPathBlackboxMetricsAbsent
+  # Missing required-path evidence is unknown/degraded, not an observed outage.
+  # Use the same two-minute hold as the zero-value path alert.
+  expr: absent(entrypath_blackbox_probe_success{path="websocket"})
+  for: 2m
+  labels:
+    service: spring-cloud-gateway
+    component: entrypath
+    severity: P1
+    owner: platform
+    runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
+  annotations:
+    summary: WebSocket entry-path blackbox evidence is absent
+    description: The required external WebSocket probe mirror has no series, so entry-path availability is unknown or degraded rather than an observed outage; restore the external monitor or Prometheus mirror.
+
 - alert: TelnetEntryPathBlackboxUnavailable
   # An absent non-exposed path is not_applicable; missing evidence for an
   # exposed path is unknown/degraded rather than not_applicable.
@@ -327,4 +342,19 @@ The P0 `WebSocketEntryPathBlackboxUnavailable` and `TelnetEntryPathBlackboxUnava
   annotations:
     summary: Telnet entry path unreachable from external probe
     description: Independent blackbox probes cannot reach the public Telnet gameplay path; this catches LB, DNS, TLS, and ingress failures before traffic reaches TCP Proxy.
+
+- alert: TelnetEntryPathBlackboxMetricsAbsent
+  # Missing required-path evidence is unknown/degraded, not an observed outage.
+  # Use the same two-minute hold as the zero-value path alert.
+  expr: absent(entrypath_blackbox_probe_success{path="telnet"})
+  for: 2m
+  labels:
+    service: tcp-proxy-service
+    component: entrypath
+    severity: P1
+    owner: platform
+    runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
+  annotations:
+    summary: Telnet entry-path blackbox evidence is absent
+    description: The required external Telnet probe mirror has no series, so entry-path availability is unknown or degraded rather than an observed outage; restore the external monitor or Prometheus mirror.
 ```

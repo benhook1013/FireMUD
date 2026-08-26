@@ -114,8 +114,9 @@ class TickRemediationServiceImplTest {
 
   @Test
   void getRuntimeOwnershipStatusRejectsMissingOrAmbiguousScope() {
-    TickRemediationServiceImpl service =
-        new TickRemediationServiceImpl(Mockito.mock(GameSessionControlPlaneClient.class));
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    TickRemediationServiceImpl service = new TickRemediationServiceImpl(gameSessionClient);
 
     assertThatThrownBy(() -> service.getRuntimeOwnershipStatus(1L, null, null))
         .isInstanceOf(ResponseStatusException.class)
@@ -124,5 +125,6 @@ class TickRemediationServiceImplTest {
     assertThatThrownBy(() -> service.getRuntimeOwnershipStatus(1L, "7", "r1"))
         .isInstanceOf(ResponseStatusException.class)
         .hasMessageContaining("Exactly one of gameInstanceId or regionId is required");
+    Mockito.verifyNoInteractions(gameSessionClient);
   }
 }

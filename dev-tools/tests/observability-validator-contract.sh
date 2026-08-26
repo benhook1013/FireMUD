@@ -22,14 +22,21 @@ fi
 profile_alerts=(
   ObservabilityDeadmanHeartbeatStale
   ObservabilityDeadmanHeartbeatMissing
+  WebSocketEntryPathBlackboxMetricsAbsent
   WebSocketEntryPathBlackboxUnavailable
+  TelnetEntryPathBlackboxMetricsAbsent
   TelnetEntryPathBlackboxUnavailable
 )
 for profile_alert in "${profile_alerts[@]}"; do
-  if grep -Fqx -- "- alert: $profile_alert" <(awk '{ sub(/^[[:space:]]*/, ""); print }' <<<"$required_published_render"); then
+  profile_alert_count="$(grep -Fc -- "- alert: $profile_alert" <(awk '{ sub(/^[[:space:]]*/, ""); print }' <<<"$required_published_render"))"
+  if [[ "$profile_alert_count" -eq 1 ]]; then
     continue
   fi
-  echo "published independent-required monitoring overlay is missing profile-dependent alert $profile_alert" >&2
+  if [[ "$profile_alert_count" -eq 0 ]]; then
+    echo "published independent-required monitoring overlay is missing profile-dependent alert $profile_alert" >&2
+  else
+    echo "published independent-required monitoring overlay declares profile-dependent alert $profile_alert $profile_alert_count times; expected exactly once" >&2
+  fi
   exit 1
 done
 shared_alert_declarations="$(sed -n '/^[[:space:]]*- alert:/p' "$ROOT_DIR/k8s/monitoring/prometheus-rules-firemud.yaml")"
@@ -142,7 +149,9 @@ if "ObservabilityDeadmanHeartbeatStale" in valid_text:
     )
 for profile_alert in (
     "ObservabilityDeadmanHeartbeatMissing",
+    "WebSocketEntryPathBlackboxMetricsAbsent",
     "WebSocketEntryPathBlackboxUnavailable",
+    "TelnetEntryPathBlackboxMetricsAbsent",
     "TelnetEntryPathBlackboxUnavailable",
 ):
     if profile_alert in valid_text:
@@ -161,7 +170,9 @@ published_overlay_findings = validator._validate_reference_prometheus_rules(
     {
         "ObservabilityDeadmanHeartbeatMissing",
         "ObservabilityDeadmanHeartbeatStale",
+        "WebSocketEntryPathBlackboxMetricsAbsent",
         "WebSocketEntryPathBlackboxUnavailable",
+        "TelnetEntryPathBlackboxMetricsAbsent",
         "TelnetEntryPathBlackboxUnavailable",
     },
     allow_profile_dependent_alerts=True,
@@ -208,7 +219,9 @@ if "for: 1m" not in missing_rule:
     raise AssertionError("deadman missing alert must retain its one-minute hold")
 
 for profile_alert in (
+    "WebSocketEntryPathBlackboxMetricsAbsent",
     "WebSocketEntryPathBlackboxUnavailable",
+    "TelnetEntryPathBlackboxMetricsAbsent",
     "TelnetEntryPathBlackboxUnavailable",
 ):
     if profile_alert not in required_rules_text:
@@ -218,6 +231,8 @@ for profile_alert in (
 for expected_expression in (
     'expr: entrypath_blackbox_probe_success{path="websocket"} == 0',
     'expr: entrypath_blackbox_probe_success{path="telnet"} == 0',
+    'expr: absent(entrypath_blackbox_probe_success{path="websocket"})',
+    'expr: absent(entrypath_blackbox_probe_success{path="telnet"})',
 ):
     if expected_expression not in required_rules_text:
         raise AssertionError(
@@ -1509,6 +1524,97 @@ for source_text, check in entry_path_sources:
                 f"for: {invalid_hold}",
             )
             require_message(findings_for(invalid_hold_rule, check), hold_message)
+
+entry_path_absence_contracts = {
+    "WebSocketEntryPathBlackboxMetricsAbsent": {
+        "path": "websocket",
+        "other_path": "telnet",
+        "service": "spring-cloud-gateway",
+    },
+    "TelnetEntryPathBlackboxMetricsAbsent": {
+        "path": "telnet",
+        "other_path": "websocket",
+        "service": "tcp-proxy-service",
+    },
+}
+for source_text, check in entry_path_sources:
+    baseline_findings = findings_for(source_text, check)
+    if baseline_findings:
+        raise AssertionError(
+            f"valid entry-path blackbox absence rules were rejected: {baseline_findings!r}"
+        )
+    for alert_name, contract in entry_path_absence_contracts.items():
+        expression_message = (
+            f'{alert_name} must use only the exact path="{contract["path"]}" '
+            "entrypath_blackbox_probe_success selector with absent()"
+        )
+        hold_message = f"{alert_name} must use a rule-level for: 2m hold"
+        mutations = (
+            (
+                "severity: P1",
+                "severity: P0",
+                f"{alert_name} must use labels.severity=P1",
+            ),
+            (
+                "component: entrypath",
+                "component: blackbox",
+                f"{alert_name} must use labels.component=entrypath",
+            ),
+            (
+                f'service: {contract["service"]}',
+                "service: prometheus",
+                f'{alert_name} must use labels.service={contract["service"]}',
+            ),
+            (
+                f'absent(entrypath_blackbox_probe_success{{path="{contract["path"]}"}})',
+                f'absent(entrypath_blackbox_probe_success{{path="{contract["other_path"]}"}})',
+                expression_message,
+            ),
+            (
+                f'absent(entrypath_blackbox_probe_success{{path="{contract["path"]}"}})',
+                f'entrypath_blackbox_probe_success{{path="{contract["path"]}"}} == 0',
+                expression_message,
+            ),
+        )
+        for old, new, expected_message in mutations:
+            mutated = mutate_alert_rule(source_text, alert_name, old, new)
+            require_message(findings_for(mutated, check), expected_message)
+
+        for invalid_hold in ("1m", "0m", "3m", "null", "~", '""', "{}", "[]", '!!str ""', ""):
+            invalid_hold_rule = mutate_alert_rule(
+                source_text,
+                alert_name,
+                "for: 2m",
+                f"for: {invalid_hold}",
+            )
+            require_message(findings_for(invalid_hold_rule, check), hold_message)
+
+duplicate_blackbox_alert = "WebSocketEntryPathBlackboxUnavailable"
+duplicate_start = required_rules_text.find(
+    f"        - alert: {duplicate_blackbox_alert}"
+)
+duplicate_next = required_rules_text.find("        - alert:", duplicate_start + 1)
+duplicate_block = required_rules_text[duplicate_start:duplicate_next]
+duplicate_overlay = required_rules_text + "\n" + duplicate_block
+duplicate_findings = findings_for(
+    duplicate_overlay,
+    lambda path: validator._validate_reference_prometheus_rules(
+        path,
+        {
+            "ObservabilityDeadmanHeartbeatMissing",
+            "ObservabilityDeadmanHeartbeatStale",
+            "WebSocketEntryPathBlackboxMetricsAbsent",
+            "WebSocketEntryPathBlackboxUnavailable",
+            "TelnetEntryPathBlackboxMetricsAbsent",
+            "TelnetEntryPathBlackboxUnavailable",
+        },
+        allow_profile_dependent_alerts=True,
+    ),
+)
+require_message(
+    duplicate_findings,
+    "profile-dependent entry-path blackbox alerts must appear exactly once; duplicate declarations: WebSocketEntryPathBlackboxUnavailable",
+)
 
 nested_for_source = """rules:
   - alert: WebSocketEntryPathBlackboxUnavailable
