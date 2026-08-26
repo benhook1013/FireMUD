@@ -6,6 +6,8 @@ This file contains reference PromQL expressions and Alertmanager rule snippets f
 
 These example rules enforce the target-state player-centric SLOs defined in the Logging & Monitoring architecture doc. Thresholds and severities may be tuned per environment, but the underlying metric shapes should remain consistent once the producers and approved `scope` label are implemented.
 
+The `profile` label uses ADR 0159's canonical monitoring-profile enum, `independent-required` or `independent-omitted`, across canary metrics, retained evidence, and profile-aware rules. Do not serialize the prose abbreviations `required` or `omitted` as profile values.
+
 ```yaml
 - alert: LoginSuccessRatioLowGateway
   expr: (
@@ -157,11 +159,24 @@ These example rules enforce the target-state player-centric SLOs defined in the 
     description: One or more approved scopes have sustained connection failures on TCP Proxy entry paths over the compliance window. Inspect entrypath_connection_attempts_total and follow the player experience runbook.
 
 - alert: PlayerFlowCanaryLoginFailed
-  expr: max_over_time(playerflow_canary_success{flow="login"}[2m]) == 0
+  expr: >-
+    playerflow_canary_success{flow="login"} == 0
+    and on (flow, path, target, profile)
+    (
+      time() - playerflow_canary_last_run_timestamp_seconds{flow="login"} >= 0
+      and on (flow, path, target, profile)
+      (
+        time() - playerflow_canary_last_run_timestamp_seconds{flow="login"}
+        <= on (profile) group_left()
+          playerflow_canary_freshness_budget_seconds
+      )
+    )
   for: 2m
   labels:
-    service: spring-cloud-gateway
     component: playerflow-canary
+    path: '{{ $labels.path }}'
+    target: '{{ $labels.target }}'
+    profile: '{{ $labels.profile }}'
     severity: P0
     owner: platform
     runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#login-success-ratio-below-slo
@@ -170,11 +185,24 @@ These example rules enforce the target-state player-centric SLOs defined in the 
     description: The independent player-flow login canary is failing on at least one monitored public path; treat this as player-impacting even when live traffic is sparse.
 
 - alert: PlayerFlowCanaryCommandFailed
-  expr: max_over_time(playerflow_canary_success{flow="command"}[2m]) == 0
+  expr: >-
+    playerflow_canary_success{flow="command"} == 0
+    and on (flow, path, target, profile)
+    (
+      time() - playerflow_canary_last_run_timestamp_seconds{flow="command"} >= 0
+      and on (flow, path, target, profile)
+      (
+        time() - playerflow_canary_last_run_timestamp_seconds{flow="command"}
+        <= on (profile) group_left()
+          playerflow_canary_freshness_budget_seconds
+      )
+    )
   for: 2m
   labels:
-    service: game-session-service
     component: playerflow-canary
+    path: '{{ $labels.path }}'
+    target: '{{ $labels.target }}'
+    profile: '{{ $labels.profile }}'
     severity: P1
     owner: gameplay
     runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#command-latency-above-slo
@@ -183,17 +211,79 @@ These example rules enforce the target-state player-centric SLOs defined in the 
     description: The independent player-flow representative command canary is failing after gameplay admission on at least one monitored public path.
 
 - alert: PlayerFlowCanaryLatencyHigh
-  expr: max_over_time(playerflow_canary_latency_ms{flow="command"}[5m]) > 1000
-  for: 5m
+  expr: >-
+    playerflow_canary_latency_ms{flow="command"} > 1000
+    and on (flow, path, target, profile)
+    (
+      time() - playerflow_canary_last_run_timestamp_seconds{flow="command"} >= 0
+      and on (flow, path, target, profile)
+      (
+        time() - playerflow_canary_last_run_timestamp_seconds{flow="command"}
+        <= on (profile) group_left()
+          playerflow_canary_freshness_budget_seconds
+      )
+    )
+  for: 2m
   labels:
-    service: game-session-service
     component: playerflow-canary
+    path: '{{ $labels.path }}'
+    target: '{{ $labels.target }}'
+    profile: '{{ $labels.profile }}'
     severity: P1
     owner: gameplay
     runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#command-latency-above-slo
   annotations:
     summary: Synthetic command canary latency high
     description: The independent player-flow representative command canary has exceeded 1000ms for at least one monitored public path.
+
+- alert: PlayerFlowCanaryFreshnessBudgetMissing
+  expr: >-
+    count by (profile) (
+      playerflow_canary_success
+      or playerflow_canary_latency_ms
+      or playerflow_canary_last_run_timestamp_seconds
+    )
+    unless on (profile)
+    count by (profile) (playerflow_canary_freshness_budget_seconds)
+  for: 2m
+  labels:
+    service: prometheus
+    component: playerflow-canary
+    profile: '{{ $labels.profile }}'
+    severity: P1
+    owner: platform
+    runbook: design/architecture/system-architecture-observability-incident-runbook.md#prometheus-down-or-stale
+  annotations:
+    summary: Player-flow canary freshness budget series missing
+    description: Canary result series are present without a matching freshness budget for this profile, so the canary failure and latency alerts cannot evaluate. Treat player-flow health as unknown until the budget mirror is restored.
+
+- alert: PlayerFlowCanaryEvidenceStale
+  expr: >-
+    (
+      playerflow_canary_success
+      unless on (flow, path, target, profile)
+      playerflow_canary_last_run_timestamp_seconds
+    )
+    or
+    time() - playerflow_canary_last_run_timestamp_seconds < 0
+    or on (flow, path, target, profile)
+    time() - playerflow_canary_last_run_timestamp_seconds
+    > on (profile) group_left()
+      playerflow_canary_freshness_budget_seconds
+  for: 1m
+  labels:
+    service: prometheus
+    component: playerflow-canary
+    flow: '{{ $labels.flow }}'
+    path: '{{ $labels.path }}'
+    target: '{{ $labels.target }}'
+    profile: '{{ $labels.profile }}'
+    severity: P1
+    owner: platform
+    runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#incident-types
+  annotations:
+    summary: Synthetic player-flow canary evidence stale
+    description: The advertised player-flow canary run evidence is missing its matching last-run timestamp, future-dated, or older than the profile-derived freshness budget; treat player-flow health as unknown or degraded until a fresh run is retained.
 
 - alert: WebSocketEntryPathBlackboxUnavailable
   expr: max_over_time(entrypath_blackbox_probe_success{path="websocket"}[2m]) == 0

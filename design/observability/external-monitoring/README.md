@@ -1,165 +1,183 @@
 # External Monitoring Contract
 
-This document defines the FireMUD monitoring that must continue to detect and page on outages when the in-cluster Prometheus and Alertmanager stack is degraded or unavailable.
+This document defines the optional stronger FireMUD monitoring profile that continues to detect and page on outages when the in-cluster Prometheus and Alertmanager stack is degraded or unavailable.
 
 It complements the Prometheus-facing observability contract in `design/architecture/system-architecture-logging-monitoring.md`.
 
+The stronger profile is governed by [ADR 0159: profile-dependent independent deadman and public-path monitoring](../../architecture/decisions/adr-0159-profile-dependent-independent-deadman-and-public-path-monitoring.md).
+
 ## Implementation Status
 
-This is a prod-like target-state contract. The repository now provides the canonical runtime smoke harness in `dev-tools/observability/run-player-experience-smoke.py`, retained-evidence validation in `dev-tools/observability/validate-player-experience-smoke-evidence.py`, and the shared mirrored metric vocabulary for blackbox, deadman, and player-flow canary signals. The harness now proves the real first-party browser admission handshake (`player-bootstrap` -> discovery -> `connect-token` cookie -> `/ws/game/**`) plus a real Telnet `WORLDS` handshake instead of treating those paths as raw transport checks. The repository still does not ship an authoritative external monitoring deployment itself; each prod-like environment must wire that deployment and its paging route separately, then feed the retained authoritative check result back into the smoke harness with `--external-authority-evidence`.
+This is the target-state contract for hosted production profiles that claim externally verified availability or monitoring-resilient readiness. The repository provides a runtime smoke harness, retained-evidence validation, and a shared mirrored metric vocabulary. It does not ship the authoritative off-cluster monitor or pager. Hobby, single-node, and small profiles may explicitly omit that infrastructure; preflight warns and records their degraded detection posture without blocking player traffic.
 
 ## What This Is
 
-FireMUD uses two observability layers in prod-like environments:
+FireMUD uses two observability layers when a deployment selects the stronger independent-monitoring profile:
 
 - **Authoritative external pager**
   - Runs outside the cluster and outside the Prometheus + Alertmanager failure domain.
-  - Must still page operators when the public edge is down or when the observability stack itself is unhealthy.
+  - Must still page operators when the public edge is down or the in-cluster heartbeat is stale.
 - **Prometheus mirror**
   - Mirrors selected external-monitor state into low-cardinality Prometheus metrics.
   - Exists so Grafana dashboards, runbooks, and smoke tests can use a shared vocabulary when Prometheus is healthy.
 
-The external pager is the real source of truth. The Prometheus mirror is a convenience view. If an environment has only the mirrored metrics and no independent external pager, it does not satisfy this contract.
+The external pager is the real source of truth. The Prometheus mirror is a convenience view. If an environment has only mirrored metrics and no independent external pager, it does not satisfy this stronger contract. It may still be a valid small or hobby deployment when the weaker posture is explicit.
 
 ## Required External Checks
 
-Prod-like environments must configure the following checks in the authoritative external monitoring system.
+Profiles claiming independent monitoring must configure the following checks in the authoritative external monitoring system.
 
 ### 1. Deadman Heartbeat Freshness
 
 - An in-cluster heartbeat emitter must publish a timestamp to the external monitor.
-- The external monitor must page when that heartbeat becomes stale for more than `3 * heartbeat_interval_seconds`.
+- The external monitor must page when the heartbeat exceeds the profile's configured stale threshold.
 - Default contract:
   - `heartbeat_interval_seconds = 60`
   - page when stale for more than `180s`
+
+Each `independent-required` profile records its actual heartbeat interval, stale threshold, probe cadence, timeout values where applicable, ingestion/observation delay, evaluation cadence, and resulting maximum detection budget. Retained `independent-required` evidence includes the last successful heartbeat/probe observation timestamp and the timestamp at which the evidence was observed. A source observation timestamp must not be later than `evidenceObservedAt`; validators reject that chronology error before computing age by direct subtraction, without clamping negative ages to zero. `observedStalenessSeconds` is the nonnegative result of the valid difference between `evidenceObservedAt` and `lastSuccessfulHeartbeatObservedAt`, within the established numeric tolerance. A green deadman is valid only when that observed staleness is no greater than the positive finite `staleThresholdSeconds`. Each exposed public-path record must carry a nonnegative finite `observedProbeAgeSeconds` equal, within the established numeric tolerance, to `evidenceObservedAt - lastSuccessfulProbeObservedAt`; a green path is valid only when that age is no greater than the profile's `detectionBudgetSeconds`. The `independent-required` profile's `detectionBudgetSeconds` is derived from the declared heartbeat interval and timeout, probe cadence and timeout, stale threshold, ingestion/observation delay, and evaluation cadence; it remains the outer retained-evidence transport-freshness bound rather than the green-deadman threshold, and is not a universal constant.
+
+Whenever `playerFlowCanary=advertised`, the profile timing declaration must also record every input used to derive its positive `detectionBudgetSeconds` and the reproducible formula: canary cadence, execution timeout, observation/ingestion delay, and evaluation cadence are required for `independent-omitted`, while `independent-required` uses the external timing inputs above as its authoritative budget. For `independent-omitted`, external heartbeat, deadman, and public-path timing inputs are not applicable; the resulting budget is local canary timing only, but it is still retained in `externalAuthority.detectionBudgetSeconds` and mirrored exactly by `playerflow_canary_freshness_budget_seconds`. The omitted profile must not add non-applicable external fields to its retained authority object.
 
 This check exists so FireMUD can still detect a broad cluster or observability-stack failure even when Prometheus cannot evaluate internal rules.
 
 ### 2. Public Player Entry-Path Reachability
 
-The external monitor must probe the real public player entry paths:
+Each profile declares the complete `exposedPublicPlayerPaths` list from the bounded set `websocket` and `telnet`, without duplicates. For an `independent-required` profile, retained `publicPathChecks` must contain exactly both bounded paths: exposed paths have green real-probe records with per-check `pageEvidenceRef`, `lastSuccessfulProbeObservedAt`, and `observedProbeAgeSeconds`, while non-exposed paths have exactly `{ "status": "not_applicable" }` and no page reference or freshness fields.
 
-- `path="websocket"` for the browser / Gateway path
-- `path="telnet"` for the TCP Proxy path
+The external monitor must probe every path the profile actually exposes:
 
-These checks must validate the real path handshake, not just TCP port-open status.
+- `path="websocket"` for an exposed browser / Gateway path
+- `path="telnet"` for an exposed TCP Proxy path
+
+These checks must validate the real path handshake, not just TCP port-open status. A non-exposed path is recorded as `not_applicable` and is excluded from the profile's availability claim; omitting a probe for an exposed path fails independent-monitoring readiness.
 
 This check exists so FireMUD can detect public-edge outages independently of internal monitoring health.
 
-### 3. Public Observability Entrypoints
+## Optional Private Observability Diagnostics
 
-The external monitor must also check operator-facing observability entrypoints:
-
-- Prometheus
-- Alertmanager
-- Grafana
-- Kibana or the Elasticsearch-backed log-query entrypoint
-- Jaeger query UI or trace-query endpoint
-
-These checks are for operator access continuity. They do not replace in-cluster health alerts for the underlying services.
-
-Each check must have:
-
-- a documented external target
-- a canonical environment-scoped identity in the external monitoring product
-- a non-production failure or test method that proves the check can open an incident without relying on Prometheus
+Prometheus, Alertmanager, Grafana, Kibana, Jaeger, and collector endpoints do not need to be externally reachable. Provider-native or in-cluster checks may diagnose them. The independent external contract is limited to heartbeat freshness, the profile's declared exposed public gameplay paths, and off-cluster page delivery.
 
 ## Prometheus Mirror
 
-When Prometheus is healthy, selected external-monitor state must be mirrored into low-cardinality metrics so dashboards and runbooks can show the same conditions with stable names.
+When Prometheus is healthy, selected external-monitor state may be mirrored into low-cardinality metrics so dashboards and runbooks can show the same conditions with stable names.
 
 Canonical mirrored metrics:
 
 - `entrypath_blackbox_probe_success{path,target}`
   - Mirrors the authoritative external result for public entry-path reachability.
-  - `path` is a bounded enum and must use `websocket` and `telnet`.
-  - `target` identifies the externally probed endpoint and must remain low-cardinality.
+  - `path` is a bounded enum and uses `websocket` or `telnet` only when that path is exposed by the profile.
+  - `target` is the bounded logical ingress enum (`gateway` or `tcp_proxy`) and must remain low-cardinality; the provider-native endpoint, product, and deployment identities remain in retained external evidence rather than Prometheus labels.
 - `observability_deadman_heartbeat_timestamp_seconds{source}`
   - Mirrors the latest externally observed in-cluster heartbeat timestamp.
-  - `source` identifies the environment or monitor instance and must remain low-cardinality.
+  - `source` is a bounded environment or heartbeat-observed label, not the exact external monitor identity; the exact monitoring product/deployment remains in retained evidence.
+- `observability_deadman_stale{profile}`
+  - Boolean-like mirror emitted by the independent monitor after applying that profile's configured stale threshold and evaluation window. It is optional only when the required-profile Prometheus overlay is not installed; a profile using `independent-required-prometheus-published` must emit it because that overlay evaluates its absence fail-closed.
+  - Prometheus deadman alerts gate on `profile="independent-required"`; an `independent-omitted` profile does not emit a green authority or trigger the required-profile alert.
+
+The independent monitor owns the `observability_deadman_stale` decision: it emits and updates that gauge only after applying the profile timing. The smoke runner never synthesizes or freezes the stale decision. Select `prometheusMirrors=published` only when the environment separately publishes this gauge and installs the matching overlay; the runner's `observability_deadman_heartbeat_timestamp_seconds` is a diagnostic timestamp mirror and does not derive the stale decision. This separate publication and overlay selection are deployment/monitor-owned and do not add `observability_deadman_stale` to the retained player-experience smoke evidence schema; the evidence validator does not require or derive this gauge.
 
 Prometheus alerts and dashboards may use these mirrored metrics, but the external monitoring system must still page independently using its own native checks and thresholds.
 
-## Observability Entrypoint Mirror Options
+### Independent Capability Declarations
 
-Public observability entrypoint checks do not require one universal mirrored metric name today. Each prod-like environment must choose one of these approaches and document it in readiness evidence:
+Retained player-experience smoke evidence declares optional capabilities separately from the external-monitoring profile:
 
-- mirror the checks into a bounded Prometheus-facing metric vocabulary
-- keep them authoritative external-only and document that they are verified in the external monitoring product rather than in Prometheus
+```json
+{
+  "executionMode": "live",
+  "externalAuthorityProvenance": "retained-external",
+  "capabilities": {
+    "prometheusMirrors": "published",
+    "playerFlowCanary": "advertised"
+  }
+}
+```
 
-Recommended bounded mirror vocabulary:
+`prometheusMirrors` is declared as `published` or `omitted`, independently of `playerFlowCanary`, which is `advertised` or `omitted`. For `independent-required`, `prometheusMirrors=published` selects the `independent-required-prometheus-published` overlay and requires the `observability_deadman_stale{profile="independent-required"}` mirror; `prometheusMirrors=omitted` selects the corresponding overlay without that rule and requires the deadman mirror to be absent. An `independent-omitted` profile never emits the required-profile deadman mirror or alert. The external deadman requirement remains authoritative and is not weakened by omitting its Prometheus convenience mirror. An advertised player-flow canary runs and retains its complete login/command metric family, last-run timestamps, profile-derived freshness budget, and canonical alert-exercise records regardless of Prometheus mirror publication; an omitted canary retains none of those canary-specific records. For `independent-omitted`, `detectionBudgetSeconds` is canary timing only and is not external-monitoring authority. `externalAuthority.profile` is not a canary declaration. In particular, `independent-required` still requires the authoritative deadman and every exposed public-path result whether either optional capability is omitted.
 
-- `observability_entrypoint_probe_success{entrypoint,target}`
-  - `entrypoint` is a bounded enum such as `prometheus`, `alertmanager`, `grafana`, `kibana_log_query`, or `jaeger_query`
-  - `target` identifies the externally probed endpoint and must remain low-cardinality
-  - values are `1` for reachable and `0` for unreachable
-
-This vocabulary is recommended for cross-environment consistency, not mandatory.
+`executionMode` is `live` for a network-executed smoke and `simulated` for `--simulate`. Live evidence must use `externalAuthorityProvenance="retained-external"`; simulation may use retained external input, but remains non-authorizing, while simulation without that input records `externalAuthorityProvenance="synthetic"`. Synthetic authority references are valid only in simulated evidence and must not be consumed as promotion, recovery, or traffic-open authority.
 
 ## Ownership and Evidence
 
 - `owner="platform"` is responsible for external monitoring configuration, routing, and periodic validation.
 
-Prod-like readiness evidence must record:
+Independent-monitoring readiness evidence must record:
 
 - the external monitoring product or deployment used
 - the configured deadman threshold
-- the configured `websocket` and `telnet` targets
-- the configured targets and check identities for Prometheus, Alertmanager, Grafana, Kibana/log-query, and Jaeger/trace-query availability
+- the declared `exposedPublicPlayerPaths` set and the configured target for every exposed path, with non-exposed paths recorded as `not_applicable`
 - evidence that the authoritative external pager can fire without Prometheus
-- evidence that mirrored Prometheus metrics match the external monitor state when Prometheus is healthy
+- when mirrored Prometheus metrics are provided, evidence that they match the external monitor state while Prometheus is healthy
 
-The canonical runner expects that retained authoritative result in a structured JSON object before it will emit prod-like smoke evidence. Required shape:
+Retained evidence for the stronger profile must identify the configured detection budget, deadman and pager outcomes, and every declared exposed public-path outcome. Illustrative target shape for a profile exposing both paths:
 
 ```json
 {
+  "profile": "independent-required",
+  "exposedPublicPlayerPaths": ["websocket", "telnet"],
+  "monitoringProduct": "external-monitoring-product",
+  "monitoringDeployment": "staging-deadman-monitor",
+  "heartbeatIntervalSeconds": 60,
+  "probeCadenceSeconds": 60,
+  "heartbeatTimeoutSeconds": 15,
+  "probeTimeoutSeconds": 15,
+  "staleThresholdSeconds": 180,
+  "ingestionObservationDelaySeconds": 10,
+  "evaluationCadenceSeconds": 5,
+  "detectionBudgetSeconds": 195,
+  "evidenceObservedAt": "2026-03-19T10:50:00Z",
+  "lastSuccessfulHeartbeatObservedAt": "2026-03-19T10:49:18Z",
+  "observedStalenessSeconds": 42,
   "deadmanAuthority": {
     "status": "green",
     "evidenceRef": "pager://staging/player-experience/2026-03-19T10:50:00Z",
+    "pageEvidenceRef": "pager://staging/player-experience/2026-03-19T10:50:00Z/delivery",
     "target": "staging-deadman-authority",
     "checkRef": "check://staging/deadman"
   },
-  "entrypointChecks": {
-    "prometheus": {
+  "publicPathChecks": {
+    "websocket": {
       "status": "green",
-      "evidenceRef": "pager://staging/prometheus/2026-03-19T10:51:00Z",
-      "target": "staging-prometheus",
-      "checkRef": "check://staging/prometheus"
+      "evidenceRef": "probe://staging/websocket/2026-03-19T10:49:40Z",
+      "pageEvidenceRef": "pager://staging/websocket/2026-03-19T10:50:00Z/delivery",
+      "target": "staging-websocket",
+      "lastSuccessfulProbeObservedAt": "2026-03-19T10:49:40Z",
+      "observedProbeAgeSeconds": 20
     },
-    "alertmanager": {
+    "telnet": {
       "status": "green",
-      "evidenceRef": "pager://staging/alertmanager/2026-03-19T10:51:00Z",
-      "target": "staging-alertmanager",
-      "checkRef": "check://staging/alertmanager"
-    },
-    "grafana": {
-      "status": "green",
-      "evidenceRef": "pager://staging/grafana/2026-03-19T10:51:00Z",
-      "target": "staging-grafana",
-      "checkRef": "check://staging/grafana"
-    },
-    "kibana_log_query": {
-      "status": "green",
-      "evidenceRef": "pager://staging/kibana-log-query/2026-03-19T10:51:00Z",
-      "target": "staging-kibana-log-query",
-      "checkRef": "check://staging/kibana-log-query"
-    },
-    "jaeger_query": {
-      "status": "green",
-      "evidenceRef": "pager://staging/jaeger-query/2026-03-19T10:51:00Z",
-      "target": "staging-jaeger-query",
-      "checkRef": "check://staging/jaeger-query"
+      "evidenceRef": "probe://staging/telnet/2026-03-19T10:49:43Z",
+      "pageEvidenceRef": "pager://staging/telnet/2026-03-19T10:50:00Z/delivery",
+      "target": "staging-telnet",
+      "lastSuccessfulProbeObservedAt": "2026-03-19T10:49:43Z",
+      "observedProbeAgeSeconds": 17
     }
   }
 }
 ```
 
-Only `--simulate` may synthesize this external-authority object. Real prod-like smoke must point at retained authoritative evidence instead of env-fed `green/red` status flags.
+For a retained `independent-required` profile, the derived budget must be reproducible from its declared values. A compatible target formula is `detectionBudgetSeconds = max(heartbeatIntervalSeconds + heartbeatTimeoutSeconds, probeCadenceSeconds + probeTimeoutSeconds, staleThresholdSeconds) + ingestionObservationDelaySeconds + evaluationCadenceSeconds`; profiles may document an equivalent formula when their monitor's timing model differs. An `independent-omitted` profile with an advertised player-flow canary must likewise document a reproducible canary-timing formula over all of its declared canary cadence, execution-timeout, observation/ingestion-delay, and evaluation-cadence inputs; that local budget does not establish external-monitoring authority. Timestamps are RFC 3339 UTC values. Every explicit source observation timestamp must be at or before `evidenceObservedAt`; after that chronology check, observed ages are computed by direct subtraction rather than `max(0, ...)` clamping.
+
+Only simulation may synthesize green authority. Real hosted-assurance smoke points at current retained external evidence. Hobby/self-hosted, single-node, and other small profiles retain an explicit omitted record instead of manufacturing external authority:
+
+```json
+{
+  "profile": "independent-omitted",
+  "reason": "single-node deployment uses operator-dependent outage detection",
+  "exposedPublicPlayerPaths": ["websocket"]
+}
+```
+
+They do not include `deadmanAuthority`, `publicPathChecks`, or any other synthesized external authority fields in that omitted record. Hosted profiles claiming independent monitoring retain the external deadman, per-check page-delivery evidence, and complete bounded path-check map above. The canonical shape has no separate monitor-level pager-delivery field: each authoritative check carries its own `pageEvidenceRef`.
 
 Freshness decision at the current repository boundary:
 
-- the repository validates the retained external-authority object for required shape and required green-state semantics only;
-- the repository does not currently parse or freshness-validate authoritative timestamps from `evidenceRef` or `checkRef`, because those references are intentionally product-specific opaque handles owned by the external monitoring system;
+- the checked-in runner and validator consume this profile-aware shape; `publicPathChecks` replaces the obsolete observability-entrypoint checks, and `independent-omitted` is accepted without synthesizing green authority;
+- readiness, promotion, and recovery consumers invoke the validator without `--allow-failure-evidence`; only green `independent-required` deadman and exposed-path records can authorize those gates, and each green authoritative record must carry its `pageEvidenceRef`;
+- `--allow-failure-evidence` is an incident-evidence mode only. It may retain fresh red external deadman/path outcomes and zero-valued mirrored canary/path outcomes (with complete record coverage), while keeping timestamps, reference provenance, and structural checks strict. Red incident records do not authorize readiness and may omit `pageEvidenceRef` when no page-delivery observation exists;
+- for `independent-required`, the checked-in runner and validator require the explicit `evidenceObservedAt` timestamp and reject future or over-budget evidence relative to the retained evidence evaluation timestamp `verifiedAt`;
+- the repository does not parse or freshness-validate authoritative timestamps from `evidenceRef`, `pageEvidenceRef`, or `checkRef`, because those references are intentionally product-specific opaque handles owned by the external monitoring system; retained evidence must use real references, while synthetic references are allowed only for simulated evidence;
 - choosing retained evidence that is contemporaneous with the smoke execution window remains an environment readiness obligation and must be documented in the environment’s own monitoring evidence.
 
 ## Compatibility Mapping
@@ -167,7 +185,7 @@ Freshness decision at the current repository boundary:
 If a monitoring product cannot expose the canonical mirrored metric names directly, the environment must document a compatibility mapping that preserves:
 
 - deadman freshness semantics
-- `path="websocket"` and `path="telnet"` semantics
+- the declared exposed `path="websocket"` and `path="telnet"` semantics
 - independent external paging behavior
 - existing runbook behavior and alert naming from the architecture docs
 
@@ -180,8 +198,8 @@ Illustrative mapping:
   - `synthetic.http.websocket.prod.status`
   - `heartbeat.firemud.prod.last_seen_unix`
 - Prometheus mirror mapping:
-  - `synthetic.tcp.telnet.prod.status -> entrypath_blackbox_probe_success{path="telnet",target="prod-telnet-edge"}`
-  - `synthetic.http.websocket.prod.status -> entrypath_blackbox_probe_success{path="websocket",target="prod-web-gateway"}`
+  - `synthetic.tcp.telnet.prod.status -> entrypath_blackbox_probe_success{path="telnet",target="tcp_proxy"}`
+  - `synthetic.http.websocket.prod.status -> entrypath_blackbox_probe_success{path="websocket",target="gateway"}`
   - `heartbeat.firemud.prod.last_seen_unix -> observability_deadman_heartbeat_timestamp_seconds{source="prod"}`
 
 Required preserved semantics:
@@ -192,4 +210,4 @@ Required preserved semantics:
 
 ## Scope
 
-This is the contract for prod-like environments that claim FireMUD-grade monitoring. Early local, preview, or hobby environments may implement a reduced version of this model, but they should not be described as meeting the prod-like monitoring contract unless the independent external pager path exists.
+This is the contract for hosted production profiles that claim externally verified availability or monitoring-resilient readiness. Local, preview, hobby, single-node, and small deployments may explicitly omit it. Their preflight and status surfaces must expose the weaker posture, and they must not describe themselves as independently monitored.

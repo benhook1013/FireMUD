@@ -15,7 +15,7 @@ dependencies {
     implementation(libs.spring.boot.starter.jdbc)
     implementation(libs.spring.boot.starter.data.redis)
 
-    compileOnly("com.github.spotbugs:spotbugs-annotations:4.10.3")
+    compileOnly(libs.spotbugs.annotations)
 
     testImplementation(libs.spring.boot.starter.test)
 }

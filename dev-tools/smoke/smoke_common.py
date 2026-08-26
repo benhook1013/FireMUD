@@ -9,7 +9,11 @@ from contextlib import closing
 from urllib.parse import quote
 
 
-class TransientUpstreamSmokeFailure(RuntimeError):
+class ProbeOperationalFailure(RuntimeError):
+    """An expected transport, upstream, or protocol failure from a live probe."""
+
+
+class TransientUpstreamSmokeFailure(ProbeOperationalFailure):
     """A startup-time upstream error that a bounded smoke retry may retry."""
 
 
@@ -89,13 +93,17 @@ def http_request_json_with_headers(
     try:
         with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             return json.loads(response.read().decode("utf-8")), response.headers
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ProbeOperationalFailure(
+            f"Request {method} {url} returned invalid JSON: {exc}"
+        ) from exc
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="ignore").strip()
-        raise RuntimeError(
+        raise ProbeOperationalFailure(
             f"Request {method} {url} failed with status {exc.code}: {body or '<empty>'}"
         ) from exc
     except urllib.error.URLError as exc:
-        raise RuntimeError(f"Request {method} {url} failed: {exc}") from exc
+        raise ProbeOperationalFailure(f"Request {method} {url} failed: {exc}") from exc
 
 
 def quote_path(value):
@@ -189,13 +197,19 @@ def run_transport_session(
                 raise
         except retriable_exceptions as exc:
             if deadline is None:
-                raise RuntimeError(f"Failed to open {session_label}: {exc}") from exc
+                raise ProbeOperationalFailure(
+                    f"Failed to open {session_label}: {exc}"
+                ) from exc
             remaining = deadline - time.time()
             if remaining <= 0:
-                raise RuntimeError(f"Failed to open {session_label}: {exc}") from exc
+                raise ProbeOperationalFailure(
+                    f"Failed to open {session_label}: {exc}"
+                ) from exc
             time.sleep(min(retry_interval_seconds, remaining))
             if time.time() >= deadline:
-                raise RuntimeError(f"Failed to open {session_label}: {exc}") from exc
+                raise ProbeOperationalFailure(
+                    f"Failed to open {session_label}: {exc}"
+                ) from exc
 
 
 def login_play_look_steps(
@@ -262,7 +276,7 @@ def wait_for_incremental_response(
                     raise TransientUpstreamSmokeFailure(
                         f"Command failed explicitly: {stripped}"
                     )
-                raise RuntimeError(f"Command failed explicitly: {stripped}")
+                raise ProbeOperationalFailure(f"Command failed explicitly: {stripped}")
             if all(substring in response for substring in expected_substrings):
                 if drain_remaining is not None:
                     trailing = drain_remaining()
@@ -272,7 +286,7 @@ def wait_for_incremental_response(
                 return response
         else:
             time.sleep(idle_sleep_seconds)
-    raise RuntimeError(
+    raise ProbeOperationalFailure(
         f"Expected response containing {expected_substrings}, got '{response}'"
     )
 
@@ -474,13 +488,15 @@ def recv_text_websocket(ws, label, timeout):
             ):
                 raise
             last_error = exc
-    raise RuntimeError(f"Timed out waiting for {label} after {timeout}s") from last_error
+    raise ProbeOperationalFailure(
+        f"Timed out waiting for {label} after {timeout}s"
+    ) from last_error
 
 
 def recv_optional_websocket_chunk(ws, label, timeout):
     try:
         return recv_text_websocket(ws, label, timeout).strip()
-    except RuntimeError:
+    except ProbeOperationalFailure:
         return ""
 
 

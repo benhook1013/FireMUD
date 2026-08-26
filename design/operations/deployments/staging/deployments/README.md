@@ -6,7 +6,7 @@ Store one immutable deployment record per staging overlay apply as:
 
 ## Implementation Status
 
-The current record producer does not yet emit the promotion-lineage JWT fields. Production-attestation validation now enforces `jwtCustodyProof` and `jwtRotationEvidenceRef` for a selected staging record, so promotion remains blocked until the producer and its underlying custody/rotation proof are implemented.
+The current record producer does not yet emit the promotion-lineage JWT fields. Production-attestation validation now enforces `jwtCustodyProof` and `jwtRotationEvidenceRef` for a selected staging record, so promotion remains blocked until the producer and its underlying custody/rotation proof are implemented. The current `_promotion_check` validates `serviceDigests`/`observedDigests` but does not validate `servicePlatformDigests`/`observedPlatformDigests`; the platform-child fields below are target-state contract coverage and remain an implementation gap rather than a reason to expand this docs-focused change.
 
 Required fields:
 
@@ -18,7 +18,8 @@ Required fields:
 - `appliedBy`
 - `deployStatus` (`pass`)
 - `smokeStatus` (`pass`)
-- `serviceDigests`
+- `serviceDigests` (map of each service to its exact staged immutable manifest or index reference)
+- `servicePlatformDigests` (same service key set, with each service mapped from its exact admitted platform keys to immutable child-manifest references; for a single-platform direct-manifest `serviceDigests` reference, the one platform entry binds that same manifest, while for an index-backed reference, each entry binds the index descriptor's selected child manifest and never the index digest)
 - `preflightReportPath`
   - must equal `design/operations/deployments/staging/preflight/<overlayCommitSha>/<deploymentEventId>.json`
   - report `completedAt` must not be later than `appliedAt`
@@ -26,11 +27,12 @@ Required fields:
 - `liveStateEvidence`
   - `status` (`pass`)
   - `observedOverlaySha`
-  - `observedDigests`
+  - `observedDigests` (must exactly equal top-level `serviceDigests`)
+  - `observedPlatformDigests` (must exactly equal top-level `servicePlatformDigests`, including service keys, platform keys, and child-manifest references)
 - `secretComplianceSnapshotAt`
 - `secretComplianceStatus`
 - `secretComplianceEvidenceRef`
-- `smokeEvidence`
+- `smokeEvidence` (non-empty list of closed `{ref, contentDigest}` entries; each `contentDigest` is the SHA-256 digest of the exact retained JSON bytes, encoded exactly as `sha256:<64 lowercase hexadecimal characters>`, each artifact's `deploymentRef` matches `overlayCommitSha`, each artifact's `deploymentEventId` equals the deployment record's `deploymentEventId`, and `ref` values are unique)
 
 Target-state promotion-lineage fields (required when this record is selected as production-attestation or production-promotion evidence):
 

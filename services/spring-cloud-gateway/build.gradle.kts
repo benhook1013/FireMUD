@@ -8,7 +8,7 @@ dependencies {
     annotationProcessor(libs.lombok)
     annotationProcessor(libs.lombok.mapstruct.binding)
     compileOnly(libs.lombok)
-    compileOnly("com.github.spotbugs:spotbugs-annotations:4.10.3")
+    compileOnly(libs.spotbugs.annotations)
     implementation(libs.mapstruct)
     implementation(libs.spring.boot.starter)
     implementation(libs.spring.boot.starter.actuator)
@@ -25,10 +25,10 @@ dependencies {
     implementation(libs.opentelemetry.sdk)
     implementation(libs.opentelemetry.exporter.otlp)
     testImplementation(testFixtures(project(":common-test-support")))
-    testImplementation("io.projectreactor:reactor-test:3.8.6")
+    testImplementation("io.projectreactor:reactor-test:3.8.7")
     testImplementation(libs.spring.boot.starter.websocket)
     testImplementation(libs.spring.boot.starter.webflux)
-    testImplementation("com.h2database:h2:2.4.240")
+    testImplementation(libs.h2)
     testRuntimeOnly("io.grpc:grpc-netty:${libs.versions.grpc.get()}")
 }
 

@@ -215,5 +215,47 @@ for transport in ("telnet", "websocket"):
     assert len(later_failure_attempts) == 1
     assert later_failure_attempts[0].closed is True
 
+
+class FakeHttpResponse:
+    def __init__(self, body):
+        self.body = body
+        self.headers = {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self):
+        return self.body
+
+
+for body in (b"\xff", b"{ malformed"):
+    with patch(
+        "smoke_common.urllib.request.urlopen", return_value=FakeHttpResponse(body)
+    ):
+        try:
+            smoke_common.http_request_json_with_headers("http://example.test", 1)
+        except smoke_common.ProbeOperationalFailure as exc:
+            assert "returned invalid JSON" in str(exc)
+        else:
+            raise AssertionError("invalid upstream HTTP JSON was not classified")
+
+
+def unrelated_http_failure(*_args, **_kwargs):
+    raise ValueError("unexpected HTTP client programming failure")
+
+
+with patch(
+    "smoke_common.urllib.request.urlopen", side_effect=unrelated_http_failure
+):
+    try:
+        smoke_common.http_request_json_with_headers("http://example.test", 1)
+    except ValueError as exc:
+        assert str(exc) == "unexpected HTTP client programming failure"
+    else:
+        raise AssertionError("unrelated HTTP exception was incorrectly classified")
+
 print("smoke transport contract checks passed")
 PY

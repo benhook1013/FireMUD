@@ -9,14 +9,17 @@ This directory contains FireMUD backup tooling for three different lanes:
 ## Script Map
 
 - `backup-db.sh`
-  - Creates a local PostgreSQL logical dump with `pg_dump`.
+  - Creates a local PostgreSQL custom-format logical dump with `pg_dump -Fc`.
+  - This ad hoc `.dump` lane is paired only with `dev-tools/restores/restore-db.sh` and `pg_restore`; it is separate from the hosted scheduled artifact lane.
   - Uses `FIREMUD_POSTGRES_HOST`, `FIREMUD_POSTGRES_USER`, and `FIREMUD_POSTGRES_DB`.
   - Accepts an optional output directory argument and defaults to a local `backups/` folder.
 
 - `pg-dump-rotate.sh`
-  - Creates rolling PostgreSQL dumps for the scheduled `pg-dump-cron` lane.
+  - Creates rolling plain-SQL PostgreSQL dumps (`pg_dump -Fp | gzip`) for the scheduled `pg-dump-cron` lane.
+  - The hosted readiness artifact contract is immutable `.sql.gz` content once published; its scheduled restore consumer is `dev-tools/restores/restore-latest-db.sh`, which uses `gunzip -c | psql`.
   - Maintains 15-minute, daily, weekly, and monthly retention folders.
   - Optionally uploads dumps to S3 or MinIO when `PG_DUMP_BUCKET` is configured.
+  - AWS's default endpoint is the canonical immutable-publication path. A custom `PG_DUMP_ENDPOINT` fails closed unless `PG_DUMP_ENDPOINT_IF_NONE_MATCH_CONFIRMED=true` is injected by the operator/preflight contract after provider-specific evidence proves that `If-None-Match: *` is enforced; the URL alone is not capability evidence and the script does not run a per-backup probe.
   - This script is built into the `pg-dump-cron` Docker image.
 
 - `setup-local-backup.sh`
@@ -31,7 +34,7 @@ This directory contains FireMUD backup tooling for three different lanes:
 ## Choosing The Right Script
 
 - Use `backup-db.sh` for a quick local PostgreSQL snapshot before a restore or experiment.
-- The scheduled `pg-dump-rotate.sh` lane is the routine online-backup direction; it does not pause or resume gameplay and still needs separate immutable lineage, artifact-readability, restore-tool, erasure-replay, and controlled-reopen proof before player-facing readiness.
+- The scheduled `pg-dump-rotate.sh` lane is the routine online-backup direction; it does not pause or resume gameplay and still needs separate immutable lineage, artifact-readability, restore-tool, erasure-replay, and controlled-reopen proof before player-facing readiness. Do not use the local custom-format `.dump`/`pg_restore` pair as hosted readiness evidence.
 - Use `setup-local-backup.sh` and `verify-backups.sh` for Kubernetes backup drills and backup verification.
 - Do not run `pg-dump-rotate.sh` manually unless you are intentionally testing the scheduled dump lane.
 

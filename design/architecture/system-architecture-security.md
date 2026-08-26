@@ -77,18 +77,18 @@ Validator cache behavior, environment modes, evidence age, planned overlap, and 
 Restore-hardening exception:
 
 - When rotating keys during post-restore hardening for a player-facing environment, use restore-mode cutover semantics instead of overlap semantics.
-- Restore mode must quarantine JWT issuance and JWT-protected traffic, have Account publish only fresh uncompromised keys in JWKS, invalidate environment-wide issuer authority, and require validator-convergence evidence before traffic reopen.
+- For `rotated`, `reissued`, or applicable `rebound` dispositions, and for any `compromiseClassified=true` hard cutover, quarantine JWT issuance and JWT-protected traffic, have Account publish only fresh uncompromised keys in JWKS, invalidate environment-wide issuer authority, and require validator-convergence evidence before traffic reopen. A same-boundary PostgreSQL-only rewind with a proved-current, unchanged trust boundary may retain current JWKS material only when its trust material and any generation source remain outside the restore artifact. Account must still invalidate restored issuer authority and apply the required generation or cutoff transition under the `verified_not_restored` disposition defined by post-restore hardening.
 - This avoids re-trusting snapshot-era keys resurrected by restore.
 
 Post-restore certificate policy:
 
-- A restore of a player-facing environment is treated as a **trust-boundary reset** for leaf identities.
-- Post-restore hardening must reissue:
+- A restore that replaces or compromises the player-facing trust boundary is treated as a **trust-boundary reset** for leaf identities. A same-boundary PostgreSQL-only rewind may retain current leaf identities only when their resources and issuer binding are proved outside the restored artifact, as defined by post-restore hardening.
+- For `rotated`, `reissued`, or applicable `rebound` dispositions, and for any `compromiseClassified=true` hard cutover, post-restore hardening must reissue:
   - workload mTLS certificates used for service-to-service gRPC,
   - TCP Proxy → Gateway WebSocket mTLS client/server certificates,
   - operator client certificates used for internal control-plane access.
 - The default restore flow does **not** rotate the cluster CA or cert-manager issuer root automatically; CA rotation is a separate incident-response path reserved for suspected CA compromise or trust-root loss.
-- Traffic must not reopen until validators and peers have converged on the reissued leaf identities.
+- Traffic must not reopen until validators and peers have converged on the applicable unchanged or reissued leaf identities.
 
 ### JWT Key Compromise Response
 

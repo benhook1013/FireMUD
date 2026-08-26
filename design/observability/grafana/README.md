@@ -4,6 +4,10 @@ This directory stores Grafana dashboard exports that visualize key FireMUD servi
 
 These JSON files can be imported into a Grafana instance connected to the project’s Prometheus data source to bootstrap consistent dashboards across environments.
 
+## Implementation Status
+
+The checked-in `player-experience.json` currently focuses on login success ratio, command end-to-end latency, Telnet/WebSocket path availability from in-service attempt counters, and chat delivery latency. Mirrored synthetic canary, external blackbox, and deadman panels remain follow-up dashboard work once those signals are implemented or mapped for a prod-like environment.
+
 ## Dashboards
 
 - [backups.json](./backups.json) – Backup pipeline dashboard with backup/verification/restore-drill freshness, artifact lineage/readability, and current recovery-participant state. Tick-pause views belong to maintenance/reset dashboards.
@@ -17,17 +21,19 @@ These JSON files can be imported into a Grafana instance connected to the projec
 - [player-experience-alerts-snippets.md](./player-experience-alerts-snippets.md) – Player-centric SLO alerts for login, command latency, chat delivery, and entry-path availability.
 - [observability-stack-alerts-snippets.md](./observability-stack-alerts-snippets.md) – Alertmanager, Prometheus, tracing, logging, and Grafana health alerts plus the smoke test rule.
 - [scripting-execution-policy-alerts-snippets.md](./scripting-execution-policy-alerts-snippets.md) – Script execution, policy, retry, and quarantine alert references.
-- [player-experience.json](./player-experience.json) – Reference player experience SLO dashboard for the target-state live-traffic SLI surface. The current checked-in JSON focuses on login success ratio, command end-to-end latency, Telnet/WebSocket path availability from in-service attempts counters, and chat delivery latency. Mirrored synthetic canary, external blackbox, and deadman panels remain follow-up dashboard work once those signals are implemented or mapped for a prod-like environment.
+- [player-experience.json](./player-experience.json) – Reference player experience SLO dashboard for the target-state live-traffic SLI surface.
 - [player-experience-drilldown.json](./player-experience-drilldown.json) – Player incident drilldown dashboard with outcome breakdowns and per-command/per-channel latency views for triage after an SLO breach.
 - [redis-coordination-health.json](./redis-coordination-health.json) – Redis and coordination health dashboard, including tail-loss vs dynamic budget, AOF size/restart, coordination memory and key counts, and per-prefix coordination metrics.
 - [tick-health-ledger.json](./tick-health-ledger.json) – Tick health and ledger dashboard, including tick status, execution-time histograms and ratios, retry and command queue depths, ledger pending/applied/abandoned metrics, replay-convergence budget/breach signals, replay fairness signals, and the canonical replay alert states `TickEffectsReplaySloBreached` / `TickEffectsReplayStarved`.
 
 To import a dashboard, use Grafana’s “Import dashboard” feature and either upload the JSON file directly or paste its contents into the “Import via panel JSON” field, then bind it to the correct Prometheus data source.
 
-Canonical alert-family registry:
+Routed-alert authority and degradation follow [ADR 0158](../../architecture/decisions/adr-0158-simplified-observability-degradation-without-fallback-alert-authority.md); external blackbox/deadman applicability follows [ADR 0159](../../architecture/decisions/adr-0159-profile-dependent-independent-deadman-and-public-path-monitoring.md).
 
-- The split alert snippet files in this directory are the canonical registry for alert-family names, severity expectations, and Alertmanager-vs-fallback family mapping.
-- Logging & Admin fallback dedupe must reuse these family names instead of maintaining an independent alert-family mapping table.
+Reference alert rules and diagnostic registry:
+
+- The split alert snippet files in this directory provide shared PromQL, Alertmanager evaluation rule names, and severity expectations for dashboards and diagnostics.
+- They are not a Prometheus fallback active-alert registry, cross-source alert-family equivalence table, or Logging & Admin deduplication authority.
 
 ## Conventions (Contract)
 

@@ -2,6 +2,8 @@
 
 This document describes how FireMUD collects logs, metrics, and traces across all services, and how operators use those signals for debugging, moderation, and performance analysis.
 
+The P0 observability owner contracts are [ADR 0158: simplified observability degradation without fallback alert authority](./decisions/adr-0158-simplified-observability-degradation-without-fallback-alert-authority.md) and [ADR 0159: profile-dependent independent deadman and public-path monitoring](./decisions/adr-0159-profile-dependent-independent-deadman-and-public-path-monitoring.md). This document owns monitoring and evidence consequences while authoritative domain/control-plane state remains outside the observability stack.
+
 For instance-bound gameplay/runtime records, scripting observability must retain the exact `(scriptPatchVersion, scriptPinEpoch)` in structured audit/log/trace records and must distinguish Game Session rollout-history authority from Automation readiness/convergence projections. An authoritative `UNPINNED` result is recorded as the valid no-script state only when `scriptPatchVersion`, `scriptPinEpoch`, and the current-pin `controlPlaneRequestId` are all absent; partial presence or unavailable/incomplete owner evidence is `UNAVAILABLE` and must not be classified as `UNPINNED` or inferred from missing authority. Tenant-readiness `onLoad` retains its declared pre-instance-pin identity and omits `gameInstanceId` and `scriptPinEpoch`; those fields must not be populated with sentinels. Metric names, labels, and increment units remain owned by the [normative scripting tables](./system-architecture-scripting-normative-contract-tables.md); any later scripting metric lists here are non-authoritative operational mirrors for bounded dashboards and alerts, not duplicate definitions. This document owns only bounded monitoring, dashboard, and alerting consequences. Routine script rollback is an epoch-fenced workflow, not a gameplay-tick outage signal.
 
 For the canonical definition of environment classes and which ones are considered player-facing or prod-like, see [Deployment Environments](./infrastructure/deployment-environments.md#terms) and [Deployment Environments](./infrastructure/deployment-environments.md#canonical-environment-classes). In this document, “prod-like” means `hobby-self-hosted`, `staging`, and `production` unless a section explicitly narrows the requirement further.
@@ -13,9 +15,9 @@ The current implemented baseline is narrower than the full target-state observab
 - Runtime identity, startup logging, shared HTTP/gRPC request logging, bounded WebSocket/Telnet handler logging, `grpc.app_error`, and the first bounded gameplay command counters are implemented.
 - Raw runtime or gameplay identifiers such as `serviceInstanceId`, `tenantId`, `sessionId`, `characterId`, and `script_patch_version` are not approved as ordinary Prometheus metric labels. These identifiers belong in structured logs and traces unless a future architecture update records a narrow low-cardinality exception.
 - The player-experience SLI catalog below is a target-state metric contract. It describes the operator-visible SLO surface FireMUD wants, but it is not fully implemented by the current services. Before implementing any metric that needs tenant, game-instance, or region scoping, reconcile the label shape with the cardinality policy, for example through a bounded environment-specific scope label or an explicitly documented exception.
-- Synthetic player-flow canaries, the independent deadman/heartbeat mirror, and the related canonical canary alert families now have a canonical operator-run runtime harness in `dev-tools/observability/run-player-experience-smoke.py`. The authoritative external pager deployment remains environment-specific, but the repo now provides the shared runner, retained-evidence validator, and mirrored metric vocabulary required for prod-like observability smoke.
+- Synthetic player-flow canaries, the independent deadman/heartbeat mirror, and the related canonical canary alert families have an operator-run runtime harness in `dev-tools/observability/run-player-experience-smoke.py`. When `playerFlowCanary=advertised`, one invocation runs and retains the complete login/command canary for every declared exposed path; when the capability is omitted, it produces no canary evidence. The current repository does not schedule that harness continuously or publish a deployment-owned expected-series inventory, so a runner that stops before its first emission remains an implementation gap rather than a condition proved by the checked-in `PlayerFlowCanaryEvidenceStale` rule. The sample profile overlays also install the shared canary rules regardless of that separate capability: clean omission emits no canary series and remains quiet/`not_applicable`, but an `advertised` to `omitted` transition does not remove the rules or guarantee cleanup of residual series, which may leave stale-evidence pages until expiry. Capability-specific installation/cleanup or an equivalent deployment-owned gate remains unimplemented. The authoritative external pager deployment remains environment-specific.
 - Validation and runtime-proof selection is owned by [Validation and Runtime Proof](../developer-workflows/validation-and-runtime-proof.md); this document defines only observability evidence and monitoring consequences.
-- The current smoke harness still accepts configurable endpoint labels for evidence output; those labels are not approved target-state Prometheus values until normalized to the bounded `playerflow` target enum defined below. Hosts, URLs, deployment identifiers, and runtime identifiers remain configuration/evidence details rather than metric labels.
+- The current smoke harness emits the bounded canonical metric targets `gateway` for WebSocket and `tcp_proxy` for Telnet. Hosts, URLs, deployment identifiers, and runtime identifiers remain configuration/evidence details rather than metric labels.
 - Routine backup dashboards and alert snippets use artifact freshness, lineage, integrity/readability, and current recovery-convergence signals. Tick-pause panels remain maintenance/reset views only and are not routine backup health signals.
 - The target measured Coordination Redis SLO is `redis_unreplicated_write_window_slo_ms`, with target breach series `redis_unreplicated_write_window_slo_breached{scope}`. Current checked-in Prometheus rules still emit `redis_coordination_tail_loss_budget_ms`, derived from `tick_interval_ms`; `redis_coordination_tail_loss_slo_breached{scope}` remains the explicit current compatibility alias/rule derived from that exposure budget, not the target measured-SLO breach. Alerting must distinguish these current compatibility signals from the target measured-SLO series without claiming that the target is already emitted.
 
@@ -195,13 +197,13 @@ In addition to infrastructure-level SLOs for Redis, ticks, and backup pipelines,
       - `outcome` is a bounded enum (for example `success`, `limit_exceeded`, `auth_failed`, `upstream_unreachable`, `timeout`, `protocol_error`, `unknown`).
     - The SLI should be computed as `sum by (service, scope, path) (rate(entrypath_connection_attempts_total{outcome="success"}[...])) / sum by (service, scope, path) (rate(entrypath_connection_attempts_total[...]))`.
     - Auxiliary meters such as `tcpproxy_connections_limit_exceeded_total` remain useful drilldowns but are not sufficient to define availability by themselves.
-    - Prod-like environments must also run **independent synthetic probes** from outside the gameplay ingress boundary and export a low-cardinality metric such as `entrypath_blackbox_probe_success{path,target}`. `path` is the bounded enum `websocket` or `telnet`; `target` is the bounded logical enum `gateway` or `tcp_proxy`, never a host, URL, deployment, or runtime identifier. These probes are the authoritative detection source for total entry-path outages that prevent traffic from ever reaching Gateway or TCP Proxy (for example LB, DNS, TLS, or ingress policy failures), while `entrypath_connection_attempts_total` remains the authoritative in-service breakdown for `outcome` analysis once traffic reaches the edge.
+    - Profiles claiming independent monitoring must also run **independent synthetic probes** from outside the gameplay ingress boundary and retain the external monitor's evidence for a low-cardinality result such as `entrypath_blackbox_probe_success{path,target}`. `path` is the bounded enum `websocket` or `telnet`; `target` is the bounded logical enum `gateway` or `tcp_proxy`, never a host, URL, deployment, or runtime identifier. These external probes are the authoritative detection source for total entry-path outages that prevent traffic from ever reaching Gateway or TCP Proxy (for example LB, DNS, TLS, or ingress policy failures), while `entrypath_connection_attempts_total` remains the authoritative in-service breakdown for `outcome` analysis once traffic reaches the edge. Profiles that omit independent monitoring retain their explicit degraded/operator-dependent detection posture and do not claim this external evidence.
   - Alert routing:
     - Entry-path alerts should preserve `service` from the emitting series and include `component="entrypath"` so Telnet-path and WebSocket-path incidents can route and page independently.
   - Detection model:
     - Treat the 1-day availability window as the compliance/SLO view.
     - Also publish short-window recording rules and alerts (for example 5-minute and 30-minute availability or burn-rate views) so acute entry-path failures are detected quickly and do not wait for a 1-day window to move materially.
-    - Blackbox probe alerts must exist alongside the in-service SLI alerts so “no requests reached the service” is still detected as a P0 edge-path outage.
+    - For profiles claiming independent monitoring, blackbox probe alerts must exist alongside the in-service SLI alerts so “no requests reached the service” is still detected as a P0 edge-path outage; profiles that omit independent monitoring retain the explicit degraded/operator-dependent posture instead of claiming this external alert authority.
 - **Chat delivery latency**
   - SLI: time from chat message submission to delivery to all intended recipients, for example `chat_delivery_latency_ms` histogram keyed by approved scope and chat channel type.
   - SLO: 99% of chat messages are delivered in < 1s over a 5-minute window for active regions.
@@ -231,26 +233,30 @@ The metrics below are the desired Prometheus-facing shapes for player experience
 - Entry-path availability:
   - `entrypath_connection_attempts_total{service,scope,path,outcome}` with the bounded emitting `service`, pre-gameplay `scope` baseline `environment`, and bounded enums for `path` and `outcome` as described above. Recording rules, alerts, and dashboards must retain `service` rather than aggregating it away.
 - Synthetic player-flow canaries:
-  - `playerflow_canary_success{flow,path,target}` for the mirrored result of the most recent synthetic login or representative-command run, for example `playerflow_canary_success{flow="login",path="websocket",target="gateway"}`.
-  - `playerflow_canary_latency_ms{flow,path,target}` for the mirrored latency of the same synthetic run in milliseconds, for example `playerflow_canary_latency_ms{flow="command",path="telnet",target="tcp_proxy"}`.
+  - For profiles advertising player-flow canaries, `playerflow_canary_success{flow,path,target,profile}` is the mirrored result of the most recent synthetic login or representative-command run, for example `playerflow_canary_success{flow="login",path="websocket",target="gateway",profile="independent-required"}`.
+  - For profiles advertising player-flow canaries, `playerflow_canary_latency_ms{flow,path,target,profile}` is the mirrored latency of the same synthetic run in milliseconds, for example `playerflow_canary_latency_ms{flow="command",path="telnet",target="tcp_proxy",profile="independent-required"}`.
+  - `playerflow_canary_last_run_timestamp_seconds{flow,path,target,profile}` is the Unix timestamp of that flow/path's most recent attempted run. A fresh failed run retains its timestamp and emits `playerflow_canary_success` with `value=0`; a stopped runner eventually makes the timestamp stale instead of leaving a prior success green.
+  - The profile's authoritative `externalAuthority.detectionBudgetSeconds` is the freshness budget for advertised player-flow canaries; it must not be replaced by a universal hard-coded interval. An advertised canary always retains and publishes the complete canary mirror family, including `playerflow_canary_freshness_budget_seconds{profile}`, independently of the separate external-monitoring `prometheusMirrors` capability, because the installed canary alerts evaluate that budget. Profiles that do not advertise the capability omit all canary metrics. For `independent-omitted`, the profile budget is canary timing only and does not establish external-monitoring authority.
 - Chat:
   - `chat_delivery_latency_ms_bucket{scope,channel_type,le}` with `scope` drawn from the metric family's documented bounded values and `channel_type` drawn from a bounded enum (global/zone/party/system, etc.).
 
-### Synthetic Player-Flow Canaries (Target-State Prod-Like Contract)
+### Synthetic Player-Flow Canaries (Target-State Profile-Advertised Contract)
 
-Live-traffic SLIs remain the authoritative compliance view for player experience, but they are not sufficient to detect outages in low-traffic periods or low-volume environments. Prod-like environments must also run **independent synthetic canaries** for the most critical player flows:
+Live-traffic SLIs remain the authoritative compliance view for player experience. Profiles that advertise continuous player-experience monitoring must also run **independent synthetic canaries** for the most critical player flows on every path in their declared `exposedPublicPlayerPaths` set; profiles that do not advertise this capability may omit these canary metrics. A non-exposed path is `not_applicable`, not a canary failure, and an advertised canary whose evidence is missing, stale, or unavailable is `unknown`/degraded rather than a green or failed result. This capability is distinct from the ADR 0159 independent-monitoring claim: a profile requiring independent monitoring still retains deadman and real public-path evidence even when it omits player-flow canaries.
 
 - Required flows:
   - `flow="login"` for an end-to-end login through each public entry path.
   - `flow="command"` for one bounded representative gameplay command after login. The starting canonical command is `command="look"`.
 - Required paths:
-  - `path="websocket"` for the browser/Gateway path.
-  - `path="telnet"` for the TCP Proxy path when that path is exposed in the environment.
+  - `path="websocket"` for the browser/Gateway path when that path is in `exposedPublicPlayerPaths`; otherwise record `not_applicable`.
+  - `path="telnet"` for the TCP Proxy path when that path is in `exposedPublicPlayerPaths`; otherwise record `not_applicable`.
 - Metric mirror contract:
-  - `playerflow_canary_success{flow,path,target}` – boolean-like result for the most recent synthetic run as mirrored into Prometheus; `target="gateway"` is used for the WebSocket/Gateway path and `target="tcp_proxy"` for the Telnet/TCP Proxy path.
-  - `playerflow_canary_latency_ms{flow,path,target}` – latency of the synthetic run in milliseconds, mirrored into Prometheus as a gauge or histogram-derived recording, using the same target enum.
+  - `playerflow_canary_success{flow,path,target,profile}` – boolean-like result for the most recent synthetic run as mirrored into Prometheus; `target="gateway"` is used for the WebSocket/Gateway path and `target="tcp_proxy"` for the Telnet/TCP Proxy path.
+  - `playerflow_canary_latency_ms{flow,path,target,profile}` – latency of the synthetic run in milliseconds, mirrored into Prometheus as a gauge or histogram-derived recording, using the same target enum.
+  - `playerflow_canary_last_run_timestamp_seconds{flow,path,target,profile}` – Unix timestamp of the most recent attempted run for each required flow on each actually exposed path. The timestamp is fresh for both passing and failing attempts.
+  - `playerflow_canary_freshness_budget_seconds{profile}` – Prometheus mirror of the authoritative profile's configured `externalAuthority.detectionBudgetSeconds`; this bounded gauge is required with the complete canary mirror family whenever the player-flow canary is advertised, regardless of the separate external-monitoring `prometheusMirrors` capability. It is absent when the canary capability is omitted.
 - Cardinality constraints:
-  - `flow` and `path` are bounded enums.
+  - `flow`, `path`, and `profile` are bounded enums; `profile` is the deployment's declared external-monitoring profile and must match the profile-specific freshness budget.
   - `target` is a bounded logical enum, currently `{gateway, tcp_proxy}`; it identifies the canonical ingress surface, never a host, URL, deployment/runtime ID, tenant, or player identity.
   - Do not label these metrics with canary account IDs, character IDs, tenant IDs, or trace IDs.
 - Operational contract:
@@ -259,26 +265,37 @@ Live-traffic SLIs remain the authoritative compliance view for player experience
   - These canaries are an outage-detection path, not the primary SLO compliance metric. They complement, but do not replace, `login_requests_total` and `command_end_to_end_latency_ms_bucket`.
   - The canary execution system should live outside the normal player request path failure domain where practical, and must alert independently from live-traffic volume.
 
-#### Canary Alert Contract (Target-State Prod-Like Contract)
+#### Canary Alert Contract (Target-State Profile-Advertised Contract)
 
-To keep synthetic canaries actionable instead of merely visible, prod-like environments must install a canonical alert set for canary failures:
+To keep advertised synthetic canaries actionable instead of merely visible, profiles that advertise this capability must install a canonical alert set for canary failures:
 
 - Required alert families:
   - `PlayerFlowCanaryLoginFailed`
   - `PlayerFlowCanaryCommandFailed`
   - `PlayerFlowCanaryLatencyHigh`
+  - `PlayerFlowCanaryEvidenceStale`
+  - `PlayerFlowCanaryFreshnessBudgetMissing`
+  - `PlayerFlowCanaryEvidenceMissing`
 - Label and routing requirements:
   - `owner="platform"` for login and entry-path availability of the synthetic path.
   - `owner="gameplay"` for representative command success/latency once the canary is authenticated and in-session.
-  - `service` should preserve the runtime entry-path emitter identity where the alert expression is service-specific; otherwise use `component="playerflow-canary"` to keep routing explicit without inventing ad hoc service names.
+  - `service` should preserve the runtime entry-path emitter identity where the alert expression is service-specific. For the canonical canary expressions, which intentionally span all exposed paths, do not hardcode a service; use `component="playerflow-canary"` and preserve the failing `path`, `target`, and `profile` labels in the alert instance (for example, with `path="{{ $labels.path }}"`, `target="{{ $labels.target }}"`, and `profile="{{ $labels.profile }}"`).
+  - `PlayerFlowCanaryEvidenceStale` is evaluated by Prometheus rather than one entry-path emitter and may use `service="prometheus"` for platform routing while preserving its bounded `flow`, `path`, `target`, and `profile` labels.
   - `runbook` must point to the player-experience or incident response runbook section that explains how to validate whether the canary reflects a real outage versus canary-only breakage.
 - Severity requirements:
   - `PlayerFlowCanaryLoginFailed` should use `severity="P0"` because it indicates end-to-end login unavailability on a monitored public path even when live traffic is sparse.
   - `PlayerFlowCanaryCommandFailed` should use `severity="P1"` because it indicates in-session gameplay degradation on a monitored public path, but does not by itself prove a total entry outage.
   - `PlayerFlowCanaryLatencyHigh` should use `severity="P1"` because it indicates sustained player-visible degradation on a monitored public path without requiring a total failure.
+  - `PlayerFlowCanaryEvidenceStale` should use `severity="P1"` because it indicates that advertised canary evidence is degraded and cannot establish current player-flow health.
+  - `PlayerFlowCanaryFreshnessBudgetMissing` should use `severity="P1"` because canary result series without their profile budget cannot safely drive the failure, latency, or stale-evidence alerts.
+  - `PlayerFlowCanaryEvidenceMissing` should use `severity="P1"` because an advertised canary has not produced its first run and cannot establish current player-flow health.
+- The canonical Prometheus canary alerts use a maximum `for: 2m` hold. Every profile advertising player-flow canaries must declare a positive `detectionBudgetSeconds` of at least 180 seconds: the two-minute longest hold plus a 60-second evaluation margin. The validator rejects a smaller authoritative budget rather than allowing an alert hold to outlive fresh evidence.
 - Detection requirements:
-  - Success/failure alerts must evaluate on short windows suitable for outage detection and must not rely on live-traffic volume.
-  - Latency alerts must evaluate `playerflow_canary_latency_ms{flow,path,target}` using millisecond thresholds and preserve the bounded `flow`, `path`, and `target` labels.
+  - Success/failure alerts must evaluate on short windows suitable for outage detection and must not rely on live-traffic volume. They are installed and evaluated only for advertised canary capability and exposed paths; omitted capabilities and non-exposed paths are `not_applicable`, while missing or stale advertised evidence is `unknown`/degraded. A failure alert may use a `value=0` or high-latency result only while its matching `playerflow_canary_last_run_timestamp_seconds{...,profile}` is within the same profile's freshness budget; an expired or absent timestamp must never leave a prior success green or turn stale evidence into a failure.
+  - Latency alerts must evaluate `playerflow_canary_latency_ms{flow,path,target,profile}` using millisecond thresholds and preserve the bounded `flow`, `path`, `target`, and `profile` labels, gated by the matching fresh run timestamp and the same-profile `playerflow_canary_freshness_budget_seconds{profile}`.
+  - `PlayerFlowCanaryEvidenceStale` must preserve the bounded `flow`, `path`, `target`, and `profile` labels and fire when an available run timestamp exceeds the same profile's freshness budget. A present `playerflow_canary_success` result whose matching last-run timestamp is missing is also owned by this stale-evidence condition and remains unknown/degraded; it must not be treated as a canary failure.
+  - `PlayerFlowCanaryFreshnessBudgetMissing` must preserve `profile` and fire when canary result series exist for that profile without a matching `playerflow_canary_freshness_budget_seconds{profile}` series. It remains quiet when the canary capability is omitted.
+  - `PlayerFlowCanaryEvidenceMissing` must use a deployment-owned expected-series inventory for every advertised flow/path/target/profile tuple and fire when a wholly absent expected tuple has no matching `playerflow_canary_last_run_timestamp_seconds` series after the profile's first-run grace period. This expected-series/first-run gate is required for `independent-omitted` profiles as well as `independent-required` profiles; it does not depend on an external deadman and remains quiet when the canary capability is omitted or a path is not exposed. The inventory and monitor remain an implementation gap; the checked-in stale rule does not claim to provide them.
   - Controlled non-production failure injection for each required canary path must be testable without paging production destinations.
 - Relationship to live-traffic SLIs:
   - Canary alerts complement, but do not replace, the live-traffic SLO alerts for `login_requests_total` and `command_end_to_end_latency_ms_bucket`.
@@ -292,8 +309,8 @@ Moderation and admin workflows should remain usable even when parts of the obser
   - Clearly indicate which data sources are unavailable (for example, “logs currently unavailable”, “metrics degraded”, or “traces unavailable”).
   - Continue to expose core moderation and admin APIs based on authoritative game data wherever possible.
   - Hide or disable only those features that require the missing backend (for example, embedded dashboards or historical trace searches), rather than failing the entire moderation workflow.
-- **Alert routing:** If Alertmanager is unavailable, or email delivery is degraded, Logging & Admin should surface alert status inside its own UI and APIs so operators can still see pending alerts without relying solely on email or chat integrations. When Alertmanager is down, Logging & Admin may fall back to a small set of Prometheus recording rules that approximate critical alert conditions (for example, SLO breaches for tail-loss or player SLIs) and clearly label those views as “best-effort from Prometheus (Alertmanager unavailable)” so operators understand they are not seeing the full alert state.
-  - For broader “observability stack outage” scenarios (Prometheus down, Elasticsearch down, Jaeger down), follow `design/architecture/system-architecture-observability-incident-runbook.md` for fallback workflows and recovery verification.
+- **Alert routing:** When Alertmanager is unavailable, Logging & Admin reports that routed-alert state is unavailable. It may display fresh, bounded Prometheus diagnostic values, but it does not reconstruct pending alerts or create a second active-alert authority; stale diagnostics become unknown.
+  - For broader “observability stack outage” scenarios (Prometheus down, Elasticsearch down, Jaeger down), follow `design/architecture/system-architecture-observability-incident-runbook.md` for bounded diagnostic workflows and recovery verification.
 
 New moderation features and admin tools must explicitly document:
 
@@ -359,113 +376,23 @@ Player SLO owner mapping (normative):
 - Command latency alerts (`CommandLatencyP99HighGateway`, `CommandLatencyP99HighTcpProxy`): `owner="gameplay"` (in-session runtime performance domain).
 - Chat delivery latency alerts (`ChatDeliveryLatencyP99High`): `owner="gameplay"` (player-facing runtime behavior domain).
 
-### Alert Fallback Recording Rules
+### Alert-State Degradation Without a Second Authority
 
-When Alertmanager is unavailable but Prometheus is still accessible, Logging & Admin may present a limited view of critical conditions based on recording rules evaluated directly in Prometheus. To keep behavior predictable, only a small set of fallback signals is supported:
+Alertmanager owns current alert-routing state while healthy; it is not game, moderation, recovery, or safety authority. Logging & Admin may render that routed state with its observation timestamp and canonical ownership/runbook labels.
 
-- **Redis coordination write-exposure SLO breaches**
-  - The current checked-in rule `redis_coordination_tail_loss_budget_ms` is derived from `tick_interval_ms`; `redis_coordination_tail_loss_slo_breached{scope}` is its explicit current compatibility alias/rule, not the measured SLO. A target rule may compare `redis_unreplicated_write_window_ms{scope}` with `redis_unreplicated_write_window_slo_ms` and expose `redis_unreplicated_write_window_slo_breached{scope}`. Exact tenant/game-instance/region drilldown belongs on the durable control-plane and runtime-health surfaces, not ordinary Prometheus labels.
-- **Tick execution safety ratios**
-  - Recording rule that exposes `tick_execution_time_ms_p99 / tick_lock_ttl_ms` per approved bounded `scope`, using the recording rules defined in the Redis operations metrics catalog. Exact region drilldown belongs on control-plane/runtime-health reads and must not be added as a raw metric label in this fallback path.
-- **Login success ratio**
-  - Recording rules mirroring `LoginSuccessRatioLowGateway` and `LoginSuccessRatioLowTcpProxy`, scoped by `service` and bounded `scope`, and based on the explicit same-window ratio `sum by (scope, service) (rate(login_requests_total{outcome="success"}[15m])) / sum by (scope, service) (rate(login_requests_total[15m]))`.
-- **Command p99 latency**
-  - Recording rules mirroring `CommandLatencyP99HighGateway` and `CommandLatencyP99HighTcpProxy` must retain bounded `service`, `scope`, and `command` dimensions in both the `histogram_quantile` aggregation and the resulting series, based on `command_end_to_end_latency_ms_bucket`. The corresponding alerts must evaluate those per-service/per-command series rather than aggregating `service` away.
-- **Entry-path availability**
-  - Recording rules mirroring both the short-window detection view and the 1-day compliance view for `EntryPathAvailabilityLowGateway` and `EntryPathAvailabilityLowTcpProxy`, scoped by bounded `scope`, `service`, and `path`, based on `entrypath_connection_attempts_total`.
-- **Chat delivery latency**
-  - Recording rule mirroring `ChatDeliveryLatencyP99High`, based on `chat_delivery_latency_ms_bucket` with approved scope and channel dimensions preserved.
-- **Backup health**
-  - Recording rules mirroring missed backup, missed verification, stale restore proof, invalid artifact lineage, unreadable artifacts, and blocked recovery-participant convergence.
-  - The complete canonical backup fallback contract is:
-    - `backup_pipeline_recent_backup_slo_breached`
-    - `backup_pipeline_recent_verification_slo_breached`
-    - `backup_pipeline_recent_restore_drill_slo_breached`
-    - `backup_artifact_lineage_invalid`
-    - `backup_artifact_restore_unreadable`
-    - `recovery_participant_convergence_blocked`
-    - `recovery_environment_convergence_blocked`
-    - `recovery_participant_convergence_coverage_missing`
-    - `recovery_participant_convergence_source_missing`
-  - `recovery_participant_convergence_state{environment,participant,state}` is the current-state source for the blocked recording; the cumulative `recovery_participant_convergence_total` counter is not an active alert source.
-  - `RecoveryParticipantConvergenceCoverageMissing` preserves the affected environment and participant when a required participant lacks current state. Environment-level inventory-completeness failures use the reserved `participant="__environment__"` sentinel so every series keeps the same label schema.
-  - `RecoveryParticipantConvergenceMetricsAbsent` is a fail-safe alert for total disappearance of a required inventory source family through `recovery_participant_convergence_source_missing{source_family}`. It reports a global observability gap, not participant convergence or readiness, and cannot replace the durable recovery controller or retained recovery evidence.
-  - The recovery-participant source emitter is not currently reliable or proven. The target-state recording and blocked alert must not be advertised as implemented readiness observability until that emitter and its end-to-end proof exist.
-  - Maintenance tick-pause metrics are not backup fallback signals and must not be used as substitutes for these recordings.
-- **Tick state and recovery progress**
-  - Recording rules or gauges projecting `current_tick_state{scope,state}` and `current_tick_terminal_at_ms{scope}` from the Redis meta record so operators can see whether a region is `STAGED`, `RESOLVING`, `APPLIED`, or `ABANDONED` without inferring state from queue depth alone.
-- **Maintenance mode visibility**
-  - Recording rules or gauges exposing `coordination_maintenance_active{scope_type,scope,operation}` (or the equivalent health/readiness field) so operators can tell when reset, cleanup, or migration workflows intentionally hold a scope in maintenance-active state.
-- **Cross-region follow-ups**
-  - Aggregate recording rules for `remote_followups_due_total`, `remote_followups_drain_lag_ms`, and `remote_followups_backlog_over_budget_total` so scaling and recovery views can show drain pressure explicitly without violating the metrics-cardinality policy. Per-region drilldown belongs on durable control-plane reads such as runtime ownership status, not raw Prometheus labels.
+When Alertmanager is unavailable, Logging & Admin displays an explicit `alert routing unavailable` state. If Prometheus remains reachable, it may also show a bounded diagnostic snapshot of selected canonical recording-rule values. That snapshot is labelled diagnostic and time-bound; it is never merged into a second authoritative active-alert list and requires no duplicate-suppression or alert-family equivalence engine.
 
-Logging & Admin should:
+Diagnostic values include `observed_at` and freshness. After the configured budget, five minutes by default, their state becomes `unknown`; stale values must not appear current. If Prometheus is also unavailable, the UI reports observability state unavailable and relies on the independent deadman where the profile provides one; omitted profiles retain their explicit degraded-detection warning.
 
-- Use these recording rules as the sole source of “active issues” when Alertmanager is unreachable, and clearly label the UI as “Alertmanager unavailable – showing fallback Prometheus conditions”.
-- Prefer Alertmanager as the source of truth whenever it is healthy; fallback conditions are a last resort to keep operators informed of the most critical SLO violations.
-- Treat broader observability-stack outages as only partially representable in fallback mode: Alertmanager-specific/routing conditions can still be surfaced when Prometheus is healthy, but Prometheus-down conditions cannot be reconstructed from fallback rules because the source of truth is itself unavailable.
-- When command convergence is involved, alerts should link operators to the durable `GetGameplayCommandStatus` surface defined in `system-architecture-tick-failures-and-operations.md` rather than relying on Redis queue inspection.
-
-#### Logging & Admin Alert-State Contract (Normative)
-
-When Logging & Admin renders alert state, it must expose enough metadata for operators to understand whether they are seeing authoritative Alertmanager data or degraded fallback data:
-
-- Required alert-state fields:
-  - `source` with values `alertmanager` or `prometheus-fallback`.
-  - `observed_at` timestamp for when the underlying alert or fallback condition was last confirmed.
-  - `status_freshness` or equivalent UI text derived from `observed_at` so stale fallback data is visibly different from current state.
-  - Canonical alert identity fields (`service`, `component` when present, `severity`, `owner`, `runbook`).
-- Precedence rules:
-  - When Alertmanager is healthy, Logging & Admin must treat Alertmanager as the source of truth and suppress duplicate fallback rendering for the same canonical condition.
-  - When Alertmanager is unhealthy or unreachable, Logging & Admin may render only the documented fallback rule set and must clearly mark those conditions as degraded approximations rather than routed alerts.
-- Duplicate-suppression rules:
-  - A fallback condition must not appear as a separate active issue when the matching Alertmanager alert is already healthy and visible.
-  - If exact alert-name equivalence is unavailable, dedupe by the canonical identity tuple of condition family plus bounded labels (for example `service`, `component`, `scope`, `path`, `command` as applicable).
-  - The canonical family registry is the shared alert snippet set under `design/observability/grafana/`; fallback implementations must use the same alert-family names there rather than inventing local equivalence tables.
-- Failure-mode rules:
-  - If both Alertmanager and Prometheus are unavailable, Logging & Admin must display that alert state is unavailable rather than presenting stale fallback conditions as current.
-  - Logging & Admin should preserve the last known `observed_at` timestamp for degraded views, but must not imply continued freshness after the freshness budget expires.
-  - Default freshness budget: treat fallback-derived alert state as stale after 5 minutes unless an environment documents a stricter budget for its Prometheus scrape and rule-evaluation cadence.
-
-Illustrative alert-state payload:
-
-```json
-{
-  "source": "prometheus-fallback",
-  "observed_at": "2026-03-19T10:42:00Z",
-  "status_freshness": "stale",
-  "service": "spring-cloud-gateway",
-  "component": "entrypath",
-  "severity": "P0",
-  "owner": "platform",
-  "runbook": "design/architecture/system-architecture-observability-incident-runbook.md#edge-path-outage",
-  "condition": "EntryPathAvailabilityLowGateway",
-  "labels": {
-    "path": "websocket",
-    "scope": "public-edge"
-  },
-  "degraded_reason": "Alertmanager unavailable; showing fallback Prometheus conditions"
-}
-```
-
-Illustrative interpretation:
-
-- `source="alertmanager"` means the condition is being rendered from routed Alertmanager state and any matching fallback condition should be suppressed.
-- `source="prometheus-fallback"` plus `status_freshness="stale"` means Logging & Admin is still showing the last known fallback-derived state, but operators should treat it as degraded information rather than current routed alert state.
-- If neither `alertmanager` nor `prometheus-fallback` can be refreshed within the freshness budget, the UI/API should switch to an explicit “alert state unavailable” presentation rather than continuing to render the example payload above as current.
-
-Fallback recording rules must be installed as part of the Prometheus ruleset for every prod-like environment. The reference starting point for these rules lives at `k8s/monitoring/prometheus-rules-firemud.yaml`; environment overlays may adjust thresholds but must preserve the metric names, labels, and alert label contract described in this document.
+Operational and safety actions use authoritative domain and control-plane state such as command status, tick ownership, moderation records, admission controls, and recovery records. Required audit records for operator or moderation mutations are durable domain evidence and are not best-effort observability. Elasticsearch indexing, metrics, dashboards, traces, and alert delivery remain enrichments rather than commit dependencies for those actions.
 
 ### Observability Stack Alerts
 
 Observability backends are best-effort enrichments for gameplay and moderation workflows, but they still require first-class alerts because their failure can mask player-visible incidents and break operator triage.
 
-- Prod-like environments must also provide an **independent meta-monitoring path** outside the Prometheus + Alertmanager failure domain:
-  - An authoritative externally hosted pager for deadman/heartbeat freshness.
-  - Authoritative externally hosted liveness checks for Prometheus, Alertmanager, Grafana, Elasticsearch/Kibana, and Jaeger/OpenTelemetry Collector entrypoints.
-  - Authoritative externally hosted reachability checks for the public gameplay entry paths.
-  - This independent path is required because Prometheus cannot reliably page on its own total outage.
-- The authoritative external path and the Prometheus-facing metric mirror are separate contracts. The external pager is the source of truth during total in-cluster observability outages; Prometheus may mirror the same state for dashboards and runbooks when healthy. See [`design/observability/external-monitoring/README.md`](../observability/external-monitoring/README.md).
+- Hosted production profiles that claim externally verified availability or monitoring-resilient readiness must provide an **independent monitoring path** outside the Prometheus + Alertmanager failure domain. It pages on deadman freshness and probes every real public gameplay path declared in `exposedPublicPlayerPaths`; non-exposed paths are `not_applicable`.
+- Hobby, single-node, and small profiles may explicitly omit that external path. Preflight records and warns about the weaker detection posture without blocking traffic; those profiles cannot claim independent outage detection, externally verified public-path availability, off-cluster paging, or monitoring-resilient readiness.
+- The authoritative external path and any Prometheus-facing metric mirror are separate contracts. The external pager is the source of truth during total in-cluster observability outages; Prometheus may mirror the same state for dashboards and runbooks when healthy. See [`design/observability/external-monitoring/README.md`](../observability/external-monitoring/README.md).
 - Prod-like environments must install a canonical `platform`-owned alert set for:
   - Prometheus rule evaluation or scrape health problems.
   - Alertmanager routing/configuration failures.
@@ -491,11 +418,22 @@ Observability backends are best-effort enrichments for gameplay and moderation w
   - `GrafanaDatasourceUnavailable`
   - `GrafanaServiceUnavailable`
 - Environment overlays may adapt metric expressions to local exporter/job naming, but they should preserve the canonical alert names and routing labels so Logging & Admin and incident docs remain consistent.
-- The in-cluster alert set above complements, but does not replace, the required independent meta-monitoring path for total observability-stack outages.
+- For profiles that require independent monitoring, the in-cluster alert set above complements but does not replace the off-cluster path for total observability-stack outages.
 
 #### External Probe and Deadman Contract (Normative)
 
-To keep overlays, smoke tests, dashboards, and runbooks aligned, prod-like environments must expose a small canonical contract for signals that originate outside the Prometheus + Alertmanager failure domain:
+Deployment profiles must declare the complete bounded `exposedPublicPlayerPaths` set (`websocket` and/or `telnet`) and one value from ADR 0159's canonical monitoring-profile enum: `independent-required` or `independent-omitted`. The path set also scopes any advertised player-flow canary capability. Hosted production profiles that claim externally verified availability use `independent-required`; hobby, single-node, and small profiles may use `independent-omitted` with a non-blocking preflight warning and an explicit degraded-detection status. These serialized values are not shortened to `required` or `omitted` in evidence, metric labels, or rules.
+
+For an `independent-required` profile, the independent monitor:
+
+- runs outside the monitored cluster and its Prometheus + Alertmanager failure domain;
+- evaluates the freshness of the canonical in-cluster heartbeat;
+- exercises every real public gameplay path in `exposedPublicPlayerPaths`; and
+- pages through an off-cluster notification authority.
+
+Each required profile records an explicit result for every path: an exposed path must have current real-public probe evidence, while a non-exposed path is `not_applicable`. An exposed path omitted from the configuration or evidence invalidates the independent public-path claim. The default heartbeat interval is 60 seconds and the default stale threshold is 180 seconds. Each profile records its actual heartbeat interval, stale threshold, probe cadence, evaluation window, and maximum detection budget; the defaults may be changed only with matching evidence and operational claims. The installed Prometheus rule consumes the profile-aware `observability_deadman_stale{profile="independent-required"}` mirror after those configured values have been applied; it must not recreate universal `180` second or `2m` timing. Prometheus, Alertmanager, Grafana, Kibana, Jaeger, and collector interfaces may remain private. Provider-native or in-cluster checks may diagnose those components, but external reachability of every observability UI is not part of this contract.
+
+To keep optional mirrors, dashboards, and runbooks aligned:
 
 - **Authoritative external monitor**
   - Must page using its own native checks and thresholds even when Prometheus is fully unavailable.
@@ -505,31 +443,23 @@ To keep overlays, smoke tests, dashboards, and runbooks aligned, prod-like envir
   - The mirrored metrics are not sufficient by themselves to satisfy the independent detection requirement.
 
 - `entrypath_blackbox_probe_success{path,target}`:
-  - Required as the Prometheus-facing mirror for each public player entry path.
+  - May mirror the external result for each public player entry path.
   - `path` is a bounded enum and must use `websocket` for the browser/Gateway path and `telnet` for the TCP Proxy path.
   - `target` is a bounded logical enum: `gateway` for the WebSocket/Gateway path or `tcp_proxy` for the Telnet/TCP Proxy path. It must never contain a host, URL, deployment, runtime ID, tenant, or player identity.
   - Values are boolean-like: `1` when the synthetic probe can complete the target handshake and `0` when it cannot.
   - Canonical alerts and dashboards may aggregate across `target`, but must preserve `path`.
 - `observability_deadman_heartbeat_timestamp_seconds{source}`:
-  - Required as the Prometheus-facing mirror for the independently hosted deadman/meta-monitoring path.
-  - `source` identifies the emitting in-cluster monitor instance or environment and must remain low-cardinality.
+  - May mirror the independently hosted deadman/meta-monitoring result.
+  - `source` is a bounded environment or heartbeat-observed label, not the exact external monitor identity; retain the exact monitoring product/deployment identity in external evidence.
   - The signal records the latest successful heartbeat time as observed by the independent monitor, not by Prometheus itself.
   - Deadman paging should trigger when this timestamp becomes stale according to the environment's configured heartbeat budget.
 
-Prod-like environments must also define a canonical contract for observability entrypoint checks in the authoritative external monitor:
+- `observability_deadman_stale{profile}`:
+  - Optional boolean-like mirror of the external monitor's profile-aware stale decision. The external monitor applies the profile's configured stale threshold and evaluation window before publishing `1`.
+  - Prometheus deadman rules gate on `profile="independent-required"`; an `independent-omitted` profile does not produce a P0 from an absent heartbeat or synthesize green external authority.
+  - This signal carries the configured timing semantics across the Prometheus boundary; rules must not replace them with an unconditional `180` second threshold or `2m` evaluation window.
 
-- Required externally hosted checks:
-  - Prometheus
-  - Alertmanager
-  - Grafana
-  - Kibana or the Elasticsearch-backed log query entrypoint
-  - Jaeger query UI or trace query endpoint
-- These checks must remain part of readiness evidence and prod-like smoke even when an environment cannot mirror them into Prometheus.
-- If an environment mirrors these checks into Prometheus, the mirror must use a bounded vocabulary or a documented compatibility mapping that preserves:
-  - which observability entrypoint is being checked,
-  - the independent external paging behavior,
-  - the existing runbook behavior for operator-access outages.
-- If an environment does not mirror them into Prometheus, it must still document the authoritative external check names/targets and the expected non-production test method used to prove that operator-access outages are actionable.
+The Prometheus mirror is optional convenience telemetry, not proof that the independent monitor or pager works. Required profiles retain current off-cluster evidence for heartbeat evaluation, every exposed public probe, explicit `not_applicable` results for non-exposed paths, monitor health, and page delivery. Expired evidence becomes `unknown`. Omitted profiles expose their common-failure-domain or operator-dependent posture instead of synthesizing green external evidence.
 
 ### Log Pipeline Queryability Contract
 

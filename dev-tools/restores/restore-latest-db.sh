@@ -3,6 +3,9 @@
 # Requires PG_DUMP_BUCKET; PG_DUMP_ENDPOINT is optional (useful for MinIO or other S3-compatible endpoints).
 set -euo pipefail
 
+# shellcheck disable=SC1090,SC1091 # The helper path is resolved from this script.
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/../backups/pg-dump-s3-selection.shlib"
+
 BUCKET=${PG_DUMP_BUCKET:?PG_DUMP_BUCKET must be set}
 ENDPOINT=${PG_DUMP_ENDPOINT:-}
 
@@ -19,20 +22,25 @@ if [ -n "$ENDPOINT" ]; then
   AWS_ENDPOINT_ARGS=(--endpoint-url "$ENDPOINT")
 fi
 
-KEY=$(aws s3api list-objects-v2 --bucket "$BUCKET" --prefix "15min/" \
-      "${AWS_ENDPOINT_ARGS[@]}" \
-      --query 'sort_by(Contents,&LastModified)[-1].Key' --output text)
-
-if [ "$KEY" = "None" ]; then
-  echo "No dumps found in bucket $BUCKET" >&2
+if ! KEY=$(select_latest_pg_dump_key "$BUCKET" "${AWS_ENDPOINT_ARGS[@]}"); then
+  echo "Unable to list pg_dump objects in bucket $BUCKET; check AWS credentials, endpoint, and network access" >&2
   exit 1
 fi
+
+case "$KEY" in
+  *.sql.gz) ;;
+  *)
+    echo "No valid .sql.gz dumps found in bucket $BUCKET" >&2
+    exit 1
+    ;;
+esac
 
 aws s3 cp "s3://$BUCKET/$KEY" "$FILE" "${AWS_ENDPOINT_ARGS[@]}"
 
 echo "Restoring $KEY"
 
-gunzip -c "$FILE" | psql -h "${FIREMUD_POSTGRES_HOST:-localhost}" \
+gunzip -c "$FILE" | psql -v ON_ERROR_STOP=1 --single-transaction \
+                    -h "${FIREMUD_POSTGRES_HOST:-localhost}" \
                     -U "${FIREMUD_POSTGRES_USER:-firemud}" \
                     -d "${FIREMUD_POSTGRES_DB:-firemud}"
 

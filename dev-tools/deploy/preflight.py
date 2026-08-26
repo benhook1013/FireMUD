@@ -62,6 +62,7 @@ MISSING_SEQUENCE_DISPLAY_LIMIT = 20
 JsonValue = bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"] | None
 JsonObject = dict[str, JsonValue]
 JSON_READ_ERRORS = (OSError, UnicodeError, json.JSONDecodeError)
+RECOVERY_JSON_READ_ERRORS = JSON_READ_ERRORS + (ValueError,)
 YAML_READ_ERRORS = (OSError, UnicodeError, yaml.YAMLError)
 TIMESTAMP_ERRORS = (TypeError, ValueError, AttributeError, OverflowError)
 SECRET_LOOKUP_TIMEOUT_SECONDS = 30
@@ -191,6 +192,13 @@ COMMON_REQUIRED_PREFLIGHT_POLICY_IDS = {
 }
 
 PREFLIGHT_APPLY_MAX_AGE = dt.timedelta(minutes=30)
+VERIFIED_RESTORABLE_POINT_MAX_AGE_SECONDS = 15 * 60
+PLAYER_EXPERIENCE_SMOKE_VALIDATOR = (
+    Path(__file__).resolve().parents[1]
+    / "observability"
+    / "validate-player-experience-smoke-evidence.py"
+)
+PROMOTION_SMOKE_EVIDENCE_ENTRY_FIELDS = {"ref", "contentDigest"}
 
 
 def expected_preflight_policy_requirements(
@@ -273,6 +281,8 @@ CANONICAL_RECOVERY_REQUIRED_FIELDS = (
     "durableParticipantConvergence",
     "externalEffectReconciliation",
     "sessionRecovery",
+    "credentialApplicability",
+    "credentialDispositions",
     "jwtHardening",
     "databaseCredentialRotation",
     "certificateReissuance",
@@ -280,6 +290,7 @@ CANONICAL_RECOVERY_REQUIRED_FIELDS = (
     "secretComplianceRefresh",
     "smokeStatus",
     "smokeEvidence",
+    "evidenceRefs",
     "reopenApprovedBy",
 )
 
@@ -324,11 +335,14 @@ CANONICAL_RECOVERY_OBJECT_FIELDS = (
     "durableParticipantConvergence",
     "externalEffectReconciliation",
     "sessionRecovery",
+    "credentialApplicability",
+    "credentialDispositions",
     "jwtHardening",
     "databaseCredentialRotation",
     "certificateReissuance",
     "externalCredentialValidation",
     "secretComplianceRefresh",
+    "evidenceRefs",
 )
 
 CANONICAL_RECOVERY_CREDENTIAL_CLASSES = (
@@ -338,6 +352,86 @@ CANONICAL_RECOVERY_CREDENTIAL_CLASSES = (
     "operator-credentials",
 )
 
+CANONICAL_RECOVERY_SECRET_COMPLIANCE_CLASSES = (
+    "jwt-signing-keys-jwks",
+    "postgres-application-credentials",
+    "backup-storage",
+    "asset-storage",
+    "outbound-comms",
+    "operator-credentials",
+)
+
+CANONICAL_RECOVERY_CREDENTIAL_DISPOSITION_CLASSES = (
+    "jwt-signing-keys-jwks",
+    "postgres-application-credentials",
+    "workload-leaf",
+    "bridge-leaf",
+    "operator-leaf",
+)
+CANONICAL_RECOVERY_REQUIRED_APPLICABLE_CLASSES = (
+    *CANONICAL_RECOVERY_CREDENTIAL_DISPOSITION_CLASSES,
+    "backup-storage",
+    "operator-credentials",
+)
+CANONICAL_RECOVERY_REQUIRED_APPLICABLE_CLASSES_BY_ENVIRONMENT = {
+    "production": frozenset(CANONICAL_RECOVERY_REQUIRED_APPLICABLE_CLASSES),
+    "staging": frozenset(CANONICAL_RECOVERY_CREDENTIAL_DISPOSITION_CLASSES),
+    "hobby-self-hosted": frozenset(CANONICAL_RECOVERY_CREDENTIAL_DISPOSITION_CLASSES),
+}
+CANONICAL_RECOVERY_CREDENTIAL_UNIVERSE = (
+    *CANONICAL_RECOVERY_CREDENTIAL_DISPOSITION_CLASSES,
+    *CANONICAL_RECOVERY_CREDENTIAL_CLASSES,
+)
+RECOVERY_CREDENTIAL_APPLICABILITY = {"applicable", "not_applicable"}
+RECOVERY_CREDENTIAL_DISPOSITIONS = {
+    "rotated",
+    "reissued",
+    "rebound",
+    "verified_not_restored",
+}
+
+
+def canonical_recovery_required_applicable_classes(environment: str) -> frozenset[str]:
+    """Return the environment-specific required-applicable recovery classes."""
+
+    return CANONICAL_RECOVERY_REQUIRED_APPLICABLE_CLASSES_BY_ENVIRONMENT.get(
+        environment,
+        frozenset(CANONICAL_RECOVERY_CREDENTIAL_DISPOSITION_CLASSES),
+    )
+
+
+def canonical_recovery_allowed_not_applicable_classes(environment: str) -> frozenset[str]:
+    """Return external recovery classes that may be absent in an environment."""
+
+    required_external_classes = (
+        canonical_recovery_required_applicable_classes(environment)
+        & frozenset(CANONICAL_RECOVERY_CREDENTIAL_CLASSES)
+    )
+    return frozenset(CANONICAL_RECOVERY_CREDENTIAL_CLASSES) - required_external_classes
+
+
+JWT_COMPROMISE_EVIDENCE_FIELDS = (
+    "compromisedKid",
+    "candidateKid",
+    "compromisedPublicKeyFingerprint",
+    "candidatePublicKeyFingerprint",
+)
+JWT_REPLACEMENT_EVIDENCE_FIELDS = {
+    "oldKid",
+    "candidateKid",
+    "oldKidRejected",
+    "candidateKidAccepted",
+    "validatorEvidenceRef",
+}
+JWT_OLD_OR_RESTORED_KEY_IDS_FIELD = "oldOrRestoredKeyIds"
+RECOVERY_FRESHNESS_ENTRY_FIELDS = {
+    "lineage",
+    "field",
+    "value",
+    "previousField",
+    "previousValue",
+}
+
 BACKUP_READINESS_REQUIRED_FIELDS = (
     "environment",
     "deploymentRef",
@@ -345,6 +439,9 @@ BACKUP_READINESS_REQUIRED_FIELDS = (
     "assessedAt",
     "assessedBy",
     "rollbackMode",
+    "newestVerifiedRestorablePointAt",
+    "newestVerifiedRestorablePointRef",
+    "newestVerifiedRestorablePointDigest",
     "backupLastSuccessAt",
     "backupVerifyLastSuccessAt",
     "restoreDrillLastSuccessAt",
@@ -366,6 +463,300 @@ BACKUP_READINESS_REQUIRED_FIELDS = (
     "recoveryContractFingerprint",
     "evidenceRefs",
 )
+
+VERIFIED_RESTORABLE_POINT_SCHEMA_VERSION = "verified-restorable-point/v1"
+VERIFIED_RESTORABLE_POINT_DIRECTORY = (
+    "design"
+    "/operations/deployments/production/verified-restorable-points"
+)
+VERIFIED_RESTORABLE_POINT_FIELDS = (
+    "schemaVersion",
+    "environment",
+    "databaseIdentity",
+    "backupArtifact",
+    "verification",
+    "recordDigest",
+)
+VERIFIED_RESTORABLE_POINT_DATABASE_FIELDS = ("clusterIdentity", "databaseName")
+VERIFIED_RESTORABLE_POINT_ARTIFACT_FIELDS = (
+    "artifactRef",
+    "artifactIdentity",
+    "artifactDigest",
+    "lineageRef",
+    "snapshotAt",
+)
+VERIFIED_RESTORABLE_POINT_VERIFICATION_FIELDS = (
+    "operationId",
+    "verifiedAt",
+    "restoreToolIdentity",
+)
+VERIFIED_RESTORABLE_POINT_TOOL_FIELDS = ("name", "version", "digest")
+RECOVERY_COMPATIBILITY_VERIFIED_POINT_FIELDS = (
+    "newestVerifiedRestorablePointRef",
+    "newestVerifiedRestorablePointDigest",
+    "newestVerifiedRestorablePointAt",
+)
+
+
+def canonical_verified_restorable_point_bytes(record: Any) -> bytes:
+    """Return the RFC 8785 payload bytes for a verified-point record.
+
+    The v1 schema intentionally contains only non-empty ASCII strings in fixed
+    object shapes. Python code-point ordering and JCS UTF-16 code-unit ordering
+    are identical for those fixed ASCII member names. Restricting values to
+    ASCII strings means compact ``json.dumps`` with ``sort_keys=True`` has no
+    numeric-formatting, escaping, or Unicode-normalization ambiguity. The
+    recordDigest member is the sole excluded member from the hash preimage.
+    """
+
+    if not isinstance(record, dict):
+        raise TypeError("verified restorable point record must be an object")
+
+    def require_exact_fields(value: Any, fields: tuple[str, ...], label: str) -> dict[str, Any]:
+        if not isinstance(value, dict) or set(value) != set(fields):
+            raise ValueError(f"{label} must contain exactly: {', '.join(fields)}")
+        for field in fields:
+            field_value = value[field]
+            if not isinstance(field_value, str) or not field_value or not field_value.isascii():
+                raise ValueError(f"{label}.{field} must be a non-empty ASCII string")
+        return value
+
+    if set(record) != set(VERIFIED_RESTORABLE_POINT_FIELDS):
+        raise ValueError(
+            "verified restorable point record must contain exactly: "
+            + ", ".join(VERIFIED_RESTORABLE_POINT_FIELDS)
+        )
+    for field in ("schemaVersion", "environment", "recordDigest"):
+        value = record[field]
+        if not isinstance(value, str) or not value or not value.isascii():
+            raise ValueError(f"verified restorable point {field} must be a non-empty ASCII string")
+    if record["schemaVersion"] != VERIFIED_RESTORABLE_POINT_SCHEMA_VERSION:
+        raise ValueError("verified restorable point schemaVersion is unsupported")
+
+    require_exact_fields(
+        record["databaseIdentity"],
+        VERIFIED_RESTORABLE_POINT_DATABASE_FIELDS,
+        "verified restorable point databaseIdentity",
+    )
+    require_exact_fields(
+        record["backupArtifact"],
+        VERIFIED_RESTORABLE_POINT_ARTIFACT_FIELDS,
+        "verified restorable point backupArtifact",
+    )
+    verification = record["verification"]
+    if not isinstance(verification, dict) or set(verification) != set(
+        VERIFIED_RESTORABLE_POINT_VERIFICATION_FIELDS
+    ):
+        raise ValueError(
+            "verified restorable point verification must contain exactly: "
+            + ", ".join(VERIFIED_RESTORABLE_POINT_VERIFICATION_FIELDS)
+        )
+    for field in ("operationId", "verifiedAt"):
+        value = verification[field]
+        if not isinstance(value, str) or not value or not value.isascii():
+            raise ValueError(f"verified restorable point verification.{field} must be a non-empty ASCII string")
+    require_exact_fields(
+        verification["restoreToolIdentity"],
+        VERIFIED_RESTORABLE_POINT_TOOL_FIELDS,
+        "verified restorable point verification.restoreToolIdentity",
+    )
+
+    payload = dict(record)
+    payload.pop("recordDigest")
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def load_verified_restorable_point(path: Path) -> Any:
+    return load_json_rejecting_duplicate_keys(path)
+
+
+def _validate_verified_restorable_point_reference(
+    root_dir: Path,
+    point_ref: str,
+    expected_environment: str,
+    expected_snapshot_at: str,
+    expected_verified_at: str | None,
+    expected_digest: str,
+    expected_artifact_ref: str | None,
+    *,
+    context: str,
+    assessed_at: dt.datetime | None = None,
+    schema_invalid_message: str | None = None,
+) -> tuple[str, str]:
+    point_ref_path = Path(point_ref)
+    if point_ref_path.is_absolute():
+        return ("fail", f"{context} reference must be repository-relative")
+    verified_point_directory = (root_dir / VERIFIED_RESTORABLE_POINT_DIRECTORY).resolve()
+    verified_point_path = resolve_repo_path(root_dir, point_ref).resolve()
+    if not verified_point_path.is_relative_to(verified_point_directory):
+        return (
+            "fail",
+            f"{context} reference must be under {VERIFIED_RESTORABLE_POINT_DIRECTORY}/",
+        )
+    if not verified_point_path.is_file():
+        return ("fail", f"{context} record not found: {point_ref}")
+    try:
+        verified_point = load_verified_restorable_point(verified_point_path)
+    except RECOVERY_JSON_READ_ERRORS as exc:
+        return ("fail", f"{context} record unreadable: {exc}")
+
+    try:
+        if expected_verified_at is None:
+            expected_verified_at = verified_point["verification"]["verifiedAt"]
+        if expected_artifact_ref is None:
+            expected_artifact_ref = verified_point["backupArtifact"]["artifactRef"]
+        point_status, point_message = validate_verified_restorable_point(
+            verified_point,
+            expected_environment,
+            expected_snapshot_at,
+            expected_verified_at,
+            expected_digest,
+            expected_artifact_ref,
+            assessed_at=assessed_at,
+        )
+    except (KeyError, TypeError):
+        if schema_invalid_message is None:
+            raise
+        return ("fail", schema_invalid_message)
+    if point_status != "pass":
+        return ("fail", point_message)
+    return ("pass", "")
+
+
+def validate_verified_restorable_point(
+    record: Any,
+    expected_environment: str,
+    expected_snapshot_at: str,
+    expected_verified_at: str,
+    expected_digest: str,
+    expected_artifact_ref: str,
+    *,
+    assessed_at: dt.datetime | None = None,
+) -> tuple[str, str]:
+    try:
+        canonical_bytes = canonical_verified_restorable_point_bytes(record)
+    except (TypeError, ValueError) as exc:
+        return ("fail", f"Verified restorable point record is invalid: {exc}")
+
+    if record.get("environment") != expected_environment:
+        return ("fail", "Verified restorable point environment does not match the target environment")
+    backup_artifact = record["backupArtifact"]
+    if backup_artifact["artifactRef"] != expected_artifact_ref:
+        return ("fail", "Verified restorable point artifactRef does not match backupArtifactRef")
+    verification = record["verification"]
+    try:
+        snapshot_at = parse_timestamp(
+            backup_artifact["snapshotAt"],
+            "verified restorable point backupArtifact.snapshotAt",
+        )
+        verified_at = parse_timestamp(
+            verification["verifiedAt"],
+            "verified restorable point verification.verifiedAt",
+        )
+    except TIMESTAMP_ERRORS as exc:
+        return ("fail", str(exc))
+    if backup_artifact["snapshotAt"] != expected_snapshot_at:
+        return ("fail", "Verified restorable point snapshotAt does not match newestVerifiedRestorablePointAt")
+    if verification["verifiedAt"] != expected_verified_at:
+        return ("fail", "Verified restorable point verifiedAt does not match backupVerifyLastSuccessAt")
+    if verified_at < snapshot_at:
+        return ("fail", "Verified restorable point verifiedAt must not precede backupArtifact.snapshotAt")
+    if assessed_at is not None:
+        if snapshot_at > assessed_at:
+            return (
+                "fail",
+                "Verified restorable point snapshotAt must not be later than the assessment/evaluation time",
+            )
+        if verified_at > assessed_at:
+            return (
+                "fail",
+                "Verified restorable point verifiedAt must not be later than the assessment/evaluation time",
+            )
+
+    record_digest = record["recordDigest"]
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", record_digest):
+        return ("fail", "Verified restorable point recordDigest must be lowercase sha256: plus 64 hex characters")
+    recomputed_digest = "sha256:" + hashlib.sha256(canonical_bytes).hexdigest()
+    if record_digest != recomputed_digest:
+        return ("fail", "Verified restorable point recordDigest does not match canonical UTF-8 bytes")
+    if expected_digest != record_digest:
+        return ("fail", "newestVerifiedRestorablePointDigest does not match the verified-point record")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", record["backupArtifact"]["artifactDigest"]):
+        return ("fail", "Verified restorable point artifactDigest must be a lowercase sha256 digest")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", verification["restoreToolIdentity"]["digest"]):
+        return ("fail", "Verified restorable point restore-tool digest must be a lowercase sha256 digest")
+    return ("pass", "Verified restorable point is valid")
+
+
+def validate_compact_verified_restorable_point(
+    recovery_compatibility: dict[str, Any],
+    root_dir: Path,
+    now_dt: dt.datetime,
+    evaluated_at: dt.datetime | None = None,
+) -> tuple[str, str]:
+    """Validate promotion freshness/integrity without claiming artifact authority.
+
+    The compact compatibility result proves that its selected repository record is
+    a current, canonical verified-point record. Database, artifact, lineage, and
+    restore-tool registration bindings remain owner-authoritative evidence that is
+    intentionally outside this compact check.
+    """
+
+    point_ref = recovery_compatibility.get("newestVerifiedRestorablePointRef")
+    point_digest = recovery_compatibility.get("newestVerifiedRestorablePointDigest")
+    point_at = recovery_compatibility.get("newestVerifiedRestorablePointAt")
+    for field, value in (
+        ("newestVerifiedRestorablePointRef", point_ref),
+        ("newestVerifiedRestorablePointDigest", point_digest),
+        ("newestVerifiedRestorablePointAt", point_at),
+    ):
+        if not isinstance(value, str) or not value.strip():
+            return (
+                "fail",
+                f"recoveryCompatibility.{field} must be a non-empty string",
+            )
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", point_digest):
+        return (
+            "fail",
+            "recoveryCompatibility.newestVerifiedRestorablePointDigest must be a lowercase sha256 digest",
+        )
+    try:
+        point_at_dt = parse_timestamp(point_at, "recoveryCompatibility.newestVerifiedRestorablePointAt")
+    except TIMESTAMP_ERRORS as exc:
+        return ("fail", str(exc))
+    if point_at_dt > now_dt:
+        return ("fail", "recoveryCompatibility.newestVerifiedRestorablePointAt is future-dated")
+    if (now_dt - point_at_dt).total_seconds() > VERIFIED_RESTORABLE_POINT_MAX_AGE_SECONDS:
+        return (
+            "fail",
+            (
+                "recoveryCompatibility.newestVerifiedRestorablePointAt older than 15 minutes; "
+                f"record: {point_ref}; remediation: refresh the verified restorable point "
+                "and generate a new event-scoped preflight report before retrying"
+            ),
+        )
+
+    point_status, point_message = _validate_verified_restorable_point_reference(
+        root_dir,
+        point_ref,
+        "production",
+        point_at,
+        None,
+        point_digest,
+        None,
+        context="recoveryCompatibility verified-point",
+        assessed_at=evaluated_at,
+        schema_invalid_message="recoveryCompatibility verified-point record is schema-invalid",
+    )
+    if point_status != "pass":
+        return ("fail", point_message)
+    return ("pass", "Compact verified restorable point freshness and integrity are valid")
 
 
 def fail(message: str) -> NoReturn:
@@ -457,6 +848,357 @@ def validate_safe_dispositions(value: Any, label: str) -> tuple[str, str]:
                 "fail",
                 f"Recovery compatibility baseline {label} has unsafe or missing disposition: {participant}",
             )
+    return ("pass", "")
+
+
+def validate_jwt_hardening_contract(
+    value: Any,
+    jwt_disposition: str,
+) -> tuple[str, str]:
+    if not isinstance(value, dict):
+        return ("fail", "Recovery compatibility baseline jwtHardening must be an object")
+    compromise_classified = value.get("compromiseClassified")
+    if not isinstance(compromise_classified, bool):
+        return (
+            "fail",
+            "Recovery compatibility baseline jwtHardening.compromiseClassified must be a boolean",
+        )
+    resulting_key_ids = value.get("resultingKeyIds")
+    if (
+        not isinstance(resulting_key_ids, list)
+        or not resulting_key_ids
+        or any(not isinstance(key_id, str) or not key_id.strip() for key_id in resulting_key_ids)
+    ):
+        return (
+            "fail",
+            "Recovery compatibility baseline jwtHardening.resultingKeyIds must be a non-empty list of strings",
+        )
+    compromise_fields_present = [
+        field for field in JWT_COMPROMISE_EVIDENCE_FIELDS if field in value
+    ]
+    if compromise_classified:
+        if jwt_disposition == "verified_not_restored":
+            return (
+                "fail",
+                "Recovery compatibility baseline compromise-classified JWT hardening cannot use verified_not_restored",
+            )
+        missing_fields = [
+            field
+            for field in JWT_COMPROMISE_EVIDENCE_FIELDS
+            if not isinstance(value.get(field), str) or not value[field].strip()
+        ]
+        if missing_fields:
+            return (
+                "fail",
+                "Recovery compatibility baseline compromise-classified JWT hardening missing fields: "
+                + ", ".join(missing_fields),
+            )
+        prohibited_replacement_fields = {
+            "replacementEvidence",
+            JWT_OLD_OR_RESTORED_KEY_IDS_FIELD,
+        } & set(value)
+        if prohibited_replacement_fields:
+            return (
+                "fail",
+                "Recovery compatibility baseline replacement evidence is prohibited for compromise-classified JWT hardening: "
+                + ", ".join(sorted(prohibited_replacement_fields)),
+            )
+        if value["compromisedKid"] == value["candidateKid"]:
+            return (
+                "fail",
+                "Recovery compatibility baseline compromise-classified JWT hardening requires distinct compromisedKid and candidateKid",
+            )
+        if value["compromisedPublicKeyFingerprint"] == value["candidatePublicKeyFingerprint"]:
+            return (
+                "fail",
+                "Recovery compatibility baseline compromise-classified JWT hardening requires distinct compromised and candidate public-key fingerprints",
+            )
+        for field in (
+            "compromisedPublicKeyFingerprint",
+            "candidatePublicKeyFingerprint",
+        ):
+            if not re.fullmatch(r"sha256:[0-9a-f]{64}", value[field]):
+                return (
+                    "fail",
+                    "Recovery compatibility baseline compromise-classified JWT hardening fingerprints must use lowercase sha256:<64 hex>: "
+                    + field,
+                )
+        if value["candidateKid"] not in resulting_key_ids:
+            return (
+                "fail",
+                "Recovery compatibility baseline compromise-classified JWT hardening candidateKid must be present in resultingKeyIds",
+            )
+        if value["compromisedKid"] in resulting_key_ids:
+            return (
+                "fail",
+                "Recovery compatibility baseline compromise-classified JWT hardening compromisedKid must be absent from resultingKeyIds",
+            )
+    elif compromise_fields_present:
+        return (
+            "fail",
+            "Recovery compatibility baseline ordinary JWT hardening must not include compromise identity fields: "
+            + ", ".join(compromise_fields_present),
+        )
+    if not compromise_classified and jwt_disposition != "verified_not_restored":
+        old_or_restored_key_ids = value.get(JWT_OLD_OR_RESTORED_KEY_IDS_FIELD)
+        if (
+            not isinstance(old_or_restored_key_ids, list)
+            or not old_or_restored_key_ids
+            or any(
+                not isinstance(key_id, str) or not key_id.strip()
+                for key_id in old_or_restored_key_ids
+            )
+            or len(old_or_restored_key_ids) != len(set(old_or_restored_key_ids))
+        ):
+            return (
+                "fail",
+                "Recovery compatibility baseline ordinary JWT hardening oldOrRestoredKeyIds must be a non-empty unique list of strings",
+            )
+        replacement_evidence = value.get("replacementEvidence")
+        if not isinstance(replacement_evidence, list) or not replacement_evidence:
+            return (
+                "fail",
+                "Recovery compatibility baseline ordinary JWT hardening replacementEvidence must be a non-empty list of per-key records",
+            )
+        observed_old_kids: list[str] = []
+        for index, replacement_record in enumerate(replacement_evidence):
+            record_label = f"replacementEvidence[{index}]"
+            if not isinstance(replacement_record, dict) or set(replacement_record) != JWT_REPLACEMENT_EVIDENCE_FIELDS:
+                return (
+                    "fail",
+                    "Recovery compatibility baseline ordinary JWT hardening "
+                    + record_label
+                    + " must contain exactly oldKid, candidateKid, oldKidRejected, candidateKidAccepted, and validatorEvidenceRef",
+                )
+            old_kid = replacement_record.get("oldKid")
+            candidate_kid = replacement_record.get("candidateKid")
+            if (
+                not isinstance(old_kid, str)
+                or not old_kid.strip()
+                or not isinstance(candidate_kid, str)
+                or not candidate_kid.strip()
+            ):
+                return (
+                    "fail",
+                    "Recovery compatibility baseline ordinary JWT hardening replacementEvidence IDs must be non-empty strings",
+                )
+            if old_kid == candidate_kid:
+                return (
+                    "fail",
+                    "Recovery compatibility baseline ordinary JWT hardening replacementEvidence IDs must be distinct",
+                )
+            if old_kid in observed_old_kids:
+                return (
+                    "fail",
+                    "Recovery compatibility baseline ordinary JWT hardening replacementEvidence oldKid must be unique",
+                )
+            observed_old_kids.append(old_kid)
+            if replacement_record.get("oldKidRejected") is not True or replacement_record.get("candidateKidAccepted") is not True:
+                return (
+                    "fail",
+                    "Recovery compatibility baseline ordinary JWT hardening replacementEvidence rejection/acceptance flags must be true",
+                )
+            if replacement_record.get("validatorEvidenceRef") != value.get("validatorConvergenceEvidence"):
+                return (
+                    "fail",
+                    "Recovery compatibility baseline ordinary JWT hardening replacementEvidence.validatorEvidenceRef must match validatorConvergenceEvidence",
+                )
+            if candidate_kid not in resulting_key_ids:
+                return (
+                    "fail",
+                    "Recovery compatibility baseline ordinary JWT hardening replacementEvidence candidateKid must be present in resultingKeyIds",
+                )
+            if old_kid in resulting_key_ids:
+                return (
+                    "fail",
+                    "Recovery compatibility baseline ordinary JWT hardening replacementEvidence oldKid must be absent from resultingKeyIds",
+                )
+        expected_old_kids = set(old_or_restored_key_ids)
+        observed_old_kid_set = set(observed_old_kids)
+        if observed_old_kid_set != expected_old_kids:
+            missing = sorted(expected_old_kids - observed_old_kid_set)
+            extra = sorted(observed_old_kid_set - expected_old_kids)
+            details = []
+            if missing:
+                details.append("missing: " + ", ".join(missing))
+            if extra:
+                details.append("unlisted: " + ", ".join(extra))
+            return (
+                "fail",
+                "Recovery compatibility baseline ordinary JWT hardening replacementEvidence must cover every old or restored key ("
+                + "; ".join(details)
+                + ")",
+            )
+    elif "replacementEvidence" in value or JWT_OLD_OR_RESTORED_KEY_IDS_FIELD in value:
+        return (
+            "fail",
+            "Recovery compatibility baseline replacement evidence is prohibited for compromise-classified or verified_not_restored JWT hardening",
+        )
+    return ("pass", "")
+
+
+def validate_recovery_freshness(
+    value: Any,
+    credential_applicability: dict[str, str],
+    credential_dispositions: dict[str, str],
+    finalized_at: dt.datetime,
+) -> tuple[str, str]:
+    if not isinstance(value, dict):
+        return (
+            "fail",
+            "Recovery compatibility baseline secretComplianceRefresh must be an object",
+        )
+    refreshed_classes = value.get("credentialClasses")
+    freshness = value.get("freshness")
+    if (
+        not isinstance(refreshed_classes, list)
+        or not refreshed_classes
+        or any(not isinstance(class_name, str) or not class_name.strip() for class_name in refreshed_classes)
+        or len(refreshed_classes) != len(set(refreshed_classes))
+    ):
+        return (
+            "fail",
+            "Recovery compatibility baseline secretComplianceRefresh.credentialClasses must be a non-empty unique list of strings",
+        )
+    if not isinstance(freshness, dict) or not freshness:
+        return (
+            "fail",
+            "Recovery compatibility baseline secretComplianceRefresh.freshness must be a non-empty object",
+        )
+    refreshed_class_set = set(refreshed_classes)
+    expected_refreshed_class_set = {
+        class_name
+        for class_name in CANONICAL_RECOVERY_SECRET_COMPLIANCE_CLASSES
+        if credential_applicability.get(class_name) == "applicable"
+    }
+    if refreshed_class_set != expected_refreshed_class_set:
+        missing = sorted(expected_refreshed_class_set - refreshed_class_set)
+        extra = sorted(refreshed_class_set - expected_refreshed_class_set)
+        details = []
+        if missing:
+            details.append("missing: " + ", ".join(missing))
+        if extra:
+            details.append("extra: " + ", ".join(extra))
+        return (
+            "fail",
+            "Recovery compatibility baseline secretComplianceRefresh.credentialClasses must exactly cover applicable secret-compliance projection classes derived from credentialApplicability ("
+            + "; ".join(details)
+            + ")",
+        )
+    freshness_class_set = set(freshness)
+    if refreshed_class_set != freshness_class_set:
+        missing = sorted(refreshed_class_set - freshness_class_set)
+        extra = sorted(freshness_class_set - refreshed_class_set)
+        details = []
+        if missing:
+            details.append("missing: " + ", ".join(missing))
+        if extra:
+            details.append("extra: " + ", ".join(extra))
+        return (
+            "fail",
+            "Recovery compatibility baseline secretComplianceRefresh freshness keys must exactly match credentialClasses ("
+            + "; ".join(details)
+            + ")",
+        )
+    for class_name in refreshed_classes:
+        if class_name not in credential_dispositions:
+            return (
+                "fail",
+                "Recovery compatibility baseline secretComplianceRefresh references a class without a disposition: "
+                + class_name,
+            )
+        entry = freshness[class_name]
+        if not isinstance(entry, dict) or set(entry) != RECOVERY_FRESHNESS_ENTRY_FIELDS:
+            return (
+                "fail",
+                "Recovery compatibility baseline freshness entry must contain exactly lineage, field, value, previousField, and previousValue: "
+                + class_name,
+            )
+        lineage = entry.get("lineage")
+        field = entry.get("field")
+        value_timestamp = entry.get("value")
+        previous_field = entry.get("previousField")
+        previous_value = entry.get("previousValue")
+        if lineage not in {"new", "existing"}:
+            return (
+                "fail",
+                f"Recovery compatibility baseline freshness lineage is invalid: {class_name}",
+            )
+        if field not in {"lastProvisionedAt", "lastRotationAt"}:
+            return (
+                "fail",
+                f"Recovery compatibility baseline freshness field is invalid: {class_name}",
+            )
+        try:
+            selected_timestamp = parse_timestamp(
+                value_timestamp,
+                f"Recovery compatibility baseline freshness value for {class_name}",
+            )
+        except TIMESTAMP_ERRORS as exc:
+            return ("fail", str(exc))
+        if selected_timestamp > finalized_at:
+            return (
+                "fail",
+                f"Recovery compatibility baseline freshness value must not be later than finalizedAt: {class_name}",
+            )
+
+        disposition = credential_dispositions[class_name]
+        if lineage == "new":
+            if disposition not in {"rotated", "reissued"}:
+                return (
+                    "fail",
+                    f"Recovery compatibility baseline new freshness lineage requires rotated or reissued disposition: {class_name}",
+                )
+            if field != "lastProvisionedAt":
+                return (
+                    "fail",
+                    f"Recovery compatibility baseline new freshness lineage must use lastProvisionedAt: {class_name}",
+                )
+            if previous_field is not None or previous_value is not None:
+                return (
+                    "fail",
+                    f"Recovery compatibility baseline new freshness lineage must not carry previous field/value: {class_name}",
+                )
+            continue
+
+        if not isinstance(previous_field, str) or previous_field not in {
+            "lastProvisionedAt",
+            "lastRotationAt",
+        }:
+            return (
+                "fail",
+                f"Recovery compatibility baseline existing freshness lineage requires a valid previousField: {class_name}",
+            )
+        try:
+            previous_timestamp = parse_timestamp(
+                previous_value,
+                f"Recovery compatibility baseline previous freshness value for {class_name}",
+            )
+        except TIMESTAMP_ERRORS as exc:
+            return ("fail", str(exc))
+        if previous_timestamp > finalized_at:
+            return (
+                "fail",
+                f"Recovery compatibility baseline previous freshness value must not be later than finalizedAt: {class_name}",
+            )
+
+        if disposition in {"rotated", "reissued"}:
+            if field != "lastRotationAt":
+                return (
+                    "fail",
+                    f"Recovery compatibility baseline {disposition} freshness must use lastRotationAt for existing lineage: {class_name}",
+                )
+            if selected_timestamp <= previous_timestamp:
+                return (
+                    "fail",
+                    f"Recovery compatibility baseline {disposition} freshness must advance the existing timestamp: {class_name}",
+                )
+        elif disposition in {"rebound", "verified_not_restored"}:
+            if field != previous_field or value_timestamp != previous_value:
+                return (
+                    "fail",
+                    f"Recovery compatibility baseline {disposition} freshness must preserve the existing field/value: {class_name}",
+                )
     return ("pass", "")
 
 
@@ -846,6 +1588,210 @@ def validate_erasure_overlay_reconciliation(
     )
 
 
+def _load_validated_retained_smoke_evidence(
+    root_dir: Path,
+    smoke_evidence: Any,
+    label: str,
+    expected_content_digests: list[str] | None = None,
+    reference_diagnostic_suffix: str = "",
+) -> tuple[str, str, list[tuple[int, Path, dict[str, Any]]]]:
+    """Validate smoke evidence through the canonical player-experience validator.
+
+    Promotion and recovery authorization currently support retained JSON evidence
+    in the repository. External URLs and opaque artifact identifiers are not
+    dereferenced by this executable, so they fail closed rather than becoming
+    implicit authorization.
+    """
+
+    if not isinstance(smoke_evidence, list) or not smoke_evidence:
+        return ("fail", f"{label} must be a non-empty list", [])
+    if expected_content_digests is not None and len(expected_content_digests) != len(smoke_evidence):
+        return ("fail", f"{label} content digest count does not match evidence count", [])
+
+    resolved_root = root_dir.resolve()
+    loaded_evidence: list[tuple[int, Path, dict[str, Any]]] = []
+    for index, evidence_ref in enumerate(smoke_evidence):
+        entry_label = f"{label}[{index}]"
+        reference_label = f"{entry_label}{reference_diagnostic_suffix}"
+        if not isinstance(evidence_ref, str) or not evidence_ref.strip():
+            return (
+                "fail",
+                f"{reference_label} must be a non-empty repository-relative JSON reference",
+                [],
+            )
+        reference_path = Path(evidence_ref)
+        if reference_path.is_absolute():
+            return (
+                "fail",
+                f"{reference_label} must be a repository-relative JSON reference",
+                [],
+            )
+
+        evidence_path = resolve_repo_path(root_dir, evidence_ref).resolve()
+        if not evidence_path.is_relative_to(resolved_root):
+            return (
+                "fail",
+                f"{reference_label} must resolve within the repository",
+                [],
+            )
+        if not evidence_path.is_file():
+            return ("fail", f"{entry_label} retained evidence file not found: {evidence_ref}", [])
+        evidence_bytes: bytes | None = None
+        if expected_content_digests is not None:
+            try:
+                evidence_bytes = evidence_path.read_bytes()
+            except (OSError, UnicodeError) as exc:
+                return ("fail", f"{entry_label} retained evidence file could not be read: {exc}", [])
+            actual_digest = "sha256:" + hashlib.sha256(evidence_bytes).hexdigest()
+            if expected_content_digests[index] != actual_digest:
+                return (
+                    "fail",
+                    f"{entry_label}.contentDigest does not match the exact retained evidence file bytes",
+                    [],
+                )
+        try:
+            if evidence_bytes is not None:
+                evidence = json.loads(evidence_bytes.decode("utf-8"))
+            else:
+                evidence = load_json(evidence_path)
+        except JSON_READ_ERRORS as exc:
+            return ("fail", f"{entry_label} retained evidence JSON unreadable: {exc}", [])
+        if not isinstance(evidence, dict):
+            return ("fail", f"{entry_label} retained evidence must be a JSON object", [])
+        if evidence.get("executionMode") != "live":
+            return ("fail", f"{entry_label} executionMode must be live for promotion or recovery authority", [])
+        if evidence.get("externalAuthorityProvenance") != "retained-external":
+            return (
+                "fail",
+                f"{entry_label} externalAuthorityProvenance must be retained-external for promotion or recovery authority",
+                [],
+            )
+
+        try:
+            validation = subprocess.run(
+                [sys.executable, str(PLAYER_EXPERIENCE_SMOKE_VALIDATOR), str(evidence_path)],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except subprocess.TimeoutExpired:
+            return (
+                "fail",
+                f"{entry_label} canonical player-experience smoke evidence validation timed out",
+                [],
+            )
+        except (OSError, UnicodeError) as exc:
+            detail = " ".join(str(exc).split())
+            return (
+                "fail",
+                f"{entry_label} canonical player-experience smoke evidence validation could not run: {detail}",
+                [],
+            )
+        if validation.returncode != 0:
+            detail = " ".join((validation.stderr or validation.stdout).split())
+            return (
+                "fail",
+                f"{entry_label} failed canonical player-experience smoke evidence validation: {detail}",
+                [],
+            )
+        loaded_evidence.append((index, evidence_path, evidence))
+
+    return ("pass", f"{label} is valid retained player-experience smoke evidence", loaded_evidence)
+
+
+def validate_retained_smoke_evidence(
+    root_dir: Path,
+    smoke_evidence: Any,
+    label: str,
+) -> tuple[str, str]:
+    status, message, _ = _load_validated_retained_smoke_evidence(
+        root_dir,
+        smoke_evidence,
+        label,
+    )
+    return (status, message)
+
+
+def validate_promotion_smoke_evidence_entry_shape(
+    smoke_evidence: Any,
+    label: str,
+) -> tuple[str, str]:
+    if not isinstance(smoke_evidence, list) or not smoke_evidence:
+        return ("fail", f"{label} must be a non-empty list")
+    references: set[str] = set()
+    for index, entry in enumerate(smoke_evidence):
+        entry_label = f"{label}[{index}]"
+        if not isinstance(entry, dict) or set(entry) != PROMOTION_SMOKE_EVIDENCE_ENTRY_FIELDS:
+            return (
+                "fail",
+                f"{entry_label} must be an object with exactly ref and contentDigest",
+            )
+        reference = entry.get("ref")
+        if not isinstance(reference, str) or not reference.strip():
+            return ("fail", f"{entry_label}.ref must be a non-empty repository-relative JSON reference")
+        if reference in references:
+            return ("fail", f"{entry_label}.ref must be unique within {label}")
+        references.add(reference)
+        content_digest = entry.get("contentDigest")
+        if not isinstance(content_digest, str) or not re.fullmatch(
+            r"sha256:[0-9a-f]{64}", content_digest
+        ):
+            return (
+                "fail",
+                f"{entry_label}.contentDigest must be lowercase sha256:<64 hex>",
+            )
+    return ("pass", "")
+
+
+def validate_promotion_smoke_evidence(
+    root_dir: Path,
+    smoke_evidence: Any,
+    label: str,
+    staging_deployment_ref: str,
+    staging_event_id: str,
+) -> tuple[str, str]:
+    shape_status, shape_message = validate_promotion_smoke_evidence_entry_shape(
+        smoke_evidence,
+        label,
+    )
+    if shape_status != "pass":
+        return (shape_status, shape_message)
+
+    references = [entry["ref"] for entry in smoke_evidence]
+    expected_content_digests = [entry["contentDigest"] for entry in smoke_evidence]
+    retained_status, retained_message, loaded_evidence = _load_validated_retained_smoke_evidence(
+        root_dir,
+        references,
+        label,
+        expected_content_digests,
+        reference_diagnostic_suffix=".ref",
+    )
+    if retained_status != "pass":
+        return (retained_status, retained_message)
+    for index, _, evidence in loaded_evidence:
+        external_authority = evidence.get("externalAuthority")
+        if (
+            isinstance(external_authority, dict)
+            and external_authority.get("profile") == "independent-omitted"
+        ):
+            return (
+                "fail",
+                f"{label}[{index}] externalAuthority.profile independent-omitted cannot satisfy promotion smoke evidence",
+            )
+        if evidence.get("deploymentRef") != staging_deployment_ref:
+            return (
+                "fail",
+                f"{label}[{index}] deploymentRef must match stagingOverlayCommitSha",
+            )
+        if evidence.get("deploymentEventId") != staging_event_id:
+            return (
+                "fail",
+                f"{label}[{index}] deploymentEventId must match stagingDeploymentEventId",
+            )
+    return ("pass", f"{label} is valid bound retained player-experience smoke evidence")
+
+
 def validate_recovery_baseline(
     root_dir: Path,
     baseline_ref: str,
@@ -867,8 +1813,8 @@ def validate_recovery_baseline(
     if not baseline_path.exists():
         return ("fail", f"Recovery compatibility baseline record not found: {baseline_ref}")
     try:
-        baseline = load_json(baseline_path)
-    except JSON_READ_ERRORS as exc:
+        baseline = load_json_rejecting_duplicate_keys(baseline_path)
+    except RECOVERY_JSON_READ_ERRORS as exc:
         return ("fail", f"Recovery compatibility baseline record unreadable: {exc}")
     if not isinstance(baseline, dict):
         return ("fail", "Recovery compatibility baseline record must be a JSON object")
@@ -876,7 +1822,8 @@ def validate_recovery_baseline(
     missing_fields = [
         field
         for field in CANONICAL_RECOVERY_REQUIRED_FIELDS
-        if field not in baseline or is_missing(baseline[field])
+        if field not in baseline
+        or is_missing(baseline[field])
     ]
     if missing_fields:
         return (
@@ -900,13 +1847,30 @@ def validate_recovery_baseline(
     invalid_object_fields = [
         field
         for field in CANONICAL_RECOVERY_OBJECT_FIELDS
-        if not isinstance(baseline.get(field), (dict, list)) or not baseline[field]
+        if not isinstance(baseline.get(field), (dict, list))
+        or not baseline[field]
     ]
     if invalid_object_fields:
         return (
             "fail",
             "Recovery compatibility baseline canonical evidence groups must be non-empty objects or lists: "
             + ", ".join(invalid_object_fields),
+        )
+    if not isinstance(baseline["evidenceRefs"], list) or not baseline["evidenceRefs"]:
+        return (
+            "fail",
+            "Recovery compatibility baseline evidenceRefs must be a non-empty list",
+        )
+    invalid_evidence_refs = [
+        str(index)
+        for index, evidence_ref in enumerate(baseline["evidenceRefs"])
+        if not isinstance(evidence_ref, str) or not evidence_ref.strip()
+    ]
+    if invalid_evidence_refs:
+        return (
+            "fail",
+            "Recovery compatibility baseline evidenceRefs must contain only non-empty strings; invalid indexes: "
+            + ", ".join(invalid_evidence_refs),
         )
 
     for field in ("sourceEnvironmentBinding", "targetBoundary", "restoreSource"):
@@ -1122,6 +2086,7 @@ def validate_recovery_baseline(
             "resultingKeyIds",
             "revocationWatermarkEvidence",
             "validatorConvergenceEvidence",
+            "compromiseClassified",
         ),
         "databaseCredentialRotation": (
             "rotationJobRef",
@@ -1157,6 +2122,25 @@ def validate_recovery_baseline(
         return ("fail", "Recovery compatibility baseline smokeStatus must be pass")
     if not isinstance(baseline.get("smokeEvidence"), list) or not baseline["smokeEvidence"]:
         return ("fail", "Recovery compatibility baseline smokeEvidence must be a non-empty list")
+    smoke_shape_status, smoke_shape_message = validate_promotion_smoke_evidence_entry_shape(
+        baseline["smokeEvidence"],
+        "Recovery compatibility baseline smokeEvidence",
+    )
+    if smoke_shape_status != "pass":
+        return ("fail", smoke_shape_message)
+    smoke_references = [entry["ref"] for entry in baseline["smokeEvidence"]]
+    smoke_expected_content_digests = [
+        entry["contentDigest"] for entry in baseline["smokeEvidence"]
+    ]
+    smoke_status, smoke_message, _ = _load_validated_retained_smoke_evidence(
+        root_dir,
+        smoke_references,
+        "Recovery compatibility baseline smokeEvidence",
+        smoke_expected_content_digests,
+        reference_diagnostic_suffix=".ref",
+    )
+    if smoke_status != "pass":
+        return ("fail", smoke_message)
 
     session_recovery = baseline.get("sessionRecovery")
     if not isinstance(session_recovery, dict):
@@ -1165,22 +2149,93 @@ def validate_recovery_baseline(
         if session_recovery.get(field) != "invalidated":
             return ("fail", f"Recovery compatibility baseline sessionRecovery.{field} must be invalidated")
 
+    credential_applicability = baseline.get("credentialApplicability")
+    if not isinstance(credential_applicability, dict) or not credential_applicability:
+        return (
+            "fail",
+            "Recovery compatibility baseline credentialApplicability must be a non-empty object",
+        )
+    expected_credential_classes = set(CANONICAL_RECOVERY_CREDENTIAL_UNIVERSE)
+    actual_credential_classes = set(credential_applicability)
+    missing_applicability = sorted(expected_credential_classes - actual_credential_classes)
+    extra_applicability = sorted(actual_credential_classes - expected_credential_classes)
+    if missing_applicability or extra_applicability:
+        details = []
+        if missing_applicability:
+            details.append("missing: " + ", ".join(missing_applicability))
+        if extra_applicability:
+            details.append("extra: " + ", ".join(extra_applicability))
+        return (
+            "fail",
+            "Recovery compatibility baseline credentialApplicability keys must exactly cover "
+            "the closed credential class universe (" + "; ".join(details) + ")",
+        )
+    invalid_applicability = [
+        class_name
+        for class_name, applicability in credential_applicability.items()
+        if not isinstance(applicability, str) or applicability not in RECOVERY_CREDENTIAL_APPLICABILITY
+    ]
+    if invalid_applicability:
+        return (
+            "fail",
+            "Recovery compatibility baseline credentialApplicability has an unknown or malformed "
+            "value for: "
+            + ", ".join(sorted(invalid_applicability)),
+        )
+    required_applicable_classes = canonical_recovery_required_applicable_classes(
+        str(baseline.get("environment"))
+    )
+    non_applicable_required_classes = [
+        class_name
+        for class_name in required_applicable_classes
+        if credential_applicability[class_name] != "applicable"
+    ]
+    if non_applicable_required_classes:
+        return (
+            "fail",
+            "Recovery compatibility baseline required credential classes must be applicable: "
+            + ", ".join(sorted(non_applicable_required_classes)),
+        )
+    allowed_not_applicable_classes = canonical_recovery_allowed_not_applicable_classes(
+        str(baseline.get("environment"))
+    )
+    disallowed_not_applicable_classes = [
+        class_name
+        for class_name in CANONICAL_RECOVERY_CREDENTIAL_CLASSES
+        if credential_applicability[class_name] == "not_applicable"
+        and class_name not in allowed_not_applicable_classes
+    ]
+    if disallowed_not_applicable_classes:
+        return (
+            "fail",
+            "Recovery compatibility baseline not-applicable credential classes are not allowed for "
+            + str(baseline.get("environment"))
+            + ": "
+            + ", ".join(sorted(disallowed_not_applicable_classes)),
+        )
+
     credential_validation = baseline.get("externalCredentialValidation")
     if not isinstance(credential_validation, dict):
         return ("fail", "Recovery compatibility baseline externalCredentialValidation must be an object")
     credential_records = credential_validation.get("records")
     if not isinstance(credential_records, dict):
         return ("fail", "Recovery compatibility baseline externalCredentialValidation.records must be an object")
-    missing_credential_records = [
-        name for name in CANONICAL_RECOVERY_CREDENTIAL_CLASSES if name not in credential_records
-    ]
-    if missing_credential_records:
+    expected_external_classes = set(CANONICAL_RECOVERY_CREDENTIAL_CLASSES)
+    actual_external_classes = set(credential_records)
+    missing_credential_records = sorted(expected_external_classes - actual_external_classes)
+    extra_credential_records = sorted(actual_external_classes - expected_external_classes)
+    if missing_credential_records or extra_credential_records:
+        details = []
+        if missing_credential_records:
+            details.append("missing: " + ", ".join(missing_credential_records))
+        if extra_credential_records:
+            details.append("extra: " + ", ".join(extra_credential_records))
         return (
             "fail",
-            "Recovery compatibility baseline externalCredentialValidation.records missing: "
-            + ", ".join(missing_credential_records),
+            "Recovery compatibility baseline externalCredentialValidation.records keys must exactly cover "
+            "the closed external credential class universe (" + "; ".join(details) + ")",
         )
-    credential_fields = (
+    credential_fields = {
         "status",
         "evidenceRef",
         "isolationAssertion",
@@ -1188,13 +2243,47 @@ def validate_recovery_baseline(
         "validatedAt",
         "validatedBy",
         "observedValue",
-    )
+    }
+    not_applicable_credential_fields = {"status", "reason", "evidenceRef"}
     for class_name in CANONICAL_RECOVERY_CREDENTIAL_CLASSES:
         record = credential_records.get(class_name)
         if not isinstance(record, dict):
             return (
                 "fail",
                 f"Recovery compatibility baseline external credential record must be an object: {class_name}",
+            )
+        applicability = credential_applicability[class_name]
+        if applicability == "not_applicable":
+            if record.get("status") != "not_applicable":
+                return (
+                    "fail",
+                    f"Recovery compatibility baseline external credential record must be not_applicable for non-applicable class: {class_name}",
+                )
+            if set(record) != not_applicable_credential_fields:
+                return (
+                    "fail",
+                    f"Recovery compatibility baseline non-applicable external credential record must contain exactly status, reason, and evidenceRef: {class_name}",
+                )
+            if record.get("reason") != "credential-class-not-present":
+                return (
+                    "fail",
+                    f"Recovery compatibility baseline non-applicable external credential record reason must be credential-class-not-present: {class_name}",
+                )
+            if not isinstance(record.get("evidenceRef"), str) or not record["evidenceRef"].strip():
+                return (
+                    "fail",
+                    f"Recovery compatibility baseline non-applicable external credential evidenceRef must be non-empty: {class_name}",
+                )
+            continue
+        if record.get("status") != "pass":
+            return (
+                "fail",
+                f"Recovery compatibility baseline applicable external credential record status must be pass: {class_name}",
+            )
+        if set(record) != credential_fields:
+            return (
+                "fail",
+                f"Recovery compatibility baseline applicable external credential record must contain exactly its validation fields: {class_name}",
             )
         missing_record_fields = [
             field for field in credential_fields if field not in record or is_missing(record[field])
@@ -1203,12 +2292,7 @@ def validate_recovery_baseline(
             return (
                 "fail",
                 f"Recovery compatibility baseline external credential record missing fields for {class_name}: "
-                + ", ".join(missing_record_fields),
-            )
-        if record.get("status") != "pass":
-            return (
-                "fail",
-                f"Recovery compatibility baseline external credential record status must be pass: {class_name}",
+                + ", ".join(sorted(missing_record_fields)),
             )
         if not isinstance(record.get("observedValue"), str):
             return (
@@ -1219,6 +2303,44 @@ def validate_recovery_baseline(
             parse_timestamp(record.get("validatedAt"), f"Recovery baseline {class_name}.validatedAt")
         except TIMESTAMP_ERRORS as exc:
             return ("fail", str(exc))
+
+    credential_dispositions = baseline.get("credentialDispositions")
+    if not isinstance(credential_dispositions, dict):
+        return (
+            "fail",
+            "Recovery compatibility baseline credentialDispositions must be an object",
+        )
+    expected_disposition_classes = {
+        class_name
+        for class_name, applicability in credential_applicability.items()
+        if applicability == "applicable"
+    }
+    actual_disposition_classes = set(credential_dispositions)
+    missing_dispositions = sorted(expected_disposition_classes - actual_disposition_classes)
+    extra_dispositions = sorted(actual_disposition_classes - expected_disposition_classes)
+    if missing_dispositions or extra_dispositions:
+        details = []
+        if missing_dispositions:
+            details.append("missing: " + ", ".join(missing_dispositions))
+        if extra_dispositions:
+            details.append("extra: " + ", ".join(extra_dispositions))
+        return (
+            "fail",
+            "Recovery compatibility baseline credentialDispositions keys must exactly cover "
+            "the applicable credential classes (" + "; ".join(details) + ")",
+        )
+    invalid_dispositions = [
+        class_name
+        for class_name, disposition in credential_dispositions.items()
+        if not isinstance(disposition, str) or disposition not in RECOVERY_CREDENTIAL_DISPOSITIONS
+    ]
+    if invalid_dispositions:
+        return (
+            "fail",
+            "Recovery compatibility baseline credentialDispositions has an unknown or malformed "
+            "disposition for: "
+            + ", ".join(sorted(invalid_dispositions)),
+        )
 
     try:
         lifecycle_timestamps = {
@@ -1252,6 +2374,21 @@ def validate_recovery_baseline(
         return ("fail", "Recovery compatibility baseline finalizedAt is future-dated")
     if (now_dt - finalized_at).total_seconds() > 30 * 24 * 60 * 60:
         return ("fail", "Recovery compatibility baseline finalized drill is older than 30 days")
+
+    jwt_status, jwt_message = validate_jwt_hardening_contract(
+        baseline.get("jwtHardening"),
+        credential_dispositions["jwt-signing-keys-jwks"],
+    )
+    if jwt_status != "pass":
+        return ("fail", jwt_message)
+    freshness_status, freshness_message = validate_recovery_freshness(
+        baseline.get("secretComplianceRefresh"),
+        credential_applicability,
+        credential_dispositions,
+        finalized_at,
+    )
+    if freshness_status != "pass":
+        return ("fail", freshness_message)
     return ("pass", "Recovery compatibility baseline is valid")
 
 
@@ -1261,6 +2398,21 @@ def load_yaml(path: Path) -> Any:
 
 def load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_json_rejecting_duplicate_keys(path: Path) -> Any:
+    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON member: {key}")
+            result[key] = value
+        return result
+
+    return json.loads(
+        path.read_text(encoding="utf-8"),
+        object_pairs_hook=reject_duplicate_keys,
+    )
 
 
 def parse_documents(rendered_text: str) -> list[dict[str, Any]]:
@@ -3323,22 +4475,21 @@ def expected_binding_checks(
     backup_storage = data.get("backupStorage")
     backup_storage_error = None
     backup_storage_enabled = False
-    if not isinstance(backup_storage, dict):
-        backup_storage_error = "backupStorage must be an object"
-    elif not isinstance(backup_storage.get("enabled"), bool):
-        backup_storage_error = "backupStorage.enabled must be a boolean"
+    if not isinstance(backup_storage, dict) or not isinstance(backup_storage.get("enabled"), bool):
+        backup_storage_error = "Expected-bindings backupStorage.enabled must be a boolean"
     else:
         backup_storage_enabled = backup_storage["enabled"]
         if not backup_storage_enabled:
-            disabled_fields = [
-                f"backupStorage.{field}"
+            placeholder_fields = sorted(
+                field
                 for field in ("bucket", "endpoint", "bindingRef", "fingerprint")
                 if field in backup_storage
-            ]
-            if disabled_fields:
+            )
+            if placeholder_fields:
                 backup_storage_error = (
-                    "backupStorage fields must be omitted when disabled: "
-                    + ", ".join(disabled_fields)
+                    "Expected-bindings backupStorage fields must be omitted when disabled; "
+                    "enabled=false must omit backup binding fields: "
+                    + ", ".join(placeholder_fields)
                 )
         if env_class == "production" and not backup_storage_enabled:
             production_error = "backupStorage.enabled must be true for production"
@@ -3353,15 +4504,37 @@ def expected_binding_checks(
     outbound_comms_enabled, outbound_comms_error = optional_integration_state(
         data, "outboundComms"
     )
-    external_requirements = [
-        ("operatorCredentials.bindingRef", "operatorCredentials.fingerprint"),
-    ]
-    missing_external = []
     if backup_storage_enabled:
+        missing_backup = []
         if not backup_storage.get("bucket"):
-            missing_external.append("backupStorage.bucket")
+            missing_backup.append("backupStorage.bucket")
         if not backup_storage.get("bindingRef") and not backup_storage.get("fingerprint"):
-            missing_external.append("backupStorage.bindingRef or backupStorage.fingerprint")
+            missing_backup.append("backupStorage.bindingRef or backupStorage.fingerprint")
+        if missing_backup:
+            backup_storage_error = (
+                "Expected-bindings enabled backup storage missing keys: "
+                + ", ".join(missing_backup)
+            )
+    external_requirements = []
+    if backup_storage_enabled:
+        external_requirements.extend(
+            [
+                ("backupStorage.bucket", None),
+                ("backupStorage.bindingRef", "backupStorage.fingerprint"),
+            ]
+        )
+    if asset_storage_enabled:
+        external_requirements.extend(
+            [
+                ("assetStorage.bucket", None),
+                ("assetStorage.endpoint", None),
+                ("assetStorage.bindingRef", "assetStorage.fingerprint"),
+            ]
+        )
+    external_requirements.append(
+        ("operatorCredentials.bindingRef", "operatorCredentials.fingerprint")
+    )
+    missing_external = []
     for primary, alternate in external_requirements:
         if not get(data, primary) and (alternate is None or not get(data, alternate)):
             missing_external.append(primary if alternate is None else f"{primary} or {alternate}")
@@ -3370,10 +4543,9 @@ def expected_binding_checks(
         error
         for error in [
             (
-                binding_ref_format_error(
-                    "backupStorage.bindingRef", get(data, "backupStorage.bindingRef")
-                )
-                if backup_storage_enabled and get(data, "backupStorage.bindingRef")
+                binding_ref_format_error("backupStorage.bindingRef", get(data, "backupStorage.bindingRef"))
+                if backup_storage_enabled
+                and get(data, "backupStorage.bindingRef")
                 else None
             ),
             (
@@ -3754,6 +4926,7 @@ def recovery_compatibility_check(
         "evaluatedAt",
         "evaluatorToolDigest",
         "newDrillRequired",
+        *RECOVERY_COMPATIBILITY_VERIFIED_POINT_FIELDS,
     )
     missing_fields = [
         field
@@ -3772,6 +4945,7 @@ def recovery_compatibility_check(
         "candidateRecoveryContractFingerprint",
         "compatibilityRationale",
         "evaluatorToolDigest",
+        *RECOVERY_COMPATIBILITY_VERIFIED_POINT_FIELDS,
     )
     invalid_string_fields = [
         field
@@ -3823,6 +4997,15 @@ def recovery_compatibility_check(
             + str(compatibility_status),
         )
 
+    point_status, point_message = validate_compact_verified_restorable_point(
+        recovery_compatibility,
+        root_dir,
+        now_dt,
+        evaluated_at,
+    )
+    if point_status != "pass":
+        return ("fail", point_message)
+
     baseline_status, baseline_message = validate_recovery_baseline(
         root_dir,
         str(recovery_compatibility["baselineRecoveryRecordRef"]),
@@ -3857,8 +5040,8 @@ def promotion_check(
     expected_production_overlay_ref: str | None = None,
 ) -> tuple[str, str, str, str, str]:
     try:
-        att = load_json(attestation_path)
-    except JSON_READ_ERRORS as exc:
+        att = load_json_rejecting_duplicate_keys(attestation_path)
+    except RECOVERY_JSON_READ_ERRORS as exc:
         message = f"Attestation unreadable: {exc}"
         return ("fail", "unknown", message, "fail", f"Recovery compatibility attestation unreadable: {exc}")
 
@@ -3934,10 +5117,6 @@ def _promotion_check(
 
     if not isinstance(att.get("serviceDigests"), dict) or not att["serviceDigests"]:
         return ("fail", rollback_mode, "Attestation serviceDigests must be a non-empty object")
-    if not isinstance(att.get("smokeEvidence"), list) or not att["smokeEvidence"]:
-        return ("fail", rollback_mode, "Attestation smokeEvidence must be a non-empty list")
-    if any(not isinstance(evidence, str) or not evidence for evidence in att["smokeEvidence"]):
-        return ("fail", rollback_mode, "Attestation smokeEvidence entries must be non-empty strings")
     if not isinstance(att.get("approvedBy"), str) or not att["approvedBy"].strip():
         return ("fail", rollback_mode, "Attestation approvedBy must be non-empty")
 
@@ -4004,6 +5183,16 @@ def _promotion_check(
     if str(parsed_staging_event_id) != staging_event_id:
         return ("fail", rollback_mode, "Attestation stagingDeploymentEventId must use canonical UUID form")
 
+    smoke_status, smoke_message = validate_promotion_smoke_evidence(
+        root_dir,
+        att["smokeEvidence"],
+        "Attestation smokeEvidence",
+        staging_sha,
+        staging_event_id,
+    )
+    if smoke_status != "pass":
+        return ("fail", rollback_mode, smoke_message)
+
     record_path = (
         root_dir
         / "design"
@@ -4018,8 +5207,8 @@ def _promotion_check(
         return ("fail", rollback_mode, f"Staging deployment record not found: {record_path}")
 
     try:
-        record = load_json(record_path)
-    except JSON_READ_ERRORS as exc:
+        record = load_json_rejecting_duplicate_keys(record_path)
+    except RECOVERY_JSON_READ_ERRORS as exc:
         return ("fail", rollback_mode, f"Staging deployment record unreadable: {exc}")
 
     if not isinstance(record, dict):
@@ -4113,10 +5302,12 @@ def _promotion_check(
         return ("fail", rollback_mode, "Staging deployment record appliedBy must be non-empty")
     if not isinstance(record.get("serviceDigests"), dict) or not record["serviceDigests"]:
         return ("fail", rollback_mode, "Staging deployment record serviceDigests must be a non-empty object")
-    if not isinstance(record.get("smokeEvidence"), list) or not record["smokeEvidence"]:
-        return ("fail", rollback_mode, "Staging deployment record smokeEvidence must be a non-empty list")
-    if any(not isinstance(evidence, str) or not evidence for evidence in record["smokeEvidence"]):
-        return ("fail", rollback_mode, "Staging deployment record smokeEvidence entries must be non-empty strings")
+    record_smoke_status, record_smoke_message = validate_promotion_smoke_evidence_entry_shape(
+        record["smokeEvidence"],
+        "Staging deployment record smokeEvidence",
+    )
+    if record_smoke_status != "pass":
+        return ("fail", rollback_mode, record_smoke_message)
     if record["smokeEvidence"] != att["smokeEvidence"]:
         return ("fail", rollback_mode, "Staging deployment record smokeEvidence does not match the attestation")
 
@@ -4398,8 +5589,8 @@ def _promotion_check(
 
 def backup_readiness_check(path: Path, now: str, deployment_ref: str, root_dir: Path) -> tuple[str, str]:
     try:
-        data = load_json(path)
-    except JSON_READ_ERRORS as exc:
+        data = load_json_rejecting_duplicate_keys(path)
+    except RECOVERY_JSON_READ_ERRORS as exc:
         return ("fail", f"Backup-readiness evidence unreadable: {exc}")
     if not isinstance(data, dict):
         return ("fail", "Backup-readiness evidence must be a JSON object")
@@ -4417,11 +5608,6 @@ def backup_readiness_check(path: Path, now: str, deployment_ref: str, root_dir: 
         return ("fail", "Backup-readiness evidence missing required target-state fields: " + ", ".join(missing_fields))
     if deployment_ref and str(data.get("deploymentRef")) != str(deployment_ref):
         return ("fail", "Backup-readiness evidence deploymentRef does not match the current deployment")
-    attestation_ref = str(data.get("promotionAttestationRef", ""))
-    attestation_path = (root_dir / attestation_ref).resolve()
-    if not attestation_path.exists():
-        return ("fail", "Backup-readiness evidence references missing promotionAttestationRef")
-
     if not isinstance(data.get("evidenceRefs"), list) or not data["evidenceRefs"]:
         return ("fail", "Backup-readiness evidence evidenceRefs must be a non-empty list")
     if data.get("backupCoverage") != "environment-wide-postgresql":
@@ -4437,6 +5623,7 @@ def backup_readiness_check(path: Path, now: str, deployment_ref: str, root_dir: 
             name: parse_timestamp(data.get(name), name)
             for name in (
                 "assessedAt",
+                "newestVerifiedRestorablePointAt",
                 "backupLastSuccessAt",
                 "backupVerifyLastSuccessAt",
                 "restoreDrillLastSuccessAt",
@@ -4450,18 +5637,44 @@ def backup_readiness_check(path: Path, now: str, deployment_ref: str, root_dir: 
         return ("fail", "Backup-readiness evidence contains future-dated timestamps: " + ", ".join(future_timestamps))
 
     backup_ts = evidence_timestamps["backupLastSuccessAt"]
+    newest_verified_point_ts = evidence_timestamps["newestVerifiedRestorablePointAt"]
     verify_ts = evidence_timestamps["backupVerifyLastSuccessAt"]
     drill_ts = evidence_timestamps["restoreDrillLastSuccessAt"]
     if (now_dt - backup_ts).total_seconds() > 90 * 60:
         return ("fail", "Backup-readiness evidence is stale: backupLastSuccessAt older than 90 minutes")
+    if (now_dt - newest_verified_point_ts).total_seconds() > VERIFIED_RESTORABLE_POINT_MAX_AGE_SECONDS:
+        return (
+            "fail",
+            (
+                "Backup-readiness evidence is stale: newestVerifiedRestorablePointAt older than 15 minutes; "
+                f"record: {data['newestVerifiedRestorablePointRef']}; remediation: refresh the verified "
+                "restorable point and generate a new event-scoped preflight report before retrying"
+            ),
+        )
     if (now_dt - verify_ts).total_seconds() > 36 * 60 * 60:
         return ("fail", "Backup-readiness evidence is stale: backupVerifyLastSuccessAt older than 36 hours")
     if (now_dt - drill_ts).total_seconds() > 30 * 24 * 60 * 60:
         return ("fail", "Backup-readiness evidence is stale: restoreDrillLastSuccessAt older than 30 days")
 
+    attestation_ref = data.get("promotionAttestationRef")
+    if not isinstance(attestation_ref, str) or not attestation_ref.strip():
+        return ("fail", "Backup-readiness evidence references missing promotionAttestationRef")
+    if not is_canonical_promotion_attestation_ref(
+        attestation_ref,
+        str(data.get("deploymentRef", "")),
+        root_dir=root_dir,
+    ):
+        return (
+            "fail",
+            "Backup-readiness evidence promotionAttestationRef must be the canonical repository-relative production attestation path",
+        )
+    attestation_path = (root_dir / attestation_ref).resolve()
+    if not attestation_path.exists():
+        return ("fail", "Backup-readiness evidence references missing promotionAttestationRef")
+
     try:
-        attestation = load_json(attestation_path)
-    except JSON_READ_ERRORS as exc:
+        attestation = load_json_rejecting_duplicate_keys(attestation_path)
+    except RECOVERY_JSON_READ_ERRORS as exc:
         return ("fail", f"Backup-readiness attestation unreadable: {exc}")
     if not isinstance(attestation, dict):
         return ("fail", "Backup-readiness attestation must be a JSON object")
@@ -4479,6 +5692,9 @@ def backup_readiness_check(path: Path, now: str, deployment_ref: str, root_dir: 
         return ("fail", "Backup-readiness evidence does not match recoveryCompatibility.backupReadinessRef")
     if data.get("baselineRecoveryRecordRef") != recovery_compatibility.get("baselineRecoveryRecordRef"):
         return ("fail", "Backup-readiness evidence baselineRecoveryRecordRef does not match the attestation")
+    for field in RECOVERY_COMPATIBILITY_VERIFIED_POINT_FIELDS:
+        if data.get(field) != recovery_compatibility.get(field):
+            return ("fail", f"Backup-readiness evidence {field} does not match the attestation")
     try:
         compatibility_evaluated_at = parse_timestamp(
             recovery_compatibility.get("evaluatedAt"), "recoveryCompatibility.evaluatedAt"
@@ -4498,6 +5714,20 @@ def backup_readiness_check(path: Path, now: str, deployment_ref: str, root_dir: 
         return ("fail", "Backup-readiness evidence candidateServiceDigests do not match the attestation")
     if data.get("recoveryContractFingerprint") != recovery_compatibility.get("candidateRecoveryContractFingerprint"):
         return ("fail", "Backup-readiness evidence recoveryContractFingerprint does not match the attestation")
+
+    point_status, point_message = _validate_verified_restorable_point_reference(
+        root_dir,
+        str(data["newestVerifiedRestorablePointRef"]),
+        str(data["environment"]),
+        str(data["newestVerifiedRestorablePointAt"]),
+        str(data["backupVerifyLastSuccessAt"]),
+        str(data["newestVerifiedRestorablePointDigest"]),
+        str(data["backupArtifactRef"]),
+        context="Verified restorable point",
+        assessed_at=evidence_timestamps["assessedAt"],
+    )
+    if point_status != "pass":
+        return ("fail", point_message)
 
     return (
         "fail",
@@ -4740,8 +5970,7 @@ def main() -> int:
                 break
         if not secret_check_failed:
             has_required_failure = append_result(
-                check_results,
-                "PREFLIGHT-SECRETS-001", True, "pass", "Rendered workloads reference required player-facing Secret bindings",
+                check_results, "PREFLIGHT-SECRETS-001", True, "pass", "Rendered workloads reference required player-facing Secret bindings",
             ) or has_required_failure
     else:
         for secret_name, secret_namespace, binding_path in expected_player_secret_bindings(

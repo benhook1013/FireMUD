@@ -4,19 +4,59 @@ from __future__ import annotations
 
 import argparse
 import copy
+import datetime as dt
+import importlib.util
 import json
+import math
 import os
 import socket
 import sys
 import time
+import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlparse
+
+_EVIDENCE_VALIDATOR_PATH = (
+    Path(__file__).resolve().with_name("validate-player-experience-smoke-evidence.py")
+)
+_EVIDENCE_VALIDATOR_SPEC = importlib.util.spec_from_file_location(
+    "player_experience_smoke_evidence_validator", _EVIDENCE_VALIDATOR_PATH
+)
+if _EVIDENCE_VALIDATOR_SPEC is None or _EVIDENCE_VALIDATOR_SPEC.loader is None:
+    raise ImportError(f"Unable to load evidence validator at {_EVIDENCE_VALIDATOR_PATH}")
+_EVIDENCE_VALIDATOR = importlib.util.module_from_spec(_EVIDENCE_VALIDATOR_SPEC)
+_EVIDENCE_VALIDATOR_SPEC.loader.exec_module(_EVIDENCE_VALIDATOR)
+
+METRIC_TARGET_BY_PATH = _EVIDENCE_VALIDATOR.METRIC_TARGET_BY_PATH
+PROMETHEUS_MIRRORS_CAPABILITY = "prometheusMirrors"
+PLAYER_FLOW_CANARY_CAPABILITY = "playerFlowCanary"
+PLAYERFLOW_CANARY_LAST_RUN_TIMESTAMP_METRIC = (
+    "playerflow_canary_last_run_timestamp_seconds"
+)
+PLAYERFLOW_CANARY_FRESHNESS_BUDGET_METRIC = (
+    "playerflow_canary_freshness_budget_seconds"
+)
+DEFAULT_SIMULATED_DETECTION_BUDGET_SECONDS = 195
+STALE_NUMERIC_TOLERANCE_SECONDS = _EVIDENCE_VALIDATOR.STALE_NUMERIC_TOLERANCE_SECONDS
+CANARY_ALERT_MAX_HOLD_SECONDS = _EVIDENCE_VALIDATOR.CANARY_ALERT_MAX_HOLD_SECONDS
+CANARY_ALERT_EVALUATION_MARGIN_SECONDS = (
+    _EVIDENCE_VALIDATOR.CANARY_ALERT_EVALUATION_MARGIN_SECONDS
+)
+MIN_CANARY_DETECTION_BUDGET_SECONDS = (
+    CANARY_ALERT_MAX_HOLD_SECONDS + CANARY_ALERT_EVALUATION_MARGIN_SECONDS
+)
+CAPABILITY_VALUES = {
+    PROMETHEUS_MIRRORS_CAPABILITY: {"published", "omitted"},
+    PLAYER_FLOW_CANARY_CAPABILITY: {"advertised", "omitted"},
+}
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "dev-tools" / "smoke"))
 
 from smoke_common import (
+    ProbeOperationalFailure,
     http_request_json,
     http_request_json_with_headers,
     login_play_look_steps,
@@ -27,6 +67,10 @@ from smoke_common import (
     wait_for_account_schema,
     wait_for_http_readiness,
 )
+
+
+class PlayerFlowProbeFailure(ProbeOperationalFailure):
+    """Expected transport/upstream failure captured as zero-valued evidence."""
 
 
 def main() -> int:
@@ -63,8 +107,8 @@ def main() -> int:
         else None,
         help=(
             "Path to retained authoritative external-monitor evidence for the "
-            "deadman and observability-entrypoint checks. Required for non-simulated "
-            "prod-like smoke."
+            "deadman and public-path checks. Required for non-simulated prod-like "
+            "smoke. The evidence profile may explicitly be independent-omitted."
         ),
     )
     parser.add_argument(
@@ -72,10 +116,9 @@ def main() -> int:
         default=os.environ.get("PLAYER_EXPERIENCE_FAILURE_INJECTION", ""),
         help=(
             "Comma-separated synthetic failure flags. Supported values: "
-            "websocket,telnet,login,command,deadman,prometheus,alertmanager,"
-            "grafana,kibana_log_query,jaeger_query,"
+            "websocket,telnet,login,command,deadman,"
             "PlayerFlowCanaryLoginFailed,PlayerFlowCanaryCommandFailed,"
-            "PlayerFlowCanaryLatencyHigh."
+            "PlayerFlowCanaryLatencyHigh,PlayerFlowCanaryEvidenceStale."
         ),
     )
     parser.add_argument(
@@ -84,21 +127,89 @@ def main() -> int:
         help="Low-cardinality source label for the deadman heartbeat mirror.",
     )
     parser.add_argument(
+        "--deployment-event-id",
+        default=os.environ.get("PLAYER_EXPERIENCE_DEPLOYMENT_EVENT_ID"),
+        help=(
+            "Canonical UUID for this deployment apply event. Promotion/staging "
+            "evidence should set it; standalone/local evidence may omit it."
+        ),
+    )
+    parser.add_argument(
         "--canary-path",
         choices=("websocket", "telnet"),
         default=os.environ.get("PLAYER_EXPERIENCE_CANARY_PATH", "websocket"),
-        help="Transport used for the synthetic login + representative command canary.",
+        help=(
+            "Preferred first exposed transport for the login + representative "
+            "command canary; all exposed paths are exercised."
+        ),
+    )
+    parser.add_argument(
+        "--prometheus-mirrors",
+        choices=tuple(sorted(CAPABILITY_VALUES[PROMETHEUS_MIRRORS_CAPABILITY])),
+        default=os.environ.get("PLAYER_EXPERIENCE_PROMETHEUS_MIRRORS", "published"),
+        help="Whether this evidence advertises optional Prometheus mirror signals.",
+    )
+    parser.add_argument(
+        "--player-flow-canary",
+        choices=tuple(sorted(CAPABILITY_VALUES[PLAYER_FLOW_CANARY_CAPABILITY])),
+        default=os.environ.get("PLAYER_EXPERIENCE_PLAYER_FLOW_CANARY", "advertised"),
+        help="Whether this evidence advertises the independent player-flow canary.",
     )
     args = parser.parse_args()
 
     injected = parse_failure_injection(args.failure_injection)
     config = SmokeConfig.from_env(
-        args.source, args.canary_path, args.external_authority_evidence
+        args.source,
+        args.canary_path,
+        args.external_authority_evidence,
+        args.prometheus_mirrors,
+        args.player_flow_canary,
+        deployment_event_id=args.deployment_event_id,
     )
-    external_authority = resolve_external_authority(config, injected, args.simulate)
+    execution_mode = "simulated" if args.simulate else "live"
+    authority_provenance = (
+        "synthetic"
+        if args.simulate and args.external_authority_evidence is None
+        else "retained-external"
+    )
+    authority_verified_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    evaluation_epoch = dt.datetime.fromisoformat(
+        authority_verified_at.replace("Z", "+00:00")
+    ).timestamp()
+    initial_external_authority = resolve_external_authority(
+        config, injected, args.simulate, evaluation_epoch
+    )
 
-    mirrored_signals = execute_smoke(config, args.simulate, injected)
-    evidence = build_evidence(config, mirrored_signals, external_authority, injected)
+    mirrored_signals = execute_smoke(
+        config, args.simulate, injected, initial_external_authority
+    )
+    verified_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    final_evaluation_epoch = dt.datetime.fromisoformat(
+        verified_at.replace("Z", "+00:00")
+    ).timestamp()
+    # Re-read retained authority after the smoke run and require the stable
+    # profile/path/budget fields to match the snapshot used for mirrors.
+    reread_external_authority = resolve_external_authority(
+        config, injected, args.simulate, final_evaluation_epoch
+    )
+    compare_external_authority_snapshots(
+        initial_external_authority, reread_external_authority
+    )
+    external_authority = reread_external_authority
+    validate_external_authority_freshness(
+        external_authority,
+        config.external_authority_evidence or Path("<synthetic external authority>"),
+        final_evaluation_epoch,
+    )
+    evidence = build_evidence(
+        config,
+        mirrored_signals,
+        external_authority,
+        injected,
+        execution_mode,
+        authority_provenance,
+        verified_at,
+    )
     args.evidence_out.parent.mkdir(parents=True, exist_ok=True)
     args.evidence_out.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
 
@@ -118,10 +229,8 @@ class SmokeConfig:
         source: str,
         canary_path: str,
         websocket_url: str,
-        websocket_target: str,
         telnet_host: str,
         telnet_port: int,
-        telnet_target: str,
         account_api_base: str,
         game_logic_api_base: str,
         game_session_api_base: str,
@@ -141,14 +250,15 @@ class SmokeConfig:
         verified_by: str,
         preflight_ref: str,
         deployment_ref: str,
+        deployment_event_id: str | None = None,
+        prometheus_mirrors: str = "published",
+        player_flow_canary: str = "advertised",
     ) -> None:
         self.source = source
         self.canary_path = canary_path
         self.websocket_url = websocket_url
-        self.websocket_target = websocket_target
         self.telnet_host = telnet_host
         self.telnet_port = telnet_port
-        self.telnet_target = telnet_target
         self.account_api_base = account_api_base
         self.game_logic_api_base = game_logic_api_base
         self.game_session_api_base = game_session_api_base
@@ -168,11 +278,32 @@ class SmokeConfig:
         self.verified_by = verified_by
         self.preflight_ref = preflight_ref
         self.deployment_ref = deployment_ref
+        self.deployment_event_id = validate_deployment_event_id(deployment_event_id)
+        self.prometheus_mirrors = validate_capability(
+            prometheus_mirrors, PROMETHEUS_MIRRORS_CAPABILITY
+        )
+        self.player_flow_canary = validate_capability(
+            player_flow_canary, PLAYER_FLOW_CANARY_CAPABILITY
+        )
 
     @classmethod
     def from_env(
-        cls, source: str, canary_path: str, external_authority_evidence: Path | None
+        cls,
+        source: str,
+        canary_path: str,
+        external_authority_evidence: Path | None,
+        prometheus_mirrors: str | None = None,
+        player_flow_canary: str | None = None,
+        deployment_event_id: str | None = None,
     ) -> SmokeConfig:
+        prometheus_mirrors = prometheus_mirrors or os.environ.get(
+            "PLAYER_EXPERIENCE_PROMETHEUS_MIRRORS", "published"
+        )
+        player_flow_canary = player_flow_canary or os.environ.get(
+            "PLAYER_EXPERIENCE_PLAYER_FLOW_CANARY", "advertised"
+        )
+        if deployment_event_id is None:
+            deployment_event_id = os.environ.get("PLAYER_EXPERIENCE_DEPLOYMENT_EVENT_ID")
         return cls(
             source=source,
             canary_path=canary_path,
@@ -182,14 +313,8 @@ class SmokeConfig:
                     os.environ.get("SMOKE_GATEWAY_API_BASE", "http://localhost:8080")
                 ),
             ),
-            websocket_target=os.environ.get(
-                "PLAYER_EXPERIENCE_WEBSOCKET_TARGET", "local-websocket-edge"
-            ),
             telnet_host=os.environ.get("SMOKE_TELNET_HOST", "localhost"),
             telnet_port=int(os.environ.get("TCP_PROXY_PORT", "2323")),
-            telnet_target=os.environ.get(
-                "PLAYER_EXPERIENCE_TELNET_TARGET", "local-telnet-edge"
-            ),
             account_api_base=os.environ.get("SMOKE_ACCOUNT_API_BASE", "http://localhost:8081"),
             game_logic_api_base=os.environ.get(
                 "SMOKE_GAME_LOGIC_API_BASE", "http://localhost:8085"
@@ -223,11 +348,38 @@ class SmokeConfig:
             deployment_ref=os.environ.get(
                 "PLAYER_EXPERIENCE_DEPLOYMENT_REF", "local-player-experience-smoke"
             ),
+            deployment_event_id=deployment_event_id,
+            prometheus_mirrors=prometheus_mirrors,
+            player_flow_canary=player_flow_canary,
         )
 
 
 def parse_failure_injection(raw: str) -> set[str]:
     return {item.strip() for item in raw.split(",") if item.strip()}
+
+
+def validate_capability(value: str, key: str) -> str:
+    allowed_values = CAPABILITY_VALUES[key]
+    if value not in allowed_values:
+        raise ValueError(
+            f"{key} must be one of {', '.join(sorted(allowed_values))}"
+        )
+    return value
+
+
+def validate_deployment_event_id(value: str | None) -> str | None:
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    try:
+        parsed = uuid.UUID(value)
+    except ValueError as exc:
+        raise ValueError("deploymentEventId must be a UUID") from exc
+    if str(parsed) != value:
+        raise ValueError("deploymentEventId must use canonical UUID form")
+    return value
 
 
 def websocket_url_from_http_base(http_base: str) -> str:
@@ -238,11 +390,15 @@ def websocket_url_from_http_base(http_base: str) -> str:
 
 
 def execute_smoke(
-    config: SmokeConfig, simulate: bool, injected: set[str]
+    config: SmokeConfig,
+    simulate: bool,
+    injected: set[str],
+    external_authority: dict[str, Any],
 ) -> dict[str, Any]:
     if simulate:
-        return simulated_signals(config, injected)
+        return simulated_signals(config, injected, external_authority)
 
+    exposed_paths = declared_exposed_paths(external_authority)
     wait_for_account_schema(config.startup_wait_seconds, config.timeout_seconds)
     wait_for_http_readiness(
         "account-service",
@@ -268,7 +424,13 @@ def execute_smoke(
         config.startup_wait_seconds,
         config.timeout_seconds,
     )
-    if config.canary_path == "telnet":
+    if (
+        "telnet" in exposed_paths
+        and (
+            config.player_flow_canary == "advertised"
+            or config.prometheus_mirrors == "published"
+        )
+    ):
         wait_for_http_readiness(
             "tcp-proxy-service",
             config.tcp_proxy_api_base,
@@ -282,102 +444,162 @@ def execute_smoke(
         config.timeout_seconds,
     )
 
-    entrypath_records = [
-        blackbox_websocket_record(config, injected),
-        blackbox_telnet_record(config, injected),
-    ]
-    playerflow_success, playerflow_latency = run_playerflow_canary(config, injected)
-    deadman = deadman_record(config, injected)
-    return {
-        "entrypath_blackbox_probe_success": entrypath_records,
-        "playerflow_canary_success": playerflow_success,
-        "playerflow_canary_latency_ms": playerflow_latency,
-        "observability_deadman_heartbeat_timestamp_seconds": deadman,
-    }
+    signals: dict[str, Any] = {}
+    signals.update(
+        entrypath_signals(
+            config, injected, exposed_paths, live_entrypath_record
+        )
+    )
+    if config.player_flow_canary == "advertised":
+        playerflow_success, playerflow_latency, playerflow_last_run = run_playerflow_canaries(
+            config, injected, exposed_paths, external_authority["profile"]
+        )
+        signals["playerflow_canary_success"] = playerflow_success
+        signals["playerflow_canary_latency_ms"] = playerflow_latency
+        signals[PLAYERFLOW_CANARY_LAST_RUN_TIMESTAMP_METRIC] = playerflow_last_run
+        freshness_budget = canary_freshness_budget_record(external_authority)
+        signals[PLAYERFLOW_CANARY_FRESHNESS_BUDGET_METRIC] = freshness_budget
+    if (
+        config.prometheus_mirrors == "published"
+        and external_authority["profile"] == "independent-required"
+    ):
+        signals["observability_deadman_heartbeat_timestamp_seconds"] = deadman_record(
+            config, injected
+        )
+    return signals
 
 
-def simulated_signals(config: SmokeConfig, injected: set[str]) -> dict[str, Any]:
+def simulated_signals(
+    config: SmokeConfig,
+    injected: set[str],
+    external_authority: dict[str, Any],
+) -> dict[str, Any]:
     now = time.time()
-    entrypath_records = [
-        {
-            "path": "websocket",
-            "target": config.websocket_target,
-            "value": 0 if "websocket" in injected else 1,
-        },
-        {
-            "path": "telnet",
-            "target": config.telnet_target,
-            "value": 0 if "telnet" in injected else 1,
-        },
-    ]
-    playerflow_success = [
-        {
-            "flow": "login",
-            "path": config.canary_path,
-            "target": canary_target(config),
-            "value": 0 if "login" in injected else 1,
-        },
-        {
-            "flow": "command",
-            "path": config.canary_path,
-            "target": canary_target(config),
-            "value": 0 if "command" in injected else 1,
-        },
-    ]
-    playerflow_latency = [
-        {
-            "flow": "command",
-            "path": config.canary_path,
-            "target": canary_target(config),
-            "value": 0 if "command" in injected else 125,
-        }
-    ]
-    return {
-        "entrypath_blackbox_probe_success": entrypath_records,
-        "playerflow_canary_success": playerflow_success,
-        "playerflow_canary_latency_ms": playerflow_latency,
-        "observability_deadman_heartbeat_timestamp_seconds": {
+    exposed_paths = declared_exposed_paths(external_authority)
+    signals: dict[str, Any] = {}
+    signals.update(
+        entrypath_signals(
+            config, injected, exposed_paths, simulated_entrypath_record
+        )
+    )
+    if config.player_flow_canary == "advertised":
+        (
+            signals["playerflow_canary_success"],
+            signals["playerflow_canary_latency_ms"],
+            signals[PLAYERFLOW_CANARY_LAST_RUN_TIMESTAMP_METRIC],
+        ) = simulated_playerflow_canaries(
+            config, injected, exposed_paths, external_authority["profile"]
+        )
+        freshness_budget = canary_freshness_budget_record(external_authority)
+        signals[PLAYERFLOW_CANARY_FRESHNESS_BUDGET_METRIC] = freshness_budget
+    if (
+        config.prometheus_mirrors == "published"
+        and external_authority["profile"] == "independent-required"
+    ):
+        signals["observability_deadman_heartbeat_timestamp_seconds"] = {
             "source": config.source,
             "value": 0 if "deadman" in injected else int(now),
-        },
+        }
+    return signals
+
+
+def declared_exposed_paths(external_authority: dict[str, Any]) -> set[str]:
+    return set(external_authority["exposedPublicPlayerPaths"])
+
+
+def ordered_canary_paths(config: SmokeConfig, exposed_paths: set[str]) -> list[str]:
+    paths: list[str] = []
+    if config.canary_path in exposed_paths:
+        paths.append(config.canary_path)
+    paths.extend(
+        path
+        for path in ("websocket", "telnet")
+        if path in exposed_paths and path not in paths
+    )
+    return paths
+
+
+def entrypath_signals(
+    config: SmokeConfig,
+    injected: set[str],
+    exposed_paths: set[str],
+    record_producer: Callable[[SmokeConfig, set[str], str], dict[str, Any]],
+) -> dict[str, Any]:
+    if config.prometheus_mirrors != "published":
+        return {}
+    records: list[dict[str, Any]] = []
+    for path in ("websocket", "telnet"):
+        if path not in exposed_paths:
+            continue
+        try:
+            records.append(record_producer(config, injected, path))
+        except PlayerFlowProbeFailure:
+            # A failed live probe is itself actionable evidence. Keep the
+            # artifact and let the freshness-gated alert classify the path.
+            records.append(
+                {
+                    "path": path,
+                    "target": metric_target_for_path(path),
+                    "value": 0,
+                }
+            )
+    return {"entrypath_blackbox_probe_success": records}
+
+
+def live_entrypath_record(
+    config: SmokeConfig, injected: set[str], path: str
+) -> dict[str, Any]:
+    if path == "websocket":
+        return blackbox_websocket_record(config, injected)
+    return blackbox_telnet_record(config, injected)
+
+
+def simulated_entrypath_record(
+    config: SmokeConfig, injected: set[str], path: str
+) -> dict[str, Any]:
+    return {
+        "path": path,
+        "target": metric_target_for_path(path),
+        "value": 0 if path in injected else 1,
     }
 
 
 def blackbox_websocket_record(config: SmokeConfig, injected: set[str]) -> dict[str, Any]:
     if "websocket" in injected:
-        return {"path": "websocket", "target": config.websocket_target, "value": 0}
-    try:
-        import websocket  # type: ignore
-    except ImportError as exc:  # pragma: no cover - exercised in live use, not tests
-        raise RuntimeError(
-            "The python 'websocket-client' package is required for WebSocket canary smoke"
-        ) from exc
+        return {"path": "websocket", "target": metric_target_for_path("websocket"), "value": 0}
+    import websocket  # type: ignore
 
-    first_party = first_party_connect_context(config)
-    ws = websocket.create_connection(
-        config.websocket_url,
-        timeout=config.timeout_seconds,
-        header=[f"Cookie: {first_party['connectCookie']}"],
-    )
     try:
-        return {"path": "websocket", "target": config.websocket_target, "value": 1}
-    finally:
-        ws.close()
+        first_party = first_party_connect_context(config)
+        ws = websocket.create_connection(
+            config.websocket_url,
+            timeout=config.timeout_seconds,
+            header=[f"Cookie: {first_party['connectCookie']}"],
+        )
+        try:
+            return {"path": "websocket", "target": metric_target_for_path("websocket"), "value": 1}
+        finally:
+            ws.close()
+    except (OSError, ProbeOperationalFailure, websocket.WebSocketException) as exc:
+        raise PlayerFlowProbeFailure(f"WebSocket blackbox probe failed: {exc}") from exc
 
 
 def blackbox_telnet_record(config: SmokeConfig, injected: set[str]) -> dict[str, Any]:
     if "telnet" in injected:
-        return {"path": "telnet", "target": config.telnet_target, "value": 0}
-    with socket.create_connection(
-        (config.telnet_host, config.telnet_port), timeout=config.timeout_seconds
-    ) as sock:
-        recv_until_socket(sock, "\n", config.timeout_seconds)
-        run_telnet_command_plan(
-            sock,
-            [("WORLDS", ["OK WORLDS"], "WORLDS")],
-            config.timeout_seconds,
-        )
-        return {"path": "telnet", "target": config.telnet_target, "value": 1}
+        return {"path": "telnet", "target": metric_target_for_path("telnet"), "value": 0}
+    try:
+        with socket.create_connection(
+            (config.telnet_host, config.telnet_port), timeout=config.timeout_seconds
+        ) as sock:
+            recv_until_socket(sock, "\n", config.timeout_seconds)
+            run_telnet_command_plan(
+                sock,
+                [("WORLDS", ["OK WORLDS"], "WORLDS")],
+                config.timeout_seconds,
+            )
+            return {"path": "telnet", "target": metric_target_for_path("telnet"), "value": 1}
+    except (OSError, ProbeOperationalFailure) as exc:
+        raise PlayerFlowProbeFailure(f"Telnet blackbox probe failed: {exc}") from exc
 
 
 def run_playerflow_canary(
@@ -388,32 +610,118 @@ def run_playerflow_canary(
     return run_telnet_canary(config, injected)
 
 
+def run_playerflow_canaries(
+    config: SmokeConfig,
+    injected: set[str],
+    exposed_paths: set[str],
+    profile: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    success: list[dict[str, Any]] = []
+    latency: list[dict[str, Any]] = []
+    last_run: list[dict[str, Any]] = []
+    for path in ordered_canary_paths(config, exposed_paths):
+        path_config = copy.copy(config)
+        path_config.canary_path = path
+        try:
+            path_success, path_latency = run_playerflow_canary(path_config, injected)
+        except PlayerFlowProbeFailure:
+            # Preserve a current failed attempt instead of aborting before the
+            # runner can publish the zero-valued, freshness-gated canary state.
+            path_success, path_latency = failed_canary_records(path_config)
+        path_success = canary_records_with_profile(path_success, profile)
+        path_latency = canary_records_with_profile(path_latency, profile)
+        success.extend(path_success)
+        latency.extend(path_latency)
+        last_run.extend(canary_last_run_records(path_success, int(time.time()), profile))
+    return success, latency, last_run
+
+
+def failed_canary_records(
+    config: SmokeConfig,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    target = canary_target(config)
+    return (
+        [
+            {"flow": flow, "path": config.canary_path, "target": target, "value": 0}
+            for flow in ("login", "command")
+        ],
+        [
+            {
+                "flow": "command",
+                "path": config.canary_path,
+                "target": target,
+                "value": 0,
+            }
+        ],
+    )
+
+
+def simulated_playerflow_canaries(
+    config: SmokeConfig,
+    injected: set[str],
+    exposed_paths: set[str],
+    profile: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    success: list[dict[str, Any]] = []
+    latency: list[dict[str, Any]] = []
+    last_run: list[dict[str, Any]] = []
+    for path in ordered_canary_paths(config, exposed_paths):
+        path_config = copy.copy(config)
+        path_config.canary_path = path
+        path_success, path_latency = simulated_canary_records(path_config, injected)
+        path_success = canary_records_with_profile(path_success, profile)
+        path_latency = canary_records_with_profile(path_latency, profile)
+        success.extend(path_success)
+        latency.extend(path_latency)
+        last_run.extend(canary_last_run_records(path_success, int(time.time()), profile))
+    return success, latency, last_run
+
+
+def canary_last_run_records(
+    success_records: list[dict[str, Any]], observed_at: int, profile: str
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "flow": record["flow"],
+            "path": record["path"],
+            "target": record["target"],
+            "profile": profile,
+            "value": observed_at,
+        }
+        for record in success_records
+    ]
+
+
+def canary_records_with_profile(
+    records: list[dict[str, Any]], profile: str
+) -> list[dict[str, Any]]:
+    return [{**record, "profile": profile} for record in records]
+
+
 def run_websocket_canary(
     config: SmokeConfig, injected: set[str]
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if "login" in injected or "command" in injected:
         return simulated_canary_records(config, injected)
-    try:
-        import websocket  # type: ignore
-    except ImportError as exc:  # pragma: no cover
-        raise RuntimeError(
-            "The python 'websocket-client' package is required for WebSocket canary smoke"
-        ) from exc
+    import websocket  # type: ignore
 
-    first_party = first_party_connect_context(config)
-    step_results: list[dict[str, Any]] = []
-    ws = websocket.create_connection(
-        config.websocket_url,
-        timeout=config.timeout_seconds,
-        header=[f"Cookie: {first_party['connectCookie']}"],
-    )
     try:
-        run_first_party_websocket_canary(
-            ws, config, first_party.get("characterName"), step_results
+        first_party = first_party_connect_context(config)
+        step_results: list[dict[str, Any]] = []
+        ws = websocket.create_connection(
+            config.websocket_url,
+            timeout=config.timeout_seconds,
+            header=[f"Cookie: {first_party['connectCookie']}"],
         )
-    finally:
-        ws.close()
-    return canary_records_from_steps(config, step_results)
+        try:
+            run_first_party_websocket_canary(
+                ws, config, first_party.get("characterName"), step_results
+            )
+        finally:
+            ws.close()
+        return canary_records_from_steps(config, step_results)
+    except (OSError, ProbeOperationalFailure, websocket.WebSocketException) as exc:
+        raise PlayerFlowProbeFailure(f"WebSocket player-flow canary failed: {exc}") from exc
 
 
 def run_telnet_canary(
@@ -421,28 +729,31 @@ def run_telnet_canary(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if "login" in injected or "command" in injected:
         return simulated_canary_records(config, injected)
-    step_results: list[dict[str, Any]] = []
-    with socket.create_connection(
-        (config.telnet_host, config.telnet_port), timeout=config.timeout_seconds
-    ) as sock:
-        recv_until_socket(sock, "\n", config.timeout_seconds)
-        run_telnet_command_plan(
-            sock,
-            login_play_look_steps(
-                config.username,
-                config.password,
-                config.world,
-                "OK WORLDS",
-                "OK LOGIN",
-                "OK PLAY",
-                "OK LOOK",
-                realm=config.realm_slug,
-                character=config.character_name,
-            ),
-            config.timeout_seconds,
-            step_results=step_results,
-        )
-    return canary_records_from_steps(config, step_results)
+    try:
+        step_results: list[dict[str, Any]] = []
+        with socket.create_connection(
+            (config.telnet_host, config.telnet_port), timeout=config.timeout_seconds
+        ) as sock:
+            recv_until_socket(sock, "\n", config.timeout_seconds)
+            run_telnet_command_plan(
+                sock,
+                login_play_look_steps(
+                    config.username,
+                    config.password,
+                    config.world,
+                    "OK WORLDS",
+                    "OK LOGIN",
+                    "OK PLAY",
+                    "OK LOOK",
+                    realm=config.realm_slug,
+                    character=config.character_name,
+                ),
+                config.timeout_seconds,
+                step_results=step_results,
+            )
+        return canary_records_from_steps(config, step_results)
+    except (OSError, ProbeOperationalFailure) as exc:
+        raise PlayerFlowProbeFailure(f"Telnet player-flow canary failed: {exc}") from exc
 
 
 def simulated_canary_records(
@@ -512,8 +823,27 @@ def deadman_record(config: SmokeConfig, injected: set[str]) -> dict[str, Any]:
     }
 
 
+def canary_freshness_budget_record(
+    external_authority: dict[str, Any]
+) -> dict[str, Any]:
+    budget = external_authority.get("detectionBudgetSeconds")
+    if budget is None:
+        raise RuntimeError(
+            "An advertised player-flow canary requires detectionBudgetSeconds "
+            "to publish playerflow_canary_freshness_budget_seconds"
+        )
+    return {"profile": external_authority["profile"], "value": budget}
+
+
 def canary_target(config: SmokeConfig) -> str:
-    return config.websocket_target if config.canary_path == "websocket" else config.telnet_target
+    return metric_target_for_path(config.canary_path)
+
+
+def metric_target_for_path(path: str) -> str:
+    try:
+        return METRIC_TARGET_BY_PATH[path]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported public player path {path!r}") from exc
 
 
 def build_evidence(
@@ -521,40 +851,82 @@ def build_evidence(
     mirrored_signals: dict[str, Any],
     external_authority: dict[str, Any],
     injected: set[str],
+    execution_mode: str = "live",
+    authority_provenance: str = "retained-external",
+    verified_at: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    evidence = {
         "deploymentRef": config.deployment_ref,
-        "verifiedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "verifiedAt": verified_at or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "verifiedBy": config.verified_by,
         "preflightEvidenceRef": config.preflight_ref,
+        "executionMode": execution_mode,
+        "externalAuthorityProvenance": authority_provenance,
+        "capabilities": {
+            PROMETHEUS_MIRRORS_CAPABILITY: config.prometheus_mirrors,
+            PLAYER_FLOW_CANARY_CAPABILITY: config.player_flow_canary,
+        },
         "externalAuthority": external_authority,
         "mirroredSignals": mirrored_signals,
-        "canaryAlerts": [
+    }
+    if config.deployment_event_id is not None:
+        evidence["deploymentEventId"] = config.deployment_event_id
+    if config.player_flow_canary == "advertised":
+        evidence["canaryAlerts"] = [
             alert_record("PlayerFlowCanaryLoginFailed", "P0", injected),
             alert_record("PlayerFlowCanaryCommandFailed", "P1", injected),
             alert_record("PlayerFlowCanaryLatencyHigh", "P1", injected),
-        ],
-    }
+            alert_record("PlayerFlowCanaryEvidenceStale", "P1", injected),
+        ]
+    return evidence
 
 
 def resolve_external_authority(
-    config: SmokeConfig, injected: set[str], simulate: bool
+    config: SmokeConfig,
+    injected: set[str],
+    simulate: bool,
+    evaluation_epoch: float | None = None,
 ) -> dict[str, Any]:
-    authority = load_external_authority(config, simulate)
+    authority = load_external_authority(config, simulate, evaluation_epoch)
     authority = copy.deepcopy(authority)
-    if "deadman" in injected:
+    if "deadman" in injected and authority.get("profile") == "independent-required":
         authority["deadmanAuthority"]["status"] = "red"
-    for name, value in authority["entrypointChecks"].items():
-        if name in injected:
+    exposed_paths = declared_exposed_paths(authority)
+    for path, value in authority.get("publicPathChecks", {}).items():
+        if path in injected and path in exposed_paths:
             value["status"] = "red"
     return authority
 
 
-def load_external_authority(config: SmokeConfig, simulate: bool) -> dict[str, Any]:
+def compare_external_authority_snapshots(
+    initial: dict[str, Any], reread: dict[str, Any]
+) -> None:
+    for field in (
+        "profile",
+        "exposedPublicPlayerPaths",
+        "detectionBudgetSeconds",
+    ):
+        initial_value = initial.get(field)
+        reread_value = reread.get(field)
+        if initial_value != reread_value:
+            raise RuntimeError(
+                "External authority changed between smoke execution and evidence "
+                f"build: {field} changed from {initial_value!r} to {reread_value!r}"
+            )
+
+
+def load_external_authority(
+    config: SmokeConfig, simulate: bool, evaluation_epoch: float | None = None
+) -> dict[str, Any]:
     path = config.external_authority_evidence
     if path is None:
         if simulate:
-            return simulated_external_authority()
+            observed_at = (
+                time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(evaluation_epoch))
+                if evaluation_epoch is not None
+                else None
+            )
+            return simulated_external_authority(observed_at)
         raise RuntimeError(
             "Non-simulated player-experience smoke requires "
             "--external-authority-evidence or PLAYER_EXPERIENCE_EXTERNAL_AUTHORITY_EVIDENCE"
@@ -569,82 +941,401 @@ def load_external_authority(config: SmokeConfig, simulate: bool) -> dict[str, An
         raise TypeError(
             f"External authority evidence at {path} must be a JSON object"
         )
-    validate_external_authority_shape(data, path)
+    validate_external_authority_shape(
+        data,
+        path,
+        evaluation_epoch=evaluation_epoch,
+        canary_advertised=config.player_flow_canary == "advertised",
+    )
     return data
 
 
-def simulated_external_authority() -> dict[str, Any]:
+def simulated_external_authority(evidence_observed_at: str | None = None) -> dict[str, Any]:
+    observed_at = evidence_observed_at or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     return {
+        "profile": "independent-required",
+        "exposedPublicPlayerPaths": ["websocket", "telnet"],
+        "detectionBudgetSeconds": DEFAULT_SIMULATED_DETECTION_BUDGET_SECONDS,
+        "staleThresholdSeconds": 180,
+        "evidenceObservedAt": observed_at,
+        "lastSuccessfulHeartbeatObservedAt": observed_at,
+        "observedStalenessSeconds": 0,
         "deadmanAuthority": {
             "status": "green",
             "evidenceRef": "synthetic://external-authority/deadman",
+            "pageEvidenceRef": "synthetic://external-authority/deadman-page",
             "target": "synthetic-deadman-authority",
             "checkRef": "synthetic-deadman-check",
         },
-        "entrypointChecks": {
-            name: {
+        "publicPathChecks": {
+            path: {
                 "status": "green",
-                "evidenceRef": f"synthetic://external-authority/{name}",
-                "target": f"synthetic-{name}",
-                "checkRef": f"synthetic-{name}-check",
+                "evidenceRef": f"synthetic://external-authority/{path}",
+                "pageEvidenceRef": f"synthetic://external-authority/{path}-page",
+                "target": f"synthetic-{path}",
+                "lastSuccessfulProbeObservedAt": observed_at,
+                "observedProbeAgeSeconds": 0,
             }
-            for name in (
-                "prometheus",
-                "alertmanager",
-                "grafana",
-                "kibana_log_query",
-                "jaeger_query",
-            )
+            for path in ("websocket", "telnet")
         },
     }
 
 
-def validate_external_authority_shape(data: dict[str, Any], path: Path) -> None:
+def validate_external_authority_shape(
+    data: dict[str, Any],
+    path: Path,
+    evaluation_epoch: float | None = None,
+    canary_advertised: bool = False,
+) -> None:
+    profile = data.get("profile")
+    if profile not in {"independent-required", "independent-omitted"}:
+        raise RuntimeError(
+            f"External authority evidence at {path} must declare profile "
+            "independent-required or independent-omitted"
+        )
+    exposed_paths = data.get("exposedPublicPlayerPaths")
+    if not isinstance(exposed_paths, list) or not exposed_paths:
+        raise TypeError(
+            f"External authority evidence at {path} must include exposedPublicPlayerPaths"
+        )
+    supported_paths = {"websocket", "telnet"}
+    if any(not isinstance(item, str) for item in exposed_paths):
+        raise TypeError(
+            f"External authority evidence at {path} exposedPublicPlayerPaths must contain only strings"
+        )
+    if len(exposed_paths) != len(set(exposed_paths)):
+        raise RuntimeError(
+            f"External authority evidence at {path} exposedPublicPlayerPaths must not contain duplicates"
+        )
+    unsupported_paths = sorted(set(exposed_paths) - supported_paths)
+    if unsupported_paths:
+        raise RuntimeError(
+            f"External authority evidence at {path} has unsupported public paths: "
+            + ", ".join(unsupported_paths)
+        )
+
+    if profile == "independent-omitted":
+        reason = data.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            raise RuntimeError(
+                f"External authority evidence at {path} must define a non-empty reason "
+                "for independent-omitted"
+            )
+        allowed_fields = {"profile", "reason", "exposedPublicPlayerPaths"}
+        if canary_advertised:
+            allowed_fields.add("detectionBudgetSeconds")
+            detection_budget = data.get("detectionBudgetSeconds")
+            if (
+                isinstance(detection_budget, bool)
+                or not isinstance(detection_budget, (int, float))
+                or not math.isfinite(detection_budget)
+                or detection_budget <= 0
+            ):
+                raise RuntimeError(
+                    f"External authority evidence at {path} must define a positive finite detectionBudgetSeconds for an advertised player-flow canary"
+                )
+            if detection_budget < MIN_CANARY_DETECTION_BUDGET_SECONDS:
+                raise RuntimeError(
+                    f"External authority evidence at {path} detectionBudgetSeconds must be at least {MIN_CANARY_DETECTION_BUDGET_SECONDS} seconds for an advertised player-flow canary"
+                )
+        unexpected = sorted(set(data) - allowed_fields)
+        if unexpected:
+            raise RuntimeError(
+                f"External authority evidence at {path} independent-omitted must not include external authority fields: "
+                + ", ".join(unexpected)
+            )
+        return
+
+    detection_budget = data.get("detectionBudgetSeconds")
+    if (
+        isinstance(detection_budget, bool)
+        or not isinstance(detection_budget, (int, float))
+        or not math.isfinite(detection_budget)
+        or detection_budget <= 0
+    ):
+        raise RuntimeError(
+            f"External authority evidence at {path} must define a positive finite detectionBudgetSeconds"
+        )
+
+    if canary_advertised and detection_budget < MIN_CANARY_DETECTION_BUDGET_SECONDS:
+        raise RuntimeError(
+            f"External authority evidence at {path} detectionBudgetSeconds must be at least {MIN_CANARY_DETECTION_BUDGET_SECONDS} seconds for an advertised player-flow canary"
+        )
+    stale_threshold = data.get("staleThresholdSeconds")
+    if (
+        isinstance(stale_threshold, bool)
+        or not isinstance(stale_threshold, (int, float))
+        or not math.isfinite(stale_threshold)
+        or stale_threshold <= 0
+    ):
+        raise RuntimeError(
+            f"External authority evidence at {path} must define a positive finite staleThresholdSeconds"
+        )
+    observed_staleness = data.get("observedStalenessSeconds")
+    if (
+        isinstance(observed_staleness, bool)
+        or not isinstance(observed_staleness, (int, float))
+        or not math.isfinite(observed_staleness)
+        or observed_staleness < 0
+    ):
+        raise RuntimeError(
+            f"External authority evidence at {path} must define a nonnegative finite observedStalenessSeconds"
+        )
+    if data.get("lastSuccessfulHeartbeatObservedAt") is None:
+        raise RuntimeError(
+            f"External authority evidence at {path} lastSuccessfulHeartbeatObservedAt is required for independent-required"
+        )
+    validate_external_authority_freshness(data, path, evaluation_epoch)
+
     deadman = data.get("deadmanAuthority")
     if not isinstance(deadman, dict):
         raise TypeError(
             f"External authority evidence at {path} must include deadmanAuthority"
         )
     validate_authority_record(deadman, "deadmanAuthority", path)
-    checks = data.get("entrypointChecks")
+    checks = data.get("publicPathChecks")
     if not isinstance(checks, dict):
         raise TypeError(
-            f"External authority evidence at {path} must include entrypointChecks"
+            f"External authority evidence at {path} must include publicPathChecks"
         )
-    required_checks = {
-        "prometheus",
-        "alertmanager",
-        "grafana",
-        "kibana_log_query",
-        "jaeger_query",
-    }
-    missing = sorted(required_checks - set(checks.keys()))
+    required_paths = {"websocket", "telnet"}
+    missing = sorted(required_paths - set(checks.keys()))
+    extra = sorted(set(checks.keys()) - required_paths)
     if missing:
         raise RuntimeError(
-            f"External authority evidence at {path} is missing entrypoint checks: "
+            f"External authority evidence at {path} is missing public path checks: "
             + ", ".join(missing)
         )
-    for name in required_checks:
+    if extra:
+        raise RuntimeError(
+            f"External authority evidence at {path} has unsupported public path checks: "
+            + ", ".join(extra)
+        )
+    for name in required_paths:
         record = checks.get(name)
         if not isinstance(record, dict):
             raise TypeError(
                 f"External authority evidence at {path} must define {name} as an object"
             )
-        validate_authority_record(record, f"entrypointChecks.{name}", path)
+        if name in exposed_paths:
+            require_source_timestamp(
+                record.get("lastSuccessfulProbeObservedAt"),
+                f"publicPathChecks.{name}.lastSuccessfulProbeObservedAt",
+                path,
+            )
+            validate_public_path_record(record, f"publicPathChecks.{name}", path)
+        else:
+            validate_not_applicable_path_record(record, f"publicPathChecks.{name}", path)
+
+
+def validate_source_timestamp(
+    value: Any,
+    key: str,
+    evidence_observed_epoch: float,
+    path: Path,
+) -> None:
+    if value is None:
+        return
+    if not isinstance(value, str) or not value.endswith("Z"):
+        raise RuntimeError(
+            f"External authority evidence at {path} {key} must be an RFC3339 UTC timestamp ending in Z"
+        )
+    try:
+        source_epoch = dt.datetime.fromisoformat(
+            value.replace("Z", "+00:00")
+        ).timestamp()
+    except ValueError as exc:
+        raise RuntimeError(
+            f"External authority evidence at {path} {key} is invalid: {exc}"
+        ) from exc
+    if source_epoch > evidence_observed_epoch:
+        raise RuntimeError(
+            f"External authority evidence at {path} {key} cannot be later than evidenceObservedAt"
+        )
+
+
+def require_source_timestamp(value: Any, key: str, path: Path) -> None:
+    if value is None:
+        raise RuntimeError(
+            f"External authority evidence at {path} {key} is required for independent-required"
+        )
+
+
+def validate_external_authority_freshness(
+    data: dict[str, Any], path: Path, evaluation_epoch: float | None = None
+) -> None:
+    if data.get("profile") != "independent-required":
+        return
+    detection_budget = data.get("detectionBudgetSeconds")
+    if (
+        isinstance(detection_budget, bool)
+        or not isinstance(detection_budget, (int, float))
+        or not math.isfinite(detection_budget)
+        or detection_budget <= 0
+    ):
+        raise RuntimeError(
+            f"External authority evidence at {path} must define a positive finite detectionBudgetSeconds"
+        )
+    evidence_observed_at = data.get("evidenceObservedAt")
+    if not isinstance(evidence_observed_at, str) or not evidence_observed_at.endswith("Z"):
+        raise RuntimeError(
+            f"External authority evidence at {path} must define evidenceObservedAt as an RFC3339 UTC timestamp ending in Z"
+        )
+    try:
+        observed_epoch = dt.datetime.fromisoformat(
+            evidence_observed_at.replace("Z", "+00:00")
+        ).timestamp()
+    except ValueError as exc:
+        raise RuntimeError(
+            f"External authority evidence at {path} has an invalid evidenceObservedAt: {exc}"
+        ) from exc
+    validate_source_timestamp(
+        data.get("lastSuccessfulHeartbeatObservedAt"),
+        "lastSuccessfulHeartbeatObservedAt",
+        observed_epoch,
+        path,
+    )
+    checks = data.get("publicPathChecks")
+    if isinstance(checks, dict):
+        for name, record in checks.items():
+            if isinstance(record, dict):
+                validate_source_timestamp(
+                    record.get("lastSuccessfulProbeObservedAt"),
+                    f"publicPathChecks.{name}.lastSuccessfulProbeObservedAt",
+                    observed_epoch,
+                    path,
+                )
+    evaluation_epoch = time.time() if evaluation_epoch is None else evaluation_epoch
+    evidence_age = evaluation_epoch - observed_epoch
+    if evidence_age < 0:
+        raise RuntimeError(
+            f"External authority evidence at {path} evidenceObservedAt cannot be in the future"
+        )
+    if evidence_age > detection_budget:
+        raise RuntimeError(
+            f"External authority evidence at {path} evidenceObservedAt is older than detectionBudgetSeconds"
+        )
+    heartbeat_epoch = dt.datetime.fromisoformat(
+        data["lastSuccessfulHeartbeatObservedAt"].replace("Z", "+00:00")
+    ).timestamp()
+    observed_staleness = data["observedStalenessSeconds"]
+    expected_staleness = observed_epoch - heartbeat_epoch
+    if not math.isclose(
+        observed_staleness,
+        expected_staleness,
+        rel_tol=0.0,
+        abs_tol=STALE_NUMERIC_TOLERANCE_SECONDS,
+    ):
+        raise RuntimeError(
+            f"External authority evidence at {path} observedStalenessSeconds must equal evidenceObservedAt minus lastSuccessfulHeartbeatObservedAt within numeric tolerance"
+        )
+    deadman = data.get("deadmanAuthority")
+    if (
+        isinstance(deadman, dict)
+        and deadman.get("status") == "green"
+        and observed_staleness
+        > data["staleThresholdSeconds"] + STALE_NUMERIC_TOLERANCE_SECONDS
+    ):
+        raise RuntimeError(
+            f"External authority evidence at {path} green deadman observedStalenessSeconds must be no greater than staleThresholdSeconds"
+        )
+    if isinstance(checks, dict):
+        exposed_paths = set(data.get("exposedPublicPlayerPaths", []))
+        for name, record in checks.items():
+            if isinstance(record, dict) and name in exposed_paths:
+                validate_public_path_freshness(
+                    record,
+                    f"publicPathChecks.{name}",
+                    observed_epoch,
+                    detection_budget,
+                    path,
+                )
+
+
+def validate_public_path_freshness(
+    record: dict[str, Any],
+    key: str,
+    evidence_observed_epoch: float,
+    detection_budget: float,
+    path: Path,
+) -> None:
+    observed_probe_age = record.get("observedProbeAgeSeconds")
+    if (
+        isinstance(observed_probe_age, bool)
+        or not isinstance(observed_probe_age, (int, float))
+        or not math.isfinite(observed_probe_age)
+        or observed_probe_age < 0
+    ):
+        raise RuntimeError(
+            f"External authority evidence at {path} must define a nonnegative finite {key}.observedProbeAgeSeconds"
+        )
+    source_timestamp = record.get("lastSuccessfulProbeObservedAt")
+    if source_timestamp is None:
+        return
+    probe_epoch = dt.datetime.fromisoformat(
+        source_timestamp.replace("Z", "+00:00")
+    ).timestamp()
+    expected_probe_age = evidence_observed_epoch - probe_epoch
+    if not math.isclose(
+        observed_probe_age,
+        expected_probe_age,
+        rel_tol=0.0,
+        abs_tol=STALE_NUMERIC_TOLERANCE_SECONDS,
+    ):
+        raise RuntimeError(
+            f"External authority evidence at {path} {key}.observedProbeAgeSeconds must equal evidenceObservedAt minus lastSuccessfulProbeObservedAt within numeric tolerance"
+        )
+    if (
+        record.get("status") == "green"
+        and observed_probe_age > detection_budget + STALE_NUMERIC_TOLERANCE_SECONDS
+    ):
+        raise RuntimeError(
+            f"External authority evidence at {path} green {key}.observedProbeAgeSeconds must be no greater than detectionBudgetSeconds"
+        )
 
 
 def validate_authority_record(record: dict[str, Any], key: str, path: Path) -> None:
     status = record.get("status")
-    if status not in {"green", "red"}:
+    if status != "green":
         raise RuntimeError(
-            f"External authority evidence at {path} has invalid {key}.status: {status!r}"
+            f"External authority evidence at {path} requires {key}.status=green"
         )
-    for field in ("evidenceRef", "target", "checkRef"):
+    for field in ("evidenceRef", "pageEvidenceRef", "target", "checkRef"):
         value = record.get(field)
         if not isinstance(value, str) or not value.strip():
             raise RuntimeError(
                 f"External authority evidence at {path} must define {key}.{field}"
             )
+        if value.startswith(("synthetic://", "synthetic-")):
+            raise RuntimeError(
+                f"External authority evidence at {path} must not use synthetic {key}.{field}"
+            )
+
+
+def validate_public_path_record(record: dict[str, Any], key: str, path: Path) -> None:
+    if record.get("status") != "green":
+        raise RuntimeError(
+            f"External authority evidence at {path} requires {key}.status=green"
+        )
+    for field in ("evidenceRef", "pageEvidenceRef", "target"):
+        value = record.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise RuntimeError(
+                f"External authority evidence at {path} must define {key}.{field}"
+            )
+        if value.startswith(("synthetic://", "synthetic-")):
+            raise RuntimeError(
+                f"External authority evidence at {path} must not use synthetic {key}.{field}"
+            )
+
+
+def validate_not_applicable_path_record(
+    record: dict[str, Any], key: str, path: Path
+) -> None:
+    if record != {"status": "not_applicable"}:
+        raise RuntimeError(
+            f"External authority evidence at {path} requires {key}={{'status': 'not_applicable'}}"
+        )
 
 
 def first_party_connect_context(config: SmokeConfig) -> dict[str, Any]:
@@ -683,7 +1374,7 @@ def resolve_connect_scope_id(config: SmokeConfig, bootstrap_token: str) -> str:
     for realm in response["data"]:
         if realm.get("realmSlug") == config.realm_slug:
             return realm["connectScopeId"]
-    raise RuntimeError(
+    raise ProbeOperationalFailure(
         f"Realm {config.realm_slug!r} was not visible during bootstrap discovery for world {config.world!r}"
     )
 
@@ -697,7 +1388,7 @@ def require_visible_world(config: SmokeConfig, bootstrap_token: str) -> None:
     for world in response["data"]:
         if world.get("worldSlug") == config.world:
             return
-    raise RuntimeError(
+    raise ProbeOperationalFailure(
         f"World {config.world!r} was not visible during bootstrap discovery"
     )
 
@@ -722,7 +1413,7 @@ def resolve_character_name(
         for character in characters:
             if character.get("characterName") == config.character_name:
                 return config.character_name
-        raise RuntimeError(
+        raise ProbeOperationalFailure(
             f"Character {config.character_name!r} was not visible during bootstrap discovery"
         )
     if not characters:
@@ -745,7 +1436,7 @@ def issue_connect_token(
     )
     cookie = headers.get("Set-Cookie", "")
     if "Firemud-Connect-Token=" not in cookie:
-        raise RuntimeError(
+        raise ProbeOperationalFailure(
             "Connect-token response did not issue the Firemud-Connect-Token cookie"
         )
     return {
@@ -819,9 +1510,11 @@ def await_structured_command_result(ws: Any, command_type: str, timeout_seconds:
         ):
             if not parsed.get("accepted", False):
                 error_code = parsed.get("errorCode") or "UNKNOWN"
-                raise RuntimeError(f"{command_type} failed with {error_code}: {payload}")
+                raise ProbeOperationalFailure(
+                    f"{command_type} failed with {error_code}: {payload}"
+                )
             return payload
-    raise RuntimeError(f"Timed out waiting for structured {command_type} result")
+    raise ProbeOperationalFailure(f"Timed out waiting for structured {command_type} result")
 
 
 def play_command(config: SmokeConfig, character_name: str | None) -> str:
@@ -843,58 +1536,86 @@ def alert_record(alert: str, severity: str, injected: set[str]) -> dict[str, str
 
 
 def render_metrics(config: SmokeConfig, mirrored_signals: dict[str, Any]) -> str:
-    lines = [
-        "# HELP playerflow_canary_success Mirrored synthetic player-flow canary result.",
-        "# TYPE playerflow_canary_success gauge",
-    ]
-    for record in mirrored_signals["playerflow_canary_success"]:
-        lines.append(
-            metric_line(
-                "playerflow_canary_success",
-                {"flow": record["flow"], "path": record["path"], "target": record["target"]},
-                record["value"],
+    lines: list[str] = []
+    for key, help_text, metric_name in (
+        (
+            "playerflow_canary_success",
+            "Mirrored synthetic player-flow canary result.",
+            "playerflow_canary_success",
+        ),
+        (
+            "playerflow_canary_latency_ms",
+            "Mirrored synthetic representative-command latency.",
+            "playerflow_canary_latency_ms",
+        ),
+        (
+            PLAYERFLOW_CANARY_LAST_RUN_TIMESTAMP_METRIC,
+            "Timestamp of the most recent synthetic player-flow canary run.",
+            PLAYERFLOW_CANARY_LAST_RUN_TIMESTAMP_METRIC,
+        ),
+    ):
+        records = mirrored_signals.get(key)
+        if records is None:
+            continue
+        lines.extend([f"# HELP {metric_name} {help_text}", f"# TYPE {metric_name} gauge"])
+        for record in records:
+            lines.append(
+                metric_line(
+                    metric_name,
+                    {
+                        "flow": record["flow"],
+                        "path": record["path"],
+                        "target": record["target"],
+                        "profile": record["profile"],
+                    },
+                    record["value"],
+                )
             )
+    freshness_budget = mirrored_signals.get(PLAYERFLOW_CANARY_FRESHNESS_BUDGET_METRIC)
+    if freshness_budget is not None:
+        lines.extend(
+            [
+                "# HELP playerflow_canary_freshness_budget_seconds Profile-derived maximum player-flow canary freshness budget.",
+                "# TYPE playerflow_canary_freshness_budget_seconds gauge",
+                metric_line(
+                    PLAYERFLOW_CANARY_FRESHNESS_BUDGET_METRIC,
+                    {"profile": freshness_budget["profile"]},
+                    freshness_budget["value"],
+                ),
+            ]
         )
-    lines.extend(
-        [
-            "# HELP playerflow_canary_latency_ms Mirrored synthetic representative-command latency.",
-            "# TYPE playerflow_canary_latency_ms gauge",
-        ]
-    )
-    for record in mirrored_signals["playerflow_canary_latency_ms"]:
-        lines.append(
-            metric_line(
-                "playerflow_canary_latency_ms",
-                {"flow": record["flow"], "path": record["path"], "target": record["target"]},
-                record["value"],
+    entrypath_records = mirrored_signals.get("entrypath_blackbox_probe_success")
+    if entrypath_records is not None:
+        lines.extend(
+            [
+                "# HELP entrypath_blackbox_probe_success Mirrored independent entry-path blackbox result.",
+                "# TYPE entrypath_blackbox_probe_success gauge",
+            ]
+        )
+        for record in entrypath_records:
+            lines.append(
+                metric_line(
+                    "entrypath_blackbox_probe_success",
+                    {"path": record["path"], "target": record["target"]},
+                    record["value"],
+                )
             )
-        )
-    lines.extend(
-        [
-            "# HELP entrypath_blackbox_probe_success Mirrored independent entry-path blackbox result.",
-            "# TYPE entrypath_blackbox_probe_success gauge",
-        ]
+    deadman = mirrored_signals.get(
+        "observability_deadman_heartbeat_timestamp_seconds"
     )
-    for record in mirrored_signals["entrypath_blackbox_probe_success"]:
-        lines.append(
-            metric_line(
-                "entrypath_blackbox_probe_success",
-                {"path": record["path"], "target": record["target"]},
-                record["value"],
-            )
+    if deadman is not None:
+        lines.extend(
+            [
+                "# HELP observability_deadman_heartbeat_timestamp_seconds Mirrored deadman heartbeat timestamp.",
+                "# TYPE observability_deadman_heartbeat_timestamp_seconds gauge",
+                metric_line(
+                    "observability_deadman_heartbeat_timestamp_seconds",
+                    {"source": config.source},
+                    deadman["value"],
+                ),
+            ]
         )
-    lines.extend(
-        [
-            "# HELP observability_deadman_heartbeat_timestamp_seconds Mirrored deadman heartbeat timestamp.",
-            "# TYPE observability_deadman_heartbeat_timestamp_seconds gauge",
-            metric_line(
-                "observability_deadman_heartbeat_timestamp_seconds",
-                {"source": config.source},
-                mirrored_signals["observability_deadman_heartbeat_timestamp_seconds"]["value"],
-            ),
-            "",
-        ]
-    )
+    lines.append("")
     return "\n".join(lines)
 
 

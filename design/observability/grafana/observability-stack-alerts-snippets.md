@@ -6,13 +6,12 @@ This file contains reference PromQL expressions and Alertmanager rule snippets f
 
 Example alerts for the observability stack itself:
 
+`ObservabilityDeadmanHeartbeatStale` and `ObservabilityDeadmanHeartbeatMissing` are installed only through `k8s/overlays/monitoring/independent-required-prometheus-published`. Before installing that overlay, the authoritative external monitor must publish `observability_deadman_stale{profile="independent-required"}` after applying the profile's stale threshold and evaluation window. The smoke runner's heartbeat timestamp is only a diagnostic mirror and does not synthesize this stale decision. A published stale value pages immediately; an absent mirror is held for one minute so provisioning gaps and transient scrape loss are distinguishable.
+
 ```yaml
 - alert: ObservabilityDeadmanHeartbeatStale
-  expr: |
-    absent(observability_deadman_heartbeat_timestamp_seconds)
-    or
-    (time() - max by (source) (observability_deadman_heartbeat_timestamp_seconds) > 180)
-  for: 2m
+  expr: observability_deadman_stale{profile="independent-required"} == 1
+  for: 0m
   labels:
     service: external-monitoring
     component: deadman
@@ -21,7 +20,20 @@ Example alerts for the observability stack itself:
     runbook: design/architecture/system-architecture-observability-incident-runbook.md#deadman-freshness-contract
   annotations:
     summary: Independent observability deadman heartbeat stale
-    description: The mirrored external deadman heartbeat is absent or older than three 60-second intervals; confirm the authoritative external monitor and paging path immediately.
+    description: The profile-aware external deadman mirror reports stale; verify the authoritative external monitor and paging path immediately.
+
+- alert: ObservabilityDeadmanHeartbeatMissing
+  expr: absent(observability_deadman_stale{profile="independent-required"})
+  for: 1m
+  labels:
+    service: external-monitoring
+    component: deadman
+    severity: P0
+    owner: platform
+    runbook: design/architecture/system-architecture-observability-incident-runbook.md#deadman-freshness-contract
+  annotations:
+    summary: Independent observability deadman heartbeat missing
+    description: The required-profile external deadman mirror is absent for one minute; confirm the authoritative external monitor and paging path.
 
 - alert: AlertmanagerServiceUnavailable
   expr: up{job="alertmanager"} == 0

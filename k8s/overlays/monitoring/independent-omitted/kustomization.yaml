@@ -1,0 +1,7 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Profile: independent-omitted. The required-profile deadman rule is intentionally absent;
+# retain the operator-dependent degraded posture.
+resources:
+  - ../../../monitoring

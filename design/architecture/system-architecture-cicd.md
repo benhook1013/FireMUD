@@ -26,7 +26,7 @@ This document describes the continuous integration strategy for FireMUD using **
 
 ## Implementation Status
 
-The current executable unconditionally blocks every player-facing production promotion class, including `rollback-compatible`, until all required production evidence and validations are complete; incomplete evidence can never become promotion authority. Static CI validates checked-in evidence shape and available bindings, but it does not yet validate release-manifest presence, schema, or bindings (including the release tag where applicable, source commit, deployment ref, promotion attestation ref, staging deployment record ref, and exact `serviceDigests`). Production promotion remains blocked until that validator exists; target validation must reject missing, malformed, or mismatched manifests. Production preflight also does not yet execute the staging-lineage, expanded backup-readiness, nested candidate recovery-controller, `PREFLIGHT-JWT-002`, or `PREFLIGHT-JWT-ROTATION-001` validations behind that block. No rollback classification becomes current promotion authority until those diagnostics, recovery inventory membership, immutable evidence dereferencing, participant, confidentiality, hardening, JWT/JWKS, and controlled-reopen validations are implemented.
+The current executable unconditionally blocks every player-facing production promotion class, including `rollback-compatible`, until all required production evidence and validations are complete; incomplete evidence can never become promotion authority. Static CI validates checked-in evidence shape and available bindings, but it does not yet validate release-manifest presence, schema, or bindings (including the release tag where applicable, source commit, deployment ref, promotion attestation ref, staging deployment record ref, and exact `serviceDigests`). Production promotion remains blocked until that validator exists; target validation must reject missing, malformed, or mismatched manifests. Production preflight also does not yet execute the staging-lineage, expanded backup-readiness, nested candidate recovery-controller, `PREFLIGHT-JWT-002`, or `PREFLIGHT-JWT-ROTATION-001` validations behind that block. No rollback classification becomes current promotion authority until those diagnostics, recovery inventory membership, immutable evidence dereferencing, participant, confidentiality, hardening, JWT/JWKS, and controlled-reopen validations are implemented. The ADR 0156 automatic observation/pause, bounded-canary progression, and compatibility-bounded automatic restoration remain target-state-only; current staging and production rollout and rollback remain operator-controlled under the Deployment Runbook.
 
 ---
 
@@ -156,7 +156,11 @@ Staging and production deployments rely on environment-specific overlays (for ex
 
 ### Rollback Strategy
 
-Staging and production rollouts use standard Kubernetes `RollingUpdate` behavior and are rolled back by re-applying the environment’s Kustomize overlay with a previously known-good image digest set. FireMUD does not rely on automated canary/auto-rollback infrastructure by default; operators treat rollback as an explicit, auditable action that restores the last known-good digest set and verifies post-deploy health checks.
+The rollout and rollback owner contract is [ADR 0156: risk-tiered progressive rollout with compatibility-bounded rollback](./decisions/adr-0156-risk-tiered-progressive-rollout-with-compatibility-bounded-rollback.md).
+
+Target state: multi-replica staging and production workloads use an explicit conservative Kubernetes `RollingUpdate` baseline, normally `maxUnavailable: 0` and `maxSurge: 1`. The canonical playbook introduces one candidate at a time, observes readiness, smoke checks, and applicable SLO evidence, and pauses or aborts on a hard failure; readiness alone is insufficient.
+
+Target state: for a proved `rollback-compatible` release, automation may restore the exact predeclared known-good digest set when current compatibility evidence remains valid and the failure matches policy. A `roll-forward-only` release may pause automatically but never reapplies old binaries automatically. Higher-risk changes use a bounded canary when production has enough replicas and representative traffic; hobby and small deployments use a simple rolling or recreate strategy. No mandatory Argo/Flagger dependency is required until measured scale and policy complexity justify it. This automation is not currently available: current staging and production rollouts use the operator-controlled RollingUpdate and explicit known-good digest reapplication flow below. The `rollback-compatible`/`roll-forward-only` classification and its safety boundary remain in force for that operator path.
 
 ---
 
@@ -247,15 +251,15 @@ Before approving a production promotion, deployment evidence must classify rollb
 
 Production promotions lacking this explicit rollback-mode classification are non-compliant.
 
-Every production promotion records a compact recovery-compatibility result against the current production-equivalent cold-start drill. A `drill_required` result blocks promotion until the required fresh drill is complete and a new `compatible` result replaces it. For releases classified as `roll-forward-only`, promotion evidence must also include fresh full backup-readiness evidence proving:
+Target-state production promotion evidence records a compact recovery-compatibility result against the current production-equivalent cold-start drill and consumes the current environment-bound reference and complete digest for the newest verified restorable point, proving the observed point is within the accepted 15-minute bound. A `drill_required` result blocks promotion until the required fresh drill is complete and a new `compatible` result replaces it. A compatible release may reference that live freshness proof without repeating the full selected-release record; the freshness gate does not itself require a full drill for every release. For releases classified as `roll-forward-only`, promotion evidence must also include fresh full backup-readiness evidence proving:
 
 - a recent successful logical backup,
 - recent backup-verification success, and
 - a current environment-wide `cold_start_restore` record suitable for the release, including empty Redis, safe recovery-participant dispositions, hardening, and controlled reopen.
 
-The canonical full-evidence path is `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`. The compact result uses `compatibilityStatus` (`compatible`, `drill_required`, or `incompatible`) as the outcome and `newDrillRequired` as the machine-readable drill gate. `incompatible` is a terminal failed result. `drill_required` requires `newDrillRequired=true` and is also non-promotable: after the drill and full evidence are complete, the compatibility classifier must produce a new `compatible` result bound to that evidence. Every `roll-forward-only` release also sets `newDrillRequired=true`, carries matching full evidence, and must have a compatible regenerated result. Production CI/preflight rejects stale `drill_required` results and full evidence that is missing, stale, or not bound to the source production database lineage, candidate recovery tooling, exact candidate digests, migration path, config, bindings, and promotion attestation. Compatible rollback releases keep only the compact result or immutable reference in promotion/deployment evidence rather than copying the full recovery record.
+The canonical full-evidence path is `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`. The compact result uses `compatibilityStatus` (`compatible`, `drill_required`, or `incompatible`) as the outcome and `newDrillRequired` as the machine-readable drill gate. `incompatible` is a terminal failed result. `drill_required` requires `newDrillRequired=true` and is also non-promotable: after the drill and full evidence are complete, the compatibility classifier must produce a new `compatible` result bound to that evidence. Every `roll-forward-only` release also sets `newDrillRequired=true`, carries matching full evidence, and must have a compatible regenerated result. Production CI/preflight rejects stale `drill_required` results and full evidence that is missing, stale, or not bound to the source production database lineage, candidate recovery tooling, exact candidate digests, migration path, config, bindings, and promotion attestation. Compatible rollback releases keep only the compact result or immutable reference in promotion/deployment evidence rather than copying the full recovery record. The current executable validates the implemented compact `rollback-compatible` result, but that result alone cannot authorize promotion while broader event-scoped player-facing gates remain unimplemented. The full `roll-forward-only` evidence lane remains fail-closed until its target checks are complete.
 
-Traffic-open readiness for production first-live or reopen events uses `design/operations/deployments/production/traffic-open/<first-live|reopen>-<deployment-ref>/<deploymentEventId>.json`, whose stored event identity matches the referenced preflight report, and references the canonical backup-readiness, recovery-controller, and confidentiality evidence. Routine online backups cover the environment-wide PostgreSQL database and do not use Game Session pause/resume as readiness proof.
+Target-state traffic-open readiness for production first-live or reopen events uses `design/operations/deployments/production/traffic-open/<first-live|reopen>-<deployment-ref>/<deploymentEventId>.json`, whose stored event identity matches the referenced preflight report, consumes the current environment-bound newest-verified-point reference and complete digest within the 15-minute bound, and references the canonical backup-readiness, recovery-controller, and confidentiality evidence. Upload existence alone is insufficient. Routine online backups cover the environment-wide PostgreSQL database and do not use Game Session pause/resume as readiness proof. The current executable has no controller-backed traffic-open result and therefore fails this gate closed; finalized checked-in projections are post-release evidence, not pre-release authority.
 
 Pre-apply policy checks for staging and production must run through the canonical preflight contract in `system-architecture-deploy-preflight-policy.md`. Static checks run in overlay PR CI, and resolved-manifest/runtime checks run in operator preflight execution. Both use the same policy IDs and evidence shape.
 
@@ -277,7 +281,7 @@ FireMUD uses one deployment-evidence chain per deployment event so promotion, ro
 Lifecycle rules:
 
 - The environment's `deployments/current.json` index is the canonical answer to “what is currently deployed.” Promotion eligibility is a separate immutable claim: an attestation selects one exact successful deployment event and never performs a later “latest event” lookup.
-- Preflight artifacts, secret-compliance snapshots, smoke evidence, and live-state verification are supporting evidence linked from the deployment record rather than parallel sources of truth.
+- Preflight artifacts, secret-compliance snapshots, smoke evidence, and live-state verification are supporting evidence linked from the deployment record rather than parallel sources of truth. Promotion/staging `smokeEvidence` entries are closed `{ref, contentDigest}` objects; the digest covers the exact retained JSON bytes. Each retained smoke artifact preserves `deploymentRef` as the environment-agnostic deployment lineage (for Git-managed staging, the selected `stagingOverlayCommitSha`) and carries the selected `deploymentEventId` equal to the selected staging deployment event. Recovery-baseline smoke evidence uses the same closed `{ref, contentDigest}` shape, without promotion-only deployment-lineage binding.
 - Current promotion trust is repository-reviewed evidence with immutable artifact references. Promotion attestation field selection and validation follow the [Promotion Attestation Contract](./system-architecture-promotion-attestation.md#validation-rules); this lifecycle retains the deployment consequence that static CI validates the authored in-repo deployment record contains and binds the required live-state and secret-compliance evidence, while operator preflight verifies observed live state before apply. Detached signatures are not required in the current single-admin/operator model.
 - Re-applying the same overlay commit creates a new immutable event record and, after successful live-state verification, advances the current-state index. It never overwrites prior preflight, apply, or attestation evidence.
 - A promotion attestation is valid only if `stagingOverlayCommitSha` plus `stagingDeploymentEventId` selects the exact successful promotable apply event it attests. A later apply does not invalidate or retarget that historical attestation.
@@ -289,7 +293,7 @@ Terminology note:
 - `promotion evidence` is the subset of evidence used to prove a staging deployment is eligible to be promoted into production, primarily the attestation plus its referenced deployment and compliance records.
 - `traffic-open evidence` is the evidence family used to prove an environment may be opened or reopened to player traffic, for example the production traffic-open backup-readiness artifact or hobby traffic-open records.
 - `promotion candidate` means a staging deployment record that is eligible to produce production promotion evidence; quarantined or detached staging drills can remain valid deployment evidence without becoming promotion candidates.
-- `deployment-ref` is the canonical environment-agnostic identity for the reviewed deployment input lineage and is used by preflight, attestation, and backup-readiness artifacts. For Git-managed staging/production overlays, it is the same Git SHA recorded as `overlayCommitSha`. `deploymentEventId` is the distinct UUID for one concrete preflight/apply event, including a retry or later re-apply of the same deployment ref.
+- `deployment-ref` is the canonical environment-agnostic identity for the reviewed deployment input lineage and is used by preflight, attestation, and backup-readiness artifacts. For Git-managed staging/production overlays, it is the same Git SHA recorded as `overlayCommitSha`. `deploymentEventId` is the distinct UUID for one concrete preflight/apply event, including a retry or later re-apply of the same deployment ref; a retained promotion/staging smoke artifact records both fields and never overloads `deploymentRef` with this event identity.
 
 The following is non-promotable pseudodata showing deployment-record field shape only; its placeholder references and example values are not promotion evidence. In real promotion evidence, `secretComplianceEvidenceRef` must resolve to an existing immutable, digest-qualified secret-compliance evidence artifact under the canonical secret-compliance owner; `secretComplianceStatus: pass` alone is insufficient.
 
@@ -324,10 +328,15 @@ Illustrative deployment record shape:
   "secretComplianceStatus": "pass",
   "secretComplianceEvidenceRef": "<immutable-digest-qualified-secret-compliance-evidence-ref>",
   "smokeEvidence": [
-    "design/operations/deployments/staging/smoke/<git-sha>.json"
+    {
+      "ref": "design/operations/deployments/staging/smoke/<git-sha>/<deploymentEventId>.json",
+      "contentDigest": "sha256:<64-lowercase-hex>"
+    }
   ]
 }
 ```
+
+The retained JSON file referenced by the `smokeEvidence` entry carries the same lineage and event binding: `deploymentRef` is `<git-sha>` and `deploymentEventId` is the record's `<uuid>`.
 
 Exact field requirements for promotion are canonical in the [Promotion Attestation Contract](./system-architecture-promotion-attestation.md#artifact-format); the example here only shows the local deployment-evidence producer shape.
 
@@ -335,24 +344,22 @@ Exact field requirements for promotion are canonical in the [Promotion Attestati
 
 Promotion and DR-readiness reporting depend on environment secret-compliance records described in `infrastructure/environment-and-secrets-overview.md`.
 
-- `production`: missing or stale secret-compliance records hard-gate production promotion, production first-live/reopen, and disaster-recovery-readiness claims.
-- `staging`: missing or stale records hard-gate staging activity used as production-promotion or production-readiness evidence. Detached or quarantined staging drills are non-promotable operational exercises, not promotion candidates.
+- `production`: missing or stale secret-compliance records are a hard CI gate for production promotion, first-live/reopen, and disaster-recovery-readiness claims.
+- `staging`: missing or stale records are a hard CI gate for staging promotion and any staging deployment intended to produce production-promotion or production-readiness evidence. Detached or quarantined staging playtests and drills may report warnings, but they remain non-promotable operational exercises rather than promotion candidates.
 - `hobby-self-hosted`: operator tooling should validate records before opening traffic, but GitHub CI gating may be unavailable.
 
 Promotion-evidence rule:
 
-- Any staging deployment record used by production attestation must carry `secretComplianceStatus=pass` and a `secretComplianceEvidenceRef`; warning-only or note-only evidence is never promotable.
+- Any staging deployment record used by production attestation must carry `secretComplianceStatus=pass` and a `secretComplianceEvidenceRef`; warning-only or note-only evidence is never promotion evidence.
 
 Enforcement workflow contract:
 
 - CI check name: `validate-secret-compliance`.
 - Expected implementation location: `.github/workflows/validate-secret-compliance.yml`.
 - Required validator behavior:
-  - Load `design/operations/secret-compliance/<environment>.yaml`.
-  - Fail when required records/classes are missing.
-  - Fail when a record lacks both `lastRotationAt` and `lastProvisionedAt`, or sets both.
-  - Fail when credential age exceeds configured maximum age for hard-gated environments, regardless of whether age is measured from bootstrap provisioning or later rotation.
-  - Fail when `evidenceRef`/`evidenceKey` is missing, the referenced evidence artifact is missing, or the evidence record lacks an immutable artifact identifier (`immutableArtifactId` with digest-qualified identity).
+  - Load `design/operations/secret-compliance/<environment>.yaml` and apply the canonical record, evidence-payload, and bootstrap operation/generation contract in [Environment Variables & Secrets Overview](./infrastructure/environment-and-secrets-overview.md#secret-compliance-controls).
+  - Fail when required records/classes, their exact parent-to-payload bindings, or a completed exact bootstrap generation are missing; partial or crashed bootstrap remains noncompliant and resumes its existing operation.
+  - Fail when credential age exceeds the configured maximum age for hard-gated environments, regardless of whether age is measured from bootstrap provisioning or later rotation.
 - Required record classes:
   - `jwt-signing-keys-jwks`
   - `postgres-application-credentials`

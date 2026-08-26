@@ -29,6 +29,11 @@ protobuf {
         }
     }
     generateProtoTasks {
+        all().configureEach { task ->
+            task.notCompatibleWithConfigurationCache(
+                "protobuf-gradle-plugin 0.10.0 retains Gradle Project and SourceDirectorySet state with Gradle 9.5.1"
+            )
+        }
         ofSourceSet('main').each { task ->
             task.doNotTrackState("Generated protobuf outputs are rewritten opportunistically and Gradle 9 output snapshotting can observe transiently missing files.")
             task.plugins {

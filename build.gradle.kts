@@ -25,7 +25,7 @@ plugins {
     alias(libs.plugins.flyway) apply false
     id("com.diffplug.spotless") version "8.10.0"
     id("checkstyle")
-    id("com.github.spotbugs") version "6.5.10"
+    id("com.github.spotbugs") version "6.5.11"
     jacoco
 }
 
@@ -43,7 +43,7 @@ java {
 
 val fullCheck = project.hasProperty("fullCheck") || System.getenv("CI") != null
 val checkstyleToolVersion = "14.0.0"
-val spotbugsToolVersion = "4.10.3"
+val spotbugsToolVersion = "4.10.4"
 val platformSettingsMetadataFiles = listOf(
     file("services/game-session-service/src/main/resources/META-INF/additional-spring-configuration-metadata.json"),
     file("services/game-logic-service/src/main/resources/META-INF/additional-spring-configuration-metadata.json")
@@ -229,6 +229,16 @@ subprojects {
         testRuntimeOnly(libs.findLibrary("junit-platform-launcher").get())
         if (projectDir.parentFile.name == "services" && !name.startsWith("common-")) {
             testImplementation(testFixtures(project(":common-test-support")))
+        }
+    }
+
+    val testcontainersVersion = libs.findVersion("testcontainers").get().requiredVersion
+    configurations.configureEach {
+        resolutionStrategy.eachDependency {
+            if (requested.group == "org.testcontainers") {
+                useVersion(testcontainersVersion)
+                because("Testcontainers modules must resolve on one catalog-managed version train")
+            }
         }
     }
 

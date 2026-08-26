@@ -94,3 +94,18 @@ Entry format:
   - Context: Packet 6 environment-bound preflight and expected-binding work.
   - Observation: binding declarations classify shareability and enabled integrations, but production state or trust material cannot be made shareable by a generic flag, and declaration alone does not prove a concrete deployment event.
   - Expected pattern: require applicable integrations only when enabled, and retain the manifest digest, event identity, and observed target binding in event-scoped evidence.
+
+- `2026-08-22`: Preserve canonical-contract provenance for superseded keys without unique ADRs
+  - Context: a reviewed superseded key had no unique ADR during alignment import.
+  - Observation: use the canonical-contract `; no ADR required` provenance path; exact ADR links are direct review metadata and must not be repurposed as replacement-only links.
+  - Expected pattern: retain that provenance distinction in future alignment imports.
+
+- `2026-08-24`: Progressive rollout and rollback need durable transition identity
+  - Context: Packet 6 aligned progressive rollout and compatibility-bounded rollback contracts while the current implementation remained partial.
+  - Observation: a safe rollout is a durable operation with server-enforced expected-state preconditions and bounded promotion steps; rollback authority remains limited by the declared compatibility boundary rather than by an operator's ability to redeploy an older image.
+  - Expected pattern: keep target transition semantics distinct from current implementation status, and require one durable operation identity plus explicit preconditions at every rollout or rollback step.
+
+- `2026-08-25`: Terminal substantive review completion can fail the merge gate
+  - Context: `check-coderabbit-review.py` exited 1 after a substantive review completed with findings remaining.
+  - Observation: an ordinary exit 1 can represent a completed substantive review whose merge gate fails, not only an active pending review; hosted watchers must terminate for adjudication when `review_finished_after_latest_request=true` or equivalent substantive completion is present even if `ok=false`.
+  - Expected pattern: when elapsed time appears stuck, inspect the direct CodeRabbit command/review record and distinguish terminal findings from an active hosted review before continuing to watch.
