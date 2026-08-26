@@ -112,5 +112,5 @@ Entry format:
 
 - `2026-08-26`: Keep parcel provenance, dependency coordinates, and finite metrics exact
   - Context: Packet import and dependency review exposed three recurring boundary checks.
-  - Observation: ADR parcel splitting must keep each decision, ADR, and provenance with its canonical owner and truthful intermediate counts; Testcontainers 2 version bumps also require prefixed module coordinates; exact finite metric schemas need enumerated vocabularies and the required bounded service label.
+  - Observation: ADR parcel splitting must keep each decision, ADR, and provenance with its canonical owner and truthful intermediate counts; Testcontainers 2 version bumps also require prefixed module coordinates; exact finite metric schemas need enumerated vocabularies and a required service label with bounded values.
   - Expected pattern: reconcile owner/count/provenance tuples before publishing a parcel, inspect every catalog alias and consumer coordinate during a Testcontainers bump, and enumerate finite metric values while enforcing the bounded service label.

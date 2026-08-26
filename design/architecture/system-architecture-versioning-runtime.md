@@ -544,22 +544,13 @@ Rollback class boundary for versioning flows:
 
 ## Runtime Feature Flags
 
-Runtime feature flags allow limited behavior changes without publishing a new design version.
-They are **defined in the Game Design Service** and copied into the **Game Session Service**
-when a version is published. The definitions table and copy steps manage this workflow.
+Runtime feature flags allow limited behavior changes without publishing a new design version. They are **defined in the Game Design Service** and copied into the **Game Session Service** when a version is published. The definitions table and copy steps manage this workflow.
 
-- Designers create and maintain the set of flag definitions in the Game Design Service UI.
-  Definitions are stored in a `runtime_flag` table for each tenant.
-- Administrators toggle flag values through the
-  [**Logging & Admin Service**](./microservices/logging-admin-service/README.md) web interface.
-- The Logging & Admin Service forwards each change to the Game Session Service,
-  calling `ToggleFeatureFlag` via gRPC so running instances update immediately.
-- The Game Session Service persists active flag values in its `feature_flag` table.
-  Sessions use consistent configuration even after reconnects.
-  The Logging & Admin Service may store audit entries.
-  It is not the source of truth for runtime behavior.
-- During each tick cycle the active flags are applied before executing game logic.
-  See [Tick System](./system-architecture-ticks.md) for details.
+- Designers create and maintain the set of flag definitions in the Game Design Service UI. Definitions are stored in a `runtime_flag` table for each tenant.
+- **Target state:** Administrators toggle flag values through the target [**Logging & Admin Service**](./microservices/logging-admin-service/README.md) operator surface, which forwards a gated owner request to Game Session.
+- **Current implementation:** Logging & Admin has no separate live admin UI or forwarding path for this operation. Its `/feature-flags/toggle` ingress fails closed with `503 Service Unavailable`, and its internal toggle entrypoint returns application-level `UNAVAILABLE` without dispatch. Game Session remains the owner of the internal runtime operation; this does not establish supported external operator forwarding.
+- The Game Session Service persists active flag values in its `feature_flag` table. Sessions use consistent configuration even after reconnects. In the target operator workflow, the Logging & Admin Service may store audit entries, but it is not the source of truth for runtime behavior.
+- During each tick cycle the active flags are applied before executing game logic. See [Tick System](./system-architecture-ticks.md) for details.
 
 ## Flow Summary
 
@@ -570,7 +561,7 @@ flowchart TD
     C --> D[Game Session Service notified of new version]
     D --> E[Session starts game using chosen version_id]
     E --> F[Runtime flags loaded and applied]
-    F -->|Admin edits| G[Logging & Admin Service calls Game Session Service]
+    F -->|Target operator edit| G[Logging & Admin forwards gated owner request]
 ```
 
 By decoupling published versions from runtime flags, FireMUD can rapidly iterate on new content while still allowing safe toggles for experimental features during live gameplay.

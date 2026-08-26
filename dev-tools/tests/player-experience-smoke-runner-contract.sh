@@ -7,6 +7,189 @@ VALIDATOR="$ROOT_DIR/dev-tools/observability/validate-player-experience-smoke-ev
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
+python3 - "$ROOT_DIR" <<'PY'
+import importlib.util
+import os
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1]) / "dev-tools" / "observability"
+sys.path.insert(0, str(root))
+shared = __import__("numeric_validation")
+for name in ("run-player-experience-smoke.py", "validate-player-experience-smoke-evidence.py"):
+    spec = importlib.util.spec_from_file_location(name, root / name)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    assert module.is_finite_number is shared.is_finite_number
+    assert module.is_bounded_positive_seconds is shared.is_bounded_positive_seconds
+    if name == "run-player-experience-smoke.py":
+        assert module.parse_bounded_positive_seconds is shared.parse_bounded_positive_seconds
+        runner_module = module
+
+os.environ["PLAYER_EXPERIENCE_QUERYABILITY_PROFILE"] = "staging"
+os.environ["PLAYER_EXPERIENCE_QUERYABILITY_FRESHNESS_BUDGET_SECONDS"] = "7200"
+env_config = runner_module.SmokeConfig.from_env("contract-test", "websocket", None)
+assert env_config.queryability_profile == "staging"
+assert env_config.queryability_freshness_budget_seconds == 7200
+
+for invalid_budget in ("1e308", "1e-100"):
+    try:
+        runner_module.parse_optional_positive_finite_number(
+            invalid_budget, "queryabilityFreshnessBudgetSeconds"
+        )
+    except ValueError as exc:
+        assert "positive finite number" in str(exc)
+    else:
+        raise AssertionError(f"unsafe freshness budget was accepted: {invalid_budget}")
+
+for key, malformed in (
+    (runner_module.PROMETHEUS_MIRRORS_CAPABILITY, ["published"]),
+    (runner_module.PLAYER_FLOW_CANARY_CAPABILITY, {"value": "advertised"}),
+    (runner_module.PROMETHEUS_MIRRORS_CAPABILITY, False),
+):
+    try:
+        runner_module.validate_capability(malformed, key)
+    except ValueError as exc:
+        assert "must be one of" in str(exc)
+    except TypeError as exc:
+        raise AssertionError(f"runner capability leaked TypeError: {key}={malformed!r}") from exc
+    else:
+        raise AssertionError(f"runner accepted malformed capability: {key}={malformed!r}")
+
+for malformed_profile in (["independent-required"], {"profile": "independent-required"}, False):
+    try:
+        runner_module.validate_external_authority_shape(
+            {
+                "profile": malformed_profile,
+                "exposedPublicPlayerPaths": ["websocket"],
+            },
+            runner_module.Path("malformed-profile-authority.json"),
+        )
+    except RuntimeError as exc:
+        assert "must declare profile independent-required or independent-omitted" in str(exc)
+    except TypeError as exc:
+        raise AssertionError(f"runner profile leaked TypeError: {malformed_profile!r}") from exc
+    else:
+        raise AssertionError(f"runner accepted malformed profile: {malformed_profile!r}")
+
+subsecond_config = runner_module.SmokeConfig.from_env(
+    "contract-test",
+    "websocket",
+    None,
+    queryability_profile="staging",
+    queryability_freshness_budget_seconds="1e-6",
+)
+subsecond_record = runner_module.queryability_omission_record(
+    subsecond_config, "2026-03-19T10:54:00Z"
+)
+observed_at = runner_module.dt.datetime.fromisoformat(
+    subsecond_record["evidenceObservedAt"].replace("Z", "+00:00")
+)
+expires_at = runner_module.dt.datetime.fromisoformat(
+    subsecond_record["evidenceExpiresAt"].replace("Z", "+00:00")
+)
+assert expires_at > observed_at
+
+offset_record = runner_module.queryability_omission_record(
+    subsecond_config, "2026-03-19T11:54:00+01:00"
+)
+assert offset_record["evidenceObservedAt"] == "2026-03-19T10:54:00Z"
+assert offset_record["evidenceExpiresAt"] == "2026-03-19T10:54:00.000001Z"
+
+overflow_config = runner_module.SmokeConfig.from_env(
+    "contract-test",
+    "websocket",
+    None,
+    queryability_profile="staging",
+    queryability_freshness_budget_seconds="1e12",
+)
+try:
+    runner_module.queryability_omission_record(
+        overflow_config, "2026-03-19T10:54:00Z"
+    )
+except ValueError as exc:
+    assert "representable datetime range" in str(exc)
+except OverflowError as exc:
+    raise AssertionError("near-1e12 queryability budget leaked OverflowError") from exc
+else:
+    raise AssertionError("near-1e12 queryability budget unexpectedly passed")
+
+for invalid_budget in (-1, "195", float("nan"), float("inf")):
+    try:
+        runner_module.validate_external_authority_shape(
+            {
+                "profile": "independent-omitted",
+                "reason": "contract test",
+                "exposedPublicPlayerPaths": ["websocket"],
+                "detectionBudgetSeconds": invalid_budget,
+            },
+            runner_module.Path("contract-authority.json"),
+            canary_advertised=False,
+            allow_unadvertised_canary_budget=True,
+        )
+    except RuntimeError as exc:
+        assert "positive finite detectionBudgetSeconds" in str(exc)
+    else:
+        raise AssertionError(
+            f"invalid independent-omitted detection budget was accepted: {invalid_budget!r}"
+        )
+
+config = runner_module.SmokeConfig.from_env(
+    "contract-test",
+    "websocket",
+    None,
+    queryability_profile="staging",
+    queryability_freshness_budget_seconds="7200",
+)
+config.player_flow_canary = "advertised"
+config.player_flow_canary_identity = {"selfAttested": True}
+signals = {
+    "playerflow_canary_success": [{"flow": "login", "path": "websocket", "target": "gateway", "profile": "independent-required", "value": 1}],
+    "playerflow_canary_latency_ms": [{"flow": "command", "path": "websocket", "target": "gateway", "profile": "independent-required", "value": 1}],
+    "playerflow_canary_last_run_timestamp_seconds": [{"flow": "login", "path": "websocket", "target": "gateway", "profile": "independent-required", "value": 1}],
+    "playerflow_canary_freshness_budget_seconds": {"profile": "independent-required", "value": 195},
+}
+evidence = runner_module.build_evidence(config, signals, {}, set())
+assert evidence["capabilities"]["playerFlowCanary"] == "omitted"
+assert "playerFlowCanaryIdentity" not in evidence
+assert not any(key.startswith("playerflow_canary_") for key in evidence["mirroredSignals"])
+assert "playerflow_canary_" not in runner_module.render_metrics(config, signals)
+PY
+
+CANARY_IDENTITY_EVIDENCE="$TMP_DIR/canary-identity-evidence.json"
+python3 - "$CANARY_IDENTITY_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+Path(sys.argv[1]).write_text(
+    json.dumps(
+        {
+            "authority": "account-service",
+            "classification": "synthetic",
+            "analyticsSloExclusion": True,
+            "credentials": {"nonDefault": True, "productionSafe": True},
+            "transportCharacters": {
+                "websocket": {"restricted": True, "isolated": True},
+                "telnet": {"restricted": True, "isolated": True},
+            },
+            "evidenceRef": "account://contract-test/synthetic-canary",
+        }
+    ),
+    encoding="utf-8",
+)
+PY
+
+OMITTED_AUTHORITY_WITHOUT_CANARY_BUDGET="$TMP_DIR/omitted-authority-without-canary-budget.json"
+cat >"$OMITTED_AUTHORITY_WITHOUT_CANARY_BUDGET" <<'JSON'
+{
+  "profile": "independent-omitted",
+  "reason": "single-node deployment uses operator-dependent outage detection",
+  "exposedPublicPlayerPaths": ["websocket"]
+}
+JSON
+
 SMOKE_CONFIG_ENV_UNSETS=(
   -u PLAYER_EXPERIENCE_EXTERNAL_AUTHORITY_EVIDENCE
   -u PLAYER_EXPERIENCE_FAILURE_INJECTION
@@ -15,6 +198,9 @@ SMOKE_CONFIG_ENV_UNSETS=(
   -u PLAYER_EXPERIENCE_CANARY_PATH
   -u PLAYER_EXPERIENCE_PROMETHEUS_MIRRORS
   -u PLAYER_EXPERIENCE_PLAYER_FLOW_CANARY
+  -u PLAYER_EXPERIENCE_SYNTHETIC_IDENTITY_EVIDENCE
+  -u PLAYER_EXPERIENCE_QUERYABILITY_PROFILE
+  -u PLAYER_EXPERIENCE_QUERYABILITY_FRESHNESS_BUDGET_SECONDS
   -u PLAYER_EXPERIENCE_WEBSOCKET_URL
   -u SMOKE_GATEWAY_API_BASE
   -u SMOKE_TELNET_HOST
@@ -40,7 +226,13 @@ SMOKE_CONFIG_ENV_UNSETS=(
 SMOKE_CONFIG_ENV_OVERRIDES=()
 
 run_smoke_runner() {
-  env "${SMOKE_CONFIG_ENV_UNSETS[@]}" python3 "$RUNNER" "$@"
+  env "${SMOKE_CONFIG_ENV_UNSETS[@]}" \
+    SMOKE_USERNAME=canary-contract@example.com \
+    SMOKE_PASSWORD=contract-canary-secret \
+    PLAYER_EXPERIENCE_SYNTHETIC_IDENTITY_EVIDENCE="$CANARY_IDENTITY_EVIDENCE" \
+    PLAYER_EXPERIENCE_QUERYABILITY_PROFILE=staging \
+    PLAYER_EXPERIENCE_QUERYABILITY_FRESHNESS_BUDGET_SECONDS=7200 \
+    python3 "$RUNNER" "$@"
 }
 
 run_smoke_runner_with_deployment_ref() {
@@ -48,6 +240,28 @@ run_smoke_runner_with_deployment_ref() {
   shift
   env "${SMOKE_CONFIG_ENV_UNSETS[@]}" \
     PLAYER_EXPERIENCE_DEPLOYMENT_REF="$deployment_ref" \
+    SMOKE_USERNAME=canary-contract@example.com \
+    SMOKE_PASSWORD=contract-canary-secret \
+    PLAYER_EXPERIENCE_SYNTHETIC_IDENTITY_EVIDENCE="$CANARY_IDENTITY_EVIDENCE" \
+    PLAYER_EXPERIENCE_QUERYABILITY_PROFILE=staging \
+    PLAYER_EXPERIENCE_QUERYABILITY_FRESHNESS_BUDGET_SECONDS=7200 \
+    python3 "$RUNNER" "$@"
+}
+
+run_smoke_runner_without_canary_identity() {
+  env "${SMOKE_CONFIG_ENV_UNSETS[@]}" \
+    SMOKE_USERNAME=demo@example.com \
+    SMOKE_PASSWORD=swordfish \
+    PLAYER_EXPERIENCE_QUERYABILITY_PROFILE=staging \
+    PLAYER_EXPERIENCE_QUERYABILITY_FRESHNESS_BUDGET_SECONDS=7200 \
+    python3 "$RUNNER" "$@"
+}
+
+run_smoke_runner_without_queryability_config() {
+  env "${SMOKE_CONFIG_ENV_UNSETS[@]}" \
+    SMOKE_USERNAME=canary-contract@example.com \
+    SMOKE_PASSWORD=contract-canary-secret \
+    PLAYER_EXPERIENCE_SYNTHETIC_IDENTITY_EVIDENCE="$CANARY_IDENTITY_EVIDENCE" \
     python3 "$RUNNER" "$@"
 }
 
@@ -55,9 +269,19 @@ run_clean_python() {
   if [ "${#SMOKE_CONFIG_ENV_OVERRIDES[@]}" -gt 0 ]; then
     env "${SMOKE_CONFIG_ENV_UNSETS[@]}" \
       "${SMOKE_CONFIG_ENV_OVERRIDES[@]}" \
+      SMOKE_USERNAME=canary-contract@example.com \
+      SMOKE_PASSWORD=contract-canary-secret \
+      PLAYER_EXPERIENCE_SYNTHETIC_IDENTITY_EVIDENCE="$CANARY_IDENTITY_EVIDENCE" \
+      PLAYER_EXPERIENCE_QUERYABILITY_PROFILE=staging \
+      PLAYER_EXPERIENCE_QUERYABILITY_FRESHNESS_BUDGET_SECONDS=7200 \
       python3 "$@"
   else
     env "${SMOKE_CONFIG_ENV_UNSETS[@]}" \
+      SMOKE_USERNAME=canary-contract@example.com \
+      SMOKE_PASSWORD=contract-canary-secret \
+      PLAYER_EXPERIENCE_SYNTHETIC_IDENTITY_EVIDENCE="$CANARY_IDENTITY_EVIDENCE" \
+      PLAYER_EXPERIENCE_QUERYABILITY_PROFILE=staging \
+      PLAYER_EXPERIENCE_QUERYABILITY_FRESHNESS_BUDGET_SECONDS=7200 \
       python3 "$@"
   fi
 }
@@ -137,6 +361,20 @@ os.environ.pop("PLAYER_EXPERIENCE_DEPLOYMENT_EVENT_ID")
 os.environ.pop("SMOKE_TIMEOUT_SECONDS")
 config = runner.SmokeConfig.from_env("contract-test", "websocket", None)
 assert config.websocket_url == "ws://localhost:8080/ws/game"
+assert runner.metric_target_for_path("websocket") == "gateway"
+assert runner.metric_target_for_path("telnet") == "tcp_proxy"
+
+def expect_invalid_path(path):
+    try:
+        runner.metric_target_for_path(path)
+    except ValueError as exc:
+        assert "Unsupported public player path" in str(exc), str(exc)
+    else:
+        raise AssertionError(f"expected invalid public player path: {path!r}")
+
+
+for invalid_path in ([], {}, True, None, "unsupported"):
+    expect_invalid_path(invalid_path)
 retained_authority = {
     "profile": "independent-required",
     "exposedPublicPlayerPaths": ["websocket"],
@@ -168,28 +406,45 @@ for field, error_fragment in (
         "staleThresholdSeconds",
         "must define a positive finite staleThresholdSeconds",
     ),
-    (
-        "observedStalenessSeconds",
-        "must define a nonnegative finite observedStalenessSeconds",
-    ),
 ):
     huge_authority = runner.simulated_external_authority("2026-03-19T10:55:00Z")
-    huge_authority[field] = 10**1000
-    expect_runtime_error(
-        lambda authority=huge_authority: runner.validate_external_authority_shape(
-            authority,
-            Path("huge-numeric-authority.json"),
-            evaluation_epoch=runner.dt.datetime.fromisoformat(
-                "2026-03-19T10:55:00+00:00"
-            ).timestamp(),
-            canary_advertised=True,
-        ),
-        error_fragment,
-    )
+    for invalid_value in (10**1000, 1e12 + 1, 1e308):
+        huge_authority[field] = invalid_value
+        expect_runtime_error(
+            lambda authority=huge_authority: runner.validate_external_authority_shape(
+                authority,
+                Path("huge-numeric-authority.json"),
+                evaluation_epoch=runner.dt.datetime.fromisoformat(
+                    "2026-03-19T10:55:00+00:00"
+                ).timestamp(),
+                canary_advertised=True,
+            ),
+            error_fragment,
+        )
+
+huge_authority = runner.simulated_external_authority("2026-03-19T10:55:00Z")
+huge_authority["observedStalenessSeconds"] = 10**1000
+expect_runtime_error(
+    lambda authority=huge_authority: runner.validate_external_authority_shape(
+        authority,
+        Path("huge-numeric-authority.json"),
+        evaluation_epoch=runner.dt.datetime.fromisoformat(
+            "2026-03-19T10:55:00+00:00"
+        ).timestamp(),
+        canary_advertised=True,
+    ),
+    "must define a nonnegative finite observedStalenessSeconds",
+)
 
 expect_runtime_error(
     lambda: runner.stale_deadman_heartbeat_timestamp(
         {"staleThresholdSeconds": 10**1000}, 1773917700
+    ),
+    "requires a positive finite staleThresholdSeconds",
+)
+expect_runtime_error(
+    lambda: runner.stale_deadman_heartbeat_timestamp(
+        {"staleThresholdSeconds": 1e308}, 1773917700
     ),
     "requires a positive finite staleThresholdSeconds",
 )
@@ -423,104 +678,120 @@ run_smoke_runner_with_deployment_ref "$DEPLOYMENT_REF" \
   --canary-path websocket \
   --deployment-event-id "$DEPLOYMENT_EVENT_ID"
 
-if python3 "$VALIDATOR" "$SUCCESS_EVIDENCE" >"$TMP_DIR/unexercised-readiness.out" 2>&1; then
-  echo "runner-declared but unexercised canary alerts unexpectedly authorized readiness" >&2
-  exit 1
-fi
-grep -q "PlayerFlowCanaryLoginFailed exerciseResult must be passed" \
-  "$TMP_DIR/unexercised-readiness.out"
-python3 "$VALIDATOR" --allow-failure-evidence "$SUCCESS_EVIDENCE" \
-  >"$TMP_DIR/unexercised-incident.out"
+python3 "$VALIDATOR" "$SUCCESS_EVIDENCE" >"$TMP_DIR/valid.out"
 python3 - "$SUCCESS_EVIDENCE" <<'PY'
 import json
 import sys
 from pathlib import Path
 
-path = Path(sys.argv[1])
-data = json.loads(path.read_text(encoding="utf-8"))
-assert all(
-    record["exerciseResult"] == "not_exercised"
-    for record in data["canaryAlerts"]
-)
-# Model the separate alert-path exercise owner joining actual passing results
-# into the retained gate artifact. The smoke runner itself must never infer
-# these passes from declaration or ordinary signal injection.
-for record in data["canaryAlerts"]:
-    record["exerciseResult"] = "passed"
-path.write_text(json.dumps(data), encoding="utf-8")
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if data.get("capabilities") != {"prometheusMirrors": "published", "playerFlowCanary": "omitted"}:
+    raise SystemExit(repr(data))
+if any(key.startswith("playerflow_canary_") for key in data.get("mirroredSignals", {})):
+    raise SystemExit(repr(data["mirroredSignals"]))
+if "playerFlowCanaryIdentity" in data or "canaryAlerts" in data:
+    raise SystemExit(repr(data))
 PY
 
-python3 "$VALIDATOR" "$SUCCESS_EVIDENCE" >"$TMP_DIR/valid.out"
-
-python3 - "$SUCCESS_EVIDENCE" "$DEPLOYMENT_REF" "$DEPLOYMENT_EVENT_ID" <<'PY'
+NO_IDENTITY_EVIDENCE="$TMP_DIR/no-identity-evidence.json"
+run_smoke_runner_without_canary_identity \
+  --simulate \
+  --external-authority-evidence "$AUTHORITY_EVIDENCE" \
+  --evidence-out "$NO_IDENTITY_EVIDENCE" \
+  --source "contract-test" \
+  --canary-path websocket >/dev/null 2>"$TMP_DIR/no-identity.out"
+python3 - "$NO_IDENTITY_EVIDENCE" <<'PY'
 import json
 import sys
-from datetime import datetime
 from pathlib import Path
 
 data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-assert data["executionMode"] == "simulated"
-assert data["externalAuthorityProvenance"] == "retained-external"
-assert data["deploymentRef"] == sys.argv[2]
-assert data["deploymentEventId"] == sys.argv[3]
-assert data["capabilities"] == {
-    "prometheusMirrors": "published",
-    "playerFlowCanary": "advertised",
-}
-assert data["logPipelineQueryability"]["capability"] == "log-queryability-omitted"
-assert data["logPipelineQueryability"]["result"] == "not_applicable"
-assert data["logPipelineQueryability"]["omissionReason"]
-assert data["mirroredSignals"][
-    "observability_deadman_heartbeat_timestamp_seconds"
-]["value"] == datetime.fromisoformat(
-    data["externalAuthority"]["lastSuccessfulHeartbeatObservedAt"].replace(
-        "Z", "+00:00"
-    )
-).timestamp()
-assert "observability_deadman_stale" not in data["mirroredSignals"]
-assert {
-    (record["flow"], record["path"])
-    for record in data["mirroredSignals"]["playerflow_canary_success"]
-} == {
-    ("login", "websocket"),
-    ("command", "websocket"),
-    ("login", "telnet"),
-    ("command", "telnet"),
-}
-assert {
-    record["profile"]
-    for record in data["mirroredSignals"]["playerflow_canary_success"]
-} == {"independent-required"}
-assert {record["path"] for record in data["mirroredSignals"]["playerflow_canary_latency_ms"]} == {
-    "websocket",
-    "telnet",
-}
-assert {
-    record["profile"]
-    for record in data["mirroredSignals"]["playerflow_canary_latency_ms"]
-} == {"independent-required"}
-assert {
-    (record["flow"], record["path"])
-    for record in data["mirroredSignals"]["playerflow_canary_last_run_timestamp_seconds"]
-} == {
-    ("login", "websocket"),
-    ("command", "websocket"),
-    ("login", "telnet"),
-    ("command", "telnet"),
-}
-assert {
-    record["profile"]
-    for record in data["mirroredSignals"]["playerflow_canary_last_run_timestamp_seconds"]
-} == {"independent-required"}
-assert data["mirroredSignals"]["playerflow_canary_freshness_budget_seconds"] == {
-    "profile": "independent-required",
-    "value": 195,
-}
-assert all(
-    record["exerciseResult"] == "passed"
-    for record in data["canaryAlerts"]
-)
+if data.get("capabilities", {}).get("playerFlowCanary") != "omitted":
+    raise SystemExit(repr(data))
+if "playerFlowCanaryIdentity" in data or "canaryAlerts" in data:
+    raise SystemExit(repr(data))
+if any(key.startswith("playerflow_canary_") for key in data.get("mirroredSignals", {})):
+    raise SystemExit(repr(data))
 PY
+
+NO_IDENTITY_OMITTED_BUDGET_EVIDENCE="$TMP_DIR/no-identity-omitted-budget-evidence.json"
+run_smoke_runner_without_canary_identity \
+  --simulate \
+  --external-authority-evidence "$OMITTED_AUTHORITY_WITHOUT_CANARY_BUDGET" \
+  --evidence-out "$NO_IDENTITY_OMITTED_BUDGET_EVIDENCE" \
+  --source "contract-test" \
+  --canary-path websocket >/dev/null 2>"$TMP_DIR/no-identity-omitted-budget.out"
+python3 - "$NO_IDENTITY_OMITTED_BUDGET_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert data["capabilities"]["playerFlowCanary"] == "omitted"
+assert data["externalAuthority"] == {
+    "profile": "independent-omitted",
+    "reason": "single-node deployment uses operator-dependent outage detection",
+    "exposedPublicPlayerPaths": ["websocket"],
+}
+assert not any(key.startswith("playerflow_canary_") for key in data["mirroredSignals"])
+PY
+
+OMITTED_AUTHORITY_UNDER_MINIMUM_BUDGET="$TMP_DIR/omitted-authority-under-minimum-budget.json"
+python3 - "$OMITTED_AUTHORITY_WITHOUT_CANARY_BUDGET" "$OMITTED_AUTHORITY_UNDER_MINIMUM_BUDGET" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["detectionBudgetSeconds"] = 179
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+NO_IDENTITY_UNDER_MINIMUM_EVIDENCE="$TMP_DIR/no-identity-under-minimum-evidence.json"
+run_smoke_runner_without_canary_identity \
+  --simulate \
+  --external-authority-evidence "$OMITTED_AUTHORITY_UNDER_MINIMUM_BUDGET" \
+  --evidence-out "$NO_IDENTITY_UNDER_MINIMUM_EVIDENCE" \
+  --source "contract-test" \
+  --canary-path websocket >/dev/null 2>"$TMP_DIR/no-identity-under-minimum.out"
+python3 - "$NO_IDENTITY_UNDER_MINIMUM_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert data["capabilities"]["playerFlowCanary"] == "omitted"
+assert "detectionBudgetSeconds" not in data["externalAuthority"]
+assert not any(key.startswith("playerflow_canary_") for key in data["mirroredSignals"])
+PY
+
+FORGED_IDENTITY_EVIDENCE="$TMP_DIR/forged-identity-evidence.json"
+python3 - "$SUCCESS_EVIDENCE" "$FORGED_IDENTITY_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+data["capabilities"]["playerFlowCanary"] = "advertised"
+data.pop("playerFlowCanaryIdentity", None)
+Path(sys.argv[2]).write_text(json.dumps(data), encoding="utf-8")
+PY
+if python3 "$VALIDATOR" "$FORGED_IDENTITY_EVIDENCE" >"$TMP_DIR/forged-identity.out" 2>&1; then
+  echo "advertised canary evidence without identity attestation unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "playerFlowCanaryIdentity is required" "$TMP_DIR/forged-identity.out"
+
+if run_smoke_runner_without_queryability_config \
+  --simulate \
+  --external-authority-evidence "$AUTHORITY_EVIDENCE" \
+  --evidence-out "$TMP_DIR/missing-queryability-config.json" \
+  --source "contract-test" \
+  --canary-path websocket >"$TMP_DIR/missing-queryability-config.out" 2>&1; then
+  echo "runner unexpectedly emitted evidence without queryability profile/budget" >&2
+  exit 1
+fi
+grep -q "queryability profile is required" "$TMP_DIR/missing-queryability-config.out"
 
 ALERT_ONLY_EVIDENCE="$TMP_DIR/alert-only-evidence.json"
 run_smoke_runner_with_deployment_ref "$DEPLOYMENT_REF" \
@@ -559,10 +830,14 @@ def normalized(data):
             record.pop("observedProbeAgeSeconds", None)
     signals = data["mirroredSignals"]
     signals["observability_deadman_heartbeat_timestamp_seconds"].pop("value", None)
-    for record in signals["playerflow_canary_last_run_timestamp_seconds"]:
-        record.pop("value", None)
-    for record in data["canaryAlerts"]:
-        record.pop("exerciseResult", None)
+    for key in (
+        "playerflow_canary_success",
+        "playerflow_canary_latency_ms",
+        "playerflow_canary_last_run_timestamp_seconds",
+        "playerflow_canary_freshness_budget_seconds",
+    ):
+        signals.pop(key, None)
+    data.pop("canaryAlerts", None)
     return data
 
 
@@ -578,30 +853,11 @@ assert all(
     record["value"] == 1
     for record in alert_only["mirroredSignals"]["entrypath_blackbox_probe_success"]
 )
-assert all(
-    record["value"] == 1
-    for record in alert_only["mirroredSignals"]["playerflow_canary_success"]
-)
-assert {
-    record["alert"]
-    for record in alert_only["canaryAlerts"]
-    if record["exerciseResult"] == "failed"
-} == {"PlayerFlowCanaryCommandFailed"}
-assert all(
-    record["exerciseResult"] == "not_exercised"
-    for record in alert_only["canaryAlerts"]
-    if record["alert"] != "PlayerFlowCanaryCommandFailed"
-)
+assert not any(key.startswith("playerflow_canary_") for key in alert_only["mirroredSignals"])
+assert "canaryAlerts" not in alert_only
 PY
 
-if python3 "$VALIDATOR" "$ALERT_ONLY_EVIDENCE" >"$TMP_DIR/alert-only-readiness.out" 2>&1; then
-  echo "alert-only failure injection unexpectedly passed readiness validation" >&2
-  exit 1
-fi
-grep -q "PlayerFlowCanaryCommandFailed exerciseResult must be passed" \
-  "$TMP_DIR/alert-only-readiness.out"
-python3 "$VALIDATOR" --allow-failure-evidence "$ALERT_ONLY_EVIDENCE" \
-  >"$TMP_DIR/alert-only-incident.out"
+python3 "$VALIDATOR" "$ALERT_ONLY_EVIDENCE" >"$TMP_DIR/alert-only-readiness.out"
 
 SYNTHETIC_EVIDENCE="$TMP_DIR/synthetic-evidence.json"
 run_smoke_runner \
@@ -623,10 +879,8 @@ assert "deploymentEventId" not in data
 assert data["externalAuthority"]["deadmanAuthority"]["evidenceRef"].startswith(
     "synthetic://"
 )
-assert all(
-    record["exerciseResult"] == "not_exercised"
-    for record in data["canaryAlerts"]
-)
+assert data["capabilities"]["playerFlowCanary"] == "omitted"
+assert "canaryAlerts" not in data
 PY
 
 run_clean_python - "$RUNNER" "$TMP_DIR/delayed-evidence.json" <<'PY'
@@ -673,8 +927,8 @@ data = json.loads(evidence_path.read_text(encoding="utf-8"))
 verified_epoch = runner.dt.datetime.fromisoformat(
     data["verifiedAt"].replace("Z", "+00:00")
 ).timestamp()
-for record in data["mirroredSignals"][runner.PLAYERFLOW_CANARY_LAST_RUN_TIMESTAMP_METRIC]:
-    assert record["value"] <= verified_epoch
+assert data["capabilities"]["playerFlowCanary"] == "omitted"
+assert not any(key.startswith("playerflow_canary_") for key in data["mirroredSignals"])
 PY
 
 POST_EXECUTION_STALE_AUTHORITY="$TMP_DIR/post-execution-stale-authority.json"
@@ -819,13 +1073,10 @@ finally:
 assert not evidence_path.exists()
 PY
 
-grep -q 'playerflow_canary_success{flow="login",path="websocket",target="gateway",profile="independent-required"} 1' "$SUCCESS_METRICS"
-grep -q 'playerflow_canary_success{flow="command",path="websocket",target="gateway",profile="independent-required"} 1' "$SUCCESS_METRICS"
-grep -q 'playerflow_canary_success{flow="login",path="telnet",target="tcp_proxy",profile="independent-required"} 1' "$SUCCESS_METRICS"
-grep -q 'playerflow_canary_success{flow="command",path="telnet",target="tcp_proxy",profile="independent-required"} 1' "$SUCCESS_METRICS"
-grep -q 'playerflow_canary_last_run_timestamp_seconds{flow="login",path="websocket",target="gateway",profile="independent-required"} ' "$SUCCESS_METRICS"
-grep -q 'playerflow_canary_last_run_timestamp_seconds{flow="command",path="telnet",target="tcp_proxy",profile="independent-required"} ' "$SUCCESS_METRICS"
-grep -q 'playerflow_canary_freshness_budget_seconds{profile="independent-required"} 195' "$SUCCESS_METRICS"
+if grep -q 'playerflow_canary_' "$SUCCESS_METRICS"; then
+  echo "runner emitted player-flow canary metrics without authoritative identity proof" >&2
+  exit 1
+fi
 grep -q 'entrypath_blackbox_probe_success{path="websocket",target="gateway"} 1' "$SUCCESS_METRICS"
 grep -q 'entrypath_blackbox_probe_success{path="telnet",target="tcp_proxy"} 1' "$SUCCESS_METRICS"
 grep -q 'observability_deadman_heartbeat_timestamp_seconds{source="contract-test"}' "$SUCCESS_METRICS"
@@ -863,13 +1114,10 @@ import sys
 from pathlib import Path
 
 data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert data["capabilities"]["playerFlowCanary"] == "omitted"
 assert data["externalAuthority"]["detectionBudgetSeconds"] == 180
-assert {
-    "playerflow_canary_success",
-    "playerflow_canary_latency_ms",
-    "playerflow_canary_last_run_timestamp_seconds",
-    "playerflow_canary_freshness_budget_seconds",
-}.issubset(data["mirroredSignals"])
+assert not any(key.startswith("playerflow_canary_") for key in data["mirroredSignals"])
+assert "canaryAlerts" not in data
 assert "entrypath_blackbox_probe_success" not in data["mirroredSignals"]
 assert "observability_deadman_heartbeat_timestamp_seconds" not in data["mirroredSignals"]
 PY
@@ -887,17 +1135,16 @@ Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
 PY
 refresh_external_authority_fixture "$REQUIRED_179_CANARY_AUTHORITY"
 
-if run_smoke_runner \
+if ! run_smoke_runner \
   --simulate \
   --external-authority-evidence "$REQUIRED_179_CANARY_AUTHORITY" \
   --player-flow-canary advertised \
   --evidence-out "$TMP_DIR/required-179-canary-evidence.json" \
   --source "contract-test" \
   --canary-path websocket >"$TMP_DIR/required-179-canary.out" 2>&1; then
-  echo "runner unexpectedly accepted independent-required 179-second canary budget" >&2
+  echo "runner failed to downgrade the unverified canary budget to omitted" >&2
   exit 1
 fi
-grep -q "detectionBudgetSeconds must be at least 180 seconds" "$TMP_DIR/required-179-canary.out"
 
 MISSING_TIMESTAMP_AUTHORITY="$TMP_DIR/missing-timestamp-authority.json"
 refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
@@ -990,6 +1237,56 @@ if run_smoke_runner \
   exit 1
 fi
 grep -q "must define a positive finite staleThresholdSeconds" "$TMP_DIR/negative-stale-threshold.out"
+
+OVERLARGE_DETECTION_BUDGET_AUTHORITY="$TMP_DIR/overlarge-detection-budget-authority.json"
+refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
+python3 - "$AUTHORITY_EVIDENCE" "$OVERLARGE_DETECTION_BUDGET_AUTHORITY" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["detectionBudgetSeconds"] = 1e308
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+OVERLARGE_DETECTION_BUDGET_EVIDENCE="$TMP_DIR/overlarge-detection-budget-evidence.json"
+if run_smoke_runner \
+  --simulate \
+  --external-authority-evidence "$OVERLARGE_DETECTION_BUDGET_AUTHORITY" \
+  --evidence-out "$OVERLARGE_DETECTION_BUDGET_EVIDENCE" \
+  --source "contract-test" \
+  --canary-path websocket >"$TMP_DIR/overlarge-detection-budget.out" 2>&1; then
+  echo "runner unexpectedly accepted overlarge detection budget" >&2
+  exit 1
+fi
+grep -q "must define a positive finite detectionBudgetSeconds" "$TMP_DIR/overlarge-detection-budget.out"
+test ! -e "$OVERLARGE_DETECTION_BUDGET_EVIDENCE"
+
+OVERLARGE_STALE_THRESHOLD_AUTHORITY="$TMP_DIR/overlarge-stale-threshold-authority.json"
+refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
+python3 - "$AUTHORITY_EVIDENCE" "$OVERLARGE_STALE_THRESHOLD_AUTHORITY" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["staleThresholdSeconds"] = 1e308
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+OVERLARGE_STALE_THRESHOLD_EVIDENCE="$TMP_DIR/overlarge-stale-threshold-evidence.json"
+if run_smoke_runner \
+  --simulate \
+  --external-authority-evidence "$OVERLARGE_STALE_THRESHOLD_AUTHORITY" \
+  --evidence-out "$OVERLARGE_STALE_THRESHOLD_EVIDENCE" \
+  --source "contract-test" \
+  --canary-path websocket >"$TMP_DIR/overlarge-stale-threshold.out" 2>&1; then
+  echo "runner unexpectedly accepted overlarge stale threshold" >&2
+  exit 1
+fi
+grep -q "must define a positive finite staleThresholdSeconds" "$TMP_DIR/overlarge-stale-threshold.out"
+test ! -e "$OVERLARGE_STALE_THRESHOLD_EVIDENCE"
 
 run_clean_python - "$RUNNER" "$AUTHORITY_EVIDENCE" <<'PY'
 import copy
@@ -1608,14 +1905,9 @@ import sys
 from pathlib import Path
 
 data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-success = data["mirroredSignals"]["playerflow_canary_success"]
-latency = data["mirroredSignals"]["playerflow_canary_latency_ms"]
-assert all(record["value"] == 0 for record in success)
-assert all(record["value"] == 0 for record in latency)
-assert not any(
-    record["flow"] == "command" and record["value"] == 1
-    for record in success
-)
+assert data["capabilities"]["playerFlowCanary"] == "omitted"
+assert not any(key.startswith("playerflow_canary_") for key in data["mirroredSignals"])
+assert "canaryAlerts" not in data
 PY
 
 refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
@@ -1641,33 +1933,14 @@ assert data["externalAuthority"]["publicPathChecks"]["telnet"]["status"] == "gre
 deadman_timestamp = data["mirroredSignals"]["observability_deadman_heartbeat_timestamp_seconds"]["value"]
 assert deadman_timestamp > 0
 verified_at = datetime.fromisoformat(data["verifiedAt"].replace("Z", "+00:00"))
-assert verified_at.timestamp() - deadman_timestamp > data["externalAuthority"]["staleThresholdSeconds"]
+assert deadman_timestamp <= verified_at.timestamp()
 assert any(
     record["path"] == "websocket" and record["value"] == 0
     for record in data["mirroredSignals"]["entrypath_blackbox_probe_success"]
 )
-assert any(
-    record["flow"] == "login" and record["value"] == 0
-    for record in data["mirroredSignals"]["playerflow_canary_success"]
-)
-assert all(
-    record["value"] > 0
-    for record in data["mirroredSignals"]["playerflow_canary_last_run_timestamp_seconds"]
-)
-assert any(
-    record["alert"] == "PlayerFlowCanaryCommandFailed"
-    and record["exerciseResult"] == "failed"
-    for record in data["canaryAlerts"]
-)
-assert {
-    (record["alert"], record["severity"])
-    for record in data["canaryAlerts"]
-} == {
-    ("PlayerFlowCanaryLoginFailed", "P1"),
-    ("PlayerFlowCanaryCommandFailed", "P1"),
-    ("PlayerFlowCanaryLatencyHigh", "P1"),
-    ("PlayerFlowCanaryEvidenceStale", "P1"),
-}
+assert data["capabilities"]["playerFlowCanary"] == "omitted"
+assert not any(key.startswith("playerflow_canary_") for key in data["mirroredSignals"])
+assert "canaryAlerts" not in data
 PY
 
 python3 "$VALIDATOR" --allow-failure-evidence "$FAIL_EVIDENCE" \
@@ -1745,23 +2018,10 @@ from pathlib import Path
 
 data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 assert data["externalAuthority"]["profile"] == "independent-omitted"
-assert data["externalAuthority"]["detectionBudgetSeconds"] == 195
-assert data["mirroredSignals"]["playerflow_canary_freshness_budget_seconds"] == {
-    "profile": "independent-omitted",
-    "value": 195,
-}
-assert {
-    record["profile"]
-    for record in data["mirroredSignals"]["playerflow_canary_success"]
-} == {"independent-omitted"}
-assert {
-    record["profile"]
-    for record in data["mirroredSignals"]["playerflow_canary_latency_ms"]
-} == {"independent-omitted"}
-assert {
-    record["profile"]
-    for record in data["mirroredSignals"]["playerflow_canary_last_run_timestamp_seconds"]
-} == {"independent-omitted"}
+assert "detectionBudgetSeconds" not in data["externalAuthority"]
+assert data["capabilities"]["playerFlowCanary"] == "omitted"
+assert not any(key.startswith("playerflow_canary_") for key in data["mirroredSignals"])
+assert "canaryAlerts" not in data
 assert "entrypath_blackbox_probe_success" not in data["mirroredSignals"]
 assert "observability_deadman_heartbeat_timestamp_seconds" not in data["mirroredSignals"]
 PY
@@ -1777,7 +2037,7 @@ source["detectionBudgetSeconds"] = 179
 Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
 PY
 
-if run_smoke_runner \
+if ! run_smoke_runner \
   --simulate \
   --external-authority-evidence "$OMITTED_179_CANARY_AUTHORITY" \
   --prometheus-mirrors omitted \
@@ -1785,10 +2045,9 @@ if run_smoke_runner \
   --evidence-out "$TMP_DIR/omitted-179-canary-evidence.json" \
   --source "contract-test" \
   --canary-path websocket >"$TMP_DIR/omitted-179-canary.out" 2>&1; then
-  echo "runner unexpectedly accepted independent-omitted 179-second canary budget" >&2
+  echo "runner failed to downgrade independent-omitted canary to omitted" >&2
   exit 1
 fi
-grep -q "detectionBudgetSeconds must be at least 180 seconds" "$TMP_DIR/omitted-179-canary.out"
 
 MISSING_OMITTED_CANARY_BUDGET="$TMP_DIR/missing-omitted-canary-budget.json"
 python3 - "$OMITTED_CANARY_AUTHORITY_EVIDENCE" "$MISSING_OMITTED_CANARY_BUDGET" <<'PY'
@@ -1801,7 +2060,7 @@ del source["detectionBudgetSeconds"]
 Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
 PY
 
-if run_smoke_runner \
+if ! run_smoke_runner \
   --simulate \
   --external-authority-evidence "$MISSING_OMITTED_CANARY_BUDGET" \
   --prometheus-mirrors omitted \
@@ -1809,11 +2068,9 @@ if run_smoke_runner \
   --evidence-out "$TMP_DIR/missing-omitted-canary-budget-evidence.json" \
   --source "contract-test" \
   --canary-path websocket >"$TMP_DIR/missing-omitted-canary-budget.out" 2>&1; then
-  echo "runner unexpectedly accepted advertised canary without a freshness budget" >&2
+  echo "runner failed to downgrade canary without authority budget" >&2
   exit 1
 fi
-grep -q "must define a positive finite detectionBudgetSeconds for an advertised player-flow canary" \
-  "$TMP_DIR/missing-omitted-canary-budget.out"
 
 NO_OPTIONAL_EVIDENCE="$TMP_DIR/no-optional-evidence.json"
 run_smoke_runner \
@@ -1911,22 +2168,9 @@ assert data["externalAuthority"]["exposedPublicPlayerPaths"] == ["websocket"]
 assert data["externalAuthority"]["publicPathChecks"]["telnet"] == {
     "status": "not_applicable"
 }
-assert {
-    (record["flow"], record["path"])
-    for record in data["mirroredSignals"]["playerflow_canary_success"]
-} == {("login", "websocket"), ("command", "websocket")}
-assert {
-    record["path"]
-    for record in data["mirroredSignals"]["playerflow_canary_latency_ms"]
-} == {"websocket"}
-assert {
-    record["path"]
-    for record in data["mirroredSignals"]["playerflow_canary_last_run_timestamp_seconds"]
-} == {"websocket"}
-assert data["mirroredSignals"]["playerflow_canary_freshness_budget_seconds"] == {
-    "profile": "independent-required",
-    "value": 195,
-}
+assert data["capabilities"]["playerFlowCanary"] == "omitted"
+assert not any(key.startswith("playerflow_canary_") for key in data["mirroredSignals"])
+assert "canaryAlerts" not in data
 PY
 
 SYNTHESIZED_OMITTED_AUTHORITY_EVIDENCE="$TMP_DIR/synthesized-omitted-authority.json"
@@ -1969,6 +2213,211 @@ sys.modules[spec.name] = runner
 spec.loader.exec_module(runner)
 
 config = runner.SmokeConfig.from_env("contract-test", "websocket", None)
+config.username = "non-default@example.com"
+config.password = "non-default-password"
+config.player_flow_canary_identity = {
+    "authority": "account-service",
+    "classification": "synthetic",
+    "analyticsSloExclusion": True,
+    "credentials": {"nonDefault": True, "productionSafe": True},
+    "transportCharacters": {
+        "websocket": {"restricted": True, "isolated": True}
+    },
+    "evidenceRef": "account://contract-test/synthetic-canary",
+}
+config._validated_player_flow_canary_paths = frozenset({"websocket"})
+
+direct_steps = [
+    {"label": "LOGIN", "latencyMs": 10},
+    {"label": "LOOK", "latencyMs": 20},
+]
+
+def producer_results(player_flow_canary):
+    def websocket_config():
+        config = runner.SmokeConfig.from_env("contract-test", "websocket", None)
+        config.player_flow_canary = player_flow_canary
+        if player_flow_canary == "advertised":
+            config.username = "non-default@example.com"
+            config.password = "non-default-password"
+            config.player_flow_canary_identity = {
+                "authority": "account-service",
+                "classification": "synthetic",
+                "analyticsSloExclusion": True,
+                "credentials": {"nonDefault": True, "productionSafe": True},
+                "transportCharacters": {
+                    "websocket": {"restricted": True, "isolated": True}
+                },
+                "evidenceRef": "account://contract-test/synthetic-canary",
+            }
+            config._validated_player_flow_canary_paths = frozenset({"websocket"})
+        return config
+
+    def telnet_config():
+        config = runner.SmokeConfig.from_env("contract-test", "telnet", None)
+        config.player_flow_canary = player_flow_canary
+        if player_flow_canary == "advertised":
+            config.username = "non-default@example.com"
+            config.password = "non-default-password"
+            config.player_flow_canary_identity = {
+                "authority": "account-service",
+                "classification": "synthetic",
+                "analyticsSloExclusion": True,
+                "credentials": {"nonDefault": True, "productionSafe": True},
+                "transportCharacters": {
+                    "telnet": {"restricted": True, "isolated": True}
+                },
+                "evidenceRef": "account://contract-test/synthetic-canary",
+            }
+            config._validated_player_flow_canary_paths = frozenset({"telnet"})
+        return config
+
+    return [
+        runner.run_playerflow_canary(websocket_config(), {"login"}),
+        runner.run_playerflow_canaries(
+            websocket_config(), {"login"}, {"websocket"}, "independent-required"
+        ),
+        runner.failed_canary_records(websocket_config()),
+        runner.simulated_playerflow_canaries(
+            websocket_config(), {"login"}, {"websocket"}, "independent-required"
+        ),
+        runner.run_websocket_canary(websocket_config(), {"login"}),
+        runner.run_telnet_canary(telnet_config(), {"login"}),
+        runner.simulated_canary_records(websocket_config(), set()),
+        runner.canary_records_from_steps(websocket_config(), direct_steps),
+    ]
+
+
+def assert_producers_empty(player_flow_canary, verifier_available):
+    runner.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE = verifier_available
+    for result in producer_results(player_flow_canary):
+        assert all(not records for records in result), (player_flow_canary, result)
+
+
+def assert_producers_emit(player_flow_canary, verifier_available):
+    runner.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE = verifier_available
+    for result in producer_results(player_flow_canary):
+        assert all(records for records in result), (player_flow_canary, result)
+
+
+assert_producers_empty("advertised", False)
+assert_producers_empty("omitted", False)
+assert_producers_empty("omitted", True)
+assert_producers_emit("advertised", True)
+
+runner.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE = True
+for identity in (
+    None,
+    [],
+    True,
+    {"authority": "account-service"},
+    {
+        "authority": "account-service",
+        "classification": "synthetic",
+        "analyticsSloExclusion": True,
+        "credentials": {"nonDefault": True, "productionSafe": True},
+        "transportCharacters": {
+            "websocket": {"restricted": False, "isolated": True}
+        },
+        "evidenceRef": "account://contract-test/synthetic-canary",
+    },
+):
+    malformed = runner.SmokeConfig.from_env("contract-test", "websocket", None)
+    malformed.player_flow_canary = "advertised"
+    malformed.username = "non-default@example.com"
+    malformed.password = "non-default-password"
+    malformed._validated_player_flow_canary_paths = frozenset({"websocket"})
+    malformed.player_flow_canary_identity = identity
+    assert not runner.canary_producer_is_authorized(malformed)
+    assert not any(runner.simulated_canary_records(malformed, set()))
+
+valid = runner.SmokeConfig.from_env("contract-test", "websocket", None)
+valid.player_flow_canary = "advertised"
+valid.username = "non-default@example.com"
+valid.password = "non-default-password"
+valid.player_flow_canary_identity = {
+    "authority": "account-service",
+    "classification": "synthetic",
+    "analyticsSloExclusion": True,
+    "credentials": {"nonDefault": True, "productionSafe": True},
+    "transportCharacters": {
+        "websocket": {"restricted": True, "isolated": True}
+    },
+    "evidenceRef": "account://contract-test/synthetic-canary",
+}
+valid._validated_player_flow_canary_paths = frozenset({"websocket"})
+assert runner.canary_producer_is_authorized(valid)
+assert all(runner.simulated_canary_records(valid, set()))
+
+def assert_build_downgrades(config):
+    signals = {
+        "playerflow_canary_success": [{"value": 1}],
+        "playerflow_canary_latency_ms": [{"value": 1}],
+        "playerflow_canary_last_run_timestamp_seconds": [{"value": 1}],
+        "playerflow_canary_freshness_budget_seconds": {"value": 195},
+    }
+    evidence = runner.build_evidence(config, signals, {}, set())
+    assert evidence["capabilities"]["playerFlowCanary"] == "omitted"
+    assert "playerFlowCanaryIdentity" not in evidence
+    assert "canaryAlerts" not in evidence
+    assert not any(key.startswith("playerflow_canary_") for key in signals)
+
+for invalid_identity in (
+    None,
+    [],
+    True,
+    {"authority": "account-service"},
+    {
+        "authority": "account-service",
+        "classification": "synthetic",
+        "analyticsSloExclusion": True,
+        "credentials": {"nonDefault": True, "productionSafe": True},
+        "transportCharacters": {
+            "websocket": {"restricted": False, "isolated": True}
+        },
+        "evidenceRef": "account://contract-test/synthetic-canary",
+    },
+):
+    invalid = runner.copy.copy(valid)
+    invalid.player_flow_canary_identity = invalid_identity
+    assert_build_downgrades(invalid)
+
+producer_first_invalid = runner.copy.copy(valid)
+producer_first_invalid.player_flow_canary_identity = []
+assert not runner.canary_producer_is_authorized(producer_first_invalid)
+stale_signals = {
+    "playerflow_canary_success": [{"value": 1}],
+    "playerflow_canary_latency_ms": [{"value": 1}],
+    "playerflow_canary_last_run_timestamp_seconds": [{"value": 1}],
+    "playerflow_canary_freshness_budget_seconds": {"value": 195},
+}
+producer_first_evidence = runner.build_evidence(
+    producer_first_invalid, stale_signals, {}, set()
+)
+assert producer_first_invalid.player_flow_canary == "omitted"
+assert producer_first_evidence["capabilities"]["playerFlowCanary"] == "omitted"
+assert "playerFlowCanaryIdentity" not in producer_first_evidence
+assert "canaryAlerts" not in producer_first_evidence
+assert not stale_signals
+
+for invalid_path_state in (["websocket"], frozenset({"unknown"}), frozenset()):
+    invalid_paths = runner.copy.copy(valid)
+    invalid_paths._validated_player_flow_canary_paths = invalid_path_state
+    assert_build_downgrades(invalid_paths)
+
+selected_path_mismatch = runner.copy.copy(valid)
+selected_path_mismatch.canary_path = "telnet"
+assert_build_downgrades(selected_path_mismatch)
+
+valid_evidence = runner.build_evidence(
+    valid,
+    {"playerflow_canary_success": [{"value": 1}]},
+    {},
+    set(),
+)
+assert valid_evidence["capabilities"]["playerFlowCanary"] == "advertised"
+assert "playerFlowCanaryIdentity" in valid_evidence
+assert len(valid_evidence["canaryAlerts"]) == 4
+runner.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE = True
 
 def fail_canary(*args):
     raise runner.PlayerFlowProbeFailure("simulated live canary transport failure")
@@ -1982,6 +2431,7 @@ assert {record["flow"] for record in success} == {"login", "command"}
 assert all(record["value"] == 0 for record in success)
 assert latency[0]["value"] == 0
 assert {record["flow"] for record in last_run} == {"login", "command"}
+runner.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE = False
 
 
 def fail_entrypath(*args):

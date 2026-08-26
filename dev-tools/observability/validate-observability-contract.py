@@ -21,6 +21,17 @@ KIBANA_SAFE_LOG_INDEX_PATTERN = re.compile(
 
 ALLOWED_SEVERITIES = {"P0", "P1", "P2"}
 REQUIRED_ALERT_LABELS = {"service", "severity", "owner", "runbook"}
+SUPPORTED_RULE_ROOT_FIELDS = {
+    "alert",
+    "record",
+    "expr",
+    "for",
+    "keep_firing_for",
+    "query_offset",
+    "labels",
+    "annotations",
+}
+SUPPORTED_RULE_INLINE_FIELDS = SUPPORTED_RULE_ROOT_FIELDS - {"alert", "record"}
 SERVICE_OPTIONAL_ALERTS = {
     "PlayerFlowCanaryLoginFailed",
     "PlayerFlowCanaryCommandFailed",
@@ -375,13 +386,30 @@ def _is_sequence_item(line: str, indent: int | None = None) -> bool:
 
 def _parse_mapping_header(text: str) -> tuple[str, str] | None:
     match = re.match(
-        r"^(?P<key>[A-Za-z_][A-Za-z0-9_-]*|\"[^\"]+\"|'[^']+')\s*:\s*(?P<value>.*)$",
+        # A plain mapping value must be separated from ``:`` by a space. A
+        # bare ``key:`` remains valid for an empty/null value, while
+        # ``key:value`` and ``key:\tvalue`` are scalar/malformed YAML rather
+        # than mappings. Keep this aligned with the dependency-free parser's
+        # safe subset so it cannot silently reinterpret malformed input.
+        r"^(?P<key>[A-Za-z_][A-Za-z0-9_-]*|\"[^\"]+\"|'[^']+')[ \t]*:(?:(?P<spaces> +)(?P<value>.*)|(?P<empty>))$",
         _strip_yaml_comment(text).strip(),
     )
     if not match:
         return None
     key = match.group("key").strip("\"'")
-    return key, match.group("value").strip()
+    return key, (match.group("value") or "").strip()
+
+
+def _looks_like_mapping_header(text: str) -> bool:
+    """Recognize YAML mapping-key syntax the dependency-free parser cannot parse."""
+    content = _strip_yaml_comment(text).strip()
+    if not content or _parse_mapping_header(content) is not None:
+        return False
+    # Keep this deliberately broad: YAML permits numeric, flow, tagged, and
+    # otherwise non-identifier mapping keys. In a rule entry, an over-indented
+    # header outside labels/annotations is not a valid scalar continuation and
+    # must fail closed instead of being folded into the PromQL expression.
+    return re.match(r"^(?:[^\s#][^:]*|\[[^\]]*\]|\{.*\}|\?\s+.+):\s*", content) is not None
 
 
 def _parse_rule_name(value: str) -> tuple[str | None, bool]:
@@ -591,17 +619,7 @@ def _standalone_rule_mapping_entry(lines: list[str]) -> _RuleEntry | None:
         return _RuleEntry(lines=[lines[first_line]], key=None, name=None)
 
     root_indent = _leading_space_count(lines[first_line])
-    supported_root_fields = {
-        "alert",
-        "record",
-        "expr",
-        "for",
-        "keep_firing_for",
-        "query_offset",
-        "labels",
-        "annotations",
-    }
-    root_rule_fields = supported_root_fields | {"name"}
+    root_rule_fields = SUPPORTED_RULE_ROOT_FIELDS | {"name"}
     root_rule_mappings: list[tuple[int, str, str]] = []
     root_rule_like = False
     malformed_root_shape = False
@@ -639,7 +657,7 @@ def _standalone_rule_mapping_entry(lines: list[str]) -> _RuleEntry | None:
             continue
         if parsed and parsed[0] in {"alert", "record"}:
             root_rule_mappings.append((index, parsed[0], parsed[1]))
-        if parsed and parsed[0] not in supported_root_fields:
+        if parsed and parsed[0] not in SUPPORTED_RULE_ROOT_FIELDS:
             unsupported_root_mapping = True
         if parsed and parsed[0] in root_rule_fields:
             root_rule_like = True
@@ -683,10 +701,20 @@ def _rule_sequence_structure_findings(
     findings: list[_RuleEntry] = []
     section_end = rules_index + 1
     while section_end < len(lines):
-        if _meaningful_yaml_line(lines[section_end]) and _leading_space_count(
-            lines[section_end]
-        ) <= rules_indent:
-            break
+        if _meaningful_yaml_line(lines[section_end]):
+            current_indent = _leading_space_count(lines[section_end])
+            if current_indent < rules_indent:
+                break
+            # YAML permits an indentationless sequence directly under a
+            # mapping key (for example ``rules:\n- alert: ...``). Keep those
+            # same-indent sequence items in the section so malformed nested
+            # entries remain visible while the enclosing mapping boundary
+            # remains outside the section.
+            if current_indent == rules_indent and not (
+                current_indent == sequence_indent
+                and _is_sequence_item(lines[section_end], sequence_indent)
+            ):
+                break
         section_end += 1
 
     block_scalar_indent: int | None = None
@@ -747,16 +775,7 @@ def _rule_sequence_structure_findings(
             if _meaningful_yaml_line(line)
             and _parse_mapping_header(line) is not None
             and _parse_mapping_header(line)[0]
-            in {
-                "alert",
-                "record",
-                "expr",
-                "for",
-                "keep_firing_for",
-                "query_offset",
-                "labels",
-                "annotations",
-            }
+            in SUPPORTED_RULE_ROOT_FIELDS
             and _leading_space_count(line) > sequence_indent
         ]
         direct_indent = min(root_field_indents, default=None)
@@ -777,42 +796,20 @@ def _rule_sequence_structure_findings(
                 if nested_mapping_indent is not None and indent <= nested_mapping_indent:
                     nested_mapping_indent = None
                 if (
-                    direct_indent is not None
-                    and nested_mapping_indent is None
-                    and parsed[0]
-                    in {
-                        "alert",
-                        "record",
-                        "expr",
-                        "for",
-                        "keep_firing_for",
-                        "query_offset",
-                        "labels",
-                        "annotations",
-                    }
-                    and indent != direct_indent
-                ):
-                    findings.append(
-                        _RuleEntry(
-                            lines=[line],
-                            key=None,
-                            name=None,
-                            issue="inconsistent rule root-field indentation",
-                        )
+                    (
+                        direct_indent is not None
+                        and nested_mapping_indent is None
+                        and parsed[0]
+                        in SUPPORTED_RULE_ROOT_FIELDS
+                        and indent != direct_indent
                     )
-                elif (
-                    inline_mapping_indent is not None
-                    and nested_mapping_indent is None
-                    and parsed[0]
-                    in {
-                        "expr",
-                        "for",
-                        "keep_firing_for",
-                        "query_offset",
-                        "labels",
-                        "annotations",
-                    }
-                    and indent != inline_mapping_indent
+                    or (
+                        inline_mapping_indent is not None
+                        and nested_mapping_indent is None
+                        and parsed[0]
+                        in SUPPORTED_RULE_INLINE_FIELDS
+                        and indent != inline_mapping_indent
+                    )
                 ):
                     findings.append(
                         _RuleEntry(
@@ -828,6 +825,37 @@ def _rule_sequence_structure_findings(
                     and parsed[0] in {"labels", "annotations"}
                 ):
                     nested_mapping_indent = indent
+                elif (
+                    nested_mapping_indent is None
+                    and parsed[0] not in SUPPORTED_RULE_ROOT_FIELDS
+                ):
+                    findings.append(
+                        _RuleEntry(
+                            lines=[line],
+                            key=None,
+                            name=None,
+                            issue=(
+                                "unsupported rule mapping header outside labels/annotations"
+                            ),
+                        )
+                    )
+            elif (
+                parsed is None
+                and not _is_sequence_item(line)
+                and indent > sequence_indent
+                and nested_mapping_indent is None
+                and _looks_like_mapping_header(content)
+            ):
+                findings.append(
+                    _RuleEntry(
+                        lines=[line],
+                        key=None,
+                        name=None,
+                        issue=(
+                            "unsupported rule mapping header outside labels/annotations"
+                        ),
+                    )
+                )
             if re.search(
                 r":\s*[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?)?)?(?:\s+#.*)?$",
                 content,
@@ -862,7 +890,7 @@ def _scan_rule_entries(yaml_text: str) -> list[_RuleEntry]:
         )
         if (
             child is None
-            or _leading_space_count(lines[child]) <= rules_indent
+            or _leading_space_count(lines[child]) < rules_indent
             or not _is_sequence_item(lines[child])
         ):
             entries.append(_RuleEntry(lines=[line], key=None, name=None))
@@ -949,23 +977,23 @@ def _parse_labels(rule_lines: list[str]) -> dict[str, str]:
     if labels_indent is None:
         return {}
     for index, line in enumerate(rule_lines):
-        match = re.match(r"^(?P<indent>\s*)labels:\s*$", line)
-        if not match:
+        if _leading_space_count(line) != labels_indent:
             continue
-        if len(match.group("indent")) != labels_indent:
+        parsed_section = _parse_mapping_header(line)
+        if parsed_section is None or parsed_section[0] != "labels" or parsed_section[1]:
             continue
         labels: dict[str, str] = {}
         for next_line in rule_lines[index + 1 :]:
             if next_line.strip() == "":
                 continue
-            next_indent = len(next_line) - len(next_line.lstrip(" "))
+            next_indent = _leading_space_count(next_line)
             if next_indent <= labels_indent:
                 break
-            kv_match = re.match(r"^\s*(?P<key>[A-Za-z0-9_]+):\s*(?P<value>.+?)\s*$", next_line)
-            if not kv_match:
+            parsed = _parse_mapping_header(next_line)
+            if parsed is None or not parsed[1]:
                 continue
-            key = kv_match.group("key")
-            value, unsupported = _parse_rule_name(kv_match.group("value"))
+            key, raw_value = parsed
+            value, unsupported = _parse_rule_name(raw_value)
             labels[key] = "" if unsupported or value is None else value
         return labels
     return {}
@@ -1067,7 +1095,7 @@ def _duplicate_group_rules_keys(lines: list[str]) -> list[_RuleEntry]:
             ),
             None,
         )
-        if first_item is None or _leading_space_count(lines[first_item]) <= groups_indent:
+        if first_item is None or _leading_space_count(lines[first_item]) < groups_indent:
             continue
         if not _is_sequence_item(lines[first_item]):
             continue
@@ -1241,13 +1269,13 @@ def _parse_expr(rule_lines: list[str]) -> str | None:
     if expr_mapping_indent is None:
         return None
     for index, line in enumerate(rule_lines):
-        match = re.match(r"^(?P<indent>\s*)expr:\s*(?P<rest>.*)$", line)
-        if not match:
+        if _leading_space_count(line) != expr_mapping_indent:
             continue
-        expr_indent = len(match.group("indent"))
-        if expr_indent != expr_mapping_indent:
+        parsed = _parse_mapping_header(line)
+        if parsed is None or parsed[0] != "expr":
             continue
-        raw_scalar = match.group("rest").strip()
+        expr_indent = _leading_space_count(line)
+        raw_scalar = parsed[1]
         scalar = _strip_yaml_comment(raw_scalar).strip()
         is_block_scalar = (
             re.fullmatch(
@@ -1455,7 +1483,6 @@ def _check_ms_thresholds(expr: str) -> str | None:
     clause_ends.append(len(expr))
 
     for clause_start, clause_end in zip(clause_starts, clause_ends, strict=True):
-        clause = expr[clause_start:clause_end]
         clause_code = code_expr[clause_start:clause_end]
         if not re.search(r"_ms(?:_|\b)", clause_code):
             continue

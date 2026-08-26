@@ -10,7 +10,7 @@ Validation and runtime-proof selection for changes to this runbook follows the s
 
 The recovery-convergence recording family (`recovery_participant_convergence_blocked`, `recovery_environment_convergence_blocked`, `recovery_participant_convergence_coverage_missing`, and `recovery_participant_convergence_source_missing`) remains target state and is not currently implemented or proved. The durable recovery controller and exporter needed to produce those recordings are not yet available; until they are implemented and proved, their absence is `unknown` and operators must follow the owning recovery-evidence path. The Alertmanager diagnostics procedure below defines how to consume the recordings once that capability is available.
 
-Profile-aware asynchronous log-queryability emit-and-query automation is also target state and is not currently implemented. The current evidence validator checks only the shape and chronology of supplied retained evidence; it does not emit, retrieve, or independently prove a recovery smoke record through an indexed or reduced query path. Operators must not treat the recovery procedure below as evidence that this runtime capability is currently executable or claim current queryability execution without separately implemented and proved automation.
+Profile-aware asynchronous log-queryability emit-and-query automation is also target state and is not currently implemented. The current evidence validator checks structural, field, and chronology constraints of supplied retained evidence; it does not emit, retrieve, or independently prove a recovery smoke record through an indexed or reduced query path. Operators must not treat the recovery procedure below as evidence that this runtime capability is currently executable or claim current queryability execution without separately implemented and proved automation.
 
 ## Objectives
 
@@ -142,6 +142,8 @@ Apply this section when the selected profile advertises indexed-log observabilit
 - Loss of the indexed query path removes its trace-to-log correlation and log-based drilldown, but does not by itself make a separately healthy tracing path unreliable. Continue using the profile's supported trace query path when healthy; pivot to metrics/health endpoints only when tracing is also unavailable or insufficient for the incident.
 
 ### Recovery and verification
+
+Implementation status: Steps 3–5 below are target-state-only and are not currently executable recovery automation. Current tooling does not emit and retrieve a new recovery record through the selected operator query path or independently prove its queryability; the evidence validator checks structural, field, and chronology constraints of a supplied retained object. Do not treat a manually emitted record, an existing log, or these instructions alone as recovery proof. Until this automation and its focused proof exist, keep the applicable queryability claim closed.
 
 1. Restore the selected backend and query-path health. For the default indexed profile, restore Elasticsearch cluster health and Kibana access. For a reduced profile, restore its declared console/journal retention and operator-access path without introducing an indexed dependency.
 2. Verify recent logs appear for a known active service as diagnostic evidence only; existing records do not replace fresh end-to-end recovery proof.

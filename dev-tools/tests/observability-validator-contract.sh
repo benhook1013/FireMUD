@@ -759,6 +759,14 @@ def mutate_alert_rule(text, alert_name, old, new):
     return text[: rule_match.start("body")] + updated_body + text[rule_match.end("body") :]
 
 
+def replace_once(text, old, new):
+    if text.count(old) != 1:
+        raise AssertionError(
+            f"fixture replacement target must occur exactly once: {old!r}"
+        )
+    return text.replace(old, new, 1)
+
+
 def add_alert_scalar(text, alert_name, field, value):
     rule_match = re.search(
         rf"(?ms)^[ \t]*- alert: {re.escape(alert_name)}\n"
@@ -1559,10 +1567,540 @@ if findings_for(
 ):
     raise AssertionError("valid minimal alert rule was rejected")
 
-nested_expr_rule = minimal_alert_rule.replace(
+quoted_conventional_alert_rule = replace_once(
+    minimal_alert_rule,
+    "        labels:\n",
+    "        'labels':\n",
+)
+quoted_conventional_alert_rule = replace_once(
+    quoted_conventional_alert_rule,
+    "          service: postgres-backup\n",
+    "          'service': postgres-backup\n",
+)
+quoted_conventional_alert_rule = replace_once(
+    quoted_conventional_alert_rule,
+    "          severity: P1\n",
+    "          \"severity\": P1\n",
+)
+quoted_conventional_alert_rule = replace_once(
+    quoted_conventional_alert_rule,
+    "          owner: infra\n",
+    "          'owner': infra\n",
+)
+quoted_conventional_alert_rule = replace_once(
+    quoted_conventional_alert_rule,
+    "          runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary\n",
+    "          \"runbook\": design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary\n"
+    "        \"annotations\":\n"
+    "          'summary': retained\n",
+)
+require_pyyaml_acceptance(
+    quoted_conventional_alert_rule,
+    "valid conventional Prometheus rule with quoted metadata keys",
+)
+if findings_for(
+    quoted_conventional_alert_rule,
+    lambda path: validator._validate_reference_prometheus_rules(
+        path, {"BackupPipelineNoRecentBackup"}
+    ),
+):
+    raise AssertionError(
+        "valid conventional quoted metadata keys were rejected"
+    )
+
+quoted_conventional_expr_rule = replace_once(
+    quoted_conventional_alert_rule,
+    "        expr: backup_pipeline_recent_backup_slo_breached > 0\n",
+    '        "expr": backup_pipeline_recent_backup_slo_breached > 0\n',
+)
+require_pyyaml_acceptance(
+    quoted_conventional_expr_rule,
+    "valid conventional Prometheus rule with a quoted expr key",
+)
+if findings_for(
+    quoted_conventional_expr_rule,
+    lambda path: validator._validate_reference_prometheus_rules(
+        path, {"BackupPipelineNoRecentBackup"}
+    ),
+):
+    raise AssertionError("valid conventional quoted expr key was rejected")
+
+for malformed_separator, expected_message in (
+    (
+        "      - alert:BackupPipelineNoRecentBackup\n",
+        "unrecognized alert rule sequence entry; the dependency-free validator cannot safely inspect this YAML shape",
+    ),
+    (
+        "      - alert:\tBackupPipelineNoRecentBackup\n",
+        "unrecognized alert rule sequence entry; the dependency-free validator cannot safely inspect this YAML shape",
+    ),
+    (
+        "        expr:backup_pipeline_recent_backup_slo_breached > 0\n",
+        "unsupported rule mapping header outside labels/annotations; the dependency-free validator cannot safely inspect this YAML shape",
+    ),
+    (
+        "        expr:\tbackup_pipeline_recent_backup_slo_breached > 0\n",
+        "unsupported rule mapping header outside labels/annotations; the dependency-free validator cannot safely inspect this YAML shape",
+    ),
+):
+    malformed_separator_rule = replace_once(
+        minimal_alert_rule,
+        (
+            "      - alert: BackupPipelineNoRecentBackup\n"
+            if "alert:" in malformed_separator
+            else "        expr: backup_pipeline_recent_backup_slo_breached > 0\n"
+        ),
+        malformed_separator,
+    )
+    require_pyyaml_rejection(
+        malformed_separator_rule,
+        f"malformed mapping separator {malformed_separator.strip()!r}",
+    )
+    require_message(
+        findings_for(
+            malformed_separator_rule,
+            lambda path: validator._validate_reference_prometheus_rules(
+                path, {"BackupPipelineNoRecentBackup"}
+            ),
+        ),
+        expected_message,
+    )
+
+for mutation, expected in (
+    (
+        lambda text: replace_once(
+            text,
+            "          \"severity\": P1\n",
+            "          \"severity\": P1\n          severity: P1\n",
+        ),
+        "duplicate rule mapping keys are unsupported: labels.severity; the dependency-free validator cannot safely inspect this YAML shape",
+    ),
+    (
+        lambda text: replace_once(
+            text,
+            "        'labels':\n",
+            "        labels:\n        'labels':\n",
+        ),
+        "duplicate rule mapping keys are unsupported: labels; the dependency-free validator cannot safely inspect this YAML shape",
+    ),
+    (
+        lambda text: replace_once(
+            text,
+            "        \"annotations\":\n",
+            "        annotations:\n        \"annotations\":\n",
+        ),
+        "duplicate rule mapping keys are unsupported: annotations; the dependency-free validator cannot safely inspect this YAML shape",
+    ),
+):
+    mutated = mutation(quoted_conventional_alert_rule)
+    require_message(
+        findings_for(
+            mutated,
+            lambda path: validator._validate_reference_prometheus_rules(
+                path, {"BackupPipelineNoRecentBackup"}
+            ),
+        ),
+        expected,
+    )
+
+duplicate_conventional_expr = replace_once(
+    quoted_conventional_expr_rule,
+    '        "expr": backup_pipeline_recent_backup_slo_breached > 0\n',
+    '        "expr": backup_pipeline_recent_backup_slo_breached > 0\n'
+    "        expr: vector(1)\n",
+)
+require_message(
+    findings_for(
+        duplicate_conventional_expr,
+        lambda path: validator._validate_reference_prometheus_rules(
+            path, {"BackupPipelineNoRecentBackup"}
+        ),
+    ),
+    "duplicate rule mapping keys are unsupported: expr; the dependency-free validator cannot safely inspect this YAML shape",
+)
+
+malformed_quoted_label_key = replace_once(
+    quoted_conventional_alert_rule,
+    "          'service': postgres-backup\n",
+    "          'service: postgres-backup\n",
+)
+require_pyyaml_rejection(
+    malformed_quoted_label_key,
+    "malformed quoted required label key",
+)
+require_message(
+    findings_for(
+        malformed_quoted_label_key,
+        lambda path: validator._validate_reference_prometheus_rules(
+            path, {"BackupPipelineNoRecentBackup"}
+        ),
+    ),
+    "BackupPipelineNoRecentBackup is missing required labels: service",
+)
+
+malformed_nested_mapping = replace_once(
+    minimal_alert_rule,
+    "        expr: backup_pipeline_recent_backup_slo_breached > 0\n",
+    "        expr: backup_pipeline_recent_backup_slo_breached > 0\n"
+    "          bogus: true\n",
+)
+require_pyyaml_rejection(
+    malformed_nested_mapping,
+    "an over-indented unknown mapping header beneath a scalar expression",
+)
+require_message(
+    findings_for(
+        malformed_nested_mapping,
+        lambda path: validator._validate_reference_prometheus_rules(
+            path, {"BackupPipelineNoRecentBackup"}
+        ),
+    ),
+    "unsupported rule mapping header outside labels/annotations; the dependency-free validator cannot safely inspect this YAML shape",
+)
+
+for malformed_header in (
+    "123: true",
+    "[bogus]: true",
+    "{bogus: true}",
+):
+    malformed_nonstandard_mapping = replace_once(
+        minimal_alert_rule,
+        "        expr: backup_pipeline_recent_backup_slo_breached > 0\n",
+        "        expr: backup_pipeline_recent_backup_slo_breached > 0\n"
+        f"          {malformed_header}\n",
+    )
+    require_pyyaml_rejection(
+        malformed_nonstandard_mapping,
+        f"an over-indented nonstandard mapping header {malformed_header!r} beneath a scalar expression",
+    )
+    require_message(
+        findings_for(
+            malformed_nonstandard_mapping,
+            lambda path: validator._validate_reference_prometheus_rules(
+                path, {"BackupPipelineNoRecentBackup"}
+            ),
+        ),
+        "unsupported rule mapping header outside labels/annotations; the dependency-free validator cannot safely inspect this YAML shape",
+    )
+
+valid_nested_metadata = replace_once(
+    minimal_alert_rule,
+    "          runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary\n",
+    "          runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary\n"
+    "          \"custom-label\": retained\n"
+    "        annotations:\n"
+    "          'custom.annotation': retained\n",
+)
+if findings_for(
+    valid_nested_metadata,
+    lambda path: validator._validate_reference_prometheus_rules(
+        path, {"BackupPipelineNoRecentBackup"}
+    ),
+):
+    raise AssertionError(
+        "valid arbitrary labels/annotations mapping entries were rejected"
+    )
+
+valid_block_scalar_mapping_like_content = replace_once(
+    minimal_alert_rule,
+    "        expr: backup_pipeline_recent_backup_slo_breached > 0\n",
+    "        expr: |-\n"
+    "          backup_pipeline_recent_backup_slo_breached > 0\n"
+    "          123: true\n"
+    "          [bogus]: true\n"
+    "          {bogus: true}\n",
+)
+require_pyyaml_acceptance(
+    valid_block_scalar_mapping_like_content,
+    "mapping-like content inside a valid expression block scalar",
+)
+if findings_for(
+    valid_block_scalar_mapping_like_content,
+    lambda path: validator._validate_reference_prometheus_rules(
+        path, {"BackupPipelineNoRecentBackup"}
+    ),
+):
+    raise AssertionError("valid mapping-like block-scalar content was rejected")
+
+indentless_sequence_alert_rule = """groups:
+- name: parser-contract
+  rules:
+  - alert: BackupPipelineNoRecentBackup
+    expr: backup_pipeline_recent_backup_slo_breached > 0
+    labels:
+      service: postgres-backup
+      severity: P1
+      owner: infra
+      runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary
+"""
+require_pyyaml_acceptance(
+    indentless_sequence_alert_rule,
+    "valid indentless Prometheus rule sequence",
+)
+if findings_for(
+    indentless_sequence_alert_rule,
+    lambda path: validator._validate_reference_prometheus_rules(
+        path, {"BackupPipelineNoRecentBackup"}
+    ),
+):
+    raise AssertionError("valid indentless Prometheus rule sequence was rejected")
+
+quoted_indentless_alert_rule = (
+    replace_once(
+        indentless_sequence_alert_rule,
+        "    labels:\n",
+        "    'labels':\n",
+    )
+)
+quoted_indentless_alert_rule = replace_once(
+    quoted_indentless_alert_rule,
+    "      service: postgres-backup\n",
+    "      'service': postgres-backup\n",
+)
+quoted_indentless_alert_rule = replace_once(
+    quoted_indentless_alert_rule,
+    "      severity: P1\n",
+    "      \"severity\": P1\n",
+)
+quoted_indentless_alert_rule = replace_once(
+    quoted_indentless_alert_rule,
+    "      owner: infra\n",
+    "      'owner': infra\n",
+)
+quoted_indentless_alert_rule = replace_once(
+    quoted_indentless_alert_rule,
+    "      runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary\n",
+    "      \"runbook\": design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary\n"
+    "    \"annotations\":\n"
+    "      'summary': retained\n",
+)
+require_pyyaml_acceptance(
+    quoted_indentless_alert_rule,
+    "valid indentless Prometheus rule with quoted metadata keys",
+)
+if findings_for(
+    quoted_indentless_alert_rule,
+    lambda path: validator._validate_reference_prometheus_rules(
+        path, {"BackupPipelineNoRecentBackup"}
+    ),
+):
+    raise AssertionError("valid indentless quoted metadata keys were rejected")
+
+quoted_indentless_expr_rule = replace_once(
+    quoted_indentless_alert_rule,
+    "    expr: backup_pipeline_recent_backup_slo_breached > 0\n",
+    '    "expr": backup_pipeline_recent_backup_slo_breached > 0\n',
+)
+require_pyyaml_acceptance(
+    quoted_indentless_expr_rule,
+    "valid indentless Prometheus rule with a quoted expr key",
+)
+if findings_for(
+    quoted_indentless_expr_rule,
+    lambda path: validator._validate_reference_prometheus_rules(
+        path, {"BackupPipelineNoRecentBackup"}
+    ),
+):
+    raise AssertionError("valid indentless quoted expr key was rejected")
+
+for mutation, expected in (
+    (
+        lambda text: replace_once(
+            text,
+            "      \"severity\": P1\n",
+            "      \"severity\": P1\n      severity: P1\n",
+        ),
+        "duplicate rule mapping keys are unsupported: labels.severity; the dependency-free validator cannot safely inspect this YAML shape",
+    ),
+    (
+        lambda text: replace_once(
+            text,
+            "    'labels':\n",
+            "    labels:\n    'labels':\n",
+        ),
+        "duplicate rule mapping keys are unsupported: labels; the dependency-free validator cannot safely inspect this YAML shape",
+    ),
+    (
+        lambda text: replace_once(
+            text,
+            "    \"annotations\":\n",
+            "    annotations:\n    \"annotations\":\n",
+        ),
+        "duplicate rule mapping keys are unsupported: annotations; the dependency-free validator cannot safely inspect this YAML shape",
+    ),
+):
+    mutated = mutation(quoted_indentless_alert_rule)
+    require_message(
+        findings_for(
+            mutated,
+            lambda path: validator._validate_reference_prometheus_rules(
+                path, {"BackupPipelineNoRecentBackup"}
+            ),
+        ),
+        expected,
+    )
+
+duplicate_indentless_expr = replace_once(
+    quoted_indentless_expr_rule,
+    '    "expr": backup_pipeline_recent_backup_slo_breached > 0\n',
+    '    "expr": backup_pipeline_recent_backup_slo_breached > 0\n'
+    "    expr: vector(1)\n",
+)
+require_message(
+    findings_for(
+        duplicate_indentless_expr,
+        lambda path: validator._validate_reference_prometheus_rules(
+            path, {"BackupPipelineNoRecentBackup"}
+        ),
+    ),
+    "duplicate rule mapping keys are unsupported: expr; the dependency-free validator cannot safely inspect this YAML shape",
+)
+
+malformed_indentless_quoted_label_key = replace_once(
+    quoted_indentless_alert_rule,
+    "      'service': postgres-backup\n",
+    "      'service: postgres-backup\n",
+)
+require_pyyaml_rejection(
+    malformed_indentless_quoted_label_key,
+    "malformed quoted required label key in an indentless rule",
+)
+require_message(
+    findings_for(
+        malformed_indentless_quoted_label_key,
+        lambda path: validator._validate_reference_prometheus_rules(
+            path, {"BackupPipelineNoRecentBackup"}
+        ),
+    ),
+    "BackupPipelineNoRecentBackup is missing required labels: service",
+)
+
+for malformed_header in (
+    "123: true",
+    "[bogus]: true",
+    "{bogus: true}",
+):
+    malformed_indentless_mapping = replace_once(
+        indentless_sequence_alert_rule,
+        "    expr: backup_pipeline_recent_backup_slo_breached > 0\n",
+        "    expr: backup_pipeline_recent_backup_slo_breached > 0\n"
+        f"      {malformed_header}\n",
+    )
+    require_pyyaml_rejection(
+        malformed_indentless_mapping,
+        f"an over-indented nonstandard mapping header {malformed_header!r} in an indentless rule",
+    )
+    require_message(
+        findings_for(
+            malformed_indentless_mapping,
+            lambda path: validator._validate_reference_prometheus_rules(
+                path, {"BackupPipelineNoRecentBackup"}
+            ),
+        ),
+        "unsupported rule mapping header outside labels/annotations; the dependency-free validator cannot safely inspect this YAML shape",
+    )
+
+valid_indentless_block_scalar_mapping_like_content = replace_once(
+    indentless_sequence_alert_rule,
+    "    expr: backup_pipeline_recent_backup_slo_breached > 0\n",
+    "    expr: |-\n"
+    "      backup_pipeline_recent_backup_slo_breached > 0\n"
+    "      123: true\n"
+    "      [bogus]: true\n"
+    "      {bogus: true}\n",
+)
+require_pyyaml_acceptance(
+    valid_indentless_block_scalar_mapping_like_content,
+    "mapping-like content inside an indentless expression block scalar",
+)
+if findings_for(
+    valid_indentless_block_scalar_mapping_like_content,
+    lambda path: validator._validate_reference_prometheus_rules(
+        path, {"BackupPipelineNoRecentBackup"}
+    ),
+):
+    raise AssertionError("valid indentless mapping-like block-scalar content was rejected")
+
+indentless_sequence_multiple_rules = indentless_sequence_alert_rule + """  - alert: BackupPipelineNoRecentVerification
+    expr: backup_pipeline_recent_verification_slo_breached > 0
+    labels:
+      service: postgres-backup
+      severity: P1
+      owner: infra
+      runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary
+"""
+require_pyyaml_acceptance(
+    indentless_sequence_multiple_rules,
+    "valid multiple-rule indentless Prometheus sequence",
+)
+if findings_for(
+    indentless_sequence_multiple_rules,
+    lambda path: validator._validate_reference_prometheus_rules(
+        path,
+        {"BackupPipelineNoRecentBackup"},
+    ),
+):
+    raise AssertionError(
+        "valid multiple-rule indentless Prometheus sequence was rejected"
+    )
+
+indentless_nested_sequence_rule = replace_once(
+    indentless_sequence_alert_rule,
+    "    labels:\n",
+    "    - alert: NestedRule\n      expr: vector(1)\n    labels:\n",
+)
+require_pyyaml_rejection(
+    indentless_nested_sequence_rule,
+    "nested sequence inside an indentless Prometheus rule entry",
+)
+require_message(
+    findings_for(
+        indentless_nested_sequence_rule,
+        lambda path: validator._validate_reference_prometheus_rules(
+            path, {"BackupPipelineNoRecentBackup"}
+        ),
+    ),
+    "inconsistent or nested rule sequence indentation; the dependency-free validator cannot safely inspect this YAML shape",
+)
+
+indentless_duplicate_expr_rule = replace_once(
+    indentless_sequence_alert_rule,
+    "    labels:\n",
+    "    expr: vector(1)\n    labels:\n",
+)
+require_message(
+    findings_for(
+        indentless_duplicate_expr_rule,
+        lambda path: validator._validate_reference_prometheus_rules(
+            path, {"BackupPipelineNoRecentBackup"}
+        ),
+    ),
+    "duplicate rule mapping keys are unsupported: expr; the dependency-free validator cannot safely inspect this YAML shape",
+)
+
+indentless_duplicate_group_rules = indentless_sequence_alert_rule + """  rules:
+  - alert: DuplicateGroupRule
+    expr: vector(1)
+    labels:
+      service: postgres-backup
+      severity: P1
+      owner: infra
+      runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary
+"""
+require_message(
+    findings_for(
+        indentless_duplicate_group_rules,
+        lambda path: validator._validate_reference_prometheus_rules(
+            path, {"BackupPipelineNoRecentBackup"}
+        ),
+    ),
+    "duplicate group mapping keys are unsupported: rules; the dependency-free validator cannot safely inspect this YAML shape",
+)
+
+nested_expr_rule = replace_once(
+    minimal_alert_rule,
     "        expr: backup_pipeline_recent_backup_slo_breached > 0\n",
     "        annotations:\n          expr: backup_pipeline_recent_backup_slo_breached > 0\n",
-    1,
 )
 require_message(
     findings_for(
@@ -1574,10 +2112,10 @@ require_message(
     "BackupPipelineNoRecentBackup is missing expr",
 )
 
-nested_labels_rule = minimal_alert_rule.replace(
+nested_labels_rule = replace_once(
+    minimal_alert_rule,
     "        labels:\n          service: postgres-backup\n          severity: P1\n          owner: infra\n          runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary\n",
     "        annotations:\n          labels:\n            service: postgres-backup\n            severity: P1\n            owner: infra\n            runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary\n",
-    1,
 )
 require_message(
     findings_for(
@@ -1589,10 +2127,10 @@ require_message(
     "BackupPipelineNoRecentBackup is missing required labels: owner, runbook, service, severity",
 )
 
-duplicate_labels_rule = minimal_alert_rule.replace(
+duplicate_labels_rule = replace_once(
+    minimal_alert_rule,
     "        labels:\n          service: postgres-backup\n          severity: P1\n          owner: infra\n          runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary\n",
     "        labels:\n          service: postgres-backup\n          severity: P1\n          owner: infra\n          runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary\n        labels:\n          service: postgres-backup\n          severity: P1\n          owner: bogus\n          runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary\n",
-    1,
 )
 require_message(
     findings_for(
@@ -1604,10 +2142,10 @@ require_message(
     "duplicate rule mapping keys are unsupported: labels; the dependency-free validator cannot safely inspect this YAML shape",
 )
 
-duplicate_expr_rule = minimal_alert_rule.replace(
+duplicate_expr_rule = replace_once(
+    minimal_alert_rule,
     "        expr: backup_pipeline_recent_backup_slo_breached > 0\n",
     "        expr: backup_pipeline_recent_backup_slo_breached > 0\n        expr: vector(1)\n",
-    1,
 )
 require_message(
     findings_for(
@@ -1619,10 +2157,10 @@ require_message(
     "duplicate rule mapping keys are unsupported: expr; the dependency-free validator cannot safely inspect this YAML shape",
 )
 
-duplicate_nested_label_rule = minimal_alert_rule.replace(
+duplicate_nested_label_rule = replace_once(
+    minimal_alert_rule,
     "          severity: P1\n",
     "          severity: P3\n          severity: P1\n",
-    1,
 )
 require_message(
     findings_for(
@@ -1653,10 +2191,10 @@ require_message(
     "duplicate group mapping keys are unsupported: rules; the dependency-free validator cannot safely inspect this YAML shape",
 )
 
-same_nested_keys_in_separate_mappings = minimal_alert_rule.replace(
+same_nested_keys_in_separate_mappings = replace_once(
+    minimal_alert_rule,
     "        labels:\n",
     "        annotations:\n          service: documentation-only\n        labels:\n",
-    1,
 )
 if findings_for(
     same_nested_keys_in_separate_mappings,
@@ -1672,10 +2210,10 @@ for scalar_variant in (
     '        expr: "backup_pipeline_recent_backup_slo_breached > 0"\n',
     "        expr: backup_pipeline_recent_backup_slo_breached > 0 # canonical\n",
 ):
-    scalar_rule = minimal_alert_rule.replace(
+    scalar_rule = replace_once(
+        minimal_alert_rule,
         "        expr: backup_pipeline_recent_backup_slo_breached > 0\n",
         scalar_variant,
-        1,
     )
     if findings_for(
         scalar_rule,

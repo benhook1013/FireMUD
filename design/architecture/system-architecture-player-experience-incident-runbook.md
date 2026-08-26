@@ -225,7 +225,8 @@ Trace-driven triage is optional but often decisive for command-latency incidents
      - Treat as a broader edge/Gateway or downstream capacity incident; cross-check login SLI, Redis tail-loss, and tick health.
 2. **Mitigate**
    - For cap- or abuse-driven `policy_rejection` identified by its bounded diagnostic reason or protected logs:
-     - Adjust caps (`TCP_PROXY_MAX_CONNECTIONS`, `TCP_PROXY_MAX_CONNECTIONS_PER_IP`) only if dashboards indicate normal load is being rejected rather than abusive traffic.
+     - For `path="telnet"`, adjust caps (`TCP_PROXY_MAX_CONNECTIONS`, `TCP_PROXY_MAX_CONNECTIONS_PER_IP`) only when TCP Proxy cap metrics confirm cap pressure and bounded diagnostic or protected traffic evidence corroborates that legitimate load, rather than abusive traffic, is being rejected.
+     - For `path="websocket"`, use the existing WebSocket/Gateway control and upgrade-failure path; do not change TCP Proxy caps.
      - Consider rate-limiting or blocking abusive sources using documented edge controls.
    - For `server_failure` identified by an upstream-unreachable or timeout diagnostic reason:
      - Scale or roll back Gateway/TCP Proxy if a recent change correlates with the incident.

@@ -37,3 +37,8 @@ operatorCredentials:
   bindingRef: cert-manager://firemud/production-operator-client
 serviceDiscovery:
   mode: kubernetes-dns-default
+observability:
+  logPipelineQueryability:
+    selectedProfile: production
+    capability: indexed-log-observability
+    evidenceFreshnessBudgetSeconds: 7200

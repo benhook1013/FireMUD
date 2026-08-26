@@ -3,6 +3,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 VALIDATOR="$ROOT_DIR/dev-tools/observability/validate-player-experience-smoke-evidence.py"
+# All fixtures use this trusted evaluation instant; production invocations
+# default to current UTC when the seam is not supplied.
+export FIREMUD_SMOKE_EVALUATION_TIME="2026-03-19T10:55:00Z"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
@@ -43,6 +46,17 @@ cat >"$VALID_EVIDENCE" <<'JSON'
     "evidenceExpiresAt": "2026-03-19T12:55:00Z",
     "evidenceRef": "query-proof://staging/log-smoke-11111111-2222-4333-8444-555555555555",
     "verifiedFields": ["recordId", "service", "traceId"]
+  },
+  "playerFlowCanaryIdentity": {
+    "authority": "account-service",
+    "classification": "synthetic",
+    "analyticsSloExclusion": true,
+    "credentials": {"nonDefault": true, "productionSafe": true},
+    "transportCharacters": {
+      "websocket": {"restricted": true, "isolated": true},
+      "telnet": {"restricted": true, "isolated": true}
+    },
+    "evidenceRef": "account://contract-test/synthetic-canary"
   },
   "capabilities": {
     "prometheusMirrors": "published",
@@ -107,10 +121,97 @@ cat >"$VALID_EVIDENCE" <<'JSON'
 }
 JSON
 
-python3 "$VALIDATOR" "$VALID_EVIDENCE" >"$TMP_DIR/valid.out"
+# Advertised canaries remain a target-state shape until an authoritative
+# Account-owned verifier is shipped. Keep a separate current-posture fixture.
+OMITTED_VALID_EVIDENCE="$TMP_DIR/omitted-valid-evidence.json"
+python3 - "$VALID_EVIDENCE" "$OMITTED_VALID_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+data = json.loads(path.read_text(encoding="utf-8"))
+data["capabilities"]["playerFlowCanary"] = "omitted"
+data.pop("playerFlowCanaryIdentity", None)
+for key in (
+    "playerflow_canary_success",
+    "playerflow_canary_latency_ms",
+    "playerflow_canary_last_run_timestamp_seconds",
+    "playerflow_canary_freshness_budget_seconds",
+):
+    data["mirroredSignals"].pop(key, None)
+data.pop("canaryAlerts", None)
+Path(sys.argv[2]).write_text(json.dumps(data), encoding="utf-8")
+PY
+
+python3 "$VALIDATOR" "$OMITTED_VALID_EVIDENCE" >"$TMP_DIR/valid.out"
+
+# Every enum-like value comes from retained JSON. Malformed JSON values must
+# produce ordinary findings rather than leaking an unhashable-value TypeError
+# from set/frozenset membership checks.
+python3 - "$OMITTED_VALID_EVIDENCE" "$VALID_EVIDENCE" "$ROOT_DIR" <<'PY'
+import copy
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+omitted_path, advertised_path, root = map(Path, sys.argv[1:])
+validator_path = root / "dev-tools/observability/validate-player-experience-smoke-evidence.py"
+spec = importlib.util.spec_from_file_location("smoke_evidence_validator", validator_path)
+validator = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(validator)
+
+cases = [
+    (omitted_path, "executionMode", ["live"], "executionMode must be live or simulated"),
+    (omitted_path, "externalAuthorityProvenance", {"value": "synthetic"}, "externalAuthorityProvenance must be retained-external or synthetic"),
+    (omitted_path, ("capabilities", "prometheusMirrors"), ["published"], "capabilities.prometheusMirrors must be one of"),
+    (omitted_path, ("capabilities", "playerFlowCanary"), {"value": "omitted"}, "capabilities.playerFlowCanary must be one of"),
+    (omitted_path, ("externalAuthority", "profile"), ["independent-omitted"], "externalAuthority.profile must be independent-required or independent-omitted"),
+    (omitted_path, ("externalAuthority", "deadmanAuthority", "status"), {"value": "green"}, "externalAuthority.deadmanAuthority.status must be green or red"),
+    (advertised_path, ("mirroredSignals", "playerflow_canary_success", 0, "flow"), {"value": "login"}, "playerflow_canary_success contains unsupported flow"),
+    (advertised_path, ("canaryAlerts", 0, "exerciseResult"), ["passed"], "PlayerFlowCanaryLoginFailed exerciseResult must be passed"),
+]
+
+for source_path, field_path, malformed, expected in cases:
+    data = json.loads(source_path.read_text(encoding="utf-8"))
+    target = data
+    parts = (field_path,) if isinstance(field_path, str) else field_path
+    for part in parts[:-1]:
+        target = target[part]
+    target[parts[-1]] = malformed
+    case_path = source_path.with_name("malformed-enum-case.json")
+    case_path.write_text(json.dumps(data), encoding="utf-8")
+    try:
+        findings = validator.validate_evidence(case_path)
+    except TypeError as exc:
+        raise AssertionError(f"{field_path!r} leaked TypeError: {exc}") from exc
+    assert any(expected in finding for finding in findings), (field_path, findings)
+PY
+
+STALE_TRUSTED_EVALUATION="$TMP_DIR/stale-trusted-evaluation.json"
+cp "$OMITTED_VALID_EVIDENCE" "$STALE_TRUSTED_EVALUATION"
+if python3 "$VALIDATOR" --evaluation-time "2026-03-19T13:00:00Z" \
+  "$STALE_TRUSTED_EVALUATION" >"$TMP_DIR/stale-trusted-evaluation.out" 2>&1; then
+  echo "expired evidence unexpectedly passed trusted-time validation" >&2
+  exit 1
+fi
+grep -q "evidenceExpiresAt must be later than the trusted evaluation time" \
+  "$TMP_DIR/stale-trusted-evaluation.out"
+
+STALE_EXTERNAL_TRUSTED_EVALUATION="$TMP_DIR/stale-external-trusted-evaluation.json"
+cp "$VALID_EVIDENCE" "$STALE_EXTERNAL_TRUSTED_EVALUATION"
+if python3 "$VALIDATOR" --evaluation-time "2026-03-19T10:59:00Z" \
+  "$STALE_EXTERNAL_TRUSTED_EVALUATION" >"$TMP_DIR/stale-external-trusted-evaluation.out" 2>&1; then
+  echo "stale external authority unexpectedly passed trusted-time validation" >&2
+  exit 1
+fi
+grep -q "older than externalAuthority.detectionBudgetSeconds relative to the trusted evaluation time" \
+  "$TMP_DIR/stale-external-trusted-evaluation.out"
 
 MISSING_QUERYABILITY_EVIDENCE="$TMP_DIR/missing-queryability-evidence.json"
-python3 - "$VALID_EVIDENCE" "$MISSING_QUERYABILITY_EVIDENCE" <<'PY'
+python3 - "$OMITTED_VALID_EVIDENCE" "$MISSING_QUERYABILITY_EVIDENCE" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -128,7 +229,7 @@ grep -q "logPipelineQueryability is required" "$TMP_DIR/missing-queryability.out
 
 REDUCED_QUERYABILITY_EVIDENCE="$TMP_DIR/reduced-queryability-evidence.json"
 OMITTED_QUERYABILITY_EVIDENCE="$TMP_DIR/omitted-queryability-evidence.json"
-python3 - "$VALID_EVIDENCE" "$REDUCED_QUERYABILITY_EVIDENCE" "$OMITTED_QUERYABILITY_EVIDENCE" <<'PY'
+python3 - "$OMITTED_VALID_EVIDENCE" "$REDUCED_QUERYABILITY_EVIDENCE" "$OMITTED_QUERYABILITY_EVIDENCE" <<'PY'
 import copy
 import json
 import sys
@@ -167,7 +268,7 @@ NON_OMITTED_NOT_APPLICABLE="$TMP_DIR/non-omitted-not-applicable.json"
 FAILED_QUERYABILITY="$TMP_DIR/failed-queryability.json"
 UNSUPPORTED_QUERYABILITY="$TMP_DIR/unsupported-queryability.json"
 FABRICATED_OMISSION="$TMP_DIR/fabricated-omission.json"
-python3 - "$VALID_EVIDENCE" "$OMITTED_QUERYABILITY_EVIDENCE" "$NON_OMITTED_NOT_APPLICABLE" "$FAILED_QUERYABILITY" "$UNSUPPORTED_QUERYABILITY" "$FABRICATED_OMISSION" <<'PY'
+python3 - "$OMITTED_VALID_EVIDENCE" "$OMITTED_QUERYABILITY_EVIDENCE" "$NON_OMITTED_NOT_APPLICABLE" "$FAILED_QUERYABILITY" "$UNSUPPORTED_QUERYABILITY" "$FABRICATED_OMISSION" <<'PY'
 import copy
 import json
 import sys
@@ -287,8 +388,20 @@ mutations = {
     "blank-selected-profile": lambda evidence: evidence["logPipelineQueryability"].update(
         {"selectedProfile": "   "}
     ),
+    "unhashable-capability": lambda evidence: evidence["logPipelineQueryability"].update(
+        {"capability": []}
+    ),
+    "unhashable-result": lambda evidence: evidence["logPipelineQueryability"].update(
+        {"result": {}}
+    ),
     "huge-budget": lambda evidence: evidence["logPipelineQueryability"].update(
         {"evidenceFreshnessBudgetSeconds": 10**1000}
+    ),
+    "too-large-budget": lambda evidence: evidence["logPipelineQueryability"].update(
+        {"evidenceFreshnessBudgetSeconds": 1e308}
+    ),
+    "subresolution-budget": lambda evidence: evidence["logPipelineQueryability"].update(
+        {"evidenceFreshnessBudgetSeconds": 1e-100}
     ),
     "huge-delay-target": lambda evidence: evidence["logPipelineQueryability"].update(
         {"configuredDelayTargetSeconds": 10**1000}
@@ -309,7 +422,9 @@ for queryability_case in \
   expired future-dated non-positive non-finite inconsistent-expiry \
   retrieved-before-emitted observed-before-retrieved emitted-after-verified \
   retrieved-after-verified delay-mismatch passed-delay-over-target \
-  missing-selected-profile blank-selected-profile huge-budget huge-delay-target \
+  missing-selected-profile blank-selected-profile unhashable-capability \
+  unhashable-result huge-budget too-large-budget \
+  subresolution-budget huge-delay-target \
   huge-observed-delay; do
   queryability_path="$TMP_DIR/queryability-$queryability_case.json"
   if python3 "$VALIDATOR" "$queryability_path" >"$TMP_DIR/queryability-$queryability_case.out" 2>&1; then
@@ -345,6 +460,14 @@ grep -q "logPipelineQueryability.selectedProfile is required" \
   "$TMP_DIR/queryability-blank-selected-profile.out"
 grep -q "logPipelineQueryability.evidenceFreshnessBudgetSeconds must be a positive finite number" \
   "$TMP_DIR/queryability-huge-budget.out"
+grep -q "logPipelineQueryability.evidenceFreshnessBudgetSeconds must be a positive finite number" \
+  "$TMP_DIR/queryability-too-large-budget.out"
+grep -q "logPipelineQueryability.evidenceFreshnessBudgetSeconds must be a positive finite number" \
+  "$TMP_DIR/queryability-subresolution-budget.out"
+grep -q "logPipelineQueryability.capability must be one of" \
+  "$TMP_DIR/queryability-unhashable-capability.out"
+grep -q "logPipelineQueryability.result must be one of" \
+  "$TMP_DIR/queryability-unhashable-result.out"
 grep -q "logPipelineQueryability.configuredDelayTargetSeconds must be a nonnegative finite number" \
   "$TMP_DIR/queryability-huge-delay-target.out"
 grep -q "logPipelineQueryability.observedDelaySeconds must be a nonnegative finite number" \
@@ -510,7 +633,7 @@ done
 FALSE_CURRENT_DEADMAN_MIRROR="$TMP_DIR/false-current-deadman-mirror.json"
 STALE_INJECTED_DEADMAN_MIRROR="$TMP_DIR/stale-injected-deadman-mirror.json"
 python3 - \
-  "$VALID_EVIDENCE" \
+  "$OMITTED_VALID_EVIDENCE" \
   "$FALSE_CURRENT_DEADMAN_MIRROR" \
   "$STALE_INJECTED_DEADMAN_MIRROR" <<'PY'
 import copy
@@ -572,8 +695,13 @@ if python3 "$VALIDATOR" "$FAILED_CANARY_ALERT_EVIDENCE" >"$TMP_DIR/failed-canary
 fi
 grep -q "PlayerFlowCanaryLoginFailed exerciseResult must be passed" \
   "$TMP_DIR/failed-canary-alert-readiness.out"
-python3 "$VALIDATOR" --allow-failure-evidence "$FAILED_CANARY_ALERT_EVIDENCE" \
-  >"$TMP_DIR/failed-canary-alert-incident.out"
+if python3 "$VALIDATOR" --allow-failure-evidence "$FAILED_CANARY_ALERT_EVIDENCE" \
+  >"$TMP_DIR/failed-canary-alert-incident.out" 2>&1; then
+  echo "self-attested failed canary alert unexpectedly passed incident validation" >&2
+  exit 1
+fi
+grep -q "cannot be advertised until an authoritative Account synthetic identity verifier is implemented" \
+  "$TMP_DIR/failed-canary-alert-incident.out"
 
 INVALID_CANARY_ALERT_EXERCISE_RESULT="$TMP_DIR/invalid-canary-alert-exercise-result.json"
 python3 - "$VALID_EVIDENCE" "$INVALID_CANARY_ALERT_EXERCISE_RESULT" <<'PY'
@@ -613,8 +741,13 @@ if python3 "$VALIDATOR" "$UNEXERCISED_CANARY_ALERT_EVIDENCE" \
 fi
 grep -q "PlayerFlowCanaryLoginFailed exerciseResult must be passed" \
   "$TMP_DIR/unexercised-canary-alert-readiness.out"
-python3 "$VALIDATOR" --allow-failure-evidence "$UNEXERCISED_CANARY_ALERT_EVIDENCE" \
-  >"$TMP_DIR/unexercised-canary-alert-incident.out"
+if python3 "$VALIDATOR" --allow-failure-evidence "$UNEXERCISED_CANARY_ALERT_EVIDENCE" \
+  >"$TMP_DIR/unexercised-canary-alert-incident.out" 2>&1; then
+  echo "self-attested unexercised canary alert unexpectedly passed incident validation" >&2
+  exit 1
+fi
+grep -q "cannot be advertised until an authoritative Account synthetic identity verifier is implemented" \
+  "$TMP_DIR/unexercised-canary-alert-incident.out"
 
 MALFORMED_CANARY_ALERT_SHAPE="$TMP_DIR/malformed-canary-alert-shape.json"
 python3 - "$VALID_EVIDENCE" "$MALFORMED_CANARY_ALERT_SHAPE" <<'PY'
@@ -941,7 +1074,31 @@ if python3 "$VALIDATOR" "$FUTURE_EXTERNAL_EVIDENCE_TIMESTAMP" >"$TMP_DIR/future-
   echo "future external evidence timestamp unexpectedly passed" >&2
   exit 1
 fi
-grep -q "externalAuthority.evidenceObservedAt cannot be in the future relative to verifiedAt" "$TMP_DIR/future-external-evidence-timestamp.out"
+grep -q "externalAuthority.evidenceObservedAt cannot be later than the trusted evaluation time" "$TMP_DIR/future-external-evidence-timestamp.out"
+
+FUTURE_EXTERNAL_BEFORE_TRUSTED_EVIDENCE="$TMP_DIR/future-external-before-trusted-evidence.json"
+python3 - "$VALID_EVIDENCE" "$FUTURE_EXTERNAL_BEFORE_TRUSTED_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["verifiedAt"] = "2026-03-19T10:54:00Z"
+source["logPipelineQueryability"]["evidenceObservedAt"] = "2026-03-19T10:54:00Z"
+source["logPipelineQueryability"]["evidenceExpiresAt"] = "2026-03-19T12:54:00Z"
+source["externalAuthority"]["evidenceObservedAt"] = "2026-03-19T10:54:30Z"
+source["externalAuthority"]["lastSuccessfulHeartbeatObservedAt"] = "2026-03-19T10:54:30Z"
+for record in source["externalAuthority"]["publicPathChecks"].values():
+    record["lastSuccessfulProbeObservedAt"] = "2026-03-19T10:54:30Z"
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+if python3 "$VALIDATOR" "$FUTURE_EXTERNAL_BEFORE_TRUSTED_EVIDENCE" \
+  >"$TMP_DIR/future-external-before-trusted.out" 2>&1; then
+  echo "external evidence after verifiedAt unexpectedly passed chronology validation" >&2
+  exit 1
+fi
+grep -q "externalAuthority.evidenceObservedAt cannot be in the future relative to verifiedAt" \
+  "$TMP_DIR/future-external-before-trusted.out"
 
 FUTURE_HEARTBEAT_TIMESTAMP="$TMP_DIR/future-heartbeat-timestamp.json"
 python3 - "$VALID_EVIDENCE" "$FUTURE_HEARTBEAT_TIMESTAMP" <<'PY'
@@ -1206,7 +1363,12 @@ source["mirroredSignals"]["playerflow_canary_freshness_budget_seconds"]["value"]
 Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
 PY
 
-python3 "$VALIDATOR" "$MINIMUM_CANARY_BUDGET_EVIDENCE" >"$TMP_DIR/minimum-canary-budget.out"
+if python3 "$VALIDATOR" "$MINIMUM_CANARY_BUDGET_EVIDENCE" >"$TMP_DIR/minimum-canary-budget.out" 2>&1; then
+  echo "self-attested advertised canary budget unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "cannot be advertised until an authoritative Account synthetic identity verifier is implemented" \
+  "$TMP_DIR/minimum-canary-budget.out"
 
 SMALL_CANARY_BUDGET_EVIDENCE="$TMP_DIR/small-canary-budget-evidence.json"
 python3 - "$MINIMUM_CANARY_BUDGET_EVIDENCE" "$SMALL_CANARY_BUDGET_EVIDENCE" <<'PY'
@@ -1324,7 +1486,12 @@ source["mirroredSignals"]["playerflow_canary_last_run_timestamp_seconds"] = [
 Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
 PY
 
-python3 "$VALIDATOR" "$SCOPED_REQUIRED_EVIDENCE" >"$TMP_DIR/scoped.out"
+if python3 "$VALIDATOR" "$SCOPED_REQUIRED_EVIDENCE" >"$TMP_DIR/scoped.out" 2>&1; then
+  echo "self-attested scoped advertised canary unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "cannot be advertised until an authoritative Account synthetic identity verifier is implemented" \
+  "$TMP_DIR/scoped.out"
 
 cat >"$INVALID_EVIDENCE" <<'JSON'
 {
@@ -1399,6 +1566,7 @@ source["externalAuthority"] = {
     "exposedPublicPlayerPaths": ["websocket"],
 }
 source["capabilities"]["playerFlowCanary"] = "omitted"
+source.pop("playerFlowCanaryIdentity", None)
 source["mirroredSignals"]["entrypath_blackbox_probe_success"] = [
     record
     for record in source["mirroredSignals"]["entrypath_blackbox_probe_success"]
@@ -1473,7 +1641,12 @@ source["mirroredSignals"]["playerflow_canary_freshness_budget_seconds"] = {
 Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
 PY
 
-python3 "$VALIDATOR" "$OMITTED_CANARY_EVIDENCE" >"$TMP_DIR/omitted-canary.out"
+if python3 "$VALIDATOR" "$OMITTED_CANARY_EVIDENCE" >"$TMP_DIR/omitted-canary.out" 2>&1; then
+  echo "self-attested advertised canary with omitted authority unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "cannot be advertised until an authoritative Account synthetic identity verifier is implemented" \
+  "$TMP_DIR/omitted-canary.out"
 
 OMITTED_CANARY_NO_BUDGET_EVIDENCE="$TMP_DIR/omitted-canary-no-budget-evidence.json"
 python3 - "$OMITTED_CANARY_EVIDENCE" "$OMITTED_CANARY_NO_BUDGET_EVIDENCE" <<'PY'
@@ -1642,8 +1815,13 @@ if python3 "$VALIDATOR" "$FRESH_FAILURE_EVIDENCE" >"$TMP_DIR/fresh-failure-readi
   exit 1
 fi
 grep -q "missing passing paths" "$TMP_DIR/fresh-failure-readiness.out"
-python3 "$VALIDATOR" --allow-failure-evidence "$FRESH_FAILURE_EVIDENCE" \
-  >"$TMP_DIR/fresh-failure-incident.out"
+if python3 "$VALIDATOR" --allow-failure-evidence "$FRESH_FAILURE_EVIDENCE" \
+  >"$TMP_DIR/fresh-failure-incident.out" 2>&1; then
+  echo "self-attested canary failure evidence unexpectedly passed incident validation" >&2
+  exit 1
+fi
+grep -q "cannot be advertised until an authoritative Account synthetic identity verifier is implemented" \
+  "$TMP_DIR/fresh-failure-incident.out"
 
 RED_EXTERNAL_INCIDENT_EVIDENCE="$TMP_DIR/red-external-incident-evidence.json"
 python3 - "$VALID_EVIDENCE" "$RED_EXTERNAL_INCIDENT_EVIDENCE" <<'PY'
@@ -1667,8 +1845,13 @@ if python3 "$VALIDATOR" "$RED_EXTERNAL_INCIDENT_EVIDENCE" \
   exit 1
 fi
 grep -q "deadmanAuthority.status must be green" "$TMP_DIR/red-external-readiness.out"
-python3 "$VALIDATOR" --allow-failure-evidence "$RED_EXTERNAL_INCIDENT_EVIDENCE" \
-  >"$TMP_DIR/red-external-incident.out"
+if python3 "$VALIDATOR" --allow-failure-evidence "$RED_EXTERNAL_INCIDENT_EVIDENCE" \
+  >"$TMP_DIR/red-external-incident.out" 2>&1; then
+  echo "self-attested red canary authority unexpectedly passed incident validation" >&2
+  exit 1
+fi
+grep -q "cannot be advertised until an authoritative Account synthetic identity verifier is implemented" \
+  "$TMP_DIR/red-external-incident.out"
 
 FALSE_CURRENT_RED_DEADMAN_MIRROR="$TMP_DIR/false-current-red-deadman-mirror.json"
 python3 - "$RED_EXTERNAL_INCIDENT_EVIDENCE" "$FALSE_CURRENT_RED_DEADMAN_MIRROR" <<'PY'
@@ -1710,8 +1893,13 @@ for record in canary:
 Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
 PY
 
-python3 "$VALIDATOR" --allow-failure-evidence "$MIXED_FAILURE_EVIDENCE" \
-  >"$TMP_DIR/mixed-failure-incident.out"
+if python3 "$VALIDATOR" --allow-failure-evidence "$MIXED_FAILURE_EVIDENCE" \
+  >"$TMP_DIR/mixed-failure-incident.out" 2>&1; then
+  echo "self-attested mixed canary failure evidence unexpectedly passed incident validation" >&2
+  exit 1
+fi
+grep -q "cannot be advertised until an authoritative Account synthetic identity verifier is implemented" \
+  "$TMP_DIR/mixed-failure-incident.out"
 
 EMPTY_FAILURE_EVIDENCE="$TMP_DIR/empty-failure-evidence.json"
 python3 - "$FRESH_FAILURE_EVIDENCE" "$EMPTY_FAILURE_EVIDENCE" <<'PY'
@@ -1768,6 +1956,6 @@ if python3 "$VALIDATOR" --allow-failure-evidence "$FUTURE_DEADMAN_EVIDENCE" >"$T
   echo "future deadman timestamp unexpectedly accepted" >&2
   exit 1
 fi
-grep -q "cannot be in the future relative to verifiedAt" "$TMP_DIR/future-deadman.out"
+grep -q "cannot be in the future relative to the trusted evaluation time" "$TMP_DIR/future-deadman.out"
 
 echo "player-experience smoke evidence contract checks passed"

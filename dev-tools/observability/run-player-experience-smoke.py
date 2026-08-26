@@ -18,6 +18,17 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlparse
 
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+from numeric_validation import (
+    is_bounded_positive_seconds,
+    is_finite_number,
+    parse_bounded_positive_seconds,
+)
+from observability_contract import (
+    OMITTED_QUERYABILITY_CAPABILITY,
+)
+
 _EVIDENCE_VALIDATOR_PATH = (
     Path(__file__).resolve().with_name("validate-player-experience-smoke-evidence.py")
 )
@@ -32,7 +43,8 @@ _EVIDENCE_VALIDATOR_SPEC.loader.exec_module(_EVIDENCE_VALIDATOR)
 METRIC_TARGET_BY_PATH = _EVIDENCE_VALIDATOR.METRIC_TARGET_BY_PATH
 PROMETHEUS_MIRRORS_CAPABILITY = "prometheusMirrors"
 PLAYER_FLOW_CANARY_CAPABILITY = "playerFlowCanary"
-QUERYABILITY_OMISSION_FRESHNESS_BUDGET_SECONDS = 7200
+DEFAULT_SMOKE_USERNAME = "demo@example.com"
+DEFAULT_SMOKE_PASSWORD = "swordfish"
 PLAYERFLOW_CANARY_LAST_RUN_TIMESTAMP_METRIC = (
     "playerflow_canary_last_run_timestamp_seconds"
 )
@@ -52,6 +64,20 @@ CAPABILITY_VALUES = {
     PROMETHEUS_MIRRORS_CAPABILITY: {"published", "omitted"},
     PLAYER_FLOW_CANARY_CAPABILITY: {"advertised", "omitted"},
 }
+CANARY_IDENTITY_REQUIRED_FIELDS = frozenset(
+    {
+        "authority",
+        "classification",
+        "analyticsSloExclusion",
+        "credentials",
+        "transportCharacters",
+        "evidenceRef",
+    }
+)
+# The repository currently has no shipped Account-owned verifier that can bind
+# synthetic classification and per-transport character identities to a smoke
+# execution. Local JSON therefore cannot authorize an advertised canary.
+AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE = False
 FAILURE_INJECTION_SIGNAL_VALUES = frozenset(
     {"websocket", "telnet", "login", "command", "deadman"}
 )
@@ -185,6 +211,36 @@ def main() -> int:
         default=os.environ.get("PLAYER_EXPERIENCE_PLAYER_FLOW_CANARY", "advertised"),
         help="Whether this evidence advertises the independent player-flow canary.",
     )
+    parser.add_argument(
+        "--synthetic-identity-evidence",
+        type=Path,
+        default=Path(os.environ["PLAYER_EXPERIENCE_SYNTHETIC_IDENTITY_EVIDENCE"])
+        if os.environ.get("PLAYER_EXPERIENCE_SYNTHETIC_IDENTITY_EVIDENCE")
+        else None,
+        help=(
+            "Path to authoritative synthetic identity/isolation evidence. An "
+            "advertised canary is downgraded to omitted when this attestation "
+            "is absent or invalid."
+        ),
+    )
+    parser.add_argument(
+        "--queryability-profile",
+        default=os.environ.get("PLAYER_EXPERIENCE_QUERYABILITY_PROFILE"),
+        help=(
+            "The selected deployment profile for the queryability omission "
+            "record. Required together with --queryability-freshness-budget-seconds."
+        ),
+    )
+    parser.add_argument(
+        "--queryability-freshness-budget-seconds",
+        default=os.environ.get(
+            "PLAYER_EXPERIENCE_QUERYABILITY_FRESHNESS_BUDGET_SECONDS"
+        ),
+        help=(
+            "Positive finite profile-resolved freshness budget for the "
+            "queryability omission record."
+        ),
+    )
     args = parser.parse_args()
 
     try:
@@ -198,8 +254,16 @@ def main() -> int:
         args.prometheus_mirrors,
         args.player_flow_canary,
         deployment_event_id=args.deployment_event_id,
+        synthetic_identity_evidence=args.synthetic_identity_evidence,
+        queryability_profile=args.queryability_profile,
+        queryability_freshness_budget_seconds=args.queryability_freshness_budget_seconds,
     )
+    try:
+        validate_queryability_omission_config(config)
+    except ValueError as exc:
+        parser.error(str(exc))
     execution_mode = "simulated" if args.simulate else "live"
+    requested_canary_advertised = config.player_flow_canary == "advertised"
     authority_provenance = (
         "synthetic"
         if args.simulate and args.external_authority_evidence is None
@@ -214,7 +278,25 @@ def main() -> int:
         args.simulate,
         evaluation_epoch,
         allow_failure_evidence=args.allow_failure_evidence,
+        # Validate the base external-authority posture before deciding whether
+        # the local canary may remain advertised. A missing or invalid
+        # synthetic identity must be able to downgrade an omitted profile
+        # without making canary-only budget fields mandatory.
+        canary_advertised=False,
+        allow_unadvertised_canary_budget=requested_canary_advertised,
     )
+    establish_player_flow_canary_capability(config, initial_external_authority)
+    if (
+        config.player_flow_canary == "advertised"
+        and config.external_authority_evidence is not None
+    ):
+        validate_external_authority_shape(
+            initial_external_authority,
+            config.external_authority_evidence or Path("<synthetic external authority>"),
+            evaluation_epoch=evaluation_epoch,
+            canary_advertised=True,
+            allow_failure_evidence=args.allow_failure_evidence,
+        )
 
     mirrored_signals = execute_smoke(
         config, args.simulate, injected, initial_external_authority
@@ -230,11 +312,21 @@ def main() -> int:
         args.simulate,
         final_evaluation_epoch,
         allow_failure_evidence=args.allow_failure_evidence,
+        canary_advertised=config.player_flow_canary == "advertised",
+        allow_unadvertised_canary_budget=requested_canary_advertised,
     )
     compare_external_authority_snapshots(
         initial_external_authority, reread_external_authority
     )
     external_authority = reread_external_authority
+    if (
+        config.player_flow_canary != "advertised"
+        and external_authority.get("profile") == "independent-omitted"
+    ):
+        # The detection budget is only meaningful for an advertised local
+        # canary. Remove it when an unverified canary is downgraded so the
+        # retained authority remains a valid independent-omitted record.
+        external_authority.pop("detectionBudgetSeconds", None)
     synchronize_deadman_heartbeat_mirror(
         mirrored_signals, external_authority, injected
     )
@@ -295,6 +387,9 @@ class SmokeConfig:
         deployment_event_id: str | None = None,
         prometheus_mirrors: str = "published",
         player_flow_canary: str = "advertised",
+        synthetic_identity_evidence: Path | None = None,
+        queryability_profile: str | None = None,
+        queryability_freshness_budget_seconds: str | float | None = None,
     ) -> None:
         self.source = source
         self.canary_path = canary_path
@@ -327,6 +422,14 @@ class SmokeConfig:
         self.player_flow_canary = validate_capability(
             player_flow_canary, PLAYER_FLOW_CANARY_CAPABILITY
         )
+        self.synthetic_identity_evidence = synthetic_identity_evidence
+        self.queryability_profile = queryability_profile
+        self.queryability_freshness_budget_seconds = parse_optional_positive_finite_number(
+            queryability_freshness_budget_seconds,
+            "queryabilityFreshnessBudgetSeconds",
+        )
+        self.player_flow_canary_identity: dict[str, Any] | None = None
+        self._validated_player_flow_canary_paths: frozenset[str] = frozenset()
 
     @classmethod
     def from_env(
@@ -337,6 +440,9 @@ class SmokeConfig:
         prometheus_mirrors: str | None = None,
         player_flow_canary: str | None = None,
         deployment_event_id: str | None = None,
+        synthetic_identity_evidence: Path | None = None,
+        queryability_profile: str | None = None,
+        queryability_freshness_budget_seconds: str | float | None = None,
     ) -> SmokeConfig:
         prometheus_mirrors = prometheus_mirrors or os.environ.get(
             "PLAYER_EXPERIENCE_PROMETHEUS_MIRRORS", "published"
@@ -346,6 +452,14 @@ class SmokeConfig:
         )
         if deployment_event_id is None:
             deployment_event_id = os.environ.get("PLAYER_EXPERIENCE_DEPLOYMENT_EVENT_ID")
+        queryability_profile = queryability_profile or os.environ.get(
+            "PLAYER_EXPERIENCE_QUERYABILITY_PROFILE"
+        )
+        queryability_freshness_budget_seconds = (
+            queryability_freshness_budget_seconds
+            if queryability_freshness_budget_seconds is not None
+            else os.environ.get("PLAYER_EXPERIENCE_QUERYABILITY_FRESHNESS_BUDGET_SECONDS")
+        )
         return cls(
             source=source,
             canary_path=canary_path,
@@ -393,6 +507,9 @@ class SmokeConfig:
             deployment_event_id=deployment_event_id,
             prometheus_mirrors=prometheus_mirrors,
             player_flow_canary=player_flow_canary,
+            synthetic_identity_evidence=synthetic_identity_evidence,
+            queryability_profile=queryability_profile,
+            queryability_freshness_budget_seconds=queryability_freshness_budget_seconds,
         )
 
 
@@ -408,11 +525,118 @@ def parse_failure_injection(raw: str) -> set[str]:
 
 def validate_capability(value: str, key: str) -> str:
     allowed_values = CAPABILITY_VALUES[key]
-    if value not in allowed_values:
+    if not isinstance(value, str) or value not in allowed_values:
         raise ValueError(
             f"{key} must be one of {', '.join(sorted(allowed_values))}"
         )
     return value
+
+
+def parse_optional_positive_finite_number(
+    value: str | float | None, key: str
+) -> float | None:
+    if value is None:
+        return None
+    return parse_bounded_positive_seconds(value, key)
+
+
+def validate_queryability_omission_config(config: SmokeConfig) -> None:
+    if not isinstance(config.queryability_profile, str) or not config.queryability_profile.strip():
+        raise ValueError(
+            "queryability profile is required; set --queryability-profile or "
+            "PLAYER_EXPERIENCE_QUERYABILITY_PROFILE"
+        )
+    if config.queryability_freshness_budget_seconds is None:
+        raise ValueError(
+            "queryability freshness budget is required; set "
+            "--queryability-freshness-budget-seconds or "
+            "PLAYER_EXPERIENCE_QUERYABILITY_FRESHNESS_BUDGET_SECONDS"
+        )
+
+
+def load_synthetic_identity_evidence(path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def validate_synthetic_identity_evidence(
+    evidence: dict[str, Any] | None,
+    exposed_paths: set[str],
+    config: SmokeConfig,
+) -> bool:
+    if not isinstance(evidence, dict):
+        return False
+    if set(evidence) != CANARY_IDENTITY_REQUIRED_FIELDS:
+        return False
+    if evidence.get("authority") != "account-service":
+        return False
+    if evidence.get("classification") != "synthetic":
+        return False
+    if evidence.get("analyticsSloExclusion") is not True:
+        return False
+    if not isinstance(evidence.get("evidenceRef"), str) or not evidence["evidenceRef"].strip():
+        return False
+    credentials = evidence.get("credentials")
+    if (
+        not isinstance(credentials, dict)
+        or set(credentials) != {"nonDefault", "productionSafe"}
+        or credentials.get("nonDefault") is not True
+        or credentials.get("productionSafe") is not True
+    ):
+        return False
+    if config.username == DEFAULT_SMOKE_USERNAME or config.password == DEFAULT_SMOKE_PASSWORD:
+        return False
+    transport_characters = evidence.get("transportCharacters")
+    if not isinstance(transport_characters, dict) or not exposed_paths.issubset(
+        set(transport_characters)
+    ):
+        return False
+    for path in exposed_paths:
+        identity = transport_characters[path]
+        if (
+            not isinstance(identity, dict)
+            or set(identity) != {"restricted", "isolated"}
+            or identity.get("restricted") is not True
+            or identity.get("isolated") is not True
+        ):
+            return False
+    return True
+
+
+def establish_player_flow_canary_capability(
+    config: SmokeConfig, external_authority: dict[str, Any]
+) -> None:
+    if config.player_flow_canary != "advertised":
+        return
+    if not AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE:
+        config.player_flow_canary = "omitted"
+        config.player_flow_canary_identity = None
+        config._validated_player_flow_canary_paths = frozenset()
+        print(
+            "WARNING: authoritative Account synthetic identity verification is not "
+            "implemented; player-flow canary downgraded to omitted",
+            file=sys.stderr,
+        )
+        return
+    exposed_paths = declared_exposed_paths(external_authority)
+    identity = load_synthetic_identity_evidence(config.synthetic_identity_evidence)
+    if not validate_synthetic_identity_evidence(identity, exposed_paths, config):
+        config.player_flow_canary = "omitted"
+        config.player_flow_canary_identity = None
+        config._validated_player_flow_canary_paths = frozenset()
+        print(
+            "WARNING: player-flow canary identity/isolation evidence is absent or "
+            "invalid; playerFlowCanary downgraded to omitted",
+            file=sys.stderr,
+        )
+        return
+    config.player_flow_canary_identity = identity
+    config._validated_player_flow_canary_paths = frozenset(exposed_paths)
 
 
 def validate_deployment_event_id(value: str | None) -> str | None:
@@ -443,6 +667,7 @@ def execute_smoke(
     injected: set[str],
     external_authority: dict[str, Any],
 ) -> dict[str, Any]:
+    enforce_authoritative_canary_gate(config)
     if simulate:
         return simulated_signals(config, injected, external_authority)
 
@@ -522,6 +747,7 @@ def simulated_signals(
     injected: set[str],
     external_authority: dict[str, Any],
 ) -> dict[str, Any]:
+    enforce_authoritative_canary_gate(config)
     now = time.time()
     exposed_paths = declared_exposed_paths(external_authority)
     signals: dict[str, Any] = {}
@@ -553,6 +779,66 @@ def simulated_signals(
             ),
         }
     return signals
+
+
+def enforce_authoritative_canary_gate(
+    config: SmokeConfig, mirrored_signals: dict[str, Any] | None = None
+) -> None:
+    """Prevent lower-level producer helpers from emitting an unverified canary."""
+    if config.player_flow_canary == "omitted":
+        _scrub_canary_mirrored_signals(mirrored_signals)
+        return
+    if config.player_flow_canary != "advertised" or _canary_authorization_is_valid(config):
+        return
+    config.player_flow_canary = "omitted"
+    config.player_flow_canary_identity = None
+    config._validated_player_flow_canary_paths = frozenset()
+    _scrub_canary_mirrored_signals(mirrored_signals)
+
+
+def _scrub_canary_mirrored_signals(
+    mirrored_signals: dict[str, Any] | None,
+) -> None:
+    if mirrored_signals is None:
+        return
+    for key in (
+        "playerflow_canary_success",
+        "playerflow_canary_latency_ms",
+        PLAYERFLOW_CANARY_LAST_RUN_TIMESTAMP_METRIC,
+        PLAYERFLOW_CANARY_FRESHNESS_BUDGET_METRIC,
+    ):
+        mirrored_signals.pop(key, None)
+
+
+def _canary_authorization_is_valid(config: SmokeConfig) -> bool:
+    if not AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE:
+        return False
+    validated_paths = getattr(config, "_validated_player_flow_canary_paths", None)
+    if (
+        not isinstance(validated_paths, frozenset)
+        or not validated_paths
+        or not all(isinstance(path, str) for path in validated_paths)
+        or not validated_paths.issubset(METRIC_TARGET_BY_PATH)
+        or not isinstance(config.canary_path, str)
+        or config.canary_path not in validated_paths
+    ):
+        return False
+    return validate_synthetic_identity_evidence(
+        config.player_flow_canary_identity,
+        set(validated_paths),
+        config,
+    )
+
+
+def canary_producer_is_authorized(config: SmokeConfig) -> bool:
+    """Return whether a direct canary producer may emit records."""
+    authorized = (
+        config.player_flow_canary == "advertised"
+        and _canary_authorization_is_valid(config)
+    )
+    if not authorized:
+        enforce_authoritative_canary_gate(config)
+    return authorized
 
 
 def declared_exposed_paths(external_authority: dict[str, Any]) -> set[str]:
@@ -657,6 +943,11 @@ def blackbox_telnet_record(config: SmokeConfig, injected: set[str]) -> dict[str,
 def run_playerflow_canary(
     config: SmokeConfig, injected: set[str]
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    # This dispatcher is also a public/direct helper, so callers can bypass
+    # establish_player_flow_canary_capability(). Keep that bypass fail-closed
+    # before selecting a transport-specific producer.
+    if not canary_producer_is_authorized(config):
+        return [], []
     if config.canary_path == "websocket":
         return run_websocket_canary(config, injected)
     return run_telnet_canary(config, injected)
@@ -668,6 +959,8 @@ def run_playerflow_canaries(
     exposed_paths: set[str],
     profile: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    if not canary_producer_is_authorized(config):
+        return [], [], []
     success: list[dict[str, Any]] = []
     latency: list[dict[str, Any]] = []
     last_run: list[dict[str, Any]] = []
@@ -691,6 +984,8 @@ def run_playerflow_canaries(
 def failed_canary_records(
     config: SmokeConfig,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not canary_producer_is_authorized(config):
+        return [], []
     target = canary_target(config)
     return (
         [
@@ -714,6 +1009,8 @@ def simulated_playerflow_canaries(
     exposed_paths: set[str],
     profile: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    if not canary_producer_is_authorized(config):
+        return [], [], []
     success: list[dict[str, Any]] = []
     latency: list[dict[str, Any]] = []
     last_run: list[dict[str, Any]] = []
@@ -753,6 +1050,8 @@ def canary_records_with_profile(
 def run_websocket_canary(
     config: SmokeConfig, injected: set[str]
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not canary_producer_is_authorized(config):
+        return [], []
     if "login" in injected or "command" in injected:
         return simulated_canary_records(config, injected)
     import websocket  # type: ignore
@@ -779,6 +1078,8 @@ def run_websocket_canary(
 def run_telnet_canary(
     config: SmokeConfig, injected: set[str]
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not canary_producer_is_authorized(config):
+        return [], []
     if "login" in injected or "command" in injected:
         return simulated_canary_records(config, injected)
     try:
@@ -811,6 +1112,10 @@ def run_telnet_canary(
 def simulated_canary_records(
     config: SmokeConfig, injected: set[str]
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    # This lower-level producer is directly importable and is reachable from
+    # transport helpers when failure injection is active.
+    if not canary_producer_is_authorized(config):
+        return [], []
     login_succeeded = "login" not in injected
     command_succeeded = login_succeeded and "command" not in injected
     success = [
@@ -847,6 +1152,8 @@ def simulated_canary_records(
 def canary_records_from_steps(
     config: SmokeConfig, step_results: list[dict[str, Any]]
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not canary_producer_is_authorized(config):
+        return [], []
     by_label = {step["label"]: step for step in step_results}
     login = by_label["LOGIN"]
     command = by_label["LOOK"]
@@ -894,7 +1201,7 @@ def external_authority_heartbeat_timestamp(
             "A published deadman heartbeat mirror requires a valid "
             "lastSuccessfulHeartbeatObservedAt timestamp"
         ) from exc
-    if not _is_finite_number(timestamp) or timestamp <= 0:
+    if not is_finite_number(timestamp) or timestamp <= 0:
         raise RuntimeError(
             "A published deadman heartbeat mirror requires a positive finite "
             "lastSuccessfulHeartbeatObservedAt timestamp"
@@ -906,17 +1213,12 @@ def stale_deadman_heartbeat_timestamp(
     external_authority: dict[str, Any], now: float
 ) -> float:
     stale_threshold = external_authority.get("staleThresholdSeconds")
-    if (
-        isinstance(stale_threshold, bool)
-        or not isinstance(stale_threshold, (int, float))
-        or not _is_finite_number(stale_threshold)
-        or stale_threshold <= 0
-    ):
+    if not is_bounded_positive_seconds(stale_threshold):
         raise RuntimeError(
             "A deadman failure injection requires a positive finite staleThresholdSeconds"
         )
     timestamp = now - stale_threshold - 1
-    if not _is_finite_number(timestamp) or timestamp <= 0:
+    if not is_finite_number(timestamp) or timestamp <= 0:
         raise RuntimeError(
             "A deadman failure injection could not produce a positive finite heartbeat timestamp"
         )
@@ -975,35 +1277,49 @@ def canary_target(config: SmokeConfig) -> str:
 def metric_target_for_path(path: str) -> str:
     try:
         return METRIC_TARGET_BY_PATH[path]
-    except KeyError as exc:
+    except (KeyError, TypeError) as exc:
         raise ValueError(f"Unsupported public player path {path!r}") from exc
 
 
-def _is_finite_number(value: Any) -> bool:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return False
-    try:
-        return math.isfinite(value)
-    except OverflowError:
-        return False
-
-
 def queryability_omission_record(config: SmokeConfig, verified_at: str) -> dict[str, Any]:
-    observed_at = dt.datetime.fromisoformat(verified_at.replace("Z", "+00:00"))
-    expires_at = observed_at + dt.timedelta(
-        seconds=QUERYABILITY_OMISSION_FRESHNESS_BUDGET_SECONDS
-    )
+    validate_queryability_omission_config(config)
+    try:
+        observed_at = dt.datetime.fromisoformat(verified_at.replace("Z", "+00:00"))
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"queryability evidenceObservedAt is invalid: {exc}") from exc
+    if observed_at.tzinfo is None:
+        raise ValueError("queryability evidenceObservedAt must include a timezone")
+    observed_at = observed_at.astimezone(dt.timezone.utc)
+    observed_at_serialized = observed_at.isoformat().replace("+00:00", "Z")
+    budget = config.queryability_freshness_budget_seconds
+    if not is_bounded_positive_seconds(budget):
+        raise ValueError(
+            "queryability freshness budget must be a positive finite number"
+        )
+    max_budget = (
+        dt.datetime.max.replace(tzinfo=observed_at.tzinfo) - observed_at
+    ).total_seconds()
+    if budget > max_budget:
+        raise ValueError(
+            "queryability freshness budget exceeds the representable datetime range"
+        )
+    try:
+        expires_at = observed_at + dt.timedelta(seconds=budget)
+    except (OverflowError, ValueError) as exc:
+        raise ValueError(
+            "queryability freshness budget exceeds the representable datetime range"
+        ) from exc
     return {
-        "selectedProfile": "player-experience-smoke-no-queryability",
-        "capability": "log-queryability-omitted",
+        "selectedProfile": config.queryability_profile.strip(),
+        "capability": OMITTED_QUERYABILITY_CAPABILITY,
         "result": "not_applicable",
         "omissionReason": (
             "the player-experience smoke runner does not execute a log queryability check"
         ),
-        "evidenceObservedAt": verified_at,
-        "evidenceFreshnessBudgetSeconds": QUERYABILITY_OMISSION_FRESHNESS_BUDGET_SECONDS,
+        "evidenceObservedAt": observed_at_serialized,
+        "evidenceFreshnessBudgetSeconds": budget,
         "evidenceExpiresAt": expires_at.isoformat().replace("+00:00", "Z"),
-        "evidenceRef": f"{config.preflight_ref}/log-queryability-omitted",
+        "evidenceRef": f"{config.preflight_ref}/{OMITTED_QUERYABILITY_CAPABILITY}",
     }
 
 
@@ -1016,6 +1332,7 @@ def build_evidence(
     authority_provenance: str = "retained-external",
     verified_at: str | None = None,
 ) -> dict[str, Any]:
+    enforce_authoritative_canary_gate(config, mirrored_signals)
     verified_at = verified_at or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     evidence = {
         "deploymentRef": config.deployment_ref,
@@ -1032,6 +1349,8 @@ def build_evidence(
         "externalAuthority": external_authority,
         "mirroredSignals": mirrored_signals,
     }
+    if config.player_flow_canary == "advertised":
+        evidence["playerFlowCanaryIdentity"] = config.player_flow_canary_identity
     if config.deployment_event_id is not None:
         evidence["deploymentEventId"] = config.deployment_event_id
     if config.player_flow_canary == "advertised":
@@ -1050,6 +1369,8 @@ def resolve_external_authority(
     evaluation_epoch: float | None = None,
     *,
     allow_failure_evidence: bool = False,
+    canary_advertised: bool | None = None,
+    allow_unadvertised_canary_budget: bool = False,
 ) -> dict[str, Any]:
     # External authority is provider-owned observation evidence, not a local
     # failure-injection target. Copy it so later evidence assembly cannot
@@ -1060,6 +1381,8 @@ def resolve_external_authority(
             simulate,
             evaluation_epoch,
             allow_failure_evidence=allow_failure_evidence,
+            canary_advertised=canary_advertised,
+            allow_unadvertised_canary_budget=allow_unadvertised_canary_budget,
         )
     )
 
@@ -1088,6 +1411,8 @@ def load_external_authority(
     evaluation_epoch: float | None = None,
     *,
     allow_failure_evidence: bool = False,
+    canary_advertised: bool | None = None,
+    allow_unadvertised_canary_budget: bool = False,
 ) -> dict[str, Any]:
     path = config.external_authority_evidence
     if path is None:
@@ -1116,7 +1441,12 @@ def load_external_authority(
         data,
         path,
         evaluation_epoch=evaluation_epoch,
-        canary_advertised=config.player_flow_canary == "advertised",
+        canary_advertised=(
+            config.player_flow_canary == "advertised"
+            if canary_advertised is None
+            else canary_advertised
+        ),
+        allow_unadvertised_canary_budget=allow_unadvertised_canary_budget,
         allow_failure_evidence=allow_failure_evidence,
     )
     return data
@@ -1159,9 +1489,13 @@ def validate_external_authority_shape(
     evaluation_epoch: float | None = None,
     canary_advertised: bool = False,
     allow_failure_evidence: bool = False,
+    allow_unadvertised_canary_budget: bool = False,
 ) -> None:
     profile = data.get("profile")
-    if profile not in {"independent-required", "independent-omitted"}:
+    if not isinstance(profile, str) or profile not in {
+        "independent-required",
+        "independent-omitted",
+    }:
         raise RuntimeError(
             f"External authority evidence at {path} must declare profile "
             "independent-required or independent-omitted"
@@ -1195,19 +1529,18 @@ def validate_external_authority_shape(
                 "for independent-omitted"
             )
         allowed_fields = {"profile", "reason", "exposedPublicPlayerPaths"}
-        if canary_advertised:
+        if canary_advertised or (
+            allow_unadvertised_canary_budget and "detectionBudgetSeconds" in data
+        ):
             allowed_fields.add("detectionBudgetSeconds")
             detection_budget = data.get("detectionBudgetSeconds")
             if (
-                isinstance(detection_budget, bool)
-                or not isinstance(detection_budget, (int, float))
-                or not _is_finite_number(detection_budget)
-                or detection_budget <= 0
+                not is_bounded_positive_seconds(detection_budget)
             ):
                 raise RuntimeError(
-                    f"External authority evidence at {path} must define a positive finite detectionBudgetSeconds for an advertised player-flow canary"
+                    f"External authority evidence at {path} must define a positive finite detectionBudgetSeconds"
                 )
-            if detection_budget < MIN_CANARY_DETECTION_BUDGET_SECONDS:
+            if canary_advertised and detection_budget < MIN_CANARY_DETECTION_BUDGET_SECONDS:
                 raise RuntimeError(
                     f"External authority evidence at {path} detectionBudgetSeconds must be at least {MIN_CANARY_DETECTION_BUDGET_SECONDS} seconds for an advertised player-flow canary"
                 )
@@ -1221,10 +1554,7 @@ def validate_external_authority_shape(
 
     detection_budget = data.get("detectionBudgetSeconds")
     if (
-        isinstance(detection_budget, bool)
-        or not isinstance(detection_budget, (int, float))
-        or not _is_finite_number(detection_budget)
-        or detection_budget <= 0
+        not is_bounded_positive_seconds(detection_budget)
     ):
         raise RuntimeError(
             f"External authority evidence at {path} must define a positive finite detectionBudgetSeconds"
@@ -1236,10 +1566,7 @@ def validate_external_authority_shape(
         )
     stale_threshold = data.get("staleThresholdSeconds")
     if (
-        isinstance(stale_threshold, bool)
-        or not isinstance(stale_threshold, (int, float))
-        or not _is_finite_number(stale_threshold)
-        or stale_threshold <= 0
+        not is_bounded_positive_seconds(stale_threshold)
     ):
         raise RuntimeError(
             f"External authority evidence at {path} must define a positive finite staleThresholdSeconds"
@@ -1248,7 +1575,7 @@ def validate_external_authority_shape(
     if (
         isinstance(observed_staleness, bool)
         or not isinstance(observed_staleness, (int, float))
-        or not _is_finite_number(observed_staleness)
+        or not is_finite_number(observed_staleness)
         or observed_staleness < 0
     ):
         raise RuntimeError(
@@ -1351,10 +1678,7 @@ def validate_external_authority_freshness(
         return
     detection_budget = data.get("detectionBudgetSeconds")
     if (
-        isinstance(detection_budget, bool)
-        or not isinstance(detection_budget, (int, float))
-        or not _is_finite_number(detection_budget)
-        or detection_budget <= 0
+        not is_bounded_positive_seconds(detection_budget)
     ):
         raise RuntimeError(
             f"External authority evidence at {path} must define a positive finite detectionBudgetSeconds"
@@ -1423,7 +1747,12 @@ def validate_external_authority_freshness(
             f"External authority evidence at {path} green deadman observedStalenessSeconds must be no greater than staleThresholdSeconds"
         )
     if isinstance(checks, dict):
-        exposed_paths = set(data.get("exposedPublicPlayerPaths", []))
+        raw_exposed_paths = data.get("exposedPublicPlayerPaths", [])
+        if not isinstance(raw_exposed_paths, list):
+            raw_exposed_paths = []
+        exposed_paths = {
+            item for item in raw_exposed_paths if isinstance(item, str)
+        }
         for name, record in checks.items():
             if isinstance(record, dict) and name in exposed_paths:
                 validate_public_path_freshness(
@@ -1446,7 +1775,7 @@ def validate_public_path_freshness(
     if (
         isinstance(observed_probe_age, bool)
         or not isinstance(observed_probe_age, (int, float))
-        or not _is_finite_number(observed_probe_age)
+        or not is_finite_number(observed_probe_age)
         or observed_probe_age < 0
     ):
         raise RuntimeError(
@@ -1775,6 +2104,7 @@ def alert_record(alert: str, severity: str, injected: set[str]) -> dict[str, str
 
 
 def render_metrics(config: SmokeConfig, mirrored_signals: dict[str, Any]) -> str:
+    enforce_authoritative_canary_gate(config, mirrored_signals)
     lines: list[str] = []
     for key, help_text, metric_name in (
         (

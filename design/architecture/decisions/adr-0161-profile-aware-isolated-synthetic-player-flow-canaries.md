@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-This decision is not implemented. Synthetic identity classification, profile-aware continuous scheduling, complete advertised-transport coverage, freshness evidence, and bounded failure and recovery proof remain gaps.
+The target decision remains unimplemented. The smoke harness and evidence shape are present, but no shipped Account-owned verifier currently binds synthetic classification, non-default production-safe credentials, isolated per-transport characters, analytics/SLO exclusion, and actual execution to retained evidence. Accordingly, the runner downgrades requested advertised canaries to `playerFlowCanary=omitted`, while the validator rejects retained evidence claiming `advertised`; local identity assertions cannot advertise a canary. Continuous scheduling, authoritative identity proof, and complete advertised-transport coverage remain future implementation work.
 
 ## Decision Record
 

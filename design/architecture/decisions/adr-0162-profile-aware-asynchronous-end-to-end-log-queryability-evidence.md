@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-This decision is not implemented. Profile-aware asynchronous end-to-end log-queryability evidence, bounded freshness, supported-backend proof, and release-gate integration remain gaps.
+Profile-aware asynchronous end-to-end log-queryability execution remains unimplemented. The current evidence validator and promotion/recovery preflight enforce chronology, trusted evaluation-time freshness, and the target environment's declared profile/capability/budget binding; actual emitter-to-query execution and supported-backend proof remain gaps.
 
 ## Decision Record
 
