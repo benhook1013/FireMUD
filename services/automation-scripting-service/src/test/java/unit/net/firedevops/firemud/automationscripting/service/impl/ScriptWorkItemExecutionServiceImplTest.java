@@ -79,6 +79,11 @@ class ScriptWorkItemExecutionServiceImplTest {
 
     assertThat(result.claimedCount()).isEqualTo(2);
     assertThat(result.completedCount()).isEqualTo(2);
+    ArgumentCaptor<ScriptEventAudit> auditCaptor = ArgumentCaptor.forClass(ScriptEventAudit.class);
+    verify(auditRepository, Mockito.times(2)).save(auditCaptor.capture());
+    assertThat(auditCaptor.getAllValues())
+        .allSatisfy(
+            audit -> assertThat(audit.getFinalOutcome()).isEqualTo("completed_no_commands"));
     verify(workItemService).claimPendingForEvaluation(List.of(99L), 10);
     verify(workItemService).claimPendingForEvaluation(9);
   }

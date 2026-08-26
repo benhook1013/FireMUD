@@ -201,7 +201,7 @@ sequenceDiagram
     else non-dry-run PUBLISH_READINESS / onLoad
         Scripting->>Scripting: Reject emitted commands; otherwise record readiness result
     else non-dry-run STANDARD_RUNTIME with no commands
-        Scripting->>Scripting: Terminal no_commands_emitted
+        Scripting->>Scripting: Terminal completed_no_commands
     else non-dry-run STANDARD_RUNTIME with emitted commands
         Scripting->>GameSession: Enqueue automation commands (internal gRPC)
         GameSession->>Redis: Append into tick:{tenantRegionTag}:queue:<entityId> (Lua)

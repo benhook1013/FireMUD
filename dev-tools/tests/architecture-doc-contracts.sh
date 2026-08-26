@@ -1562,9 +1562,126 @@ require_absent(
 require_contains(
     "design/architecture/system-architecture-scripting-scheduler-and-timers.md",
     [
+        "resume-window record per `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun>`",
+        "its `resumeWindowId` is `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>`",
         "retains the authoritative `playableStateNamespaceId` as immutable non-identity scope evidence",
         "missing or mismatched evidence fails closed without changing any canonical identity tuple",
     ],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-dsl-for-designers.md",
+    [
+        "`resumeWindowId` identified by `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>`",
+        "one-tenant, one-mode ID",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-scripting-dsl-for-designers.md",
+    [
+        "`resumeWindowId` identified by `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, resumeGeneration>`",
+    ],
+)
+require_contains(
+    "design/architecture/decisions/adr-0072-class-specific-timer-durability-and-recovery.md",
+    [
+        "resume-window record per runtime scope, epoch, and `isDryRun` mode",
+        "`resumeWindowId` is the exact tuple `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>`",
+        "each prior epoch's `OPEN` resume window, independently for each `isDryRun` mode",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-normative-contract-tables.md",
+    [
+        "resume window identified by `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>`",
+        "Durable compare-and-set creates or reuses one `OPEN` window per runtime scope, epoch, and `isDryRun` mode",
+    ],
+)
+require_contains(
+    "design/architecture/decisions/adr-0001-scripting-event-ingress-idempotency-identity.md",
+    [
+        "The canonical scheduler preimage fields are serialized in this fixed order:",
+        "`resumeWindowId` is absent for non-catch-up triggers",
+        "Fields marked `when ...` are omitted, not replaced by empty or sentinel values",
+    ],
+)
+adr0001 = (
+    root
+    / "design/architecture/decisions/adr-0001-scripting-event-ingress-idempotency-identity.md"
+).read_text(encoding="utf-8")
+preimage_match = re.search(
+    r"The canonical scheduler preimage fields are serialized in this fixed order: `([^`]+)`",
+    adr0001,
+)
+if preimage_match is None:
+    raise SystemExit(
+        "adr-0001-scripting-event-ingress-idempotency-identity.md: canonical scheduler preimage is missing"
+    )
+expected_scheduler_preimage = [
+    "tenantId",
+    "gameInstanceId",
+    "playableStateScope",
+    "stableOwnerKind",
+    "stableOwnerId",
+    "regionId",
+    "regionEpoch",
+    "entityId when targetScopeType=ENTITY",
+    "scriptId",
+    "eventType",
+    "eventSchemaVersion",
+    "scriptPatchVersion",
+    "scriptPinEpoch",
+    "scheduleDefinitionId",
+    "targetScopeType",
+    "targetScopeId",
+    "duePoint",
+    "isDryRun",
+    "triggerMode",
+    "pluginId when plugin-owned",
+    "pluginVersionId when plugin-owned",
+    "bindingId when plugin-owned",
+    "pluginActivationEpoch when plugin-owned",
+    "resumeWindowId when triggerMode=CATCH_UP",
+]
+actual_scheduler_preimage = [
+    field.strip()
+    for field in preimage_match.group(1).strip("<>").split(",")
+]
+if actual_scheduler_preimage != expected_scheduler_preimage:
+    raise SystemExit(
+        "adr-0001-scripting-event-ingress-idempotency-identity.md: canonical scheduler preimage fields/order drifted"
+    )
+specialized_inventory = (
+    root / "design/project-management/design-alignment/decision-inventory-specialized-runtime.md"
+).read_text(encoding="utf-8")
+trace03_rows = [
+    line for line in specialized_inventory.splitlines() if line.startswith("| `TRACE-03` |")
+]
+if len(trace03_rows) != 1:
+    raise SystemExit(
+        "decision-inventory-specialized-runtime.md: expected exactly one TRACE-03 row"
+    )
+if "ADR 0017" in trace03_rows[0]:
+    raise SystemExit(
+        "decision-inventory-specialized-runtime.md: TRACE-03 must not inherit ADR 0017 provenance"
+    )
+require_contains(
+    "design/architecture/system-architecture-scripting.md",
+    ["Terminal completed_no_commands"],
+)
+require_absent(
+    "design/architecture/system-architecture-scripting.md",
+    ["Terminal no_commands_emitted"],
+)
+require_contains(
+    "design/architecture/decisions/adr-0064-stage-qualified-script-outcomes.md",
+    [
+        "the live no-command terminal path now records the canonical `completed_no_commands` outcome with focused proof",
+        "The live handoff path still needs convergence to `handoff_accepted`",
+    ],
+)
+require_absent(
+    "design/architecture/decisions/adr-0064-stage-qualified-script-outcomes.md",
+    ["the live taxonomy still needs convergence to `handoff_accepted`/`completed_no_commands`"],
 )
 require_contains(
     "design/architecture/system-architecture-scripting-normative-contract-tables.md",
