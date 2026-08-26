@@ -22,13 +22,16 @@ fi
 profile_alerts=(
   ObservabilityDeadmanHeartbeatStale
   ObservabilityDeadmanHeartbeatMissing
-  WebSocketEntryPathBlackboxMetricsAbsent
-  WebSocketEntryPathBlackboxUnavailable
-  TelnetEntryPathBlackboxMetricsAbsent
-  TelnetEntryPathBlackboxUnavailable
+)
+canary_alerts=(
+  PlayerFlowCanaryLoginFailed
+  PlayerFlowCanaryCommandFailed
+  PlayerFlowCanaryLatencyHigh
+  PlayerFlowCanaryFreshnessBudgetMissing
+  PlayerFlowCanaryEvidenceStale
 )
 for profile_alert in "${profile_alerts[@]}"; do
-  profile_alert_count="$(grep -Fc -- "- alert: $profile_alert" <(awk '{ sub(/^[[:space:]]*/, ""); print }' <<<"$required_published_render"))"
+  profile_alert_count="$(grep -Fxc -- "- alert: $profile_alert" <(awk '{ sub(/^[[:space:]]*/, ""); print }' <<<"$required_published_render") || true)"
   if [[ "$profile_alert_count" -eq 1 ]]; then
     continue
   fi
@@ -95,6 +98,20 @@ done
 for profile_alert in "${profile_alerts[@]}"; do
   if grep -Fqx -- "- alert: $profile_alert" <(awk '{ sub(/^[[:space:]]*/, ""); print }' "$ROOT_DIR/k8s/monitoring/prometheus-rules-firemud.yaml"); then
     echo "shared Prometheus rules installed profile-dependent alert $profile_alert" >&2
+    exit 1
+  fi
+done
+for render in "$required_published_render" "$required_omitted_render" "$independent_omitted_render"; do
+  for canary_alert in "${canary_alerts[@]}"; do
+    if grep -Fqx -- "- alert: $canary_alert" <(awk '{ sub(/^[[:space:]]*/, ""); print }' <<<"$render"); then
+      echo "monitoring overlay installed target-only canary alert $canary_alert" >&2
+      exit 1
+    fi
+  done
+done
+for canary_alert in "${canary_alerts[@]}"; do
+  if grep -Fqx -- "- alert: $canary_alert" <(awk '{ sub(/^[[:space:]]*/, ""); print }' "$ROOT_DIR/k8s/monitoring/prometheus-rules-firemud.yaml"); then
+    echo "shared Prometheus rules installed target-only canary alert $canary_alert" >&2
     exit 1
   fi
 done
@@ -170,10 +187,6 @@ published_overlay_findings = validator._validate_reference_prometheus_rules(
     {
         "ObservabilityDeadmanHeartbeatMissing",
         "ObservabilityDeadmanHeartbeatStale",
-        "WebSocketEntryPathBlackboxMetricsAbsent",
-        "WebSocketEntryPathBlackboxUnavailable",
-        "TelnetEntryPathBlackboxMetricsAbsent",
-        "TelnetEntryPathBlackboxUnavailable",
     },
     allow_profile_dependent_alerts=True,
 )
@@ -224,76 +237,10 @@ for profile_alert in (
     "TelnetEntryPathBlackboxMetricsAbsent",
     "TelnetEntryPathBlackboxUnavailable",
 ):
-    if profile_alert not in required_rules_text:
+    if profile_alert in required_rules_text:
         raise AssertionError(
-            f"published profile overlay is missing {profile_alert}"
+            f"published profile overlay must not install ungated path alert {profile_alert}"
         )
-for expected_expression in (
-    'expr: entrypath_blackbox_probe_success{path="websocket"} == 0',
-    'expr: entrypath_blackbox_probe_success{path="telnet"} == 0',
-    'expr: absent(entrypath_blackbox_probe_success{path="websocket"})',
-    'expr: absent(entrypath_blackbox_probe_success{path="telnet"})',
-):
-    if expected_expression not in required_rules_text:
-        raise AssertionError(
-            f"published profile overlay is missing blackbox expression {expected_expression}"
-        )
-
-for alert_name in (
-    "PlayerFlowCanaryLoginFailed",
-    "PlayerFlowCanaryCommandFailed",
-    "PlayerFlowCanaryLatencyHigh",
-):
-    start = valid_text.find(f"        - alert: {alert_name}")
-    if start == -1:
-        raise AssertionError(f"{alert_name} alert is missing")
-    next_rule = valid_text.find("        - alert:", start + 1)
-    block = valid_text[start:] if next_rule == -1 else valid_text[start:next_rule]
-    if "\n            service:" in block:
-        raise AssertionError(f"{alert_name} must not hard-code one service across public paths")
-    if "path: '{{ $labels.path }}'" not in block or "target: '{{ $labels.target }}'" not in block:
-        raise AssertionError(f"{alert_name} must retain failing path and target labels")
-    if "playerflow_canary_last_run_timestamp_seconds" not in block:
-        raise AssertionError(f"{alert_name} must gate on canary run freshness")
-    if "playerflow_canary_freshness_budget_seconds" not in block:
-        raise AssertionError(f"{alert_name} must use the profile-derived freshness budget")
-
-budget_missing_start = valid_text.find(
-    "        - alert: PlayerFlowCanaryFreshnessBudgetMissing"
-)
-if budget_missing_start == -1:
-    raise AssertionError("PlayerFlowCanaryFreshnessBudgetMissing fixture is missing")
-budget_missing_next = valid_text.find("        - alert:", budget_missing_start + 1)
-budget_missing_rule = (
-    valid_text[budget_missing_start:]
-    if budget_missing_next == -1
-    else valid_text[budget_missing_start:budget_missing_next]
-)
-for required_text in (
-    "count by (profile)",
-    "playerflow_canary_success",
-    "or playerflow_canary_latency_ms",
-    "or playerflow_canary_last_run_timestamp_seconds",
-    "unless on (profile)",
-    "count by (profile) (playerflow_canary_freshness_budget_seconds)",
-    "profile: '{{ $labels.profile }}'",
-    "for: 2m",
-):
-    if required_text not in budget_missing_rule:
-        raise AssertionError(
-            "PlayerFlowCanaryFreshnessBudgetMissing is missing "
-            + repr(required_text)
-        )
-
-stale_start = valid_text.find("        - alert: PlayerFlowCanaryEvidenceStale")
-if stale_start == -1:
-    raise AssertionError("PlayerFlowCanaryEvidenceStale fixture is missing")
-stale_next = valid_text.find("        - alert:", stale_start + 1)
-without_stale = (
-    valid_text[:stale_start]
-    + ("" if stale_next == -1 else valid_text[stale_next:])
-)
-
 
 def findings_for(text, check):
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".yaml") as temp_file:
@@ -334,7 +281,7 @@ kibana_payload = json.loads(kibana_path.read_text(encoding="utf-8"))
 baseline_kibana_findings = validator._validate_kibana_saved_objects(kibana_path.parent)
 if any(finding.path == kibana_path for finding in baseline_kibana_findings):
     raise AssertionError(
-        "canonical player incident Kibana object must retain its environment sentinel/filter: "
+        "canonical player incident Kibana object must retain its environment-scoped index sentinel: "
         f"{baseline_kibana_findings!r}"
     )
 
@@ -367,7 +314,6 @@ require_message(
 
 wrong_column_shape = copy.deepcopy(kibana_payload)
 wrong_column_shape["attributes"]["columns"] = [
-    "environment",
     "service",
     "tenantId",
     "characterId",
@@ -380,12 +326,12 @@ require_message(
     "Kibana saved object is missing required structured log fields for runbooks: traceId",
 )
 wrong_column_shape["attributes"]["columns"] = (
-    "environment service tenantId characterId traceId correlationId message"
+    "service tenantId characterId traceId correlationId message"
 )
 require_message(
     kibana_findings(wrong_column_shape),
     "Kibana saved object is missing required structured log fields for runbooks: "
-    "characterId, correlationId, environment, message, service, tenantId, traceId",
+    "characterId, correlationId, message, service, tenantId, traceId",
 )
 
 list_kibana_findings = kibana_findings([kibana_payload])
@@ -428,64 +374,37 @@ if log_volume_findings(
     raise AssertionError("mixed dashboard saved-object payload was rejected")
 
 
-mutated_findings = kibana_findings(
-    kibana_with_query("service:* and traceId:*")
-)
+missing_trace_bound_findings = kibana_findings(kibana_with_query("service:*"))
 require_message(
-    mutated_findings,
-    "player incident Kibana saved object must apply an explicit environment filter before querying wildcard logs",
-)
-require_message(
-    mutated_findings,
-    "player incident Kibana saved object query must retain the __REQUIRED_ENVIRONMENT__ fail-closed sentinel",
+    missing_trace_bound_findings,
+    "player incident Kibana saved object query must contain exact conjunctive service and traceId bounds",
 )
 
-require_message(
-    mutated_findings,
-    "player incident Kibana saved object query must bind __REQUIRED_ENVIRONMENT__ as an exact conjunctive environment filter with service and traceId bounds",
-)
-
-misplaced_sentinel_findings = kibana_findings(
-    kibana_with_query(
-        'environment:* and service:* and traceId:* and message:"__REQUIRED_ENVIRONMENT__"'
-    )
+unsupported_environment_predicate_findings = kibana_findings(
+    kibana_with_query('environment:"staging" and service:* and traceId:*')
 )
 require_message(
-    misplaced_sentinel_findings,
-    "player incident Kibana saved object query must bind __REQUIRED_ENVIRONMENT__ as an exact conjunctive environment filter with service and traceId bounds",
-)
-
-environment_wildcard_findings = kibana_findings(
-    kibana_with_query(
-        'environment:* and service:* and traceId:*'
-    )
-)
-require_message(
-    environment_wildcard_findings,
-    "player incident Kibana saved object query must retain the __REQUIRED_ENVIRONMENT__ fail-closed sentinel",
-)
-require_message(
-    environment_wildcard_findings,
-    "player incident Kibana saved object query must bind __REQUIRED_ENVIRONMENT__ as an exact conjunctive environment filter with service and traceId bounds",
+    unsupported_environment_predicate_findings,
+    "player incident Kibana saved object must scope environment through its index/access boundary rather than a log field predicate",
 )
 
 disjunctive_findings = kibana_findings(
     kibana_with_query(
-        'environment:"__REQUIRED_ENVIRONMENT__" or service:* and traceId:*'
+        "service:* or traceId:*"
     )
 )
 require_message(
     disjunctive_findings,
-    "player incident Kibana saved object query must keep environment, service, and traceId clauses conjunctive",
+    "player incident Kibana saved object query must keep service and traceId clauses conjunctive",
 )
 quoted_operator_findings = kibana_findings(
     kibana_with_query(
-        'environment:"__REQUIRED_ENVIRONMENT__" and service:* and traceId:* and message:"error or timeout"'
+        'service:* and traceId:* and message:"error or timeout"'
     )
 )
 if any(
     finding.message
-    == "player incident Kibana saved object query must keep environment, service, and traceId clauses conjunctive"
+    == "player incident Kibana saved object query must keep service and traceId clauses conjunctive"
     for finding in quoted_operator_findings
 ):
     raise AssertionError(
@@ -493,15 +412,15 @@ if any(
     )
 
 for quoted_conjunction in (
-    'environment:"__REQUIRED_ENVIRONMENT__" and service:* and traceId:* and message:"error and timeout"',
-    'environment:"__REQUIRED_ENVIRONMENT__" AND service:* AND traceId:* AND message:"error AND timeout"',
+    'service:* and traceId:* and message:"error and timeout"',
+    'service:* AND traceId:* AND message:"error AND timeout"',
 ):
     quoted_conjunction_findings = kibana_findings(
         kibana_with_query(quoted_conjunction)
     )
     if any(
         finding.message
-        == "player incident Kibana saved object query must bind __REQUIRED_ENVIRONMENT__ as an exact conjunctive environment filter with service and traceId bounds"
+        == "player incident Kibana saved object query must contain exact conjunctive service and traceId bounds"
         for finding in quoted_conjunction_findings
     ):
         raise AssertionError(
@@ -510,22 +429,22 @@ for quoted_conjunction in (
 
 quoted_conjunction_missing_bound = kibana_findings(
     kibana_with_query(
-        'environment:"__REQUIRED_ENVIRONMENT__ and service:*" AND traceId:*'
+        'service:"* and traceId:*" AND traceId:*'
     )
 )
 require_message(
     quoted_conjunction_missing_bound,
-    "player incident Kibana saved object query must bind __REQUIRED_ENVIRONMENT__ as an exact conjunctive environment filter with service and traceId bounds",
+    "player incident Kibana saved object query must contain exact conjunctive service and traceId bounds",
 )
 
 actual_conjunction_findings = kibana_findings(
     kibana_with_query(
-        'environment:"__REQUIRED_ENVIRONMENT__" AND service:* AND traceId:*'
+        "service:* AND traceId:*"
     )
 )
 if any(
     finding.message
-    == "player incident Kibana saved object query must bind __REQUIRED_ENVIRONMENT__ as an exact conjunctive environment filter with service and traceId bounds"
+    == "player incident Kibana saved object query must contain exact conjunctive service and traceId bounds"
     for finding in actual_conjunction_findings
 ):
     raise AssertionError("actual Kibana AND conjunctions were not split")
@@ -535,7 +454,14 @@ unrestricted_index["references"][0]["id"] = "*"
 unrestricted_index_findings = kibana_findings(unrestricted_index)
 require_message(
     unrestricted_index_findings,
-    "player incident Kibana saved object index reference must use firemud-logs-* or an explicit environment-scoped FireMUD log index",
+    "player incident Kibana saved object index reference must use firemud-logs-env-__REQUIRED_ENVIRONMENT__-* or an explicit environment-scoped FireMUD log index",
+)
+
+broad_index = copy.deepcopy(kibana_payload)
+broad_index["references"][0]["id"] = "firemud-logs-*"
+require_message(
+    kibana_findings(broad_index),
+    "player incident Kibana saved object index reference must use the __REQUIRED_ENVIRONMENT__ fail-closed sentinel or an explicit environment-scoped FireMUD log index",
 )
 
 explicit_environment_index = copy.deepcopy(kibana_payload)
@@ -583,9 +509,9 @@ require_message(
 )
 
 non_string_query_message = (
-    "player incident Kibana saved object query must be a string before environment safety checks"
+    "player incident Kibana saved object query must be a string before index/access safety checks"
 )
-for invalid_query in (None, 123, ["environment", "service", "traceId"]):
+for invalid_query in (None, 123, ["service", "traceId"]):
     require_message(
         kibana_findings(kibana_with_query(invalid_query)),
         non_string_query_message,
@@ -973,22 +899,6 @@ for profile_alert in (
         f"base Prometheus rules must not include profile-dependent alert {profile_alert}; install it only through the matching profile overlay",
     )
 
-
-require_message(
-    findings_for(without_stale, validator._validate_reference_prometheus_rules),
-    "reference rules are missing required alerts: PlayerFlowCanaryEvidenceStale",
-)
-empty_required_findings = findings_for(
-    without_stale,
-    lambda path: validator._validate_reference_prometheus_rules(path, set()),
-)
-if empty_required_findings:
-    raise AssertionError(
-        "an explicit empty required-alert set must not restore default requirements: "
-        f"{empty_required_findings!r}"
-    )
-
-
 backup_rule = """        - alert: BackupPipelineNoRecentBackup
           expr: backup_pipeline_recent_backup_slo_breached > 0
 """
@@ -1197,6 +1107,16 @@ valid_snippet = snippet_path.read_text(encoding="utf-8")
 
 playerflow_snippet_path = root / "design/observability/grafana/player-experience-alerts-snippets.md"
 valid_playerflow_snippet = playerflow_snippet_path.read_text(encoding="utf-8")
+
+empty_required_findings = findings_for(
+    valid_text,
+    lambda path: validator._validate_reference_prometheus_rules(path, set()),
+)
+if empty_required_findings:
+    raise AssertionError(
+        "an explicit empty required-alert set must not restore default requirements: "
+        f"{empty_required_findings!r}"
+    )
 
 player_dashboard_with_slo_title = copy.deepcopy(player_dashboard)
 dashboard_title = player_dashboard_with_slo_title["panels"][0]["title"]
@@ -1484,14 +1404,6 @@ entry_path_contracts = {
     },
 }
 entry_path_sources = (
-    (
-        required_rules_text,
-        lambda path: validator._validate_reference_prometheus_rules(
-            path,
-            set(entry_path_contracts),
-            allow_profile_dependent_alerts=True,
-        ),
-    ),
     (valid_playerflow_snippet, validator._validate_alert_snippet),
 )
 for source_text, check in entry_path_sources:
@@ -1627,33 +1539,6 @@ for source_text, check in entry_path_sources:
             )
             require_message(findings_for(invalid_hold_rule, check), hold_message)
 
-duplicate_blackbox_alert = "WebSocketEntryPathBlackboxUnavailable"
-duplicate_start = required_rules_text.find(
-    f"        - alert: {duplicate_blackbox_alert}"
-)
-duplicate_next = required_rules_text.find("        - alert:", duplicate_start + 1)
-duplicate_block = required_rules_text[duplicate_start:duplicate_next]
-duplicate_overlay = required_rules_text + "\n" + duplicate_block
-duplicate_findings = findings_for(
-    duplicate_overlay,
-    lambda path: validator._validate_reference_prometheus_rules(
-        path,
-        {
-            "ObservabilityDeadmanHeartbeatMissing",
-            "ObservabilityDeadmanHeartbeatStale",
-            "WebSocketEntryPathBlackboxMetricsAbsent",
-            "WebSocketEntryPathBlackboxUnavailable",
-            "TelnetEntryPathBlackboxMetricsAbsent",
-            "TelnetEntryPathBlackboxUnavailable",
-        },
-        allow_profile_dependent_alerts=True,
-    ),
-)
-require_message(
-    duplicate_findings,
-    "profile-dependent entry-path blackbox alerts must appear exactly once; duplicate declarations: WebSocketEntryPathBlackboxUnavailable",
-)
-
 nested_for_source = """rules:
   - alert: WebSocketEntryPathBlackboxUnavailable
     expr: entrypath_blackbox_probe_success{path="websocket"} == 0
@@ -1691,6 +1576,42 @@ if valid_sequence_findings:
     raise AssertionError(
         f"valid sequence rule was rejected: {valid_sequence_findings!r}"
     )
+
+valid_blackbox_rule = """groups:
+  - name: parser-contract
+    rules:
+      - alert: WebSocketEntryPathBlackboxUnavailable
+        expr: entrypath_blackbox_probe_success{path="websocket"} == 0
+        for: 2m
+        labels:
+          service: spring-cloud-gateway
+          component: entrypath
+          severity: P0
+          owner: platform
+          runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
+"""
+
+duplicate_blackbox_alert = "WebSocketEntryPathBlackboxUnavailable"
+duplicate_start = valid_blackbox_rule.find(
+    f"      - alert: {duplicate_blackbox_alert}"
+)
+duplicate_next = valid_blackbox_rule.find("      - alert:", duplicate_start + 1)
+duplicate_block = valid_blackbox_rule[duplicate_start:duplicate_next]
+duplicate_overlay = valid_blackbox_rule + "\n" + duplicate_block
+duplicate_findings = findings_for(
+    duplicate_overlay,
+    lambda path: validator._validate_reference_prometheus_rules(
+        path,
+        {
+            "WebSocketEntryPathBlackboxUnavailable",
+        },
+        allow_profile_dependent_alerts=True,
+    ),
+)
+require_message(
+    duplicate_findings,
+    "profile-dependent entry-path blackbox alerts must appear exactly once; duplicate declarations: WebSocketEntryPathBlackboxUnavailable",
+)
 
 minimal_alert_rule = """groups:
   - name: parser-contract
@@ -2541,7 +2462,10 @@ def shift_rule_indentation(text, amount):
     return "\n".join(shifted_lines) + "\n"
 
 
-uniformly_overindented_rule = shift_rule_indentation(valid_sequence_rule, 2)
+uniformly_overindented_rule = "\n".join(
+    ("  " + line if line.startswith("        ") else line)
+    for line in valid_blackbox_rule.splitlines()
+) + "\n"
 require_pyyaml_rejection(
     uniformly_overindented_rule,
     "uniformly over-indented inline sequence mapping fields",
@@ -2630,7 +2554,7 @@ for explicit_for in (
     "",
 ):
     explicit_hold = add_alert_scalar(
-        required_rules_text,
+        valid_blackbox_rule,
         "WebSocketEntryPathBlackboxUnavailable",
         "for",
         explicit_for,
@@ -2647,9 +2571,9 @@ for explicit_for in (
         "WebSocketEntryPathBlackboxUnavailable must use a rule-level for: 2m hold",
     )
 
-root_indentation_mutation = required_rules_text.replace(
+root_indentation_mutation = valid_blackbox_rule.replace(
+    "      - alert: WebSocketEntryPathBlackboxUnavailable",
     "        - alert: WebSocketEntryPathBlackboxUnavailable",
-    "          - alert: WebSocketEntryPathBlackboxUnavailable",
     1,
 )
 require_message(
@@ -2661,12 +2585,12 @@ require_message(
             allow_profile_dependent_alerts=True,
         ),
     ),
-    "inconsistent or nested rule sequence indentation; the dependency-free validator cannot safely inspect this YAML shape",
+    "unsupported rule sequence entry boundary; the dependency-free validator cannot safely inspect this YAML shape",
 )
 
-field_indentation_mutation = required_rules_text.replace(
+field_indentation_mutation = valid_blackbox_rule.replace(
+    "        expr: entrypath_blackbox_probe_success{path=\"websocket\"} == 0",
     "          expr: entrypath_blackbox_probe_success{path=\"websocket\"} == 0",
-    "            expr: entrypath_blackbox_probe_success{path=\"websocket\"} == 0",
     1,
 )
 require_message(
@@ -2681,9 +2605,9 @@ require_message(
     "inconsistent rule root-field indentation; the dependency-free validator cannot safely inspect this YAML shape",
 )
 
-nested_sequence_mutation = required_rules_text.replace(
-    "          expr: entrypath_blackbox_probe_success{path=\"websocket\"} == 0",
-    "          - alert: HiddenEntryPathRule\n            expr: vector(1)\n          expr: entrypath_blackbox_probe_success{path=\"websocket\"} == 0",
+nested_sequence_mutation = valid_blackbox_rule.replace(
+    "        expr: entrypath_blackbox_probe_success{path=\"websocket\"} == 0",
+    "        - alert: HiddenEntryPathRule\n          expr: vector(1)\n        expr: entrypath_blackbox_probe_success{path=\"websocket\"} == 0",
     1,
 )
 require_message(
@@ -2709,7 +2633,7 @@ expected_budget_missing_expr = validator._compact_promql(
     count by (profile) (playerflow_canary_freshness_budget_seconds)
     """
 )
-for source_text in (valid_playerflow_snippet, valid_text):
+for source_text in (valid_playerflow_snippet,):
     yaml_blocks = validator._extract_fenced_blocks(source_text, "yaml")
     parsed_rules = [
         entry
@@ -2781,7 +2705,6 @@ canary_mutations = (
 
 for source_text, check in (
     (valid_playerflow_snippet, validator._validate_alert_snippet),
-    (valid_text, validator._validate_reference_prometheus_rules),
 ):
     baseline_findings = findings_for(source_text, check)
     if baseline_findings:
@@ -2798,7 +2721,6 @@ for source_text, check in (
 
 for source_text, check in (
     (valid_playerflow_snippet, validator._validate_alert_snippet),
-    (valid_text, validator._validate_reference_prometheus_rules),
 ):
     for alert_name in (
         "PlayerFlowCanaryLoginFailed",
@@ -2831,7 +2753,7 @@ latest_canary_expressions = (
         'playerflow_canary_latency_ms{flow="command"} > 1000',
     ),
 )
-for source_text in (valid_playerflow_snippet, valid_text):
+for source_text in (valid_playerflow_snippet,):
     for alert_name, expected_expression in latest_canary_expressions:
         rule_match = re.search(
             rf"(?ms)^[ \t]*- alert: {re.escape(alert_name)}\n"
@@ -2874,7 +2796,6 @@ stale_canary_mutations = (
 )
 for source_text, check in (
     (valid_playerflow_snippet, validator._validate_alert_snippet),
-    (valid_text, validator._validate_reference_prometheus_rules),
 ):
     for label, replacement, expected_message in stale_canary_mutations:
         mutated = replace_canary_label(
@@ -2899,7 +2820,7 @@ for source_text, check in (
     )
     require_message(missing_service_findings, missing_service_message)
 
-for source_text in (valid_playerflow_snippet, valid_text):
+for source_text in (valid_playerflow_snippet,):
     for alert_name in (
         "PlayerFlowCanaryLoginFailed",
         "PlayerFlowCanaryCommandFailed",

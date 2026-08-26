@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.dto.LogEventDto;
+import net.firedevops.firemud.loggingadmin.dto.ModerationPolicyDecisionDto;
 import net.firedevops.firemud.loggingadmin.service.LogEventService;
 import net.firedevops.firemud.loggingadmin.service.LogQueryService;
 import net.firedevops.firemud.loggingadmin.service.ModerationService;
@@ -451,6 +452,8 @@ class LoggingAdminGrpcServiceAuthTest {
 
   @Test
   void evaluateModerationPolicyRejectsZeroAccountIdBeforeDispatch() {
+    SessionContext.setContext(
+        "", List.of(), Map.of(), true, "game-session-service", "test-instance");
     ModerationService moderationService = Mockito.mock(ModerationService.class);
     LoggingAdminGrpcService service =
         new LoggingAdminGrpcService(
@@ -483,6 +486,194 @@ class LoggingAdminGrpcServiceAuthTest {
     assertFalse(ref.get().getAllowed());
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     assertEquals("accountId must be positive", ref.get().getError().getMessage());
+    verifyNoInteractions(moderationService);
+  }
+
+  @Test
+  void evaluateModerationPolicyAllowsAllowlistedInternalService() {
+    SessionContext.setContext(
+        "", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    ModerationService moderationService = Mockito.mock(ModerationService.class);
+    when(moderationService.evaluatePolicy(1L, 2L, "CHAT_SEND"))
+        .thenReturn(new ModerationPolicyDecisionDto(true, "", "allowed", null));
+    LoggingAdminGrpcService service =
+        new LoggingAdminGrpcService(
+            Mockito.mock(LogQueryService.class),
+            Mockito.mock(LogEventService.class),
+            moderationService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<EvaluateModerationPolicyResponse> ref = new AtomicReference<>();
+    service.evaluateModerationPolicy(
+        EvaluateModerationPolicyRequest.newBuilder()
+            .setTenantId("1")
+            .setAccountId("2")
+            .setScope("CHAT_SEND")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(EvaluateModerationPolicyResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertFalse(ref.get().hasError());
+    assertEquals(true, ref.get().getAllowed());
+    verify(moderationService).evaluatePolicy(1L, 2L, "CHAT_SEND");
+  }
+
+  @Test
+  void evaluateModerationPolicyAllowsSocialGroupsInternalService() {
+    SessionContext.setContext(
+        "", List.of(), Map.of(), true, "social-groups-service", "test-instance");
+    ModerationService moderationService = Mockito.mock(ModerationService.class);
+    when(moderationService.evaluatePolicy(1L, 2L, "CHAT_SEND"))
+        .thenReturn(new ModerationPolicyDecisionDto(true, "", "allowed", null));
+    LoggingAdminGrpcService service =
+        new LoggingAdminGrpcService(
+            Mockito.mock(LogQueryService.class),
+            Mockito.mock(LogEventService.class),
+            moderationService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<EvaluateModerationPolicyResponse> ref = new AtomicReference<>();
+    service.evaluateModerationPolicy(
+        EvaluateModerationPolicyRequest.newBuilder()
+            .setTenantId("1")
+            .setAccountId("2")
+            .setScope("CHAT_SEND")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(EvaluateModerationPolicyResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertFalse(ref.get().hasError());
+    assertEquals(true, ref.get().getAllowed());
+    verify(moderationService).evaluatePolicy(1L, 2L, "CHAT_SEND");
+  }
+
+  @Test
+  void evaluateModerationPolicyRejectsMissingCallerBeforeDispatch() {
+    SessionContext.clear();
+    ModerationService moderationService = Mockito.mock(ModerationService.class);
+    LoggingAdminGrpcService service =
+        new LoggingAdminGrpcService(
+            Mockito.mock(LogQueryService.class),
+            Mockito.mock(LogEventService.class),
+            moderationService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<EvaluateModerationPolicyResponse> ref = new AtomicReference<>();
+    service.evaluateModerationPolicy(
+        EvaluateModerationPolicyRequest.newBuilder()
+            .setTenantId("1")
+            .setAccountId("2")
+            .setScope("CHAT_SEND")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(EvaluateModerationPolicyResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+    verifyNoInteractions(moderationService);
+  }
+
+  @Test
+  void evaluateModerationPolicyRejectsAuthenticatedEndUserBeforeDispatch() {
+    SessionContext.setContext("42", List.of("player"), Map.of());
+    ModerationService moderationService = Mockito.mock(ModerationService.class);
+    LoggingAdminGrpcService service =
+        new LoggingAdminGrpcService(
+            Mockito.mock(LogQueryService.class),
+            Mockito.mock(LogEventService.class),
+            moderationService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<EvaluateModerationPolicyResponse> ref = new AtomicReference<>();
+    service.evaluateModerationPolicy(
+        EvaluateModerationPolicyRequest.newBuilder()
+            .setTenantId("1")
+            .setAccountId("2")
+            .setScope("CHAT_SEND")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(EvaluateModerationPolicyResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+    verifyNoInteractions(moderationService);
+  }
+
+  @Test
+  void evaluateModerationPolicyRejectsNonAllowlistedInternalServiceBeforeDispatch() {
+    SessionContext.setContext("", List.of(), Map.of(), true, "account-service", "test-instance");
+    ModerationService moderationService = Mockito.mock(ModerationService.class);
+    LoggingAdminGrpcService service =
+        new LoggingAdminGrpcService(
+            Mockito.mock(LogQueryService.class),
+            Mockito.mock(LogEventService.class),
+            moderationService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<EvaluateModerationPolicyResponse> ref = new AtomicReference<>();
+    service.evaluateModerationPolicy(
+        EvaluateModerationPolicyRequest.newBuilder()
+            .setTenantId("1")
+            .setAccountId("2")
+            .setScope("CHAT_SEND")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(EvaluateModerationPolicyResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
     verifyNoInteractions(moderationService);
   }
 }

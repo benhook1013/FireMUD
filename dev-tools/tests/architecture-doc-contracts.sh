@@ -1056,14 +1056,8 @@ require_contains(
     "design/architecture/system-architecture-logging-monitoring.md",
     [
         "canonical new-record emit-and-query check is conditional",
-        "current fallback records capability `UNAVAILABLE`",
-        "keeps only the applicable indexed-queryability claim or gate closed",
-    ],
-)
-
-require_contains(
-    "design/architecture/system-architecture-logging-monitoring.md",
-    [
+        "current fallback records capability `log-queryability-omitted` with result `not_applicable`",
+        "for profiles that require indexed queryability, the applicable claim or gate remains closed",
         "any required evidence input is `unknown`, regardless of whether that profile otherwise permits unknown evidence",
         "`unknown` is an explicit non-SLI state",
     ],

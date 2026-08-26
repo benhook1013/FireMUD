@@ -129,7 +129,10 @@ for invalid_budget in (-1, "195", float("nan"), float("inf")):
             allow_unadvertised_canary_budget=True,
         )
     except RuntimeError as exc:
-        assert "positive finite detectionBudgetSeconds" in str(exc)
+        assert (
+            "positive finite number of seconds in the inclusive range "
+            "[1e-06, 1000000000000]"
+        ) in str(exc)
     else:
         raise AssertionError(
             f"invalid independent-omitted detection budget was accepted: {invalid_budget!r}"
@@ -400,11 +403,11 @@ def expect_runtime_error(action, error_fragment):
 for field, error_fragment in (
     (
         "detectionBudgetSeconds",
-        "must define a positive finite detectionBudgetSeconds",
+        "detectionBudgetSeconds must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]",
     ),
     (
         "staleThresholdSeconds",
-        "must define a positive finite staleThresholdSeconds",
+        "staleThresholdSeconds must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]",
     ),
 ):
     huge_authority = runner.simulated_external_authority("2026-03-19T10:55:00Z")
@@ -440,13 +443,13 @@ expect_runtime_error(
     lambda: runner.stale_deadman_heartbeat_timestamp(
         {"staleThresholdSeconds": 10**1000}, 1773917700
     ),
-    "requires a positive finite staleThresholdSeconds",
+    "staleThresholdSeconds must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]",
 )
 expect_runtime_error(
     lambda: runner.stale_deadman_heartbeat_timestamp(
         {"staleThresholdSeconds": 1e308}, 1773917700
     ),
-    "requires a positive finite staleThresholdSeconds",
+    "staleThresholdSeconds must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]",
 )
 expect_runtime_error(
     lambda: runner.validate_public_path_freshness(
@@ -1190,7 +1193,7 @@ if run_smoke_runner \
   echo "runner unexpectedly accepted missing stale threshold" >&2
   exit 1
 fi
-grep -q "must define a positive finite staleThresholdSeconds" "$TMP_DIR/missing-stale-threshold.out"
+grep -q "staleThresholdSeconds must be a positive finite number of seconds in the inclusive range \[1e-06, 1000000000000\]" "$TMP_DIR/missing-stale-threshold.out"
 
 INVALID_STALE_THRESHOLD_AUTHORITY="$TMP_DIR/invalid-stale-threshold-authority.json"
 refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
@@ -1213,7 +1216,7 @@ if run_smoke_runner \
   echo "runner unexpectedly accepted invalid stale threshold" >&2
   exit 1
 fi
-grep -q "must define a positive finite staleThresholdSeconds" "$TMP_DIR/invalid-stale-threshold.out"
+grep -q "staleThresholdSeconds must be a positive finite number of seconds in the inclusive range \[1e-06, 1000000000000\]" "$TMP_DIR/invalid-stale-threshold.out"
 
 NEGATIVE_STALE_THRESHOLD_AUTHORITY="$TMP_DIR/negative-stale-threshold-authority.json"
 refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
@@ -1236,7 +1239,7 @@ if run_smoke_runner \
   echo "runner unexpectedly accepted negative stale threshold" >&2
   exit 1
 fi
-grep -q "must define a positive finite staleThresholdSeconds" "$TMP_DIR/negative-stale-threshold.out"
+grep -q "staleThresholdSeconds must be a positive finite number of seconds in the inclusive range \[1e-06, 1000000000000\]" "$TMP_DIR/negative-stale-threshold.out"
 
 OVERLARGE_DETECTION_BUDGET_AUTHORITY="$TMP_DIR/overlarge-detection-budget-authority.json"
 refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
@@ -1260,7 +1263,7 @@ if run_smoke_runner \
   echo "runner unexpectedly accepted overlarge detection budget" >&2
   exit 1
 fi
-grep -q "must define a positive finite detectionBudgetSeconds" "$TMP_DIR/overlarge-detection-budget.out"
+grep -q "detectionBudgetSeconds must be a positive finite number of seconds in the inclusive range \[1e-06, 1000000000000\]" "$TMP_DIR/overlarge-detection-budget.out"
 test ! -e "$OVERLARGE_DETECTION_BUDGET_EVIDENCE"
 
 OVERLARGE_STALE_THRESHOLD_AUTHORITY="$TMP_DIR/overlarge-stale-threshold-authority.json"
@@ -1285,7 +1288,7 @@ if run_smoke_runner \
   echo "runner unexpectedly accepted overlarge stale threshold" >&2
   exit 1
 fi
-grep -q "must define a positive finite staleThresholdSeconds" "$TMP_DIR/overlarge-stale-threshold.out"
+grep -q "staleThresholdSeconds must be a positive finite number of seconds in the inclusive range \[1e-06, 1000000000000\]" "$TMP_DIR/overlarge-stale-threshold.out"
 test ! -e "$OVERLARGE_STALE_THRESHOLD_EVIDENCE"
 
 run_clean_python - "$RUNNER" "$AUTHORITY_EVIDENCE" <<'PY'

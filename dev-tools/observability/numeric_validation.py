@@ -27,14 +27,22 @@ def is_bounded_positive_seconds(value: Any) -> bool:
     )
 
 
+def format_bounded_positive_seconds_error(key: str) -> str:
+    """Return the canonical diagnostic for an invalid bounded seconds value."""
+    return (
+        f"{key} must be a positive finite number of seconds in the inclusive "
+        f"range [{MIN_POSITIVE_SECONDS}, {MAX_SAFE_SECONDS}]"
+    )
+
+
 def parse_bounded_positive_seconds(value: Any, key: str) -> float:
     """Parse a bounded positive seconds value for runner configuration."""
     if isinstance(value, bool):
-        raise ValueError(f"{key} must be a positive finite number")  # noqa: TRY004 - one config-validation error contract
+        raise ValueError(format_bounded_positive_seconds_error(key))  # noqa: TRY004 - preserve the config-validation error contract
     try:
         parsed = float(value)
     except (TypeError, ValueError, OverflowError) as exc:
-        raise ValueError(f"{key} must be a positive finite number") from exc
+        raise ValueError(format_bounded_positive_seconds_error(key)) from exc
     if not is_bounded_positive_seconds(parsed):
-        raise ValueError(f"{key} must be a positive finite number")
+        raise ValueError(format_bounded_positive_seconds_error(key))
     return parsed

@@ -21,6 +21,7 @@ from urllib.parse import urlencode, urlparse
 if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 from numeric_validation import (
+    format_bounded_positive_seconds_error,
     is_bounded_positive_seconds,
     is_finite_number,
     parse_bounded_positive_seconds,
@@ -1214,9 +1215,7 @@ def stale_deadman_heartbeat_timestamp(
 ) -> float:
     stale_threshold = external_authority.get("staleThresholdSeconds")
     if not is_bounded_positive_seconds(stale_threshold):
-        raise RuntimeError(
-            "A deadman failure injection requires a positive finite staleThresholdSeconds"
-        )
+        raise RuntimeError(format_bounded_positive_seconds_error("staleThresholdSeconds"))
     timestamp = now - stale_threshold - 1
     if not is_finite_number(timestamp) or timestamp <= 0:
         raise RuntimeError(
@@ -1293,9 +1292,7 @@ def queryability_omission_record(config: SmokeConfig, verified_at: str) -> dict[
     observed_at_serialized = observed_at.isoformat().replace("+00:00", "Z")
     budget = config.queryability_freshness_budget_seconds
     if not is_bounded_positive_seconds(budget):
-        raise ValueError(
-            "queryability freshness budget must be a positive finite number"
-        )
+        raise ValueError(format_bounded_positive_seconds_error("queryability freshness budget"))
     max_budget = (
         dt.datetime.max.replace(tzinfo=observed_at.tzinfo) - observed_at
     ).total_seconds()
@@ -1538,7 +1535,9 @@ def validate_external_authority_shape(
                 not is_bounded_positive_seconds(detection_budget)
             ):
                 raise RuntimeError(
-                    f"External authority evidence at {path} must define a positive finite detectionBudgetSeconds"
+                    format_bounded_positive_seconds_error(
+                        f"External authority evidence at {path} detectionBudgetSeconds"
+                    )
                 )
             if canary_advertised and detection_budget < MIN_CANARY_DETECTION_BUDGET_SECONDS:
                 raise RuntimeError(
@@ -1557,7 +1556,9 @@ def validate_external_authority_shape(
         not is_bounded_positive_seconds(detection_budget)
     ):
         raise RuntimeError(
-            f"External authority evidence at {path} must define a positive finite detectionBudgetSeconds"
+            format_bounded_positive_seconds_error(
+                f"External authority evidence at {path} detectionBudgetSeconds"
+            )
         )
 
     if canary_advertised and detection_budget < MIN_CANARY_DETECTION_BUDGET_SECONDS:
@@ -1569,7 +1570,9 @@ def validate_external_authority_shape(
         not is_bounded_positive_seconds(stale_threshold)
     ):
         raise RuntimeError(
-            f"External authority evidence at {path} must define a positive finite staleThresholdSeconds"
+            format_bounded_positive_seconds_error(
+                f"External authority evidence at {path} staleThresholdSeconds"
+            )
         )
     observed_staleness = data.get("observedStalenessSeconds")
     if (
@@ -1681,7 +1684,9 @@ def validate_external_authority_freshness(
         not is_bounded_positive_seconds(detection_budget)
     ):
         raise RuntimeError(
-            f"External authority evidence at {path} must define a positive finite detectionBudgetSeconds"
+            format_bounded_positive_seconds_error(
+                f"External authority evidence at {path} detectionBudgetSeconds"
+            )
         )
     evidence_observed_at = data.get("evidenceObservedAt")
     if not isinstance(evidence_observed_at, str) or not evidence_observed_at.endswith("Z"):

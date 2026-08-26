@@ -15,6 +15,7 @@ def _compact_promql(expr: str) -> str:
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 KIBANA_DEFAULT_LOG_INDEX = "firemud-logs-*"
+KIBANA_ENVIRONMENT_INDEX_SENTINEL = "firemud-logs-env-__REQUIRED_ENVIRONMENT__-*"
 KIBANA_SAFE_LOG_INDEX_PATTERN = re.compile(
     r"^firemud-logs-(?:\*|[A-Za-z0-9][A-Za-z0-9._-]*\*?)$"
 )
@@ -2055,7 +2056,7 @@ def _validate_kibana_saved_objects(kibana_dir: Path) -> list[Finding]:
     findings: list[Finding] = []
     required_columns: dict[str, set[str]] = {
         "log-volume.json": {"service", "tenantId", "regionId", "message"},
-        "player-incident-drilldown.json": {"environment", "service", "tenantId", "characterId", "traceId", "correlationId", "message"},
+        "player-incident-drilldown.json": {"service", "tenantId", "characterId", "traceId", "correlationId", "message"},
         "tick-region-logs.json": {"service", "tenantId", "regionId", "tickId", "traceId", "correlationId", "message"},
     }
 
@@ -2160,34 +2161,23 @@ def _validate_kibana_saved_objects(kibana_dir: Path) -> list[Finding]:
                         path=json_path,
                         message=(
                             "player incident Kibana saved object query must be a "
-                            "string before environment safety checks"
+                            "string before index/access safety checks"
                         ),
                     )
                 )
                 query = ""
-            if not re.search(r"\benvironment\s*:", query, re.IGNORECASE):
+            if re.search(r"\benvironment\s*:", query, re.IGNORECASE):
                 findings.append(
                     Finding(
                         path=json_path,
                         message=(
-                            "player incident Kibana saved object must apply an "
-                            "explicit environment filter before querying wildcard logs"
-                        ),
-                    )
-                )
-            if sentinel not in query:
-                findings.append(
-                    Finding(
-                        path=json_path,
-                        message=(
-                            "player incident Kibana saved object query must retain the "
-                            "__REQUIRED_ENVIRONMENT__ fail-closed sentinel"
+                            "player incident Kibana saved object must scope environment "
+                            "through its index/access boundary rather than a log field predicate"
                         ),
                     )
                 )
             query_clauses = _split_kibana_query_clauses(query)
             required_conjunctive_clauses = {
-                "environment": r'environment\s*:\s*"__REQUIRED_ENVIRONMENT__"',
                 "service": r"service\s*:\s*\*",
                 "traceId": r"traceId\s*:\s*\*",
             }
@@ -2202,9 +2192,8 @@ def _validate_kibana_saved_objects(kibana_dir: Path) -> list[Finding]:
                     Finding(
                         path=json_path,
                         message=(
-                            "player incident Kibana saved object query must bind "
-                            '__REQUIRED_ENVIRONMENT__ as an exact conjunctive '
-                            "environment filter with service and traceId bounds"
+                            "player incident Kibana saved object query must contain "
+                            "exact conjunctive service and traceId bounds"
                         ),
                     )
                 )
@@ -2216,7 +2205,7 @@ def _validate_kibana_saved_objects(kibana_dir: Path) -> list[Finding]:
                         path=json_path,
                         message=(
                             "player incident Kibana saved object query must keep "
-                            "environment, service, and traceId clauses conjunctive"
+                            "service and traceId clauses conjunctive"
                         ),
                     )
                 )
@@ -2271,8 +2260,19 @@ def _validate_kibana_saved_objects(kibana_dir: Path) -> list[Finding]:
                             path=json_path,
                             message=(
                                 "player incident Kibana saved object index reference "
-                                f"must use {KIBANA_DEFAULT_LOG_INDEX} or an explicit "
+                                f"must use {KIBANA_ENVIRONMENT_INDEX_SENTINEL} or an explicit "
                                 "environment-scoped FireMUD log index"
+                            ),
+                        )
+                    )
+                elif index_id == KIBANA_DEFAULT_LOG_INDEX:
+                    findings.append(
+                        Finding(
+                            path=json_path,
+                            message=(
+                                "player incident Kibana saved object index reference must "
+                                "use the __REQUIRED_ENVIRONMENT__ fail-closed sentinel or "
+                                "an explicit environment-scoped FireMUD log index"
                             ),
                         )
                     )
@@ -2588,11 +2588,6 @@ def _validate_reference_prometheus_rules(
             "EntryPathAvailabilityLowTcpProxy",
             "EntryPathAvailabilityLowGatewayCompliance",
             "EntryPathAvailabilityLowTcpProxyCompliance",
-            "PlayerFlowCanaryLoginFailed",
-            "PlayerFlowCanaryCommandFailed",
-            "PlayerFlowCanaryLatencyHigh",
-            "PlayerFlowCanaryFreshnessBudgetMissing",
-            "PlayerFlowCanaryEvidenceStale",
             "ChatDeliveryLatencyP99High",
             "TickReplayFairnessStarved",
             "TickReplayScanLagHigh",
@@ -2847,10 +2842,6 @@ def main() -> int:
                 {
                     "ObservabilityDeadmanHeartbeatMissing",
                     "ObservabilityDeadmanHeartbeatStale",
-                    "WebSocketEntryPathBlackboxMetricsAbsent",
-                    "WebSocketEntryPathBlackboxUnavailable",
-                    "TelnetEntryPathBlackboxMetricsAbsent",
-                    "TelnetEntryPathBlackboxUnavailable",
                 },
                 allow_profile_dependent_alerts=True,
             )

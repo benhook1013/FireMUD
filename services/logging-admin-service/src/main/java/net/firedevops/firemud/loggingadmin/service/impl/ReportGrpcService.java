@@ -5,7 +5,9 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.RequestIdValidation;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.dto.ReportDto;
 import net.firedevops.firemud.loggingadmin.service.ReportService;
 import net.firedevops.firemud.loggingadmin.v1.CreateReportRequest;
@@ -18,6 +20,7 @@ import org.springframework.grpc.server.service.GrpcService;
 @GrpcService
 public class ReportGrpcService extends ReportServiceGrpc.ReportServiceImplBase {
   private static final Logger logger = LoggerFactory.getLogger(ReportGrpcService.class);
+  private static final String SOCIAL_GROUPS_SERVICE = "social-groups-service";
 
   private final ReportService reportService;
   private final MeterRegistry meterRegistry;
@@ -35,6 +38,7 @@ public class ReportGrpcService extends ReportServiceGrpc.ReportServiceImplBase {
   public void createReport(
       CreateReportRequest request, StreamObserver<CreateReportResponse> responseObserver) {
     try {
+      requireSocialGroupsInternalService();
       ReportDto dto =
           reportService.createReport(
               new net.firedevops.firemud.loggingadmin.dto.CreateReportRequest(
@@ -47,6 +51,15 @@ public class ReportGrpcService extends ReportServiceGrpc.ReportServiceImplBase {
                   request.getDescription()));
       CreateReportResponse response =
           CreateReportResponse.newBuilder().setReportId(dto.id().toString()).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      CreateReportResponse response =
+          CreateReportResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "CreateReport", "PERMISSION_DENIED", ex.getMessage()))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
@@ -65,6 +78,14 @@ public class ReportGrpcService extends ReportServiceGrpc.ReportServiceImplBase {
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    }
+  }
+
+  private static void requireSocialGroupsInternalService() {
+    if (!SessionContext.isInternalService()
+        || !SOCIAL_GROUPS_SERVICE.equals(SessionContext.getServiceName())) {
+      throw new AdminAuthorizationException(
+          "CreateReport requires social-groups-service as an internal service caller");
     }
   }
 }

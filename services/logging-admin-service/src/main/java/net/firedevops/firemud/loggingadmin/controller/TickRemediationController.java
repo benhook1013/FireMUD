@@ -59,7 +59,7 @@ public class TickRemediationController {
       @Valid @RequestBody TickRemediationRequest request) {
     return LoggingAdminRequestReaders.withBadRequest(
         () -> {
-          requestWithAuthorizedTenant(request, request.tenantId());
+          validateAuthorizedTenantRequest(request, request.tenantId());
           return unavailableResponse();
         });
   }
@@ -70,7 +70,7 @@ public class TickRemediationController {
       @Valid @RequestBody TickRemediationRequest request) {
     return LoggingAdminRequestReaders.withBadRequest(
         () -> {
-          requestWithAuthorizedTenant(request, request.tenantId());
+          validateAuthorizedTenantRequest(request, request.tenantId());
           return unavailableResponse();
         });
   }
@@ -83,8 +83,7 @@ public class TickRemediationController {
                     TICK_REMEDIATION_UNAVAILABLE_CODE, TICK_REMEDIATION_UNAVAILABLE_MESSAGE)));
   }
 
-  private TickRemediationRequest requestWithAuthorizedTenant(
-      TickRemediationRequest request, Long tenantId) {
+  private void validateAuthorizedTenantRequest(TickRemediationRequest request, Long tenantId) {
     SessionContext.requireTenantAccess(tenantId);
     boolean hasGameInstanceId =
         request.gameInstanceId() != null && !request.gameInstanceId().isBlank();
@@ -93,11 +92,7 @@ public class TickRemediationController {
       throw new IllegalArgumentException(
           "gameInstanceId is required and regionId is not supported for pause/resume");
     }
-    return new TickRemediationRequest(
-        request.tenantId(),
-        LoggingAdminRequestReaders.requireOptionalPositiveLongText(
-            request.gameInstanceId(), "gameInstanceId"),
-        request.regionId(),
-        request.reason());
+    LoggingAdminRequestReaders.requireOptionalPositiveLongText(
+        request.gameInstanceId(), "gameInstanceId");
   }
 }

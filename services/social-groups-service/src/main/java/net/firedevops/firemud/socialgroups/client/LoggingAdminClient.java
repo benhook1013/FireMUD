@@ -5,11 +5,14 @@ import java.io.IOException;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
-import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.runtime.RuntimeIdentity;
+import net.firedevops.firemud.common.security.GrpcClientAuth;
+import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.loggingadmin.v1.CreateReportRequest;
 import net.firedevops.firemud.loggingadmin.v1.ReportServiceGrpc;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 /** Client for communicating with the Logging & Admin Service. */
@@ -20,9 +23,15 @@ public class LoggingAdminClient
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
       GrpcChannelFactory channelFactory,
-      BlockingGrpcStubCustomizer stubCustomizer) {
-    super(endpoints, tlsProps, channelFactory, stubCustomizer, LoggingAdminClient.class);
+      JwtUtil jwtUtil,
+      ObjectProvider<RuntimeIdentity> runtimeIdentityProvider) {
+    super(endpoints, tlsProps, channelFactory, LoggingAdminClient.class);
+    this.jwtUtil = jwtUtil;
+    this.runtimeIdentityProvider = runtimeIdentityProvider;
   }
+
+  private final JwtUtil jwtUtil;
+  private final ObjectProvider<RuntimeIdentity> runtimeIdentityProvider;
 
   @PostConstruct
   void init() throws SSLException, IOException {
@@ -41,7 +50,10 @@ public class LoggingAdminClient
 
   @Override
   protected ReportServiceGrpc.ReportServiceBlockingStub buildStub(io.grpc.ManagedChannel channel) {
-    return applyStubCustomizer(ReportServiceGrpc.newBlockingStub(channel).withCompression("gzip"));
+    return GrpcClientAuth.attachInternal(
+        ReportServiceGrpc.newBlockingStub(channel).withCompression("gzip"),
+        jwtUtil,
+        runtimeIdentityProvider.getIfAvailable());
   }
 
   /**

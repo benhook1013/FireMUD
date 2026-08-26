@@ -436,9 +436,9 @@ grep -q "logPipelineQueryability.evidenceExpiresAt cannot be in the past relativ
   "$TMP_DIR/queryability-expired.out"
 grep -q "logPipelineQueryability.evidenceObservedAt cannot be in the future relative to verifiedAt" \
   "$TMP_DIR/queryability-future-dated.out"
-grep -q "logPipelineQueryability.evidenceFreshnessBudgetSeconds must be a positive finite number" \
+grep -Fxq -- "ERROR: logPipelineQueryability.evidenceFreshnessBudgetSeconds must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]" \
   "$TMP_DIR/queryability-non-positive.out"
-grep -q "logPipelineQueryability.evidenceFreshnessBudgetSeconds must be a positive finite number" \
+grep -Fxq -- "ERROR: logPipelineQueryability.evidenceFreshnessBudgetSeconds must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]" \
   "$TMP_DIR/queryability-non-finite.out"
 grep -q "logPipelineQueryability.evidenceExpiresAt must equal evidenceObservedAt plus evidenceFreshnessBudgetSeconds within numeric tolerance" \
   "$TMP_DIR/queryability-inconsistent-expiry.out"
@@ -458,11 +458,11 @@ grep -q "logPipelineQueryability.selectedProfile is required" \
   "$TMP_DIR/queryability-missing-selected-profile.out"
 grep -q "logPipelineQueryability.selectedProfile is required" \
   "$TMP_DIR/queryability-blank-selected-profile.out"
-grep -q "logPipelineQueryability.evidenceFreshnessBudgetSeconds must be a positive finite number" \
+grep -Fxq -- "ERROR: logPipelineQueryability.evidenceFreshnessBudgetSeconds must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]" \
   "$TMP_DIR/queryability-huge-budget.out"
-grep -q "logPipelineQueryability.evidenceFreshnessBudgetSeconds must be a positive finite number" \
+grep -Fxq -- "ERROR: logPipelineQueryability.evidenceFreshnessBudgetSeconds must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]" \
   "$TMP_DIR/queryability-too-large-budget.out"
-grep -q "logPipelineQueryability.evidenceFreshnessBudgetSeconds must be a positive finite number" \
+grep -Fxq -- "ERROR: logPipelineQueryability.evidenceFreshnessBudgetSeconds must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]" \
   "$TMP_DIR/queryability-subresolution-budget.out"
 grep -q "logPipelineQueryability.capability must be one of" \
   "$TMP_DIR/queryability-unhashable-capability.out"
@@ -534,15 +534,15 @@ for huge_numeric_case in \
     exit 1
   fi
 done
-grep -q "externalAuthority.detectionBudgetSeconds must be a positive finite number" \
+grep -Fxq -- "ERROR: externalAuthority.detectionBudgetSeconds must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]" \
   "$TMP_DIR/external-detection-budget.out"
-grep -q "externalAuthority.staleThresholdSeconds must be a positive finite number" \
+grep -Fxq -- "ERROR: externalAuthority.staleThresholdSeconds must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]" \
   "$TMP_DIR/external-stale-threshold.out"
 grep -q "externalAuthority.observedStalenessSeconds must be a nonnegative finite number" \
   "$TMP_DIR/external-observed-staleness.out"
 grep -q "publicPathChecks.websocket.observedProbeAgeSeconds must be a nonnegative finite number" \
   "$TMP_DIR/mirrored-probe-age.out"
-grep -q "observability_deadman_heartbeat_timestamp_seconds.value must be a positive finite number" \
+grep -Fxq -- "ERROR: observability_deadman_heartbeat_timestamp_seconds.value must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]" \
   "$TMP_DIR/mirrored-deadman.out"
 grep -q "playerflow_canary_success values must be finite numeric 0 or 1" \
   "$TMP_DIR/mirrored-canary-success.out"
@@ -550,7 +550,7 @@ grep -q "playerflow_canary_latency_ms values must be a nonnegative finite number
   "$TMP_DIR/mirrored-canary-latency.out"
 grep -q "playerflow_canary_last_run_timestamp_seconds values must be positive finite timestamps" \
   "$TMP_DIR/mirrored-canary-last-run.out"
-grep -q "mirroredSignals.playerflow_canary_freshness_budget_seconds.value must be a positive finite number" \
+grep -Fxq -- "ERROR: mirroredSignals.playerflow_canary_freshness_budget_seconds.value must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]" \
   "$TMP_DIR/mirrored-canary-budget.out"
 
 QUERY_PATH_STORAGE_TARGET="$TMP_DIR/queryability-storage-target-path.json"
@@ -854,7 +854,7 @@ if python3 "$VALIDATOR" "$MISSING_STALE_THRESHOLD_EVIDENCE" >"$TMP_DIR/missing-s
   echo "missing stale threshold unexpectedly passed" >&2
   exit 1
 fi
-grep -q "externalAuthority.staleThresholdSeconds must be a positive finite number" \
+grep -Fxq -- "ERROR: externalAuthority.staleThresholdSeconds must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]" \
   "$TMP_DIR/missing-stale-threshold.out"
 
 INVALID_STALE_THRESHOLD_EVIDENCE="$TMP_DIR/invalid-stale-threshold-evidence.json"
@@ -872,7 +872,7 @@ if python3 "$VALIDATOR" "$INVALID_STALE_THRESHOLD_EVIDENCE" >"$TMP_DIR/invalid-s
   echo "invalid stale threshold unexpectedly passed" >&2
   exit 1
 fi
-grep -q "externalAuthority.staleThresholdSeconds must be a positive finite number" \
+grep -Fxq -- "ERROR: externalAuthority.staleThresholdSeconds must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]" \
   "$TMP_DIR/invalid-stale-threshold.out"
 
 OVER_THRESHOLD_DEADMAN_EVIDENCE="$TMP_DIR/over-threshold-deadman-evidence.json"
@@ -1724,7 +1724,7 @@ if python3 "$VALIDATOR" "$MISSING_OMITTED_CANARY_BUDGET" >"$TMP_DIR/missing-omit
   echo "missing advertised-canary freshness budget unexpectedly passed" >&2
   exit 1
 fi
-grep -q "externalAuthority.detectionBudgetSeconds must be a positive finite number" \
+grep -Fxq -- "ERROR: externalAuthority.detectionBudgetSeconds must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]" \
   "$TMP_DIR/missing-omitted-canary-budget.out"
 
 DUPLICATE_PLAYERFLOW_SUCCESS="$TMP_DIR/duplicate-playerflow-success.json"
@@ -1936,7 +1936,7 @@ if python3 "$VALIDATOR" --allow-failure-evidence "$BOOL_DEADMAN_EVIDENCE" >"$TMP
   echo "boolean deadman timestamp unexpectedly accepted" >&2
   exit 1
 fi
-grep -q "value must be a positive finite number" "$TMP_DIR/bool-deadman.out"
+grep -Fxq -- "ERROR: observability_deadman_heartbeat_timestamp_seconds.value must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]" "$TMP_DIR/bool-deadman.out"
 
 FUTURE_DEADMAN_EVIDENCE="$TMP_DIR/future-deadman-evidence.json"
 python3 - "$VALID_EVIDENCE" "$FUTURE_DEADMAN_EVIDENCE" <<'PY'

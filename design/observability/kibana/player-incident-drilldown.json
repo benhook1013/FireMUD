@@ -3,10 +3,9 @@
   "id": "firemud-player-incident-drilldown",
   "attributes": {
     "title": "FireMUD Player Incident Drilldown",
-    "description": "Target-state platform-operator-only saved search for investigating player-visible incidents by environment, service, and traceId. Replace the required __REQUIRED_ENVIRONMENT__ sentinel and configure tenant-safe index/access controls before import; the sentinel intentionally matches no environment so an unconfigured import fails closed.",
+    "description": "Target-state platform-operator-only saved search for investigating player-visible incidents by service and traceId within an environment-scoped index. Replace the required __REQUIRED_ENVIRONMENT__ index sentinel and configure tenant-safe index/access controls before import; the sentinel intentionally matches no index so an unconfigured import fails closed.",
     "columns": [
       "@timestamp",
-      "environment",
       "service",
       "tenantId",
       "regionId",
@@ -20,7 +19,7 @@
       "desc"
     ],
     "kibanaSavedObjectMeta": {
-      "searchSourceJSON": "{\"indexRefName\":\"searchSourceJSON.index\",\"query\":{\"language\":\"kuery\",\"query\":\"environment:\\\"__REQUIRED_ENVIRONMENT__\\\" and service:* and traceId:*\"},\"filter\":[]}"
+      "searchSourceJSON": "{\"indexRefName\":\"searchSourceJSON.index\",\"query\":{\"language\":\"kuery\",\"query\":\"service:* and traceId:*\"},\"filter\":[]}"
     },
     "version": 1
   },
@@ -28,7 +27,7 @@
     {
       "name": "searchSourceJSON.index",
       "type": "index-pattern",
-      "id": "firemud-logs-*"
+      "id": "firemud-logs-env-__REQUIRED_ENVIRONMENT__-*"
     }
   ]
 }

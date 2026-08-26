@@ -13,7 +13,11 @@ from typing import Any
 
 if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-from numeric_validation import is_bounded_positive_seconds, is_finite_number
+from numeric_validation import (
+    format_bounded_positive_seconds_error,
+    is_bounded_positive_seconds,
+    is_finite_number,
+)
 from observability_contract import (
     OMITTED_QUERYABILITY_CAPABILITY,
     QUERYABILITY_CAPABILITIES,
@@ -931,16 +935,11 @@ def _validate_deadman_signal(
     if not isinstance(value.get("source"), str) or not value.get("source").strip():
         findings.append("observability_deadman_heartbeat_timestamp_seconds.source is required")
     timestamp = value.get("value")
-    if (
-        isinstance(timestamp, bool)
-        or not isinstance(timestamp, (int, float))
-        or not is_finite_number(timestamp)
-        or timestamp <= 0
-    ):
-        findings.append(
-            "observability_deadman_heartbeat_timestamp_seconds.value must be a positive finite number"
-        )
-    elif timestamp > evaluation_time.timestamp():
+    timestamp_findings = _validate_positive_finite_number(
+        timestamp, "observability_deadman_heartbeat_timestamp_seconds.value"
+    )
+    findings.extend(timestamp_findings)
+    if not timestamp_findings and timestamp > evaluation_time.timestamp():
         findings.append(
             "observability_deadman_heartbeat_timestamp_seconds.value cannot be in the future relative to the trusted evaluation time"
         )
@@ -1437,7 +1436,7 @@ def _validate_source_timestamp_chronology(
 
 def _validate_positive_finite_number(value: Any, key: str) -> list[str]:
     if not is_bounded_positive_seconds(value):
-        return [f"{key} must be a positive finite number"]
+        return [format_bounded_positive_seconds_error(key)]
     return []
 
 

@@ -8,7 +8,7 @@ These example rules are calibration and degradation signals for the target-state
 
 The `profile` label uses ADR 0159's canonical monitoring-profile enum, `independent-required` or `independent-omitted`, across canary metrics, retained evidence, and profile-aware rules. Do not serialize the prose abbreviations `required` or `omitted` as profile values.
 
-The P0 `WebSocketEntryPathBlackboxUnavailable` and `TelnetEntryPathBlackboxUnavailable` rules, together with the P1 `WebSocketEntryPathBlackboxMetricsAbsent` and `TelnetEntryPathBlackboxMetricsAbsent` unknown/degraded evidence rules, are owned by the `independent-required-prometheus-published` overlay; keep these reference snippets aligned with that overlay. They must not be installed by the shared rules, the `independent-omitted` overlay, or an `independent-required` deployment with `prometheusMirrors=omitted`.
+The `PlayerFlowCanary*` rules below, together with the P0 `WebSocketEntryPathBlackboxUnavailable` and `TelnetEntryPathBlackboxUnavailable` rules and the P1 `WebSocketEntryPathBlackboxMetricsAbsent` and `TelnetEntryPathBlackboxMetricsAbsent` unknown/degraded evidence rules, are target-state reference fixtures only. They remain pending deployment-owned applicability/expected-series gating for the advertised capability and complete exposed path set, and are not currently installed by the shared PrometheusRule or any profile overlay. When eventually installed, they must remain local diagnostic mirrors of—not replacements for—the authoritative canary/external monitor and pager. They must not be installed for omitted capabilities or non-exposed paths.
 
 ```yaml
 - alert: LoginSuccessRatioLowGateway
