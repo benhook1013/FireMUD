@@ -492,6 +492,44 @@ if any(
         "Kibana OR inside a quoted query value was treated as a disjunction"
     )
 
+for quoted_conjunction in (
+    'environment:"__REQUIRED_ENVIRONMENT__" and service:* and traceId:* and message:"error and timeout"',
+    'environment:"__REQUIRED_ENVIRONMENT__" AND service:* AND traceId:* AND message:"error AND timeout"',
+):
+    quoted_conjunction_findings = kibana_findings(
+        kibana_with_query(quoted_conjunction)
+    )
+    if any(
+        finding.message
+        == "player incident Kibana saved object query must bind __REQUIRED_ENVIRONMENT__ as an exact conjunctive environment filter with service and traceId bounds"
+        for finding in quoted_conjunction_findings
+    ):
+        raise AssertionError(
+            "Kibana AND inside a quoted query value was treated as a conjunction boundary"
+        )
+
+quoted_conjunction_missing_bound = kibana_findings(
+    kibana_with_query(
+        'environment:"__REQUIRED_ENVIRONMENT__ and service:*" AND traceId:*'
+    )
+)
+require_message(
+    quoted_conjunction_missing_bound,
+    "player incident Kibana saved object query must bind __REQUIRED_ENVIRONMENT__ as an exact conjunctive environment filter with service and traceId bounds",
+)
+
+actual_conjunction_findings = kibana_findings(
+    kibana_with_query(
+        'environment:"__REQUIRED_ENVIRONMENT__" AND service:* AND traceId:*'
+    )
+)
+if any(
+    finding.message
+    == "player incident Kibana saved object query must bind __REQUIRED_ENVIRONMENT__ as an exact conjunctive environment filter with service and traceId bounds"
+    for finding in actual_conjunction_findings
+):
+    raise AssertionError("actual Kibana AND conjunctions were not split")
+
 unrestricted_index = copy.deepcopy(kibana_payload)
 unrestricted_index["references"][0]["id"] = "*"
 unrestricted_index_findings = kibana_findings(unrestricted_index)

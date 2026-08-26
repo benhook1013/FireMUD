@@ -26,15 +26,15 @@ Logging & Admin owns fixed safety policy intent, moderation cases, bounded appea
 
 - **Target state:** Profile-advertised log retrieval: central indexed search for the default or a compatible indexed profile, console/journal retrieval for a declared reduced profile, or an explicit unavailable indexed-search state.
 - **Target state:** [Analytics dashboards](./analytics-dashboards.md) for operators. The default indexed profile embeds Kibana and Grafana panels, including Telnet ingress views based on the TCP Proxy metrics described in [Logging & Monitoring](../../system-architecture-logging-monitoring.md) and the example Grafana snippets under `design/observability/grafana/`; another profile maps equivalent views or marks omitted panels `not_applicable`.
-- Tools for reviewing account-related evidence and target-state restriction workflows; Account owns and enforces account restrictions, while Logging & Admin does not currently record or enforce them.
+- **Target state:** Tools for reviewing account-related evidence and restriction workflows; Account owns and enforces account restrictions, while Logging & Admin does not currently record or enforce them.
 - **Target state:** [Role-based admin UI](./admin-ui.md) for moderators; no separate admin application or embedded-dashboard endpoint is currently implemented.
-- [Moderation policies](./moderation-policies.md) including profanity filters.
-- Target-only UI for requesting runtime feature-flag overrides through owning domain control-plane APIs; `ToggleFeatureFlag` is not externally supported until the owner-side variant of the Operator Mutation Support Gate is complete.
-- Audit trail for account actions and world changes; target-state audit trail for moderation actions.
-- Transaction logs for purchases and subscription events.
-- Operator review of failed login attempts and suspicious activity reported by Game Session.
-- Automated alerts for suspicious activity via Alertmanager.
-- Real-time analytics on game performance.
+- **Target state:** [Moderation policies](./moderation-policies.md) including profanity filters.
+- **Target state:** UI for requesting runtime feature-flag overrides through owning domain control-plane APIs; `ToggleFeatureFlag` is not externally supported until the owner-side variant of the Operator Mutation Support Gate is complete.
+- **Target state:** Audit trail for account actions and world changes, plus moderation-action audit evidence.
+- **Target state:** Transaction logs for purchases and subscription events.
+- **Target state:** Operator review of failed login attempts and suspicious activity reported by Game Session.
+- **Target state:** Automated alerts for suspicious activity via Alertmanager.
+- **Target state:** Real-time analytics on game performance.
 
 ## Document Map
 

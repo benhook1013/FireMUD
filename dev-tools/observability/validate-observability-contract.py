@@ -1687,6 +1687,18 @@ def _mask_kibana_query_strings(query: str) -> str:
     return "".join(characters)
 
 
+def _split_kibana_query_clauses(query: str) -> list[str]:
+    """Split conjunctions at operators outside quoted KQL values."""
+    masked_query = _mask_kibana_query_strings(query)
+    clauses: list[str] = []
+    start = 0
+    for separator in re.finditer(r"\band\b", masked_query, re.IGNORECASE):
+        clauses.append(query[start : separator.start()].strip())
+        start = separator.end()
+    clauses.append(query[start:].strip())
+    return clauses
+
+
 def _validate_alert_snippet(path: Path) -> list[Finding]:
     findings: list[Finding] = []
     markdown = _read_text(path)
@@ -2173,10 +2185,7 @@ def _validate_kibana_saved_objects(kibana_dir: Path) -> list[Finding]:
                         ),
                     )
                 )
-            query_clauses = [
-                clause.strip()
-                for clause in re.split(r"\band\b", query, flags=re.IGNORECASE)
-            ]
+            query_clauses = _split_kibana_query_clauses(query)
             required_conjunctive_clauses = {
                 "environment": r'environment\s*:\s*"__REQUIRED_ENVIRONMENT__"',
                 "service": r"service\s*:\s*\*",

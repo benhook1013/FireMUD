@@ -16,7 +16,7 @@ Logging & Admin has no separate live feature-flag UI or forwarding path: `/featu
 
 - **Target state:** Administrators toggle flag values through the target [Logging & Admin Service](../logging-admin-service/README.md) operator surface, which forwards a gated owner request to the Game Session Service.
 - **Target state:** The Game Session Service owns runtime flag state, persists active values in its `feature_flag` table, and reapplies them before each tick cycle to keep world behaviour consistent across ticks.
-- Under the target owner operation, flag changes take effect immediately for active sessions, allowing safe experimentation with mechanics, layout tweaks or pacing options.
+- Under the target owner operation, an accepted flag change takes effect at the next tick boundary for active sessions, not retroactively in the current tick. Reapplying the value before each tick keeps world behaviour consistent while allowing safe experimentation with mechanics, layout tweaks or pacing options.
 
 ## Customization Examples
 

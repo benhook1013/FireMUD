@@ -399,7 +399,7 @@ Observability backends are best-effort enrichments for gameplay and moderation w
 - Hosted production profiles that claim externally verified availability or monitoring-resilient readiness must provide an **independent monitoring path** outside the Prometheus + Alertmanager failure domain. It pages on deadman freshness and probes every real public gameplay path declared in `exposedPublicPlayerPaths`; non-exposed paths are `not_applicable`.
 - Hobby, single-node, and small profiles may explicitly omit that external path. Preflight records and warns about the weaker detection posture without blocking traffic; those profiles cannot claim independent outage detection, externally verified public-path availability, off-cluster paging, or monitoring-resilient readiness.
 - The authoritative external path and any Prometheus-facing metric mirror are separate contracts. The external pager is the source of truth during total in-cluster observability outages; Prometheus may mirror the same state for dashboards and runbooks when healthy. See [`design/observability/external-monitoring/README.md`](../observability/external-monitoring/README.md).
-- Prod-like environments must install a canonical `platform`-owned alert set for:
+- Each selected deployment profile installs the canonical `platform`-owned alert families for the observability capabilities it advertises and can prove. A selected profile records every omitted backend family as `not_applicable`; it must not install or claim alerts for an omitted capability. The default indexed profile includes:
   - Prometheus rule evaluation or scrape health problems.
   - Alertmanager routing/configuration failures.
   - Elasticsearch indexing or cluster-health failures.
