@@ -46,10 +46,11 @@ All trace-specific guidance in this runbook is conditional on the environment ad
 Normal incident escalation groups by `<tenantId, gameInstanceId>`; `regionId` remains a diagnostic and reset-selection dimension within that group. Any wider tenant or cluster escalation must first enumerate the affected game instances and their regions from the authoritative mapping source and carry that exact version-validated blast radius through approval and execution.
 
 - Metrics and structured logs are the dependable baseline in every environment; mitigation must proceed without traces.
-- Use `tick_execute` / `tick_apply_effect` traces only when the environment advertises and proves the named workflow-tracing capability.
-- Apply temporary service-scoped sampling escalation only when that control is advertised and proved, and record start/end times.
-- Use collector tail-sampling by `tenantId`/`gameInstanceId`/`regionId` only when the environment advertises and proves scoped escalation; remove it after triage.
+- Use `tick_execute` / `tick_apply_effect` traces only when the environment advertises and proves the named workflow-tracing capability. Tracing may be explicitly disabled; approximately 1% is only a calibration seed for high-volume entry paths, not a universal sampling rule or correctness boundary, and remains conditional on advertised/proven tracing capability or explicit disablement.
+- Apply temporary service-scoped sampling escalation only when that control is advertised and proved, with a positive TTL/lease, durable rollback/reconciliation that survives operator loss, safe policy reload/rollback, the exact affected service/workflow scope, incident identity, start time, volume budget, automatic expiry, recorded completion, and verified reversion. Keep the escalation incomplete until baseline sampling is restored and verified.
+- Use collector tail-sampling by `tenantId`/`gameInstanceId`/`regionId` only when the environment advertises and proves scoped escalation; require a positive TTL/lease, durable rollback/reconciliation that survives operator loss, safe policy reload/rollback, and record the exact scope, incident identity, start time, volume budget, automatic expiry, completion, and verified reversion. Remove the policy automatically at the declared deadline, and keep the escalation incomplete until baseline sampling is restored and verified after triage.
 - If the relevant capability is absent or traces remain unavailable, continue with metrics and logs and proceed with region/tenant reset decisions using runbook thresholds.
+- Missing sampled traces are not evidence that a tick/effect did not execute.
 
 ## Stalled Tick Region
 

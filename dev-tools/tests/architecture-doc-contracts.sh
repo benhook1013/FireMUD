@@ -170,6 +170,13 @@ def require_contains(path, snippets):
     if missing:
         raise SystemExit(f"{path}: missing required snippets: {missing}")
 
+
+def require_absent(path, snippets):
+    text = (root / path).read_text(encoding="utf-8")
+    present = [snippet for snippet in snippets if snippet in text]
+    if present:
+        raise SystemExit(f"{path}: contains forbidden snippets: {present}")
+
 obsolete_redis_rebind_envelope = re.compile(
     r"\brebind(?:[-_\s]?handle)?[-_\s]?envelope\b",
     re.IGNORECASE,
@@ -1488,6 +1495,87 @@ require_contains(
         "A phase failure retains the lock and paused fence.",
         "abandonment does not authorize resume",
     ],
+)
+
+require_contains(
+    "design/architecture/system-architecture-scripting-contracts.md",
+    [
+        "always-isolated test-only breaker or gate",
+        "no environment, tenant, or request opt-in may cross that boundary",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-scripting-contracts.md",
+    ["separate breaker or explicitly opt-in per environment/tenant"],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-quotas-and-operations.md",
+    [
+        "always-isolated test-only breaker or gate",
+        "no environment, tenant, or request opt-in may cross that boundary",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-scripting-quotas-and-operations.md",
+    ["separate breaker or explicit opt-in"],
+)
+require_contains(
+    "design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md",
+    ["with mandatory dry-run/test isolation"],
+)
+require_absent(
+    "design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md",
+    ["dry-run/test isolation by default"],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-control-plane-api.md",
+    [
+        "bounded immutable `lastResetReason`",
+        "bounded immutable `resetReason`",
+        "`lastResetValidationEvidence`",
+        "bounded `validationEvidence`",
+        "`resetReason` is absent from lifecycle and trip rows",
+        "persisted non-identity `playableStateNamespaceId` evidence",
+        "`currentRuntimePlayableStateNamespaceId`",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-scripting-control-plane-api.md",
+    ["`lastResetEvidence`", "`resetEvidence`"],
+)
+require_contains(
+    "design/architecture/microservices/automation-scripting-service/operations.md",
+    ["inspect `automation_script_queue_delay_seconds` by bounded priority"],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-operations-cookbook.md",
+    [
+        "`automation_script_test_runs_total{result=\"quota_denied\"}`",
+        "`automation_script_test_capacity_denied_total{scope}`",
+        "never increments the live `automation_script_triggers_total` family",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-scripting-operations-cookbook.md",
+    ["priority_throttled"],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-scheduler-and-timers.md",
+    [
+        "retains the authoritative `playableStateNamespaceId` as immutable non-identity scope evidence",
+        "missing or mismatched evidence fails closed without changing any canonical identity tuple",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-normative-contract-tables.md",
+    [
+        "| `automation_script_queue_delay_seconds` | `service`, `scope`, `script_kind`, `priority` |",
+        "canonical priority-starvation signal",
+    ],
+)
+require_contains(
+    "design/project-management/implementation-tracking/automation-and-scheduler-runtime.md",
+    ["priority-sensitive queue-delay/starvation emission"],
 )
 
 print("architecture doc contracts passed")

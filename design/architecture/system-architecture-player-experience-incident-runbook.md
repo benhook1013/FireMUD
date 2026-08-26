@@ -42,12 +42,13 @@ If any required profile, path, status, timestamp, age, or reference is missing, 
 
 Trace-driven triage is optional but often decisive for command-latency incidents. Before relying on Jaeger as a primary diagnostic:
 
-- Confirm baseline tracing is usable for the affected path (production-like default is non-zero sampling; around 1% for high-volume entry paths is the baseline usability target from `system-architecture-tracing.md`).
+- Check the environment's advertised tracing capability and covered workflow. Tracing may be explicitly disabled; approximately 1% is only a possible calibration seed for a sampling-capable high-volume path.
 - If traces are too sparse:
-  - Use temporary service-scoped sampling (`OTEL_TRACES_SAMPLER=parentbased_traceidratio`, increase `OTEL_TRACES_SAMPLER_ARG`) only when the environment advertises and independently proves ADR 0017 level 3 for the affected workflow; record start/end times in the incident timeline.
-  - Use tenant/game-instance/region-scoped escalation only when the environment advertises and independently proves ADR 0017 level 4 for the affected workflow, and only after the exact runtime scope is resolved through control-plane/runtime-health reads and logs. Remove the policy immediately after triage.
+  - If service-scoped escalation is advertised and proved, apply its supported sampler control with an incident identity, volume budget, automatic expiry, and verified reversion. Environment variables are usable only where the environment declares them wired.
+  - If the environment advertises and independently proves tenant/game-instance/region-scoped escalation for the affected workflow, use its supported collector tail-sampling control for the impacted runtime scope after resolving it through control-plane/runtime-health reads and logs. The escalation must carry the incident identity, exact scope, start time, positive TTL/lease, volume budget, and expiry under the authorized collector-control owner; durable expiry must remove it even if the initiator disappears. At expiry, perform the safe collector reload/rollback or retain the prior valid configuration fail-closed, record completion, and verify sampled volume returns to the measured pre-escalation baseline before marking the escalation complete.
 - If the environment does not meet the advertised-and-proved ADR 0017 capability for the required level, treat it as baseline or service-scoped-only as applicable and do not claim scoped escalation.
 - If trace volume remains insufficient, continue with metrics + logs and do not block mitigation on trace availability.
+- Missing trace evidence does not prove that the player event did not occur.
 
 ## Login Success Ratio Below SLO
 

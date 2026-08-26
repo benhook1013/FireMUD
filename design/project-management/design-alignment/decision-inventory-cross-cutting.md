@@ -240,7 +240,7 @@ The decisions below have applied human-review provenance. They are not pending p
 
 ### Selective-Import Follow-up
 
-Human consultation for the listed outcomes is complete, and this Packet 6 P1 foundation parcel applies the next 11 of 15 Packet 6 outcomes through `MS-PO-OWNER-REMEDIATION` and ADRs 0160-0165; their implementation, calibration, and proof gaps remain open. The 21 remaining reviewed outcomes comprise the four-decision Packet 6 tail (`SCRIPT-14`, `SCRIPT-15`, `TRACE-02`, and `TRACE-03`) plus 17 Packet 7 outcomes; they are selective-import work, not absent review evidence, and remain pending import. Residual authority conflicts or repeated non-ADR contracts remain deferred to the planned whole-corpus authority pass after the selective import program completes.
+Human consultation for the listed outcomes is complete, and the Packet 6 P1-P3 parcel applies the reviewed outcomes for `OBS-01`, `OBS-02`, `OBS-03`, `OBS-06`, `CAPACITY-01`, `CAPACITY-02`, `TEST-01`, `TEST-02`, and `TEST-03`; their implementation, calibration, and proof gaps remain open. The 17 remaining reviewed outcomes are Packet 7 selective-import work, not absent review evidence, and remain pending import. Residual authority conflicts or repeated non-ADR contracts remain deferred to the planned whole-corpus authority pass after the selective import program completes.
 
 ## Coverage By Exact Capability
 

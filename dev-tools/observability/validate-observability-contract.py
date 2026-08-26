@@ -100,6 +100,7 @@ CORE_ALERT_SNIPPET_PATHS = [
     GRAFANA_DIR / "backup-alerts-snippets.md",
     GRAFANA_DIR / "player-experience-alerts-snippets.md",
     GRAFANA_DIR / "observability-stack-alerts-snippets.md",
+    GRAFANA_DIR / "scripting-execution-policy-alerts-snippets.md",
 ]
 ALERT_SNIPPET_PATHS = [
     GRAFANA_DIR / "core-alerts-snippets.md",

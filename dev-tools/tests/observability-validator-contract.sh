@@ -142,6 +142,24 @@ validator = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = validator
 spec.loader.exec_module(validator)
 
+checked_in_alert_snippets = set(
+    (root / "design/observability/grafana").glob("*alerts-snippets.md")
+)
+declared_alert_snippets = set(validator.ALERT_SNIPPET_PATHS)
+if declared_alert_snippets != checked_in_alert_snippets:
+    missing = sorted(
+        str(path.relative_to(root))
+        for path in checked_in_alert_snippets - declared_alert_snippets
+    )
+    unexpected = sorted(
+        str(path.relative_to(root))
+        for path in declared_alert_snippets - checked_in_alert_snippets
+    )
+    raise AssertionError(
+        "canonical alert-snippet validation sources differ from the checked-in "
+        f"contract files; missing={missing!r}, unexpected={unexpected!r}"
+    )
+
 expected_ampersand_anchor = "backup-verification--restoration-testing"
 actual_ampersand_anchor = validator._github_anchor_from_heading(
     "Backup Verification & Restoration Testing"

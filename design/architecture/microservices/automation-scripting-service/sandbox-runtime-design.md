@@ -29,7 +29,7 @@ The table below captures the required sandbox behavior contract (target-state se
 | Iteration / loop guards | Enforce per-run iteration limits so even bounded loops cannot hot-loop indefinitely. |
 | Soft memory guards | Approximate tracking of script-local data sizes and early abort with `finalOutcome=sandbox_error` and `finalReason=memory_budget_exceeded` before JVM OOM. |
 | Outcome taxonomy | Use canonical stage-aware outcomes (`finalStage` + `finalOutcome` / `finalReason`) in the applicable audit surface: live and current legacy materialized dry-run handler outcomes use `script_event_audit`; target ADR 0114 previews use an isolated preview result/audit surface. |
-| Failure-rate circuit breaker integration | Use live-traffic sandbox failures to transition scripts into `runtimeStatus=DISABLED_DUE_TO_ERRORS`, with dry-run/test isolation by default. |
+| Failure-rate circuit breaker integration | Use live-traffic qualifying handler failures to transition scripts into `runtimeStatus=DISABLED_DUE_TO_ERRORS` or plugins into separate `breakerState=DISABLED_DUE_TO_ERRORS` for the exact version/runtime scope, with mandatory dry-run/test isolation. |
 | Test / dry-run parity | Dry-run executions share the same sandbox limits as live runs while remaining isolated for quotas, budgets, and metrics. |
 | Plugin sandbox reuse | Plugins run in the same sandbox engine with component allowlists and stricter quotas where policy requires; plugin activation/version lifecycle remains distinct from embedded script publication. |
 
@@ -168,7 +168,7 @@ When a script exceeds its CPU/time budget:
   - `automation_script_runtime_seconds` (histogram bucket for the partial run)
 - Dry-run/test handlers, including a target ADR 0114 preview, use the applicable test-only failure and runtime metric families instead of live-traffic counters; the target preview records its corresponding outcome in the isolated preview result/audit surface.
 
-Repeated CPU budget violations by live handlers contribute to the live failure-rate circuit breaker. Once its thresholds are exceeded, the script transitions to `runtimeStatus=DISABLED_DUE_TO_ERRORS` and new live triggers are skipped until an administrator intervenes. Preview/test failures never contribute to that live breaker; they remain within the isolated test-only metrics and breaker namespace.
+Repeated CPU budget violations by live handlers contribute to the live failure-rate circuit breaker. Once the rolling-window eligible classified sample count is greater than or equal to its configured minimum and qualifying handler-attributable failures divided by eligible classified samples are greater than or equal to its configured failure-rate threshold, a script transitions to `runtimeStatus=DISABLED_DUE_TO_ERRORS`, while a plugin transitions its separate `breakerState=DISABLED_DUE_TO_ERRORS` for the exact active version/runtime scope; new live handlers are denied with `finalOutcome=disabled_due_to_errors` and `finalReason=failure_rate_breaker`. Preview/test failures never contribute to that live breaker; they remain within the isolated test-only metrics and breaker namespace.
 
 ---
 
@@ -234,7 +234,7 @@ Sandbox limits do not replace existing quotas and scheduling policies; they **la
 - **Per-script vs per-tenant safety**
   - Live per-script sandbox failures (`sandbox_error`) count toward:
     - Live per-script failure-rate circuit breakers
-    - Live per-scope error metrics, for example `automation_script_errors_total{scope, script_category, reason=...}`
+    - Live per-scope `automation_script_errors_total` metrics using only the finite dimensions owned by [normative Table 4](../../system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix)
   - Preview/test sandbox failures contribute only to their isolated test metrics and breakers; they never increment live error metrics or advance a live failure-rate breaker.
   - This prevents one script from repeatedly failing without impacting other tenants’ automation workloads.
 

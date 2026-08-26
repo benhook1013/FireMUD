@@ -93,19 +93,27 @@ There is no mandatory `ScriptPatchInstanceRolloutChanged` family. Game Session's
 
 ## `PluginVersionRuntimeStateChanged` (Automation & Scripting -> Advisory Notification)
 
-Published after an instance-scoped plugin lifecycle transition, the authoritative owner history commit, and required Game Session fence acknowledgement under [ADR 0119](decisions/adr-0119-epoch-fenced-per-instance-plugin-activation.md). It retains the settled runtime-state event identity and is not the activation or containment barrier.
+Published after an instance-scoped plugin lifecycle or breaker transition and the authoritative owner history commit; lifecycle transitions additionally require the Game Session fence acknowledgement under [ADR 0119](decisions/adr-0119-epoch-fenced-per-instance-plugin-activation.md). It retains the settled runtime-state event identity and is not the activation, containment, or breaker admission barrier.
 
 Fields in addition to the common envelope:
 
+- `transitionKind` (`LIFECYCLE` | `BREAKER_TRIPPED` | `BREAKER_RESET`)
 - `tenantId`
 - `gameInstanceId`
 - `pluginId`
 - `previousPluginVersionId` / `newPluginVersionId` (when applicable)
+- `activePluginVersionId` (required for `BREAKER_TRIPPED` and `BREAKER_RESET`; it is the exact unchanged non-null version whose breaker aggregate changed)
 - `pluginActivationEpoch`
 - `lifecycleRevision`
-- `newState` (`ENABLED` | `RELOADING` | `FAILED` | `DISABLED` | `DRAINING`)
+- `newState` (`ENABLED` | `RELOADING` | `FAILED` | `DISABLED` | `DRAINING`; required for `LIFECYCLE`; for a breaker transition it carries the unchanged current lifecycle state)
+- `previousBreakerState` (`CLOSED` | `DISABLED_DUE_TO_ERRORS`; required for breaker transitions and absent for lifecycle transitions)
+- `breakerState` (`CLOSED` | `DISABLED_DUE_TO_ERRORS`; the resulting breaker state)
+- `breakerRevision` (the resulting Automation-owned breaker revision; unchanged snapshot for lifecycle events and advanced exactly once for breaker events)
+- `breakerReason` (required for `DISABLED_DUE_TO_ERRORS`, otherwise absent; bounded value `failure_rate_breaker`)
 - `controlPlaneRequestId` (if operator-driven)
 - `actor` and `reason` (if operator-driven)
+
+`LIFECYCLE` identifies an active-version or lifecycle transition. `BREAKER_TRIPPED` and `BREAKER_RESET` reuse the breaker history transition taxonomy, require the previous/new breaker states and exact `activePluginVersionId`, and leave that active version, `newState`, `pluginActivationEpoch`, and `lifecycleRevision` unchanged. Because `breakerRevision` is scoped to one exact active-version aggregate, consumers scope that cursor with `(tenantId, gameInstanceId, pluginId, activePluginVersionId)` and never apply it to another version. Consumers do not infer the transition kind from unchanged counters or row timestamps; this notification remains only a reread wake-up.
 
 Tooling reads Automation's current state and append-only instance-scoped plugin transition history. Tooling that needs the full picture joins Game Design publication reads with Automation runtime reads rather than overloading runtime notifications to explain design-time publication history.
 

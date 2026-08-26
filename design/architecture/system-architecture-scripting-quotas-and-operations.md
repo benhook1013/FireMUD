@@ -126,7 +126,11 @@ The main mechanisms include:
 - **Cluster-wide ceilings** on automation work, including CPU/time budgets and `AUTOMATION_TICK_MAX_EVENTS`.
 - **Priority tags** (`high`, `normal`, `background`) that determine how scripts are throttled when budgets are tight.
 
-These controls work alongside the **failure-rate circuit breaker**, which can automatically place scripts into a `disabled_due_to_errors` state when error rates exceed configured thresholds in a window.
+These controls work alongside the **failure-rate circuit breaker**, which can automatically place one exact immutable script/plugin version and runtime activation scope into `DISABLED_DUE_TO_ERRORS` when, within the configured rolling window, eligible classified samples are greater than or equal to the configured minimum and qualifying handler-attributable failures divided by eligible classified samples are greater than or equal to the configured failure-rate threshold, with all settings within platform hard bounds.
+
+Only handler-attributable deterministic evaluation, sandbox-limit, and authored-output failures count. Quota/capacity denial, infrastructure or owner unavailability, rollback/version fencing, expected gameplay precondition rejection, dry-run/test traffic, operator cancellation, and player-controlled invalid input do not. A trip blocks new admission but does not cancel accepted work or reverse effects. Recovery requires a new version or explicit audited reset after validation; emergency component revocation remains a separate immediate fence. The classified samples and policy version are retained as durable audit evidence.
+
+For plugin handlers, the trip changes only the separate `breakerState` for the exact active `pluginVersionId` and runtime scope; it does not change lifecycle `pluginState`, `pluginActivationEpoch`, or `lifecycleRevision`. A newly resolved handler is denied with `finalStage=ADMISSION`, `finalOutcome=disabled_due_to_errors`, and bounded `finalReason=failure_rate_breaker`; a new version starts `CLOSED`, and an audited reset is independent of lifecycle mutation.
 
 ### Plugin Workloads
 
@@ -151,7 +155,7 @@ Per-script scheduling knobs control how often scripts are allowed to run and how
   - `concurrencyPolicy=queue_until_free` keeps a short queue of pending triggers up to configured limits and runs them once existing executions complete.
   - `concurrencyPolicy=drop_new` skips new triggers while the script is already running, favoring bounded concurrency over backlog growth.
   - Queued triggers retain their durable admission charge but hold no execution capacity. An event-scope limiter may reject an incoming trigger before handler resolution, but that is not a per-script quota charge and uses event-scope ingress audit and drop metrics. After handler resolution, `ScriptQuotaService` records one charge for each resolved handler and may deny it with `script_event_audit.finalStage=ADMISSION`, `finalOutcome=quota_denied`, and the handler outcome metric rather than the dropped-ingress metric.
-- **`priorityTag`** – assigns a priority tier (`high`, `normal`, `background`) that interacts with per-tenant budgets and cluster ceilings. When capacity is tight, the scheduler continues to admit `high`-priority work preferentially and defers or drops lower-priority triggers according to budget and quota rules.
+- **`priorityTag`** – assigns a priority tier (`high`, `normal`, `background`) that interacts with per-tenant budgets and cluster ceilings. When capacity is tight, the scheduler applies tenant fairness first, then admits `high`-priority work preferentially within each tenant's allocated share, deferring or dropping lower-priority triggers according to budget and quota rules.
 
 Timer and interval limits are evaluated against the canonical runtime scope tuple `<tenantId, gameInstanceId, regionId>`. A per-tenant or per-game-instance timer limit must not substitute for that tuple and accidentally couple unrelated instances or regions; any broader aggregate ceiling is an additional explicitly named safety limit. `playableStateScope` remains part of trigger identity and handler/work fencing, but it does not replace the scheduler's runtime scope tuple for these timer-capacity limits.
 
@@ -210,9 +214,12 @@ Budgets operate at three main levels:
 
 - **Cluster-wide**:
   - Global ceilings on automation work (for example, CPU/time budgets and `AUTOMATION_TICK_MAX_EVENTS`) protect the cluster.
-  - When limits are reached, the scheduler favors `high`-priority, latency-sensitive scripts and defers or drops `background` work.
+  - Scheduling provides tenant fairness before applying priority within each tenant's share. Bounded weights favor `high` over `normal` and `background`, but no tier bypasses per-script, tenant, sandbox-capacity, or cluster ceilings.
+  - Under sustained overload, declared best-effort background work may be delayed or dropped and its starvation must be measurable. Correctness-bearing work must use a recovery class that does not depend on eventual execution of best-effort background traffic.
 
 All script-side keys remain scoped by `tenantId`, and scheduler ownership must remain explicit enough that each tenant’s automation workload can be reasoned about and tuned independently while still sharing the same infrastructure. Operator-facing metrics, however, must use the bounded `scope`, category, family, or tier labels defined in canonical Table 4 rather than raw tenant/runtime identifiers. Do not infer a separate canonical `script-leader:*` prefix unless the Redis coordination docs explicitly add one.
+
+See [ADR 0166](./decisions/adr-0166-attributable-script-breakers-and-tenant-first-fairness.md).
 
 ### Quota & Budget Summary
 
@@ -333,11 +340,11 @@ These identifiers are intended to appear in the following observability surfaces
 A typical troubleshooting flow for a problematic script or plugin is:
 
 1. Start from a player-visible issue or a game tick log that includes `tenantId`, `gameInstanceId`, `playableStateScope` when gameplay/runtime-scoped, `regionId`, `regionEpoch`, `entityId`, and `tickId`.
-2. Use the tick log’s `scriptEventId` (or a derived `correlationId`) to locate matching entries in `script_event_audit` and in logs/traces. Do not rely on `scriptEventId` as a metric label; use metrics to understand aggregate rates by bounded `scope` / `script_category` / `eventType` dimensions and use audit/log queries for per-event correlation.
-3. From those records, identify the responsible `scriptId`, `scriptPatchVersion`, and, where applicable, `pluginId`/`pluginVersionId`/`bindingId`.
+2. Join the tick log, `script_event_audit`, and logs/traces by the complete applicable Trigger Identity: `tenantId`, `gameInstanceId`, `playableStateScope` when gameplay/runtime-scoped, `regionId`, `regionEpoch`, `entityId` when applicable, `scriptId`, `eventType`, `eventSchemaVersion`, `scriptPatchVersion`, `scriptPinEpoch` when applicable, `scriptEventId`, `isDryRun`, and plugin/scheduler fields when applicable. `scriptEventId` and `correlationId` are scoped filters that narrow a search; neither is a standalone execution identity and neither may be used as the join key without the remaining applicable fields. Do not rely on `scriptEventId` as a metric label; use metrics to understand aggregate rates by bounded `scope` / `script_kind` / `event_class` dimensions and use audit/log/trace queries for per-trigger correlation.
+3. From the identity-matched records, identify the responsible `scriptId`, `scriptPatchVersion`, and, where applicable, `pluginId`/`pluginVersionId`/`bindingId`.
 4. Cross-reference the associated publish or plugin enable/disable actions in Game Design and Logging & Admin using the same identifiers.
 
-By consistently tagging metrics and audits with these identifiers, operators can follow a single script event across authoring, publishing, execution, and downstream effects without needing ad hoc joins or heuristics.
+By retaining the complete applicable Trigger Identity in audit/log/trace records, operators can follow a single script event across authoring, publishing, execution, and downstream effects without ad hoc identity joins or heuristics; metrics remain aggregate and bounded.
 
 ### Dry-Run Budgets & Limits
 
@@ -347,7 +354,7 @@ Dry-run and test executions share the same sandbox engine and guards as live tra
   - Execute through the same sandbox, CPU, and memory budgets described in the [sandbox runtime design](./microservices/automation-scripting-service/sandbox-runtime-design.md).
   - Contribute to dry-run/test-only metrics (for example, `automation_script_test_runs_total`, `automation_script_test_runtime_seconds`, `automation_script_test_sandbox_failures_total`) so behavior is observable without affecting live-traffic dashboards and SLOs.
 - Dry-run/test triggers must use a separate idempotency namespace from live traffic (for example include `isDryRun=true` in Trigger Identity) so test executions cannot dedupe, suppress, or overwrite live trigger handling/audit rows.
-- By default, dry-run/test executions must not contribute to failure-rate circuit breakers that can disable live scripts (`runtimeStatus=DISABLED_DUE_TO_ERRORS`); if dry-run failures are used for gating, they must be isolated (separate breaker or explicit opt-in).
+- Dry-run/test executions must never contribute to failure-rate circuit breakers that can disable live scripts (`runtimeStatus=DISABLED_DUE_TO_ERRORS`). Any safety gate based on dry-run failures must use an always-isolated test-only breaker or gate whose state cannot affect live breaker state or live-script admission; no environment, tenant, or request opt-in may cross that boundary.
 - To prevent abuse, the Automation & Scripting Service enforces additional dry-run ceilings, such as:
   - Per-tenant and per-principal maximum runs per window (for example, `SCRIPT_TEST_MAX_RUNS_PER_MINUTE`).
   - Maximum concurrent dry-runs per tenant and cluster-wide (for example, `SCRIPT_TEST_MAX_CONCURRENCY` and `SCRIPT_TEST_MAX_CLUSTER_CONCURRENCY`).
@@ -393,7 +400,7 @@ At a high level:
   - During an ordinary rollback pause or convergence backpressure before terminal timeout, a rejected pre-handler ingress uses `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK`, `admissionReason=rollback_pause`, and a bounded `retryAfterMs` when retry is allowed; `script_event_ingress_audit` records the denial and the same event-scope claim may be reclaimed under the bounded retry lifecycle. This is retryable ingress backpressure only, not a handler-scoped final outcome.
   - While promotion or rollback pin convergence timeout terminal state is active, each rejected pre-handler ingress returns `admitted=false`, `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE`, `admissionReason=pin_convergence_timeout`, and no `retryAfterMs`; `script_event_ingress_audit` records the same fields and has the Table 4 ingress-drop consequence once for that rejected ingress. This is terminal fail-closed state, not retryable backpressure. The separate Table 4 terminal-timeout metric consequence applies only once when the owner workflow enters the terminal state, not for each rejected ingress. This condition does not create a handler-scoped `finalOutcome`.
 
-The failure-rate circuit breaker primarily considers **sandbox_error** and other logical script failures when deciding to transition a script into `runtimeStatus=DISABLED_DUE_TO_ERRORS`. Quota denials and purely infrastructure-level errors do not, by themselves, trigger disables, although they should still be visible in metrics and dashboards.
+The failure-rate circuit breaker primarily considers **sandbox_error**, **`validation_error` from live handler/runtime validation**, and other qualifying deterministic handler failures when deciding to transition a script into `runtimeStatus=DISABLED_DUE_TO_ERRORS` or a plugin's separate `breakerState=DISABLED_DUE_TO_ERRORS`. Quota denials and purely infrastructure-level errors do not, by themselves, trigger disables, although they should still be visible in metrics and dashboards. For plugins, this breaker state is keyed to the exact active version/runtime scope and must not be represented by `pluginState`.
 
 ---
 
