@@ -172,7 +172,7 @@ Alerts based on `redis_coordination_tail_loss_ms` should follow the conventions 
       - Iterates the affected prefix (for example `automation:queue:{tenantInstanceTag}:*`).
       - Writes corrected keys using shared builders.
       - Deletes or expires the old keys once consumers have been updated.
-   3. Use the `tick-region-logs.json` Kibana saved search to confirm that tick/coordination-related logs for the affected regions no longer show mis-keyed or unknown-prefix warnings after the migration or reset completes.
+   3. Use the selected profile's supported operator-query path to confirm that tick/coordination-related logs for the affected regions no longer show mis-keyed or unknown-prefix warnings after the migration or reset completes. The default indexed profile uses the `tick-region-logs.json` Kibana saved search, a compatible indexed profile uses its mapped equivalent, and a reduced profile uses only its declared console/journal or direct service/pod path; an explicit indexed-search omission does not become a failed indexed check.
 
 ### Automation Queue Schema Mistakes
 

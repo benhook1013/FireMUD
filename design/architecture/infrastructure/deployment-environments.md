@@ -243,11 +243,11 @@ Both modes use the environment's certificate lifecycle and include expiry/rotati
 
 ## Monitoring & Logging
 
-FireMUD relies on a consistent observability stack across environments. Expectations for log fields, metric naming, and alert labels live in [Logging & Monitoring](../system-architecture-logging-monitoring.md).
+FireMUD relies on consistent observability contracts across environments, while the installed backends and advertised capabilities vary by deployment profile. Expectations for log fields, metric naming, alert labels, and profile-aware log queryability live in [Logging & Monitoring](../system-architecture-logging-monitoring.md).
 
-### Kubernetes (Default)
+### Kubernetes (Default Indexed Profile)
 
-The full observability stack is deployed in Kubernetes. Example manifests for the collector, Jaeger, and exporters live under [`k8s/monitoring`](../../../k8s/monitoring).
+The default indexed profile deploys the reference observability stack in Kubernetes. Example manifests for the collector, Jaeger, and exporters live under [`k8s/monitoring`](../../../k8s/monitoring); the presence of those examples does not make every component mandatory for every profile.
 
 Typical components:
 
@@ -256,7 +256,9 @@ Typical components:
 - Alertmanager notifies on failures or latency spikes.
 - OpenTelemetry spans are emitted by services for distributed tracing.
 - Jaeger stores these traces for debugging and analysis.
-- Fluent Bit ships logs to Elasticsearch; Kibana is used for log queries.
+- Fluent Bit ships logs to Elasticsearch; Kibana is the supported operator query path for this default indexed profile.
+
+A Kubernetes profile using another indexed backend documents an equivalent collection, field, delay, access, evidence, and degraded-state mapping. A hobby, single-node, or small profile may use console/journal retrieval or declare indexed search unavailable; its preflight and operational evidence mark the omitted indexed checks `not_applicable` and retain the reduced operator posture instead of claiming the default Elasticsearch/Kibana capability. In all cases, runtime loss or omission of indexed search degrades only the applicable observability claim and does not become pod/gameplay readiness or player-traffic admission authority.
 
 Independent outage detection is a deployment-profile claim, not a universal Kubernetes prerequisite. Hosted production profiles claiming externally verified availability or monitoring-resilient readiness must declare the complete `exposedPublicPlayerPaths` set, add an off-cluster deadman/pager, and probe every exposed public browser/WebSocket or Telnet path; non-exposed paths are recorded as `not_applicable`. Hobby, single-node, and small profiles may omit that infrastructure when unavailable or disproportionate; preflight records a non-blocking degraded-detection warning, and those deployments must preserve the explicit degraded/operator-dependent posture rather than claim independent outage detection or off-cluster paging. The observability services themselves may remain private in either posture.
 

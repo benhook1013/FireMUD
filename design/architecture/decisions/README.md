@@ -254,6 +254,12 @@ Validation precedence is fixed: first parse every checked queue row and validate
 | [ADR 0157](./adr-0157-dependency-classified-liveness-readiness-and-route-admission.md) | Accepted | `PO-4.2` | `PO-2.2`, `GR-1.1`, `PO-3.2` | Dependency-classified liveness, readiness, and route admission |
 | [ADR 0158](./adr-0158-simplified-observability-degradation-without-fallback-alert-authority.md) | Accepted | `PO-4.2` | `PO-1.1`, `PO-1.4`, `PO-4.4` | Simplified observability degradation without fallback alert authority |
 | [ADR 0159](./adr-0159-profile-dependent-independent-deadman-and-public-path-monitoring.md) | Accepted | `PO-4.4` | `PO-2.1`, `PO-4.2` | Profile-dependent independent deadman and public-path monitoring |
+| [ADR 0160](./adr-0160-staged-profile-aware-player-experience-slo-contract.md) | Accepted | `PO-4.2` | `PO-2.4`, `GR-1.2`, `EA-2.1` | Staged profile-aware player-experience SLO contract |
+| [ADR 0161](./adr-0161-profile-aware-isolated-synthetic-player-flow-canaries.md) | Accepted | `PO-4.4` | `EA-3.1`, `PO-2.1`, `AA-1.1`, `PO-4.2` | Profile-aware isolated synthetic player-flow canaries |
+| [ADR 0162](./adr-0162-profile-aware-asynchronous-end-to-end-log-queryability-evidence.md) | Accepted | `PO-4.4` | `PO-4.1` | Profile-aware asynchronous end-to-end log-queryability evidence |
+| [ADR 0163](./adr-0163-service-owned-retention-classes-with-cross-service-safety.md) | Accepted | `SF-2.1` | `GR-1.4`, `PO-4.2`, `PO-4.3` | Service-owned retention classes with cross-service safety |
+| [ADR 0164](./adr-0164-three-boundary-profile-aware-verification-evidence.md) | Accepted | `PO-4.4` | `PO-4.3`, `PO-3.4`, `PO-3.1` | Three-boundary profile-aware verification evidence |
+| [ADR 0165](./adr-0165-authoritative-control-actions-during-observability-loss.md) | Accepted | `PO-4.2` | `PO-1.1`, `PO-4.1`, `PO-4.4`, `SF-2.2`, `SF-1.1` | Authoritative control actions during observability loss |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../../product/capability-taxonomy.md).
 

@@ -19,6 +19,19 @@ if ! grep -Fqx -- "- alert: ObservabilityDeadmanHeartbeatMissing" <(awk '{ sub(/
   echo "published independent-required monitoring overlay is missing the required ObservabilityDeadmanHeartbeatMissing alert" >&2
   exit 1
 fi
+profile_alerts=(
+  ObservabilityDeadmanHeartbeatStale
+  ObservabilityDeadmanHeartbeatMissing
+  WebSocketEntryPathBlackboxUnavailable
+  TelnetEntryPathBlackboxUnavailable
+)
+for profile_alert in "${profile_alerts[@]}"; do
+  if grep -Fqx -- "- alert: $profile_alert" <(awk '{ sub(/^[[:space:]]*/, ""); print }' <<<"$required_published_render"); then
+    continue
+  fi
+  echo "published independent-required monitoring overlay is missing profile-dependent alert $profile_alert" >&2
+  exit 1
+done
 shared_alert_declarations="$(sed -n '/^[[:space:]]*- alert:/p' "$ROOT_DIR/k8s/monitoring/prometheus-rules-firemud.yaml")"
 if [[ -z "${shared_alert_declarations//[[:space:]]/}" ]]; then
   echo "shared Prometheus rules parsing yielded no alert names" >&2
@@ -65,16 +78,24 @@ for render in "$required_published_render" "$required_omitted_render" "$independ
   done <<<"$shared_alerts"
 done
 for render in "$required_omitted_render" "$independent_omitted_render"; do
-  for profile_alert in ObservabilityDeadmanHeartbeatStale ObservabilityDeadmanHeartbeatMissing; do
+  for profile_alert in "${profile_alerts[@]}"; do
     if grep -Fqx -- "- alert: $profile_alert" <(awk '{ sub(/^[[:space:]]*/, ""); print }' <<<"$render"); then
       echo "a non-published or independent-omitted monitoring overlay installed $profile_alert" >&2
       exit 1
     fi
   done
 done
+for profile_alert in "${profile_alerts[@]}"; do
+  if grep -Fqx -- "- alert: $profile_alert" <(awk '{ sub(/^[[:space:]]*/, ""); print }' "$ROOT_DIR/k8s/monitoring/prometheus-rules-firemud.yaml"); then
+    echo "shared Prometheus rules installed profile-dependent alert $profile_alert" >&2
+    exit 1
+  fi
+done
 
 python3 - "$ROOT_DIR" <<'PY'
+import copy
 import importlib.util
+import json
 import re
 import sys
 import tempfile
@@ -114,6 +135,15 @@ if "ObservabilityDeadmanHeartbeatStale" in valid_text:
     raise AssertionError(
         "shared Prometheus rules must not install the profile-dependent deadman alert"
     )
+for profile_alert in (
+    "ObservabilityDeadmanHeartbeatMissing",
+    "WebSocketEntryPathBlackboxUnavailable",
+    "TelnetEntryPathBlackboxUnavailable",
+):
+    if profile_alert in valid_text:
+        raise AssertionError(
+            f"shared Prometheus rules must not install profile-dependent alert {profile_alert}"
+        )
 
 required_rules_path = (
     root
@@ -126,6 +156,8 @@ published_overlay_findings = validator._validate_reference_prometheus_rules(
     {
         "ObservabilityDeadmanHeartbeatMissing",
         "ObservabilityDeadmanHeartbeatStale",
+        "WebSocketEntryPathBlackboxUnavailable",
+        "TelnetEntryPathBlackboxUnavailable",
     },
     allow_profile_dependent_alerts=True,
 )
@@ -169,6 +201,23 @@ if 'expr: absent(observability_deadman_stale{profile="independent-required"})' n
     raise AssertionError("deadman missing alert must fail closed on an absent required-profile stale mirror")
 if "for: 1m" not in missing_rule:
     raise AssertionError("deadman missing alert must retain its one-minute hold")
+
+for profile_alert in (
+    "WebSocketEntryPathBlackboxUnavailable",
+    "TelnetEntryPathBlackboxUnavailable",
+):
+    if profile_alert not in required_rules_text:
+        raise AssertionError(
+            f"published profile overlay is missing {profile_alert}"
+        )
+for expected_expression in (
+    'expr: max_over_time(entrypath_blackbox_probe_success{path="websocket"}[2m]) == 0',
+    'expr: max_over_time(entrypath_blackbox_probe_success{path="telnet"}[2m]) == 0',
+):
+    if expected_expression not in required_rules_text:
+        raise AssertionError(
+            f"published profile overlay is missing blackbox expression {expected_expression}"
+        )
 
 for alert_name in (
     "PlayerFlowCanaryLoginFailed",
@@ -237,6 +286,356 @@ def require_message(findings, expected):
     messages = [finding.message for finding in findings]
     if expected not in messages:
         raise AssertionError(f"expected {expected!r}, got {messages!r}")
+
+
+kibana_path = root / "design/observability/kibana/player-incident-drilldown.json"
+kibana_payload = json.loads(kibana_path.read_text(encoding="utf-8"))
+baseline_kibana_findings = validator._validate_kibana_saved_objects(kibana_path.parent)
+if any(finding.path == kibana_path for finding in baseline_kibana_findings):
+    raise AssertionError(
+        "canonical player incident Kibana object must retain its environment sentinel/filter: "
+        f"{baseline_kibana_findings!r}"
+    )
+
+
+def kibana_with_query(query):
+    mutated_kibana = copy.deepcopy(kibana_payload)
+    mutated_search_source = json.loads(
+        mutated_kibana["attributes"]["kibanaSavedObjectMeta"]["searchSourceJSON"]
+    )
+    mutated_search_source["query"]["query"] = query
+    mutated_kibana["attributes"]["kibanaSavedObjectMeta"]["searchSourceJSON"] = json.dumps(
+        mutated_search_source, separators=(",", ":")
+    )
+    return mutated_kibana
+
+
+def kibana_findings(mutated_kibana):
+    with tempfile.TemporaryDirectory() as kibana_temp_dir:
+        mutated_path = Path(kibana_temp_dir) / kibana_path.name
+        mutated_path.write_text(json.dumps(mutated_kibana), encoding="utf-8")
+        return validator._validate_kibana_saved_objects(Path(kibana_temp_dir))
+
+
+mutated_findings = kibana_findings(
+    kibana_with_query("service:* and traceId:*")
+)
+require_message(
+    mutated_findings,
+    "player incident Kibana saved object must apply an explicit environment filter before querying wildcard logs",
+)
+require_message(
+    mutated_findings,
+    "player incident Kibana saved object query must retain the __REQUIRED_ENVIRONMENT__ fail-closed sentinel",
+)
+
+require_message(
+    mutated_findings,
+    "player incident Kibana saved object query must bind __REQUIRED_ENVIRONMENT__ as an exact conjunctive environment filter with service and traceId bounds",
+)
+
+misplaced_sentinel_findings = kibana_findings(
+    kibana_with_query(
+        'environment:* and service:* and traceId:* and message:"__REQUIRED_ENVIRONMENT__"'
+    )
+)
+require_message(
+    misplaced_sentinel_findings,
+    "player incident Kibana saved object query must bind __REQUIRED_ENVIRONMENT__ as an exact conjunctive environment filter with service and traceId bounds",
+)
+
+environment_wildcard_findings = kibana_findings(
+    kibana_with_query(
+        'environment:* and service:* and traceId:*'
+    )
+)
+require_message(
+    environment_wildcard_findings,
+    "player incident Kibana saved object query must retain the __REQUIRED_ENVIRONMENT__ fail-closed sentinel",
+)
+require_message(
+    environment_wildcard_findings,
+    "player incident Kibana saved object query must bind __REQUIRED_ENVIRONMENT__ as an exact conjunctive environment filter with service and traceId bounds",
+)
+
+disjunctive_findings = kibana_findings(
+    kibana_with_query(
+        'environment:"__REQUIRED_ENVIRONMENT__" or service:* and traceId:*'
+    )
+)
+require_message(
+    disjunctive_findings,
+    "player incident Kibana saved object query must keep environment, service, and traceId clauses conjunctive",
+)
+
+unrestricted_index = copy.deepcopy(kibana_payload)
+unrestricted_index["references"][0]["id"] = "*"
+unrestricted_index_findings = kibana_findings(unrestricted_index)
+require_message(
+    unrestricted_index_findings,
+    "player incident Kibana saved object index reference must use firemud-logs-* or an explicit environment-scoped FireMUD log index",
+)
+
+explicit_environment_index = copy.deepcopy(kibana_payload)
+explicit_environment_index["references"][0]["id"] = "firemud-logs-staging-eu-*"
+if any(finding.path.name == kibana_path.name for finding in kibana_findings(explicit_environment_index)):
+    raise AssertionError(
+        "explicit environment-scoped FireMUD index reference must remain valid"
+    )
+
+missing_index_ref_name = copy.deepcopy(kibana_payload)
+missing_search_source_ref = json.loads(
+    missing_index_ref_name["attributes"]["kibanaSavedObjectMeta"]["searchSourceJSON"]
+)
+missing_search_source_ref.pop("indexRefName", None)
+missing_index_ref_name["attributes"]["kibanaSavedObjectMeta"]["searchSourceJSON"] = json.dumps(
+    missing_search_source_ref,
+    separators=(",", ":"),
+)
+require_message(
+    kibana_findings(missing_index_ref_name),
+    "player incident Kibana saved object must have a non-empty searchSourceJSON.indexRefName",
+)
+
+wrong_index_ref_name = copy.deepcopy(kibana_payload)
+wrong_search_source_ref = json.loads(
+    wrong_index_ref_name["attributes"]["kibanaSavedObjectMeta"]["searchSourceJSON"]
+)
+wrong_search_source_ref["indexRefName"] = "unsafe.index"
+wrong_index_ref_name["attributes"]["kibanaSavedObjectMeta"]["searchSourceJSON"] = json.dumps(
+    wrong_search_source_ref,
+    separators=(",", ":"),
+)
+require_message(
+    kibana_findings(wrong_index_ref_name),
+    "player incident Kibana saved object searchSourceJSON.indexRefName must exactly match the searchSourceJSON.index reference name",
+)
+
+alternate_broad_reference = copy.deepcopy(kibana_payload)
+alternate_broad_reference["references"].append(
+    {"name": "unsafe.index", "type": "index-pattern", "id": "*"}
+)
+require_message(
+    kibana_findings(alternate_broad_reference),
+    "player incident Kibana saved object must have exactly one searchSourceJSON.index index-pattern reference",
+)
+
+non_string_query_message = (
+    "player incident Kibana saved object query must be a string before environment safety checks"
+)
+for invalid_query in (None, 123, ["environment", "service", "traceId"]):
+    require_message(
+        kibana_findings(kibana_with_query(invalid_query)),
+        non_string_query_message,
+    )
+
+
+player_dashboard_path = (
+    root / "design/observability/grafana/player-experience.json"
+)
+player_dashboard_text = player_dashboard_path.read_text(encoding="utf-8")
+player_chat_selector = (
+    'chat_delivery_latency_ms_bucket{completion_boundary=\\"recipient_dispatch\\"}'
+)
+if player_chat_selector not in player_dashboard_text:
+    raise AssertionError(
+        "canonical player-experience dashboard fixture is missing the "
+        "recipient_dispatch chat selector"
+    )
+player_dashboard_message = (
+    "canonical player-experience chat latency panels must select "
+    'completion_boundary="recipient_dispatch" on every '
+    "chat_delivery_latency_ms_bucket selector"
+)
+for replacement in (
+    "chat_delivery_latency_ms_bucket",
+    'chat_delivery_latency_ms_bucket{completion_boundary=\\"server_acceptance\\"}',
+):
+    mutated_dashboard = player_dashboard_text.replace(
+        player_chat_selector, replacement, 1
+    )
+    require_message(
+        findings_for(
+            mutated_dashboard,
+            validator._validate_player_experience_dashboard,
+        ),
+        player_dashboard_message,
+    )
+
+player_dashboard = json.loads(player_dashboard_text)
+baseline_dashboard_findings = findings_for(
+    player_dashboard_text,
+    validator._validate_player_experience_dashboard,
+)
+if baseline_dashboard_findings:
+    raise AssertionError(
+        "valid player-experience dashboard was rejected: "
+        f"{baseline_dashboard_findings!r}"
+    )
+if (
+    "calibration" not in player_dashboard.get("description", "").lower()
+    or "non-enforcing" not in player_dashboard.get("description", "").lower()
+):
+    raise AssertionError(
+        "canonical player-experience dashboard must declare calibration "
+        "views as non-enforcing"
+    )
+if any(
+    re.search(r"\bslo\b", panel.get("title", ""), re.IGNORECASE)
+    and not re.search(r"\bcalibration\b", panel.get("title", ""), re.IGNORECASE)
+    for panel in player_dashboard["panels"]
+):
+    raise AssertionError(
+        "canonical player-experience panels must not use unqualified SLO wording"
+    )
+player_chat_targets = [
+    target
+    for panel in player_dashboard["panels"]
+    for target in panel.get("targets", [])
+    if "chat_delivery_latency_ms_bucket" in target.get("expr", "")
+]
+if len(player_chat_targets) != 1:
+    raise AssertionError(
+        "canonical player-experience dashboard fixture must contain exactly one "
+        "chat latency target for compound-selector mutation coverage"
+    )
+for additional_term in (
+    " + rate(chat_delivery_latency_ms_bucket[5m])",
+    ' + rate(chat_delivery_latency_ms_bucket{completion_boundary="server_acceptance"}[5m])',
+):
+    mutated_dashboard = copy.deepcopy(player_dashboard)
+    mutated_chat_targets = [
+        target
+        for panel in mutated_dashboard["panels"]
+        for target in panel.get("targets", [])
+        if "chat_delivery_latency_ms_bucket" in target.get("expr", "")
+    ]
+    mutated_chat_targets[0]["expr"] += additional_term
+    require_message(
+        findings_for(
+            json.dumps(mutated_dashboard),
+            validator._validate_player_experience_dashboard,
+        ),
+        player_dashboard_message,
+    )
+
+dashboard_description_message = (
+    "canonical player-experience dashboard must identify its views as calibration "
+    "and non-enforcing until profile promotion"
+)
+for description_replacement in ("calibration", "non-enforcing"):
+    mutated_dashboard = copy.deepcopy(player_dashboard)
+    mutated_dashboard["description"] = mutated_dashboard["description"].replace(
+        description_replacement,
+        "unqualified",
+        1,
+    )
+    require_message(
+        findings_for(
+            json.dumps(mutated_dashboard),
+            validator._validate_player_experience_dashboard,
+        ),
+        dashboard_description_message,
+    )
+
+
+player_drilldown_path = (
+    root / "design/observability/grafana/player-experience-drilldown.json"
+)
+player_drilldown_text = player_drilldown_path.read_text(encoding="utf-8")
+baseline_drilldown_findings = findings_for(
+    player_drilldown_text,
+    validator._validate_player_experience_drilldown,
+)
+if baseline_drilldown_findings:
+    raise AssertionError(
+        "valid player-experience drilldown was rejected: "
+        f"{baseline_drilldown_findings!r}"
+    )
+player_drilldown_chat_selector = (
+    'chat_delivery_latency_ms_bucket{completion_boundary=\\"recipient_dispatch\\"}'
+)
+if player_drilldown_chat_selector not in player_drilldown_text:
+    raise AssertionError(
+        "player-experience drilldown fixture is missing the recipient_dispatch "
+        "chat selector"
+    )
+player_drilldown_message = (
+    "player-experience drilldown chat latency panels must select "
+    'completion_boundary="recipient_dispatch" on every '
+    "chat_delivery_latency_ms_bucket selector"
+)
+for replacement in (
+    "chat_delivery_latency_ms_bucket",
+    'chat_delivery_latency_ms_bucket{completion_boundary=\\"server_acceptance\\"}',
+):
+    mutated_drilldown = player_drilldown_text.replace(
+        player_drilldown_chat_selector, replacement, 1
+    )
+    require_message(
+        findings_for(
+            mutated_drilldown,
+            validator._validate_player_experience_drilldown,
+        ),
+        player_drilldown_message,
+    )
+
+
+def mutate_alert_rule(text, alert_name, old, new):
+    rule_match = re.search(
+        rf"(?ms)^[ \t]*- alert: {re.escape(alert_name)}\n"
+        rf"(?P<body>.*?)(?=^[ \t]*- alert: |\Z)",
+        text,
+    )
+    if rule_match is None:
+        raise AssertionError(f"{alert_name} rule is missing from test fixture")
+    body = rule_match.group("body")
+    if old not in body:
+        raise AssertionError(
+            f"{alert_name} test fixture does not contain expected text {old!r}"
+        )
+    updated_body = body.replace(old, new, 1)
+    return text[: rule_match.start("body")] + updated_body + text[rule_match.end("body") :]
+
+
+def mutate_recording_rule(text, recording_name, old, new):
+    rule_match = re.search(
+        rf"(?ms)^[ \t]*- record: {re.escape(recording_name)}\n"
+        rf"(?P<body>.*?)(?=^[ \t]*- (?:alert|record): |\Z)",
+        text,
+    )
+    if rule_match is None:
+        raise AssertionError(f"{recording_name} rule is missing from test fixture")
+    body = rule_match.group("body")
+    if old not in body:
+        raise AssertionError(
+            f"{recording_name} test fixture does not contain expected text {old!r}"
+        )
+    updated_body = body.replace(old, new, 1)
+    return text[: rule_match.start("body")] + updated_body + text[rule_match.end("body") :]
+
+
+canonical_indexed_log_runbook = (
+    "design/architecture/system-architecture-observability-incident-runbook.md"
+    "#indexed-log-query-path-down-or-ingest-stalled"
+)
+stale_indexed_log_runbook = (
+    "design/architecture/system-architecture-observability-incident-runbook.md"
+    "#elasticsearchkibana-down-or-indexing-stalled"
+)
+stale_runbook_rules = mutate_alert_rule(
+    valid_text,
+    "ElasticsearchClusterHealthRed",
+    canonical_indexed_log_runbook,
+    stale_indexed_log_runbook,
+)
+require_message(
+    findings_for(
+        stale_runbook_rules,
+        validator._validate_reference_prometheus_rules,
+    ),
+    f"alert rule runbook anchor does not exist: {stale_indexed_log_runbook!r}",
+)
 
 
 without_missing = required_rules_text[:missing_start] + (
@@ -517,6 +916,328 @@ valid_snippet = snippet_path.read_text(encoding="utf-8")
 
 playerflow_snippet_path = root / "design/observability/grafana/player-experience-alerts-snippets.md"
 valid_playerflow_snippet = playerflow_snippet_path.read_text(encoding="utf-8")
+
+player_dashboard_with_slo_title = copy.deepcopy(player_dashboard)
+player_dashboard_with_slo_title["panels"][0]["title"] = (
+    player_dashboard_with_slo_title["panels"][0]["title"]
+    .replace("Calibration", "SLO")
+)
+require_message(
+    findings_for(
+        json.dumps(player_dashboard_with_slo_title),
+        validator._validate_player_experience_dashboard,
+    ),
+    "canonical player-experience calibration panels must not use enforceable SLO wording before profile promotion",
+)
+player_dashboard_with_calibration_slo_title = copy.deepcopy(player_dashboard)
+player_dashboard_with_calibration_slo_title["panels"][0]["title"] = (
+    "Login Success Ratio by Service (15m SLO Calibration)"
+)
+allowed_slo_calibration_findings = findings_for(
+    json.dumps(player_dashboard_with_calibration_slo_title),
+    validator._validate_player_experience_dashboard,
+)
+if allowed_slo_calibration_findings:
+    raise AssertionError(
+        "explicit SLO Calibration dashboard wording should remain allowed: "
+        f"{allowed_slo_calibration_findings!r}"
+    )
+command_scope_targets = [
+    target
+    for panel in player_dashboard["panels"]
+    for target in panel.get("targets", [])
+    if isinstance(target.get("expr"), str)
+    and "command_end_to_end_latency_ms_bucket" in target["expr"]
+    and any(
+        {"scope", "command"}.issubset(
+            {label.strip() for label in grouping.group(1).split(",")}
+        )
+        for grouping in re.finditer(
+            r"sum\s+by\s*\(([^)]*)\)", target["expr"], re.IGNORECASE
+        )
+    )
+]
+if not command_scope_targets:
+    raise AssertionError(
+        "canonical command latency dashboard query must retain bounded scope and command grouping"
+    )
+command_scope_query_message = (
+    "canonical command latency by-scope panels must not group command latency "
+    "expressions by raw region"
+)
+command_scope_grouping_message = (
+    "canonical command latency by-scope panels must group each command latency "
+    "expression by bounded scope and command"
+)
+for query_replacement, expected_message in (
+    (
+        "sum by (region, le, command)",
+        command_scope_query_message,
+    ),
+    (
+        "sum by (service, le, command)",
+        command_scope_grouping_message,
+    ),
+):
+    mutated_dashboard = copy.deepcopy(player_dashboard)
+    for panel in mutated_dashboard["panels"]:
+        if panel.get("title") == "Command Latency (p99) by Scope":
+            panel["targets"][0]["expr"] = panel["targets"][0]["expr"].replace(
+                "sum by (scope, le, command)",
+                query_replacement,
+                1,
+            )
+            break
+    require_message(
+        findings_for(
+            json.dumps(mutated_dashboard),
+            validator._validate_player_experience_dashboard,
+        ),
+        expected_message,
+    )
+player_dashboard_with_region_command_title = copy.deepcopy(player_dashboard)
+for panel in player_dashboard_with_region_command_title["panels"]:
+    if panel.get("title") == "Command Latency (p99) by Scope":
+        panel["title"] = "Command Latency (p99) by Region"
+        break
+else:
+    raise AssertionError("canonical command latency by-scope panel is missing")
+require_message(
+    findings_for(
+        json.dumps(player_dashboard_with_region_command_title),
+        validator._validate_player_experience_dashboard,
+    ),
+    "canonical command latency panels grouped by bounded scope must not claim a raw region grouping",
+)
+
+calibration_alerts = (
+    "LoginSuccessRatioLowGateway",
+    "LoginSuccessRatioLowTcpProxy",
+    "CommandLatencyP99HighGateway",
+    "CommandLatencyP99HighTcpProxy",
+    "ChatDeliveryLatencyP99High",
+    "EntryPathAvailabilityLowGateway",
+    "EntryPathAvailabilityLowGatewayCompliance",
+    "EntryPathAvailabilityLowTcpProxy",
+    "EntryPathAvailabilityLowTcpProxyCompliance",
+)
+calibration_sources = (
+    (valid_playerflow_snippet, validator._validate_alert_snippet),
+    (valid_text, validator._validate_reference_prometheus_rules),
+)
+for source_text, source_validator in calibration_sources:
+    baseline_findings = findings_for(source_text, source_validator)
+    if baseline_findings:
+        raise AssertionError(
+            f"valid player calibration rules were rejected: {baseline_findings!r}"
+        )
+    for alert_name in calibration_alerts:
+        severity_drift = mutate_alert_rule(
+            source_text, alert_name, "severity: P2", "severity: P0"
+        )
+        require_message(
+            findings_for(severity_drift, source_validator),
+            f"{alert_name} calibration alert must use severity=P2",
+        )
+        wrong_slo_state = mutate_alert_rule(
+            source_text,
+            alert_name,
+            "slo_state: calibration",
+            "slo_state: enforceable",
+        )
+        require_message(
+            findings_for(wrong_slo_state, source_validator),
+            f"{alert_name} calibration alert must use slo_state=calibration",
+        )
+        missing_slo_state = mutate_alert_rule(
+            source_text,
+            alert_name,
+            "slo_state: calibration\n",
+            "",
+        )
+        require_message(
+            findings_for(missing_slo_state, source_validator),
+            f"{alert_name} calibration alert must use slo_state=calibration",
+        )
+
+raw_chat_selector = (
+    'chat_delivery_latency_ms_bucket{completion_boundary="recipient_dispatch"}'
+)
+raw_chat_term = f"rate({raw_chat_selector}[5m])"
+chat_recording_selector = (
+    'chat_delivery_latency_ms_p99_5m{completion_boundary="recipient_dispatch"}'
+)
+recording_message = (
+    "canonical chat delivery recording rule must select "
+    'completion_boundary="recipient_dispatch" on every '
+    "chat_delivery_latency_ms_bucket selector"
+)
+shipped_alert_message = (
+    "shipped ChatDeliveryLatencyP99High alert must select "
+    'completion_boundary="recipient_dispatch" on every '
+    "chat_delivery_latency_ms_p99_5m selector"
+)
+snippet_alert_message = (
+    "ChatDeliveryLatencyP99High alert snippet must select "
+    'completion_boundary="recipient_dispatch" on every '
+    "chat_delivery_latency_ms_bucket selector"
+)
+
+for old, replacement in (
+    (
+        raw_chat_selector,
+        'chat_delivery_latency_ms_bucket{completion_boundary="server_acceptance"}',
+    ),
+    (raw_chat_selector, "chat_delivery_latency_ms_bucket"),
+    (
+        raw_chat_term,
+        f"({raw_chat_term} + rate(chat_delivery_latency_ms_bucket[5m]))",
+    ),
+    (
+        raw_chat_term,
+        (
+            f"({raw_chat_term} + rate(chat_delivery_latency_ms_bucket"
+            '{completion_boundary="server_acceptance"}[5m]))'
+        ),
+    ),
+):
+    mutated_recording = mutate_recording_rule(
+        valid_text,
+        "chat_delivery_latency_ms_p99_5m",
+        old,
+        replacement,
+    )
+    require_message(
+        findings_for(
+            mutated_recording,
+            validator._validate_reference_prometheus_recordings,
+        ),
+        recording_message,
+    )
+
+for replacement in (
+    'chat_delivery_latency_ms_p99_5m{completion_boundary="server_acceptance"}',
+    "chat_delivery_latency_ms_p99_5m",
+    (
+        "(" + chat_recording_selector
+        + " + chat_delivery_latency_ms_p99_5m)"
+    ),
+    (
+        "(" + chat_recording_selector
+        + ' + chat_delivery_latency_ms_p99_5m{completion_boundary="server_acceptance"})'
+    ),
+):
+    mutated_shipped_alert = mutate_alert_rule(
+        valid_text,
+        "ChatDeliveryLatencyP99High",
+        chat_recording_selector,
+        replacement,
+    )
+    require_message(
+        findings_for(
+            mutated_shipped_alert,
+            validator._validate_reference_prometheus_rules,
+        ),
+        shipped_alert_message,
+    )
+
+for old, replacement in (
+    (
+        raw_chat_selector,
+        'chat_delivery_latency_ms_bucket{completion_boundary="server_acceptance"}',
+    ),
+    (raw_chat_selector, "chat_delivery_latency_ms_bucket"),
+    (
+        raw_chat_term,
+        f"({raw_chat_term} + rate(chat_delivery_latency_ms_bucket[5m]))",
+    ),
+    (
+        raw_chat_term,
+        (
+            f"({raw_chat_term} + rate(chat_delivery_latency_ms_bucket"
+            '{completion_boundary="server_acceptance"}[5m]))'
+        ),
+    ),
+):
+    mutated_snippet_alert = mutate_alert_rule(
+        valid_playerflow_snippet,
+        "ChatDeliveryLatencyP99High",
+        old,
+        replacement,
+    )
+    require_message(
+        findings_for(
+            mutated_snippet_alert,
+            validator._validate_alert_snippet,
+        ),
+        snippet_alert_message,
+    )
+
+entry_path_contracts = {
+    "WebSocketEntryPathBlackboxUnavailable": {
+        "path": "websocket",
+        "other_path": "telnet",
+        "service": "spring-cloud-gateway",
+    },
+    "TelnetEntryPathBlackboxUnavailable": {
+        "path": "telnet",
+        "other_path": "websocket",
+        "service": "tcp-proxy-service",
+    },
+}
+entry_path_sources = (
+    (
+        required_rules_text,
+        lambda path: validator._validate_reference_prometheus_rules(
+            path,
+            set(entry_path_contracts),
+            allow_profile_dependent_alerts=True,
+        ),
+    ),
+    (valid_playerflow_snippet, validator._validate_alert_snippet),
+)
+for source_text, check in entry_path_sources:
+    baseline_findings = findings_for(source_text, check)
+    if baseline_findings:
+        raise AssertionError(
+            f"valid entry-path blackbox rules were rejected: {baseline_findings!r}"
+        )
+    for alert_name, contract in entry_path_contracts.items():
+        mutations = (
+            (
+                "severity: P0",
+                "severity: P1",
+                f"{alert_name} must use labels.severity=P0",
+            ),
+            (
+                "component: entrypath",
+                "component: blackbox",
+                f"{alert_name} must use labels.component=entrypath",
+            ),
+            (
+                f'service: {contract["service"]}',
+                "service: prometheus",
+                f'{alert_name} must use labels.service={contract["service"]}',
+            ),
+            (
+                "for: 2m",
+                "for: 3m",
+                f"{alert_name} must use for=2m",
+            ),
+            (
+                f'entrypath_blackbox_probe_success{{path="{contract["path"]}"}}',
+                f'entrypath_blackbox_probe_success{{path="{contract["other_path"]}"}}',
+                f'{alert_name} must use only the exact path="{contract["path"]}" entrypath_blackbox_probe_success selector over 2m and compare it to zero',
+            ),
+            (
+                f'entrypath_blackbox_probe_success{{path="{contract["path"]}"}}',
+                f'entrypath_blackbox_probe_success{{path="{contract["path"]}",profile="independent-required"}}',
+                f'{alert_name} must use only the exact path="{contract["path"]}" entrypath_blackbox_probe_success selector over 2m and compare it to zero',
+            ),
+        )
+        for old, new, expected_message in mutations:
+            mutated = mutate_alert_rule(source_text, alert_name, old, new)
+            require_message(findings_for(mutated, check), expected_message)
 
 expected_budget_missing_expr = validator._compact_promql(
     """

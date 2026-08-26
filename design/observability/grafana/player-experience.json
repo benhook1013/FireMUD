@@ -1,16 +1,17 @@
 {
   "title": "Player Experience",
+  "description": "Player-experience calibration views are informational and non-enforcing until a deployment profile promotes a measured objective with minimum-sample and multi-window policy.",
   "schemaVersion": 36,
   "version": 1,
   "timezone": "browser",
   "panels": [
     {
       "type": "graph",
-      "title": "Login Success Ratio",
+      "title": "Login Success Ratio by Service (15m Calibration)",
       "targets": [
         {
-          "expr": "sum by (scope) (rate(login_requests_total{outcome=\"success\"}[5m])) / sum by (scope) (rate(login_requests_total[5m]))",
-          "legendFormat": "{{scope}}",
+          "expr": "sum by (scope, service) (rate(login_requests_total{outcome=\"success\"}[15m])) / sum by (scope, service) (rate(login_requests_total{outcome=~\"success|server_failure\"}[15m]))",
+          "legendFormat": "{{scope}} {{service}}",
           "refId": "A"
         }
       ],
@@ -18,10 +19,10 @@
     },
     {
       "type": "graph",
-      "title": "Login Success Ratio by Service",
+      "title": "Login Success Ratio by Service (5m Trend)",
       "targets": [
         {
-          "expr": "sum by (scope, service) (rate(login_requests_total{outcome=\"success\"}[5m])) / sum by (scope, service) (rate(login_requests_total[5m]))",
+          "expr": "sum by (scope, service) (rate(login_requests_total{outcome=\"success\"}[5m])) / sum by (scope, service) (rate(login_requests_total{outcome=~\"success|server_failure\"}[5m]))",
           "legendFormat": "{{scope}} {{service}}",
           "refId": "A"
         }
@@ -54,7 +55,7 @@
     },
     {
       "type": "graph",
-      "title": "Command Latency (p99) by Region",
+      "title": "Command Latency (p99) by Scope",
       "targets": [
         {
           "expr": "histogram_quantile(0.99, sum by (scope, le, command) (rate(command_end_to_end_latency_ms_bucket[5m])))",
@@ -69,7 +70,7 @@
       "title": "Telnet/WebSocket Path Availability (5m Trend)",
       "targets": [
         {
-          "expr": "sum by (service, scope, path) (rate(entrypath_connection_attempts_total{outcome=\"success\"}[5m])) / sum by (service, scope, path) (rate(entrypath_connection_attempts_total[5m]))",
+          "expr": "sum by (service, scope, path) (rate(entrypath_connection_attempts_total{outcome=\"success\"}[5m])) / sum by (service, scope, path) (rate(entrypath_connection_attempts_total{outcome=~\"success|server_failure\"}[5m]))",
           "legendFormat": "{{service}} {{scope}} {{path}}",
           "refId": "A"
         }
@@ -78,10 +79,10 @@
     },
     {
       "type": "graph",
-      "title": "Telnet/WebSocket Path Availability (1d SLO)",
+      "title": "Telnet/WebSocket Path Availability (1d Calibration)",
       "targets": [
         {
-          "expr": "sum by (service, scope, path) (increase(entrypath_connection_attempts_total{outcome=\"success\"}[1d])) / sum by (service, scope, path) (increase(entrypath_connection_attempts_total[1d]))",
+          "expr": "sum by (service, scope, path) (increase(entrypath_connection_attempts_total{outcome=\"success\"}[1d])) / sum by (service, scope, path) (increase(entrypath_connection_attempts_total{outcome=~\"success|server_failure\"}[1d]))",
           "legendFormat": "{{service}} {{scope}} {{path}}",
           "refId": "A"
         }
@@ -93,8 +94,8 @@
       "title": "Chat Delivery Latency (p99)",
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum by (scope, le, channel_type) (rate(chat_delivery_latency_ms_bucket[5m])))",
-          "legendFormat": "{{scope}} {{channel_type}}",
+          "expr": "histogram_quantile(0.99, sum by (service, scope, completion_boundary, le, channel_type) (rate(chat_delivery_latency_ms_bucket{completion_boundary=\"recipient_dispatch\"}[5m])))",
+          "legendFormat": "{{service}} {{scope}} {{completion_boundary}} {{channel_type}}",
           "refId": "A"
         }
       ],

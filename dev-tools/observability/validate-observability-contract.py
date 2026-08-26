@@ -14,12 +14,28 @@ def _compact_promql(expr: str) -> str:
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
+KIBANA_DEFAULT_LOG_INDEX = "firemud-logs-*"
+KIBANA_SAFE_LOG_INDEX_PATTERN = re.compile(
+    r"^firemud-logs-(?:\*|[A-Za-z0-9][A-Za-z0-9._-]*\*?)$"
+)
+
 ALLOWED_SEVERITIES = {"P0", "P1", "P2"}
 REQUIRED_ALERT_LABELS = {"service", "severity", "owner", "runbook"}
 SERVICE_OPTIONAL_ALERTS = {
     "PlayerFlowCanaryLoginFailed",
     "PlayerFlowCanaryCommandFailed",
     "PlayerFlowCanaryLatencyHigh",
+}
+PLAYER_SLO_CALIBRATION_ALERTS = {
+    "LoginSuccessRatioLowGateway",
+    "LoginSuccessRatioLowTcpProxy",
+    "CommandLatencyP99HighGateway",
+    "CommandLatencyP99HighTcpProxy",
+    "ChatDeliveryLatencyP99High",
+    "EntryPathAvailabilityLowGateway",
+    "EntryPathAvailabilityLowGatewayCompliance",
+    "EntryPathAvailabilityLowTcpProxy",
+    "EntryPathAvailabilityLowTcpProxyCompliance",
 }
 PLAYERFLOW_CANARY_ALERTS = SERVICE_OPTIONAL_ALERTS | {
     "PlayerFlowCanaryEvidenceStale",
@@ -32,6 +48,18 @@ PLAYERFLOW_CANARY_REQUIRED_LABELS = {
 PROFILE_DEPENDENT_ALERTS = {
     "ObservabilityDeadmanHeartbeatMissing",
     "ObservabilityDeadmanHeartbeatStale",
+    "WebSocketEntryPathBlackboxUnavailable",
+    "TelnetEntryPathBlackboxUnavailable",
+}
+ENTRY_PATH_BLACKBOX_ALERT_CONTRACTS = {
+    "WebSocketEntryPathBlackboxUnavailable": {
+        "path": "websocket",
+        "service": "spring-cloud-gateway",
+    },
+    "TelnetEntryPathBlackboxUnavailable": {
+        "path": "telnet",
+        "service": "tcp-proxy-service",
+    },
 }
 DISALLOWED_ALERT_SERVICE_LABELS = {"gateway", "game-session"}
 GRAFANA_DIR = REPO_ROOT / "design" / "observability" / "grafana"
@@ -41,6 +69,11 @@ CORE_ALERT_SNIPPET_PATHS = [
     GRAFANA_DIR / "backup-alerts-snippets.md",
     GRAFANA_DIR / "player-experience-alerts-snippets.md",
     GRAFANA_DIR / "observability-stack-alerts-snippets.md",
+]
+ALERT_SNIPPET_PATHS = [
+    GRAFANA_DIR / "core-alerts-snippets.md",
+    *CORE_ALERT_SNIPPET_PATHS,
+    GRAFANA_DIR / "tcp-proxy-alerts-snippets.md",
 ]
 REQUIRED_BACKUP_RECORDINGS = {
     "backup_pipeline_recent_backup_slo_breached",
@@ -258,6 +291,38 @@ def _github_anchors_for_markdown(path: Path) -> set[str]:
             anchor = base
         anchors.add(anchor)
     return anchors
+
+
+def _alert_runbook_findings(path: Path, runbook: str) -> list[Finding]:
+    if not runbook.startswith("design/") or ".md" not in runbook or "#" not in runbook:
+        return [
+            Finding(
+                path=path,
+                message=(
+                    "alert rule runbook label must be a design doc anchor "
+                    f"(design/...md#section); got {runbook!r}"
+                ),
+            )
+        ]
+
+    runbook_path_s, anchor = runbook.split("#", 1)
+    runbook_path = REPO_ROOT / runbook_path_s
+    if not runbook_path.exists():
+        return [
+            Finding(
+                path=path,
+                message=f"alert rule runbook file does not exist: {runbook!r}",
+            )
+        ]
+
+    if anchor not in _github_anchors_for_markdown(runbook_path):
+        return [
+            Finding(
+                path=path,
+                message=f"alert rule runbook anchor does not exist: {runbook!r}",
+            )
+        ]
+    return []
 
 
 def _split_alert_rules(yaml_text: str) -> list[_RuleEntry]:
@@ -704,6 +769,63 @@ def _parse_labels(rule_lines: list[str]) -> dict[str, str]:
     return {}
 
 
+def _parse_rule_scalar(rule_lines: list[str], field: str) -> str | None:
+    for line in rule_lines[1:]:
+        parsed = _parse_mapping_header(line)
+        if not parsed or parsed[0] != field:
+            continue
+        value, unsupported = _parse_rule_name(parsed[1])
+        return None if unsupported else value
+    return None
+
+
+def _entry_path_blackbox_findings(
+    path: Path,
+    alert_name: str,
+    labels: dict[str, str],
+    expr: str,
+    hold: str | None,
+) -> list[Finding]:
+    contract = ENTRY_PATH_BLACKBOX_ALERT_CONTRACTS.get(alert_name)
+    if contract is None:
+        return []
+
+    expected_expr = _compact_promql(
+        "max_over_time("
+        f'entrypath_blackbox_probe_success{{path="{contract["path"]}"}}[2m]'
+        ") == 0"
+    )
+    findings: list[Finding] = []
+    expected_labels = {
+        "severity": "P0",
+        "component": "entrypath",
+        "service": contract["service"],
+    }
+    for label, expected in expected_labels.items():
+        if labels.get(label) != expected:
+            findings.append(
+                Finding(
+                    path=path,
+                    message=f"{alert_name} must use labels.{label}={expected}",
+                )
+            )
+    if hold != "2m":
+        findings.append(
+            Finding(path=path, message=f"{alert_name} must use for=2m")
+        )
+    if _compact_promql(expr) != expected_expr:
+        findings.append(
+            Finding(
+                path=path,
+                message=(
+                    f'{alert_name} must use only the exact path="{contract["path"]}" '
+                    "entrypath_blackbox_probe_success selector over 2m and compare it to zero"
+                ),
+            )
+        )
+    return findings
+
+
 def _playerflow_canary_label_findings(
     path: Path, alert_name: str, labels: dict[str, str]
 ) -> list[Finding]:
@@ -833,6 +955,112 @@ def _check_dotted_metric_tokens(expr: str) -> str | None:
     return None
 
 
+def _exact_metric_label_selector_finding(
+    path: Path,
+    expr: str,
+    metric_name: str,
+    label_name: str,
+    label_value: str,
+    message: str,
+) -> Finding | None:
+    selector_matches = list(
+        re.finditer(
+            rf"(?<![A-Za-z0-9_:]){re.escape(metric_name)}"
+            r"(?P<selector>\{[^{}]*\})?(?![A-Za-z0-9_:{])",
+            expr,
+        )
+    )
+    exact_matcher = re.compile(
+        rf'(?:\{{|,)\s*{re.escape(label_name)}\s*=\s*'
+        rf'"{re.escape(label_value)}"\s*(?:,|\}})'
+    )
+    if selector_matches and all(
+        (selector := match.group("selector")) is not None
+        and exact_matcher.search(selector)
+        for match in selector_matches
+    ):
+        return None
+    return Finding(path=path, message=message)
+
+
+def _recipient_dispatch_selector_finding(
+    path: Path, expr: str, metric_name: str, context: str
+) -> Finding | None:
+    return _exact_metric_label_selector_finding(
+        path,
+        expr,
+        metric_name,
+        "completion_boundary",
+        "recipient_dispatch",
+        (
+            f"{context} must select "
+            'completion_boundary="recipient_dispatch" on every '
+            f"{metric_name} selector"
+        ),
+    )
+
+
+def _player_slo_calibration_findings(
+    path: Path, alert_name: str, labels: dict[str, str]
+) -> list[Finding]:
+    if alert_name not in PLAYER_SLO_CALIBRATION_ALERTS:
+        return []
+    findings: list[Finding] = []
+    if labels.get("severity") != "P2":
+        findings.append(
+            Finding(
+                path=path,
+                message=f"{alert_name} calibration alert must use severity=P2",
+            )
+        )
+    if labels.get("slo_state") != "calibration":
+        findings.append(
+            Finding(
+                path=path,
+                message=f"{alert_name} calibration alert must use slo_state=calibration",
+            )
+        )
+    return findings
+
+
+def _command_scope_query_findings(path: Path, expr: str) -> list[Finding]:
+    if "command_end_to_end_latency_ms_bucket" not in expr:
+        return []
+
+    findings: list[Finding] = []
+    groupings = [
+        {
+            label.strip().lower()
+            for label in grouping.group(1).split(",")
+            if label.strip()
+        }
+        for grouping in re.finditer(
+            r"sum\s+by\s*\(([^)]*)\)", expr, re.IGNORECASE
+        )
+    ]
+    if any("region" in grouping for grouping in groupings):
+        findings.append(
+            Finding(
+                path=path,
+                message=(
+                    "canonical command latency by-scope panels must not group "
+                    "command latency expressions by raw region"
+                ),
+            )
+        )
+    if not any({"scope", "command"}.issubset(grouping) for grouping in groupings):
+        findings.append(
+            Finding(
+                path=path,
+                message=(
+                    "canonical command latency by-scope panels must group each "
+                    "command latency expression by bounded scope and command"
+                ),
+            )
+        )
+    return findings
+
+
 def _validate_alert_snippet(path: Path) -> list[Finding]:
     findings: list[Finding] = []
     markdown = _read_text(path)
@@ -847,6 +1075,9 @@ def _validate_alert_snippet(path: Path) -> list[Finding]:
                 continue
             rule_lines = entry.lines
             labels = _parse_labels(rule_lines)
+            findings.extend(
+                _player_slo_calibration_findings(path, entry.name, labels)
+            )
             findings.extend(
                 _playerflow_canary_label_findings(path, entry.name, labels)
             )
@@ -877,18 +1108,7 @@ def _validate_alert_snippet(path: Path) -> list[Finding]:
                     )
                 )
 
-            runbook = labels.get("runbook", "")
-            if not runbook.startswith("design/") or ".md" not in runbook or "#" not in runbook:
-                findings.append(Finding(path=path, message=f"alert rule runbook label must be a design doc anchor (design/...md#section); got {runbook!r}"))
-            else:
-                runbook_path_s, anchor = runbook.split("#", 1)
-                runbook_path = REPO_ROOT / runbook_path_s
-                if not runbook_path.exists():
-                    findings.append(Finding(path=path, message=f"alert rule runbook file does not exist: {runbook!r}"))
-                else:
-                    anchors = _github_anchors_for_markdown(runbook_path)
-                    if anchor not in anchors:
-                        findings.append(Finding(path=path, message=f"alert rule runbook anchor does not exist: {runbook!r}"))
+            findings.extend(_alert_runbook_findings(path, labels.get("runbook", "")))
 
             alert_class = labels.get("alert_class")
             if alert_class == "test" and severity != "P2":
@@ -898,6 +1118,25 @@ def _validate_alert_snippet(path: Path) -> list[Finding]:
             if not expr:
                 findings.append(Finding(path=path, message="alert rule is missing expr"))
                 continue
+
+            findings.extend(
+                _entry_path_blackbox_findings(
+                    path,
+                    entry.name,
+                    labels,
+                    expr,
+                    _parse_rule_scalar(rule_lines, "for"),
+                )
+            )
+            if entry.name == "ChatDeliveryLatencyP99High":
+                chat_selector_issue = _recipient_dispatch_selector_finding(
+                    path,
+                    expr,
+                    "chat_delivery_latency_ms_bucket",
+                    "ChatDeliveryLatencyP99High alert snippet",
+                )
+                if chat_selector_issue:
+                    findings.append(chat_selector_issue)
 
             ms_issue = _check_ms_thresholds(expr)
             if ms_issue:
@@ -957,11 +1196,148 @@ def _validate_grafana_dashboards(grafana_dir: Path) -> list[Finding]:
     return findings
 
 
+def _validate_player_experience_dashboard(path: Path) -> list[Finding]:
+    try:
+        dashboard = json.loads(_read_text(path))
+    except json.JSONDecodeError:
+        return []
+
+    findings: list[Finding] = []
+    description = dashboard.get("description")
+    if (
+        not isinstance(description, str)
+        or "calibration" not in description.lower()
+        or "non-enforcing" not in description.lower()
+    ):
+        findings.append(
+            Finding(
+                path=path,
+                message=(
+                    "canonical player-experience dashboard must identify its "
+                    "views as calibration and non-enforcing until profile promotion"
+                ),
+            )
+        )
+    for panel in dashboard.get("panels", []):
+        title = panel.get("title") if isinstance(panel, dict) else None
+        if (
+            isinstance(title, str)
+            and re.search(r"\bslo\b", title, re.IGNORECASE)
+            and not re.search(r"\bcalibration\b", title, re.IGNORECASE)
+        ):
+            findings.append(
+                Finding(
+                    path=path,
+                    message=(
+                        "canonical player-experience calibration panels must not "
+                        "use enforceable SLO wording before profile promotion"
+                    ),
+                )
+            )
+        if (
+            isinstance(title, str)
+            and re.search(r"\bcommand\s+latency\b", title, re.IGNORECASE)
+            and re.search(r"\bregion\b", title, re.IGNORECASE)
+            and isinstance(panel, dict)
+            and any(
+                isinstance(target.get("expr"), str)
+                and "command_end_to_end_latency_ms_bucket" in target["expr"]
+                for target in panel.get("targets", [])
+                if isinstance(target, dict)
+            )
+        ):
+            findings.append(
+                Finding(
+                    path=path,
+                    message=(
+                        "canonical command latency panels grouped by bounded scope "
+                        "must not claim a raw region grouping"
+                    ),
+                )
+            )
+        if (
+            isinstance(title, str)
+            and re.search(r"\bcommand\s+latency\b", title, re.IGNORECASE)
+            and re.search(r"\bby\s+scope\b", title, re.IGNORECASE)
+            and isinstance(panel, dict)
+        ):
+            for target in panel.get("targets", []):
+                if isinstance(expr := target.get("expr"), str):
+                    findings.extend(_command_scope_query_findings(path, expr))
+
+    chat_expressions = [
+        expr
+        for panel in dashboard.get("panels", [])
+        for target in panel.get("targets", [])
+        if isinstance((expr := target.get("expr")), str)
+        and "chat_delivery_latency_ms_bucket" in expr
+    ]
+    if not chat_expressions:
+        findings.append(
+            Finding(
+                path=path,
+                message=(
+                    "canonical player-experience dashboard must include a chat "
+                    "delivery latency panel"
+                ),
+            )
+        )
+        return findings
+
+    for expr in chat_expressions:
+        chat_selector_issue = _recipient_dispatch_selector_finding(
+            path,
+            expr,
+            "chat_delivery_latency_ms_bucket",
+            "canonical player-experience chat latency panels",
+        )
+        if chat_selector_issue:
+            findings.append(chat_selector_issue)
+    return findings
+
+
+def _validate_player_experience_drilldown(path: Path) -> list[Finding]:
+    try:
+        dashboard = json.loads(_read_text(path))
+    except json.JSONDecodeError:
+        return []
+
+    chat_expressions = [
+        expr
+        for panel in dashboard.get("panels", [])
+        for target in panel.get("targets", [])
+        if isinstance((expr := target.get("expr")), str)
+        and "chat_delivery_latency_ms_bucket" in expr
+    ]
+    if not chat_expressions:
+        return [
+            Finding(
+                path=path,
+                message=(
+                    "player-experience drilldown must include a chat delivery "
+                    "latency panel"
+                ),
+            )
+        ]
+
+    findings: list[Finding] = []
+    for expr in chat_expressions:
+        chat_selector_issue = _recipient_dispatch_selector_finding(
+            path,
+            expr,
+            "chat_delivery_latency_ms_bucket",
+            "player-experience drilldown chat latency panels",
+        )
+        if chat_selector_issue:
+            findings.append(chat_selector_issue)
+    return findings
+
+
 def _validate_kibana_saved_objects(kibana_dir: Path) -> list[Finding]:
     findings: list[Finding] = []
     required_columns: dict[str, set[str]] = {
         "log-volume.json": {"service", "tenantId", "regionId", "message"},
-        "player-incident-drilldown.json": {"service", "tenantId", "characterId", "traceId", "correlationId", "message"},
+        "player-incident-drilldown.json": {"environment", "service", "tenantId", "characterId", "traceId", "correlationId", "message"},
         "tick-region-logs.json": {"service", "tenantId", "regionId", "tickId", "traceId", "correlationId", "message"},
     }
 
@@ -985,6 +1361,149 @@ def _validate_kibana_saved_objects(kibana_dir: Path) -> list[Finding]:
                     message=f"Kibana saved object is missing required structured log fields for runbooks: {', '.join(missing)}",
                 )
             )
+        if json_path.name == "player-incident-drilldown.json":
+            sentinel = "__REQUIRED_ENVIRONMENT__"
+            if sentinel not in serialized:
+                findings.append(
+                    Finding(
+                        path=json_path,
+                        message=(
+                            "player incident Kibana saved object must retain the "
+                            "__REQUIRED_ENVIRONMENT__ fail-closed environment sentinel"
+                        ),
+                    )
+                )
+            try:
+                search_source = payload["attributes"]["kibanaSavedObjectMeta"]["searchSourceJSON"]
+                search_source_payload = json.loads(search_source)
+                query = search_source_payload["query"]["query"]
+                index_ref_name = search_source_payload.get("indexRefName")
+            except (KeyError, TypeError, json.JSONDecodeError):
+                query = ""
+                index_ref_name = None
+            if not isinstance(query, str):
+                findings.append(
+                    Finding(
+                        path=json_path,
+                        message=(
+                            "player incident Kibana saved object query must be a "
+                            "string before environment safety checks"
+                        ),
+                    )
+                )
+                query = ""
+            if not re.search(r"\benvironment\s*:", query, re.IGNORECASE):
+                findings.append(
+                    Finding(
+                        path=json_path,
+                        message=(
+                            "player incident Kibana saved object must apply an "
+                            "explicit environment filter before querying wildcard logs"
+                        ),
+                    )
+                )
+            if sentinel not in query:
+                findings.append(
+                    Finding(
+                        path=json_path,
+                        message=(
+                            "player incident Kibana saved object query must retain the "
+                            "__REQUIRED_ENVIRONMENT__ fail-closed sentinel"
+                        ),
+                    )
+                )
+            query_clauses = [
+                clause.strip()
+                for clause in re.split(r"\band\b", query, flags=re.IGNORECASE)
+            ]
+            required_conjunctive_clauses = {
+                "environment": r'environment\s*:\s*"__REQUIRED_ENVIRONMENT__"',
+                "service": r"service\s*:\s*\*",
+                "traceId": r"traceId\s*:\s*\*",
+            }
+            if any(
+                not any(
+                    re.fullmatch(pattern, clause, re.IGNORECASE)
+                    for clause in query_clauses
+                )
+                for pattern in required_conjunctive_clauses.values()
+            ):
+                findings.append(
+                    Finding(
+                        path=json_path,
+                        message=(
+                            "player incident Kibana saved object query must bind "
+                            '__REQUIRED_ENVIRONMENT__ as an exact conjunctive '
+                            "environment filter with service and traceId bounds"
+                        ),
+                    )
+                )
+            if re.search(r"\bor\b", query, re.IGNORECASE):
+                findings.append(
+                    Finding(
+                        path=json_path,
+                        message=(
+                            "player incident Kibana saved object query must keep "
+                            "environment, service, and traceId clauses conjunctive"
+                        ),
+                    )
+                )
+
+            references = payload.get("references")
+            index_references = (
+                references
+                if isinstance(references, list)
+                else []
+            )
+            if (
+                len(index_references) != 1
+                or not isinstance(index_references[0], dict)
+                or index_references[0].get("name") != "searchSourceJSON.index"
+                or index_references[0].get("type") != "index-pattern"
+            ):
+                findings.append(
+                    Finding(
+                        path=json_path,
+                        message=(
+                            "player incident Kibana saved object must have exactly "
+                            "one searchSourceJSON.index index-pattern reference"
+                        ),
+                    )
+                )
+            else:
+                index_id = index_references[0].get("id")
+                if not isinstance(index_ref_name, str) or not index_ref_name:
+                    findings.append(
+                        Finding(
+                            path=json_path,
+                            message=(
+                                "player incident Kibana saved object must have a "
+                                "non-empty searchSourceJSON.indexRefName"
+                            ),
+                        )
+                    )
+                elif index_ref_name != index_references[0].get("name"):
+                    findings.append(
+                        Finding(
+                            path=json_path,
+                            message=(
+                                "player incident Kibana saved object "
+                                "searchSourceJSON.indexRefName must exactly match "
+                                "the searchSourceJSON.index reference name"
+                            ),
+                        )
+                    )
+                if not isinstance(index_id, str) or not KIBANA_SAFE_LOG_INDEX_PATTERN.fullmatch(index_id):
+                    findings.append(
+                        Finding(
+                            path=json_path,
+                            message=(
+                                "player incident Kibana saved object index reference "
+                                f"must use {KIBANA_DEFAULT_LOG_INDEX} or an explicit "
+                                "environment-scoped FireMUD log index"
+                            ),
+                        )
+                    )
     return findings
 
 
@@ -1117,7 +1636,7 @@ def _validate_doc_semantics() -> list[Finding]:
 
     player_dashboard = REPO_ROOT / "design" / "observability" / "grafana" / "player-experience.json"
     player_dashboard_text = _read_text(player_dashboard)
-    if "Telnet/WebSocket Path Availability (1d SLO)" not in player_dashboard_text:
+    if "Telnet/WebSocket Path Availability (1d Calibration)" not in player_dashboard_text:
         findings.append(
             Finding(
                 path=player_dashboard,
@@ -1168,6 +1687,27 @@ def _validate_reference_prometheus_rules(
 
         labels = _parse_labels(rule_lines)
         findings.extend(
+            _player_slo_calibration_findings(path, alert_name, labels)
+        )
+        findings.extend(
+            _entry_path_blackbox_findings(
+                path,
+                alert_name,
+                labels,
+                expr,
+                _parse_rule_scalar(rule_lines, "for"),
+            )
+        )
+        if alert_name == "ChatDeliveryLatencyP99High":
+            chat_selector_issue = _recipient_dispatch_selector_finding(
+                path,
+                expr,
+                "chat_delivery_latency_ms_p99_5m",
+                "shipped ChatDeliveryLatencyP99High alert",
+            )
+            if chat_selector_issue:
+                findings.append(chat_selector_issue)
+        findings.extend(
             _playerflow_canary_label_findings(path, alert_name, labels)
         )
         findings.extend(
@@ -1196,6 +1736,8 @@ def _validate_reference_prometheus_rules(
                     ),
                 )
             )
+
+        findings.extend(_alert_runbook_findings(path, labels.get("runbook", "")))
 
         ms_issue = _check_ms_thresholds(expr)
         if ms_issue:
@@ -1277,8 +1819,6 @@ def _validate_reference_prometheus_rules(
             "PlayerFlowCanaryLatencyHigh",
             "PlayerFlowCanaryFreshnessBudgetMissing",
             "PlayerFlowCanaryEvidenceStale",
-            "WebSocketEntryPathBlackboxUnavailable",
-            "TelnetEntryPathBlackboxUnavailable",
             "ChatDeliveryLatencyP99High",
             "TickReplayFairnessStarved",
             "TickReplayScanLagHigh",
@@ -1372,6 +1912,37 @@ def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
         for recording, expressions in recording_occurrences.items()
         if len(expressions) == 1
     }
+    chat_recording_name = "chat_delivery_latency_ms_p99_5m"
+    chat_recording_expressions = recording_occurrences.get(chat_recording_name, [])
+    if len(chat_recording_expressions) != 1:
+        findings.append(
+            Finding(
+                path=path,
+                message=(
+                    "canonical chat delivery recording rule must be declared "
+                    f"exactly once: {chat_recording_name}"
+                ),
+            )
+        )
+    elif not chat_recording_expressions[0]:
+        findings.append(
+            Finding(
+                path=path,
+                message=(
+                    "canonical chat delivery recording rule is missing expr: "
+                    f"{chat_recording_name}"
+                ),
+            )
+        )
+    else:
+        chat_selector_issue = _recipient_dispatch_selector_finding(
+            path,
+            chat_recording_expressions[0],
+            "chat_delivery_latency_ms_bucket",
+            "canonical chat delivery recording rule",
+        )
+        if chat_selector_issue:
+            findings.append(chat_selector_issue)
     blocked_convergence_expr = recordings.get("recovery_participant_convergence_blocked") or ""
     if _compact_promql(blocked_convergence_expr) != CURRENT_BLOCKED_CONVERGENCE_EXPR:
         findings.append(
@@ -1441,13 +2012,19 @@ def main() -> int:
     findings: list[Finding] = []
 
     grafana_dir = GRAFANA_DIR
-    for alert_snippet in [
-        grafana_dir / "core-alerts-snippets.md",
-        *CORE_ALERT_SNIPPET_PATHS,
-        grafana_dir / "tcp-proxy-alerts-snippets.md",
-    ]:
+    for alert_snippet in ALERT_SNIPPET_PATHS:
         findings.extend(_validate_alert_snippet(alert_snippet))
     findings.extend(_validate_grafana_dashboards(grafana_dir))
+    findings.extend(
+        _validate_player_experience_dashboard(
+            grafana_dir / "player-experience.json"
+        )
+    )
+    findings.extend(
+        _validate_player_experience_drilldown(
+            grafana_dir / "player-experience-drilldown.json"
+        )
+    )
     findings.extend(_validate_kibana_saved_objects(REPO_ROOT / "design" / "observability" / "kibana"))
     findings.extend(_validate_doc_semantics())
     prometheus_rules = REPO_ROOT / "k8s" / "monitoring" / "prometheus-rules-firemud.yaml"
@@ -1478,6 +2055,8 @@ def main() -> int:
                 {
                     "ObservabilityDeadmanHeartbeatMissing",
                     "ObservabilityDeadmanHeartbeatStale",
+                    "WebSocketEntryPathBlackboxUnavailable",
+                    "TelnetEntryPathBlackboxUnavailable",
                 },
                 allow_profile_dependent_alerts=True,
             )

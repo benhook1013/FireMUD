@@ -51,6 +51,20 @@ CAPABILITY_VALUES = {
     PROMETHEUS_MIRRORS_CAPABILITY: {"published", "omitted"},
     PLAYER_FLOW_CANARY_CAPABILITY: {"advertised", "omitted"},
 }
+FAILURE_INJECTION_SIGNAL_VALUES = frozenset(
+    {"websocket", "telnet", "login", "command", "deadman"}
+)
+FAILURE_INJECTION_ALERT_VALUES = frozenset(
+    {
+        "PlayerFlowCanaryLoginFailed",
+        "PlayerFlowCanaryCommandFailed",
+        "PlayerFlowCanaryLatencyHigh",
+        "PlayerFlowCanaryEvidenceStale",
+    }
+)
+FAILURE_INJECTION_VALUES = (
+    FAILURE_INJECTION_SIGNAL_VALUES | FAILURE_INJECTION_ALERT_VALUES
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "dev-tools" / "smoke"))
@@ -115,10 +129,25 @@ def main() -> int:
         "--failure-injection",
         default=os.environ.get("PLAYER_EXPERIENCE_FAILURE_INJECTION", ""),
         help=(
-            "Comma-separated synthetic failure flags. Supported values: "
-            "websocket,telnet,login,command,deadman,"
+            "Comma-separated synthetic failure flags. Signal values are "
+            "websocket,telnet,login,command,deadman; alert-family values "
             "PlayerFlowCanaryLoginFailed,PlayerFlowCanaryCommandFailed,"
-            "PlayerFlowCanaryLatencyHigh,PlayerFlowCanaryEvidenceStale."
+            "PlayerFlowCanaryLatencyHigh,PlayerFlowCanaryEvidenceStale only "
+            "retain a failed incident-diagnostic exerciseResult. They do not "
+            "execute the alert path or create passing gate evidence. Signal "
+            "injection changes only locally produced mirrors and canary records; "
+            "retained external-authority observations remain unchanged."
+        ),
+    )
+    parser.add_argument(
+        "--allow-failure-evidence",
+        action="store_true",
+        help=(
+            "Allow fresh retained external-authority evidence whose current "
+            "deadman or exposed public-path status is red, so the runner can "
+            "preserve a non-authorizing incident artifact. This does not mark "
+            "unexercised alert paths passed. Omit this option for readiness, "
+            "recovery, and promotion evidence."
         ),
     )
     parser.add_argument(
@@ -157,7 +186,10 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    injected = parse_failure_injection(args.failure_injection)
+    try:
+        injected = parse_failure_injection(args.failure_injection)
+    except ValueError as exc:
+        parser.error(str(exc))
     config = SmokeConfig.from_env(
         args.source,
         args.canary_path,
@@ -177,7 +209,10 @@ def main() -> int:
         authority_verified_at.replace("Z", "+00:00")
     ).timestamp()
     initial_external_authority = resolve_external_authority(
-        config, injected, args.simulate, evaluation_epoch
+        config,
+        args.simulate,
+        evaluation_epoch,
+        allow_failure_evidence=args.allow_failure_evidence,
     )
 
     mirrored_signals = execute_smoke(
@@ -190,12 +225,18 @@ def main() -> int:
     # Re-read retained authority after the smoke run and require the stable
     # profile/path/budget fields to match the snapshot used for mirrors.
     reread_external_authority = resolve_external_authority(
-        config, injected, args.simulate, final_evaluation_epoch
+        config,
+        args.simulate,
+        final_evaluation_epoch,
+        allow_failure_evidence=args.allow_failure_evidence,
     )
     compare_external_authority_snapshots(
         initial_external_authority, reread_external_authority
     )
     external_authority = reread_external_authority
+    synchronize_deadman_heartbeat_mirror(
+        mirrored_signals, external_authority, injected
+    )
     validate_external_authority_freshness(
         external_authority,
         config.external_authority_evidence or Path("<synthetic external authority>"),
@@ -355,7 +396,13 @@ class SmokeConfig:
 
 
 def parse_failure_injection(raw: str) -> set[str]:
-    return {item.strip() for item in raw.split(",") if item.strip()}
+    values = {item.strip() for item in raw.split(",") if item.strip()}
+    unsupported = sorted(values - FAILURE_INJECTION_VALUES)
+    if unsupported:
+        raise ValueError(
+            "unsupported failure-injection token(s): " + ", ".join(unsupported)
+        )
+    return values
 
 
 def validate_capability(value: str, key: str) -> str:
@@ -464,7 +511,7 @@ def execute_smoke(
         and external_authority["profile"] == "independent-required"
     ):
         signals["observability_deadman_heartbeat_timestamp_seconds"] = deadman_record(
-            config, injected
+            config, injected, external_authority
         )
     return signals
 
@@ -498,7 +545,11 @@ def simulated_signals(
     ):
         signals["observability_deadman_heartbeat_timestamp_seconds"] = {
             "source": config.source,
-            "value": 0 if "deadman" in injected else int(now),
+            "value": (
+                stale_deadman_heartbeat_timestamp(external_authority, now)
+                if "deadman" in injected
+                else external_authority_heartbeat_timestamp(external_authority)
+            ),
         }
     return signals
 
@@ -759,18 +810,24 @@ def run_telnet_canary(
 def simulated_canary_records(
     config: SmokeConfig, injected: set[str]
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    login_succeeded = "login" not in injected
+    command_succeeded = login_succeeded and "command" not in injected
     success = [
         {
             "flow": "login",
             "path": config.canary_path,
             "target": canary_target(config),
-            "value": 0 if "login" in injected else 1,
+            "value": 1 if login_succeeded else 0,
         },
         {
             "flow": "command",
             "path": config.canary_path,
             "target": canary_target(config),
-            "value": 0 if "command" in injected else 1,
+            # This metric is the complete representative-command journey. A
+            # failed LOGIN means LOOK was not reached, so the journey cannot
+            # be reported successful even when command failure was not also
+            # requested explicitly.
+            "value": 1 if command_succeeded else 0,
         },
     ]
     latency = [
@@ -778,7 +835,9 @@ def simulated_canary_records(
             "flow": "command",
             "path": config.canary_path,
             "target": canary_target(config),
-            "value": 0 if "command" in injected else 125,
+            # Zero records that no successful command-completion latency was
+            # observed for the failed/unreached journey.
+            "value": 125 if command_succeeded else 0,
         }
     ]
     return success, latency
@@ -816,11 +875,84 @@ def canary_records_from_steps(
     return success, latency
 
 
-def deadman_record(config: SmokeConfig, injected: set[str]) -> dict[str, Any]:
+def external_authority_heartbeat_timestamp(
+    external_authority: dict[str, Any],
+) -> float:
+    observed_at = external_authority.get("lastSuccessfulHeartbeatObservedAt")
+    if not isinstance(observed_at, str) or not observed_at.endswith("Z"):
+        raise RuntimeError(
+            "A published deadman heartbeat mirror requires "
+            "lastSuccessfulHeartbeatObservedAt as an RFC3339 UTC timestamp"
+        )
+    try:
+        timestamp = dt.datetime.fromisoformat(
+            observed_at.replace("Z", "+00:00")
+        ).timestamp()
+    except ValueError as exc:
+        raise RuntimeError(
+            "A published deadman heartbeat mirror requires a valid "
+            "lastSuccessfulHeartbeatObservedAt timestamp"
+        ) from exc
+    if not math.isfinite(timestamp) or timestamp <= 0:
+        raise RuntimeError(
+            "A published deadman heartbeat mirror requires a positive finite "
+            "lastSuccessfulHeartbeatObservedAt timestamp"
+        )
+    return timestamp
+
+
+def stale_deadman_heartbeat_timestamp(
+    external_authority: dict[str, Any], now: float
+) -> float:
+    stale_threshold = external_authority.get("staleThresholdSeconds")
+    if (
+        isinstance(stale_threshold, bool)
+        or not isinstance(stale_threshold, (int, float))
+        or not math.isfinite(stale_threshold)
+        or stale_threshold <= 0
+    ):
+        raise RuntimeError(
+            "A deadman failure injection requires a positive finite staleThresholdSeconds"
+        )
+    timestamp = now - stale_threshold - 1
+    if not math.isfinite(timestamp) or timestamp <= 0:
+        raise RuntimeError(
+            "A deadman failure injection could not produce a positive finite heartbeat timestamp"
+        )
+    return timestamp
+
+
+def deadman_record(
+    config: SmokeConfig,
+    injected: set[str],
+    external_authority: dict[str, Any],
+) -> dict[str, Any]:
     return {
         "source": config.source,
-        "value": 0 if "deadman" in injected else int(time.time()),
+        "value": (
+            stale_deadman_heartbeat_timestamp(external_authority, time.time())
+            if "deadman" in injected
+            else external_authority_heartbeat_timestamp(external_authority)
+        ),
     }
+
+
+def synchronize_deadman_heartbeat_mirror(
+    mirrored_signals: dict[str, Any],
+    external_authority: dict[str, Any],
+    injected: set[str],
+) -> None:
+    if "deadman" in injected:
+        return
+    record = mirrored_signals.get(
+        "observability_deadman_heartbeat_timestamp_seconds"
+    )
+    if not isinstance(record, dict):
+        return
+    # The retained authority may observe a new successful heartbeat while the
+    # public-path smoke is running. Bind the final artifact to the final
+    # retained snapshot instead of preserving the earlier observation.
+    record["value"] = external_authority_heartbeat_timestamp(external_authority)
 
 
 def canary_freshness_budget_record(
@@ -873,7 +1005,7 @@ def build_evidence(
         evidence["deploymentEventId"] = config.deployment_event_id
     if config.player_flow_canary == "advertised":
         evidence["canaryAlerts"] = [
-            alert_record("PlayerFlowCanaryLoginFailed", "P0", injected),
+            alert_record("PlayerFlowCanaryLoginFailed", "P1", injected),
             alert_record("PlayerFlowCanaryCommandFailed", "P1", injected),
             alert_record("PlayerFlowCanaryLatencyHigh", "P1", injected),
             alert_record("PlayerFlowCanaryEvidenceStale", "P1", injected),
@@ -883,19 +1015,22 @@ def build_evidence(
 
 def resolve_external_authority(
     config: SmokeConfig,
-    injected: set[str],
     simulate: bool,
     evaluation_epoch: float | None = None,
+    *,
+    allow_failure_evidence: bool = False,
 ) -> dict[str, Any]:
-    authority = load_external_authority(config, simulate, evaluation_epoch)
-    authority = copy.deepcopy(authority)
-    if "deadman" in injected and authority.get("profile") == "independent-required":
-        authority["deadmanAuthority"]["status"] = "red"
-    exposed_paths = declared_exposed_paths(authority)
-    for path, value in authority.get("publicPathChecks", {}).items():
-        if path in injected and path in exposed_paths:
-            value["status"] = "red"
-    return authority
+    # External authority is provider-owned observation evidence, not a local
+    # failure-injection target. Copy it so later evidence assembly cannot
+    # mutate either the loaded retained record or synthetic source fixture.
+    return copy.deepcopy(
+        load_external_authority(
+            config,
+            simulate,
+            evaluation_epoch,
+            allow_failure_evidence=allow_failure_evidence,
+        )
+    )
 
 
 def compare_external_authority_snapshots(
@@ -916,7 +1051,11 @@ def compare_external_authority_snapshots(
 
 
 def load_external_authority(
-    config: SmokeConfig, simulate: bool, evaluation_epoch: float | None = None
+    config: SmokeConfig,
+    simulate: bool,
+    evaluation_epoch: float | None = None,
+    *,
+    allow_failure_evidence: bool = False,
 ) -> dict[str, Any]:
     path = config.external_authority_evidence
     if path is None:
@@ -946,6 +1085,7 @@ def load_external_authority(
         path,
         evaluation_epoch=evaluation_epoch,
         canary_advertised=config.player_flow_canary == "advertised",
+        allow_failure_evidence=allow_failure_evidence,
     )
     return data
 
@@ -986,6 +1126,7 @@ def validate_external_authority_shape(
     path: Path,
     evaluation_epoch: float | None = None,
     canary_advertised: bool = False,
+    allow_failure_evidence: bool = False,
 ) -> None:
     profile = data.get("profile")
     if profile not in {"independent-required", "independent-omitted"}:
@@ -1092,7 +1233,12 @@ def validate_external_authority_shape(
         raise TypeError(
             f"External authority evidence at {path} must include deadmanAuthority"
         )
-    validate_authority_record(deadman, "deadmanAuthority", path)
+    validate_authority_record(
+        deadman,
+        "deadmanAuthority",
+        path,
+        allow_failure_evidence=allow_failure_evidence,
+    )
     checks = data.get("publicPathChecks")
     if not isinstance(checks, dict):
         raise TypeError(
@@ -1123,7 +1269,12 @@ def validate_external_authority_shape(
                 f"publicPathChecks.{name}.lastSuccessfulProbeObservedAt",
                 path,
             )
-            validate_public_path_record(record, f"publicPathChecks.{name}", path)
+            validate_public_path_record(
+                record,
+                f"publicPathChecks.{name}",
+                path,
+                allow_failure_evidence=allow_failure_evidence,
+            )
         else:
             validate_not_applicable_path_record(record, f"publicPathChecks.{name}", path)
 
@@ -1294,13 +1445,24 @@ def validate_public_path_freshness(
         )
 
 
-def validate_authority_record(record: dict[str, Any], key: str, path: Path) -> None:
+def validate_authority_record(
+    record: dict[str, Any],
+    key: str,
+    path: Path,
+    *,
+    allow_failure_evidence: bool = False,
+) -> None:
     status = record.get("status")
-    if status != "green":
+    if status != "green" and not (
+        allow_failure_evidence and status == "red"
+    ):
         raise RuntimeError(
             f"External authority evidence at {path} requires {key}.status=green"
         )
-    for field in ("evidenceRef", "pageEvidenceRef", "target", "checkRef"):
+    required_fields = ["evidenceRef", "target", "checkRef"]
+    if status == "green" or not allow_failure_evidence:
+        required_fields.append("pageEvidenceRef")
+    for field in required_fields:
         value = record.get(field)
         if not isinstance(value, str) or not value.strip():
             raise RuntimeError(
@@ -1310,14 +1472,29 @@ def validate_authority_record(record: dict[str, Any], key: str, path: Path) -> N
             raise RuntimeError(
                 f"External authority evidence at {path} must not use synthetic {key}.{field}"
             )
+    validate_optional_page_evidence_ref(
+        record, key, path, allow_failure_evidence=allow_failure_evidence
+    )
 
 
-def validate_public_path_record(record: dict[str, Any], key: str, path: Path) -> None:
-    if record.get("status") != "green":
+def validate_public_path_record(
+    record: dict[str, Any],
+    key: str,
+    path: Path,
+    *,
+    allow_failure_evidence: bool = False,
+) -> None:
+    status = record.get("status")
+    if status != "green" and not (
+        allow_failure_evidence and status == "red"
+    ):
         raise RuntimeError(
             f"External authority evidence at {path} requires {key}.status=green"
         )
-    for field in ("evidenceRef", "pageEvidenceRef", "target"):
+    required_fields = ["evidenceRef", "target"]
+    if status == "green" or not allow_failure_evidence:
+        required_fields.append("pageEvidenceRef")
+    for field in required_fields:
         value = record.get(field)
         if not isinstance(value, str) or not value.strip():
             raise RuntimeError(
@@ -1327,6 +1504,31 @@ def validate_public_path_record(record: dict[str, Any], key: str, path: Path) ->
             raise RuntimeError(
                 f"External authority evidence at {path} must not use synthetic {key}.{field}"
             )
+    validate_optional_page_evidence_ref(
+        record, key, path, allow_failure_evidence=allow_failure_evidence
+    )
+
+
+def validate_optional_page_evidence_ref(
+    record: dict[str, Any],
+    key: str,
+    path: Path,
+    *,
+    allow_failure_evidence: bool,
+) -> None:
+    if not allow_failure_evidence or record.get("status") != "red":
+        return
+    if "pageEvidenceRef" not in record:
+        return
+    value = record["pageEvidenceRef"]
+    if not isinstance(value, str) or not value.strip():
+        raise RuntimeError(
+            f"External authority evidence at {path} must define {key}.pageEvidenceRef when present"
+        )
+    if value.startswith(("synthetic://", "synthetic-")):
+        raise RuntimeError(
+            f"External authority evidence at {path} must not use synthetic {key}.pageEvidenceRef"
+        )
 
 
 def validate_not_applicable_path_record(
@@ -1528,10 +1730,14 @@ def public_auth_url(config: SmokeConfig, path: str) -> str:
 
 
 def alert_record(alert: str, severity: str, injected: set[str]) -> dict[str, str]:
+    # This runner injects signal values but does not execute or observe the
+    # alert evaluator and notification path. Alert-family tokens can preserve
+    # an explicitly failed exercise input for incident diagnostics; absence of
+    # such a token is unproved, never an inferred pass.
     return {
         "alert": alert,
         "severity": severity,
-        "exerciseResult": "failed" if alert in injected else "passed",
+        "exerciseResult": "failed" if alert in injected else "not_exercised",
     }
 
 

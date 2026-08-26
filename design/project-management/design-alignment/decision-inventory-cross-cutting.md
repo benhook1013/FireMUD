@@ -238,9 +238,9 @@ The decisions below have applied human-review provenance. They are not pending p
 | `MS-PO-MODERATION-APPEALS` | [ADR 0142](../../architecture/decisions/adr-0142-bounded-moderation-appeal-cases.md) | Implement Logging & Admin-owned bounded appeals with Account-authenticated intake, protected evidence, jurisdiction/review lifecycle, digest-bound outcome commands to the applicable enforcement owner, and focused appeal proof. |
 | `MOD-01` | [ADR 0146](../../architecture/decisions/adr-0146-owner-local-moderation-enforcement.md) | Owner-local moderation enforcement commands remain incomplete; implement the typed owner commands and prove monotonic enforcement state, active-binding containment, and the complete restriction lifecycle without treating current synchronous `PLAY`/chat checks as completion. |
 
-### Pending Decisions Requiring Product Or Operations Consultation
+### Selective-Import Follow-up
 
-This cross-cutting ledger has no additional product or operations consultation rows of its own. The companion [Product and Operations inventory](./decision-inventory-product-operations.md) still retains these explicitly `proposed/deferred` rows whose `Human consultation: Yes` status is unchanged: `OBS-02`, `OBS-03`, `OBS-06`, `CAPACITY-01`, `CAPACITY-02`, and `TEST-02`. They remain consultation questions in that owner inventory and are not converted into applied decisions or implementation-only follow-ups here. `OPS-02` and `OPS-03` have applied human-review provenance; only their implementation and focused-proof obligations remain in the applied follow-up table above. Existing canonical ADR/design authority remains in force.
+Human consultation for the listed outcomes is complete, and this Packet 6 P1 foundation parcel applies the next 11 of 15 Packet 6 outcomes through `MS-PO-OWNER-REMEDIATION` and ADRs 0160-0165; their implementation, calibration, and proof gaps remain open. The 21 remaining reviewed outcomes comprise the four-decision Packet 6 tail (`SCRIPT-14`, `SCRIPT-15`, `TRACE-02`, and `TRACE-03`) plus 17 Packet 7 outcomes; they are selective-import work, not absent review evidence, and remain pending import. Residual authority conflicts or repeated non-ADR contracts remain deferred to the planned whole-corpus authority pass after the selective import program completes.
 
 ## Coverage By Exact Capability
 

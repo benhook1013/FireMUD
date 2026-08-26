@@ -120,6 +120,53 @@ os.environ.pop("PLAYER_EXPERIENCE_DEPLOYMENT_EVENT_ID")
 os.environ.pop("SMOKE_TIMEOUT_SECONDS")
 config = runner.SmokeConfig.from_env("contract-test", "websocket", None)
 assert config.websocket_url == "ws://localhost:8080/ws/game"
+retained_authority = {
+    "profile": "independent-required",
+    "exposedPublicPlayerPaths": ["websocket"],
+    "detectionBudgetSeconds": 195,
+    "staleThresholdSeconds": 180,
+    "lastSuccessfulHeartbeatObservedAt": "2026-03-19T10:54:00Z",
+}
+expected_heartbeat = runner.dt.datetime.fromisoformat(
+    "2026-03-19T10:54:00+00:00"
+).timestamp()
+assert runner.deadman_record(config, set(), retained_authority)["value"] == expected_heartbeat
+mirror_only_config = runner.SmokeConfig.from_env(
+    "contract-test",
+    "websocket",
+    None,
+    prometheus_mirrors="published",
+    player_flow_canary="omitted",
+)
+simulated_mirror = runner.simulated_signals(
+    mirror_only_config, set(), retained_authority
+)["observability_deadman_heartbeat_timestamp_seconds"]
+assert simulated_mirror["value"] == expected_heartbeat
+final_authority = dict(retained_authority)
+final_authority["lastSuccessfulHeartbeatObservedAt"] = "2026-03-19T10:55:00Z"
+mirrored_signals = {
+    "observability_deadman_heartbeat_timestamp_seconds": dict(simulated_mirror)
+}
+runner.synchronize_deadman_heartbeat_mirror(
+    mirrored_signals, final_authority, set()
+)
+assert mirrored_signals[
+    "observability_deadman_heartbeat_timestamp_seconds"
+]["value"] == runner.dt.datetime.fromisoformat(
+    "2026-03-19T10:55:00+00:00"
+).timestamp()
+injected_mirror = {
+    "observability_deadman_heartbeat_timestamp_seconds": {
+        "source": "contract-test",
+        "value": 123.0,
+    }
+}
+runner.synchronize_deadman_heartbeat_mirror(
+    injected_mirror, final_authority, {"deadman"}
+)
+assert injected_mirror[
+    "observability_deadman_heartbeat_timestamp_seconds"
+]["value"] == 123.0
 requests = []
 
 
@@ -163,6 +210,18 @@ assert characters_request["headers"] == {
 PY
 SMOKE_CONFIG_ENV_OVERRIDES=()
 
+if run_smoke_runner \
+  --simulate \
+  --failure-injection "unsupported-token" \
+  --evidence-out "$TMP_DIR/unsupported-injection-evidence.json" \
+  --source "contract-test" \
+  --canary-path websocket >"$TMP_DIR/unsupported-injection.out" 2>&1; then
+  echo "unsupported failure-injection token unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "unsupported failure-injection token(s): unsupported-token" \
+  "$TMP_DIR/unsupported-injection.out"
+
 SMOKE_CONFIG_ENV_OVERRIDES=(
   PLAYER_EXPERIENCE_DEPLOYMENT_EVENT_ID=not-a-uuid
   SMOKE_TIMEOUT_SECONDS=not-an-integer
@@ -197,6 +256,7 @@ os.environ.pop("SMOKE_TIMEOUT_SECONDS")
 authority = {
     "profile": "independent-required",
     "exposedPublicPlayerPaths": ["telnet"],
+    "lastSuccessfulHeartbeatObservedAt": "2026-03-19T10:54:00Z",
 }
 readiness_calls = []
 
@@ -287,11 +347,39 @@ run_smoke_runner_with_deployment_ref "$DEPLOYMENT_REF" \
   --canary-path websocket \
   --deployment-event-id "$DEPLOYMENT_EVENT_ID"
 
+if python3 "$VALIDATOR" "$SUCCESS_EVIDENCE" >"$TMP_DIR/unexercised-readiness.out" 2>&1; then
+  echo "runner-declared but unexercised canary alerts unexpectedly authorized readiness" >&2
+  exit 1
+fi
+grep -q "PlayerFlowCanaryLoginFailed exerciseResult must be passed" \
+  "$TMP_DIR/unexercised-readiness.out"
+python3 "$VALIDATOR" --allow-failure-evidence "$SUCCESS_EVIDENCE" \
+  >"$TMP_DIR/unexercised-incident.out"
+python3 - "$SUCCESS_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+data = json.loads(path.read_text(encoding="utf-8"))
+assert all(
+    record["exerciseResult"] == "not_exercised"
+    for record in data["canaryAlerts"]
+)
+# Model the separate alert-path exercise owner joining actual passing results
+# into the retained gate artifact. The smoke runner itself must never infer
+# these passes from declaration or ordinary signal injection.
+for record in data["canaryAlerts"]:
+    record["exerciseResult"] = "passed"
+path.write_text(json.dumps(data), encoding="utf-8")
+PY
+
 python3 "$VALIDATOR" "$SUCCESS_EVIDENCE" >"$TMP_DIR/valid.out"
 
 python3 - "$SUCCESS_EVIDENCE" "$DEPLOYMENT_REF" "$DEPLOYMENT_EVENT_ID" <<'PY'
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
@@ -303,6 +391,13 @@ assert data["capabilities"] == {
     "prometheusMirrors": "published",
     "playerFlowCanary": "advertised",
 }
+assert data["mirroredSignals"][
+    "observability_deadman_heartbeat_timestamp_seconds"
+]["value"] == datetime.fromisoformat(
+    data["externalAuthority"]["lastSuccessfulHeartbeatObservedAt"].replace(
+        "Z", "+00:00"
+    )
+).timestamp()
 assert "observability_deadman_stale" not in data["mirroredSignals"]
 assert {
     (record["flow"], record["path"])
@@ -342,7 +437,88 @@ assert data["mirroredSignals"]["playerflow_canary_freshness_budget_seconds"] == 
     "profile": "independent-required",
     "value": 195,
 }
+assert all(
+    record["exerciseResult"] == "passed"
+    for record in data["canaryAlerts"]
+)
 PY
+
+ALERT_ONLY_EVIDENCE="$TMP_DIR/alert-only-evidence.json"
+run_smoke_runner_with_deployment_ref "$DEPLOYMENT_REF" \
+  --simulate \
+  --external-authority-evidence "$AUTHORITY_EVIDENCE" \
+  --failure-injection "PlayerFlowCanaryCommandFailed" \
+  --evidence-out "$ALERT_ONLY_EVIDENCE" \
+  --source "contract-test" \
+  --canary-path websocket \
+  --deployment-event-id "$DEPLOYMENT_EVENT_ID"
+
+python3 - "$SUCCESS_EVIDENCE" "$ALERT_ONLY_EVIDENCE" <<'PY'
+import copy
+import json
+import sys
+from pathlib import Path
+
+
+def normalized(data):
+    data = copy.deepcopy(data)
+    data.pop("verifiedAt", None)
+    authority = data["externalAuthority"]
+    for key in (
+        "evidenceObservedAt",
+        "lastSuccessfulHeartbeatObservedAt",
+        "observedStalenessSeconds",
+    ):
+        authority.pop(key, None)
+    for record in authority["publicPathChecks"].values():
+        if isinstance(record, dict):
+            record.pop("lastSuccessfulProbeObservedAt", None)
+            record.pop("observedProbeAgeSeconds", None)
+    signals = data["mirroredSignals"]
+    signals["observability_deadman_heartbeat_timestamp_seconds"].pop("value", None)
+    for record in signals["playerflow_canary_last_run_timestamp_seconds"]:
+        record.pop("value", None)
+    for record in data["canaryAlerts"]:
+        record.pop("exerciseResult", None)
+    return data
+
+
+baseline = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+alert_only = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+assert normalized(alert_only) == normalized(baseline)
+assert all(
+    record["status"] == "green"
+    for record in alert_only["externalAuthority"]["publicPathChecks"].values()
+)
+assert alert_only["externalAuthority"]["deadmanAuthority"]["status"] == "green"
+assert all(
+    record["value"] == 1
+    for record in alert_only["mirroredSignals"]["entrypath_blackbox_probe_success"]
+)
+assert all(
+    record["value"] == 1
+    for record in alert_only["mirroredSignals"]["playerflow_canary_success"]
+)
+assert {
+    record["alert"]
+    for record in alert_only["canaryAlerts"]
+    if record["exerciseResult"] == "failed"
+} == {"PlayerFlowCanaryCommandFailed"}
+assert all(
+    record["exerciseResult"] == "not_exercised"
+    for record in alert_only["canaryAlerts"]
+    if record["alert"] != "PlayerFlowCanaryCommandFailed"
+)
+PY
+
+if python3 "$VALIDATOR" "$ALERT_ONLY_EVIDENCE" >"$TMP_DIR/alert-only-readiness.out" 2>&1; then
+  echo "alert-only failure injection unexpectedly passed readiness validation" >&2
+  exit 1
+fi
+grep -q "PlayerFlowCanaryCommandFailed exerciseResult must be passed" \
+  "$TMP_DIR/alert-only-readiness.out"
+python3 "$VALIDATOR" --allow-failure-evidence "$ALERT_ONLY_EVIDENCE" \
+  >"$TMP_DIR/alert-only-incident.out"
 
 SYNTHETIC_EVIDENCE="$TMP_DIR/synthetic-evidence.json"
 run_smoke_runner \
@@ -350,7 +526,8 @@ run_smoke_runner \
   --evidence-out "$SYNTHETIC_EVIDENCE" \
   --source "contract-test" \
   --canary-path websocket
-python3 "$VALIDATOR" "$SYNTHETIC_EVIDENCE" >"$TMP_DIR/synthetic.out"
+python3 "$VALIDATOR" --allow-failure-evidence "$SYNTHETIC_EVIDENCE" \
+  >"$TMP_DIR/synthetic.out"
 python3 - "$SYNTHETIC_EVIDENCE" <<'PY'
 import json
 import sys
@@ -362,6 +539,10 @@ assert data["externalAuthorityProvenance"] == "synthetic"
 assert "deploymentEventId" not in data
 assert data["externalAuthority"]["deadmanAuthority"]["evidenceRef"].startswith(
     "synthetic://"
+)
+assert all(
+    record["exerciseResult"] == "not_exercised"
+    for record in data["canaryAlerts"]
 )
 PY
 
@@ -587,7 +768,8 @@ run_smoke_runner \
   --evidence-out "$REQUIRED_180_MIRRORS_OMITTED_EVIDENCE" \
   --source "contract-test" \
   --canary-path websocket >/dev/null
-python3 "$VALIDATOR" "$REQUIRED_180_MIRRORS_OMITTED_EVIDENCE" >"$TMP_DIR/required-180-mirrors-omitted.out"
+python3 "$VALIDATOR" --allow-failure-evidence "$REQUIRED_180_MIRRORS_OMITTED_EVIDENCE" \
+  >"$TMP_DIR/required-180-mirrors-omitted.out"
 python3 - "$REQUIRED_180_MIRRORS_OMITTED_EVIDENCE" <<'PY'
 import json
 import sys
@@ -1113,6 +1295,173 @@ fi
 grep -q "requires --external-authority-evidence" "$TMP_DIR/missing-authority.out"
 
 refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
+RED_SOURCE_AUTHORITY_EVIDENCE="$TMP_DIR/red-source-authority.json"
+RED_SOURCE_EVIDENCE="$TMP_DIR/red-source-evidence.json"
+python3 - "$AUTHORITY_EVIDENCE" "$RED_SOURCE_AUTHORITY_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["deadmanAuthority"]["status"] = "red"
+source["deadmanAuthority"].pop("pageEvidenceRef")
+source["publicPathChecks"]["websocket"]["status"] = "red"
+source["publicPathChecks"]["websocket"].pop("pageEvidenceRef")
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+NULL_DEADMAN_PAGE_AUTHORITY_EVIDENCE="$TMP_DIR/null-deadman-page-authority.json"
+NULL_PUBLIC_PATH_PAGE_AUTHORITY_EVIDENCE="$TMP_DIR/null-public-path-page-authority.json"
+python3 - \
+  "$RED_SOURCE_AUTHORITY_EVIDENCE" \
+  "$NULL_DEADMAN_PAGE_AUTHORITY_EVIDENCE" \
+  "$NULL_PUBLIC_PATH_PAGE_AUTHORITY_EVIDENCE" <<'PY'
+import copy
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+null_deadman = copy.deepcopy(source)
+null_deadman["deadmanAuthority"]["pageEvidenceRef"] = None
+Path(sys.argv[2]).write_text(json.dumps(null_deadman), encoding="utf-8")
+null_public_path = copy.deepcopy(source)
+null_public_path["publicPathChecks"]["websocket"]["pageEvidenceRef"] = None
+Path(sys.argv[3]).write_text(json.dumps(null_public_path), encoding="utf-8")
+PY
+
+if run_smoke_runner \
+  --simulate \
+  --allow-failure-evidence \
+  --external-authority-evidence "$NULL_DEADMAN_PAGE_AUTHORITY_EVIDENCE" \
+  --evidence-out "$TMP_DIR/rejected-null-deadman-page-evidence.json" \
+  --source "contract-test" \
+  --canary-path websocket >"$TMP_DIR/null-deadman-page.out" 2>&1; then
+  echo "runner unexpectedly accepted a present null red deadman page reference" >&2
+  exit 1
+fi
+grep -q "must define deadmanAuthority.pageEvidenceRef when present" \
+  "$TMP_DIR/null-deadman-page.out"
+
+if run_smoke_runner \
+  --simulate \
+  --allow-failure-evidence \
+  --external-authority-evidence "$NULL_PUBLIC_PATH_PAGE_AUTHORITY_EVIDENCE" \
+  --evidence-out "$TMP_DIR/rejected-null-public-path-page-evidence.json" \
+  --source "contract-test" \
+  --canary-path websocket >"$TMP_DIR/null-public-path-page.out" 2>&1; then
+  echo "runner unexpectedly accepted a present null red public-path page reference" >&2
+  exit 1
+fi
+grep -q "must define publicPathChecks.websocket.pageEvidenceRef when present" \
+  "$TMP_DIR/null-public-path-page.out"
+
+RED_SOURCE_WITH_PAGE_AUTHORITY_EVIDENCE="$TMP_DIR/red-source-with-page-authority.json"
+RED_SOURCE_WITH_PAGE_EVIDENCE="$TMP_DIR/red-source-with-page-evidence.json"
+python3 - "$AUTHORITY_EVIDENCE" "$RED_SOURCE_WITH_PAGE_AUTHORITY_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["deadmanAuthority"]["status"] = "red"
+source["publicPathChecks"]["websocket"]["status"] = "red"
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+run_smoke_runner \
+  --simulate \
+  --allow-failure-evidence \
+  --external-authority-evidence "$RED_SOURCE_WITH_PAGE_AUTHORITY_EVIDENCE" \
+  --evidence-out "$RED_SOURCE_WITH_PAGE_EVIDENCE" \
+  --source "contract-test" \
+  --canary-path websocket
+python3 "$VALIDATOR" --allow-failure-evidence "$RED_SOURCE_WITH_PAGE_EVIDENCE" \
+  >"$TMP_DIR/red-source-with-page-incident.out"
+python3 - "$RED_SOURCE_WITH_PAGE_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert data["externalAuthority"]["deadmanAuthority"]["pageEvidenceRef"]
+assert data["externalAuthority"]["publicPathChecks"]["websocket"]["pageEvidenceRef"]
+PY
+
+if run_smoke_runner \
+  --simulate \
+  --external-authority-evidence "$RED_SOURCE_AUTHORITY_EVIDENCE" \
+  --evidence-out "$TMP_DIR/rejected-red-source-evidence.json" \
+  --source "contract-test" \
+  --canary-path websocket >"$TMP_DIR/rejected-red-source.out" 2>&1; then
+  echo "runner unexpectedly accepted red retained authority as readiness input" >&2
+  exit 1
+fi
+grep -q "requires deadmanAuthority.status=green" "$TMP_DIR/rejected-red-source.out"
+
+run_smoke_runner \
+  --simulate \
+  --allow-failure-evidence \
+  --external-authority-evidence "$RED_SOURCE_AUTHORITY_EVIDENCE" \
+  --evidence-out "$RED_SOURCE_EVIDENCE" \
+  --source "contract-test" \
+  --canary-path websocket
+if python3 "$VALIDATOR" "$RED_SOURCE_EVIDENCE" \
+  >"$TMP_DIR/red-source-readiness.out" 2>&1; then
+  echo "red retained source evidence unexpectedly authorized readiness" >&2
+  exit 1
+fi
+grep -q "deadmanAuthority.status must be green" "$TMP_DIR/red-source-readiness.out"
+python3 "$VALIDATOR" --allow-failure-evidence "$RED_SOURCE_EVIDENCE" \
+  >"$TMP_DIR/red-source-incident.out"
+python3 - "$RED_SOURCE_EVIDENCE" <<'PY'
+import json
+import sys
+from datetime import datetime
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert data["externalAuthorityProvenance"] == "retained-external"
+assert data["externalAuthority"]["deadmanAuthority"]["status"] == "red"
+assert data["externalAuthority"]["publicPathChecks"]["websocket"]["status"] == "red"
+assert "pageEvidenceRef" not in data["externalAuthority"]["deadmanAuthority"]
+assert "pageEvidenceRef" not in data["externalAuthority"]["publicPathChecks"]["websocket"]
+assert data["mirroredSignals"][
+    "observability_deadman_heartbeat_timestamp_seconds"
+]["value"] == datetime.fromisoformat(
+    data["externalAuthority"]["lastSuccessfulHeartbeatObservedAt"].replace(
+        "Z", "+00:00"
+    )
+).timestamp()
+PY
+
+LOGIN_FAILURE_EVIDENCE="$TMP_DIR/login-failure-evidence.json"
+refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
+run_smoke_runner \
+  --simulate \
+  --external-authority-evidence "$AUTHORITY_EVIDENCE" \
+  --failure-injection "login" \
+  --evidence-out "$LOGIN_FAILURE_EVIDENCE" \
+  --source "contract-test" \
+  --canary-path websocket
+python3 "$VALIDATOR" --allow-failure-evidence "$LOGIN_FAILURE_EVIDENCE" \
+  >"$TMP_DIR/login-failure-incident.out"
+python3 - "$LOGIN_FAILURE_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+success = data["mirroredSignals"]["playerflow_canary_success"]
+latency = data["mirroredSignals"]["playerflow_canary_latency_ms"]
+assert all(record["value"] == 0 for record in success)
+assert all(record["value"] == 0 for record in latency)
+assert not any(
+    record["flow"] == "command" and record["value"] == 1
+    for record in success
+)
+PY
+
+refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
 run_smoke_runner \
   --simulate \
   --external-authority-evidence "$AUTHORITY_EVIDENCE" \
@@ -1124,12 +1473,18 @@ run_smoke_runner \
 python3 - "$FAIL_EVIDENCE" <<'PY'
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-assert data["externalAuthority"]["deadmanAuthority"]["status"] == "red"
-assert data["externalAuthority"]["publicPathChecks"]["websocket"]["status"] == "red"
-assert data["externalAuthority"]["publicPathChecks"]["telnet"]["status"] == "red"
+assert data["externalAuthorityProvenance"] == "retained-external"
+assert data["externalAuthority"]["deadmanAuthority"]["status"] == "green"
+assert data["externalAuthority"]["publicPathChecks"]["websocket"]["status"] == "green"
+assert data["externalAuthority"]["publicPathChecks"]["telnet"]["status"] == "green"
+deadman_timestamp = data["mirroredSignals"]["observability_deadman_heartbeat_timestamp_seconds"]["value"]
+assert deadman_timestamp > 0
+verified_at = datetime.fromisoformat(data["verifiedAt"].replace("Z", "+00:00"))
+assert verified_at.timestamp() - deadman_timestamp > data["externalAuthority"]["staleThresholdSeconds"]
 assert any(
     record["path"] == "websocket" and record["value"] == 0
     for record in data["mirroredSignals"]["entrypath_blackbox_probe_success"]
@@ -1151,12 +1506,15 @@ assert {
     (record["alert"], record["severity"])
     for record in data["canaryAlerts"]
 } == {
-    ("PlayerFlowCanaryLoginFailed", "P0"),
+    ("PlayerFlowCanaryLoginFailed", "P1"),
     ("PlayerFlowCanaryCommandFailed", "P1"),
     ("PlayerFlowCanaryLatencyHigh", "P1"),
     ("PlayerFlowCanaryEvidenceStale", "P1"),
 }
 PY
+
+python3 "$VALIDATOR" --allow-failure-evidence "$FAIL_EVIDENCE" \
+  >"$TMP_DIR/failure-incident.out"
 
 OMITTED_AUTHORITY_EVIDENCE="$TMP_DIR/omitted-authority.json"
 OMITTED_EVIDENCE="$TMP_DIR/omitted-evidence.json"
@@ -1217,7 +1575,8 @@ run_smoke_runner \
   --source "contract-test" \
   --canary-path websocket
 
-python3 "$VALIDATOR" "$OMITTED_CANARY_EVIDENCE" >"$TMP_DIR/omitted-canary.out"
+python3 "$VALIDATOR" --allow-failure-evidence "$OMITTED_CANARY_EVIDENCE" \
+  >"$TMP_DIR/omitted-canary.out"
 python3 - "$OMITTED_CANARY_EVIDENCE" <<'PY'
 import json
 import sys
@@ -1374,7 +1733,8 @@ run_smoke_runner \
   --evidence-out "$REQUIRED_SINGLE_PATH_EVIDENCE" \
   --source "contract-test" \
   --canary-path telnet
-python3 "$VALIDATOR" "$REQUIRED_SINGLE_PATH_EVIDENCE" >"$TMP_DIR/required-single-path.out"
+python3 "$VALIDATOR" --allow-failure-evidence "$REQUIRED_SINGLE_PATH_EVIDENCE" \
+  >"$TMP_DIR/required-single-path.out"
 python3 - "$REQUIRED_SINGLE_PATH_EVIDENCE" <<'PY'
 import json
 import sys

@@ -61,18 +61,25 @@ Key steps:
 - Use read replicas for read-heavy workloads where supported by the design, but do not assume replicas solve tick-path pressure; the primary write path must be sized for peak tick and replay throughput.
 - Increase instance size or provisioned IOPS as necessary, following database operations runbooks.
 - Monitor Slow Query logs and apply schema/index optimizations as needed.
+
+### Data Retention and High-Churn Tables
+
 - Partition and retention strategy must be explicit for the full high-churn tick-history surface:
   - tick effect ledger / tick-batch tables
   - cross-region follow-up tables
   - effect reconciliation backlog tables
   - command ingress / command outcome status tables keyed by `(tenantId, gameInstanceId, commandId)`
-- Treat these as one retention policy surface during capacity review:
-  - define the retention horizon for each family,
-  - define the partitioning scheme or archive strategy,
-  - define vacuum/GC cadence,
-  - confirm the command-status retention window outlives expected player/client retry windows,
-  - verify oldest-pending-row age and write-latency SLOs across the whole surface rather than table-by-table in isolation.
+- Treat these as one cross-service retention-class and compatibility surface during capacity review, while each service remains responsible for its own schema and cleanup:
+  - classify live or recoverable work, retry/idempotency receipts, recovery/reconciliation lineage, purpose-bound audit or safety evidence, and diagnostic/content payload separately;
+  - never age-delete nonterminal, inconsistent, quarantined, or still-actionable recovery work;
+  - define each family's terminality and safe-watermark predicate, blocking references, horizon, partition/compaction/archive strategy, vacuum/GC cadence, hold behavior, and bounded metrics;
+  - preserve compact consumer receipts and effect guards through every producer/client retry, duplicate-delivery, replay, restore, and reconciliation window that can address the logical action;
+  - permit bulky payload or diagnostic detail to expire earlier than the minimum correctness receipt only after replay, investigation, and governance no longer require it;
+  - drop a partition only when every row is eligible, otherwise move protected rows or use a bounded row-level strategy;
+  - verify oldest-blocking-row age, cleanup lag, write latency, storage growth, and dependency inequalities across the whole surface rather than table-by-table in isolation; and
   - confirm dashboards and operator playbooks still map command-status rows onto the canonical terminal-state vocabulary in `design/architecture/system-architecture-tick-execution-flows.md`.
+
+Exact durations are deployment policy derived from declared retry, recovery, and governance horizons and measured growth, not one platform-wide constant. See [ADR 0163](./decisions/adr-0163-service-owned-retention-classes-with-cross-service-safety.md).
 
 ## Verification
 
@@ -124,6 +131,18 @@ Baseline guardrails are only a starting point. Before materially increasing regi
 - `pod_tick_cost_ms = active_regions * (p99_region_tick_ms + p99_remote_drain_ms + p99_replay_overhead_ms)`
 - Keep `pod_tick_cost_ms` below the effective scheduling envelope implied by `tick_interval_ms`, lock TTL headroom, and observed Redis script latency.
 - When `solo_tick_budget_ms` is enabled for `requiresSoloTick` commands, capacity reviews must also model the isolated solo-tick path and its derived TTL/health thresholds rather than treating those commands as ordinary ticks.
+
+This formula is a conservative first-pass input, not a complete capacity predictor. It must not be interpreted as proof that all region work executes serially or that summing independent p99 values predicts the p99 of the combined workload. Calibration must additionally account for:
+
+- available CPU, executor/thread-pool parallelism, scheduling contention, and whether region ticks synchronize or stagger;
+- players, entities, scripts, timers, and retries per region;
+- representative command mix, chat and other fan-out, and authored high-cost or solo-tick commands;
+- Redis latency, script throughput, memory, persistence, and unreplicated-write exposure behavior;
+- PostgreSQL read/write throughput, latency, storage growth, vacuum/GC, and retention behavior;
+- cross-region follow-up volume, target-drain behavior, and topology;
+- replay, recovery, dependency failure, retry, and reconciliation load;
+- process and node memory, garbage collection, network throughput, connection pressure, and required operating headroom.
+
 - Calibrate each term from load tests in the target profile (`dev_local`, `hobby_self_hosted`, `production_clustered`) and record:
   - `p99_region_tick_ms` from `tick_execution_time_ms_p99`.
   - `p99_remote_drain_ms` from remote follow-up lag/drain metrics.
@@ -141,4 +160,4 @@ Scaling decisions must not rely only on Redis unreplicated-write exposure and po
 
 Scaling plans should include this calibration so “add replicas” and “increase regions per pod” decisions are tied to measured tick and coordination cost, not only static guardrail numbers.
 
-Environment docs and load-test reports should record any deviations from these starting numbers along with the observed tick and unreplicated-write exposure metrics so operators can make informed scaling decisions in future iterations.
+Every measured envelope must identify the deployment profile, hardware and resource allocation, FireMUD software version or artifact, workload fixture, and measurement date. Environment docs and load-test reports should record any deviations from these starting numbers along with the observed tick and unreplicated-write exposure metrics so operators can make informed scaling decisions in future iterations.

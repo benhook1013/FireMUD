@@ -126,7 +126,7 @@ Example alerts for the observability stack itself:
     service: elasticsearch
     severity: P1
     owner: platform
-    runbook: design/architecture/system-architecture-observability-incident-runbook.md#elasticsearchkibana-down-or-indexing-stalled
+    runbook: design/architecture/system-architecture-observability-incident-runbook.md#indexed-log-query-path-down-or-ingest-stalled
   annotations:
     summary: Elasticsearch cluster health is red
     description: Elasticsearch cluster health is red, which can break log ingest, search, and Kibana-backed incident triage.
@@ -138,7 +138,7 @@ Example alerts for the observability stack itself:
     service: elasticsearch
     severity: P1
     owner: platform
-    runbook: design/architecture/system-architecture-observability-incident-runbook.md#elasticsearchkibana-down-or-indexing-stalled
+    runbook: design/architecture/system-architecture-observability-incident-runbook.md#indexed-log-query-path-down-or-ingest-stalled
   annotations:
     summary: Elasticsearch indexing failures detected
     description: Elasticsearch is failing to index a non-zero stream of documents, so recent logs may be missing or incomplete.
@@ -174,7 +174,7 @@ Example alerts for the observability stack itself:
     service: fluent-bit
     severity: P1
     owner: platform
-    runbook: design/architecture/system-architecture-observability-incident-runbook.md#elasticsearchkibana-down-or-indexing-stalled
+    runbook: design/architecture/system-architecture-observability-incident-runbook.md#indexed-log-query-path-down-or-ingest-stalled
   annotations:
     summary: Fluent Bit output errors detected
     description: Log shipping is failing or backpressured; Kibana may lose recent log visibility.

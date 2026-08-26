@@ -10,6 +10,8 @@ Validation and runtime-proof selection for changes to this runbook follows the s
 
 The recovery-convergence recording family (`recovery_participant_convergence_blocked`, `recovery_environment_convergence_blocked`, `recovery_participant_convergence_coverage_missing`, and `recovery_participant_convergence_source_missing`) remains target state and is not currently implemented or proved. The durable recovery controller and exporter needed to produce those recordings are not yet available; until they are implemented and proved, their absence is `unknown` and operators must follow the owning recovery-evidence path. The Alertmanager diagnostics procedure below defines how to consume the recordings once that capability is available.
 
+Profile-aware asynchronous log-queryability emit-and-query automation is also target state and is not currently implemented. The current evidence validator checks only the shape and chronology of supplied retained evidence; it does not emit, retrieve, or independently prove a recovery smoke record through an indexed or reduced query path. Operators must not treat the recovery procedure below as evidence that this runtime capability is currently executable or claim current queryability execution without separately implemented and proved automation.
+
 ## Objectives
 
 - Preserve player-facing operation using authoritative systems (services, PostgreSQL, coordination rules) even when observability backends are impaired.
@@ -118,31 +120,37 @@ For an `independent-required` profile, use the [player-experience direct externa
 
 - Trigger a non-paging smoke-test alert (`alert_class="test"`, `severity="P2"`) in a non-production environment and verify routing end-to-end.
 
-## Elasticsearch/Kibana Down or Indexing Stalled
+## Indexed Log Query Path Down or Ingest Stalled
 
-### Elasticsearch/Kibana symptoms
+Apply this section when the selected profile advertises indexed-log observability or a supported reduced console/journal retrieval capability. Elasticsearch/Kibana names below describe the default indexed profile; a compatible indexed backend and a reduced profile follow their documented collector, storage-target, and final operator-query mappings. Only a profile that explicitly declares log queryability omitted records this section as `not_applicable`; it retains the omission reason and operator limitation without fabricating a backend, query path, recovery requirement, or passing result.
 
-- Kibana dashboards and searches fail or show no recent logs.
+### Symptoms
+
+- The supported indexed dashboards or searches fail or show no recent logs.
 - Operators cannot drill down by `tenantId`/`gameInstanceId`/`regionId`/`traceId`.
 
-### Elasticsearch/Kibana triage
+### Triage
 
-1. Distinguish “Kibana UI down” vs “Elasticsearch ingest/indexing down”.
-2. Confirm Fluent Bit is running and shipping logs (pod health, errors).
-3. Check Elasticsearch cluster health for disk pressure, shard allocation failures, or OOM.
+1. Distinguish operator-query UI/API failure from collector/forwarder, ingest, indexing, or storage failure.
+2. Confirm the profile's configured collector or forwarder is running and shipping logs. For the default indexed profile, inspect Fluent Bit pod health and errors.
+3. Check the selected backend for capacity and health failures. For Elasticsearch, inspect disk pressure, shard allocation, and OOM conditions; a compatible backend uses its mapped checks.
 
-### Elasticsearch/Kibana operator fallback
+### Operator fallback
 
 - Use Kubernetes pod logs and service logs directly for the affected service(s).
 - Prefer structured log fields (`service`, `traceId`, `correlationId`) when manually filtering logs, adding `tenantId`, `gameInstanceId`, `regionId`, and `characterId` only when those fields are present and expected by the affected record's logging contract.
-- Loss of Elasticsearch/Kibana indexing removes trace-to-log correlation and log-based drilldown, but does not by itself make healthy Jaeger/OpenTelemetry tracing unreliable. Continue using Jaeger traces when the collector and Jaeger query path are healthy; pivot to metrics/health endpoints only when tracing is also unavailable or insufficient for the incident.
+- Loss of the indexed query path removes its trace-to-log correlation and log-based drilldown, but does not by itself make a separately healthy tracing path unreliable. Continue using the profile's supported trace query path when healthy; pivot to metrics/health endpoints only when tracing is also unavailable or insufficient for the incident.
 
-### Elasticsearch/Kibana recovery and verification
+### Recovery and verification
 
-1. Restore Elasticsearch cluster health.
-2. Verify recent logs appear for a known active service.
-3. Emit or identify a recovery smoke record carrying `service` and `traceId`; include gameplay identity fields (`tenantId`, `gameInstanceId`, `regionId`, and `characterId` when applicable) only when the exercised record's canonical logging schema requires them.
-4. Verify Kibana saved searches return that record when filtering by `service` and `traceId`, then apply the gameplay identity filters only when those fields are expected by the logging contract for that record.
+1. Restore the selected backend and query-path health. For the default indexed profile, restore Elasticsearch cluster health and Kibana access. For a reduced profile, restore its declared console/journal retention and operator-access path without introducing an indexed dependency.
+2. Verify recent logs appear for a known active service as diagnostic evidence only; existing records do not replace fresh end-to-end recovery proof.
+3. Emit a uniquely identifiable new recovery smoke record carrying a known `service` and `traceId`, and record its emission time. Include gameplay identity fields (`tenantId`, `gameInstanceId`, `regionId`, and `characterId` when applicable) only when the exercised record's canonical logging schema requires them.
+4. Poll the supported operator query path for that exact record and verify retrieval by `service` and `traceId` within the selected profile's configured queryability-delay target; apply gameplay identity filters only when those fields are expected by the logging contract for that record. The default indexed profile uses a Kibana saved search or API, a compatible backend uses its mapped equivalent, and a reduced profile uses its declared console/journal query path.
+5. Retain the canonical recovery object using the shape for the selected capability:
+   - For indexed or reduced console/journal retrieval, retain `selectedProfile`, `capability`, `backend`, `storageTarget`, `recordId`, `service`, `traceId`, `queryPath`, `configuredDelayTargetSeconds`, `emittedAt`, `retrievedAt`, `observedDelaySeconds`, `result`, `evidenceObservedAt`, `evidenceFreshnessBudgetSeconds`, `evidenceExpiresAt`, `evidenceRef`, and `verifiedFields`. `evidenceFreshnessBudgetSeconds` is the positive finite value resolved from the exercised profile; derive `evidenceExpiresAt` as `evidenceObservedAt + evidenceFreshnessBudgetSeconds`, and retain the trusted chronology `emittedAt <= retrievedAt <= evidenceObservedAt <= verifiedAt`. `queryPath` names the final supported operator surface, not merely the storage target.
+   - For an explicit omission, retain only `selectedProfile`, `capability="log-queryability-omitted"`, `result="not_applicable"`, `omissionReason`, `evidenceObservedAt`, `evidenceFreshnessBudgetSeconds`, `evidenceExpiresAt`, and `evidenceRef`. Do not fabricate or include `backend`, `storageTarget`, `recordId`, `service`, `traceId`, `queryPath`, `configuredDelayTargetSeconds`, `emittedAt`, `retrievedAt`, `observedDelaySeconds`, or `verifiedFields` for the omitted shape.
+   For indexed or reduced profiles, until current evidence passes, keep only the applicable promotion, release, or advertised queryability claim closed; an omitted profile records its explicit operator limitation and does not claim indexed queryability. Missing, expired, late, or failing query evidence never fails process liveness, Kubernetes pod or gameplay readiness, or player-traffic admission.
 
 ## Grafana Down
 
@@ -201,6 +209,7 @@ For an `independent-required` profile, use the [player-experience direct externa
 
 - Document the root cause and whether the observability stack failure masked a player-visible incident.
 - Add or tighten alerts on observability backend health (Prometheus target availability, Alertmanager routing errors, Elasticsearch disk pressure, collector export failures).
+- For an indexed or advertised reduced-queryability incident, retain the canonical new-record recovery evidence with the selected profile's configured target and observed result. Keep only the applicable promotion, release, or advertised queryability claim closed while that evidence is missing, expired, late, or failing; do not turn the evidence into pod/gameplay readiness or player-traffic admission authority. An explicitly omitted queryability capability remains `not_applicable`.
 - For every profile declaring independent monitoring `independent-required`, confirm that its external deadman and every applicable exposed public gameplay edge blackbox path are documented and tested as part of that profile's monitoring contract rather than left as environment-specific tribal knowledge; non-exposed paths remain `not_applicable`. Profiles declaring independent monitoring `independent-omitted` must retain the documented degraded/operator-dependent posture.
 - If the incident required manual fallback steps, encode them into a small, repeatable operator checklist or one-shot script rather than leaving them as tribal knowledge.
 

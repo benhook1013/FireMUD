@@ -1,6 +1,6 @@
 # FireMUD Player Experience Incident Runbook
 
-This runbook describes operator actions for **player-facing SLO breaches** on login, command latency, and chat delivery. It complements the Player Experience SLIs/SLOs in `system-architecture-logging-monitoring.md` and the alert rules in `design/observability/grafana/player-experience-alerts-snippets.md`.
+This runbook describes operator actions for **player-facing reliability signals and profile-promoted SLO breaches** on login, command latency, and chat delivery. It complements the Player Experience SLIs/SLOs in [Logging & Monitoring](./system-architecture-logging-monitoring.md) and the alert rules in [Player Experience alert snippets](../observability/grafana/player-experience-alerts-snippets.md).
 
 Validation and runtime-proof selection for changes to this runbook follows the shared [Validation and Runtime Proof](../developer-workflows/validation-and-runtime-proof.md) workflow. Record execution results in PR/CI evidence or the owning implementation tracker; this normative runbook is not a validation ledger.
 
@@ -8,7 +8,7 @@ Independent-monitoring applicability follows [ADR 0159](./decisions/adr-0159-pro
 
 ## Implementation Status
 
-The checked-in player-experience smoke harness and retained-evidence validator are implemented and contract-proven at their current operator-run boundary, but they are not continuously scheduled and no deployment-owned expected-series inventory is published. The deployment-owned `PlayerFlowCanaryEvidenceMissing` expected-series inventory and alert remain target-only and are not implemented. The authoritative off-cluster deadman/public-path monitor and pager remain environment-specific and are not shipped or proved by this repository. Accordingly, `independent-required` profiles need current retained external evidence for readiness or recovery; missing, stale, unavailable, or invalid evidence is `unknown`/degraded. `independent-omitted` profiles use local or operator-dependent checks and must not claim independent detection.
+The checked-in player-experience smoke harness and retained-evidence validator are implemented and contract-proven at their current operator-run boundary, but they are not continuously scheduled and no deployment-owned expected-series inventory is published. The deployment-owned `PlayerFlowCanaryEvidenceMissing` expected-series inventory and alert remain target-only and are not implemented. The authoritative off-cluster deadman/public-path monitor and pager remain environment-specific and are not shipped or proved by this repository. Accordingly, `independent-required` profiles need current retained external evidence for readiness or recovery; missing, stale, unavailable, or invalid evidence is `unknown`/degraded. `independent-omitted` profiles use local or operator-dependent checks and must not claim independent detection. Numeric thresholds in this runbook are calibration/template values unless a profile has promoted them using representative evidence, minimum-sample handling, and multi-window burn policy as required by [ADR 0160](./decisions/adr-0160-staged-profile-aware-player-experience-slo-contract.md).
 
 ## Incident Types
 
@@ -17,9 +17,9 @@ The checked-in player-experience smoke harness and retained-evidence validator a
 - **Chat delivery latency above SLO**
 - **Telnet and WebSocket path availability below SLO**
 
-Use Grafana/Kibana/Jaeger when available. If any observability backend is degraded, follow the degraded-observability procedures in `system-architecture-observability-incident-runbook.md` and the degraded-mode branches in each scenario below.
+Use only the selected profile's advertised observability paths. The default indexed profile uses Grafana/Kibana/Jaeger, a compatible profile uses its documented mappings, and a reduced profile uses only its declared console/journal or direct service/pod paths without claiming indexed search. If any advertised backend is degraded, follow the degraded-observability procedures in `system-architecture-observability-incident-runbook.md` and the degraded-mode branches in each scenario below.
 
-Synthetic canary identities used in this runbook should be treated as operational probes, not normal players. Operator workflows should keep them out of routine moderation, behavior review, and player-facing analytics unless an incident specifically involves canary validation.
+Synthetic canary identities used in this runbook are operational probes, not ordinary players. They remain subject to authentication, abuse controls, moderation, security monitoring, and durable audit. Validated canary traffic is excluded only from product analytics, ordinary player-behavior interpretation, and live-player SLO denominators.
 
 Metrics in this runbook use the bounded `scope` contract from [Logging & Monitoring](./system-architecture-logging-monitoring.md#canonical-bounded-metrics-scope): pre-gameplay flows use `scope="environment"`, while each gameplay metric family documents any narrower bounded operational buckets it supports. Resolve an exact `<tenantId, gameInstanceId, regionId>` runtime scope through Game Session/control-plane runtime-health reads and structured logs before taking gameplay-scope action; do not infer exact runtime ownership from ordinary metric labels.
 
@@ -53,7 +53,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 
 ### Detect (Login success ratio)
 
-- Alert: `LoginSuccessRatioLowGateway` or `LoginSuccessRatioLowTcpProxy` fires (for example, success ratio < 99.5% over 15 minutes).
+- Alert: `LoginSuccessRatioLowGateway` or `LoginSuccessRatioLowTcpProxy` fires for a profile that has explicitly promoted this exact objective (for example, success ratio < 99.5% over 15 minutes) using representative evidence, minimum-sample handling, and multi-window policy. Without that exact promotion, treat the threshold as calibration/template evidence, not a universal current SLO breach.
 - Where the profile advertises the player-flow canary capability, and only for paths in its complete `exposedPublicPlayerPaths` set, `playerflow_canary_success{flow="login",path=...,target=...,profile=...}` alerts may fire before live-traffic SLIs move materially in low-traffic environments. Use the matching `playerflow_canary_last_run_timestamp_seconds{flow="login",path=...,target=...,profile=...}` and profile-derived freshness budget before treating the result as actionable. An omitted capability or non-exposed path is `not_applicable`; missing, stale, or unavailable advertised evidence is `unknown`/degraded rather than a canary failure.
 - `PlayerFlowCanaryEvidenceStale` means the available canary evidence exceeded the matching profile budget, or a present `playerflow_canary_success` result has no matching last-run timestamp; treat player-flow health as unknown/degraded until a fresh run is retained, rather than as a synthetic login or command failure. A wholly absent expected flow/path/target/profile tuple belongs to `PlayerFlowCanaryEvidenceMissing` once its deployment-owned expected-series inventory exists.
 - Player reports: widespread login failures or timeouts.
@@ -94,19 +94,19 @@ Trace-driven triage is optional but often decisive for command-latency incidents
      - Scale the Account Service and database resources where safe.
      - If a recent migration or deployment is suspected, consider rollback and run smoke tests.
 5. **Verify recovery**
-   - Confirm the login success SLI panel returns to acceptable levels.
+   - Confirm the login success SLI panel returns to the profile-promoted objective when one exists; otherwise compare it with the provisional calibration baseline and keep the result informational.
    - Ensure `LoginSuccessRatioLowGateway` and/or `LoginSuccessRatioLowTcpProxy` clear (as applicable) and player reports subside.
-   - Use the `player-incident-drilldown.json` Kibana saved search to spot-check representative logs by `service`, `traceId`, and `correlationId`, adding `tenantId` or `characterId` only when those fields are present, to confirm that errors have returned to normal levels.
+   - Use the selected profile's supported operator-query path to spot-check representative logs by `service`, `traceId`, and `correlationId`, adding `tenantId` or `characterId` only when those fields are present, to confirm that errors have returned to normal levels. The default indexed profile uses the `player-incident-drilldown.json` Kibana saved search, a compatible indexed profile uses its mapped equivalent, and a reduced profile uses only its declared console/journal or direct service/pod path.
 6. **Degraded-mode branch (if observability backends are unavailable)**
    - If Grafana is down: query Prometheus directly for `login_requests_total` success ratio by its available `scope`, `service`, and `outcome` labels, using the deployment-wide `scope="environment"` baseline. If the profile advertises player-flow canaries, use `playerflow_canary_success{flow="login",path=...,target=...,profile=...}` with its matching fresh last-run timestamp and profile budget to distinguish only exposed ingress paths; omitted capability or non-exposed paths are `not_applicable`, and missing, stale, or unavailable advertised evidence is `unknown`/degraded. `login_requests_total` itself has no `path` label. Do not require `gameInstanceId` or `regionId`: login occurs before gameplay scope is selected.
-   - If Kibana is down: use service logs from Gateway/TCP Proxy/Account pods filtered by `service`, `traceId`, and `correlationId`; do not require gameplay identity fields for this pre-gameplay login path.
+   - If the selected indexed query path is unavailable, or the profile omits indexed search: use the profile's declared console/journal path or direct service logs from Gateway/TCP Proxy/Account pods filtered by `service`, `traceId`, and `correlationId`; do not require gameplay identity fields for this pre-gameplay login path.
    - If Prometheus is down: for an `independent-required` profile, first follow [Direct External-Monitor Retrieval When Prometheus Is Unavailable](#direct-external-monitor-retrieval-when-prometheus-is-unavailable); classify missing, stale, unavailable, or invalid external evidence as `unknown`/degraded, then use service health endpoints and dependency health (Postgres/Redis) as supplementary login classification and action evidence. Profiles with independent monitoring omitted use those strongest available local signals and retain their operator-dependent degraded posture. Apply conservative ingress mitigation (rollback/scale) based on authoritative service signals.
 
 ## Command Latency Above SLO
 
 ### Detect (Command latency)
 
-- Alert: `CommandLatencyP99HighGateway` or `CommandLatencyP99HighTcpProxy` fires (p99 command latency > 250ms over 5 minutes).
+- Alert: `CommandLatencyP99HighGateway` or `CommandLatencyP99HighTcpProxy` fires for a profile that has explicitly promoted this exact objective (for example, p99 command latency > 250ms over 5 minutes) using representative evidence, minimum-sample handling, and multi-window policy. Without that exact promotion, treat the threshold as calibration/template evidence, not a universal current SLO breach.
 - Where the profile advertises the player-flow canary capability, and only for paths in its complete `exposedPublicPlayerPaths` set, `playerflow_canary_success{flow="command",path=...,target=...,profile=...}` or `playerflow_canary_latency_ms{flow="command",path=...,target=...,profile=...}` alerts may fire before traffic-derived latency panels move in low-volume periods. Use the matching `playerflow_canary_last_run_timestamp_seconds{flow="command",path=...,target=...,profile=...}` and profile-derived freshness budget before treating success or latency as actionable. An omitted capability or non-exposed path is `not_applicable`; missing, stale, or unavailable advertised evidence is `unknown`/degraded.
 - Player reports: perceived lag or delayed command responses in game.
 - Metrics:
@@ -144,19 +144,19 @@ Trace-driven triage is optional but often decisive for command-latency incidents
    - Scale the Game Session Service and/or hot downstream services where indicated.
    - If a recent release introduced expensive command logic, consider rollback or feature-flagging the new behavior.
 5. **Verify recovery**
-   - Ensure command p99 latency returns under the SLO threshold across core commands.
+   - Ensure command p99 latency returns under the profile-promoted objective when one exists; otherwise compare it with the provisional calibration baseline and keep the result informational.
    - Confirm tick health metrics return to normal envelopes.
-   - Use the `player-incident-drilldown.json` and `tick-region-logs.json` Kibana saved searches to correlate any remaining slow commands by `service` and `traceId`, adding `correlationId` and the applicable `tenantId`, `gameInstanceId`, `regionId`, `characterId`, and `tickId` fields only when those saved objects and affected records expose them. Resolve the exact `<tenantId, gameInstanceId, regionId>` runtime scope through Game Session/control-plane runtime-health reads and structured logs rather than inferring `gameInstanceId` from these saved-object filters.
+   - Use the selected profile's supported operator-query path to correlate any remaining slow commands by `service` and `traceId`, adding `correlationId` and the applicable `tenantId`, `gameInstanceId`, `regionId`, `characterId`, and `tickId` fields only when the affected records expose them. The default indexed profile uses the `player-incident-drilldown.json` and `tick-region-logs.json` Kibana saved searches, a compatible indexed profile uses its mapped equivalents, and a reduced profile uses only its declared console/journal or direct service/pod path. Resolve the exact `<tenantId, gameInstanceId, regionId>` runtime scope through Game Session/control-plane runtime-health reads and structured logs rather than inferring `gameInstanceId` from query filters.
 6. **Degraded-mode branch (if observability backends are unavailable)**
    - If Grafana is down: run direct PromQL checks for command p99 latency, synthetic command-canary success/latency only when current, fresh, valid advertised evidence exists for the matching profile and exposed path, tick safety ratio, Redis tail-loss, and queue depth per affected gameplay `scope`; otherwise use live-traffic and authoritative service signals.
    - If Jaeger is down or sampling is insufficient: skip span-based narrowing and classify bottlenecks from metrics + structured logs only.
-   - If Kibana is down: inspect Game Session and hot domain-service logs directly by `service` and `traceId`, adding `correlationId` and conditional gameplay identity fields (`tenantId`, `gameInstanceId`, `regionId`, `characterId`) only when present in the affected records.
+   - If the selected indexed query path is unavailable, or the profile omits indexed search: use the profile's declared console/journal path or inspect Game Session and hot domain-service logs directly by `service` and `traceId`, adding `correlationId` and conditional gameplay identity fields (`tenantId`, `gameInstanceId`, `regionId`, `characterId`) only when present in the affected records.
 
 ## Chat Delivery Latency Above SLO
 
 ### Detect (Chat delivery latency)
 
-- Alert: `ChatDeliveryLatencyP99High` fires (p99 chat delivery > 1s over 5 minutes).
+- Alert: `ChatDeliveryLatencyP99High` fires for a profile that has explicitly promoted this exact objective (for example, p99 chat delivery > 1s over 5 minutes) using representative evidence, minimum-sample handling, and multi-window policy. Without that exact promotion, treat the threshold as calibration/template evidence, not a universal current SLO breach.
 - Player reports: delayed or missing chat messages.
 - Metrics:
   - Player Experience dashboard shows elevated chat p99 latency.
@@ -173,7 +173,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 
 1. **Inspect chat service metrics**
    - Check:
-     - Per-channel `chat_delivery_latency_ms_bucket` histograms.
+     - Per-service and per-channel `chat_delivery_latency_ms_bucket{service,scope,completion_boundary="recipient_dispatch",channel_type,le}` histograms. The canonical player-experience chat SLI selects only `completion_boundary="recipient_dispatch"`; other boundary values are diagnostic and must not be substituted, combined, or aggregated into this SLI.
      - Any internal queue depth metrics or backpressure indicators.
    - Determine if one channel type (e.g., global vs zone vs party) is affected more than others.
 2. **Check dependencies**
@@ -184,12 +184,12 @@ Trace-driven triage is optional but often decisive for command-latency incidents
    - Scale the chat/social service and dependencies as indicated by CPU/memory/queue depth.
    - If a new moderation/filtering feature was rolled out, consider temporarily disabling or throttling it.
 4. **Verify recovery**
-   - Confirm chat p99 latency returns below the SLO for active channels.
+   - Confirm chat p99 latency returns below the profile-promoted objective when one exists; otherwise compare it with the provisional calibration baseline and keep the result informational.
    - Ensure the alert clears and player reports improve.
-   - Use the `player-incident-drilldown.json` Kibana saved search to validate that chat-related errors or delays have subsided by `service` and `traceId`, adding `correlationId` and conditional gameplay identity fields only when present in the affected records.
+   - Use the selected profile's supported operator-query path to validate that chat-related errors or delays have subsided by `service` and `traceId`, adding `correlationId` and conditional gameplay identity fields only when present in the affected records. The default indexed profile uses the `player-incident-drilldown.json` Kibana saved search, a compatible indexed profile uses its mapped equivalent, and a reduced profile uses only its declared console/journal or direct service/pod path.
 5. **Degraded-mode branch (if observability backends are unavailable)**
-   - If Grafana is down: query Prometheus directly for `chat_delivery_latency_ms_bucket` p99 by `scope` / `channel_type`.
-   - If Kibana is down: inspect Social/Groups service logs directly using `service` and `traceId`, adding `correlationId` and conditional `tenantId`/`gameInstanceId`/`regionId`/`characterId` fields when present.
+   - If Grafana is down: query Prometheus directly for `chat_delivery_latency_ms_bucket{completion_boundary="recipient_dispatch"}` p99 by `service` / `scope` / `channel_type`. Do not substitute, combine, or aggregate other completion-boundary values into the canonical player-experience chat SLI.
+   - If the selected indexed query path is unavailable, or the profile omits indexed search: use the profile's declared console/journal path or inspect Social/Groups service logs directly using `service` and `traceId`, adding `correlationId` and conditional `tenantId`/`gameInstanceId`/`regionId`/`characterId` fields when present.
    - If Prometheus is down: use service health + queue/dependency indicators from application logs and reduce chat feature pressure (throttle or temporary feature disable) if needed.
 
 ## Telnet and WebSocket Path Availability Below SLO
@@ -207,11 +207,10 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 - Determine scope:
   - Single approved bounded `scope` bucket vs the deployment-wide baseline.
   - Single `path` vs multiple (`path="telnet"` vs `path="websocket"`).
-- Determine dominant failure outcomes by inspecting `entrypath_connection_attempts_total{service,scope,path,outcome}` broken down by `service` and `outcome`:
-  - `limit_exceeded` suggests caps or abusive clients.
-  - `protocol_error` suggests client/edge parsing problems.
-  - `upstream_unreachable` suggests Gateway or downstream availability issues.
-  - `auth_failed` suggests account/JWT or session binding problems.
+- Determine dominant shared outcome classes by inspecting `entrypath_connection_attempts_total{service,scope,path,outcome}` broken down by `service` and canonical `outcome`. `server_failure` identifies platform-attributable availability failures; `user_rejection` and `policy_rejection` remain diagnostic but are excluded from the availability denominator; `unknown` requires conservative investigation. Use the documented bounded diagnostic reason, when available, or protected logs to identify the specific cause:
+  - `policy_rejection` with a cap or abuse-control reason suggests caps or abusive clients.
+  - `user_rejection` with a malformed-protocol or authentication reason suggests client/edge parsing or account/session binding problems.
+  - `server_failure` with an upstream-unreachable or timeout reason suggests Gateway or downstream availability issues.
   - For profiles with independent monitoring, use each fresh authoritative external synthetic-probe result alongside local edge and control-plane/runtime-health evidence. A missing, stale, unavailable, or invalid external result is `unknown`/degraded rather than green or failed. When a current external probe is failing and `entrypath_connection_attempts_total` is flat or absent, treat the external result as authoritative evidence of off-cluster reachability failure and use local/control-plane evidence to distinguish ingress/LB/TLS/DNS failure from an application-level success-ratio problem.
   - For profiles that omit independent monitoring, use the strongest available local edge/public-path check and keep degraded detection visible. A stale or unknown local check cannot classify an outage alone; a current failing local check must be corroborated with control-plane/runtime-health reads or ingress logs before classifying an edge outage.
 
@@ -225,18 +224,18 @@ Trace-driven triage is optional but often decisive for command-latency incidents
    - If both paths are affected:
      - Treat as a broader edge/Gateway or downstream capacity incident; cross-check login SLI, Redis tail-loss, and tick health.
 2. **Mitigate**
-   - For cap-driven failures (`outcome="limit_exceeded"`):
+   - For cap- or abuse-driven `policy_rejection` identified by its bounded diagnostic reason or protected logs:
      - Adjust caps (`TCP_PROXY_MAX_CONNECTIONS`, `TCP_PROXY_MAX_CONNECTIONS_PER_IP`) only if dashboards indicate normal load is being rejected rather than abusive traffic.
      - Consider rate-limiting or blocking abusive sources using documented edge controls.
-   - For upstream failures (`outcome="upstream_unreachable"` or timeouts):
+   - For `server_failure` identified by an upstream-unreachable or timeout diagnostic reason:
      - Scale or roll back Gateway/TCP Proxy if a recent change correlates with the incident.
      - Validate downstream dependencies (Redis/Postgres) and tick health for player-facing regions.
 3. **Verify recovery**
    - Confirm the short-window detection view recovers quickly for every affected `{service,scope,path}` combination and the dominant failure outcomes subside. Use control-plane/runtime-health reads and structured logs for exact runtime scope only when gameplay identity is present; otherwise verify the environment, entry path, and probe target.
-   - Confirm the 1-day compliance view trends back toward SLO after the acute incident is resolved.
+   - Confirm the 1-day compliance view trends back toward the profile-promoted objective when one exists; otherwise retain it as a calibration view after the acute incident is resolved.
 4. **Degraded-mode branch (if observability backends are unavailable)**
    - If Grafana is down while Prometheus remains available: query Prometheus directly for `entrypath_connection_attempts_total` success/total ratios by `{service,scope,path}`. Use mirrored login/command canary metrics only when the profile advertises the player-flow canary and the corresponding path is exposed; an omitted capability or non-exposed path is `not_applicable`, while missing or stale evidence for a required canary is `unknown`/degraded rather than green or failed. For `independent-required` profiles, use a fresh authoritative external synthetic-probe result for every exposed public path alongside those Prometheus and local signals; missing, stale, unavailable, or invalid external evidence for any path is `unknown`/degraded rather than green or failed. Omitted or otherwise non-required profiles use the strongest local edge/public-path checks and retain degraded detection.
-   - If Kibana is down: use Gateway/TCP Proxy logs directly, preserving `service`, `traceId`, and `correlationId` and adding conditional gameplay identity fields only when present, to classify failures (`limit_exceeded`, `protocol_error`, `upstream_unreachable`, `auth_failed`).
+   - If the selected indexed query path is unavailable, or the profile omits indexed search: use the profile's declared console/journal path or Gateway/TCP Proxy logs directly, preserving `service`, `traceId`, and `correlationId` and adding conditional gameplay identity fields only when present, to classify canonical outcomes (`server_failure`, `user_rejection`, `policy_rejection`) and their bounded diagnostic reasons.
    - If Prometheus is down: follow [Direct External-Monitor Retrieval When Prometheus Is Unavailable](#direct-external-monitor-retrieval-when-prometheus-is-unavailable) for `independent-required` profiles, then use edge health, pod events, and direct ingress error logs as supplementary classification and action evidence. Omitted or otherwise non-required profiles use those strongest available local signals with the same stale/unknown handling and retain degraded detection.
 
 ### Gameplay close classification branch

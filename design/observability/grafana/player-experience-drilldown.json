@@ -45,8 +45,8 @@
       "title": "Chat Delivery by Channel (p99)",
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum by (scope, channel_type, le) (rate(chat_delivery_latency_ms_bucket[5m])))",
-          "legendFormat": "{{scope}} {{channel_type}}",
+          "expr": "histogram_quantile(0.99, sum by (service, scope, completion_boundary, channel_type, le) (rate(chat_delivery_latency_ms_bucket{completion_boundary=\"recipient_dispatch\"}[5m])))",
+          "legendFormat": "{{service}} {{scope}} {{completion_boundary}} {{channel_type}}",
           "refId": "A"
         }
       ],

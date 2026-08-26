@@ -3819,7 +3819,7 @@ smoke_evidence_path.write_text(
                 ],
                 "observability_deadman_heartbeat_timestamp_seconds": {
                     "source": "staging-contract",
-                    "value": 1773917600,
+                    "value": past_epoch,
                 },
                 "playerflow_canary_success": [
                     {"flow": "login", "path": "websocket", "target": "gateway", "value": 1, "profile": "independent-required"},
@@ -3843,7 +3843,7 @@ smoke_evidence_path.write_text(
                 },
             },
             "canaryAlerts": [
-                {"alert": "PlayerFlowCanaryLoginFailed", "severity": "P0", "exerciseResult": "passed"},
+                {"alert": "PlayerFlowCanaryLoginFailed", "severity": "P1", "exerciseResult": "passed"},
                 {"alert": "PlayerFlowCanaryCommandFailed", "severity": "P1", "exerciseResult": "passed"},
                 {"alert": "PlayerFlowCanaryLatencyHigh", "severity": "P1", "exerciseResult": "passed"},
                 {"alert": "PlayerFlowCanaryEvidenceStale", "severity": "P1", "exerciseResult": "passed"},

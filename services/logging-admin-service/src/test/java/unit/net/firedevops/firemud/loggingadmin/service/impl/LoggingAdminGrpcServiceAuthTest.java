@@ -17,7 +17,6 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.dto.LogEventDto;
-import net.firedevops.firemud.loggingadmin.service.FeatureFlagService;
 import net.firedevops.firemud.loggingadmin.service.LogEventService;
 import net.firedevops.firemud.loggingadmin.service.LogQueryService;
 import net.firedevops.firemud.loggingadmin.service.ModerationService;
@@ -46,7 +45,6 @@ class LoggingAdminGrpcServiceAuthTest {
     SessionContext.setContext("1", List.of("player"), Map.of());
     LoggingAdminGrpcService service =
         new LoggingAdminGrpcService(
-            Mockito.mock(FeatureFlagService.class),
             Mockito.mock(LogQueryService.class),
             Mockito.mock(LogEventService.class),
             Mockito.mock(ModerationService.class),
@@ -89,7 +87,6 @@ class LoggingAdminGrpcServiceAuthTest {
                 Instant.parse("2026-01-01T00:00:00Z")));
     LoggingAdminGrpcService service =
         new LoggingAdminGrpcService(
-            Mockito.mock(FeatureFlagService.class),
             Mockito.mock(LogQueryService.class),
             logEventService,
             moderationService,
@@ -125,10 +122,8 @@ class LoggingAdminGrpcServiceAuthTest {
   @Test
   void toggleFeatureFlagRejectsZeroTenantIdBeforeDispatch() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
-    FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
     LoggingAdminGrpcService service =
         new LoggingAdminGrpcService(
-            featureFlagService,
             Mockito.mock(LogQueryService.class),
             Mockito.mock(LogEventService.class),
             Mockito.mock(ModerationService.class),
@@ -158,7 +153,147 @@ class LoggingAdminGrpcServiceAuthTest {
     assertFalse(ref.get().getSuccess());
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     assertEquals("tenantId must be positive", ref.get().getError().getMessage());
-    verifyNoInteractions(featureFlagService);
+  }
+
+  @Test
+  void toggleFeatureFlagRejectsAuthorizedCallerWhileMutationGateIsUnavailable() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    LoggingAdminGrpcService service =
+        new LoggingAdminGrpcService(
+            Mockito.mock(LogQueryService.class),
+            Mockito.mock(LogEventService.class),
+            Mockito.mock(ModerationService.class),
+            new SimpleMeterRegistry());
+
+    AtomicReference<ToggleFeatureFlagResponse> ref = new AtomicReference<>();
+    service.toggleFeatureFlag(
+        ToggleFeatureFlagRequest.newBuilder()
+            .setTenantId("1")
+            .setName("demo")
+            .setEnabled(true)
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ToggleFeatureFlagResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertFalse(ref.get().getSuccess());
+    assertEquals("UNAVAILABLE", ref.get().getError().getCode());
+    assertEquals(
+        "Feature-flag toggles are unavailable until the shared mutation gate is implemented",
+        ref.get().getError().getMessage());
+  }
+
+  @Test
+  void toggleFeatureFlagRejectsUnauthorizedCallerBeforeUnavailableResponse() {
+    SessionContext.setContext("1", List.of("player"), Map.of());
+    LoggingAdminGrpcService service =
+        new LoggingAdminGrpcService(
+            Mockito.mock(LogQueryService.class),
+            Mockito.mock(LogEventService.class),
+            Mockito.mock(ModerationService.class),
+            new SimpleMeterRegistry());
+
+    AtomicReference<ToggleFeatureFlagResponse> ref = new AtomicReference<>();
+    service.toggleFeatureFlag(
+        ToggleFeatureFlagRequest.newBuilder()
+            .setTenantId("1")
+            .setName("demo")
+            .setEnabled(true)
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ToggleFeatureFlagResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertFalse(ref.get().getSuccess());
+    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+  }
+
+  @Test
+  void toggleFeatureFlagRejectsEmptyNameBeforeUnavailableResponse() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+
+    ToggleFeatureFlagResponse response = invokeToggleFeatureFlag("");
+
+    assertNotNull(response);
+    assertFalse(response.getSuccess());
+    assertEquals("INVALID_ARGUMENT", response.getError().getCode());
+    assertEquals("name must not be blank", response.getError().getMessage());
+  }
+
+  @Test
+  void toggleFeatureFlagRejectsBlankNameBeforeUnavailableResponse() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+
+    ToggleFeatureFlagResponse response = invokeToggleFeatureFlag("   ");
+
+    assertNotNull(response);
+    assertFalse(response.getSuccess());
+    assertEquals("INVALID_ARGUMENT", response.getError().getCode());
+    assertEquals("name must not be blank", response.getError().getMessage());
+  }
+
+  @Test
+  void toggleFeatureFlagRejectsOverlongNameBeforeUnavailableResponse() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+
+    ToggleFeatureFlagResponse response = invokeToggleFeatureFlag("x".repeat(101));
+
+    assertNotNull(response);
+    assertFalse(response.getSuccess());
+    assertEquals("INVALID_ARGUMENT", response.getError().getCode());
+    assertEquals("name size must be between 0 and 100", response.getError().getMessage());
+  }
+
+  private ToggleFeatureFlagResponse invokeToggleFeatureFlag(String name) {
+    LogQueryService logQueryService = Mockito.mock(LogQueryService.class);
+    LogEventService logEventService = Mockito.mock(LogEventService.class);
+    ModerationService moderationService = Mockito.mock(ModerationService.class);
+    LoggingAdminGrpcService service =
+        new LoggingAdminGrpcService(
+            logQueryService, logEventService, moderationService, new SimpleMeterRegistry());
+    AtomicReference<ToggleFeatureFlagResponse> ref = new AtomicReference<>();
+
+    service.toggleFeatureFlag(
+        ToggleFeatureFlagRequest.newBuilder()
+            .setTenantId("1")
+            .setName(name)
+            .setEnabled(true)
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ToggleFeatureFlagResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    verifyNoInteractions(logQueryService, logEventService, moderationService);
+    return ref.get();
   }
 
   @Test
@@ -167,7 +302,6 @@ class LoggingAdminGrpcServiceAuthTest {
     LogQueryService logQueryService = Mockito.mock(LogQueryService.class);
     LoggingAdminGrpcService service =
         new LoggingAdminGrpcService(
-            Mockito.mock(FeatureFlagService.class),
             logQueryService,
             Mockito.mock(LogEventService.class),
             Mockito.mock(ModerationService.class),
@@ -201,7 +335,6 @@ class LoggingAdminGrpcServiceAuthTest {
     LogEventService logEventService = Mockito.mock(LogEventService.class);
     LoggingAdminGrpcService service =
         new LoggingAdminGrpcService(
-            Mockito.mock(FeatureFlagService.class),
             Mockito.mock(LogQueryService.class),
             logEventService,
             Mockito.mock(ModerationService.class),
@@ -240,7 +373,6 @@ class LoggingAdminGrpcServiceAuthTest {
     ModerationService moderationService = Mockito.mock(ModerationService.class);
     LoggingAdminGrpcService service =
         new LoggingAdminGrpcService(
-            Mockito.mock(FeatureFlagService.class),
             Mockito.mock(LogQueryService.class),
             Mockito.mock(LogEventService.class),
             moderationService,
@@ -276,11 +408,52 @@ class LoggingAdminGrpcServiceAuthTest {
   }
 
   @Test
+  void applyModerationActionRejectsAuthorizedCallerWhileMutationGateIsUnavailable() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ModerationService moderationService = Mockito.mock(ModerationService.class);
+    LoggingAdminGrpcService service =
+        new LoggingAdminGrpcService(
+            Mockito.mock(LogQueryService.class),
+            Mockito.mock(LogEventService.class),
+            moderationService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<ApplyModerationActionResponse> ref = new AtomicReference<>();
+    service.applyModerationAction(
+        ApplyModerationActionRequest.newBuilder()
+            .setTenantId("1")
+            .setAccountId("2")
+            .setSessionId("9")
+            .setAction("ban")
+            .setReason("bad")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ApplyModerationActionResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertFalse(ref.get().getSuccess());
+    assertEquals("UNAVAILABLE", ref.get().getError().getCode());
+    assertEquals(
+        "Moderation actions are unavailable until the shared mutation gate is implemented",
+        ref.get().getError().getMessage());
+    verifyNoInteractions(moderationService);
+  }
+
+  @Test
   void evaluateModerationPolicyRejectsZeroAccountIdBeforeDispatch() {
     ModerationService moderationService = Mockito.mock(ModerationService.class);
     LoggingAdminGrpcService service =
         new LoggingAdminGrpcService(
-            Mockito.mock(FeatureFlagService.class),
             Mockito.mock(LogQueryService.class),
             Mockito.mock(LogEventService.class),
             moderationService,

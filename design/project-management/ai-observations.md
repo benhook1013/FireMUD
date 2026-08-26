@@ -109,3 +109,8 @@ Entry format:
   - Context: `check-coderabbit-review.py` exited 1 after a substantive review completed with findings remaining.
   - Observation: an ordinary exit 1 can represent a completed substantive review whose merge gate fails, not only an active pending review; hosted watchers must terminate for adjudication when `review_finished_after_latest_request=true` or equivalent substantive completion is present even if `ok=false`.
   - Expected pattern: when elapsed time appears stuck, inspect the direct CodeRabbit command/review record and distinguish terminal findings from an active hosted review before continuing to watch.
+
+- `2026-08-26`: Keep parcel provenance, dependency coordinates, and finite metrics exact
+  - Context: Packet import and dependency review exposed three recurring boundary checks.
+  - Observation: ADR parcel splitting must keep each decision, ADR, and provenance with its canonical owner and truthful intermediate counts; Testcontainers 2 version bumps also require prefixed module coordinates; exact finite metric schemas need enumerated vocabularies and the required bounded service label.
+  - Expected pattern: reconcile owner/count/provenance tuples before publishing a parcel, inspect every catalog alias and consumer coordinate during a Testcontainers bump, and enumerate finite metric values while enforcing the bounded service label.
