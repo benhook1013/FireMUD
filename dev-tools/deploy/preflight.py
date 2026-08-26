@@ -352,6 +352,15 @@ CANONICAL_RECOVERY_CREDENTIAL_CLASSES = (
     "operator-credentials",
 )
 
+CANONICAL_RECOVERY_SECRET_COMPLIANCE_CLASSES = (
+    "jwt-signing-keys-jwks",
+    "postgres-application-credentials",
+    "backup-storage",
+    "asset-storage",
+    "outbound-comms",
+    "operator-credentials",
+)
+
 CANONICAL_RECOVERY_CREDENTIAL_DISPOSITION_CLASSES = (
     "jwt-signing-keys-jwks",
     "postgres-application-credentials",
@@ -726,9 +735,11 @@ def validate_compact_verified_restorable_point(
     if (now_dt - point_at_dt).total_seconds() > VERIFIED_RESTORABLE_POINT_MAX_AGE_SECONDS:
         return (
             "fail",
-            "recoveryCompatibility.newestVerifiedRestorablePointAt older than 15 minutes; "
-            f"record: {point_ref}; remediation: refresh the verified restorable point "
-            "and generate a new event-scoped preflight report before retrying",
+            (
+                "recoveryCompatibility.newestVerifiedRestorablePointAt older than 15 minutes; "
+                f"record: {point_ref}; remediation: refresh the verified restorable point "
+                "and generate a new event-scoped preflight report before retrying"
+            ),
         )
 
     point_status, point_message = _validate_verified_restorable_point_reference(
@@ -1057,8 +1068,8 @@ def validate_recovery_freshness(
     refreshed_class_set = set(refreshed_classes)
     expected_refreshed_class_set = {
         class_name
-        for class_name, applicability in credential_applicability.items()
-        if applicability == "applicable"
+        for class_name in CANONICAL_RECOVERY_SECRET_COMPLIANCE_CLASSES
+        if credential_applicability.get(class_name) == "applicable"
     }
     if refreshed_class_set != expected_refreshed_class_set:
         missing = sorted(expected_refreshed_class_set - refreshed_class_set)
@@ -1070,7 +1081,7 @@ def validate_recovery_freshness(
             details.append("extra: " + ", ".join(extra))
         return (
             "fail",
-            "Recovery compatibility baseline secretComplianceRefresh.credentialClasses must exactly cover applicable credential classes derived from credentialApplicability ("
+            "Recovery compatibility baseline secretComplianceRefresh.credentialClasses must exactly cover applicable secret-compliance projection classes derived from credentialApplicability ("
             + "; ".join(details)
             + ")",
         )
@@ -5634,9 +5645,11 @@ def backup_readiness_check(path: Path, now: str, deployment_ref: str, root_dir: 
     if (now_dt - newest_verified_point_ts).total_seconds() > VERIFIED_RESTORABLE_POINT_MAX_AGE_SECONDS:
         return (
             "fail",
-            "Backup-readiness evidence is stale: newestVerifiedRestorablePointAt older than 15 minutes; "
-            f"record: {data['newestVerifiedRestorablePointRef']}; remediation: refresh the verified "
-            "restorable point and generate a new event-scoped preflight report before retrying",
+            (
+                "Backup-readiness evidence is stale: newestVerifiedRestorablePointAt older than 15 minutes; "
+                f"record: {data['newestVerifiedRestorablePointRef']}; remediation: refresh the verified "
+                "restorable point and generate a new event-scoped preflight report before retrying"
+            ),
         )
     if (now_dt - verify_ts).total_seconds() > 36 * 60 * 60:
         return ("fail", "Backup-readiness evidence is stale: backupVerifyLastSuccessAt older than 36 hours")

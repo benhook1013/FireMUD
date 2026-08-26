@@ -15,6 +15,25 @@ Current repository automation includes the profile-aware retained-evidence valid
 
 Illustrative retained evidence shape for a hosted-assurance observability smoke; an omitted profile must retain `externalAuthority: {"profile": "independent-omitted", "reason": "...", "exposedPublicPlayerPaths": ["websocket"]}` and declare `capabilities: {"prometheusMirrors": "omitted", "playerFlowCanary": "omitted"}` without deadman or public-path authority records. For promotion-bound evidence, `deploymentRef` is the exact staging overlay commit SHA (`stagingOverlayCommitSha`) and `deploymentEventId` is the distinct UUID selected by the promotion attestation, so evidence cannot be reused across two applies of the same overlay commit. Standalone local evidence may use another non-empty reference, but that artifact is not promotion evidence.
 
+An `independent-omitted` profile may instead advertise player-flow canaries as a separate valid form:
+
+```json
+{
+  "externalAuthority": {
+    "profile": "independent-omitted",
+    "reason": "single-node deployment uses operator-dependent outage detection",
+    "exposedPublicPlayerPaths": ["websocket"],
+    "detectionBudgetSeconds": 195
+  },
+  "capabilities": {
+    "prometheusMirrors": "omitted",
+    "playerFlowCanary": "advertised"
+  }
+}
+```
+
+This advertised-canary form retains the complete local canary mirror family and profile budget, but no deadman or external `publicPathChecks` authority; the budget is local canary timing only. Together with the omitted-canary form above, these are the two valid `independent-omitted` canary forms.
+
 ```json
 {
   "deploymentRef": "<staging-overlay-commit-sha>",

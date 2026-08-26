@@ -4315,9 +4315,6 @@ def canonical_recovery_record(finalized_at):
             "credentialClasses": [
                 "jwt-signing-keys-jwks",
                 "postgres-application-credentials",
-                "workload-leaf",
-                "bridge-leaf",
-                "operator-leaf",
                 "backup-storage",
                 "asset-storage",
                 "outbound-comms",
@@ -4336,27 +4333,6 @@ def canonical_recovery_record(finalized_at):
                     "field": "lastRotationAt",
                     "value": freshness_timestamp,
                     "previousField": "lastRotationAt",
-                    "previousValue": freshness_timestamp,
-                },
-                "workload-leaf": {
-                    "lineage": "existing",
-                    "field": "lastRotationAt",
-                    "value": freshness_timestamp,
-                    "previousField": "lastRotationAt",
-                    "previousValue": "2026-03-01T00:00:00Z",
-                },
-                "bridge-leaf": {
-                    "lineage": "existing",
-                    "field": "lastRotationAt",
-                    "value": freshness_timestamp,
-                    "previousField": "lastRotationAt",
-                    "previousValue": "2026-03-01T00:00:00Z",
-                },
-                "operator-leaf": {
-                    "lineage": "existing",
-                    "field": "lastProvisionedAt",
-                    "value": freshness_timestamp,
-                    "previousField": "lastProvisionedAt",
                     "previousValue": freshness_timestamp,
                 },
                 "backup-storage": {
@@ -4491,6 +4467,17 @@ baseline_status, baseline_message = module.validate_recovery_baseline(
 )
 if baseline_status != "pass":
     raise SystemExit(f"valid recovery baseline did not pass: {baseline_message}")
+if set(valid_baseline["secretComplianceRefresh"]["credentialClasses"]) != {
+    "jwt-signing-keys-jwks",
+    "postgres-application-credentials",
+    "backup-storage",
+    "asset-storage",
+    "outbound-comms",
+    "operator-credentials",
+}:
+    raise SystemExit(
+        "valid recovery baseline did not use the exact secret-compliance projection class set"
+    )
 
 if set(module.canonical_recovery_allowed_not_applicable_classes("production")) != {
     "asset-storage",
@@ -4532,7 +4519,7 @@ legacy_refresh_class_names_status, legacy_refresh_class_names_message = module.v
 )
 if (
     legacy_refresh_class_names_status != "fail"
-    or "credentialClasses must exactly cover applicable credential classes" not in legacy_refresh_class_names_message
+    or "credentialClasses must exactly cover applicable secret-compliance projection classes" not in legacy_refresh_class_names_message
 ):
     raise SystemExit(
         "legacy refresh class aliases were accepted: " + legacy_refresh_class_names_message
@@ -5083,6 +5070,23 @@ def validate_recovery_variant(name, data):
         "sha256:recovery-contract",
         now,
         now,
+    )
+
+certificate_class_in_refresh = copy.deepcopy(valid_baseline)
+certificate_class_in_refresh["secretComplianceRefresh"]["credentialClasses"].append(
+    "workload-leaf"
+)
+certificate_class_in_refresh_status, certificate_class_in_refresh_message = validate_recovery_variant(
+    "certificate-class-in-refresh-baseline.json",
+    certificate_class_in_refresh,
+)
+if (
+    certificate_class_in_refresh_status != "fail"
+    or "extra: workload-leaf" not in certificate_class_in_refresh_message
+):
+    raise SystemExit(
+        "certificate class was accepted in the secret-compliance refresh projection: "
+        + certificate_class_in_refresh_message
     )
 
 missing_jwt_compromise_classification = copy.deepcopy(valid_baseline)
