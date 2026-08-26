@@ -32,6 +32,7 @@ _EVIDENCE_VALIDATOR_SPEC.loader.exec_module(_EVIDENCE_VALIDATOR)
 METRIC_TARGET_BY_PATH = _EVIDENCE_VALIDATOR.METRIC_TARGET_BY_PATH
 PROMETHEUS_MIRRORS_CAPABILITY = "prometheusMirrors"
 PLAYER_FLOW_CANARY_CAPABILITY = "playerFlowCanary"
+QUERYABILITY_OMISSION_FRESHNESS_BUDGET_SECONDS = 7200
 PLAYERFLOW_CANARY_LAST_RUN_TIMESTAMP_METRIC = (
     "playerflow_canary_last_run_timestamp_seconds"
 )
@@ -893,7 +894,7 @@ def external_authority_heartbeat_timestamp(
             "A published deadman heartbeat mirror requires a valid "
             "lastSuccessfulHeartbeatObservedAt timestamp"
         ) from exc
-    if not math.isfinite(timestamp) or timestamp <= 0:
+    if not _is_finite_number(timestamp) or timestamp <= 0:
         raise RuntimeError(
             "A published deadman heartbeat mirror requires a positive finite "
             "lastSuccessfulHeartbeatObservedAt timestamp"
@@ -908,14 +909,14 @@ def stale_deadman_heartbeat_timestamp(
     if (
         isinstance(stale_threshold, bool)
         or not isinstance(stale_threshold, (int, float))
-        or not math.isfinite(stale_threshold)
+        or not _is_finite_number(stale_threshold)
         or stale_threshold <= 0
     ):
         raise RuntimeError(
             "A deadman failure injection requires a positive finite staleThresholdSeconds"
         )
     timestamp = now - stale_threshold - 1
-    if not math.isfinite(timestamp) or timestamp <= 0:
+    if not _is_finite_number(timestamp) or timestamp <= 0:
         raise RuntimeError(
             "A deadman failure injection could not produce a positive finite heartbeat timestamp"
         )
@@ -978,6 +979,34 @@ def metric_target_for_path(path: str) -> str:
         raise ValueError(f"Unsupported public player path {path!r}") from exc
 
 
+def _is_finite_number(value: Any) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def queryability_omission_record(config: SmokeConfig, verified_at: str) -> dict[str, Any]:
+    observed_at = dt.datetime.fromisoformat(verified_at.replace("Z", "+00:00"))
+    expires_at = observed_at + dt.timedelta(
+        seconds=QUERYABILITY_OMISSION_FRESHNESS_BUDGET_SECONDS
+    )
+    return {
+        "selectedProfile": "player-experience-smoke-no-queryability",
+        "capability": "log-queryability-omitted",
+        "result": "not_applicable",
+        "omissionReason": (
+            "the player-experience smoke runner does not execute a log queryability check"
+        ),
+        "evidenceObservedAt": verified_at,
+        "evidenceFreshnessBudgetSeconds": QUERYABILITY_OMISSION_FRESHNESS_BUDGET_SECONDS,
+        "evidenceExpiresAt": expires_at.isoformat().replace("+00:00", "Z"),
+        "evidenceRef": f"{config.preflight_ref}/log-queryability-omitted",
+    }
+
+
 def build_evidence(
     config: SmokeConfig,
     mirrored_signals: dict[str, Any],
@@ -987,13 +1016,15 @@ def build_evidence(
     authority_provenance: str = "retained-external",
     verified_at: str | None = None,
 ) -> dict[str, Any]:
+    verified_at = verified_at or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     evidence = {
         "deploymentRef": config.deployment_ref,
-        "verifiedAt": verified_at or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "verifiedAt": verified_at,
         "verifiedBy": config.verified_by,
         "preflightEvidenceRef": config.preflight_ref,
         "executionMode": execution_mode,
         "externalAuthorityProvenance": authority_provenance,
+        "logPipelineQueryability": queryability_omission_record(config, verified_at),
         "capabilities": {
             PROMETHEUS_MIRRORS_CAPABILITY: config.prometheus_mirrors,
             PLAYER_FLOW_CANARY_CAPABILITY: config.player_flow_canary,
@@ -1040,6 +1071,7 @@ def compare_external_authority_snapshots(
         "profile",
         "exposedPublicPlayerPaths",
         "detectionBudgetSeconds",
+        "staleThresholdSeconds",
     ):
         initial_value = initial.get(field)
         reread_value = reread.get(field)
@@ -1169,7 +1201,7 @@ def validate_external_authority_shape(
             if (
                 isinstance(detection_budget, bool)
                 or not isinstance(detection_budget, (int, float))
-                or not math.isfinite(detection_budget)
+                or not _is_finite_number(detection_budget)
                 or detection_budget <= 0
             ):
                 raise RuntimeError(
@@ -1191,7 +1223,7 @@ def validate_external_authority_shape(
     if (
         isinstance(detection_budget, bool)
         or not isinstance(detection_budget, (int, float))
-        or not math.isfinite(detection_budget)
+        or not _is_finite_number(detection_budget)
         or detection_budget <= 0
     ):
         raise RuntimeError(
@@ -1206,7 +1238,7 @@ def validate_external_authority_shape(
     if (
         isinstance(stale_threshold, bool)
         or not isinstance(stale_threshold, (int, float))
-        or not math.isfinite(stale_threshold)
+        or not _is_finite_number(stale_threshold)
         or stale_threshold <= 0
     ):
         raise RuntimeError(
@@ -1216,7 +1248,7 @@ def validate_external_authority_shape(
     if (
         isinstance(observed_staleness, bool)
         or not isinstance(observed_staleness, (int, float))
-        or not math.isfinite(observed_staleness)
+        or not _is_finite_number(observed_staleness)
         or observed_staleness < 0
     ):
         raise RuntimeError(
@@ -1321,7 +1353,7 @@ def validate_external_authority_freshness(
     if (
         isinstance(detection_budget, bool)
         or not isinstance(detection_budget, (int, float))
-        or not math.isfinite(detection_budget)
+        or not _is_finite_number(detection_budget)
         or detection_budget <= 0
     ):
         raise RuntimeError(
@@ -1414,7 +1446,7 @@ def validate_public_path_freshness(
     if (
         isinstance(observed_probe_age, bool)
         or not isinstance(observed_probe_age, (int, float))
-        or not math.isfinite(observed_probe_age)
+        or not _is_finite_number(observed_probe_age)
         or observed_probe_age < 0
     ):
         raise RuntimeError(
@@ -1452,28 +1484,12 @@ def validate_authority_record(
     *,
     allow_failure_evidence: bool = False,
 ) -> None:
-    status = record.get("status")
-    if status != "green" and not (
-        allow_failure_evidence and status == "red"
-    ):
-        raise RuntimeError(
-            f"External authority evidence at {path} requires {key}.status=green"
-        )
-    required_fields = ["evidenceRef", "target", "checkRef"]
-    if status == "green" or not allow_failure_evidence:
-        required_fields.append("pageEvidenceRef")
-    for field in required_fields:
-        value = record.get(field)
-        if not isinstance(value, str) or not value.strip():
-            raise RuntimeError(
-                f"External authority evidence at {path} must define {key}.{field}"
-            )
-        if value.startswith(("synthetic://", "synthetic-")):
-            raise RuntimeError(
-                f"External authority evidence at {path} must not use synthetic {key}.{field}"
-            )
-    validate_optional_page_evidence_ref(
-        record, key, path, allow_failure_evidence=allow_failure_evidence
+    validate_external_monitor_record(
+        record,
+        key,
+        path,
+        required_fields=("evidenceRef", "target", "checkRef"),
+        allow_failure_evidence=allow_failure_evidence,
     )
 
 
@@ -1484,6 +1500,23 @@ def validate_public_path_record(
     *,
     allow_failure_evidence: bool = False,
 ) -> None:
+    validate_external_monitor_record(
+        record,
+        key,
+        path,
+        required_fields=("evidenceRef", "target"),
+        allow_failure_evidence=allow_failure_evidence,
+    )
+
+
+def validate_external_monitor_record(
+    record: dict[str, Any],
+    key: str,
+    path: Path,
+    *,
+    required_fields: tuple[str, ...],
+    allow_failure_evidence: bool = False,
+) -> None:
     status = record.get("status")
     if status != "green" and not (
         allow_failure_evidence and status == "red"
@@ -1491,7 +1524,7 @@ def validate_public_path_record(
         raise RuntimeError(
             f"External authority evidence at {path} requires {key}.status=green"
         )
-    required_fields = ["evidenceRef", "target"]
+    required_fields = list(required_fields)
     if status == "green" or not allow_failure_evidence:
         required_fields.append("pageEvidenceRef")
     for field in required_fields:

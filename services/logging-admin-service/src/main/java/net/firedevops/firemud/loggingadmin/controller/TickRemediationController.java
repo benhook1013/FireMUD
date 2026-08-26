@@ -89,8 +89,9 @@ public class TickRemediationController {
     boolean hasGameInstanceId =
         request.gameInstanceId() != null && !request.gameInstanceId().isBlank();
     boolean hasRegionId = request.regionId() != null && !request.regionId().isBlank();
-    if (hasGameInstanceId == hasRegionId) {
-      throw new IllegalArgumentException("Exactly one of gameInstanceId or regionId is required");
+    if (!hasGameInstanceId || hasRegionId) {
+      throw new IllegalArgumentException(
+          "gameInstanceId is required and regionId is not supported for pause/resume");
     }
     return new TickRemediationRequest(
         request.tenantId(),

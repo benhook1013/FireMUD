@@ -8,7 +8,7 @@ These example rules are calibration and degradation signals for the target-state
 
 The `profile` label uses ADR 0159's canonical monitoring-profile enum, `independent-required` or `independent-omitted`, across canary metrics, retained evidence, and profile-aware rules. Do not serialize the prose abbreviations `required` or `omitted` as profile values.
 
-The P0 `WebSocketEntryPathBlackboxUnavailable` and `TelnetEntryPathBlackboxUnavailable` snippets below are profile-dependent rules. Install them only through the `independent-required-prometheus-published` overlay; they must not be installed by the shared rules, the `independent-omitted` overlay, or an `independent-required` deployment with `prometheusMirrors=omitted`.
+The P0 `WebSocketEntryPathBlackboxUnavailable` and `TelnetEntryPathBlackboxUnavailable` rules are owned by the `independent-required-prometheus-published` overlay; keep these reference snippets aligned with that overlay. They must not be installed by the shared rules, the `independent-omitted` overlay, or an `independent-required` deployment with `prometheusMirrors=omitted`.
 
 ```yaml
 - alert: LoginSuccessRatioLowGateway
@@ -297,7 +297,10 @@ The P0 `WebSocketEntryPathBlackboxUnavailable` and `TelnetEntryPathBlackboxUnava
     description: The advertised player-flow canary run evidence is missing its matching last-run timestamp, future-dated, or older than the profile-derived freshness budget; treat player-flow health as unknown or degraded until a fresh run is retained.
 
 - alert: WebSocketEntryPathBlackboxUnavailable
-  expr: max_over_time(entrypath_blackbox_probe_success{path="websocket"}[2m]) == 0
+  # An absent non-exposed path is not_applicable; missing evidence for an
+  # exposed path is unknown/degraded rather than not_applicable.
+  # A two-minute rule hold confirms continuous failure before paging.
+  expr: entrypath_blackbox_probe_success{path="websocket"} == 0
   for: 2m
   labels:
     service: spring-cloud-gateway
@@ -310,7 +313,10 @@ The P0 `WebSocketEntryPathBlackboxUnavailable` and `TelnetEntryPathBlackboxUnava
     description: Independent blackbox probes cannot reach the public WebSocket gameplay path; this catches LB, DNS, TLS, and ingress failures before traffic reaches Gateway.
 
 - alert: TelnetEntryPathBlackboxUnavailable
-  expr: max_over_time(entrypath_blackbox_probe_success{path="telnet"}[2m]) == 0
+  # An absent non-exposed path is not_applicable; missing evidence for an
+  # exposed path is unknown/degraded rather than not_applicable.
+  # A two-minute rule hold confirms continuous failure before paging.
+  expr: entrypath_blackbox_probe_success{path="telnet"} == 0
   for: 2m
   labels:
     service: tcp-proxy-service

@@ -86,6 +86,23 @@ path.write_text(json.dumps(source), encoding="utf-8")
 PY
 }
 
+mark_canary_alerts_passed() {
+  local source_path="$1"
+  local target_path="$2"
+  run_clean_python - "$source_path" "$target_path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source_path = Path(sys.argv[1])
+target_path = Path(sys.argv[2])
+data = json.loads(source_path.read_text(encoding="utf-8"))
+for record in data.get("canaryAlerts", []):
+    record["exerciseResult"] = "passed"
+target_path.write_text(json.dumps(data), encoding="utf-8")
+PY
+}
+
 SMOKE_CONFIG_ENV_OVERRIDES=(
   PLAYER_EXPERIENCE_DEPLOYMENT_EVENT_ID=not-a-uuid
   SMOKE_TIMEOUT_SECONDS=not-an-integer
@@ -131,6 +148,65 @@ expected_heartbeat = runner.dt.datetime.fromisoformat(
     "2026-03-19T10:54:00+00:00"
 ).timestamp()
 assert runner.deadman_record(config, set(), retained_authority)["value"] == expected_heartbeat
+
+
+def expect_runtime_error(action, error_fragment):
+    try:
+        action()
+    except RuntimeError as exc:
+        assert error_fragment in str(exc), str(exc)
+    else:
+        raise AssertionError(f"expected RuntimeError containing: {error_fragment}")
+
+
+for field, error_fragment in (
+    (
+        "detectionBudgetSeconds",
+        "must define a positive finite detectionBudgetSeconds",
+    ),
+    (
+        "staleThresholdSeconds",
+        "must define a positive finite staleThresholdSeconds",
+    ),
+    (
+        "observedStalenessSeconds",
+        "must define a nonnegative finite observedStalenessSeconds",
+    ),
+):
+    huge_authority = runner.simulated_external_authority("2026-03-19T10:55:00Z")
+    huge_authority[field] = 10**1000
+    expect_runtime_error(
+        lambda authority=huge_authority: runner.validate_external_authority_shape(
+            authority,
+            Path("huge-numeric-authority.json"),
+            evaluation_epoch=runner.dt.datetime.fromisoformat(
+                "2026-03-19T10:55:00+00:00"
+            ).timestamp(),
+            canary_advertised=True,
+        ),
+        error_fragment,
+    )
+
+expect_runtime_error(
+    lambda: runner.stale_deadman_heartbeat_timestamp(
+        {"staleThresholdSeconds": 10**1000}, 1773917700
+    ),
+    "requires a positive finite staleThresholdSeconds",
+)
+expect_runtime_error(
+    lambda: runner.validate_public_path_freshness(
+        {
+            "lastSuccessfulProbeObservedAt": "2026-03-19T10:55:00Z",
+            "observedProbeAgeSeconds": 10**1000,
+            "status": "green",
+        },
+        "publicPathChecks.websocket",
+        runner.dt.datetime.fromisoformat("2026-03-19T10:55:00+00:00").timestamp(),
+        195,
+        Path("huge-numeric-authority.json"),
+    ),
+    "must define a nonnegative finite publicPathChecks.websocket.observedProbeAgeSeconds",
+)
 mirror_only_config = runner.SmokeConfig.from_env(
     "contract-test",
     "websocket",
@@ -391,6 +467,9 @@ assert data["capabilities"] == {
     "prometheusMirrors": "published",
     "playerFlowCanary": "advertised",
 }
+assert data["logPipelineQueryability"]["capability"] == "log-queryability-omitted"
+assert data["logPipelineQueryability"]["result"] == "not_applicable"
+assert data["logPipelineQueryability"]["omissionReason"]
 assert data["mirroredSignals"][
     "observability_deadman_heartbeat_timestamp_seconds"
 ]["value"] == datetime.fromisoformat(
@@ -463,6 +542,10 @@ from pathlib import Path
 def normalized(data):
     data = copy.deepcopy(data)
     data.pop("verifiedAt", None)
+    queryability = data.get("logPipelineQueryability")
+    if isinstance(queryability, dict):
+        queryability.pop("evidenceObservedAt", None)
+        queryability.pop("evidenceExpiresAt", None)
     authority = data["externalAuthority"]
     for key in (
         "evidenceObservedAt",
@@ -701,7 +784,7 @@ original_execute_smoke = runner.execute_smoke
 
 def changed_execute_smoke(*args):
     source = json.loads(authority_path.read_text(encoding="utf-8"))
-    source["detectionBudgetSeconds"] += 1
+    source["staleThresholdSeconds"] += 1
     authority_path.write_text(json.dumps(source), encoding="utf-8")
     return original_execute_smoke(*args)
 
@@ -728,7 +811,7 @@ try:
     try:
         runner.main()
     except RuntimeError as exc:
-        assert "detectionBudgetSeconds changed from 195 to 196" in str(exc)
+        assert "staleThresholdSeconds changed from 180 to 181" in str(exc)
     else:
         raise AssertionError("runner accepted authority snapshot changed during execution")
 finally:
@@ -749,6 +832,7 @@ grep -q 'observability_deadman_heartbeat_timestamp_seconds{source="contract-test
 
 REQUIRED_180_MIRRORS_OMITTED_AUTHORITY="$TMP_DIR/required-180-mirrors-omitted-authority.json"
 REQUIRED_180_MIRRORS_OMITTED_EVIDENCE="$TMP_DIR/required-180-mirrors-omitted-evidence.json"
+REQUIRED_180_MIRRORS_OMITTED_READY_EVIDENCE="$TMP_DIR/required-180-mirrors-omitted-ready-evidence.json"
 refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
 python3 - "$AUTHORITY_EVIDENCE" "$REQUIRED_180_MIRRORS_OMITTED_AUTHORITY" <<'PY'
 import json
@@ -768,7 +852,10 @@ run_smoke_runner \
   --evidence-out "$REQUIRED_180_MIRRORS_OMITTED_EVIDENCE" \
   --source "contract-test" \
   --canary-path websocket >/dev/null
-python3 "$VALIDATOR" --allow-failure-evidence "$REQUIRED_180_MIRRORS_OMITTED_EVIDENCE" \
+mark_canary_alerts_passed \
+  "$REQUIRED_180_MIRRORS_OMITTED_EVIDENCE" \
+  "$REQUIRED_180_MIRRORS_OMITTED_READY_EVIDENCE"
+python3 "$VALIDATOR" "$REQUIRED_180_MIRRORS_OMITTED_READY_EVIDENCE" \
   >"$TMP_DIR/required-180-mirrors-omitted.out"
 python3 - "$REQUIRED_180_MIRRORS_OMITTED_EVIDENCE" <<'PY'
 import json
@@ -880,6 +967,76 @@ if run_smoke_runner \
   exit 1
 fi
 grep -q "must define a positive finite staleThresholdSeconds" "$TMP_DIR/invalid-stale-threshold.out"
+
+NEGATIVE_STALE_THRESHOLD_AUTHORITY="$TMP_DIR/negative-stale-threshold-authority.json"
+refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
+python3 - "$AUTHORITY_EVIDENCE" "$NEGATIVE_STALE_THRESHOLD_AUTHORITY" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["staleThresholdSeconds"] = -1
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if run_smoke_runner \
+  --simulate \
+  --external-authority-evidence "$NEGATIVE_STALE_THRESHOLD_AUTHORITY" \
+  --evidence-out "$TMP_DIR/negative-stale-threshold-evidence.json" \
+  --source "contract-test" \
+  --canary-path websocket >"$TMP_DIR/negative-stale-threshold.out" 2>&1; then
+  echo "runner unexpectedly accepted negative stale threshold" >&2
+  exit 1
+fi
+grep -q "must define a positive finite staleThresholdSeconds" "$TMP_DIR/negative-stale-threshold.out"
+
+run_clean_python - "$RUNNER" "$AUTHORITY_EVIDENCE" <<'PY'
+import copy
+import importlib.util
+import json
+import sys
+from datetime import datetime
+from pathlib import Path
+
+runner_path = Path(sys.argv[1])
+authority_path = Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location("player_experience_smoke", runner_path)
+assert spec is not None and spec.loader is not None
+runner = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = runner
+spec.loader.exec_module(runner)
+
+source = json.loads(authority_path.read_text(encoding="utf-8"))
+evaluation_epoch = datetime.fromisoformat(
+    source["evidenceObservedAt"].replace("Z", "+00:00")
+).timestamp()
+cases = {
+    "missing": (lambda data: data.pop("lastSuccessfulHeartbeatObservedAt"),
+                 "lastSuccessfulHeartbeatObservedAt is required"),
+    "non-string": (lambda data: data.__setitem__("lastSuccessfulHeartbeatObservedAt", 0),
+                   "lastSuccessfulHeartbeatObservedAt must be an RFC3339 UTC timestamp ending in Z"),
+    "non-Z": (lambda data: data.__setitem__("lastSuccessfulHeartbeatObservedAt", "2026-03-19T10:54:00+00:00"),
+              "lastSuccessfulHeartbeatObservedAt must be an RFC3339 UTC timestamp ending in Z"),
+    "unparseable": (lambda data: data.__setitem__("lastSuccessfulHeartbeatObservedAt", "not-a-timestampZ"),
+                    "lastSuccessfulHeartbeatObservedAt is invalid"),
+    "non-positive": (lambda data: data.__setitem__("lastSuccessfulHeartbeatObservedAt", -1),
+                     "lastSuccessfulHeartbeatObservedAt must be an RFC3339 UTC timestamp ending in Z"),
+}
+for name, (mutate, expected) in cases.items():
+    candidate = copy.deepcopy(source)
+    mutate(candidate)
+    try:
+        runner.validate_external_authority_shape(
+            candidate,
+            authority_path,
+            evaluation_epoch=evaluation_epoch,
+        )
+    except (RuntimeError, TypeError) as exc:
+        assert expected in str(exc), (name, str(exc))
+    else:
+        raise AssertionError(f"runner accepted invalid heartbeat case: {name}")
+PY
 
 OVER_THRESHOLD_DEADMAN_AUTHORITY="$TMP_DIR/over-threshold-deadman-authority.json"
 refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
@@ -1557,6 +1714,7 @@ PY
 
 OMITTED_CANARY_AUTHORITY_EVIDENCE="$TMP_DIR/omitted-canary-authority.json"
 OMITTED_CANARY_EVIDENCE="$TMP_DIR/omitted-canary-evidence.json"
+OMITTED_CANARY_READY_EVIDENCE="$TMP_DIR/omitted-canary-ready-evidence.json"
 cat >"$OMITTED_CANARY_AUTHORITY_EVIDENCE" <<'JSON'
 {
   "profile": "independent-omitted",
@@ -1575,7 +1733,10 @@ run_smoke_runner \
   --source "contract-test" \
   --canary-path websocket
 
-python3 "$VALIDATOR" --allow-failure-evidence "$OMITTED_CANARY_EVIDENCE" \
+mark_canary_alerts_passed \
+  "$OMITTED_CANARY_EVIDENCE" \
+  "$OMITTED_CANARY_READY_EVIDENCE"
+python3 "$VALIDATOR" "$OMITTED_CANARY_READY_EVIDENCE" \
   >"$TMP_DIR/omitted-canary.out"
 python3 - "$OMITTED_CANARY_EVIDENCE" <<'PY'
 import json
@@ -1704,6 +1865,7 @@ fi
 
 REQUIRED_SINGLE_PATH_AUTHORITY_EVIDENCE="$TMP_DIR/required-single-path-authority.json"
 REQUIRED_SINGLE_PATH_EVIDENCE="$TMP_DIR/required-single-path-evidence.json"
+REQUIRED_SINGLE_PATH_READY_EVIDENCE="$TMP_DIR/required-single-path-ready-evidence.json"
 cat >"$REQUIRED_SINGLE_PATH_AUTHORITY_EVIDENCE" <<'JSON'
 {
   "profile": "independent-required",
@@ -1733,7 +1895,10 @@ run_smoke_runner \
   --evidence-out "$REQUIRED_SINGLE_PATH_EVIDENCE" \
   --source "contract-test" \
   --canary-path telnet
-python3 "$VALIDATOR" --allow-failure-evidence "$REQUIRED_SINGLE_PATH_EVIDENCE" \
+mark_canary_alerts_passed \
+  "$REQUIRED_SINGLE_PATH_EVIDENCE" \
+  "$REQUIRED_SINGLE_PATH_READY_EVIDENCE"
+python3 "$VALIDATOR" "$REQUIRED_SINGLE_PATH_READY_EVIDENCE" \
   >"$TMP_DIR/required-single-path.out"
 python3 - "$REQUIRED_SINGLE_PATH_EVIDENCE" <<'PY'
 import json

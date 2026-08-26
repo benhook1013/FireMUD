@@ -35,7 +35,10 @@ spec:
             summary: Independent observability deadman heartbeat missing
             description: The required-profile external deadman mirror is absent for one minute; confirm the authoritative external monitor and paging path.
         - alert: WebSocketEntryPathBlackboxUnavailable
-          expr: max_over_time(entrypath_blackbox_probe_success{path="websocket"}[2m]) == 0
+          # An absent non-exposed path is not_applicable; missing evidence for an
+          # exposed path is unknown/degraded rather than not_applicable.
+          # A two-minute rule hold confirms continuous failure before paging.
+          expr: entrypath_blackbox_probe_success{path="websocket"} == 0
           for: 2m
           labels:
             service: spring-cloud-gateway
@@ -47,7 +50,10 @@ spec:
             summary: WebSocket entry path unreachable from external probe
             description: Independent blackbox probes cannot reach the public WebSocket gameplay path; this may be an LB, DNS, TLS, or ingress failure before requests reach Gateway.
         - alert: TelnetEntryPathBlackboxUnavailable
-          expr: max_over_time(entrypath_blackbox_probe_success{path="telnet"}[2m]) == 0
+          # An absent non-exposed path is not_applicable; missing evidence for an
+          # exposed path is unknown/degraded rather than not_applicable.
+          # A two-minute rule hold confirms continuous failure before paging.
+          expr: entrypath_blackbox_probe_success{path="telnet"} == 0
           for: 2m
           labels:
             service: tcp-proxy-service

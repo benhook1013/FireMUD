@@ -172,9 +172,11 @@ def _validate_timestamp(value: Any, key: str) -> list[str]:
 def _validate_log_pipeline_queryability(
     value: Any, verified_at: Any, *, allow_failure_evidence: bool
 ) -> list[str]:
-    """Validate optional target-state queryability evidence when supplied."""
+    """Validate queryability evidence or an explicit posture-bound omission."""
     if value is None:
-        return []
+        return [
+            "logPipelineQueryability is required; provide queryability evidence or an explicit omission"
+        ]
     key = "logPipelineQueryability"
     if not isinstance(value, dict):
         return [f"{key} must be a JSON object"]
@@ -537,36 +539,15 @@ def _validate_authority_record(
     allow_synthetic_refs: bool,
     allow_failure_evidence: bool = False,
 ) -> list[str]:
-    findings: list[str] = []
-    status = record.get("status")
-    if status not in {"green", "red"}:
-        findings.append(f"{key}.status must be green or red")
-    elif require_green and status != "green" and not allow_failure_evidence:
-        findings.append(f"{key}.status must be green")
-    required_fields = ("evidenceRef", "target", "checkRef")
-    if status == "green" or not allow_failure_evidence:
-        required_fields = (*required_fields, "pageEvidenceRef")
-    for field in required_fields:
-        value = record.get(field)
-        if not isinstance(value, str) or not value.strip():
-            findings.append(f"{key}.{field} is required")
-        else:
-            findings.extend(
-                _validate_reference_provenance(
-                    value, f"{key}.{field}", allow_synthetic_refs
-                )
-            )
-    if status == "red" and allow_failure_evidence and "pageEvidenceRef" in record:
-        page_evidence_ref = record["pageEvidenceRef"]
-        if not isinstance(page_evidence_ref, str) or not page_evidence_ref.strip():
-            findings.append(f"{key}.pageEvidenceRef must be a non-empty string when present")
-        else:
-            findings.extend(
-                _validate_reference_provenance(
-                    page_evidence_ref, f"{key}.pageEvidenceRef", allow_synthetic_refs
-                )
-            )
-    return findings
+    return _validate_external_monitor_record(
+        record,
+        key,
+        required_fields=("evidenceRef", "target", "checkRef"),
+        require_green=require_green,
+        allow_synthetic_refs=allow_synthetic_refs,
+        allow_failure_evidence=allow_failure_evidence,
+        invalid_status_message=f"{key}.status must be green or red",
+    )
 
 
 def _validate_public_path_record(
@@ -575,11 +556,33 @@ def _validate_public_path_record(
     allow_synthetic_refs: bool,
     allow_failure_evidence: bool = False,
 ) -> list[str]:
+    return _validate_external_monitor_record(
+        record,
+        key,
+        required_fields=("evidenceRef", "target"),
+        require_green=True,
+        allow_synthetic_refs=allow_synthetic_refs,
+        allow_failure_evidence=allow_failure_evidence,
+        invalid_status_message=f"{key}.status must be green",
+    )
+
+
+def _validate_external_monitor_record(
+    record: dict[str, Any],
+    key: str,
+    *,
+    required_fields: tuple[str, ...],
+    require_green: bool,
+    allow_synthetic_refs: bool,
+    allow_failure_evidence: bool,
+    invalid_status_message: str,
+) -> list[str]:
     findings: list[str] = []
     status = record.get("status")
-    if status != "green" and not (status == "red" and allow_failure_evidence):
+    if status not in {"green", "red"}:
+        findings.append(invalid_status_message)
+    elif require_green and status != "green" and not allow_failure_evidence:
         findings.append(f"{key}.status must be green")
-    required_fields = ("evidenceRef", "target")
     if status == "green" or not allow_failure_evidence:
         required_fields = (*required_fields, "pageEvidenceRef")
     for field in required_fields:
@@ -797,7 +800,7 @@ def _validate_deadman_signal(
     if (
         isinstance(timestamp, bool)
         or not isinstance(timestamp, (int, float))
-        or not math.isfinite(timestamp)
+        or not _is_finite_number(timestamp)
         or timestamp <= 0
     ):
         findings.append(
@@ -853,7 +856,7 @@ def _is_allowed_injected_stale_deadman_mirror(
         verified_epoch is None
         or isinstance(stale_threshold, bool)
         or not isinstance(stale_threshold, (int, float))
-        or not math.isfinite(stale_threshold)
+        or not _is_finite_number(stale_threshold)
         or stale_threshold <= 0
     ):
         return False
@@ -938,7 +941,7 @@ def _validate_boolean_like_metric(value: Any, metric: str) -> list[str]:
     if (
         isinstance(value, bool)
         or not isinstance(value, (int, float))
-        or not math.isfinite(value)
+        or not _is_finite_number(value)
         or value not in {0, 1}
     ):
         return [f"{metric} values must be finite numeric 0 or 1"]
@@ -1028,7 +1031,7 @@ def _validate_playerflow_last_run(
         freshness_budget
         if isinstance(freshness_budget, (int, float))
         and not isinstance(freshness_budget, bool)
-        and math.isfinite(freshness_budget)
+        and _is_finite_number(freshness_budget)
         and freshness_budget > 0
         else None
     )
@@ -1073,7 +1076,7 @@ def _validate_playerflow_last_run(
         if (
             isinstance(timestamp, bool)
             or not isinstance(timestamp, (int, float))
-            or not math.isfinite(timestamp)
+            or not _is_finite_number(timestamp)
             or timestamp <= 0
         ):
             findings.append(
@@ -1123,7 +1126,7 @@ def _validate_canary_detection_budget_minimum(value: Any) -> list[str]:
     if (
         isinstance(value, bool)
         or not isinstance(value, (int, float))
-        or not math.isfinite(value)
+        or not _is_finite_number(value)
         or value <= 0
         or value >= MIN_CANARY_DETECTION_BUDGET_SECONDS
     ):
@@ -1161,7 +1164,7 @@ def _validate_external_authority_freshness(
             if (
                 isinstance(observed_staleness, (int, float))
                 and not isinstance(observed_staleness, bool)
-                and math.isfinite(observed_staleness)
+                and _is_finite_number(observed_staleness)
                 and not math.isclose(
                     observed_staleness,
                     expected_staleness,
@@ -1181,10 +1184,10 @@ def _validate_external_authority_freshness(
                 and deadman.get("status") == "green"
                 and isinstance(observed_staleness, (int, float))
                 and not isinstance(observed_staleness, bool)
-                and math.isfinite(observed_staleness)
+                and _is_finite_number(observed_staleness)
                 and isinstance(stale_threshold, (int, float))
                 and not isinstance(stale_threshold, bool)
-                and math.isfinite(stale_threshold)
+                and _is_finite_number(stale_threshold)
                 and observed_staleness
                 > stale_threshold + STALE_NUMERIC_TOLERANCE_SECONDS
             ):
@@ -1198,7 +1201,7 @@ def _validate_external_authority_freshness(
         budget_valid = (
             not isinstance(budget, bool)
             and isinstance(budget, (int, float))
-            and math.isfinite(budget)
+            and _is_finite_number(budget)
             and budget > 0
         )
         if isinstance(checks, dict):
@@ -1229,7 +1232,7 @@ def _validate_external_authority_freshness(
                     if (
                         isinstance(observed_probe_age, (int, float))
                         and not isinstance(observed_probe_age, bool)
-                        and math.isfinite(observed_probe_age)
+                        and _is_finite_number(observed_probe_age)
                         and not math.isclose(
                             observed_probe_age,
                             expected_probe_age,
@@ -1245,7 +1248,7 @@ def _validate_external_authority_freshness(
                         and budget_valid
                         and isinstance(observed_probe_age, (int, float))
                         and not isinstance(observed_probe_age, bool)
-                        and math.isfinite(observed_probe_age)
+                        and _is_finite_number(observed_probe_age)
                         and observed_probe_age
                         > budget + STALE_NUMERIC_TOLERANCE_SECONDS
                     ):
@@ -1258,7 +1261,7 @@ def _validate_external_authority_freshness(
     if (
         isinstance(budget, bool)
         or not isinstance(budget, (int, float))
-        or not math.isfinite(budget)
+        or not _is_finite_number(budget)
         or budget <= 0
     ):
         return findings
@@ -1389,7 +1392,13 @@ def _validate_canary_alerts(
         if allow_failure_evidence:
             allowed_results.update({"failed", "not_exercised"})
         if record.get("exerciseResult") not in allowed_results:
-            findings.append(f"{alert} exerciseResult must be passed")
+            if allow_failure_evidence:
+                findings.append(
+                    f"{alert} exerciseResult must be one of "
+                    + ", ".join(sorted(allowed_results))
+                )
+            else:
+                findings.append(f"{alert} exerciseResult must be passed")
     return findings
 
 

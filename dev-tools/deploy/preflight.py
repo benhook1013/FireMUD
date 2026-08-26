@@ -1779,6 +1779,16 @@ def validate_promotion_smoke_evidence(
                 "fail",
                 f"{label}[{index}] externalAuthority.profile independent-omitted cannot satisfy promotion smoke evidence",
             )
+        queryability = evidence.get("logPipelineQueryability")
+        if (
+            not isinstance(queryability, dict)
+            or queryability.get("capability") == "log-queryability-omitted"
+            or queryability.get("result") != "passed"
+        ):
+            return (
+                "fail",
+                f"{label}[{index}] promotion smoke evidence requires a passing non-omitted logPipelineQueryability result",
+            )
         if evidence.get("deploymentRef") != staging_deployment_ref:
             return (
                 "fail",

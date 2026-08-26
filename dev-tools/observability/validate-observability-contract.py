@@ -392,9 +392,15 @@ def _parse_rule_name(value: str) -> tuple[str | None, bool]:
         quote = value[0]
         if len(value) < 2 or value[-1] != quote:
             return None, True
-        name = value[1:-1]
-        if quote == "'":
-            name = name.replace("''", "'")
+        if quote == '"':
+            try:
+                name = json.loads(value)
+            except json.JSONDecodeError:
+                return None, True
+            if not isinstance(name, str):
+                return None, True
+        else:
+            name = value[1:-1].replace("''", "'")
     else:
         if value.startswith(("&", "*", "!", "{", "[", "|", ">")):
             return None, True
@@ -667,9 +673,173 @@ def _standalone_rule_mapping_entry(lines: list[str]) -> _RuleEntry | None:
     )
 
 
+def _rule_sequence_structure_findings(
+    lines: list[str],
+    rules_index: int,
+    rules_indent: int,
+    sequence_indent: int,
+) -> list[_RuleEntry]:
+    """Reject shapes the dependency-free scanner cannot safely interpret."""
+    findings: list[_RuleEntry] = []
+    section_end = rules_index + 1
+    while section_end < len(lines):
+        if _meaningful_yaml_line(lines[section_end]) and _leading_space_count(
+            lines[section_end]
+        ) <= rules_indent:
+            break
+        section_end += 1
+
+    block_scalar_indent: int | None = None
+    for line in lines[rules_index + 1 : section_end]:
+        if not _meaningful_yaml_line(line):
+            continue
+        indent = _leading_space_count(line)
+        content = _strip_yaml_comment(line).strip()
+        if block_scalar_indent is not None:
+            if indent <= block_scalar_indent:
+                block_scalar_indent = None
+            else:
+                continue
+
+        if _is_sequence_item(line) and indent != sequence_indent:
+            findings.append(
+                _RuleEntry(
+                    lines=[line],
+                    key=None,
+                    name=None,
+                    issue="inconsistent or nested rule sequence indentation",
+                )
+            )
+        elif indent == sequence_indent and not _is_sequence_item(line):
+            findings.append(
+                _RuleEntry(
+                    lines=[line],
+                    key=None,
+                    name=None,
+                    issue="unsupported rule sequence entry boundary",
+                )
+            )
+
+        if re.search(r":\s*[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?)?)?(?:\s+#.*)?$", content):
+            block_scalar_indent = indent
+
+    starts = [
+        index
+        for index in range(rules_index + 1, section_end)
+        if _is_sequence_item(lines[index], sequence_indent)
+    ]
+    if not starts:
+        return findings
+    for entry_start, entry_end in zip(
+        starts, [*starts[1:], section_end], strict=True
+    ):
+        entry_lines = lines[entry_start:entry_end]
+        sequence_header = _strip_yaml_comment(lines[entry_start]).lstrip()
+        inline_mapping_match = re.match(r"^-([ \t]+)(?P<key>[^\s].*)$", sequence_header)
+        inline_mapping_indent = (
+            sequence_indent + 1 + len(inline_mapping_match.group(1))
+            if inline_mapping_match is not None
+            else None
+        )
+        root_field_indents = [
+            _leading_space_count(line)
+            for line in entry_lines
+            if _meaningful_yaml_line(line)
+            and _parse_mapping_header(line) is not None
+            and _parse_mapping_header(line)[0]
+            in {
+                "alert",
+                "record",
+                "expr",
+                "for",
+                "keep_firing_for",
+                "query_offset",
+                "labels",
+                "annotations",
+            }
+            and _leading_space_count(line) > sequence_indent
+        ]
+        direct_indent = min(root_field_indents, default=None)
+        nested_mapping_indent: int | None = None
+        entry_block_scalar_indent: int | None = None
+        for line in entry_lines:
+            if not _meaningful_yaml_line(line):
+                continue
+            indent = _leading_space_count(line)
+            content = _strip_yaml_comment(line).strip()
+            if entry_block_scalar_indent is not None:
+                if indent <= entry_block_scalar_indent:
+                    entry_block_scalar_indent = None
+                else:
+                    continue
+            parsed = _parse_mapping_header(line)
+            if parsed is not None and indent > sequence_indent:
+                if nested_mapping_indent is not None and indent <= nested_mapping_indent:
+                    nested_mapping_indent = None
+                if (
+                    direct_indent is not None
+                    and nested_mapping_indent is None
+                    and parsed[0]
+                    in {
+                        "alert",
+                        "record",
+                        "expr",
+                        "for",
+                        "keep_firing_for",
+                        "query_offset",
+                        "labels",
+                        "annotations",
+                    }
+                    and indent != direct_indent
+                ):
+                    findings.append(
+                        _RuleEntry(
+                            lines=[line],
+                            key=None,
+                            name=None,
+                            issue="inconsistent rule root-field indentation",
+                        )
+                    )
+                elif (
+                    inline_mapping_indent is not None
+                    and nested_mapping_indent is None
+                    and parsed[0]
+                    in {
+                        "expr",
+                        "for",
+                        "keep_firing_for",
+                        "query_offset",
+                        "labels",
+                        "annotations",
+                    }
+                    and indent != inline_mapping_indent
+                ):
+                    findings.append(
+                        _RuleEntry(
+                            lines=[line],
+                            key=None,
+                            name=None,
+                            issue="inconsistent rule root-field indentation",
+                        )
+                    )
+                elif (
+                    direct_indent is not None
+                    and indent == direct_indent
+                    and parsed[0] in {"labels", "annotations"}
+                ):
+                    nested_mapping_indent = indent
+            if re.search(
+                r":\s*[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?)?)?(?:\s+#.*)?$",
+                content,
+            ):
+                entry_block_scalar_indent = indent
+    return findings
+
+
 def _scan_rule_entries(yaml_text: str) -> list[_RuleEntry]:
     lines = yaml_text.splitlines()
     entries: list[_RuleEntry] = _unsupported_rules_key_shapes(lines)
+    entries.extend(_duplicate_group_rules_keys(lines))
     standalone_mapping = _standalone_rule_mapping_entry(lines)
     if standalone_mapping is not None:
         entries.append(standalone_mapping)
@@ -697,6 +867,16 @@ def _scan_rule_entries(yaml_text: str) -> list[_RuleEntry]:
         ):
             entries.append(_RuleEntry(lines=[line], key=None, name=None))
 
+        if child is not None and _is_sequence_item(lines[child]):
+            entries.extend(
+                _rule_sequence_structure_findings(
+                    lines,
+                    index,
+                    rules_indent,
+                    _leading_space_count(lines[child]),
+                )
+            )
+
     ranges = _rule_sequence_ranges(lines)
     if not ranges:
         standalone_range = _standalone_rule_sequence_range(lines)
@@ -718,6 +898,24 @@ def _scan_rule_entries(yaml_text: str) -> list[_RuleEntry]:
                     name=name,
                 )
             )
+    duplicate_entries: list[_RuleEntry] = []
+    for entry in entries:
+        if entry.key is None:
+            continue
+        duplicate_keys = _duplicate_rule_mapping_keys(entry.lines)
+        if duplicate_keys:
+            duplicate_entries.append(
+                _RuleEntry(
+                    lines=entry.lines,
+                    key=None,
+                    name=None,
+                    issue=(
+                        "duplicate rule mapping keys are unsupported: "
+                        + ", ".join(duplicate_keys)
+                    ),
+                )
+            )
+    entries.extend(duplicate_entries)
     return entries
 
 
@@ -747,11 +945,15 @@ def _unrecognized_rule_entry_finding(path: Path, entry_key: str, entry: _RuleEnt
 
 
 def _parse_labels(rule_lines: list[str]) -> dict[str, str]:
+    labels_indent = _rule_mapping_indent(rule_lines)
+    if labels_indent is None:
+        return {}
     for index, line in enumerate(rule_lines):
         match = re.match(r"^(?P<indent>\s*)labels:\s*$", line)
         if not match:
             continue
-        labels_indent = len(match.group("indent"))
+        if len(match.group("indent")) != labels_indent:
+            continue
         labels: dict[str, str] = {}
         for next_line in rule_lines[index + 1 :]:
             if next_line.strip() == "":
@@ -763,20 +965,184 @@ def _parse_labels(rule_lines: list[str]) -> dict[str, str]:
             if not kv_match:
                 continue
             key = kv_match.group("key")
-            value = kv_match.group("value").strip().strip('"').strip("'")
-            labels[key] = value
+            value, unsupported = _parse_rule_name(kv_match.group("value"))
+            labels[key] = "" if unsupported or value is None else value
         return labels
     return {}
 
 
+def _rule_mapping_indent(rule_lines: list[str]) -> int | None:
+    if not rule_lines:
+        return None
+
+    first_line = rule_lines[0]
+    first_indent = _leading_space_count(first_line)
+    if not _is_sequence_item(first_line, first_indent):
+        return first_indent
+    return next(
+        (
+            _leading_space_count(line)
+            for line in rule_lines[1:]
+            if _meaningful_yaml_line(line)
+            and _leading_space_count(line) > first_indent
+            and _parse_mapping_header(line) is not None
+        ),
+        None,
+    )
+
+
+def _duplicate_rule_mapping_keys(rule_lines: list[str]) -> list[str]:
+    mapping_indent = _rule_mapping_indent(rule_lines)
+    if mapping_indent is None:
+        return []
+
+    keys: list[str] = []
+    first_line = rule_lines[0]
+    if _is_sequence_item(first_line, _leading_space_count(first_line)):
+        key, _ = _parse_rule_entry_header(first_line)
+        if key is not None:
+            keys.append(key)
+    for line in rule_lines[1:] if keys else rule_lines:
+        if _leading_space_count(line) != mapping_indent:
+            continue
+        parsed = _parse_mapping_header(line)
+        if parsed is not None:
+            keys.append(parsed[0])
+    duplicates = {key for key in keys if keys.count(key) > 1}
+
+    # Labels and annotations are nested mappings. Detect duplicate keys within
+    # each mapping independently; the same key in two separate mappings is
+    # valid YAML and must not be conflated.
+    for index, line in enumerate(rule_lines):
+        if _leading_space_count(line) != mapping_indent:
+            continue
+        parsed = _parse_mapping_header(line)
+        if parsed is None or parsed[1]:
+            continue
+        child_indent = next(
+            (
+                _leading_space_count(candidate)
+                for candidate in rule_lines[index + 1 :]
+                if _meaningful_yaml_line(candidate)
+                and _leading_space_count(candidate) > mapping_indent
+            ),
+            None,
+        )
+        if child_indent is None:
+            continue
+        nested_keys: list[str] = []
+        for candidate in rule_lines[index + 1 :]:
+            if not _meaningful_yaml_line(candidate):
+                continue
+            candidate_indent = _leading_space_count(candidate)
+            if candidate_indent <= mapping_indent:
+                break
+            if candidate_indent != child_indent:
+                continue
+            nested = _parse_mapping_header(candidate)
+            if nested is not None:
+                nested_keys.append(nested[0])
+        duplicates.update(
+            f"{parsed[0]}.{key}"
+            for key in set(nested_keys)
+            if nested_keys.count(key) > 1
+        )
+
+    return sorted(duplicates)
+
+
+def _duplicate_group_rules_keys(lines: list[str]) -> list[_RuleEntry]:
+    """Reject duplicate ``rules`` keys within one Prometheus group mapping."""
+    findings: list[_RuleEntry] = []
+    for index, line in enumerate(lines):
+        parsed = _parse_mapping_header(line)
+        if not parsed or parsed[0] != "groups" or parsed[1]:
+            continue
+        groups_indent = _leading_space_count(line)
+        first_item = next(
+            (
+                candidate
+                for candidate in range(index + 1, len(lines))
+                if _meaningful_yaml_line(lines[candidate])
+            ),
+            None,
+        )
+        if first_item is None or _leading_space_count(lines[first_item]) <= groups_indent:
+            continue
+        if not _is_sequence_item(lines[first_item]):
+            continue
+        sequence_indent = _leading_space_count(lines[first_item])
+        starts = [
+            candidate
+            for candidate in range(first_item, len(lines))
+            if _meaningful_yaml_line(lines[candidate])
+            and _leading_space_count(lines[candidate]) == sequence_indent
+            and _is_sequence_item(lines[candidate])
+        ]
+        for start, end in zip(starts, [*starts[1:], len(lines)], strict=True):
+            group_lines = lines[start:end]
+            direct_indents = [
+                _leading_space_count(candidate)
+                for candidate in group_lines[1:]
+                if _meaningful_yaml_line(candidate)
+                and _parse_mapping_header(candidate) is not None
+                and _leading_space_count(candidate) > sequence_indent
+            ]
+            if not direct_indents:
+                continue
+            mapping_indent = min(direct_indents)
+            rules_lines = [
+                candidate
+                for candidate in group_lines[1:]
+                if _leading_space_count(candidate) == mapping_indent
+                and _parse_mapping_header(candidate) is not None
+                and _parse_mapping_header(candidate)[0] == "rules"
+            ]
+            if len(rules_lines) > 1:
+                findings.append(
+                    _RuleEntry(
+                        lines=rules_lines,
+                        key=None,
+                        name=None,
+                        issue="duplicate group mapping keys are unsupported: rules",
+                    )
+                )
+    return findings
+
+
 def _parse_rule_scalar(rule_lines: list[str], field: str) -> str | None:
-    for line in rule_lines[1:]:
+    if not rule_lines:
+        return None
+
+    mapping_indent = _rule_mapping_indent(rule_lines)
+    if mapping_indent is None:
+        return None
+
+    for line in rule_lines:
+        if _leading_space_count(line) != mapping_indent:
+            continue
         parsed = _parse_mapping_header(line)
         if not parsed or parsed[0] != field:
             continue
         value, unsupported = _parse_rule_name(parsed[1])
         return None if unsupported else value
     return None
+
+
+def _rule_scalar_is_present(rule_lines: list[str], field: str) -> bool:
+    if not rule_lines:
+        return False
+
+    mapping_indent = _rule_mapping_indent(rule_lines)
+    if mapping_indent is None:
+        return False
+
+    return any(
+        _leading_space_count(line) == mapping_indent
+        and (parsed := _parse_mapping_header(line)) is not None
+        and parsed[0] == field
+        for line in rule_lines
+    )
 
 
 def _entry_path_blackbox_findings(
@@ -791,9 +1157,7 @@ def _entry_path_blackbox_findings(
         return []
 
     expected_expr = _compact_promql(
-        "max_over_time("
-        f'entrypath_blackbox_probe_success{{path="{contract["path"]}"}}[2m]'
-        ") == 0"
+        f'entrypath_blackbox_probe_success{{path="{contract["path"]}"}} == 0'
     )
     findings: list[Finding] = []
     expected_labels = {
@@ -811,7 +1175,10 @@ def _entry_path_blackbox_findings(
             )
     if hold != "2m":
         findings.append(
-            Finding(path=path, message=f"{alert_name} must use for=2m")
+            Finding(
+                path=path,
+                message=f"{alert_name} must use a rule-level for: 2m hold",
+            )
         )
     if _compact_promql(expr) != expected_expr:
         findings.append(
@@ -819,7 +1186,7 @@ def _entry_path_blackbox_findings(
                 path=path,
                 message=(
                     f'{alert_name} must use only the exact path="{contract["path"]}" '
-                    "entrypath_blackbox_probe_success selector over 2m and compare it to zero"
+                    "entrypath_blackbox_probe_success selector and compare it to zero"
                 ),
             )
         )
@@ -870,12 +1237,18 @@ def _playerflow_canary_service_findings(
 
 
 def _parse_expr(rule_lines: list[str]) -> str | None:
+    expr_mapping_indent = _rule_mapping_indent(rule_lines)
+    if expr_mapping_indent is None:
+        return None
     for index, line in enumerate(rule_lines):
         match = re.match(r"^(?P<indent>\s*)expr:\s*(?P<rest>.*)$", line)
         if not match:
             continue
         expr_indent = len(match.group("indent"))
-        scalar = match.group("rest").strip()
+        if expr_indent != expr_mapping_indent:
+            continue
+        raw_scalar = match.group("rest").strip()
+        scalar = _strip_yaml_comment(raw_scalar).strip()
         is_block_scalar = (
             re.fullmatch(
                 r"[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?(?:\s+#.*)?",
@@ -883,6 +1256,17 @@ def _parse_expr(rule_lines: list[str]) -> str | None:
             )
             is not None
         )
+        block_scalar_indent_indicator = None
+        if is_block_scalar:
+            block_scalar_header = _strip_yaml_comment(scalar).strip()
+            indicator = re.search(r"[1-9]", block_scalar_header)
+            if indicator is not None:
+                block_scalar_indent_indicator = int(indicator.group(0))
+        elif scalar.startswith(("|", ">")):
+            return ""
+        normalized_scalar, unsupported_scalar = _parse_rule_name(scalar)
+        if not is_block_scalar and not unsupported_scalar and normalized_scalar is not None:
+            scalar = normalized_scalar
         expr_lines = [] if is_block_scalar or not scalar else [scalar]
         for next_line in rule_lines[index + 1 :]:
             next_indent = len(next_line) - len(next_line.lstrip(" "))
@@ -892,6 +1276,17 @@ def _parse_expr(rule_lines: list[str]) -> str | None:
             if next_indent <= expr_indent:
                 break
             expr_lines.append(next_line.rstrip())
+        if block_scalar_indent_indicator is not None:
+            first_content_line = next(
+                (line for line in rule_lines[index + 1 :] if line.strip()),
+                None,
+            )
+            if (
+                first_content_line is not None
+                and _leading_space_count(first_content_line)
+                < expr_indent + block_scalar_indent_indicator
+            ):
+                return ""
         expression = "\n".join(expr_lines).strip()
         if not is_block_scalar:
             first_value_line = next(
@@ -903,6 +1298,7 @@ def _parse_expr(rule_lines: list[str]) -> str | None:
                 first_value_line,
                 re.IGNORECASE,
             )
+            malformed_block_scalar = first_value_line.startswith(("|", ">"))
             unsupported_indirection = first_value_line.startswith(("#", "!", "&", "*"))
             collection_node = first_value_line.startswith(("{", "[")) or (
                 not scalar
@@ -913,40 +1309,204 @@ def _parse_expr(rule_lines: list[str]) -> str | None:
                     is not None
                 )
             )
-            if empty_scalar or unsupported_indirection or collection_node:
+            if (
+                empty_scalar
+                or malformed_block_scalar
+                or unsupported_indirection
+                or collection_node
+            ):
                 return ""
         return expression
     return None
 
 
+def _mask_promql_non_code(expr: str) -> str:
+    """Mask strings/comments while preserving offsets for lexical checks."""
+    characters = list(expr)
+    quote: str | None = None
+    escaped = False
+    index = 0
+    while index < len(expr):
+        character = expr[index]
+        if quote is not None:
+            characters[index] = " " if character != "\n" else "\n"
+            if quote != "`" and escaped:
+                escaped = False
+            elif quote != "`" and character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+            index += 1
+            continue
+        if character in {'"', "'", "`"}:
+            characters[index] = " "
+            quote = character
+            index += 1
+            continue
+        if character == "#":
+            characters[index] = " "
+            index += 1
+            while index < len(expr) and expr[index] != "\n":
+                characters[index] = " "
+                index += 1
+            continue
+        index += 1
+    return "".join(characters)
+
+
+def _mask_promql_comments(expr: str) -> str:
+    """Mask PromQL comments while preserving quoted matcher values."""
+    characters = list(expr)
+    quote: str | None = None
+    escaped = False
+    index = 0
+    while index < len(expr):
+        character = expr[index]
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+            index += 1
+            continue
+        if character in {'"', "'", "`"}:
+            quote = character
+            index += 1
+            continue
+        if character == "#":
+            characters[index] = " "
+            index += 1
+            while index < len(expr) and expr[index] != "\n":
+                characters[index] = " "
+                index += 1
+            continue
+        index += 1
+    return "".join(characters)
+
+
+def _promql_metric_occurrences(expr: str, metric_name: str) -> list[re.Match[str]]:
+    metric_pattern = re.compile(
+        rf"(?<![A-Za-z0-9_:]){re.escape(metric_name)}(?![A-Za-z0-9_:])"
+    )
+    return list(metric_pattern.finditer(_mask_promql_non_code(expr)))
+
+
+def _promql_selector_after(expr: str, end: int) -> str | None:
+    index = end
+    while index < len(expr):
+        if expr[index].isspace():
+            index += 1
+            continue
+        if expr[index] == "#":
+            newline = expr.find("\n", index + 1)
+            index = len(expr) if newline == -1 else newline + 1
+            continue
+        break
+    if index >= len(expr) or expr[index] != "{":
+        return None
+
+    start = index
+    depth = 0
+    quote: str | None = None
+    escaped = False
+    while index < len(expr):
+        character = expr[index]
+        if quote is not None:
+            if quote != "`" and escaped:
+                escaped = False
+            elif quote != "`" and character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+        elif character in {'"', "'", "`"}:
+            quote = character
+        elif character == "#":
+            newline = expr.find("\n", index + 1)
+            index = len(expr) if newline == -1 else newline
+            continue
+        elif character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if depth == 0:
+                return expr[start : index + 1]
+        index += 1
+    return None
+
+
 def _check_ms_thresholds(expr: str) -> str | None:
-    if "_ms_" not in expr:
+    code_expr = _mask_promql_non_code(expr)
+    if not re.search(r"_ms(?:_|\b)", code_expr):
         return None
-    normalized = re.sub(r"\s+", "", expr)
-    if re.search(r"_ms[^)]*/[^)]*_ms", normalized):
-        return None
-    numeric_comparisons = re.findall(r">\s*([0-9]+(?:\.[0-9]+)?)", expr)
-    if not numeric_comparisons:
-        return None
-    threshold = float(numeric_comparisons[-1])
-    if threshold < 10:
-        return f"expression compares an `_ms` metric against {threshold}; this looks like seconds, but `_ms` metrics are milliseconds"
+
+    # A compound PromQL expression can contain unrelated numeric comparisons.
+    # Keep each logical clause with the metric it constrains so a later
+    # `queue_depth > 0` cannot be mistaken for the threshold of an earlier
+    # `latency_ms > 1000` comparison.
+    clause_starts = [0]
+    clause_ends: list[int] = []
+    for logical_operator in re.finditer(
+        r"\b(?:and|or|unless)\b", code_expr, re.IGNORECASE
+    ):
+        clause_ends.append(logical_operator.start())
+        clause_starts.append(logical_operator.end())
+    clause_ends.append(len(expr))
+
+    for clause_start, clause_end in zip(clause_starts, clause_ends, strict=True):
+        clause = expr[clause_start:clause_end]
+        clause_code = code_expr[clause_start:clause_end]
+        if not re.search(r"_ms(?:_|\b)", clause_code):
+            continue
+        normalized = re.sub(r"\s+", "", clause_code)
+        if re.search(r"_ms[^)]*/[^)]*_ms", normalized):
+            continue
+        # PromQL supports decimal and exponent-form float literals. Match the
+        # complete literal after any scalar comparison so `1e2` is not parsed
+        # as `1`, and cover both directions used by alert expressions.
+        promql_number = r"(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?"
+        numeric_comparisons = re.findall(
+            rf"(?:<=|>=|<|>)\s*({promql_number})(?![A-Za-z0-9_.])",
+            clause_code,
+        )
+        if not numeric_comparisons:
+            continue
+        threshold = float(numeric_comparisons[-1])
+        if threshold < 10:
+            return f"expression compares an `_ms` metric against {threshold}; this looks like seconds, but `_ms` metrics are milliseconds"
     return None
 
 
 def _check_grpc_app_error_scoping(expr: str) -> str | None:
-    if "grpc_app_error" not in expr:
-        return None
-    matcher = re.search(r"grpc_app_error(?:_total)?(\{[^}]*\})", expr)
-    if not matcher:
-        return "expression references grpc_app_error_total without a `{...}` matcher; shared dashboards/snippets must scope by `service`"
-    if "service=" not in matcher.group(1):
+    if not _all_metric_selectors_have_label(expr, "grpc_app_error_total", "service"):
         return "expression references grpc_app_error_total without a `service=...` matcher; shared dashboards/snippets must scope by `service`"
     return None
 
 
+def _all_metric_selectors_have_label(
+    expr: str, metric_name: str, label_name: str
+) -> bool:
+    label_matcher = re.compile(
+        rf'(?:^|,)\s*{re.escape(label_name)}\s*=\s*'
+        r'(?:~\s*)?"(?:\\.|[^"\\])*"\s*(?:,|$)'
+    )
+    occurrences = _promql_metric_occurrences(expr, metric_name)
+    if not occurrences:
+        return True
+    for occurrence in occurrences:
+        selector = _promql_selector_after(expr, occurrence.end())
+        if selector is None or not label_matcher.search(
+            _mask_promql_comments(selector[1:-1])
+        ):
+            return False
+    return True
+
+
 def _check_dotted_metric_tokens(expr: str) -> str | None:
-    for token in re.findall(r"\b[A-Za-z_][A-Za-z0-9_\.]*\b", expr):
+    for token in re.findall(
+        r"\b[A-Za-z_][A-Za-z0-9_\.]*\b", _mask_promql_non_code(expr)
+    ):
         if "." not in token:
             continue
         if re.fullmatch(r"\d+\.\d+", token):
@@ -963,21 +1523,15 @@ def _exact_metric_label_selector_finding(
     label_value: str,
     message: str,
 ) -> Finding | None:
-    selector_matches = list(
-        re.finditer(
-            rf"(?<![A-Za-z0-9_:]){re.escape(metric_name)}"
-            r"(?P<selector>\{[^{}]*\})?(?![A-Za-z0-9_:{])",
-            expr,
-        )
-    )
     exact_matcher = re.compile(
         rf'(?:\{{|,)\s*{re.escape(label_name)}\s*=\s*'
         rf'"{re.escape(label_value)}"\s*(?:,|\}})'
     )
-    if selector_matches and all(
-        (selector := match.group("selector")) is not None
-        and exact_matcher.search(selector)
-        for match in selector_matches
+    occurrences = _promql_metric_occurrences(expr, metric_name)
+    if occurrences and all(
+        (selector := _promql_selector_after(expr, occurrence.end())) is not None
+        and exact_matcher.search(_mask_promql_comments(selector))
+        for occurrence in occurrences
     ):
         return None
     return Finding(path=path, message=message)
@@ -1048,7 +1602,9 @@ def _command_scope_query_findings(path: Path, expr: str) -> list[Finding]:
                 ),
             )
         )
-    if not any({"scope", "command"}.issubset(grouping) for grouping in groupings):
+    if not groupings or any(
+        not {"scope", "command"}.issubset(grouping) for grouping in groupings
+    ):
         findings.append(
             Finding(
                 path=path,
@@ -1059,6 +1615,27 @@ def _command_scope_query_findings(path: Path, expr: str) -> list[Finding]:
             )
         )
     return findings
+
+
+def _mask_kibana_query_strings(query: str) -> str:
+    """Mask quoted KQL values while preserving operators outside strings."""
+    characters = list(query)
+    quote: str | None = None
+    escaped = False
+    for index, character in enumerate(query):
+        if quote is not None:
+            characters[index] = "\n" if character == "\n" else " "
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+            continue
+        if character in {'"', "'"}:
+            characters[index] = " "
+            quote = character
+    return "".join(characters)
 
 
 def _validate_alert_snippet(path: Path) -> list[Finding]:
@@ -1166,9 +1743,35 @@ def _validate_grafana_dashboards(grafana_dir: Path) -> list[Finding]:
             findings.append(Finding(path=json_path, message=f"invalid JSON: {exc}"))
             continue
 
+        if not isinstance(dashboard, dict):
+            findings.append(
+                Finding(path=json_path, message="Grafana dashboard root must be a JSON object")
+            )
+            continue
         panels = dashboard.get("panels", [])
+        if not isinstance(panels, list):
+            findings.append(
+                Finding(path=json_path, message="Grafana dashboard panels must be a JSON array")
+            )
+            continue
         for panel in panels:
-            for target in panel.get("targets", []):
+            if not isinstance(panel, dict):
+                findings.append(
+                    Finding(path=json_path, message="Grafana dashboard panels must contain JSON objects")
+                )
+                continue
+            targets = panel.get("targets", [])
+            if not isinstance(targets, list):
+                findings.append(
+                    Finding(path=json_path, message="Grafana dashboard panel targets must be a JSON array")
+                )
+                continue
+            for target in targets:
+                if not isinstance(target, dict):
+                    findings.append(
+                        Finding(path=json_path, message="Grafana dashboard targets must contain JSON objects")
+                    )
+                    continue
                 expr = target.get("expr")
                 if not expr or not isinstance(expr, str):
                     continue
@@ -1176,14 +1779,18 @@ def _validate_grafana_dashboards(grafana_dir: Path) -> list[Finding]:
                 if grpc_scope_issue:
                     findings.append(Finding(path=json_path, message=grpc_scope_issue))
 
-                if "redis_coordination_used_memory_bytes" in expr and "role=" not in expr:
+                if not _all_metric_selectors_have_label(
+                    expr, "redis_coordination_used_memory_bytes", "role"
+                ):
                     findings.append(
                         Finding(
                             path=json_path,
                             message="expression references redis_coordination_used_memory_bytes without a role matcher; shared dashboards must scope coordination role explicitly",
                         )
                     )
-                if "redis_coordination_keys_total" in expr and "role=" not in expr:
+                if not _all_metric_selectors_have_label(
+                    expr, "redis_coordination_keys_total", "role"
+                ):
                     findings.append(
                         Finding(
                             path=json_path,
@@ -1203,6 +1810,8 @@ def _validate_player_experience_dashboard(path: Path) -> list[Finding]:
         return []
 
     findings: list[Finding] = []
+    if not isinstance(dashboard, dict):
+        return [Finding(path=path, message="Grafana dashboard root must be a JSON object")]
     description = dashboard.get("description")
     if (
         not isinstance(description, str)
@@ -1218,8 +1827,24 @@ def _validate_player_experience_dashboard(path: Path) -> list[Finding]:
                 ),
             )
         )
-    for panel in dashboard.get("panels", []):
+    panels = dashboard.get("panels", [])
+    if not isinstance(panels, list):
+        return findings + [
+            Finding(path=path, message="Grafana dashboard panels must be a JSON array")
+        ]
+    for panel in panels:
+        if not isinstance(panel, dict):
+            findings.append(
+                Finding(path=path, message="Grafana dashboard panels must contain JSON objects")
+            )
+            continue
         title = panel.get("title") if isinstance(panel, dict) else None
+        targets = panel.get("targets", [])
+        if not isinstance(targets, list):
+            findings.append(
+                Finding(path=path, message="Grafana dashboard panel targets must be a JSON array")
+            )
+            continue
         if (
             isinstance(title, str)
             and re.search(r"\bslo\b", title, re.IGNORECASE)
@@ -1239,10 +1864,10 @@ def _validate_player_experience_dashboard(path: Path) -> list[Finding]:
             and re.search(r"\bcommand\s+latency\b", title, re.IGNORECASE)
             and re.search(r"\bregion\b", title, re.IGNORECASE)
             and isinstance(panel, dict)
-            and any(
-                isinstance(target.get("expr"), str)
-                and "command_end_to_end_latency_ms_bucket" in target["expr"]
-                for target in panel.get("targets", [])
+                and any(
+                    isinstance(target.get("expr"), str)
+                    and "command_end_to_end_latency_ms_bucket" in target["expr"]
+                for target in targets
                 if isinstance(target, dict)
             )
         ):
@@ -1261,17 +1886,28 @@ def _validate_player_experience_dashboard(path: Path) -> list[Finding]:
             and re.search(r"\bby\s+scope\b", title, re.IGNORECASE)
             and isinstance(panel, dict)
         ):
-            for target in panel.get("targets", []):
+            for target in targets:
+                if not isinstance(target, dict):
+                    findings.append(
+                        Finding(path=path, message="Grafana dashboard targets must contain JSON objects")
+                    )
+                    continue
                 if isinstance(expr := target.get("expr"), str):
                     findings.extend(_command_scope_query_findings(path, expr))
 
-    chat_expressions = [
-        expr
-        for panel in dashboard.get("panels", [])
-        for target in panel.get("targets", [])
-        if isinstance((expr := target.get("expr")), str)
-        and "chat_delivery_latency_ms_bucket" in expr
-    ]
+    chat_expressions: list[str] = []
+    for panel in panels:
+        if not isinstance(panel, dict):
+            continue
+        targets = panel.get("targets", [])
+        if not isinstance(targets, list):
+            continue
+        for target in targets:
+            if not isinstance(target, dict):
+                continue
+            expr = target.get("expr")
+            if isinstance(expr, str) and "chat_delivery_latency_ms_bucket" in expr:
+                chat_expressions.append(expr)
     if not chat_expressions:
         findings.append(
             Finding(
@@ -1302,15 +1938,36 @@ def _validate_player_experience_drilldown(path: Path) -> list[Finding]:
     except json.JSONDecodeError:
         return []
 
-    chat_expressions = [
-        expr
-        for panel in dashboard.get("panels", [])
-        for target in panel.get("targets", [])
-        if isinstance((expr := target.get("expr")), str)
-        and "chat_delivery_latency_ms_bucket" in expr
-    ]
+    if not isinstance(dashboard, dict):
+        return [Finding(path=path, message="Grafana dashboard root must be a JSON object")]
+    panels = dashboard.get("panels", [])
+    if not isinstance(panels, list):
+        return [Finding(path=path, message="Grafana dashboard panels must be a JSON array")]
+    findings: list[Finding] = []
+    chat_expressions: list[str] = []
+    for panel in panels:
+        if not isinstance(panel, dict):
+            findings.append(
+                Finding(path=path, message="Grafana dashboard panels must contain JSON objects")
+            )
+            continue
+        targets = panel.get("targets", [])
+        if not isinstance(targets, list):
+            findings.append(
+                Finding(path=path, message="Grafana dashboard panel targets must be a JSON array")
+            )
+            continue
+        for target in targets:
+            if not isinstance(target, dict):
+                findings.append(
+                    Finding(path=path, message="Grafana dashboard targets must contain JSON objects")
+                )
+                continue
+            expr = target.get("expr")
+            if isinstance(expr, str) and "chat_delivery_latency_ms_bucket" in expr:
+                chat_expressions.append(expr)
     if not chat_expressions:
-        return [
+        findings.append(
             Finding(
                 path=path,
                 message=(
@@ -1318,9 +1975,9 @@ def _validate_player_experience_drilldown(path: Path) -> list[Finding]:
                     "latency panel"
                 ),
             )
-        ]
+        )
+        return findings
 
-    findings: list[Finding] = []
     for expr in chat_expressions:
         chat_selector_issue = _recipient_dispatch_selector_finding(
             path,
@@ -1353,7 +2010,40 @@ def _validate_kibana_saved_objects(kibana_dir: Path) -> list[Finding]:
             continue
 
         serialized = json.dumps(payload)
-        missing = sorted(column for column in expected if column not in serialized)
+        objects = payload if isinstance(payload, list) else [payload]
+        candidate_pairs: list[tuple[dict[str, object], dict[str, object]]] = []
+        invalid_object_shape = False
+        for saved_object in objects:
+            if not isinstance(saved_object, dict):
+                invalid_object_shape = True
+                continue
+            if saved_object.get("type") == "index-pattern":
+                continue
+            if saved_object.get("type") == "dashboard":
+                saved_search = saved_object.get("savedSearch")
+                if isinstance(saved_search, dict):
+                    candidate_pairs.append((saved_search, saved_object))
+                else:
+                    candidate_pairs.append((saved_object, saved_object))
+                continue
+            candidate_pairs.append((saved_object, saved_object))
+
+        column_lists: list[object | None] = []
+        for candidate, _ in candidate_pairs:
+            attributes = candidate.get("attributes")
+            column_lists.append(
+                attributes.get("columns")
+                if isinstance(attributes, dict)
+                else None
+            )
+        if invalid_object_shape or not column_lists:
+            column_lists.append(None)
+        missing = sorted(
+            column
+            for columns in column_lists
+            for column in expected
+            if not isinstance(columns, list) or column not in columns
+        )
         if missing:
             findings.append(
                 Finding(
@@ -1362,6 +2052,28 @@ def _validate_kibana_saved_objects(kibana_dir: Path) -> list[Finding]:
                 )
             )
         if json_path.name == "player-incident-drilldown.json":
+            player_sources = [
+                (candidate, owner)
+                for candidate, owner in candidate_pairs
+                if isinstance(candidate.get("attributes"), dict)
+                and isinstance(
+                    candidate["attributes"].get("kibanaSavedObjectMeta"), dict
+                )
+                and "searchSourceJSON"
+                in candidate["attributes"]["kibanaSavedObjectMeta"]
+            ]
+            if len(player_sources) != 1:
+                findings.append(
+                    Finding(
+                        path=json_path,
+                        message=(
+                            "player incident Kibana saved object must contain exactly "
+                            "one relevant search object"
+                        ),
+                    )
+                )
+                continue
+            player_payload, references_payload = player_sources[0]
             sentinel = "__REQUIRED_ENVIRONMENT__"
             if sentinel not in serialized:
                 findings.append(
@@ -1374,7 +2086,7 @@ def _validate_kibana_saved_objects(kibana_dir: Path) -> list[Finding]:
                     )
                 )
             try:
-                search_source = payload["attributes"]["kibanaSavedObjectMeta"]["searchSourceJSON"]
+                search_source = player_payload["attributes"]["kibanaSavedObjectMeta"]["searchSourceJSON"]
                 search_source_payload = json.loads(search_source)
                 query = search_source_payload["query"]["query"]
                 index_ref_name = search_source_payload.get("indexRefName")
@@ -1438,7 +2150,9 @@ def _validate_kibana_saved_objects(kibana_dir: Path) -> list[Finding]:
                         ),
                     )
                 )
-            if re.search(r"\bor\b", query, re.IGNORECASE):
+            if re.search(
+                r"\bor\b", _mask_kibana_query_strings(query), re.IGNORECASE
+            ):
                 findings.append(
                     Finding(
                         path=json_path,
@@ -1449,7 +2163,7 @@ def _validate_kibana_saved_objects(kibana_dir: Path) -> list[Finding]:
                     )
                 )
 
-            references = payload.get("references")
+            references = references_payload.get("references")
             index_references = (
                 references
                 if isinstance(references, list)

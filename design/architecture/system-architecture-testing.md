@@ -135,6 +135,7 @@ This advertised-canary form retains the complete local canary mirror family and 
     "evidenceFreshnessBudgetSeconds": 7200,
     "evidenceExpiresAt": "2026-03-19T12:55:00Z",
     "evidenceRef": "query-proof://staging/log-smoke-11111111-2222-4333-8444-555555555555",
+    "verifiedAt": "2026-03-19T10:55:00Z",
     "verifiedFields": ["recordId", "service", "traceId", "tenantId", "gameInstanceId", "regionId", "characterId"]
   }
 }

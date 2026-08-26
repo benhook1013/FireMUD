@@ -3774,6 +3774,26 @@ smoke_evidence_path.write_text(
             "preflightEvidenceRef": "ci://preflight-contract",
             "executionMode": "live",
             "externalAuthorityProvenance": "retained-external",
+            "logPipelineQueryability": {
+                "selectedProfile": "staging",
+                "capability": "indexed-log-observability",
+                "backend": "elasticsearch",
+                "storageTarget": "firemud-logs-*",
+                "recordId": "preflight-contract-log-smoke-11111111-2222-4333-8444-555555555555",
+                "service": "game-session-service",
+                "traceId": "preflight-contract-trace-9c8d7e6f5a4b3210",
+                "queryPath": "kibana-saved-search:player-incident-drilldown",
+                "configuredDelayTargetSeconds": 120,
+                "emittedAt": (past_time - module.dt.timedelta(seconds=120)).isoformat().replace("+00:00", "Z"),
+                "retrievedAt": (past_time - module.dt.timedelta(seconds=60)).isoformat().replace("+00:00", "Z"),
+                "observedDelaySeconds": 60,
+                "result": "passed",
+                "evidenceObservedAt": past_timestamp,
+                "evidenceFreshnessBudgetSeconds": 7200,
+                "evidenceExpiresAt": (past_time + module.dt.timedelta(hours=2)).isoformat().replace("+00:00", "Z"),
+                "evidenceRef": "query-proof://preflight-contract/log-smoke-11111111-2222-4333-8444-555555555555",
+                "verifiedFields": ["recordId", "service", "traceId"],
+            },
             "capabilities": {
                 "prometheusMirrors": "published",
                 "playerFlowCanary": "advertised",
@@ -3892,6 +3912,24 @@ finally:
     module.subprocess.run = original_subprocess_run
 if unavailable_status != "fail" or "could not run: validator executable missing" not in unavailable_message:
     raise SystemExit(f"smoke evidence validator launch failure did not fail closed: {unavailable_message}")
+
+missing_queryability_evidence = json.loads(smoke_evidence_path.read_text(encoding="utf-8"))
+missing_queryability_evidence.pop("logPipelineQueryability", None)
+original_smoke_evidence_bytes = smoke_evidence_path.read_bytes()
+smoke_evidence_path.write_text(json.dumps(missing_queryability_evidence), encoding="utf-8")
+try:
+    missing_queryability_status, missing_queryability_message = module.validate_retained_smoke_evidence(
+        tmp,
+        [smoke_evidence_ref],
+        "Contract smokeEvidence",
+    )
+finally:
+    smoke_evidence_path.write_bytes(original_smoke_evidence_bytes)
+if missing_queryability_status != "fail" or "logPipelineQueryability is required" not in missing_queryability_message:
+    raise SystemExit(
+        "missing queryability posture evidence did not fail closed: "
+        + missing_queryability_message
+    )
 
 recovery_dir = tmp / "design/operations/deployments/production/recovery"
 recovery_dir.mkdir(parents=True)
@@ -6963,6 +7001,7 @@ independent_omitted_entry = {
     "ref": smoke_evidence_ref,
     "contentDigest": "sha256:" + hashlib.sha256(promotion_smoke_evidence_path.read_bytes()).hexdigest(),
 }
+independent_omitted_smoke_bytes = promotion_smoke_evidence_path.read_bytes()
 promotion_attestation_path.write_text(
     json.dumps({**promotion_attestation_data, "smokeEvidence": [independent_omitted_entry]}),
     encoding="utf-8",
@@ -6986,6 +7025,53 @@ if (
         + independent_omitted_message
     )
 
+queryability_omitted_smoke = {
+    **valid_smoke_evidence,
+    "logPipelineQueryability": {
+        "selectedProfile": "staging",
+        "capability": "log-queryability-omitted",
+        "result": "not_applicable",
+        "omissionReason": "contract test omits indexed queryability",
+        "evidenceObservedAt": valid_smoke_evidence["verifiedAt"],
+        "evidenceFreshnessBudgetSeconds": 7200,
+        "evidenceExpiresAt": (
+            module.dt.datetime.fromisoformat(
+                valid_smoke_evidence["verifiedAt"].replace("Z", "+00:00")
+            )
+            + module.dt.timedelta(hours=2)
+        ).isoformat().replace("+00:00", "Z"),
+        "evidenceRef": "query-proof://staging/queryability-omitted",
+    },
+}
+promotion_smoke_evidence_path.write_text(json.dumps(queryability_omitted_smoke), encoding="utf-8")
+queryability_omitted_entry = {
+    "ref": smoke_evidence_ref,
+    "contentDigest": "sha256:" + hashlib.sha256(promotion_smoke_evidence_path.read_bytes()).hexdigest(),
+}
+promotion_attestation_path.write_text(
+    json.dumps({**promotion_attestation_data, "smokeEvidence": [queryability_omitted_entry]}),
+    encoding="utf-8",
+)
+staging_record_path.write_text(
+    json.dumps({**staging_record, "smokeEvidence": [queryability_omitted_entry]}),
+    encoding="utf-8",
+)
+queryability_omitted_status, _, queryability_omitted_message, _, _ = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if (
+    queryability_omitted_status != "fail"
+    or "requires a passing non-omitted logPipelineQueryability result" not in queryability_omitted_message
+):
+    raise SystemExit(
+        "omitted queryability promotion smoke evidence was accepted: "
+        + queryability_omitted_message
+    )
+
+promotion_smoke_evidence_path.write_bytes(independent_omitted_smoke_bytes)
 recovery_independent_omitted_path = promotion_recovery_dir / "independent-omitted-baseline.json"
 recovery_independent_omitted = {**valid_baseline, "smokeEvidence": [independent_omitted_entry]}
 recovery_independent_omitted_path.write_text(json.dumps(recovery_independent_omitted), encoding="utf-8")

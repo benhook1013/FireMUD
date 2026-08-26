@@ -101,6 +101,11 @@ import sys
 import tempfile
 from pathlib import Path
 
+try:
+    import yaml
+except ModuleNotFoundError:
+    yaml = None
+
 
 root = Path(sys.argv[1])
 validator_path = root / "dev-tools/observability/validate-observability-contract.py"
@@ -211,8 +216,8 @@ for profile_alert in (
             f"published profile overlay is missing {profile_alert}"
         )
 for expected_expression in (
-    'expr: max_over_time(entrypath_blackbox_probe_success{path="websocket"}[2m]) == 0',
-    'expr: max_over_time(entrypath_blackbox_probe_success{path="telnet"}[2m]) == 0',
+    'expr: entrypath_blackbox_probe_success{path="websocket"} == 0',
+    'expr: entrypath_blackbox_probe_success{path="telnet"} == 0',
 ):
     if expected_expression not in required_rules_text:
         raise AssertionError(
@@ -288,6 +293,27 @@ def require_message(findings, expected):
         raise AssertionError(f"expected {expected!r}, got {messages!r}")
 
 
+def require_pyyaml_rejection(text, description):
+    if yaml is None:
+        return
+    try:
+        yaml.safe_load(text)
+    except yaml.YAMLError:
+        return
+    raise AssertionError(f"PyYAML accepted malformed YAML mutation: {description}")
+
+
+def require_pyyaml_acceptance(text, description):
+    if yaml is None:
+        return
+    try:
+        yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise AssertionError(
+            f"PyYAML rejected valid YAML control {description}: {exc}"
+        ) from exc
+
+
 kibana_path = root / "design/observability/kibana/player-incident-drilldown.json"
 kibana_payload = json.loads(kibana_path.read_text(encoding="utf-8"))
 baseline_kibana_findings = validator._validate_kibana_saved_objects(kibana_path.parent)
@@ -315,6 +341,76 @@ def kibana_findings(mutated_kibana):
         mutated_path = Path(kibana_temp_dir) / kibana_path.name
         mutated_path.write_text(json.dumps(mutated_kibana), encoding="utf-8")
         return validator._validate_kibana_saved_objects(Path(kibana_temp_dir))
+
+
+missing_required_column = copy.deepcopy(kibana_payload)
+missing_required_column["attributes"]["columns"].remove("traceId")
+require_message(
+    kibana_findings(missing_required_column),
+    "Kibana saved object is missing required structured log fields for runbooks: traceId",
+)
+
+wrong_column_shape = copy.deepcopy(kibana_payload)
+wrong_column_shape["attributes"]["columns"] = [
+    "environment",
+    "service",
+    "tenantId",
+    "characterId",
+    "traceIdExtra",
+    "correlationId",
+    "message",
+]
+require_message(
+    kibana_findings(wrong_column_shape),
+    "Kibana saved object is missing required structured log fields for runbooks: traceId",
+)
+wrong_column_shape["attributes"]["columns"] = (
+    "environment service tenantId characterId traceId correlationId message"
+)
+require_message(
+    kibana_findings(wrong_column_shape),
+    "Kibana saved object is missing required structured log fields for runbooks: "
+    "characterId, correlationId, environment, message, service, tenantId, traceId",
+)
+
+list_kibana_findings = kibana_findings([kibana_payload])
+if list_kibana_findings:
+    raise AssertionError(
+        "list-shaped player incident saved-object payload was rejected: "
+        f"{list_kibana_findings!r}"
+    )
+mixed_kibana_findings = kibana_findings(
+    [
+        {"type": "index-pattern", "attributes": {"title": "firemud-logs-*"}},
+        kibana_payload,
+    ]
+)
+if mixed_kibana_findings:
+    raise AssertionError(
+        "mixed Kibana export with an index-pattern was rejected: "
+        f"{mixed_kibana_findings!r}"
+    )
+
+log_volume_path = root / "design/observability/kibana/log-volume.json"
+log_volume_payload = json.loads(log_volume_path.read_text(encoding="utf-8"))
+
+
+def log_volume_findings(payload):
+    with tempfile.TemporaryDirectory() as kibana_temp_dir:
+        mutated_path = Path(kibana_temp_dir) / log_volume_path.name
+        mutated_path.write_text(json.dumps(payload), encoding="utf-8")
+        return validator._validate_kibana_saved_objects(Path(kibana_temp_dir))
+
+
+if log_volume_findings([log_volume_payload]):
+    raise AssertionError("list-shaped dashboard saved-object payload was rejected")
+if log_volume_findings(
+    [
+        {"type": "index-pattern", "attributes": {"title": "firemud-logs-*"}},
+        log_volume_payload,
+    ]
+):
+    raise AssertionError("mixed dashboard saved-object payload was rejected")
 
 
 mutated_findings = kibana_findings(
@@ -367,6 +463,19 @@ require_message(
     disjunctive_findings,
     "player incident Kibana saved object query must keep environment, service, and traceId clauses conjunctive",
 )
+quoted_operator_findings = kibana_findings(
+    kibana_with_query(
+        'environment:"__REQUIRED_ENVIRONMENT__" and service:* and traceId:* and message:"error or timeout"'
+    )
+)
+if any(
+    finding.message
+    == "player incident Kibana saved object query must keep environment, service, and traceId clauses conjunctive"
+    for finding in quoted_operator_findings
+):
+    raise AssertionError(
+        "Kibana OR inside a quoted query value was treated as a disjunction"
+    )
 
 unrestricted_index = copy.deepcopy(kibana_payload)
 unrestricted_index["references"][0]["id"] = "*"
@@ -538,6 +647,45 @@ for description_replacement in ("calibration", "non-enforcing"):
         dashboard_description_message,
     )
 
+def grafana_findings(payload, filename="dashboard.json"):
+    with tempfile.TemporaryDirectory() as dashboard_temp_dir:
+        dashboard_path = Path(dashboard_temp_dir) / filename
+        dashboard_path.write_text(json.dumps(payload), encoding="utf-8")
+        return validator._validate_grafana_dashboards(Path(dashboard_temp_dir))
+
+
+for malformed_dashboard in (
+    {"panels": None},
+    {"panels": [{"targets": None}]},
+    {"panels": [{"targets": [None]}]},
+    {"panels": [None]},
+    None,
+):
+    malformed_findings = grafana_findings(malformed_dashboard)
+    if not malformed_findings:
+        raise AssertionError(
+            f"malformed Grafana dashboard shape was silently accepted: {malformed_dashboard!r}"
+        )
+
+valid_shape_findings = grafana_findings({"panels": [{"targets": []}]})
+if valid_shape_findings:
+    raise AssertionError(
+        f"valid empty Grafana dashboard shape was rejected: {valid_shape_findings!r}"
+    )
+
+for malformed_dashboard in (
+    {**player_dashboard, "panels": None},
+    {**player_dashboard, "panels": [{"targets": [None]}]},
+):
+    specialized_findings = findings_for(
+        json.dumps(malformed_dashboard),
+        validator._validate_player_experience_dashboard,
+    )
+    if not specialized_findings:
+        raise AssertionError(
+            f"malformed canonical dashboard shape was silently accepted: {malformed_dashboard!r}"
+        )
+
 
 player_drilldown_path = (
     root / "design/observability/grafana/player-experience-drilldown.json"
@@ -580,11 +728,24 @@ for replacement in (
         player_drilldown_message,
     )
 
+for malformed_drilldown in (
+    {"panels": None},
+    {"panels": [{"targets": [None]}]},
+):
+    specialized_findings = findings_for(
+        json.dumps(malformed_drilldown),
+        validator._validate_player_experience_drilldown,
+    )
+    if not specialized_findings:
+        raise AssertionError(
+            f"malformed drilldown dashboard shape was silently accepted: {malformed_drilldown!r}"
+        )
+
 
 def mutate_alert_rule(text, alert_name, old, new):
     rule_match = re.search(
         rf"(?ms)^[ \t]*- alert: {re.escape(alert_name)}\n"
-        rf"(?P<body>.*?)(?=^[ \t]*- alert: |\Z)",
+        rf"(?P<body>.*?)(?=^[ \t]*- |\Z)",
         text,
     )
     if rule_match is None:
@@ -595,6 +756,27 @@ def mutate_alert_rule(text, alert_name, old, new):
             f"{alert_name} test fixture does not contain expected text {old!r}"
         )
     updated_body = body.replace(old, new, 1)
+    return text[: rule_match.start("body")] + updated_body + text[rule_match.end("body") :]
+
+
+def add_alert_scalar(text, alert_name, field, value):
+    rule_match = re.search(
+        rf"(?ms)^[ \t]*- alert: {re.escape(alert_name)}\n"
+        rf"(?P<body>.*?)(?=^[ \t]*- (?:alert|record): |\Z)",
+        text,
+    )
+    if rule_match is None:
+        raise AssertionError(f"{alert_name} rule is missing from test fixture")
+    body = rule_match.group("body")
+    expr_match = re.search(r"(?m)^(?P<indent>[ \t]+)expr:.*\n", body)
+    if expr_match is None:
+        raise AssertionError(f"{alert_name} test fixture has no scalar expr")
+    indent = expr_match.group("indent")
+    updated_body = (
+        body[: expr_match.end()]
+        + f"{indent}{field}: {value}\n"
+        + body[expr_match.end() :]
+    )
     return text[: rule_match.start("body")] + updated_body + text[rule_match.end("body") :]
 
 
@@ -613,6 +795,44 @@ def mutate_recording_rule(text, recording_name, old, new):
         )
     updated_body = body.replace(old, new, 1)
     return text[: rule_match.start("body")] + updated_body + text[rule_match.end("body") :]
+
+
+cross_rule_boundary_fixture = """- alert: BoundaryProbe
+  expr: vector(1)
+- record: BoundaryRecord
+  marker: only-in-the-following-record
+"""
+try:
+    mutate_alert_rule(
+        cross_rule_boundary_fixture,
+        "BoundaryProbe",
+        "marker: only-in-the-following-record",
+        "marker: mutated",
+    )
+except AssertionError:
+    pass
+else:
+    raise AssertionError(
+        "mutate_alert_rule must not mutate text from a following record rule"
+    )
+
+for unsupported_next_entry in ("name", "unknown"):
+    try:
+        mutate_alert_rule(
+            cross_rule_boundary_fixture.replace(
+                "- record: BoundaryRecord",
+                f"- {unsupported_next_entry}: BoundaryRecord",
+            ),
+            "BoundaryProbe",
+            "marker: only-in-the-following-record",
+            "marker: mutated",
+        )
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError(
+            "mutate_alert_rule must fail closed at any following same-level sequence item"
+        )
 
 
 canonical_indexed_log_runbook = (
@@ -918,9 +1138,13 @@ playerflow_snippet_path = root / "design/observability/grafana/player-experience
 valid_playerflow_snippet = playerflow_snippet_path.read_text(encoding="utf-8")
 
 player_dashboard_with_slo_title = copy.deepcopy(player_dashboard)
-player_dashboard_with_slo_title["panels"][0]["title"] = (
-    player_dashboard_with_slo_title["panels"][0]["title"]
-    .replace("Calibration", "SLO")
+dashboard_title = player_dashboard_with_slo_title["panels"][0]["title"]
+if "Calibration" not in dashboard_title:
+    raise AssertionError(
+        "canonical player-experience dashboard title mutation target is missing"
+    )
+player_dashboard_with_slo_title["panels"][0]["title"] = dashboard_title.replace(
+    "Calibration", "SLO", 1
 )
 require_message(
     findings_for(
@@ -980,14 +1204,27 @@ for query_replacement, expected_message in (
     ),
 ):
     mutated_dashboard = copy.deepcopy(player_dashboard)
+    scope_panel_found = False
     for panel in mutated_dashboard["panels"]:
         if panel.get("title") == "Command Latency (p99) by Scope":
-            panel["targets"][0]["expr"] = panel["targets"][0]["expr"].replace(
-                "sum by (scope, le, command)",
-                query_replacement,
-                1,
+            scope_panel_found = True
+            if not panel.get("targets") or not isinstance(panel["targets"][0], dict):
+                raise AssertionError(
+                    "canonical command latency by-scope panel mutation target has no query"
+                )
+            expression = panel["targets"][0].get("expr")
+            if not isinstance(expression, str) or "sum by (scope, le, command)" not in expression:
+                raise AssertionError(
+                    "canonical command latency by-scope query mutation target is missing"
+                )
+            panel["targets"][0]["expr"] = expression.replace(
+                "sum by (scope, le, command)", query_replacement, 1
             )
             break
+    if not scope_panel_found:
+        raise AssertionError(
+            "canonical command latency by-scope panel mutation target is missing"
+        )
     require_message(
         findings_for(
             json.dumps(mutated_dashboard),
@@ -1203,6 +1440,11 @@ for source_text, check in entry_path_sources:
             f"valid entry-path blackbox rules were rejected: {baseline_findings!r}"
         )
     for alert_name, contract in entry_path_contracts.items():
+        expression_message = (
+            f'{alert_name} must use only the exact path="{contract["path"]}" '
+            "entrypath_blackbox_probe_success selector and compare it to zero"
+        )
+        hold_message = f"{alert_name} must use a rule-level for: 2m hold"
         mutations = (
             (
                 "severity: P0",
@@ -1220,24 +1462,559 @@ for source_text, check in entry_path_sources:
                 f'{alert_name} must use labels.service={contract["service"]}',
             ),
             (
-                "for: 2m",
-                "for: 3m",
-                f"{alert_name} must use for=2m",
-            ),
-            (
                 f'entrypath_blackbox_probe_success{{path="{contract["path"]}"}}',
                 f'entrypath_blackbox_probe_success{{path="{contract["other_path"]}"}}',
-                f'{alert_name} must use only the exact path="{contract["path"]}" entrypath_blackbox_probe_success selector over 2m and compare it to zero',
+                expression_message,
             ),
             (
                 f'entrypath_blackbox_probe_success{{path="{contract["path"]}"}}',
                 f'entrypath_blackbox_probe_success{{path="{contract["path"]}",profile="independent-required"}}',
-                f'{alert_name} must use only the exact path="{contract["path"]}" entrypath_blackbox_probe_success selector over 2m and compare it to zero',
+                expression_message,
             ),
         )
+
         for old, new, expected_message in mutations:
             mutated = mutate_alert_rule(source_text, alert_name, old, new)
             require_message(findings_for(mutated, check), expected_message)
+
+        canonical_expression = (
+            f'entrypath_blackbox_probe_success{{path="{contract["path"]}"}} == 0'
+        )
+        range_expression = (
+            "max_over_time("
+            f'entrypath_blackbox_probe_success{{path="{contract["path"]}"}}[2m]'
+            ") == 0"
+        )
+        range_selector = mutate_alert_rule(
+            source_text, alert_name, canonical_expression, range_expression
+        )
+        require_message(
+            findings_for(range_selector, check),
+            expression_message,
+        )
+
+        for invalid_hold in ("1m", "0m", "3m", "null", "~", '""', "{}", "[]", '!!str ""', ""):
+            invalid_hold_rule = mutate_alert_rule(
+                source_text,
+                alert_name,
+                "for: 2m",
+                f"for: {invalid_hold}",
+            )
+            require_message(findings_for(invalid_hold_rule, check), hold_message)
+
+nested_for_source = """rules:
+  - alert: WebSocketEntryPathBlackboxUnavailable
+    expr: entrypath_blackbox_probe_success{path="websocket"} == 0
+    for: 2m
+    labels:
+      service: spring-cloud-gateway
+      component: entrypath
+      severity: P0
+      owner: platform
+      runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
+      for: 2m
+"""
+if findings_for(
+    nested_for_source,
+    lambda path: validator._validate_reference_prometheus_rules(
+        path,
+        {"WebSocketEntryPathBlackboxUnavailable"},
+        allow_profile_dependent_alerts=True,
+    ),
+):
+        raise AssertionError(
+            "nested labels.for must not be interpreted as a rule-level hold"
+        )
+
+valid_sequence_rule = nested_for_source
+valid_sequence_findings = findings_for(
+    valid_sequence_rule,
+    lambda path: validator._validate_reference_prometheus_rules(
+        path,
+        {"WebSocketEntryPathBlackboxUnavailable"},
+        allow_profile_dependent_alerts=True,
+    ),
+)
+if valid_sequence_findings:
+    raise AssertionError(
+        f"valid sequence rule was rejected: {valid_sequence_findings!r}"
+    )
+
+minimal_alert_rule = """groups:
+  - name: parser-contract
+    rules:
+      - alert: BackupPipelineNoRecentBackup
+        expr: backup_pipeline_recent_backup_slo_breached > 0
+        labels:
+          service: postgres-backup
+          severity: P1
+          owner: infra
+          runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary
+"""
+if findings_for(
+    minimal_alert_rule,
+    lambda path: validator._validate_reference_prometheus_rules(
+        path, {"BackupPipelineNoRecentBackup"}
+    ),
+):
+    raise AssertionError("valid minimal alert rule was rejected")
+
+nested_expr_rule = minimal_alert_rule.replace(
+    "        expr: backup_pipeline_recent_backup_slo_breached > 0\n",
+    "        annotations:\n          expr: backup_pipeline_recent_backup_slo_breached > 0\n",
+    1,
+)
+require_message(
+    findings_for(
+        nested_expr_rule,
+        lambda path: validator._validate_reference_prometheus_rules(
+            path, {"BackupPipelineNoRecentBackup"}
+        ),
+    ),
+    "BackupPipelineNoRecentBackup is missing expr",
+)
+
+nested_labels_rule = minimal_alert_rule.replace(
+    "        labels:\n          service: postgres-backup\n          severity: P1\n          owner: infra\n          runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary\n",
+    "        annotations:\n          labels:\n            service: postgres-backup\n            severity: P1\n            owner: infra\n            runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary\n",
+    1,
+)
+require_message(
+    findings_for(
+        nested_labels_rule,
+        lambda path: validator._validate_reference_prometheus_rules(
+            path, {"BackupPipelineNoRecentBackup"}
+        ),
+    ),
+    "BackupPipelineNoRecentBackup is missing required labels: owner, runbook, service, severity",
+)
+
+duplicate_labels_rule = minimal_alert_rule.replace(
+    "        labels:\n          service: postgres-backup\n          severity: P1\n          owner: infra\n          runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary\n",
+    "        labels:\n          service: postgres-backup\n          severity: P1\n          owner: infra\n          runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary\n        labels:\n          service: postgres-backup\n          severity: P1\n          owner: bogus\n          runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary\n",
+    1,
+)
+require_message(
+    findings_for(
+        duplicate_labels_rule,
+        lambda path: validator._validate_reference_prometheus_rules(
+            path, {"BackupPipelineNoRecentBackup"}
+        ),
+    ),
+    "duplicate rule mapping keys are unsupported: labels; the dependency-free validator cannot safely inspect this YAML shape",
+)
+
+duplicate_expr_rule = minimal_alert_rule.replace(
+    "        expr: backup_pipeline_recent_backup_slo_breached > 0\n",
+    "        expr: backup_pipeline_recent_backup_slo_breached > 0\n        expr: vector(1)\n",
+    1,
+)
+require_message(
+    findings_for(
+        duplicate_expr_rule,
+        lambda path: validator._validate_reference_prometheus_rules(
+            path, {"BackupPipelineNoRecentBackup"}
+        ),
+    ),
+    "duplicate rule mapping keys are unsupported: expr; the dependency-free validator cannot safely inspect this YAML shape",
+)
+
+duplicate_nested_label_rule = minimal_alert_rule.replace(
+    "          severity: P1\n",
+    "          severity: P3\n          severity: P1\n",
+    1,
+)
+require_message(
+    findings_for(
+        duplicate_nested_label_rule,
+        lambda path: validator._validate_reference_prometheus_rules(
+            path, {"BackupPipelineNoRecentBackup"}
+        ),
+    ),
+    "duplicate rule mapping keys are unsupported: labels.severity; the dependency-free validator cannot safely inspect this YAML shape",
+)
+
+duplicate_group_rules = minimal_alert_rule + """    rules:
+      - alert: DuplicateGroupRule
+        expr: vector(1)
+        labels:
+          service: postgres-backup
+          severity: P1
+          owner: infra
+          runbook: design/architecture/system-architecture-backup-recovery.md#restore-workflow-summary
+"""
+require_message(
+    findings_for(
+        duplicate_group_rules,
+        lambda path: validator._validate_reference_prometheus_rules(
+            path, {"BackupPipelineNoRecentBackup"}
+        ),
+    ),
+    "duplicate group mapping keys are unsupported: rules; the dependency-free validator cannot safely inspect this YAML shape",
+)
+
+same_nested_keys_in_separate_mappings = minimal_alert_rule.replace(
+    "        labels:\n",
+    "        annotations:\n          service: documentation-only\n        labels:\n",
+    1,
+)
+if findings_for(
+    same_nested_keys_in_separate_mappings,
+    lambda path: validator._validate_reference_prometheus_rules(
+        path, {"BackupPipelineNoRecentBackup"}
+    ),
+):
+    raise AssertionError(
+        "same keys in separate nested mappings were incorrectly treated as duplicates"
+    )
+
+for scalar_variant in (
+    '        expr: "backup_pipeline_recent_backup_slo_breached > 0"\n',
+    "        expr: backup_pipeline_recent_backup_slo_breached > 0 # canonical\n",
+):
+    scalar_rule = minimal_alert_rule.replace(
+        "        expr: backup_pipeline_recent_backup_slo_breached > 0\n",
+        scalar_variant,
+        1,
+    )
+    if findings_for(
+        scalar_rule,
+        lambda path: validator._validate_reference_prometheus_rules(
+            path, {"BackupPipelineNoRecentBackup"}
+        ),
+    ):
+        raise AssertionError(f"valid YAML scalar form was rejected: {scalar_variant!r}")
+
+if validator._check_ms_thresholds("tick_cleanup_lag_ms > 5") is None:
+    raise AssertionError("a low threshold on a metric ending in _ms was silently accepted")
+for comparison_operator in ("<", "<=", ">", ">="):
+    low_threshold = f"tick_cleanup_lag_ms {comparison_operator} 5"
+    if validator._check_ms_thresholds(low_threshold) is None:
+        raise AssertionError(
+            "a low threshold with comparison operator "
+            f"{comparison_operator!r} was silently accepted: {low_threshold!r}"
+        )
+    valid_threshold = f"tick_cleanup_lag_ms {comparison_operator} 100"
+    if validator._check_ms_thresholds(valid_threshold):
+        raise AssertionError(
+            "a valid millisecond threshold with comparison operator "
+            f"{comparison_operator!r} was rejected: {valid_threshold!r}"
+        )
+for exponent_expression in (
+    "tick_cleanup_lag_ms > 1e2",
+    "tick_cleanup_lag_ms >= 1.5E+3",
+    "tick_cleanup_lag_ms < 1.0e2",
+    "tick_cleanup_lag_ms <= .5e2",
+):
+    if validator._check_ms_thresholds(exponent_expression):
+        raise AssertionError(
+            "a valid exponent-form millisecond threshold was rejected: "
+            f"{exponent_expression!r}"
+        )
+for low_exponent_expression in (
+    "tick_cleanup_lag_ms > 1e0",
+    "tick_cleanup_lag_ms >= 1.5E+0",
+    "tick_cleanup_lag_ms < .5e1",
+    "tick_cleanup_lag_ms <= 1.0e0",
+):
+    if validator._check_ms_thresholds(low_exponent_expression) is None:
+        raise AssertionError(
+            "a low exponent-form millisecond threshold was silently accepted: "
+            f"{low_exponent_expression!r}"
+        )
+for valid_compound_ms_expr in (
+    "tick_cleanup_lag_ms > 1000 and queue_depth > 0",
+    "queue_depth > 0 and tick_cleanup_lag_ms > 1000",
+    "first_latency_ms > 100 and second_latency_ms > 500",
+    "tick_cleanup_lag_ms > 1000 and queue_depth > 0 and retries > 2",
+):
+    if validator._check_ms_thresholds(valid_compound_ms_expr):
+        raise AssertionError(
+            f"an unrelated numeric comparison was associated with an _ms threshold: {valid_compound_ms_expr!r}"
+        )
+for invalid_compound_ms_expr in (
+    "tick_cleanup_lag_ms > 5 and queue_depth > 0",
+    "queue_depth > 0 and tick_cleanup_lag_ms > 5",
+    "first_latency_ms > 100 and second_latency_ms > 5",
+):
+    if validator._check_ms_thresholds(invalid_compound_ms_expr) is None:
+        raise AssertionError(
+            f"a low threshold on an _ms metric in a compound expression was silently accepted: {invalid_compound_ms_expr!r}"
+        )
+for valid_ms_expr in (
+    "tick_cleanup_lag_ms > 100 # explanatory threshold > 1",
+    'tick_cleanup_lag_ms > 100 + label_replace(foo, "note", "_ms > 1", "a", "b")',
+):
+    if validator._check_ms_thresholds(valid_ms_expr):
+        raise AssertionError(
+            f"comment or string threshold was treated as an _ms comparison: {valid_ms_expr!r}"
+        )
+if validator._check_ms_thresholds('label_replace(foo, "unit", "latency_ms", "a", "b") > 5'):
+    raise AssertionError("metric-like text in a PromQL string was treated as an _ms metric")
+
+if validator._check_grpc_app_error_scoping(
+    'sum(rate(grpc_app_error_total{service="game-session-service"}[5m]))'
+):
+    raise AssertionError("valid gRPC service matcher was rejected")
+for invalid_grpc_expr in (
+    'grpc_app_error_total{foo_service="game-session-service"}',
+    'grpc_app_error_total{service="game-session-service"} + grpc_app_error_total',
+):
+    if validator._check_grpc_app_error_scoping(invalid_grpc_expr) is None:
+        raise AssertionError(
+            f"invalid gRPC service scoping was silently accepted: {invalid_grpc_expr}"
+        )
+for valid_grpc_expr in (
+    '# grpc_app_error_total\ngrpc_app_error_total{service="game-session-service"}',
+    'grpc_app_error_total {service="game-session-service"}',
+    'grpc_app_error_total{ # selector comment\n service="game-session-service"}',
+    'grpc_app_error_total{service="game-session-service"} + label_replace(foo, "x", "grpc_app_error_total", "a", "b")',
+):
+    if validator._check_grpc_app_error_scoping(valid_grpc_expr):
+        raise AssertionError(
+            f"valid PromQL comment, spacing, or string literal was rejected: {valid_grpc_expr!r}"
+        )
+
+exact_selector_message = "exact selector contract"
+for valid_exact_expr in (
+    '# chat_delivery_latency_ms_bucket\nchat_delivery_latency_ms_bucket { completion_boundary="recipient_dispatch" }',
+    'chat_delivery_latency_ms_bucket{ # selector comment\n completion_boundary="recipient_dispatch" }',
+    'label_replace(foo, "metric", "chat_delivery_latency_ms_bucket", "a", "b") + chat_delivery_latency_ms_bucket{completion_boundary="recipient_dispatch"}',
+):
+    if validator._exact_metric_label_selector_finding(
+        Path("selector.json"),
+        valid_exact_expr,
+        "chat_delivery_latency_ms_bucket",
+        "completion_boundary",
+        "recipient_dispatch",
+        exact_selector_message,
+    ):
+        raise AssertionError(
+            f"valid PromQL exact selector form was rejected: {valid_exact_expr!r}"
+        )
+invalid_exact_expr = (
+    'chat_delivery_latency_ms_bucket{completion_boundary="recipient_dispatch"} '
+    '+ chat_delivery_latency_ms_bucket{completion_boundary="server_acceptance"}'
+)
+require_message(
+    [
+        validator._exact_metric_label_selector_finding(
+            Path("selector.json"),
+            invalid_exact_expr,
+            "chat_delivery_latency_ms_bucket",
+            "completion_boundary",
+            "recipient_dispatch",
+            exact_selector_message,
+        )
+    ],
+    exact_selector_message,
+)
+
+valid_redis_dashboard = {
+    "panels": [
+        {
+            "targets": [
+                {"expr": 'redis_coordination_used_memory_bytes{role="coordination"}'}
+            ]
+        }
+    ]
+}
+if grafana_findings(valid_redis_dashboard):
+    raise AssertionError("valid Redis coordination role matcher was rejected")
+for invalid_redis_expr in (
+    'redis_coordination_used_memory_bytes{notrole="coordination"}',
+    'redis_coordination_used_memory_bytes{role="coordination"} + redis_coordination_used_memory_bytes',
+):
+    redis_findings = grafana_findings(
+        {"panels": [{"targets": [{"expr": invalid_redis_expr}]}]}
+    )
+    require_message(
+        redis_findings,
+        "expression references redis_coordination_used_memory_bytes without a role matcher; shared dashboards must scope coordination role explicitly",
+    )
+
+valid_scope_expr = (
+    "sum by (scope, command) "
+    "(rate(command_end_to_end_latency_ms_bucket[5m]))"
+)
+if validator._command_scope_query_findings(Path("scope.json"), valid_scope_expr):
+    raise AssertionError("valid command scope grouping was rejected")
+mixed_scope_expr = (
+    valid_scope_expr
+    + " + sum by (service) "
+    "(rate(command_end_to_end_latency_ms_bucket[5m]))"
+)
+require_message(
+    validator._command_scope_query_findings(Path("scope.json"), mixed_scope_expr),
+    "canonical command latency by-scope panels must group each command latency expression by bounded scope and command",
+)
+
+
+def shift_rule_indentation(text, amount):
+    shifted_lines = []
+    for line in text.splitlines():
+        if line.startswith("    "):
+            line = (" " * amount) + line
+        shifted_lines.append(line)
+    return "\n".join(shifted_lines) + "\n"
+
+
+uniformly_overindented_rule = shift_rule_indentation(valid_sequence_rule, 2)
+require_pyyaml_rejection(
+    uniformly_overindented_rule,
+    "uniformly over-indented inline sequence mapping fields",
+)
+require_message(
+    findings_for(
+        uniformly_overindented_rule,
+        lambda path: validator._validate_reference_prometheus_rules(
+            path,
+            {"WebSocketEntryPathBlackboxUnavailable"},
+            allow_profile_dependent_alerts=True,
+        ),
+    ),
+    "inconsistent rule root-field indentation; the dependency-free validator cannot safely inspect this YAML shape",
+)
+
+valid_noncanonical_sequence_spacing = valid_sequence_rule.replace(
+    "  - alert:", "  -  alert:", 1
+)
+valid_noncanonical_sequence_spacing = shift_rule_indentation(
+    valid_noncanonical_sequence_spacing, 1
+)
+noncanonical_spacing_findings = findings_for(
+    valid_noncanonical_sequence_spacing,
+    lambda path: validator._validate_reference_prometheus_rules(
+        path,
+        {"WebSocketEntryPathBlackboxUnavailable"},
+        allow_profile_dependent_alerts=True,
+    ),
+)
+if noncanonical_spacing_findings:
+    raise AssertionError(
+        "valid sequence mapping with additional post-dash spacing was rejected: "
+        f"{noncanonical_spacing_findings!r}"
+    )
+
+blackbox_expression = 'entrypath_blackbox_probe_success{path="websocket"} == 0'
+for malformed_block_scalar in ("|0", "|9", "|--", ">0", ">9", "|2++", ">++", ">2++"):
+    malformed_block_scalar_rule = valid_sequence_rule.replace(
+        f"    expr: {blackbox_expression}",
+        f"    expr: {malformed_block_scalar}\n      {blackbox_expression}",
+        1,
+    )
+    require_pyyaml_rejection(
+        malformed_block_scalar_rule,
+        f"malformed expression block-scalar header {malformed_block_scalar!r}",
+    )
+    require_message(
+        findings_for(
+            malformed_block_scalar_rule,
+            lambda path: validator._validate_reference_prometheus_rules(
+                path,
+                {"WebSocketEntryPathBlackboxUnavailable"},
+                allow_profile_dependent_alerts=True,
+            ),
+        ),
+        "WebSocketEntryPathBlackboxUnavailable is missing expr",
+    )
+
+valid_block_scalar_rule = valid_sequence_rule.replace(
+    f"    expr: {blackbox_expression}",
+    f"    expr: |-\n      {blackbox_expression}",
+    1,
+)
+require_pyyaml_acceptance(valid_block_scalar_rule, "valid literal expression block scalar")
+valid_block_scalar_findings = findings_for(
+    valid_block_scalar_rule,
+    lambda path: validator._validate_reference_prometheus_rules(
+        path,
+        {"WebSocketEntryPathBlackboxUnavailable"},
+        allow_profile_dependent_alerts=True,
+    ),
+)
+if valid_block_scalar_findings:
+    raise AssertionError(
+        f"valid literal expression block scalar was rejected: {valid_block_scalar_findings!r}"
+    )
+
+for explicit_for in (
+    "null",
+    "~",
+    '""',
+    "{}",
+    "[]",
+    "!!str \"\"",
+    "",
+):
+    explicit_hold = add_alert_scalar(
+        required_rules_text,
+        "WebSocketEntryPathBlackboxUnavailable",
+        "for",
+        explicit_for,
+    )
+    require_message(
+        findings_for(
+            explicit_hold,
+            lambda path: validator._validate_reference_prometheus_rules(
+                path,
+                {"WebSocketEntryPathBlackboxUnavailable"},
+                allow_profile_dependent_alerts=True,
+            ),
+        ),
+        "WebSocketEntryPathBlackboxUnavailable must use a rule-level for: 2m hold",
+    )
+
+root_indentation_mutation = required_rules_text.replace(
+    "        - alert: WebSocketEntryPathBlackboxUnavailable",
+    "          - alert: WebSocketEntryPathBlackboxUnavailable",
+    1,
+)
+require_message(
+    findings_for(
+        root_indentation_mutation,
+        lambda path: validator._validate_reference_prometheus_rules(
+            path,
+            {"WebSocketEntryPathBlackboxUnavailable"},
+            allow_profile_dependent_alerts=True,
+        ),
+    ),
+    "inconsistent or nested rule sequence indentation; the dependency-free validator cannot safely inspect this YAML shape",
+)
+
+field_indentation_mutation = required_rules_text.replace(
+    "          expr: entrypath_blackbox_probe_success{path=\"websocket\"} == 0",
+    "            expr: entrypath_blackbox_probe_success{path=\"websocket\"} == 0",
+    1,
+)
+require_message(
+    findings_for(
+        field_indentation_mutation,
+        lambda path: validator._validate_reference_prometheus_rules(
+            path,
+            {"WebSocketEntryPathBlackboxUnavailable"},
+            allow_profile_dependent_alerts=True,
+        ),
+    ),
+    "inconsistent rule root-field indentation; the dependency-free validator cannot safely inspect this YAML shape",
+)
+
+nested_sequence_mutation = required_rules_text.replace(
+    "          expr: entrypath_blackbox_probe_success{path=\"websocket\"} == 0",
+    "          - alert: HiddenEntryPathRule\n            expr: vector(1)\n          expr: entrypath_blackbox_probe_success{path=\"websocket\"} == 0",
+    1,
+)
+require_message(
+    findings_for(
+        nested_sequence_mutation,
+        lambda path: validator._validate_reference_prometheus_rules(
+            path,
+            {"WebSocketEntryPathBlackboxUnavailable"},
+            allow_profile_dependent_alerts=True,
+        ),
+    ),
+    "inconsistent or nested rule sequence indentation; the dependency-free validator cannot safely inspect this YAML shape",
+)
 
 expected_budget_missing_expr = validator._compact_promql(
     """
@@ -1525,6 +2302,27 @@ if len(standalone_alert_entries) != 1:
 standalone_alert_entry = standalone_alert_entries[0]
 if standalone_alert_entry.key != "alert" or standalone_alert_entry.name != "StandaloneBackupAlert":
     raise AssertionError(f"standalone alert mapping was parsed incorrectly: {standalone_alert_entry!r}")
+if validator._parse_rule_scalar(standalone_alert_entry.lines, "expr") != "backup_pipeline_recent_backup_slo_breached > 0":
+    raise AssertionError("standalone root scalar was not parsed at its mapping indentation")
+
+sequence_nested_scalar = """rules:
+  - alert: NestedScalarProbe
+    expr: vector(1)
+    labels:
+      for: 9m
+"""
+sequence_nested_entries = validator._split_alert_rules(sequence_nested_scalar)
+if len(sequence_nested_entries) != 1:
+    raise AssertionError("sequence nested scalar fixture was not parsed as one alert")
+if validator._parse_rule_scalar(sequence_nested_entries[0].lines, "for") is not None:
+    raise AssertionError("nested labels scalar must not masquerade as a sequence root scalar")
+
+sequence_root_scalar = sequence_nested_scalar.replace(
+    "    labels:\n", "    for: 2m\n    labels:\n", 1
+)
+sequence_root_entries = validator._split_alert_rules(sequence_root_scalar)
+if validator._parse_rule_scalar(sequence_root_entries[0].lines, "for") != "2m":
+    raise AssertionError("sequence root scalar was not parsed at its mapping indentation")
 
 standalone_record = """record: standalone_recording
 expr: backup_artifact_lineage_valid

@@ -31,9 +31,9 @@ Declared but not rendered by this UI:
 
 ```text
 POST /moderation/actions (unavailable/gated)
-POST /feature-flags/toggle (implemented forwarding path, unavailable)
-POST /tick-remediation/pause (implemented forwarding path, unavailable)
-POST /tick-remediation/resume (implemented forwarding path, unavailable)
+POST /feature-flags/toggle (implemented fail-closed ingress stub, unavailable; no forwarding path)
+POST /tick-remediation/pause (implemented fail-closed ingress stub, unavailable; no forwarding path)
+POST /tick-remediation/resume (implemented fail-closed ingress stub, unavailable; no forwarding path)
 POST /admission-pointers (target-only absent)
 POST /admission-pointers/cutover (target-only absent)
 POST /admission-pointers/version-upgrades (target-only absent)
@@ -45,7 +45,7 @@ Mutation inventory:
 
 - Unavailable/gated mutation, not rendered: `POST /moderation/actions` currently hard fails closed with HTTP `503 Service Unavailable` and does not dispatch or persist policy input/audit. Once the receiving-service variant of the Operator Mutation Support Gate exists, it may persist the target policy input/audit; it does not require owner-side redemption, evaluate policy, call an enforcement owner, or mutate `GAMEPLAY_ADMISSION`/`CHAT_SEND` enforcement state. `EvaluateModerationPolicy` is the separate evaluation contract.
 - Target-only absent public operator mutation: `POST /admission-pointers/version-upgrades` has no public HTTP handler or Gateway forwarding; internal preparation remains available behind internal trust boundaries. `GET /admission-pointers/version-upgrades/{tenantId}/{preparationId}` is the live read-only prepared-upgrade proof surface.
-- Gated implemented owner-forwarding paths not presented as usable UI controls: `POST /feature-flags/toggle`, `POST /tick-remediation/pause`, and `POST /tick-remediation/resume` remain unavailable pending the owner-side variant of the Operator Mutation Support Gate.
+- Gated implemented fail-closed ingress stubs not presented as usable UI controls: `POST /feature-flags/toggle`, `POST /tick-remediation/pause`, and `POST /tick-remediation/resume` remain unavailable pending the owner-side variant of the Operator Mutation Support Gate; no Logging & Admin forwarding method is currently callable.
 - Live backend reads not presented by this UI: admission-pointer reads, audit, and prepared-upgrade proof GET.
 - Target-only absent public operator mutations not presented by this UI: admission-pointer open/close CAS and prepared cutover replacing `OPEN(old)` with `OPEN(new)`. Internal preparation/cutover implementation remains behind internal trust boundaries; there is no public HTTP handler, Gateway forwarding, or current UI control, and no separate retarget operation.
 - Target-only or unavailable capabilities not presented by this UI: session-lifecycle controls, quota overrides, future named typed owner recovery actions, and versioned moderation propagation.

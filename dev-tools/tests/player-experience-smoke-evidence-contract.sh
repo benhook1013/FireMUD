@@ -109,6 +109,23 @@ JSON
 
 python3 "$VALIDATOR" "$VALID_EVIDENCE" >"$TMP_DIR/valid.out"
 
+MISSING_QUERYABILITY_EVIDENCE="$TMP_DIR/missing-queryability-evidence.json"
+python3 - "$VALID_EVIDENCE" "$MISSING_QUERYABILITY_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source.pop("logPipelineQueryability")
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+if python3 "$VALIDATOR" "$MISSING_QUERYABILITY_EVIDENCE" \
+  >"$TMP_DIR/missing-queryability.out" 2>&1; then
+  echo "missing queryability posture unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "logPipelineQueryability is required" "$TMP_DIR/missing-queryability.out"
+
 REDUCED_QUERYABILITY_EVIDENCE="$TMP_DIR/reduced-queryability-evidence.json"
 OMITTED_QUERYABILITY_EVIDENCE="$TMP_DIR/omitted-queryability-evidence.json"
 python3 - "$VALID_EVIDENCE" "$REDUCED_QUERYABILITY_EVIDENCE" "$OMITTED_QUERYABILITY_EVIDENCE" <<'PY'
@@ -333,6 +350,86 @@ grep -q "logPipelineQueryability.configuredDelayTargetSeconds must be a nonnegat
 grep -q "logPipelineQueryability.observedDelaySeconds must be a nonnegative finite number" \
   "$TMP_DIR/queryability-huge-observed-delay.out"
 
+HUGE_NUMERIC_EVIDENCE_DIR="$TMP_DIR/huge-numeric-evidence"
+mkdir -p "$HUGE_NUMERIC_EVIDENCE_DIR"
+python3 - "$VALID_EVIDENCE" "$HUGE_NUMERIC_EVIDENCE_DIR" <<'PY'
+import copy
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+output = Path(sys.argv[2])
+mutations = {
+    "external-detection-budget": lambda evidence: evidence["externalAuthority"].update(
+        {"detectionBudgetSeconds": 10**1000}
+    ),
+    "external-stale-threshold": lambda evidence: evidence["externalAuthority"].update(
+        {"staleThresholdSeconds": 10**1000}
+    ),
+    "external-observed-staleness": lambda evidence: evidence["externalAuthority"].update(
+        {"observedStalenessSeconds": 10**1000}
+    ),
+    "mirrored-probe-age": lambda evidence: evidence["externalAuthority"][
+        "publicPathChecks"
+    ]["websocket"].update({"observedProbeAgeSeconds": 10**1000}),
+    "mirrored-deadman": lambda evidence: evidence["mirroredSignals"][
+        "observability_deadman_heartbeat_timestamp_seconds"
+    ].update({"value": 10**1000}),
+    "mirrored-canary-success": lambda evidence: evidence["mirroredSignals"][
+        "playerflow_canary_success"
+    ][0].update({"value": 10**1000}),
+    "mirrored-canary-latency": lambda evidence: evidence["mirroredSignals"][
+        "playerflow_canary_latency_ms"
+    ][0].update({"value": 10**1000}),
+    "mirrored-canary-last-run": lambda evidence: evidence["mirroredSignals"][
+        "playerflow_canary_last_run_timestamp_seconds"
+    ][0].update({"value": 10**1000}),
+    "mirrored-canary-budget": lambda evidence: evidence["mirroredSignals"][
+        "playerflow_canary_freshness_budget_seconds"
+    ].update({"value": 10**1000}),
+}
+for name, mutate in mutations.items():
+    evidence = copy.deepcopy(source)
+    mutate(evidence)
+    (output / f"{name}.json").write_text(json.dumps(evidence), encoding="utf-8")
+PY
+
+for huge_numeric_case in \
+  external-detection-budget external-stale-threshold external-observed-staleness \
+  mirrored-probe-age mirrored-deadman mirrored-canary-success mirrored-canary-latency \
+  mirrored-canary-last-run mirrored-canary-budget; do
+  huge_numeric_path="$HUGE_NUMERIC_EVIDENCE_DIR/$huge_numeric_case.json"
+  huge_numeric_output="$TMP_DIR/$huge_numeric_case.out"
+  if python3 "$VALIDATOR" "$huge_numeric_path" >"$huge_numeric_output" 2>&1; then
+    echo "$huge_numeric_case unexpectedly passed" >&2
+    exit 1
+  fi
+  if grep -q "Traceback" "$huge_numeric_output"; then
+    echo "$huge_numeric_case raised an unexpected traceback" >&2
+    cat "$huge_numeric_output" >&2
+    exit 1
+  fi
+done
+grep -q "externalAuthority.detectionBudgetSeconds must be a positive finite number" \
+  "$TMP_DIR/external-detection-budget.out"
+grep -q "externalAuthority.staleThresholdSeconds must be a positive finite number" \
+  "$TMP_DIR/external-stale-threshold.out"
+grep -q "externalAuthority.observedStalenessSeconds must be a nonnegative finite number" \
+  "$TMP_DIR/external-observed-staleness.out"
+grep -q "publicPathChecks.websocket.observedProbeAgeSeconds must be a nonnegative finite number" \
+  "$TMP_DIR/mirrored-probe-age.out"
+grep -q "observability_deadman_heartbeat_timestamp_seconds.value must be a positive finite number" \
+  "$TMP_DIR/mirrored-deadman.out"
+grep -q "playerflow_canary_success values must be finite numeric 0 or 1" \
+  "$TMP_DIR/mirrored-canary-success.out"
+grep -q "playerflow_canary_latency_ms values must be a nonnegative finite number" \
+  "$TMP_DIR/mirrored-canary-latency.out"
+grep -q "playerflow_canary_last_run_timestamp_seconds values must be positive finite timestamps" \
+  "$TMP_DIR/mirrored-canary-last-run.out"
+grep -q "mirroredSignals.playerflow_canary_freshness_budget_seconds.value must be a positive finite number" \
+  "$TMP_DIR/mirrored-canary-budget.out"
+
 QUERY_PATH_STORAGE_TARGET="$TMP_DIR/queryability-storage-target-path.json"
 QUERY_PATH_BARE_INDEX="$TMP_DIR/queryability-bare-index-path.json"
 python3 - "$VALID_EVIDENCE" "$QUERY_PATH_STORAGE_TARGET" "$QUERY_PATH_BARE_INDEX" <<'PY'
@@ -477,6 +574,25 @@ grep -q "PlayerFlowCanaryLoginFailed exerciseResult must be passed" \
   "$TMP_DIR/failed-canary-alert-readiness.out"
 python3 "$VALIDATOR" --allow-failure-evidence "$FAILED_CANARY_ALERT_EVIDENCE" \
   >"$TMP_DIR/failed-canary-alert-incident.out"
+
+INVALID_CANARY_ALERT_EXERCISE_RESULT="$TMP_DIR/invalid-canary-alert-exercise-result.json"
+python3 - "$VALID_EVIDENCE" "$INVALID_CANARY_ALERT_EXERCISE_RESULT" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["canaryAlerts"][0]["exerciseResult"] = "unknown"
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if python3 "$VALIDATOR" --allow-failure-evidence "$INVALID_CANARY_ALERT_EXERCISE_RESULT" \
+  >"$TMP_DIR/invalid-canary-alert-exercise-result.out" 2>&1; then
+  echo "invalid canary alert exercise result unexpectedly passed incident validation" >&2
+  exit 1
+fi
+grep -q "PlayerFlowCanaryLoginFailed exerciseResult must be one of failed, not_exercised, passed" \
+  "$TMP_DIR/invalid-canary-alert-exercise-result.out"
 
 UNEXERCISED_CANARY_ALERT_EVIDENCE="$TMP_DIR/unexercised-canary-alert-evidence.json"
 python3 - "$VALID_EVIDENCE" "$UNEXERCISED_CANARY_ALERT_EVIDENCE" <<'PY'

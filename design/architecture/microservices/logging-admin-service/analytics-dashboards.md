@@ -1,8 +1,18 @@
 # Operator Analytics Dashboards
 
-This document defines the target dashboard catalog for deployment profiles that advertise the corresponding observability capabilities. Sample JSON assets live under [`design/observability`](../../../observability) for local validation and adaptation, but the Logging & Admin Service does not currently implement Kibana/Grafana API clients, embedded-dashboard endpoints, or a separate admin UI. Its current `/logs/query` path reads only the service-owned PostgreSQL `log_events` table and is not the profile-aware operator-query path. The canonical profile, evidence, and degradation contract remains in [Logging & Monitoring](../../system-architecture-logging-monitoring.md).
+This document defines the target dashboard catalog for deployment profiles that advertise the corresponding observability capabilities. The canonical profile, evidence, and degradation contract remains in [Logging & Monitoring](../../system-architecture-logging-monitoring.md).
 
-When implemented for an applicable profile, the dashboards may include real-time analytics and export options. Omitted capabilities remain `not_applicable` rather than being represented by empty embedded panels.
+## Target-State Scope
+
+When implemented for an applicable profile, the dashboards may include real-time analytics and export options. Omitted capabilities remain `not_applicable` rather than being represented by empty embedded panels. The default indexed profile uses the target Grafana and Kibana surfaces below; a selected profile may map an equivalent supported dashboard path or declare the capability omitted.
+
+## Implementation Status
+
+The current Logging & Admin implementation is narrower than this target catalog:
+
+- `POST /logs/query` reads only the service-owned PostgreSQL `log_events` table. It is not the selected deployment profile's indexed or console/journal operator-query path.
+- No Kibana or Grafana API clients, embedded-dashboard or query endpoints, or separate admin UI are implemented.
+- Sample JSON assets under [`design/observability`](../../../observability) are validation and adaptation references; they do not prove deployed dashboard, client, endpoint, or UI integration.
 
 ## Grafana Dashboards (Target Default Indexed Profile)
 
@@ -12,7 +22,7 @@ When implemented for an applicable profile, the dashboards may include real-time
 - **Redis Metrics** – cache hit ratios and eviction counts.
 - **Alert Summary** – current Alertmanager alerts grouped by severity.
 
-These target dashboards use Prometheus metrics scraped from `/actuator/prometheus` endpoints. A selected profile may map an equivalent supported dashboard path or declare the capability omitted.
+These target dashboards use Prometheus metrics scraped from `/actuator/prometheus` endpoints.
 
 ## Kibana Dashboards (Target Default Indexed Profile)
 
