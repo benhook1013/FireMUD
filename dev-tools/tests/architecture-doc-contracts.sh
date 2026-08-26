@@ -1520,13 +1520,65 @@ require_absent(
     ["separate breaker or explicit opt-in"],
 )
 require_contains(
+    "design/architecture/decisions/adr-0166-attributable-script-breakers-and-tenant-first-fairness.md",
+    [
+        "For a core script, the Automation & Scripting Service owns the authoritative persisted `breakerState` aggregate",
+        "A legacy/read-model `runtimeStatus=DISABLED_DUE_TO_ERRORS`, when exposed, is only a read-only effective-admission projection",
+        "it is not persisted breaker authority and does not own transition history or reset",
+    ],
+)
+require_contains(
     "design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md",
-    ["with mandatory dry-run/test isolation"],
+    [
+        "with mandatory dry-run/test isolation",
+        "live-only boundary",
+        "ScriptDryRunCapacityService",
+        "never invokes `ScriptTenantBudgetService`",
+    ],
 )
 require_absent(
     "design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md",
-    ["dry-run/test isolation by default"],
+    [
+        "dry-run/test isolation by default",
+        "even for dry-run/test work",
+    ],
 )
+require_contains(
+    "design/architecture/system-architecture-scripting-normative-contract-tables.md",
+    [
+        "live-only `ScriptTenantBudgetService` denied after executor claim",
+        "This row is live-only (`isDryRun=false`)",
+        "materialized dry-run/test capacity denied",
+        "ScriptDryRunCapacityService",
+        "event-level catch-up candidate ceiling route",
+    ],
+)
+normative_contracts = (
+    root / "design/architecture/system-architecture-scripting-normative-contract-tables.md"
+).read_text(encoding="utf-8")
+catch_up_rows = [
+    line
+    for line in normative_contracts.splitlines()
+    if line.startswith("| Recurring/durable-recurring leader failover or short downtime |")
+]
+if len(catch_up_rows) != 1:
+    raise SystemExit(
+        "system-architecture-scripting-normative-contract-tables.md: expected exactly one catch-up candidate row"
+    )
+for required_clause in (
+    "this candidate-level route does not invoke `ScriptTenantBudgetService`",
+    "For `isDryRun=false`, a tenant-ceiling denial records candidate-audit",
+    "increments `automation_script_skips_total` once with `scope=\"tenant\"` and `reason=\"tenant_budget_exceeded\"`",
+    "A cluster-ceiling denial records candidate-audit",
+    "increments `automation_script_triggers_dropped_total` once with `scope=\"cluster\"` and `reason=\"cluster_limit_reached\"`",
+    "For `isDryRun=true`, neither live-only family is emitted",
+    "settled candidate audit and mode-specific resume-window outcome are the complete observability surface",
+    "handler-scoped test families are not used because the denial occurs before handler materialization",
+):
+    if required_clause not in catch_up_rows[0]:
+        raise SystemExit(
+            "system-architecture-scripting-normative-contract-tables.md: catch-up candidate route drifted"
+        )
 require_contains(
     "design/architecture/system-architecture-scripting-control-plane-api.md",
     [
@@ -1608,13 +1660,13 @@ adr0001 = (
     root
     / "design/architecture/decisions/adr-0001-scripting-event-ingress-idempotency-identity.md"
 ).read_text(encoding="utf-8")
-preimage_match = re.search(
+preimage_matches = re.findall(
     r"The canonical scheduler preimage fields are serialized in this fixed order: `([^`]+)`",
     adr0001,
 )
-if preimage_match is None:
+if len(preimage_matches) != 1:
     raise SystemExit(
-        "adr-0001-scripting-event-ingress-idempotency-identity.md: canonical scheduler preimage is missing"
+        "adr-0001-scripting-event-ingress-idempotency-identity.md: expected exactly one canonical scheduler preimage"
     )
 expected_scheduler_preimage = [
     "tenantId",
@@ -1644,7 +1696,7 @@ expected_scheduler_preimage = [
 ]
 actual_scheduler_preimage = [
     field.strip()
-    for field in preimage_match.group(1).strip("<>").split(",")
+    for field in preimage_matches[0].strip("<>").split(",")
 ]
 if actual_scheduler_preimage != expected_scheduler_preimage:
     raise SystemExit(
