@@ -107,11 +107,12 @@ Dry-run executions are privileged and must not destabilize production:
 ### 7) Reload Backpressure Contract
 
 - During `reloadState=RELOADING`, the Automation & Scripting Service must return an explicit application-level backpressure outcome (not a silent drop).
-- For low-rate external events, callers must retry with the same full applicable Trigger Identity, including the same `scriptEventId`, using bounded exponential backoff and jitter:
+- Each event-registry entry selects exactly one reload policy. Only `DURABLE_RETRY` low-rate external events may be retried with the same full applicable Trigger Identity, including the same `scriptEventId`, using bounded exponential backoff and jitter:
   - `maxAttempts` must be finite and documented per client.
   - `maxElapsedMs` must be finite and documented per client.
   - Jitter must be non-zero to avoid synchronized retry storms.
-- Backpressure responses must include a server hint (`retryAfterMs`) so callers can align retries with expected reload/rollback progress.
+- `REJECT_VISIBLE` finalizes the current intent as an explicit rejection and never executes it later; a new business intent must use a new parent event identity. `SKIP_RECONCILE` records the skipped attempt and follows the event's declared reconciliation or catch-up rule; it does not reclaim stale intent.
+- Only a `DURABLE_RETRY` response includes a server hint (`retryAfterMs`) and permits reclaiming the same retry-eligible parent claim. A rejected or skipped event has no automatic delayed admission.
 - For timer-derived scheduler events, best-effort timer semantics apply; triggers not admitted during reload are not backfilled unless explicitly covered by a bounded catch-up rule.
 
 ### 7a) Runtime Scope Isolation

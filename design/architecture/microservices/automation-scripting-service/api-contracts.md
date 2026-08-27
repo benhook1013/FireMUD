@@ -154,7 +154,7 @@ Reload admission and retry semantics follow [ADR 0173](../../decisions/adr-0173-
 - `REJECT_VISIBLE` returns an explicit temporary rejection for current intent such as `onCommand`; the platform does not queue it for delayed automatic execution.
 - `DURABLE_RETRY` requires the named owning producer to retain and retry the same parent identity with bounded expiry or elapsed time, exponential backoff, and jitter.
 - `SKIP_RECONCILE` records the skipped attempt and applies the event's declared reconciliation or catch-up behavior. Best-effort timer events are not generally backfilled.
-- Reload backpressure is a transient attempt rather than permanent consumption of the logical event identity. Attempt audit or a monotonic `BACKPRESSURED -> ADMITTED` transition preserves the same request digest and version/fence.
+- Reload backpressure is policy-specific: only a `DURABLE_RETRY` entry may retain a retry-eligible attempt or perform a monotonic `BACKPRESSURED -> ADMITTED` transition with the same request digest and version/fence. `REJECT_VISIBLE` finalizes the current intent without delayed execution; a new intent uses a new parent event identity. `SKIP_RECONCILE` follows its declared reconciliation or catch-up rule and does not reclaim stale intent.
 
 At this API boundary, a reload rejection returns explicit backpressure signals consistent with that selected policy:
 

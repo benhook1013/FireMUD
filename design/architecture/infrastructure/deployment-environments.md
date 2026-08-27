@@ -316,8 +316,8 @@ FireMUD's preview environment is a hosted single-node k3s cluster intended for r
 - Preview deploys currently reset the namespace before each Helm apply, then reseed the minimum bootstrap state needed for reviewer proof. Within one deployed preview instance, PostgreSQL, MinIO/object storage, and other stateful components persist across normal pod restarts and VM reboot, but preview state does not currently persist across preview redeploys.
 - Preview state is not backed up and is not durable beyond the single preview node. If the node or its attached storage is lost, preview state is lost.
 - The initial Hetzner/k3s sizing target is one reliably usable full-stack preview on an 8 GB shared-CPU x86 VM. A second concurrent preview is best-effort only and may fail to deploy if capacity is exhausted.
-- Eligibility may be explicit or on-demand while capacity is scarce. A preview holds a bounded renewable visible lease; an active lease is not silently evicted, while an expired lease may be reclaimed even if the pull request remains open.
-- Capacity exhaustion reports preview evidence as unavailable, not passed. Any review claiming hosted proof requires successful evidence for its current head SHA.
+- Eligibility may be explicit or on-demand while capacity is scarce, but it is only a prerequisite for allocation. Each successfully allocated eligible preview receives its own namespace and holds a bounded renewable visible lease; an active lease is not silently evicted, while an expired lease may be reclaimed even if the pull request remains open. A request that is eligible but not allocated, including because capacity is exhausted, reports `preview_unavailable`, not passed.
+- Any review claiming hosted proof requires successful evidence for its current head SHA.
 - Preview namespaces are removed when the pull request closes or merges, is explicitly released, or its lease expires.
 
 ---

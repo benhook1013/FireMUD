@@ -39,7 +39,7 @@ Each event-registry entry declares exactly one reload admission policy:
 
 Correctness-bearing durable timers retain their separate scheduler/timer contract. This decision does not convert them into best-effort work or create a general timer backfill rule.
 
-Reload backpressure is transient and does not permanently consume the logical parent event identity. The service records append-only admission attempts or permits a monotonic `BACKPRESSURED -> ADMITTED` logical transition while the same digest, version/fence, producer policy, and expiry remain valid. Changed-input reuse remains an idempotency conflict under ADR 0172.
+Reload backpressure is transient, but its identity treatment is policy-specific. Only a `DURABLE_RETRY` entry may retain a retry-eligible `BACKPRESSURED` claim and permit a monotonic `BACKPRESSURED -> ADMITTED` transition, and only while the same digest, version/fence, producer policy, and bounded expiry remain valid. A `REJECT_VISIBLE` entry finalizes the denial for the submitted parent event identity: it must never later execute that stale intent, and a new user intent must use a new parent event identity rather than reclaiming the rejected claim. `SKIP_RECONCILE` follows its event family's declared skip/catch-up contract and likewise does not turn a stale intent into later admission. Changed-input reuse remains an idempotency conflict under ADR 0172.
 
 Responses include the bounded admission outcome and `retryAfterMs` where producer retry is allowed. Metrics and audit distinguish visible rejection, durable retry scheduling/exhaustion, best-effort skip, reconciliation failure, and recovery.
 

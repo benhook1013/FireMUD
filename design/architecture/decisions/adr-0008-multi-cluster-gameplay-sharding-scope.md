@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The current deployment model uses one gameplay cluster and in-cluster lease ownership. Explicit recovery or replacement-cluster fencing, authority cutover, and focused proof that only one cluster can hold active gameplay authority remain gaps.
+The current deployment model uses one gameplay cluster and in-cluster lease ownership. Explicit recovery or replacement-cluster fencing, authority cutover, and focused proof that only one cluster can hold active gameplay authority remain gaps. Current implementation and proof status is tracked in the [Game Session Runtime and Tick Coordination tracker](../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md).
 
 ## Decision Record
 

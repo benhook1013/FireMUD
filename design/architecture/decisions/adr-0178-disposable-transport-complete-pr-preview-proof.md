@@ -29,9 +29,9 @@ The current hosted cluster reliably supports roughly one full-stack preview. Kee
 
 ## Decision
 
-PR previews remain disposable and reproducible. Each eligible new PR head receives a clean namespace and deterministic seed state; state persists only within that deployed head and is not backed up. The namespace is deleted when the PR closes, the preview is explicitly released, or its bounded renewable lease expires. Expiry is visible to the PR and never silently evicts an actively leased review session.
+PR previews remain disposable and reproducible. Eligibility is a prerequisite for allocation, not evidence that allocation succeeded. Each successfully allocated preview for an eligible new PR head receives a clean namespace and deterministic seed state; state persists only within that deployed head and is not backed up. The namespace is deleted when the PR closes, the preview is explicitly released, or its bounded renewable lease expires. Expiry is visible to the PR and never silently evicts an actively leased review session.
 
-Eligibility may be explicit/on-demand when capacity requires it. Capacity exhaustion reports `preview_unavailable`, never success. A slice that claims hosted preview proof must retain a successful result bound to its current head SHA.
+Eligibility may be explicit/on-demand when capacity requires it. A request that passes eligibility but is not allocated, including because capacity is exhausted, reports `preview_unavailable`, never success. A slice that claims hosted preview proof must retain a successful result bound to its current head SHA.
 
 One transport-neutral semantic assertion set describes the shared player outcome:
 

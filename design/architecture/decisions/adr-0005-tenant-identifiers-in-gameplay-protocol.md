@@ -4,6 +4,10 @@
 
 Superseded by [ADR 0168](./adr-0168-snapshot-bound-lobby-selectors-and-stable-realm-identity.md)
 
+This record preserves the original accepted tenant-selector decision. The replacement ADR owns
+the current lobby, realm, snapshot, and identity contract; this historical record is not a
+current authority for those details.
+
 ## Context
 
 Some documents described gameplay commands using `tenantIdOrSlug` (for example `ENTER_GAME <tenantIdOrSlug>`), but the Multi-Tenancy model defines `tenantId` as the authoritative internal tenant identifier and does not define:
@@ -20,12 +24,12 @@ Leaving the gameplay protocol ambiguous creates interoperability problems for cl
 
 FireMUD uses a single shared gameplay entrypoint for many worlds. The gameplay text protocol must therefore support a player-friendly world selection flow without requiring humans to type opaque internal identifiers.
 
-The gameplay protocol uses two distinct identifier layers:
+The gameplay protocol used two distinct identifier layers:
 
 - **Internal identifiers (authoritative):** `tenantId` and `characterId`.
 - **Player-facing selectors (lobby only):** `tenantSlug` (stable, human-friendly) plus numbered menu indices returned by `WORLDS`/`CHARS`.
 
-The canonical lobby flow after `LOGIN` is:
+The original canonical lobby flow after `LOGIN` was:
 
 - `WORLDS` returns a numbered list of worlds, including each world’s stable `tenantSlug`.
 - `CHARS <world>` accepts either a world menu index or a `tenantSlug`.
@@ -33,7 +37,7 @@ The canonical lobby flow after `LOGIN` is:
 
 Outside of lobby selection, services and persistence models use `tenantId` exclusively. No gameplay command other than the lobby selection commands may accept `tenantSlug` as a substitute for `tenantId`.
 
-### Slug Ownership and Stability (Required)
+### Slug Ownership and Stability (Required by the Original Decision)
 
 - The Game Design Service owns `tenantSlug` generation and uniqueness at tenant creation time.
 - `tenantSlug` is stable for the lifetime of the tenant; renaming a world changes display name, not slug.
