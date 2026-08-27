@@ -22,7 +22,7 @@ The owner contracts for health and independent outage detection are [ADR 0157: d
 
 - Use **Docker Compose** for local development only.
 - Use **Kubernetes shared or player-facing environment classes** (`dev-demo-cluster`, `staging`, `production`, or `hobby-self-hosted`) where autoscaling, high availability, and full observability are required.
-- Use **`pr-preview`** for reviewer-accessible pull-request environments that expose the full stack over HTTPS for a bounded renewable review lease.
+- Use **`pr-preview`** for reviewer-accessible pull-request environments whose target state exposes the full stack over HTTPS for a bounded renewable review lease; current hosted proof remains TCP/Telnet-first until dedicated frontend delivery, public routing, and browser support are implemented.
 - Prefer **staging** for playtests that should mirror production routing, TLS, and Redis/Postgres topologies before promoting changes. `pr-preview` is for isolated PR validation, not for canonical creator playtests or promotion evidence.
 
 ## Implementation Notes
