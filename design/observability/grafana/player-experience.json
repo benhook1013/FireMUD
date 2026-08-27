@@ -55,18 +55,6 @@
     },
     {
       "type": "graph",
-      "title": "Command Latency (p99) by Scope",
-      "targets": [
-        {
-          "expr": "histogram_quantile(0.99, sum by (scope, le, command) (rate(command_end_to_end_latency_ms_bucket[5m])))",
-          "legendFormat": "{{scope}} {{command}}",
-          "refId": "A"
-        }
-      ],
-      "id": 5
-    },
-    {
-      "type": "graph",
       "title": "Telnet/WebSocket Path Availability (5m Trend)",
       "targets": [
         {

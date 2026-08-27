@@ -1131,14 +1131,29 @@ def _duplicate_group_rules_keys(lines: list[str]) -> list[_RuleEntry]:
         if not _is_sequence_item(lines[first_item]):
             continue
         sequence_indent = _leading_space_count(lines[first_item])
+        section_end = first_item
+        while section_end < len(lines):
+            if _meaningful_yaml_line(lines[section_end]):
+                current_indent = _leading_space_count(lines[section_end])
+                if current_indent < groups_indent:
+                    break
+                # YAML permits an indentationless sequence directly under a
+                # mapping key. Same-indent sequence items remain part of this
+                # groups section; any other same-indent node closes it.
+                if current_indent == groups_indent and not (
+                    current_indent == sequence_indent
+                    and _is_sequence_item(lines[section_end], sequence_indent)
+                ):
+                    break
+            section_end += 1
         starts = [
             candidate
-            for candidate in range(first_item, len(lines))
+            for candidate in range(first_item, section_end)
             if _meaningful_yaml_line(lines[candidate])
             and _leading_space_count(lines[candidate]) == sequence_indent
             and _is_sequence_item(lines[candidate])
         ]
-        for start, end in zip(starts, [*starts[1:], len(lines)], strict=True):
+        for start, end in zip(starts, [*starts[1:], section_end], strict=True):
             group_lines = lines[start:end]
             direct_indents = [
                 _leading_space_count(candidate)
@@ -2005,20 +2020,14 @@ def _validate_player_experience_dashboard(path: Path) -> list[Finding]:
                     ),
                 )
             )
-        if (
-            isinstance(title, str)
-            and re.search(r"\bcommand\s+latency\b", title, re.IGNORECASE)
-            and re.search(r"\bby\s+scope\b", title, re.IGNORECASE)
-            and isinstance(panel, dict)
-        ):
-            for target in targets:
-                if not isinstance(target, dict):
-                    findings.append(
-                        Finding(path=path, message="Grafana dashboard targets must contain JSON objects")
-                    )
-                    continue
-                if isinstance(expr := target.get("expr"), str):
-                    findings.extend(_command_scope_query_findings(path, expr))
+        # Apply the bounded-scope contract to every command-latency query,
+        # independent of presentation titles. A canonical query can retain a
+        # concise panel title without escaping its scope and command checks.
+        for target in targets:
+            if isinstance(target, dict) and isinstance(
+                expr := target.get("expr"), str
+            ):
+                findings.extend(_command_scope_query_findings(path, expr))
 
     chat_expressions: list[str] = []
     for panel in panels:

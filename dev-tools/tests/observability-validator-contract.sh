@@ -1199,7 +1199,7 @@ for query_replacement, expected_message in (
     mutated_dashboard = copy.deepcopy(player_dashboard)
     scope_panel_found = False
     for panel in mutated_dashboard["panels"]:
-        if panel.get("title") == "Command Latency (p99) by Scope":
+        if panel.get("id") == 2:
             scope_panel_found = True
             if not panel.get("targets") or not isinstance(panel["targets"][0], dict):
                 raise AssertionError(
@@ -1227,7 +1227,7 @@ for query_replacement, expected_message in (
     )
 player_dashboard_with_region_command_title = copy.deepcopy(player_dashboard)
 for panel in player_dashboard_with_region_command_title["panels"]:
-    if panel.get("title") == "Command Latency (p99) by Scope":
+    if panel.get("id") == 2:
         panel["title"] = "Command Latency (p99) by Region"
         break
 else:
@@ -2351,6 +2351,40 @@ require_message(
     ),
     "duplicate group mapping keys are unsupported: rules; the dependency-free validator cannot safely inspect this YAML shape",
 )
+
+later_section_with_rules = minimal_alert_rule + """metadata:
+  nested:
+    rules:
+      retained: true
+"""
+if validator._duplicate_group_rules_keys(later_section_with_rules.splitlines()):
+    raise AssertionError(
+        "a rules key in a later root section was conflated with the preceding Prometheus group"
+    )
+
+separate_groups_sections = """first:
+  groups:
+    - name: first-parser-contract
+      rules:
+        - alert: FirstAlert
+          expr: vector(1)
+second:
+  groups:
+    - name: second-parser-contract
+      rules:
+        - alert: SecondAlert
+          expr: vector(1)
+"""
+if validator._duplicate_group_rules_keys(separate_groups_sections.splitlines()):
+    raise AssertionError("separate groups sections were conflated")
+
+duplicate_group_rule_findings = validator._duplicate_group_rules_keys(
+    duplicate_group_rules.splitlines()
+)
+if len(duplicate_group_rule_findings) != 1:
+    raise AssertionError(
+        "a true duplicate rules key in one Prometheus group was not detected exactly once"
+    )
 
 same_nested_keys_in_separate_mappings = replace_once(
     minimal_alert_rule,
