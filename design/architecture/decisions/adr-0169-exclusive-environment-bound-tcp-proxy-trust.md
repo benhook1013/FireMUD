@@ -29,11 +29,11 @@ ADR 0010 selected URI SAN as the preferred production identity but defined DNS S
 
 ## Decision
 
-Player-facing TCP Proxy traffic enters Gateway through a dedicated internal-only `wss://` listener that requires a client certificate. Gateway accepts the bridge only when the certificate:
+Player-facing TCP Proxy traffic enters Gateway through a dedicated internal-only `wss://` listener that requires a client certificate. Gateway applies the checks shared by every non-development trust profile first: the certificate must chain to the trust bundle or issuer explicitly assigned to that deployment environment and be valid for client authentication. It then applies exactly one matcher selected by the active profile:
 
-- chains to the trust bundle or issuer explicitly assigned to that deployment environment;
-- is valid for client authentication; and
-- contains the exact allowlisted environment-specific URI SAN/SPIFFE workload identity for TCP Proxy.
+- `production_uri` requires the exact allowlisted URI SAN/SPIFFE workload identity for TCP Proxy;
+- `migration_dns` requires the exact allowlisted DNS SAN;
+- `breakglass_fingerprint` requires the one explicitly pinned leaf fingerprint.
 
 Trust profiles are explicit and mutually exclusive:
 
