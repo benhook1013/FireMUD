@@ -1603,7 +1603,7 @@ require_contains(
     "design/architecture/system-architecture-scripting-operations-cookbook.md",
     [
         "`automation_script_test_runs_total{result=\"quota_denied\"}`",
-        "`automation_script_test_capacity_denied_total{scope}`",
+        "`automation_script_test_capacity_denied_total{scope=~\"tenant|cluster\"}`",
         "never increments the live `automation_script_triggers_total` family",
     ],
 )
