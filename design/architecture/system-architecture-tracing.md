@@ -80,7 +80,7 @@ To make traces consistently useful across services and runbooks, FireMUD uses a 
     - `gateway_command_dispatch` – dispatch from Gateway/Proxy into Game Session or other domain services, tagged with `command`, `tenantId`, `gameInstanceId`, `regionId`, and `characterId`.
   - Game Session and domain spans:
     - `gamesession_handle_command` – top-level span for handling a gameplay command, tagged with `command`, `tenantId`, `gameInstanceId`, `regionId`, and `characterId`.
-    - Domain-specific spans such as `entity_apply_damage`, `inventory_transfer`, `room_resolve_look`, and `quest_update_state`, tagged with `tenantId`, `gameInstanceId`, `regionId`, and any relevant aggregate identifiers.
+    - Domain-specific spans such as `entity_apply_damage`, `inventory_transfer`, `room_resolve_look`, and `quest_update_state`, tagged with `tenantId`, `gameInstanceId`, `regionId`, and only the exact aggregate attribute(s) explicitly allowlisted for that span family's documented incident query; an open-ended set of “relevant aggregate identifiers” is not permitted.
 - **Tick executor and coordination**
   - `tick_schedule` – scheduling of ticks for a `<tenantId, gameInstanceId, regionId>`, tagged with `tenantId`, `gameInstanceId`, `regionId`, `tickId`, and `regionEpoch`.
   - `tick_execute` – execution of a single tick, tagged with `tenantId`, `gameInstanceId`, `regionId`, `tickId`, `regionEpoch`, and a `tick_phase` attribute for major phases (for example `load_effects`, `apply_effects`, `persist_ledger`, `drain_followups`).
