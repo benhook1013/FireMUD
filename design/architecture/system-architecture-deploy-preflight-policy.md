@@ -361,6 +361,10 @@ The report artifact must include:
 - `startedAt` and `completedAt` timestamps
 - `toolVersion`
 - `context` (`operator` or `ci-static`)
+- `assuranceProfile` and each capability-specific `proved`, `omitted`, or `not-applicable` posture
+- `evidenceBoundary` (`change`, `environment`, or `recovery-event`)
+- `evidenceExpiresAt` where freshness is required
+- content digest or immutable reference for the underlying automated tool output
 
 For `ci-static` runs, `expectedBindingsRef` should point to the same repository path that operator preflight would use for the target environment, even when CI validates only static contracts and not live cluster bindings. A consumed report for a protected player-facing deployment, production promotion or production attestation, traffic-open event, or fresh-boundary restore must have `context=operator`, the canonical `preflight.py-v1` tool version, ordered non-future execution timestamps, exact environment/event applicability, an authorizing `jwtCustodyProof`, and every required policy result at `pass`; ordinary non-player deployment, drill, maintenance, and diagnostic reports may be consumed without `jwtCustodyProof` but are never eligible to authorize a protected player-facing transition. A `ci-static` report cannot authorize promotion, player traffic, or a custody mode, and any JWT custody result it carries remains non-authorizing static evidence. A deployment record may consume only the canonical event-scoped report path whose `deploymentEventId` matches both the path and that record, whose `completedAt` is not later than `appliedAt`, and whose completion is no more than 30 minutes before apply. A recovery controller must consume and re-check the event-scoped report no more than 30 minutes before its traffic-release decision. No renewable report artifact is defined, so an expired report requires a new preflight event. A later finalized traffic-open projection references that already-consumed report and controller evidence; export time does not re-consume the report or create a second freshness gate.
 
@@ -396,7 +400,7 @@ Illustrative abbreviated `ci-static` report shape (non-consumable; omitted polic
 }
 ```
 
-CI and manual operator runs must produce the same report shape so audit tooling can compare them.
+CI and operator automation must produce the same report shape so audit tooling can compare them. A manually authored record or shape-valid supplied object is an index, not proof by itself; it must reference the content-addressed automated output. Static change evidence cannot satisfy environment assurance, and generic environment assurance cannot satisfy an event-bound restore, rewind, quarantine, or reopen gate.
 
 ### Evidence Storage and Retention
 

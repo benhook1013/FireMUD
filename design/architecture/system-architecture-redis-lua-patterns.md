@@ -426,7 +426,7 @@ The registry, validators, ownership enforcement, generic test harness, and CI ch
   - `tail_loss_behavior` describing what is expected to happen if the script’s writes are lost or replayed within the measured unreplicated-write exposure (for example “pure lease; safe to lose”, “can enqueue duplicates; relies on domain idempotency”, “must not silently drop without a corresponding ledger row”).
   - Shard-locality metadata for multi-key scripts, including whether all `KEYS` must share the same `{tenantRegionTag}`, `{tenantInstanceTag}`, or `{tenantGameplayTag}` hash tag and slot.
 
-The registry descriptors are sufficient to **drive a generic test harness**: any coordination script must be invokable in isolation using only the registry metadata (script identifier, expected `KEYS`/`ARGV`, and allowed prefixes). Callers must not hard-code key names or slots that diverge from the registry.
+The registry descriptors are sufficient to **drive a generic test harness** over owner-local or genuinely shared sources: any coordination script must be invokable in isolation using the registry metadata (script identifier, expected `KEYS`/`ARGV`, and allowed prefixes). Callers must not hard-code key names or slots that diverge from their owner descriptor.
 
 CI enforces the following invariants for registered scripts:
 

@@ -114,6 +114,7 @@ The local environment consequence is:
 - Proxy -> Gateway gameplay traffic uses mTLS in all shared and player-facing environments.
 - Shared and player-facing environments must use `wss://` to the internal-only Gateway mTLS listener; they must not serve player-facing traffic over `ws://`.
 - Player-facing environments must fail startup or admission if Proxy -> Gateway mTLS identity verification is unavailable.
+- Gateway trust uses exactly one profile from [ADR 0169](../../decisions/adr-0169-exclusive-environment-bound-tcp-proxy-trust.md). Steady-state player-facing deployments require an exact environment-specific URI SAN identity; DNS migration and fingerprint break-glass profiles are explicit and expiring, while insecure CIDR trust is development/test-only.
 
 ## Connection Limits and Abuse Protection
 

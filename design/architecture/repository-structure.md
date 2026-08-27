@@ -23,7 +23,6 @@ root
 │   ├── account-service/
 │   ├── automation-scripting-service/
 │   ├── common-data-runtime/
-│   ├── common-library/
 │   ├── common-platform-core/
 │   ├── common-saga/
 │   ├── common-security/
@@ -74,7 +73,7 @@ root
 - `gradle/` – Gradle version catalog, build conventions, and wrapper binaries.
 - `k8s/` – Kubernetes base manifests, Helm charts, overlays, monitoring configs, network policies, preview/prod support assets, storage/database helpers, Velero backup assets, and Terraform modules for local and production-like clusters.
 - `protos/` – Versioned gRPC definitions for every service, organized by service and version as described in this directory’s [gRPC API Style & Versioning Guidelines](./system-architecture-grpc.md).
-- `services/` – Spring Boot microservices plus shared platform/library Gradle modules (`common-library`, `common-data-runtime`, `common-platform-core`, `common-saga`, `common-security`, `common-temporal`, `common-test-support`, and `common-web-support`), including Flyway database migration scripts under `services/<service>/src/main/resources/db/migration/` and shared saga migrations under `services/common-saga/src/main/resources/db/migration/saga`. SQL-backed services use one explicit `jOOQ + Flyway` persistence model rather than a mixed long-term ORM stack, and long-running durable control-plane workflows use the shared Temporal substrate rather than service-local workflow scaffolding.
+- `services/` – Spring Boot microservices plus the narrowly scoped shared platform/library Gradle modules (`common-data-runtime`, `common-platform-core`, `common-saga`, `common-security`, `common-temporal`, `common-test-support`, and `common-web-support`), including Flyway database migration scripts under `services/<service>/src/main/resources/db/migration/` and shared saga migrations under `services/common-saga/src/main/resources/db/migration/saga`. SQL-backed services use one explicit `jOOQ + Flyway` persistence model rather than a mixed long-term ORM stack, and long-running durable control-plane workflows use the shared Temporal substrate rather than service-local workflow scaffolding. ADR 0176's future narrow Redis-contract foundation does not make owner-exclusive Redis execution a shared module concern.
 - `web-client/` – React web application.
 - `.editorconfig` – Consistent indentation and newline settings across editors.
 - `.env.sample` – Example environment variables loaded by `docker compose` and the test suites.

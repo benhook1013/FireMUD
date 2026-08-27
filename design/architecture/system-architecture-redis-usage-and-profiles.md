@@ -8,6 +8,8 @@ The live automation handoff still carries optional `dueTickId` for scheduler/tim
 
 The target automation handoff also requires the complete Trigger Identity, including `scriptPinEpoch`, plus `automationDispatchId` and `commandOrdinal`. The current Game Session request does not yet carry that complete contract, including `scriptPinEpoch`, so the target fields and uniqueness rules below are not implementation proof.
 
+Separate Coordination and Cache/Rate-Limit Redis processes exist in current manifests, but role-specific application clients, ACLs, key/script registration, and ownership proof under [ADR 0171](./decisions/adr-0171-separated-redis-role-processes-and-owned-keyspaces.md) remain incomplete.
+
 ---
 
 ## Table of Contents
@@ -64,7 +66,7 @@ Scope-key convention: `{tenantRegionTag}` is the canonical opaque tag for the co
     - `ratelimit:<tenantId>:<subjectHash>:<timeWindow>` (one opaque stable subject hash per individual subject)
     - `automation:queue:{tenantInstanceTag}:<entityId>` and automation quota counters.
 
-Coordination Redis and Cache/Rate‑Limit Redis are treated as **separate deployments** in all non-ephemeral environments so cache eviction/pressure cannot silently impact coordination SLOs. The only supported exception is explicitly ephemeral test/CI stacks that opt out of tail-loss and role-separation guarantees; those stacks may collapse roles temporarily, but must be clearly labelled as ephemeral and must not be used to validate coordination behavior or SLOs. See [Environment Profiles and Mappings](#environment-profiles-and-mappings) for details.
+Coordination Redis and Cache/Rate‑Limit Redis are treated as **separate processes and endpoints** in all persistent, player-facing environments so cache eviction/pressure cannot silently impact coordination SLOs. They may be two containers or processes on the same hobby host or cluster node; separate hardware is not required. The only supported exception is explicitly ephemeral test/CI stacks that opt out of tail-loss and role-separation guarantees; those stacks may collapse roles temporarily, but must be clearly labelled as ephemeral and must not be used to validate coordination behavior or SLOs. See [ADR 0171](./decisions/adr-0171-separated-redis-role-processes-and-owned-keyspaces.md) and [Environment Profiles and Mappings](#environment-profiles-and-mappings).
 
 New prefixes must declare:
 

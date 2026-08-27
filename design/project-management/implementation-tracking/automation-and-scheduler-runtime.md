@@ -31,9 +31,12 @@ The target local consequences are tracked against [ADR 0103](../../architecture/
 
 These links add decision provenance only; they do not upgrade Automation implementation or verification state.
 
-## Packet 6 P1-P3 Status and Proof Gaps
+## Final Reviewed-Import Status and Proof Gaps
 
 - `AS-1.6`: [ADR 0166](../../architecture/decisions/adr-0166-attributable-script-breakers-and-tenant-first-fairness.md) is applied as decision provenance. Current quota and tier budgets are partial foundations; breaker authority, audited reset, general priority scheduling, priority-sensitive queue-delay/starvation emission, the ADR 0166 cluster-ceiling capability (distinct from the current dry-run `SCRIPT_TEST_MAX_CLUSTER_CONCURRENCY` capacity), concurrency policy, and focused fairness proof remain gaps.
+- `AS-1.1`: [ADR 0172](../../architecture/decisions/adr-0172-parent-event-and-frozen-handler-execution-identity.md) supersedes ADR 0001 with durable parent-event identity, canonical input-digest conflict handling, an atomically frozen ordered handler manifest, binding-scoped plugin execution identity, and activation-epoch fencing. Current ingress identity, storage, retry, scheduler, audit, and handoff paths do not implement or prove that complete split.
+- `AS-1.5`: Human review retained [ADR 0002](../../architecture/decisions/adr-0002-automation-handoff-reliability-and-success-semantics.md): handoff acceptance requires durable Game Session custody for every child dispatch, not DSL/outbox persistence and not final gameplay application. The current local duplicate crash window and incomplete child-dispatch/digest/readback model keep this capability partial.
+- `AS-1.6`: [ADR 0173](../../architecture/decisions/adr-0173-registry-classified-reload-admission-policy.md) supersedes ADR 0003. Current implementation does not expose the canonical post-pin `RELOADING` barrier or `retryAfterMs`, permanently memoizes current ingress denials, and does not implement registry-classified `REJECT_VISIBLE`, `DURABLE_RETRY`, or `SKIP_RECONCILE` producer behavior. Existing readiness/plugin/admission proof does not establish the transient-denial retry lifecycle.
 
 This records implementation and proof gaps; it does not upgrade the runtime slice.
 

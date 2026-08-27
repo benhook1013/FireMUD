@@ -8,7 +8,7 @@ Use `system-architecture-scripting-dsl-reference-and-lifecycle.md` for DSL seman
 
 ## Implementation Status
 
-The target exact-fence and materialized-catalogue requirements below are not fully implemented. At the live handoff, the current request carries `scriptPatchVersion` but not `scriptPinEpoch`, so same-version work from an older epoch cannot be rejected there today. The current static registry also lacks an accepted materialized catalogue revision/digest and the applicable immutable schema identity/digest evidence required for its mutable `payloadSchemaRef` anchors. See the [runtime execution implementation status](./system-architecture-scripting-runtime-execution.md#current-implementation-status); these gaps do not weaken the target registry contract.
+The target exact-fence and materialized-catalogue requirements below are not fully implemented. At the live handoff, the current request carries `scriptPatchVersion` but not `scriptPinEpoch`, so same-version work from an older epoch cannot be rejected there today. The current static registry also lacks an accepted materialized catalogue revision/digest and the applicable immutable schema identity/digest evidence required for its mutable `payloadSchemaRef` anchors. Registry-classified reload policy, transient attempt state, producer-specific durable retry, and policy-specific proof under [ADR 0173](./decisions/adr-0173-registry-classified-reload-admission-policy.md) are also unimplemented. See the [runtime execution implementation status](./system-architecture-scripting-runtime-execution.md#current-implementation-status); these gaps do not weaken the target registry contract.
 
 ## Purpose
 
@@ -47,6 +47,7 @@ Each entry must define at least:
 - `consistencyClass`
 - `quotaClass`
 - `replaySemantics`
+- `reloadAdmissionPolicy`
 - `allowedBindingScopes`
 - `dryRunSupport`
 - `deprecationStatus`
@@ -87,6 +88,9 @@ Required semantics for those fields:
   - Current built-in classes are `STANDARD_RUNTIME` for ordinary live gameplay/scheduler work and `PUBLISH_READINESS` for tenant-readiness `onLoad`.
 - `replaySemantics`
   - Whether duplicate ingress is expected to be idempotent, rejected, or coalesced.
+- `reloadAdmissionPolicy`
+  - Exactly one of `REJECT_VISIBLE`, `DURABLE_RETRY`, or `SKIP_RECONCILE` as defined by [ADR 0173](./decisions/adr-0173-registry-classified-reload-admission-policy.md).
+  - `DURABLE_RETRY` also declares the owning producer, maximum elapsed time or expiry, and stable parent-event identity behavior. Timer families retain their separate catch-up and continuity contract.
 - `allowedBindingScopes`
   - Which target scopes are legal for handlers of this event, such as `ENTITY`, `REGION`, `GLOBAL`, or `COMMAND_ALIAS`.
 - `dryRunSupport`
@@ -109,7 +113,7 @@ The producer-side activation gate is a control-plane/read gate, not an event-wir
 
 Rules:
 
-- Breaking payload, identity, producer-authorization, snapshot-authority, consistency, replay, quota, or binding-scope changes require a new `eventSchemaVersion`; compatible additive changes must pass declared mechanical compatibility validation.
+- Breaking payload, identity, producer-authorization, snapshot-authority, consistency, replay, reload-admission, quota, or binding-scope changes require a new `eventSchemaVersion`; compatible additive changes must pass declared mechanical compatibility validation.
 - Removing an event requires a deprecation phase in the catalogue first; Game Design must stop offering new bindings before runtime ingress rejects it as `REMOVED`.
 - Source manifests and catalogue entries required by supported patches remain retained for validation, runtime admission, rollback, and operator explanation. Removal or compaction is allowed only after the authoritative patch-support lifecycle proves that no supported patch still references the event schema version.
 
@@ -133,6 +137,7 @@ Minimum read payload:
 - versioned handler input manifest requirements, including owner, schema/version, scope, selector-or-token, causal-floor, and bounded-value requirements
 - quota class
 - replay semantics
+- reload admission policy
 - allowed binding scopes
 - deprecation status
 - last changed timestamp

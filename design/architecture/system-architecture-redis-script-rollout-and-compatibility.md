@@ -30,7 +30,7 @@ Script rollout compatibility applies to Coordination Redis. Cache/Rate-Limit Red
 
 ## Target-State Lua Compatibility Registry and Script Upgrades (Not Implemented)
 
-The registry and compatibility-test surface in this section are target state and are not currently available. Once implemented, the Lua Compatibility Registry is part of the aggregated Redis-contract registry. The shared foundation owns its schema and aggregation, while each owning service contributes compatibility metadata for its scripts; executable key builders and Lua remain owner-local for exclusive families. It declares per script:
+The registry and compatibility-test surface in this section are target state and are not currently available. Once implemented, the Lua Compatibility Registry is part of the aggregated Redis-contract registry. A narrow shared foundation owns its descriptor schema and aggregation, while each owning service contributes compatibility metadata and retains exclusive key builders, invocation adapters, executable Lua, and semantic tests. The registry is owned by platform/coordination maintainers and declares per script:
 
 - `callerVersionsSupported`, identifying the application/caller versions that may invoke the script
 - `schemaVersionsSupported`, identifying the stored payload schema versions the script can interpret, with the evidence and retention window that makes each version possible
@@ -67,7 +67,7 @@ Potentially compatible when proven by tests:
 ## Runbook: Upgrading Scripts
 
 1. Classify changes and update the target-state registry rationale.
-2. Add or update target-state compatibility tests in the owning service for any owner-local script tagged `compatible`; shared-mutation tests belong in the shared foundation.
+2. Add or update target-state compatibility tests in the owning service for any owner-local script tagged `compatible`; shared-mutation tests belong in the shared foundation, with aggregated descriptor/proof inputs updated when the contract is shared across independently deployed callers.
 3. Run the coordination upgrade planner from `dev-tools` once that target-state tooling exists.
 4. If all changes are `compatible` for the evidenced coexistence set, deploy through the normal rollout path.
 5. If any script is tagged `requires_*_reset`, use the smallest required reset scope:
