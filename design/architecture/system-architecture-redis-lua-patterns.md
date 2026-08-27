@@ -187,7 +187,7 @@ Every post-acquisition region-lease script must perform the following validation
 
 The Redis operations docs and metrics catalog should treat `current_tick_state` transitions as first-class observability surfaces so operators can tell whether regions are stuck in `STAGED` or `RESOLVING`, how often ticks terminate as `APPLIED` vs `ABANDONED`, and whether stale-timeline outcomes correlate with reset or recovery activity.
 
-Once ADR 0176 is implemented, these checks will be enforced via the aggregated Lua Script Registry descriptors, the owning service's generated key-builder helpers, and CI linting so reviewers can automatically catch regressions. The registry and validators are target-state controls; they are not current implementation evidence. Scripts that cannot make these validations are not allowed to touch tick/coordination prefixes.
+Once ADR 0176 is implemented, these checks will be enforced via the aggregated Lua Script Registry descriptors, the owning service's generated key-builder helpers, and CI linting so reviewers can automatically catch regressions. The registry and validators are target-state controls; they are not current implementation evidence. In that target state, scripts that cannot make these validations will not be accepted for tick/coordination prefixes.
 
 #### Session-only scripts
 
