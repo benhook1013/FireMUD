@@ -8,7 +8,7 @@ Supersedes [ADR 0005](./adr-0005-tenant-identifiers-in-gameplay-protocol.md).
 
 ## Implementation Status
 
-This decision is not implemented. Stable UUID realm identity, tenant-scoped world selectors, snapshot-bound lobby ordinals, alias handling, and aligned discovery authorization remain gaps.
+This decision is not implemented. Stable UUID realm identity, tenant-scoped world selectors, snapshot-bound lobby ordinals, alias handling, and aligned discovery authorization remain gaps. The authoritative implementation and proof status for `AUTH-01` is [`AA-3.1` in the Realm Routing and Playable State tracker](../../project-management/implementation-tracking/realm-routing-and-playable-state.md#capability-status).
 
 ## Decision Record
 

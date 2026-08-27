@@ -8,7 +8,7 @@ Supersedes [ADR 0010](./adr-0010-tcp-proxy-identity-canonicalization.md).
 
 ## Implementation Status
 
-This decision is not implemented. The hosted bridge still lacks the dedicated authenticated listener, exclusive environment-bound trust profiles, fail-closed validation, and end-to-end proof required here.
+This decision is not implemented. The hosted bridge still lacks the dedicated authenticated listener, exclusive environment-bound trust profiles, fail-closed validation, and end-to-end proof required here. The authoritative implementation and proof status for `EDGE-03` is [`SF-1.3` in the Shared Runtime, Service Contracts, and Persistence tracker](../../project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md#capability-status).
 
 ## Decision Record
 

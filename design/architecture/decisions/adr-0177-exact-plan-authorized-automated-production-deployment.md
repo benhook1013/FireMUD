@@ -44,7 +44,7 @@ Approval binds all of the following:
 
 After approval, the executor re-resolves and hashes every input. A changed commit, manifest, digest, workflow, evidence record, environment generation, or live-state precondition invalidates approval and stops before mutation. Approval never means "deploy current main" or authorizes a mutable input.
 
-The executor may run preflight, apply, bounded rollout progression, public-path smoke and SLO observation, live-state verification, and authoritative evidence recording unattended. It uses a concurrency lock and environment-generation compare-and-set so approved plans cannot race. Ambiguous results pause closed and alert the operator.
+The executor may run preflight, apply, bounded rollout progression, public-path smoke and SLO observation, live-state verification, and authoritative evidence recording unattended. It uses a concurrency lock and environment-generation compare-and-set so approved plans cannot race. Ambiguous results leave the deployment paused in a fail-closed state, alert the operator, and permit no continuation until the ambiguity is resolved.
 
 Automatic restoration is pre-authorized only when the plan names the exact known-good digest set, the release is still `rollback-compatible`, current schema/config/secret/binding evidence remains compatible, and the failure fits the declared rollout policy. A `roll-forward-only` release, migration ambiguity, trust or binding drift, stale evidence, or unknown live state stops for explicit forward remediation. Automation does not improvise another target.
 

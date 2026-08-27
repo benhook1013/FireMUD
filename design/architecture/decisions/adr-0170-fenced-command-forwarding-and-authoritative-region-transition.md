@@ -8,7 +8,7 @@ Supersedes [ADR 0011](./adr-0011-gameplay-session-front-end-and-region-execution
 
 ## Implementation Status
 
-This decision is partially implemented. Front-door routing and game-instance fence seams exist, but region-partitioned owner forwarding, generation-bound output, bounded failure handling, and focused proof remain gaps.
+This decision is partially implemented. Front-door routing and game-instance fence seams exist, but region-partitioned owner forwarding, generation-bound output, bounded failure handling, and focused proof remain gaps. The authoritative implementation and proof status for `SESSION-01` is [`GR-1.1` in the Game Session Runtime and Tick Coordination tracker](../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#capability-status).
 
 ## Decision Record
 

@@ -8,7 +8,7 @@ Extends [ADR 0009](./adr-0009-coordination-redis-ownership-boundary.md).
 
 ## Implementation Status
 
-This decision is partially implemented. Separate Redis role topology exists in current manifests, but role-specific application clients, ACLs, key and script registration, and ownership proof remain gaps.
+This decision is partially implemented. Separate Redis role topology exists in current manifests, but role-specific application clients, ACLs, key and script registration, and ownership proof remain gaps. The authoritative implementation and proof status for `REDIS-02` is [`SF-2.2` in the Shared Runtime, Service Contracts, and Persistence tracker](../../project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md#capability-status).
 
 ## Decision Record
 

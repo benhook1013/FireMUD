@@ -37,7 +37,7 @@ These rules keep the script registry’s invariants and hash-tag discipline mean
 Redis ACLs enforce a clear split between application and operations clients:
 
 - Application user (for example `coord_app`):
-  - Used only by application services and approved maintenance tooling that calls the owning service's typed maintenance API (or, when it is itself an independently deployed executor, the corresponding shared mutation contract).
+- Target state: used only by application services and approved maintenance tooling that calls the owning service's typed maintenance API (or, when it is itself an independently deployed executor, the corresponding shared mutation contract).
   - Permitted to execute `EVALSHA`/`SCRIPT LOAD` and write commands on coordination databases.
   - Not used from interactive shells or general-purpose admin tooling in production.
 - Read-only ops user (for example `coord_ops_ro`):
