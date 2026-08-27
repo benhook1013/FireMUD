@@ -165,7 +165,29 @@ assert spec.loader is not None
 spec.loader.exec_module(validator)
 observability_contract = __import__("observability_contract")
 assert validator.CANARY_IDENTITY_REQUIRED_FIELDS is observability_contract.CANARY_IDENTITY_REQUIRED_FIELDS
-assert validator.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE is observability_contract.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE
+identity_verifier_sentinel = object()
+original_identity_verifier = (
+    observability_contract.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE
+)
+try:
+    observability_contract.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE = (
+        identity_verifier_sentinel
+    )
+    probe_spec = importlib.util.spec_from_file_location(
+        "smoke_evidence_validator_shared_contract_probe", validator_path
+    )
+    assert probe_spec is not None
+    shared_contract_probe = importlib.util.module_from_spec(probe_spec)
+    assert probe_spec.loader is not None
+    probe_spec.loader.exec_module(shared_contract_probe)
+    assert (
+        shared_contract_probe.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE
+        is identity_verifier_sentinel
+    )
+finally:
+    observability_contract.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE = (
+        original_identity_verifier
+    )
 evaluation_time = validator._parse_evaluation_time(sys.argv[4])
 
 cases = [

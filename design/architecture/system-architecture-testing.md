@@ -121,7 +121,7 @@ The complete target-state advertised-canary form retains the local canary mirror
     "selectedProfile": "staging",
     "capability": "indexed-log-observability",
     "backend": "elasticsearch",
-    "storageTarget": "firemud-logs-*",
+    "storageTarget": "firemud-logs-env-staging-*",
     "recordId": "log-smoke-11111111-2222-4333-8444-555555555555",
     "service": "game-session-service",
     "traceId": "9c8d7e6f5a4b3210",
