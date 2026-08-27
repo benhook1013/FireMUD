@@ -23,8 +23,8 @@ Defining additional Redis users, ACL variations, or ad-hoc tools is considered *
 ## Coordination Redis Access Rules
 
 - Coordination Redis is treated as an **application-only write surface during normal operation**:
-  - Normal-operation mutations to coordination prefixes (`tick:*`, `retry:*`, `timer:*`, `remote:*`, `session:*`, `tick-executor-lease:*`, and related keys) go through the owning service's typed key and mutation helpers, with the target shared Redis-contract foundation validating descriptors and aggregation. Lua is mandatory for atomic multi-key behavior and may be used for an explicitly documented single-key atomic guard or compare-and-set contract; every registered script is invoked through its owning service adapter and the target aggregated registry path. Ordinary single-key mutations use owner-local typed helpers without Lua. Executable helpers or Lua are shared only for mutations genuinely executed by multiple independently deployed callers. The audited incident-only break-glass path below is the explicit exception to this normal-operation rule and must follow its evidence, fencing, reset, and verification gates.
-  - Application services (Game Session, Automation & Scripting, and any future tick participants) never bypass those helpers with raw Redis commands.
+  - Current normal-operation access uses the generic `common-data-runtime` `firemud.redis.*` properties and its auto-configured `RedisConnectionFactory`, `RedisTemplate`, and `StringRedisTemplate`; deployment configuration routes a service to the appropriate role-specific endpoint. The ADR 0176 owner-local descriptor/key-builder foundation, shared contract validation, and aggregated registry are target state and are not implemented. Target state requires coordination mutations to use the owning service's typed key and mutation helpers, with the shared foundation validating descriptors and aggregation; Lua is mandatory for atomic multi-key behavior and may be used for an explicitly documented single-key atomic guard or compare-and-set contract. Ordinary single-key mutations use owner-local typed helpers without Lua, and executable helpers or Lua are shared only for mutations genuinely executed by multiple independently deployed callers. The audited incident-only break-glass path below is the explicit exception to this normal-operation rule and must follow its evidence, fencing, reset, and verification gates.
+  - In target state, application services (Game Session, Automation & Scripting, and any future tick participants) never bypass those helpers with raw Redis commands; current direct usages require reconciliation against the owner-local contract rather than being treated as proof that the target helpers exist.
 - Human operators and ad-hoc tools:
   - May use `redis-cli`, RedisInsight, or similar tools with **read-only ops users** to inspect coordination state.
   - Must not issue raw `EVAL`/`EVALSHA`, `SET`, `DEL`, or TTL-changing commands against coordination prefixes in normal operation.
@@ -78,18 +78,18 @@ All tools and services refer to Redis deployments via **role-specific configurat
 - Coordination clients and ops tools read connection settings from `FIREMUD_REDIS_COORD_HOST` / `FIREMUD_REDIS_COORD_PORT` (or an equivalent `FIREMUD_REDIS_COORD_URL`), which identify the **Coordination Redis** deployment.
 - Cache/rate-limit clients and tools read from `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT` (or `FIREMUD_REDIS_CACHE_URL`), which identify the **Cache/Rate-Limit Redis** deployment.
 
-The current shared Redis connection properties and auto-configuration are provided by `common-data-runtime`; no role-bound maintenance-tool config/client helper surface is implemented today. Target state may add that surface in a dedicated tooling/contract module (for example, a future `common-redis-contracts` module, not an implemented module) exposing **typed configs and helpers** such as:
+The current shared Redis connection seam is the generic `firemud.redis.*` `RedisProperties` binding and `common-data-runtime` auto-configuration, which provides the injected Spring Redis connection factory/templates used by services. Deployment configuration supplies the role-specific endpoint routing through `FIREMUD_REDIS_COORD_*` and `FIREMUD_REDIS_CACHE_*`; this is not a current role-bound maintenance client or typed contract surface. The ADR 0176 shared foundation, owner-local descriptor contributions, and repository aggregation remain unimplemented. Target state may add a dedicated tooling/contract module (for example, a future `common-redis-contracts` module, not an implemented module) exposing **typed configs and helpers** such as:
 
 - `RedisCoordConfig` + `createCoordinationRedisClient(...)`
 - `RedisCacheConfig` + `createCacheRedisClient(...)`
 
-All ops scripts and maintenance tools must:
+Target-state ops scripts and maintenance tools, once the role-bound helper surface is implemented, must:
 
 - Accept an explicit `RedisCoordConfig` when they touch coordination prefixes.
 - Accept an explicit `RedisCacheConfig` when they operate only on cache/rate-limit prefixes.
 - Never construct Redis host/port or URLs by hand.
 
-This makes the target Redis role part of the tool’s type signature and configuration, reducing the chance that coordination tooling accidentally points at Cache Redis (or vice versa).
+This target contract makes the Redis role part of the tool’s type signature and configuration, reducing the chance that coordination tooling accidentally points at Cache Redis (or vice versa); it is not a current operator invocation path.
 
 Some health checks and observability tools legitimately need to talk to **both** roles in a single process (for example, a composite “Redis health” check or a diagnostic CLI). These multi-role tools must:
 
@@ -473,7 +473,7 @@ Direct `redis-cli` writes to coordination prefixes are reserved for **break-glas
 
 ### Tooling Maintenance and Versioning
 
-The coordination maintenance client/CLI is treated as a first-class part of the system, not an ad-hoc script:
+The target coordination maintenance client/CLI, once implemented, is treated as a first-class part of the system, not an ad-hoc script:
 
 - It lives in the same repository and modules as:
   - The aggregated Redis-contract registry/schema and each owning service's key builders and Lua Script Registry contributions.
