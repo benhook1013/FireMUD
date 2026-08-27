@@ -312,10 +312,20 @@ run_smoke_runner_without_queryability_config() {
 
 run_clean_python() {
   env "${SMOKE_CONFIG_ENV_UNSETS[@]}" \
-    "${SMOKE_CONFIG_ENV_OVERRIDES[@]}" \
     "${SMOKE_CONFIG_DEFAULT_ENV[@]}" \
+    "${SMOKE_CONFIG_ENV_OVERRIDES[@]}" \
     python3 "$@"
 }
+
+SMOKE_CONFIG_ENV_OVERRIDES=(
+  SMOKE_USERNAME=explicit-override@example.com
+)
+run_clean_python - <<'PY'
+import os
+
+assert os.environ["SMOKE_USERNAME"] == "explicit-override@example.com"
+assert os.environ["SMOKE_PASSWORD"] == "contract-canary-secret"
+PY
 
 refresh_external_authority_fixture() {
   local authority_path="$1"

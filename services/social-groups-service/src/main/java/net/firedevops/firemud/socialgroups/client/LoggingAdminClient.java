@@ -76,7 +76,10 @@ public class LoggingAdminClient
     CreateReportResponse response = stub().createReport(request);
     if (response.hasError()) {
       throw new IllegalStateException(
-          "Chat violation report failed: " + response.getError().getCode());
+          "Chat violation report failed: "
+              + response.getError().getCode()
+              + ": "
+              + response.getError().getMessage());
     }
   }
 }

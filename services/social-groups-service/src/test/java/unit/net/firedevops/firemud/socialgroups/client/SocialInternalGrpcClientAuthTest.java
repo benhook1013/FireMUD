@@ -127,7 +127,8 @@ class SocialInternalGrpcClientAuthTest {
 
     assertThatThrownBy(() -> client.reportChatViolation(7L, 42L, "Filtered profanity"))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessage("Chat violation report failed: UNAVAILABLE");
+        .hasMessage("Chat violation report failed: UNAVAILABLE: Report creation unavailable")
+        .hasMessageNotContaining("Filtered profanity");
   }
 
   @Test

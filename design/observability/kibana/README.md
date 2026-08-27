@@ -4,13 +4,17 @@ This directory stores Kibana saved objects for exploring FireMUD logs indexed in
 
 These JSON exports can be imported into Kibana to quickly restore log views and dashboards that align with the project’s logging conventions.
 
+## Implementation Status
+
+The checked-in saved objects are target-state examples, not runtime queryability proof. The repository currently has no emitted `environment` log field, ingest enrichment, or deployed environment-scoped index/role mapping that proves the required access boundary. It also has no tenant-scoped safeguard that makes the platform-only player-incident object safe for tenant operators; tenant-scoped exposure remains unavailable until mandatory tenant context and tenant-safe index/access controls are implemented and verified.
+
 ## Dashboards and Saved Objects
 
 - [log-volume.json](./log-volume.json) – Saved search and visualization set focused on log volume, error spikes, and severity distribution across services.
 - [player-incident-drilldown.json](./player-incident-drilldown.json) – Target-state platform-operator-only saved search targeting player-visible incidents. Its index reference contains the required `firemud-logs-env-__REQUIRED_ENVIRONMENT__-*` sentinel and its query is bounded by `service` and `traceId`; an unmodified import intentionally matches no index.
 - [tick-region-logs.json](./tick-region-logs.json) – Saved search focused on tick and region incidents; filters on `tenantId`, `regionId`, `tickId`, and tick/Redis-related services for use during coordination and tick incident runbooks.
 
-To use this object, replace `__REQUIRED_ENVIRONMENT__` in its index reference with the exact environment value (for example, `staging`, yielding `firemud-logs-env-staging-*`), configure the corresponding read-only index and access boundary, and import through Kibana’s “Saved Objects” management screen. The repository currently has no emitted `environment` log field, ingest enrichment, or deployed environment-scoped index/role mapping proving that boundary; this target-state object is therefore not runtime queryability proof until the deployment supplies and verifies it. Tenant-scoped operators additionally require mandatory tenant context and tenant-safe index/access controls before this platform-only object is exposed. Do not import the sentinel unchanged and do not broaden the index or role to `firemud-logs-*` or cross-environment data.
+To use this object, replace `__REQUIRED_ENVIRONMENT__` in its index reference with the exact environment value (for example, `staging`, yielding `firemud-logs-env-staging-*`), configure the corresponding read-only index and access boundary, and import through Kibana’s “Saved Objects” management screen. Tenant-scoped operators additionally require mandatory tenant context and tenant-safe index/access controls before this platform-only object is exposed. Do not import the sentinel unchanged and do not broaden the index or role to `firemud-logs-*` or cross-environment data.
 
 ## Conventions (Contract)
 

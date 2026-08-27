@@ -2,6 +2,7 @@ package net.firedevops.firemud.loggingadmin.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
@@ -10,8 +11,11 @@ import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusResponse;
 import net.firedevops.firemud.gamesession.v1.RuntimeOwnershipStatus;
 import net.firedevops.firemud.loggingadmin.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.loggingadmin.dto.RuntimeOwnershipStatusDto;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.Mockito;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -55,6 +59,34 @@ class TickRemediationServiceImplTest {
     assertThat(result.regionId()).isEqualTo("region-7");
     assertThat(result.pendingGameplayCommandCount()).isEqualTo(3L);
     assertThat(result.remoteFollowupDrainLagMs()).isEqualTo(2000L);
+    verify(gameSessionClient).getRuntimeOwnershipStatus(1L, "7", null);
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "INVALID_ARGUMENT, 400 BAD_REQUEST",
+    "PERMISSION_DENIED, 403 FORBIDDEN",
+    "NOT_FOUND, 404 NOT_FOUND",
+    "FUTURE_ERROR, 500 INTERNAL_SERVER_ERROR"
+  })
+  void getRuntimeOwnershipStatusMapsControlPlaneErrors(String errorCode, String expectedStatus) {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getRuntimeOwnershipStatus(1L, "7", null))
+        .thenReturn(
+            GetRuntimeOwnershipStatusResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode(errorCode)
+                        .setMessage("runtime ownership unavailable"))
+                .build());
+    TickRemediationServiceImpl service = new TickRemediationServiceImpl(gameSessionClient);
+
+    assertThatThrownBy(() -> service.getRuntimeOwnershipStatus(1L, "7", null))
+        .isInstanceOf(ResponseStatusException.class)
+        .hasMessageContaining(expectedStatus)
+        .hasMessageContaining("runtime ownership unavailable");
+    verify(gameSessionClient).getRuntimeOwnershipStatus(1L, "7", null);
   }
 
   @Test
@@ -76,6 +108,7 @@ class TickRemediationServiceImplTest {
     assertThatThrownBy(() -> service.getRuntimeOwnershipStatus(1L, null, "region-7"))
         .isInstanceOf(ResponseStatusException.class)
         .hasMessageContaining("500 INTERNAL_SERVER_ERROR");
+    verify(gameSessionClient).getRuntimeOwnershipStatus(1L, null, "region-7");
   }
 
   @Test

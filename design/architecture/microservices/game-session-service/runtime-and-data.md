@@ -183,7 +183,7 @@ Game Session also owns the canonical live gameplay-presence substrate rather tha
 
 ## Runtime Feature Flags
 
-Feature flags are stored in the `feature_flag` table, and Game Session owns the implemented gRPC `ToggleFeatureFlag` mutation. The current Logging & Admin feature-flag ingress hard fails closed and has no callable forwarding path; target operator forwarding remains unavailable until the action-family schema, shared `mutationDigest/v1` vectors, and Account authorization-reference gate are complete. See [Game Design Service Feature Flags](../game-design-service/feature-flags.md) for how definitions are created and published.
+Feature flags are stored in the `feature_flag` table, and Game Session owns the implemented gRPC `ToggleFeatureFlag` mutation. The current Logging & Admin feature-flag ingress hard fails closed and has no callable forwarding path; target operator forwarding remains unavailable until the action-family schema, shared `mutationDigest/v1` vectors, Account authorization-reference issuance and redemption, and [ADR 0048](../../decisions/adr-0048-durable-idempotent-operator-write-execution.md)'s complete durable, idempotent, fenced owner execution and read-only recovery and reconciliation are implemented and proved. See [Game Design Service Feature Flags](../game-design-service/feature-flags.md) for how definitions are created and published.
 
 ## Script Patch Version Pinning and Rollback (target-state contract)
 

@@ -562,7 +562,7 @@ flowchart TD
     C --> D[Game Session Service notified of new version]
     D --> E[Session starts game using chosen version_id]
     E --> F[Runtime flags loaded and applied]
-    F -->|Target operator edit| G[Logging & Admin forwards gated owner request]
+    F -->|Target operator edit| G["Logging & Admin forwards gated owner request"]
 ```
 
 By decoupling published versions from runtime flags, FireMUD can rapidly iterate on new content while still allowing safe toggles for experimental features during live gameplay.
