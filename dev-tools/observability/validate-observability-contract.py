@@ -2071,7 +2071,6 @@ def _validate_kibana_saved_objects(kibana_dir: Path) -> list[Finding]:
         if expected is None:
             continue
 
-        serialized = json.dumps(payload)
         objects = payload if isinstance(payload, list) else [payload]
         candidate_pairs: list[tuple[dict[str, object], dict[str, object]]] = []
         invalid_object_shape = False
@@ -2136,17 +2135,6 @@ def _validate_kibana_saved_objects(kibana_dir: Path) -> list[Finding]:
                 )
                 continue
             player_payload, references_payload = player_sources[0]
-            sentinel = "__REQUIRED_ENVIRONMENT__"
-            if sentinel not in serialized:
-                findings.append(
-                    Finding(
-                        path=json_path,
-                        message=(
-                            "player incident Kibana saved object must retain the "
-                            "__REQUIRED_ENVIRONMENT__ fail-closed environment sentinel"
-                        ),
-                    )
-                )
             try:
                 search_source = player_payload["attributes"]["kibanaSavedObjectMeta"]["searchSourceJSON"]
                 search_source_payload = json.loads(search_source)

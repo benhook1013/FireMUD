@@ -4,6 +4,8 @@ This runbook describes how to **scale FireMUD services and infrastructure** to h
 
 For the conceptual overview of scaling, see `design/architecture/system-architecture-overview.md` and `design/architecture/system-architecture-ticks.md`.
 
+Validation and runtime-proof selection for changes to this runbook follows the shared [Validation and Runtime Proof workflow](../developer-workflows/validation-and-runtime-proof.md); record execution results in PR/CI evidence or the owning implementation tracker.
+
 ## Scaling Principles
 
 - Prefer **horizontal scaling** of stateless services (Gateway, TCP Proxy, game logic/stateless APIs).

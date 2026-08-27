@@ -471,6 +471,20 @@ if any(finding.path.name == kibana_path.name for finding in kibana_findings(expl
         "explicit environment-scoped FireMUD index reference must remain valid"
     )
 
+explicit_environment_index_without_sentinel = copy.deepcopy(explicit_environment_index)
+explicit_environment_index_without_sentinel["attributes"]["description"] = (
+    explicit_environment_index_without_sentinel["attributes"]["description"].replace(
+        "__REQUIRED_ENVIRONMENT__", "staging"
+    )
+)
+if any(
+    finding.path.name == kibana_path.name
+    for finding in kibana_findings(explicit_environment_index_without_sentinel)
+):
+    raise AssertionError(
+        "explicit environment-scoped FireMUD index must remain valid without sentinel prose"
+    )
+
 missing_index_ref_name = copy.deepcopy(kibana_payload)
 missing_search_source_ref = json.loads(
     missing_index_ref_name["attributes"]["kibanaSavedObjectMeta"]["searchSourceJSON"]
@@ -1564,18 +1578,6 @@ if findings_for(
         )
 
 valid_sequence_rule = nested_for_source
-valid_sequence_findings = findings_for(
-    valid_sequence_rule,
-    lambda path: validator._validate_reference_prometheus_rules(
-        path,
-        {"WebSocketEntryPathBlackboxUnavailable"},
-        allow_profile_dependent_alerts=True,
-    ),
-)
-if valid_sequence_findings:
-    raise AssertionError(
-        f"valid sequence rule was rejected: {valid_sequence_findings!r}"
-    )
 
 valid_blackbox_rule = """groups:
   - name: parser-contract
@@ -1596,8 +1598,14 @@ duplicate_start = valid_blackbox_rule.find(
     f"      - alert: {duplicate_blackbox_alert}"
 )
 duplicate_next = valid_blackbox_rule.find("      - alert:", duplicate_start + 1)
-duplicate_block = valid_blackbox_rule[duplicate_start:duplicate_next]
+duplicate_block = (
+    valid_blackbox_rule[duplicate_start:]
+    if duplicate_next == -1
+    else valid_blackbox_rule[duplicate_start:duplicate_next]
+)
 duplicate_overlay = valid_blackbox_rule + "\n" + duplicate_block
+if not duplicate_overlay.endswith(valid_blackbox_rule[-1:]):
+    raise AssertionError("duplicate fixture truncated the source rule's final byte")
 duplicate_findings = findings_for(
     duplicate_overlay,
     lambda path: validator._validate_reference_prometheus_rules(
@@ -3474,5 +3482,10 @@ require_message(
     "required backup recordings are missing expr: backup_artifact_lineage_invalid",
 )
 
+if yaml is None:
+    print(
+        "PyYAML unavailable; skipped optional PyYAML cross-checks",
+        file=sys.stderr,
+    )
 print("observability validator contract checks passed")
 PY

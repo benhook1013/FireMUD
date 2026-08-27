@@ -15,6 +15,8 @@ The [TCP Proxy Service Operations](./microservices/tcp-proxy-service/operations.
 - Other or invalid established-connection close outcomes currently fall back to minimal Telnet text (`backend_unavailable`) and bridge `unattributed_failure`; pre-session trust failures remain separately classified as `policy_violation`. Standalone `session_replaced`/`service_restart` remain target-only lifecycle classes until runtime and focused proof converge; opaque `policy_violation` suffix preservation is current behavior, not proof of bounded subreason validation.
 - **Convergence gate:** do not report a target-only lifecycle row below as a current observation until `TelnetServerHandler` and focused tests/proof recognize and validate that class; current opaque `policy_violation` suffix preservation does not establish bounded subreason validation.
 
+Validation and runtime-proof selection for changes to this runbook follows the shared [Validation and Runtime Proof workflow](../developer-workflows/validation-and-runtime-proof.md); record execution results in PR/CI evidence or the owning implementation tracker.
+
 ## Symptoms
 
 - Players using Telnet cannot connect or experience frequent disconnects.

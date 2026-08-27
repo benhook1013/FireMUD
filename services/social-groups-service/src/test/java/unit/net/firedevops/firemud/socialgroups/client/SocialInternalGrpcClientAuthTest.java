@@ -5,13 +5,14 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import io.grpc.CallOptions;
-import io.grpc.Channel;
 import io.grpc.ClientCall;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
 import io.grpc.MethodDescriptor;
+import io.grpc.Status;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jws;
+import java.io.ByteArrayInputStream;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -22,8 +23,8 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
-import net.firedevops.firemud.loggingadmin.v1.LoggingAdminServiceGrpc;
-import net.firedevops.firemud.loggingadmin.v1.ReportServiceGrpc;
+import net.firedevops.firemud.loggingadmin.v1.CreateReportRequest;
+import net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyRequest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
@@ -54,7 +55,7 @@ class SocialInternalGrpcClientAuthTest {
             jwtUtil,
             runtimeIdentityProvider());
 
-    invoke(client.buildStub(channel), ReportServiceGrpc.getCreateReportMethod());
+    client.buildStub(channel).createReport(CreateReportRequest.getDefaultInstance());
 
     assertInternalSocialServiceToken(channel);
   }
@@ -71,7 +72,9 @@ class SocialInternalGrpcClientAuthTest {
             jwtUtil,
             runtimeIdentityProvider());
 
-    invoke(client.buildStub(channel), LoggingAdminServiceGrpc.getEvaluateModerationPolicyMethod());
+    client
+        .buildStub(channel)
+        .evaluateModerationPolicy(EvaluateModerationPolicyRequest.getDefaultInstance());
 
     assertInternalSocialServiceToken(channel);
   }
@@ -86,24 +89,6 @@ class SocialInternalGrpcClientAuthTest {
     CommonGrpcClientProperties properties = new CommonGrpcClientProperties();
     properties.setPlaintext(true);
     return properties;
-  }
-
-  private static <ReqT, RespT> void invoke(
-      io.grpc.stub.AbstractStub<?> stub, MethodDescriptor<ReqT, RespT> method) {
-    Channel channel = channelOf(stub);
-    ClientCall<ReqT, RespT> call = channel.newCall(method, CallOptions.DEFAULT);
-    call.start(new ClientCall.Listener<>() {}, new Metadata());
-  }
-
-  private static Channel channelOf(io.grpc.stub.AbstractStub<?> stub) {
-    try {
-      java.lang.reflect.Method method =
-          io.grpc.stub.AbstractStub.class.getDeclaredMethod("getChannel");
-      method.setAccessible(true);
-      return (Channel) method.invoke(stub);
-    } catch (ReflectiveOperationException ex) {
-      throw new AssertionError(ex);
-    }
   }
 
   private void assertInternalSocialServiceToken(CapturingChannel channel) {
@@ -135,6 +120,9 @@ class SocialInternalGrpcClientAuthTest {
         @Override
         public void start(Listener<RespT> responseListener, Metadata headers) {
           lastAuthorization = headers.get(AUTH_HEADER);
+          responseListener.onMessage(
+              methodDescriptor.parseResponse(new ByteArrayInputStream(new byte[0])));
+          responseListener.onClose(Status.OK, new Metadata());
         }
 
         @Override
