@@ -49,13 +49,13 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
 
 ### Redis Key Naming & Lua Script Helpers
 
-Redis helpers follow the owner-local execution and aggregated-contract boundary in [ADR 0176](decisions/adr-0176-owner-local-redis-execution-with-aggregated-contracts.md).
+Target-state Redis helpers must follow the owner-local execution and aggregated-contract boundary in [ADR 0176](decisions/adr-0176-owner-local-redis-execution-with-aggregated-contracts.md); this boundary is not implemented in the current tree.
 
-A narrow shared Redis-contract module owns the descriptor schema, common outcome types, Redis-role and prefix-owner rules, hash-tag/cluster-slot validation, compatibility metadata rules, and repository registry/test aggregation. It owns executable key builders, invocation machinery, or Lua only for mutations genuinely executed by multiple independently deployed callers.
+The target narrow shared Redis-contract module would own the descriptor schema, common outcome types, Redis-role and prefix-owner rules, hash-tag/cluster-slot validation, compatibility metadata rules, and repository registry/test aggregation. It would own executable key builders, invocation machinery, or Lua only for mutations genuinely executed by multiple independently deployed callers.
 
-For an exclusively owned key family, the owning service contributes descriptors through the shared schema and retains its generated or typed key builders, invocation adapter, executable Lua source, and semantic tests. Direct string concatenation remains forbidden where a declared builder exists. Non-owner services do not gain executable access to private keyspaces merely by depending on the shared schema.
+For an exclusively owned key family, the target contract requires the owning service to contribute descriptors through the shared schema while retaining its generated or typed key builders, invocation adapter, executable Lua source, and semantic tests. Direct string concatenation remains forbidden where a declared builder exists. Non-owner services must not gain executable access to private keyspaces merely by depending on the shared schema.
 
-The aggregated registry and CI harness validate that:
+Once implemented, the aggregated registry and CI harness must validate that:
 
 - every Lua source and owned key family has one descriptor and owner;
 - `KEYS`/`ARGV` order, allowed prefixes, Redis role, outcome codes, reset sensitivity, tail-loss behavior, and compatibility metadata are complete;
@@ -64,7 +64,7 @@ The aggregated registry and CI harness validate that:
 - scripts cannot mix owners or Coordination and Cache key families;
 - caller adapters and focused tests match the registered descriptor and supported coexistence set.
 
-Operator visibility comes from this catalog and owner APIs. Supported tooling normally requests mutations through the owning service; if it must execute the same Lua directly, that mutation becomes a genuinely shared contract and moves into the shared module.
+Operator visibility would come from this catalog and owner APIs. Supported tooling must normally request mutations through the owning service; if it must execute the same Lua directly, that mutation becomes a genuinely shared contract and moves into the shared module.
 
 For Redis-backed caches and rate limiting, the common library may also provide:
 
