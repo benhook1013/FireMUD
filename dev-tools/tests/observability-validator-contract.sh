@@ -127,8 +127,10 @@ from pathlib import Path
 
 try:
     import yaml
-except ModuleNotFoundError:
-    yaml = None
+except ModuleNotFoundError as exc:
+    raise SystemExit(
+        "PyYAML is required for observability validator contract checks"
+    ) from exc
 
 
 root = Path(sys.argv[1])
@@ -256,8 +258,6 @@ def require_message(findings, expected):
 
 
 def require_pyyaml_rejection(text, description):
-    if yaml is None:
-        return
     try:
         yaml.safe_load(text)
     except yaml.YAMLError:
@@ -266,8 +266,6 @@ def require_pyyaml_rejection(text, description):
 
 
 def require_pyyaml_acceptance(text, description):
-    if yaml is None:
-        return
     try:
         yaml.safe_load(text)
     except yaml.YAMLError as exc:
@@ -3580,10 +3578,5 @@ require_message(
     "required backup recordings are missing expr: backup_artifact_lineage_invalid",
 )
 
-if yaml is None:
-    print(
-        "PyYAML unavailable; skipped optional PyYAML cross-checks",
-        file=sys.stderr,
-    )
 print("observability validator contract checks passed")
 PY

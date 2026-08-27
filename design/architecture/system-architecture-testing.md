@@ -15,7 +15,7 @@ Current repository automation includes the profile-aware retained-evidence valid
 
 Illustrative retained evidence shape for a hosted-assurance observability smoke; an omitted profile must retain `externalAuthority: {"profile": "independent-omitted", "reason": "...", "exposedPublicPlayerPaths": ["websocket"]}` and declare `capabilities: {"prometheusMirrors": "omitted", "playerFlowCanary": "omitted"}` without deadman or public-path authority records. For promotion-bound evidence, `deploymentRef` is the exact staging overlay commit SHA (`stagingOverlayCommitSha`) and `deploymentEventId` is the distinct UUID selected by the promotion attestation, so evidence cannot be reused across two applies of the same overlay commit. Standalone local evidence may use another non-empty reference, but that artifact is not promotion evidence.
 
-An `independent-omitted` profile may instead advertise player-flow canaries as a separate target-state form:
+An `independent-omitted` profile may instead advertise player-flow canaries. The following partial capability fragment only contrasts the authority and capability selection; it is not a complete retained-evidence or timing-declaration form:
 
 ```json
 {
@@ -32,7 +32,7 @@ An `independent-omitted` profile may instead advertise player-flow canaries as a
 }
 ```
 
-This target-state advertised-canary form retains the complete local canary mirror family and profile budget, but no deadman or external `publicPathChecks` authority; the budget is local canary timing only. Until the authoritative synthetic identity/isolation verifier exists, the runner emits only the omitted-canary form and the validator rejects retained advertised-canary evidence. Together with the omitted-canary form above, these are the two valid `independent-omitted` canary forms.
+The complete target-state advertised-canary form retains the local canary mirror family and profile budget, but no deadman or external `publicPathChecks` authority; the budget is local canary timing only. Its deployment timing declaration must also record the canary cadence, execution timeout, observation/ingestion delay, evaluation cadence, and the reproducible formula deriving the positive `detectionBudgetSeconds` under the [external-monitoring contract](../observability/external-monitoring/README.md#required-external-checks). Until the authoritative synthetic identity/isolation verifier exists, the runner emits only the omitted-canary form and the validator rejects retained advertised-canary evidence. Omitted-canary and advertised-canary are the two valid `independent-omitted` contract variants; this fragment illustrates the latter without claiming to enumerate its complete fields.
 
 ```json
 {
