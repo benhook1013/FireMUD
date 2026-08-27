@@ -4,6 +4,8 @@
 
 Superseded by [ADR 0169](./adr-0169-exclusive-environment-bound-tcp-proxy-trust.md)
 
+This record preserves the historical ordered-fallback proposal. [ADR 0169](./adr-0169-exclusive-environment-bound-tcp-proxy-trust.md) is the current authority for TCP Proxy trust; its exclusive-profile model supersedes the URI SAN -> DNS SAN -> fingerprint fallback order below. That fallback order is obsolete transitional guidance and is not current target-state behavior.
+
 ## Context
 
 Gateway header trust depends on authenticating the TCP Proxy identity on the internal mTLS WebSocket hop. The architecture documented URI SAN, DNS SAN, and fingerprint allowlist modes, but lacked a single normative decision that defined production canonical identity and fallback boundaries.

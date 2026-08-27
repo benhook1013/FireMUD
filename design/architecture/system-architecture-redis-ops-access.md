@@ -508,7 +508,7 @@ To keep operational scripts aligned with application code:
   - Scripts construct `tick:*`, `timer:*`, `retry:*`, `remote:*`, or `session:*` keys by hand instead of calling shared helpers.
   - Scripts hard-code Redis host/port or URLs instead of using the shared `RedisCoordConfig` / `RedisCacheConfig` helpers and role-specific environment variables.
   - Cache/rate-limit scripts introduce Redis prefixes that are not listed in the Cache/Rate-Limit Redis key catalog maintained in the Redis cache design docs (Redis cheat sheet plus `system-architecture-redis-cache.md`), or misuse those prefixes against the wrong Redis role.
-  - Automation-related Lua or tooling scripts reference both `automation:*` and `tick:*` prefixes in a single operation, violating the automation cluster slotting rules in `system-architecture-redis-lua-patterns.md` and the Automation & Scripting service design.
+  - Target-state descriptor validation rejects every Automation Lua or tooling descriptor that constructs or references any `tick:*` key, including tick-only artifacts and regardless of whether an `automation:*` prefix is also present. Game Session owner-local tick builders are the sole exception; Automation must hand work to Game Session through the documented contract, in accordance with the automation cluster slotting rules in `system-architecture-redis-lua-patterns.md` and the Automation & Scripting service design.
 
 Once the target maintenance surface is implemented and proven, maintenance scripts that genuinely need to work with coordination keys must:
 
