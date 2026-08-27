@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-`AS-1.5` remains partial. Current audit and handoff surfaces prove stage-linked single-command paths and current execution-fence handling, and the live no-command terminal path now records the canonical `completed_no_commands` outcome with focused proof. The live handoff path still needs convergence to `handoff_accepted`, alongside authoritative per-command Game Session links with derived handler summaries. The full multi-command outcome model and its focused proof are not yet end to end. See the [automation and scheduler runtime tracker](../../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status).
+`AS-1.5` remains partial. Current audit and handoff surfaces prove stage-linked single-command paths and current execution-fence handling, and the live no-command terminal path now records the canonical `completed_no_commands` outcome with focused proof. The live handoff path still needs convergence to `handoff_accepted`, alongside authoritative per-command Game Session links with derived handler summaries. The full multi-command outcome model and its focused proof are not yet end-to-end. See the [automation and scheduler runtime tracker](../../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status).
 
 ## Canonical Design
 

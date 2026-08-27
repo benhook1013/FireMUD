@@ -25,7 +25,18 @@ This file contains reference PromQL expressions and Alertmanager rules that cove
   expr: |
     sum by (service, scope, script_kind) (rate(script_quota_denied_total{service="automation-scripting-service"}[5m]))
       /
-    (sum by (service, scope, script_kind) (rate(script_quota_allowed_total{service="automation-scripting-service"}[5m])) + sum by (service, scope, script_kind) (rate(script_quota_denied_total{service="automation-scripting-service"}[5m])) + 1e-9)
+    (
+      sum by (service, scope, script_kind) (rate(script_quota_denied_total{service="automation-scripting-service"}[5m]))
+        +
+      (
+        sum by (service, scope, script_kind) (rate(script_quota_allowed_total{service="automation-scripting-service"}[5m]))
+          or on (service, scope, script_kind)
+        (
+          0 * sum by (service, scope, script_kind) (rate(script_quota_denied_total{service="automation-scripting-service"}[5m]))
+        )
+      )
+      + 1e-9
+    )
       > 0.20
   for: 5m
   labels:

@@ -103,14 +103,17 @@ The table below summarizes high-level implementation status categories; verify c
 
 At a high level, a script (or plugin) must pass through several stages before it can execute in production. Different services own different steps:
 
-1. **Editor graph validation (Game Design Service)**
-   - The visual editor enforces type correctness, required connections, and basic structural rules (for example, no missing inputs, no dangling edges).
-   - Loop safety is checked at the graph level using the bounded-loop rules described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md#loop-safety-analysis`.
-   - Errors at this stage are shown directly in the editor; scripts cannot be published until they are resolved.
+1. **Target-state editor graph validation (Game Design Service)**
+   - **Target state:** The visual editor enforces type correctness, required connections, and basic structural rules (for example, no missing inputs, no dangling edges).
+   - **Target state:** Loop safety is checked at the graph level using the bounded-loop rules described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md#loop-safety-analysis`.
+   - **Target state:** Errors at this stage are shown directly in the editor, and scripts cannot be published until they are resolved.
+   - **Current status:** The creator/editor capability is partial and audited: [`ScriptEditor.tsx`](../../web-client/src/ScriptEditor.tsx) is a starter text/test surface, and the [Game Authoring, Publishing, and Activation tracker](../project-management/implementation-tracking/game-authoring-publishing-and-activation.md#capability-status) records the designed creator application, graph editor workflows, and focused frontend proof as absent. No current Game Design or Automation code path proves the target visual graph validator or loop-safety analysis, so these remain unimplemented target behavior rather than live publication gates.
 
-2. **Compile-time validation and persistence (Automation & Scripting Service)**
-   - When designers publish a new script patch, the Game Design Service drives the durable publish workflow that compiles the editor graph into the runtime DSL representation and persists it in the Automation & Scripting Service schema.
-   - The Automation & Scripting Service revalidates the compiled graph (for example, type checks, guard-node presence in loops, supported component versions) and will reject or mark the patch as `FAILED` if compilation or validation fails.
+2. **Target-state compile-time validation and persistence (Automation & Scripting Service)**
+   - **Target state:** When designers publish a new script patch, the Game Design Service drives the durable publish workflow that compiles the editor graph into the runtime DSL representation and persists it in the Automation & Scripting Service schema.
+   - **Target state:** The Automation & Scripting Service revalidates the compiled graph (for example, type checks, guard-node presence in loops, supported component versions) and will reject or mark the patch as `FAILED` if compilation or validation fails.
+   - **Current status:** Automation's `AS-1.2` boundary is partial: the live service evaluates stored structured command templates with narrow output, target, and DSL-shape checks, while the [Automation and Scheduler Runtime tracker](../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status) records the broader graph compiler/validator and sandbox policy as gaps. The current [`ScriptDefinitionServiceImpl`](../../services/automation-scripting-service/src/main/java/net/firedevops/firemud/automationscripting/service/impl/ScriptDefinitionServiceImpl.java) validates event bindings and persists definitions but does not implement the target compiled-graph or loop-safety gate.
+   - **Current publication boundary:** Game Design does have a design-time script-patch publication path through [`VersionServiceImpl`](../../services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/impl/VersionServiceImpl.java), but the owning authoring tracker records broader authoring/publication capability as partial and a published patch is only a readiness candidate; publication does not prove the target visual graph, loop-safety, or runtime readiness gates. Automation's tenant readiness remains the later `PENDING_VALIDATION` -> `ONLOAD_RUNNING` -> `READY`/`FAILED` lifecycle.
 
 3. **`onLoad` initialization (Automation & Scripting Service, per tenant patch)**
    - For each `<tenantId, scriptPatchVersion>`, the Automation & Scripting Service runs any configured `onLoad` handlers after static validation succeeds but **before** the patch is marked `READY` for that tenant. `READY` only means the patch is eligible for pinning; runtime admission, timers, reload pause, and rollback remain instance-scoped.
