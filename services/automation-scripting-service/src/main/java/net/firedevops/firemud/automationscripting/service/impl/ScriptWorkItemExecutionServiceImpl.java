@@ -357,7 +357,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
           STAGE_DSL_EVAL,
           workItem.isDryRun()
               ? "dry_run_completed"
-              : isOnLoad(workItem) ? "readiness_success" : "no_commands_emitted",
+              : isOnLoad(workItem) ? "readiness_success" : "completed_no_commands",
           workItem.isDryRun()
               ? "dry_run_no_handoff"
               : isOnLoad(workItem) ? "ready_for_tenant" : "script_emitted_no_commands",

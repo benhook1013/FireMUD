@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-`AS-1.5` remains partial. Current audit and handoff surfaces prove stage-linked single-command paths and current execution-fence handling, but the live taxonomy still needs convergence to `handoff_accepted`/`completed_no_commands` and authoritative per-command Game Session links with derived handler summaries. The full multi-command outcome model and its focused proof are not yet end to end. See the [automation and scheduler runtime tracker](../../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status).
+`AS-1.5` remains partial. Current audit and handoff surfaces prove stage-linked single-command paths and current execution-fence handling, and the live no-command terminal path now records the canonical `completed_no_commands` outcome with focused proof. The live handoff path still needs convergence to `handoff_accepted`, alongside authoritative per-command Game Session links with derived handler summaries. The full multi-command outcome model and its focused proof are not yet end-to-end. See the [automation and scheduler runtime tracker](../../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status).
 
 ## Canonical Design
 
@@ -85,6 +85,8 @@ Specify the event-ingress, handler-pipeline, dispatch-link, and derived-summary 
 Prove successful zero-command evaluation; one- and multi-command handoff; mixed applied and not-applied command results; abandoned commands; retry without duplicate dispatch outcomes; stage-monotonic audit history; authoritative links to Game Session; derived summary reconstruction; and operator queries that distinguish every required stage and terminal disposition.
 
 Current implementation and focused proof must be evaluated separately; this decision does not claim the contract is already implemented.
+
+Select and report the required checks and evidence under [Validation and Runtime Proof](../../developer-workflows/validation-and-runtime-proof.md); record execution results in PR/CI evidence or implementation-tracking documents rather than in this decision record.
 
 ## Reversibility and Revisit Triggers
 

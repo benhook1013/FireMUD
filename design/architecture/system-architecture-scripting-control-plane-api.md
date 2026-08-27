@@ -347,6 +347,100 @@ Boundary rule:
 
 - This API reports tenant runtime readiness only. Operator UIs that need to explain "published but not ready" must join this read with `GetPublishedScriptPatchVersion` instead of inventing a fused status enum.
 
+#### `GetScriptBreakerStatus`
+
+Implementation note: this is a target-state Automation & Scripting read. The current proto and implementation do not persist or expose an authoritative core-script breaker row, transition evidence, or reset audit. In the target contract, Automation owns the authoritative persisted breaker aggregate, immutable transition history, and validated reset for the exact five-field tuple below. It must not be inferred from `GetScriptPatchStatus` or `GetScriptStatus`: the former reports tenant patch readiness, while the latter reports current pre-DSL work-item states.
+
+Inputs:
+
+- `tenantId`
+- `gameInstanceId`
+- `scriptPatchVersion`
+- `scriptPinEpoch`
+- `scriptId`
+
+The exact breaker identity and runtime scope is `(tenantId, gameInstanceId, scriptPatchVersion, scriptPinEpoch, scriptId)`. `scriptPatchVersion` and `scriptPinEpoch` are the immutable patch/pin selection under which the core script runs; no `scriptVersionId` is introduced or inferred.
+
+Outputs:
+
+- `tenantId`, `gameInstanceId`, `scriptPatchVersion`, `scriptPinEpoch`, `scriptId`
+- `breakerState` (`CLOSED` or `DISABLED_DUE_TO_ERRORS`)
+- `breakerReason` (nullable when `CLOSED`; otherwise the bounded value `failure_rate_breaker`)
+- `breakerRevision` (Automation-owned monotonic cursor for this exact breaker aggregate; initialized to `0` and advanced once by each trip or reset)
+- `breakerSampleGeneration` (Automation-owned monotonic sample-accounting generation for this exact aggregate; initialized to `0` and advanced once by each reset)
+- `breakerPolicyVersion`
+- `sampleWindowStartedAt`, `sampleWindowEndedAt`
+- `minimumSampleCount`, `failureRateThreshold`
+- `eligibleSampleCount`, `qualifyingFailureCount`, and `observedFailureRate`
+- bounded `sampleEvidence[]` for the current `breakerSampleGeneration` classified samples that explain the current transition; each entry retains its stable sample identifier, observation timestamp, classification, and bounded outcome/reason
+- `lastChangedAt`, `observedAt`
+- nullable audited reset evidence: `lastResetActor`, bounded immutable `lastResetReason`, `lastResetControlPlaneRequestId`, `lastResetValidationEvidence`, and `lastResetAt`
+
+Contract rules:
+
+- A newly selected exact patch/script tuple is initialized `CLOSED` at `breakerRevision=0` and `breakerSampleGeneration=0`. A missing transition has no failure evidence; it must not be synthesized from patch readiness or pre-DSL work state.
+- The exact five-field tuple is the core-script breaker identity. Automation persists and owns its `breakerState`, transition history, and validated reset; `runtimeStatus` remains administrative lifecycle/readiness state. If `runtimeStatus=DISABLED_DUE_TO_ERRORS` is exposed, it is only a read-only effective-admission projection for this queried exact tuple and is never persisted breaker authority or transition history.
+- Every eligible classified live-handler sample is durably bound to the exact current `breakerSampleGeneration` and the observed closed-state `breakerRevision`. The breaker counts only samples in that generation and trips only when the bounded rolling-window minimum and failure-rate threshold in [ADR 0166](./decisions/adr-0166-attributable-script-breakers-and-tenant-first-fairness.md) are met. The policy version, window, threshold, counts, rate, and bounded triggering sample evidence are retained so the read explains why the state changed.
+- An explicit validated, audited reset may clear `DISABLED_DUE_TO_ERRORS` only for this exact five-field identity. Its actor, bounded immutable reset reason, request ID, validation/reset evidence, and timestamp are retained in the status and history. Reset does not change the patch, pin epoch, or any unrelated tuple, and there is no automatic `HALF_OPEN` state or probe loop.
+- This read is a current-state view only; it does not authorize a different patch, infer readiness, or return pre-DSL work progress. Handler admission uses the exact tuple and records the bounded breaker denial in `script_event_audit` when the state is disabled.
+
+#### `ListScriptBreakerEvents`
+
+Implementation note: this is a target-state bounded append-only history read. The current proto and implementation do not expose it or persist the complete core-script breaker transition evidence.
+
+Inputs:
+
+- `tenantId`
+- optional selectors `gameInstanceId`, `scriptPatchVersion`, `scriptPinEpoch`, `scriptId`, and `breakerState`
+- optional `changedAfterMs` / `changedBeforeMs`
+- bounded `limit` and opaque `pageToken`
+
+Outputs:
+
+- ordered `events[]`, each carrying `eventId`, `transition` (`TRIPPED` or `RESET`), the exact `(tenantId, gameInstanceId, scriptPatchVersion, scriptPinEpoch, scriptId)` identity/runtime scope, `previousBreakerState`, `breakerState`, `breakerRevision`, `breakerSampleGeneration`, bounded `breakerReason`, `breakerPolicyVersion`, sample-window bounds, threshold/minimum policy, classified sample counts/rate, bounded `sampleEvidence[]`, and `occurredAt`/`observedAt` timestamps
+- reset events additionally carry `previousBreakerSampleGeneration`, the validated reset `actor`, bounded immutable `resetReason`, `controlPlaneRequestId`, and bounded `validationEvidence`; their resulting current-generation counts are zero and `sampleEvidence[]` is empty, while the preceding immutable trip row retains the prior generation's samples
+- `nextPageToken` when more bounded history remains
+
+Contract rules:
+
+- Optional selectors narrow the bounded history query; a partial selector never becomes a new breaker identity, and every returned row still exposes the complete exact tuple. Ordering is deterministic newest-first by `occurredAt`, then `eventId`.
+- Trip and reset evidence is immutable and append-only. A reset clears only the exact selected tuple after validation, advances its sample generation, and leaves every prior generation's evidence only in history; a new exact tuple starts `CLOSED`. Neither operation mutates patch readiness, pre-DSL work status, or another tuple. No automatic half-open transition is recorded.
+- Operators use this history to explain transitions rather than reconstructing them from metrics, `GetScriptPatchStatus`, or `GetScriptStatus`.
+
+#### `ResetScriptBreaker`
+
+Implementation note: this is a target-state Automation & Scripting mutation. The current proto and implementation do not expose this operation or persist the authoritative breaker aggregate, revision, request result, or reset evidence.
+
+Inputs:
+
+- `tenantId`
+- `gameInstanceId`
+- `scriptPatchVersion`
+- `scriptPinEpoch`
+- `scriptId`
+- `expectedBreakerState` (required and exactly `DISABLED_DUE_TO_ERRORS`)
+- `expectedBreakerRevision`
+- `validationEvidence` (bounded immutable validation-result reference or digest)
+- `controlPlaneRequestId`
+- `actor`
+- `reason`
+
+Semantics:
+
+- The mutation uses the shared operator/admin authorization, actor/reason audit, and digest-bound idempotency rules in [Idempotency, AuthZ, and Audit](#idempotency-authz-and-audit). Its canonical request digest binds the complete exact breaker identity, expected state and revision, validation evidence, actor, and reason. Reusing the request ID with changed input conflicts before mutation; an exact retry returns the stored result and does not append another event or advance the breaker revision.
+- After exact-request idempotency is resolved, Automation atomically compares the exact breaker aggregate with `expectedBreakerState=DISABLED_DUE_TO_ERRORS` and `expectedBreakerRevision`. Missing, displaced, `CLOSED`, or revision-mismatched state is a deterministic non-mutating conflict. On success, one owner transaction changes only this exact aggregate to `CLOSED`, clears `breakerReason`, advances `breakerRevision` and `breakerSampleGeneration` exactly once each, starts empty current-generation sample accounting at the reset cutoff, stores the request result, and appends one immutable `transition=RESET` history event with previous/new state, `previousBreakerSampleGeneration`, resulting `breakerSampleGeneration`, actor, bounded reset reason, request ID, validation evidence, and timestamp. Samples from every prior generation remain immutable trip/history evidence but are ineligible for all later thresholds.
+- Automatic trips use the same aggregate fence: a trip from `CLOSED` compare-and-sets the observed `breakerRevision` and `breakerSampleGeneration`, counts only samples durably bound to both observed values, advances `breakerRevision` once, and appends its `TRIPPED` evidence atomically. Therefore a reset and trip cannot overwrite each other, a sample recorded before the reset cutoff cannot retrip the reset breaker, and a delayed reset for an older disabled revision cannot clear a later trip. There is no `HALF_OPEN` state, automatic probe, lifecycle mutation, or patch/pin change.
+
+Outputs:
+
+- the exact `(tenantId, gameInstanceId, scriptPatchVersion, scriptPinEpoch, scriptId)` identity
+- `previousBreakerState` (`DISABLED_DUE_TO_ERRORS`)
+- `breakerState` (`CLOSED`)
+- `breakerRevision`
+- `breakerSampleGeneration`
+- `controlPlaneRequestId`
+- `resetEventId`
+
 #### `ListScriptPatchStatuses`
 
 Inputs:
@@ -517,7 +611,7 @@ Inputs:
 Outputs:
 
 - **Current live output:** patch-only instance-scoped schedule entries omit `scriptPinEpoch` and therefore cannot prove an exact pin tuple.
-- **Target-state output:** instance-scoped schedule entries contain the exact `scriptPatchVersion` and `scriptPinEpoch`, `scriptId`, plugin owner metadata, resolved `playableStateScope`, `scheduleDefinitionId`, event type, cadence, scheduler priority tag, target-scope identity (`targetScopeType`, `targetScopeId`), binding priority/exclusivity flags, materialization status, due-point fields, observed runtime version id, the pin operation's `controlPlaneRequestId`, pin observation time, row timestamps, and the current owned runtime scope (`currentRuntimeGameInstanceId`, `currentRuntimeRegionId`, `currentRuntimeRegionEpoch`) plus the current owned routing bundle (`currentRuntimePlayableStateScope`, `currentRuntimeWorldSlug`, `currentRuntimeRealmSlug`, `currentRuntimePointerVersion`) and stale-scope/routing signaling beside the persisted scheduler row scope.
+- **Target-state output:** instance-scoped schedule entries contain the exact `scriptPatchVersion` and `scriptPinEpoch`, `scriptId`, plugin owner metadata, persisted `playableStateNamespaceId` and resolved `playableStateScope`, `scheduleDefinitionId`, event type, cadence, scheduler priority tag, target-scope identity (`targetScopeType`, `targetScopeId`), binding priority/exclusivity flags, materialization status, due-point fields, observed runtime version id, the pin operation's `controlPlaneRequestId`, pin observation time, row timestamps, and the current owned runtime scope (`currentRuntimePlayableStateNamespaceId`, `currentRuntimeGameInstanceId`, `currentRuntimeRegionId`, `currentRuntimeRegionEpoch`) plus the current owned routing bundle (`currentRuntimePlayableStateScope`, `currentRuntimeWorldSlug`, `currentRuntimeRealmSlug`, `currentRuntimePointerVersion`) and stale-namespace/scope/routing signaling beside the persisted scheduler row evidence.
 
 Contract rules:
 
@@ -525,6 +619,7 @@ Contract rules:
 - The live implementation must report tick-aligned schedules honestly as not-yet-advanced when no heartbeat-derived due point exists; it must not invent synthetic tick coordinates.
 - Reconciliation across repins is keyed by stable `scheduleDefinitionId` plus plugin owner metadata and binding target identity, not by inferred semantic similarity.
 - The read must also expose the current owned runtime scope from Game Session when the instance still exists so operators can tell directly whether persisted scheduler scope has gone stale without a second runtime-state lookup.
+- `playableStateNamespaceId` is immutable non-identity scope evidence, not a schedule, trigger, or command identity field. Missing or mismatched namespace evidence fails closed during materialization, due-candidate claim, retry, and reconciliation and remains visible on this read rather than being inferred or refreshed.
 
 #### `ListScriptTimerAuditEvents`
 
@@ -539,7 +634,7 @@ Inputs:
 
 Outputs:
 
-- newest-first timer audit rows containing Trigger Identity fields including the exact `scriptPatchVersion` and `scriptPinEpoch`, resolved `playableStateScope`, admitted routing bundle, plugin owner metadata, trigger mode, scheduler source state/ordinal/due-point fields, optional `workItemId`, final stage/outcome/reason, row timestamps, and the current owned runtime scope (`currentRuntimeGameInstanceId`, `currentRuntimeRegionId`, `currentRuntimeRegionEpoch`) plus the current owned routing bundle (`currentRuntimePlayableStateScope`, `currentRuntimeWorldSlug`, `currentRuntimeRealmSlug`, `currentRuntimePointerVersion`) and stale-scope/routing signaling beside the persisted timer row scope
+- newest-first timer audit rows containing the Trigger Identity fields, including the exact `scriptPatchVersion` and `scriptPinEpoch`, plus persisted non-identity `playableStateNamespaceId` evidence, resolved `playableStateScope`, admitted routing bundle, plugin owner metadata, trigger mode, scheduler source state/ordinal/due-point fields, optional `workItemId`, final stage/outcome/reason, row timestamps, and the current owned runtime scope (`currentRuntimePlayableStateNamespaceId`, `currentRuntimeGameInstanceId`, `currentRuntimeRegionId`, `currentRuntimeRegionEpoch`) plus the current owned routing bundle (`currentRuntimePlayableStateScope`, `currentRuntimeWorldSlug`, `currentRuntimeRealmSlug`, `currentRuntimePointerVersion`) and stale-namespace/scope/routing signaling beside the persisted timer row evidence
 
 Contract rules:
 
@@ -547,6 +642,7 @@ Contract rules:
 - The live implementation is sourced from durable `script_event_audit` rows, not reconstructed from metrics or volatile queue indexes.
 - Timer-fired work that reached durable work-item persistence and timer-fired work intentionally dropped by scheduler fences/truncation share this history surface so operators can correlate a due point without joining multiple ad hoc tables first.
 - The read must also expose the current owned runtime scope from Game Session when the instance still exists so operators can distinguish stale timer history from current-timeline timer activity without a second runtime-state lookup.
+- Timer audit retains `playableStateNamespaceId` as the namespace evidence validated at claim/admission time. Missing or mismatched namespace evidence fails closed before firing and is never repaired by a current-owner read.
 
 #### `ListScriptDeadLetters`
 
@@ -651,7 +747,7 @@ Outputs:
 
 ### Automation & Scripting: Plugin Lifecycle Management
 
-Plugins are controlled by operators via Logging & Admin, but the runtime registry and enforcement live in Automation & Scripting. The authoritative row for `(tenantId, gameInstanceId, pluginId)` binds the exact `pluginVersionId`, monotonic `pluginActivationEpoch`, lifecycle state, and monotonic owner `lifecycleRevision`. Mutating operations are scoped to a running instance, are idempotent against a canonical operation digest, and must install and durably acknowledge the corresponding Game Session final-execution fence before reporting activation or containment complete. Notifications are advisory refresh wakeups, not that fence.
+Plugins are controlled by operators via Logging & Admin, but the runtime registry and enforcement live in Automation & Scripting. The authoritative row for `(tenantId, gameInstanceId, pluginId)` binds the exact `pluginVersionId`, monotonic `pluginActivationEpoch`, lifecycle state, separate breaker state, and monotonic owner `lifecycleRevision`. Lifecycle and activation operations are scoped to a running instance, are idempotent against a canonical operation digest, and must install and durably acknowledge the corresponding Game Session final-execution fence before reporting activation or lifecycle containment complete. A breaker trip or reset independently changes execution admission state and does not require a Game Session final-execution fence or acknowledgement; it leaves lifecycle state, version, epoch, and revision unchanged. Notifications are advisory refresh wakeups, not the lifecycle fence.
 
 Lifecycle mutations use one durable pending-transition slot per `(tenantId, gameInstanceId, pluginId)`. Initiation compare-and-sets from the captured current `(pluginVersionId, pluginActivationEpoch, pluginState, lifecycleRevision)` only when no transition is pending. Every state-changing target reserves `targetLifecycleRevision = current lifecycleRevision + 1`; an epoch-advancing target additionally reserves `targetPluginActivationEpoch = current pluginActivationEpoch + 1` exactly once. An exact same-request retry resumes that slot with the same reserved tuple, while any different activation, switch, drain, disable, revocation, reactivation, or policy mutation returns `transition_in_progress`/fails closed rather than reusing or overwriting the target. Completion compare-and-sets the unchanged captured tuple plus pending request identity/digest, target epoch, and target lifecycle revision; the owner advances `lifecycleRevision` exactly once only when the Game Session install has been durably acknowledged, and stale completion cannot overwrite newer state. Security, component, and signer-policy fences remain independent immediate fail-closed checks and are not delayed by this serialization.
 
@@ -659,7 +755,7 @@ Lifecycle mutations use one durable pending-transition slot per `(tenantId, game
 
 Implementation note: the current Automation & Scripting implementation persists and serves the runtime registry for `(tenantId, gameInstanceId, pluginId)`, and `SetPluginActiveVersion` now consults the live Game Design `GetPublishedPluginVersion` read surface plus the shared Game Session runtime-state read for runtime version, launch descriptor, version/release identifiers, and script-patch pin metadata before mutating that registry. Design-time publication eligibility, signer revocation, component-policy decisions, and `baseVersionId` compatibility are enforced, but exact `abilitySchemaDigest` compatibility is not: the live path compares against Automation's aggregate participant digest instead of the required dedicated Game Logic-owned release attestation. The activation path also now re-checks the currently pinned script-patch binding surface for the target instance, validates `COMMAND_ALIAS` bindings against Game Session's authoritative built-in command registry, and rejects instance-scoped binding conflicts before runtime state changes. Enabled plugin runtime states are also rechecked on a bounded scheduled cadence so already-active plugins are disabled if their publication state, signer metadata, or component-policy decision becomes fail-closed after activation; `REPORT_ONLY` policy decisions remain activatable and do not trigger fail-closed reconciliation. Plugin-trigger ingress uses the persisted `lastPolicyCheckedAt` evidence and fails closed with `signer_policy_unavailable` when that check is older than `SCRIPT_PLUGIN_POLICY_STALE_THRESHOLD_SECONDS`, and `GetPluginStatus` now exposes both `lastPolicyCheckedAtMs` and `policyCheckStale` so operators can see that freshness directly.
 
-Target state additionally exposes the Automation-owned monotonic `pluginActivationEpoch` and `lifecycleRevision` for the scoped runtime row and resulting lifecycle history. A newly created runtime row starts at epoch `0` and revision `0` while no activation is admitted. The first successful activation/enable atomically establishes epoch `1` and advances the revision once. A version switch, completed disable of an active/current lifecycle, final drain or forced drain, same-version reactivation after invalidation, or revocation of an active/current lifecycle advances the epoch exactly once; every committed state-changing transition, including same-epoch entry into `DRAINING`, advances `lifecycleRevision` exactly once. Never-active disable, failed operations, no-ops, and exact retries advance neither counter. The current runtime/status implementation does not yet persist or expose these target fences; same-version re-enable fencing remains an implementation and proof gap.
+Target state additionally exposes the Automation-owned monotonic `pluginActivationEpoch` and `lifecycleRevision` for the scoped runtime row and resulting lifecycle history. A newly created runtime row starts at epoch `0` and revision `0` while no activation is admitted. The first successful activation/enable atomically establishes epoch `1` and advances the revision once. A version switch, completed disable of an active/current lifecycle, final drain or forced drain, same-version reactivation after invalidation, or revocation of an active/current lifecycle advances the epoch exactly once; every committed lifecycle/active-version state-changing transition, including same-epoch entry into `DRAINING`, advances `lifecycleRevision` exactly once. Never-active disable, failed operations, no-ops, and exact retries advance neither counter. The current runtime/status implementation does not yet persist or expose these target fences; same-version re-enable fencing remains an implementation and proof gap. The separate target `breakerState` is keyed to the exact active `pluginVersionId` and runtime scope, initializes to `CLOSED` only when a newly introduced plugin-version breaker aggregate is created, and may transition to `DISABLED_DUE_TO_ERRORS` without advancing lifecycle counters or changing `pluginState`; same-version reactivation reuses the retained aggregate, including a retained `DISABLED_DUE_TO_ERRORS` state and its audit evidence, and lifecycle reactivation never clears it. Only a successful `ResetPluginBreaker` may clear that retained state. With no active version, all breaker fields and reset evidence are `null`/`not_applicable` and cannot authorize or serve as the target of a breaker operation.
 
 Inputs:
 
@@ -675,18 +771,23 @@ Outputs:
 - `lifecycleRevision` (the Automation-owned monotonic lifecycle cursor; target state)
 - `pendingPluginVersionId` (nullable)
 - `pluginState` (`ENABLED`, `DISABLED`, `DRAINING`, `RELOADING`, `FAILED`)
+- `breakerState` (`CLOSED` or `DISABLED_DUE_TO_ERRORS`, target state; keyed to the exact active plugin version and runtime scope; `null`/`not_applicable` when no active version is bound)
+- `breakerReason` (nullable unless `breakerState=DISABLED_DUE_TO_ERRORS`; bounded value `failure_rate_breaker`; `null`/`not_applicable` when no active version is bound)
+- `breakerRevision` (Automation-owned monotonic cursor for the exact active-version breaker aggregate; target state; `null`/`not_applicable` when no active version is bound)
+- `breakerSampleGeneration` (Automation-owned monotonic sample-accounting generation for that exact aggregate; initialized to `0` for a new active version and advanced once by each reset; target state; `null`/`not_applicable` when no active version is bound)
 - `statusReason` (optional; required for security/policy-driven disablement such as `signer_revoked`)
 - `lastChangedAt`
 - `controlPlaneRequestId` (nullable; the last idempotent mutating request that changed this runtime row)
 - `actor` (nullable; the last operator/system principal recorded on the runtime row)
+- nullable breaker-reset evidence for the exact active-version aggregate: `lastResetActor`, bounded immutable `lastResetReason`, `lastResetControlPlaneRequestId`, `lastResetValidationEvidence`, and `lastResetAt`; `lastResetReason` is distinct from lifecycle `statusReason` and all are `null`/`not_applicable` when no active version is bound
 
 Boundary rule:
 
-- This API reports runtime state for one `(tenantId, gameInstanceId, pluginId)` only. It must not be overloaded to synthesize design-time publication status or signer-verification history from Game Design.
+- This API reports runtime state for one `(tenantId, gameInstanceId, pluginId)` only. It must not be overloaded to synthesize design-time publication status or signer-verification history from Game Design. `breakerState` is an independent execution-admission state and must not be folded into `pluginState`; a breaker trip leaves lifecycle state/version/epoch/revision unchanged while blocking new resolved plugin-handler admission with `finalStage=ADMISSION`, `finalOutcome=disabled_due_to_errors`, and `finalReason=failure_rate_breaker`. When no active plugin version is bound, breaker fields are `null`/`not_applicable`, and no breaker trip or reset operation may use those values as an aggregate identity or authorization evidence; breaker mutations require the exact active version and expected breaker state/revision.
 
 #### `ListPluginRuntimeEvents`
 
-Purpose: provide append-only runtime lifecycle history for one tenant's plugin activations, drains, disables, and policy-reconcile fail-closed transitions so tooling does not reconstruct operator history from the latest registry row.
+Purpose: provide append-only runtime lifecycle and breaker history for one tenant's plugin activations, drains, disables, policy-reconcile fail-closed transitions, and failure-rate breaker transitions so tooling does not reconstruct operator history from the latest registry row.
 
 Request fields:
 
@@ -694,6 +795,7 @@ Request fields:
 - optional `gameInstanceId`
 - optional `pluginId`
 - optional `pluginState`
+- optional `breakerState`
 - optional `activePluginVersionId`
 - optional `changedAfterMs`
 - optional `changedBeforeMs`
@@ -701,17 +803,55 @@ Request fields:
 
 Response fields:
 
-- repeated `events[]` with `eventId`, `tenantId`, `gameInstanceId`, `pluginId`, `previousPluginVersionId`, `activePluginVersionId`, `pluginActivationEpoch`, `lifecycleRevision`, `pluginState`, `statusReason`, `controlPlaneRequestId`, `actor`, and `observedAtMs`; when an event is binding-scoped, it also carries the optional plugin identity tuple `(pluginId, pluginVersionId, bindingId)` alongside the epoch/revision evidence. An absent optional tuple is explicit and must not be inferred from `pluginActivationEpoch`, `lifecycleRevision`, or other event fields.
+- repeated `events[]` with `eventId`, bounded `transitionKind` (`LIFECYCLE`, `BREAKER_TRIPPED`, or `BREAKER_RESET`), `tenantId`, `gameInstanceId`, `pluginId`, `previousPluginVersionId`, `activePluginVersionId`, `pluginActivationEpoch`, `lifecycleRevision`, `pluginState`, nullable `previousBreakerState`, `breakerState`, `breakerReason`, `breakerRevision`, `breakerSampleGeneration`, lifecycle `statusReason`, nullable bounded immutable `resetReason`, `controlPlaneRequestId`, `actor`, and `observedAtMs`; when an event is binding-scoped, it also carries the optional plugin identity tuple `(pluginId, pluginVersionId, bindingId)` alongside the epoch/revision evidence. An absent optional tuple is explicit and must not be inferred from `pluginActivationEpoch`, `lifecycleRevision`, or other event fields. When `activePluginVersionId` is null because no active version is bound, `breakerState`, `breakerReason`, `breakerRevision`, and `breakerSampleGeneration` are `null`/`not_applicable`; lifecycle events must not fabricate an initialized `CLOSED` breaker snapshot. When an active version exists, those fields come from that exact active-version breaker aggregate, while `BREAKER_TRIPPED` and `BREAKER_RESET` retain their required exact active-version and transition-kind semantics.
+- `BREAKER_TRIPPED` rows additionally carry `breakerPolicyVersion`, `sampleWindowStartedAt`, `sampleWindowEndedAt`, `minimumSampleCount`, `failureRateThreshold`, `eligibleSampleCount`, `qualifyingFailureCount`, `observedFailureRate`, and bounded `sampleEvidence[]`; every sample entry retains its stable sample identifier, observation timestamp, classification, and bounded outcome/reason and is bound to that row's exact active version, `breakerRevision` predecessor, and `breakerSampleGeneration`.
+- `BREAKER_RESET` rows additionally carry `previousBreakerSampleGeneration`, bounded immutable `resetReason`, and bounded immutable `validationEvidence`; common `breakerSampleGeneration` is the resulting generation, its current counts are zero, and `sampleEvidence[]` is empty, while the preceding immutable trip row retains the prior generation's samples. The actor, reset reason, request identity, and timestamp complete the reset audit; `resetReason` is absent from lifecycle and trip rows and is never inferred from lifecycle `statusReason`.
 - `error`
 
 Contract rules:
 
 - This is append-only runtime lifecycle history, not a projection of design-time publication events.
-- `SetPluginActiveVersion`, `DisablePlugin`, `DrainPlugin`, and scheduled policy reconciliation must append one event only when they materially change runtime plugin state or the active version.
+- `SetPluginActiveVersion`, `DisablePlugin`, `DrainPlugin`, scheduled policy reconciliation, and breaker trip/reset must append one event only when they materially change runtime plugin state, breaker state, or the active version.
+- A lifecycle event uses `transitionKind=LIFECYCLE`; `previousBreakerState` and all trip/reset-only evidence fields are absent, while any common breaker fields are the current snapshot rather than a breaker transition. A breaker event uses `BREAKER_TRIPPED` or `BREAKER_RESET`, requires previous/new breaker states, the resulting `breakerRevision`, the exact unchanged non-null `activePluginVersionId`, and the applicable transition-kind-specific evidence above, and retains unchanged lifecycle state, activation epoch, and lifecycle revision. Consumers never infer the event kind from timestamps, unchanged lifecycle counters, or snapshot comparison.
 - Idempotent no-op retries against an already-applied target must not append duplicate events or advance the latest-row `lastChangedAt`.
 - An already-applied idempotent request (the requested active version and resulting runtime state already equal the committed state) reuses the existing committed state and history evidence without updating `lastChangedAt`, appending duplicate history, emitting an advisory notification, or triggering projections.
-- [ADR 0119](./decisions/adr-0119-epoch-fenced-per-instance-plugin-activation.md) owns epoch and lifecycle-cursor advancement: a successful committed active-version change, completed disable of an active/current lifecycle, final drain or forced drain, same-version reactivation after invalidation, or revocation of an active/current lifecycle advances `pluginActivationEpoch` exactly once; every committed state-changing transition advances `lifecycleRevision` exactly once, including entry into `DRAINING` without an epoch advance. Never-active disable, failed operations, exact idempotent retries, and no-op requests advance neither counter. A notification may refresh projections after the owner history commit but cannot replace the owner history or fence acknowledgement.
+- [ADR 0119](./decisions/adr-0119-epoch-fenced-per-instance-plugin-activation.md) owns epoch and lifecycle-cursor advancement: a successful committed active-version change, completed disable of an active/current lifecycle, final drain or forced drain, same-version reactivation after invalidation, or revocation of an active/current lifecycle advances `pluginActivationEpoch` exactly once; every committed lifecycle/active-version state-changing transition advances `lifecycleRevision` exactly once, including entry into `DRAINING` without an epoch advance. Never-active disable, failed operations, exact idempotent retries, and no-op requests advance neither counter. A breaker trip or reset does not advance either lifecycle counter or change `pluginState`; it records its own bounded state/reason and exact version/scope evidence. A notification may refresh projections after the owner history commit but cannot replace the owner history or the lifecycle fence acknowledgement.
 - Operators that need the current runtime truth still use `GetPluginStatus`; operators that need transition history use this read rather than inferring chronology from row timestamps.
+
+#### `ResetPluginBreaker`
+
+Implementation note: this is a target-state Automation & Scripting mutation. The current proto and implementation do not expose it or persist the separate authoritative plugin breaker aggregate, revision, request result, or reset evidence.
+
+Inputs:
+
+- `tenantId`
+- `gameInstanceId`
+- `pluginId`
+- `pluginVersionId` (must equal the exact active version for this runtime scope)
+- `expectedBreakerState` (required and exactly `DISABLED_DUE_TO_ERRORS`)
+- `expectedBreakerRevision`
+- `validationEvidence` (bounded immutable validation-result reference or digest)
+- `controlPlaneRequestId`
+- `actor`
+- `reason`
+
+Semantics:
+
+- The shared operator/admin authorization, actor/reason audit, and digest-bound idempotency rules apply. The canonical request digest binds the complete exact active-version/runtime identity, expected state and revision, validation evidence, actor, and reason. Changed input under the same request ID conflicts; an exact retry returns the stored response without another transition.
+- After exact-request idempotency is resolved, Automation atomically requires the current runtime row to retain the requested exact `pluginVersionId` and its breaker aggregate to match `DISABLED_DUE_TO_ERRORS` at `expectedBreakerRevision`. A displaced version, missing aggregate, `CLOSED` state, or revision mismatch is a deterministic non-mutating conflict. On success, one owner transaction changes only that exact active-version breaker aggregate to `CLOSED`, clears `breakerReason`, advances `breakerRevision` and `breakerSampleGeneration` exactly once each, starts empty current-generation sample accounting at the reset cutoff, stores the result, and appends one immutable `transitionKind=BREAKER_RESET` event with previous/new breaker state, `previousBreakerSampleGeneration`, resulting `breakerSampleGeneration`, actor, bounded reset reason, request ID, validation evidence, and timestamp. Samples from every prior generation remain immutable trip/history evidence but cannot contribute to a later threshold.
+- Every eligible plugin sample is durably bound to the exact active version, current `breakerSampleGeneration`, and observed closed-state `breakerRevision`. Automatic plugin trips compare-and-set that same version, revision, and sample generation, count only samples bound to those observed values, advance `breakerRevision` once, and append the complete `transitionKind=BREAKER_TRIPPED` policy/window/count/sample evidence atomically. A reset and trip cannot overwrite one another, a pre-reset sample cannot retrip the reset aggregate, and a delayed reset cannot clear a later trip. Reset changes no `pluginState`, `pluginActivationEpoch`, `lifecycleRevision`, active version, Game Session fence, or lifecycle pending-transition slot, and it creates no `HALF_OPEN` state or automatic probe.
+- After the owner transaction, Automation must publish the existing advisory `PluginVersionRuntimeStateChanged` wake-up with `transitionKind=BREAKER_RESET`; notification delivery is not the reset or admission barrier.
+
+Outputs:
+
+- `tenantId`, `gameInstanceId`, `pluginId`, `activePluginVersionId`
+- `previousBreakerState` (`DISABLED_DUE_TO_ERRORS`)
+- `breakerState` (`CLOSED`)
+- `breakerRevision`
+- `breakerSampleGeneration`
+- unchanged `pluginActivationEpoch`, `lifecycleRevision`, and `pluginState`
+- `controlPlaneRequestId`
+- `resetEventId`
 
 #### `GetPluginPolicyConvergence`
 
@@ -756,7 +896,7 @@ Semantics:
   - `plugin.abilitySchemaDigest` must match the dedicated immutable `abilitySchemaDigest` in a fresh, supported Game Design `GetPublishedReleaseBundle` attestation for the exact base/release version used by the running instance; the Game Logic-owned ability-schema snapshot is the source of that field, not an Automation participant aggregate digest. A missing, unsupported, stale, or otherwise non-matching attestation/digest fails closed before activation.
   - Any mismatch or unavailable attestation fails deterministically with an application error (for example `PLUGIN_BASE_VERSION_MISMATCH`, `PLUGIN_ABILITY_SCHEMA_MISMATCH`, `RELEASE_BUNDLE_NOT_FOUND`, `SCHEMA_VERSION_UNSUPPORTED`, or `RELEASE_ATTESTATION_MISMATCH`) and must not mutate active plugin state.
 - Current implementation note: the live control-plane path enforces `PUBLISHED` design-time state, non-revoked signer metadata, non-blocking component-policy decisions, `plugin.baseVersionId == runtimeVersionId`, supported built-in `COMMAND_ALIAS` bindings, and no instance-scoped binding conflicts against the currently pinned script patch plus already-enabled plugins before updating the runtime registry. Its `plugin.abilitySchemaDigest` check incorrectly compares the Automation participant's aggregate digest; it remains unproved until it consumes the dedicated Game Logic-owned `abilitySchemaDigest` from the running release attestation.
-- On success, when `targetPluginVersionId` changes the active version or a same-version activation/enable re-admits work after invalidation, the epoch-advancement rule above applies. The operation first reserves the exact target epoch/state/revision in the pending-transition slot, installs that tuple at Game Session through an idempotent control-plane command, and waits for durable fence acknowledgement. It must not commit the Automation owner target state, history, result, or notification before that acknowledgement; one completion compare-and-set then commits the owner tuple and advances its revision exactly once. Durable plugin schedules, pending work, and follow-ups reconcile asynchronously; the version-and-epoch/revision fence, not cleanup completion, prevents displaced work from mutating gameplay. After that owner-history commit, it must publish `PluginVersionRuntimeStateChanged` as an advisory notification; notification delivery is not the activation fence or runtime authority.
+- On success, when `targetPluginVersionId` changes the active version or a same-version activation/enable re-admits work after invalidation, the epoch-advancement rule above applies. The operation first reserves the exact target epoch/state/revision in the pending-transition slot, installs that tuple at Game Session through an idempotent control-plane command, and waits for durable fence acknowledgement. It must not commit the Automation owner target state, history, result, or notification before that acknowledgement; one completion compare-and-set then commits the owner tuple and advances its revision exactly once. Durable plugin schedules, pending work, and follow-ups reconcile asynchronously; the version-and-epoch/revision fence, not cleanup completion, prevents displaced work from mutating gameplay. After that owner-history commit, it must publish `PluginVersionRuntimeStateChanged(transitionKind=LIFECYCLE)` as an advisory notification; notification delivery is not the activation fence or runtime authority.
 - If the requested active version and resulting runtime state already equal the committed state, returns the existing committed state without updating `lastChangedAt`, appending history, emitting an advisory notification, triggering projections, or reconciling schedules/timers.
 - The epoch-advancement rule above applies to this operation: every successful activation or version switch advances the epoch and lifecycle revision, while exact idempotent retries, failed operations, and no-op requests do not mint another epoch or revision. `DrainPlugin`, not this operation, owns entry into `DRAINING`.
 
@@ -784,8 +924,8 @@ Semantics:
 - Digest-bound idempotent: the `controlPlaneRequestId` is bound to the canonical digest of the complete operation input; a changed input conflicts before mutation, and an exact retry either resumes the same pending transition or, after completion, returns its stored result.
 - For an active/current lifecycle, initiation atomically creates a durable request-digest-bound pending transition/admission-barrier record with the captured current tuple, one reserved target epoch (`current + 1`), and `targetLifecycleRevision = current lifecycleRevision + 1`, plus target `pluginState=DISABLED`. It durably blocks new admission, survives restart, and does not change the current epoch/state/revision at initiation; admission must check the barrier before admitting work.
 - Game Session installs that exact target epoch/state/revision idempotently. A failed or lost acknowledgement leaves the barrier and pending transition in place and fail closed; an exact retry resumes the same target tuple and install command and does not return a completed or no-op result while pending. After durable acknowledgement, one Automation transaction compare-and-sets the captured tuple and advances the current epoch/state/revision exactly once, marks the transition complete, and stores the result; exact retries after completion return that stored result.
-- Triggers are rejected at admission with a dedicated outcome (for example `finalOutcome=plugin_disabled`) and recorded in `script_event_audit`.
-- Disabling a never-active plugin at epoch `0` is an idempotent no-op and does not advance the epoch. An already-`DISABLED` request is a no-op only when the corresponding transition and Game Session fence acknowledgement are complete; otherwise it resumes the pending transition. Failed operations and retries do not add epochs. The barrier is not automatically cleared on timeout or failure; any clearance requires a separate authorized, audited pre-fence cancellation compare-and-set and is forbidden once the target fence may have installed. After the completed owner transition, it must publish `PluginVersionRuntimeStateChanged(newState=DISABLED)` as an advisory notification; it follows completed owner state and is never the containment barrier. See [ADR 0119](./decisions/adr-0119-epoch-fenced-per-instance-plugin-activation.md) for the lifecycle authority.
+- The disable barrier rejects new triggers before handler resolution with an event-scope admission outcome (for example `admissionOutcome=TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE`, `admissionReason=plugin_disabled`) recorded in `script_event_ingress_audit`; it creates no handler row. A `script_event_audit` row with `finalStage=ADMISSION`, `finalOutcome=plugin_disabled` is only for work that had already resolved a handler and was admitted before the barrier, then failed a handler-scoped disable/fence check.
+- Disabling a never-active plugin at epoch `0` is an idempotent no-op and does not advance the epoch. An already-`DISABLED` request is a no-op only when the corresponding transition and Game Session fence acknowledgement are complete; otherwise it resumes the pending transition. Failed operations and retries do not add epochs. The barrier is not automatically cleared on timeout or failure; any clearance requires a separate authorized, audited pre-fence cancellation compare-and-set and is forbidden once the target fence may have installed. After the completed owner transition, it must publish `PluginVersionRuntimeStateChanged(transitionKind=LIFECYCLE, newState=DISABLED)` as an advisory notification; it follows completed owner state and is never the containment barrier. See [ADR 0119](./decisions/adr-0119-epoch-fenced-per-instance-plugin-activation.md) for the lifecycle authority.
 
 Target-state outputs:
 
@@ -812,7 +952,7 @@ Semantics:
 - Digest-bound idempotent.
 - This operation exclusively owns entry into `DRAINING`. A new drain requires an active current lifecycle with `pluginState=ENABLED`; never-active or other non-executable states use the applicable established deterministic no-op/rejection taxonomy and do not create a drain transition. An exact retry of an already pending drain resumes that transition and its existing target tuple. When the plugin is not already `DRAINING`, it atomically persists a request-digest-bound pending drain transition and admission barrier containing the current exact tuple (plugin version, `pluginActivationEpoch`, current `lifecycleRevision`, and state) plus same-epoch `targetLifecycleRevision = current lifecycleRevision + 1`, before issuing the Game Session install. Every trigger, timer, work-item, follow-up, staged-command, and gameplay-command admission path checks that durable barrier; it survives restart. Only installation and durable acknowledgement of the exact `{pluginActivationEpoch, DRAINING, targetLifecycleRevision}` Game Session fence permits the Automation owner to commit `DRAINING` state/history/revision. New admission is blocked; previously admitted work may complete only within bounded limits when it carries the exact captured version, activation epoch, and lifecycle revision, its policy and runtime fences still pass, and its winning admission/fence compare-and-set durably committed that immediately preceding `ENABLED` lifecycle revision before the pending drain barrier was created. Capturing or merely observing a tuple is not admission proof. Entry into `DRAINING` does not advance `pluginActivationEpoch`.
 - At bounded completion or forced timeout, it reserves `targetPluginActivationEpoch = current pluginActivationEpoch + 1` and `targetLifecycleRevision = current lifecycleRevision + 1` independently from the committed owner row for the final non-executable state, installs and durably acknowledges that exact final Game Session fence, and then advances the Automation-owned epoch/state/revision exactly once by completion compare-and-set. Cleanup remains asynchronous and cannot delay the non-executable fence.
-- If the plugin is already `DRAINING`, returns the existing committed state without updating `lastChangedAt`, appending history, or emitting a notification. Otherwise, records owner history and must publish `PluginVersionRuntimeStateChanged(newState=DRAINING)` as an advisory notification after the committed transition.
+- If the plugin is already `DRAINING`, returns the existing committed state without updating `lastChangedAt`, appending history, or emitting a notification. Otherwise, records owner history and must publish `PluginVersionRuntimeStateChanged(transitionKind=LIFECYCLE, newState=DRAINING)` as an advisory notification after the committed transition.
 
 Target-state outputs:
 
@@ -854,11 +994,13 @@ Contract rules:
 - `admissionOutcome` and `admissionReason` describe the **event-scope ingress decision** only. They must not be interpreted as a summary of all handler-scoped outcomes created after binding resolution.
 - Event-scope `admissionOutcome` and `admissionReason` must map directly to the ingress-time admission result recorded in ingress audit/logging surfaces for that request; they are not the same thing as later handler-scoped `finalOutcome` values recorded in `script_event_audit`.
 - Handler-scoped denials such as `quota_denied`, `script_disabled`, `plugin_disabled`, and `plugin_component_blocked` remain handler/audit outcomes after binding resolution. They are not valid event-scope ingress `admissionOutcome` values in the general fan-out contract.
+- A resolved plugin handler whose exact active version/runtime scope has `breakerState=DISABLED_DUE_TO_ERRORS` is denied with handler-scoped `finalStage=ADMISSION`, `finalOutcome=disabled_due_to_errors`, and bounded `finalReason=failure_rate_breaker`; the handler audit retains the breaker state and exact version/scope evidence. This breaker state is independent of lifecycle `pluginState` and does not create a new event-scope admission enum.
 - `TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED` is reserved for deterministic dry-run/test budget or policy decisions made before handler binding. After binding, a handler capacity denial uses `finalStage=ADMISSION`, `finalOutcome=quota_denied` with its bounded reason.
 - If route/lease, worker, dependency, or capacity-policy infrastructure is unavailable and prevents producing an admission result, return canonical non-OK gRPC `RESOURCE_EXHAUSTED` or `UNAVAILABLE`, as applicable; do not encode infrastructure unavailability as `TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED`.
 - Expected event-scope admission decisions use the typed `admitted`/`admissionOutcome`/`admissionReason` fields. This does not suppress canonical non-OK gRPC status for transport/pre-domain validation or authentication failure, missing preconditions, resource exhaustion, dependency unavailability, deadlines/cancellation, or internal failure; the [gRPC outcome classification](./system-architecture-grpc.md#outcome-and-transport-classification) owns that split.
 - Current ingress enforces `SCRIPT_OUTPUT_MAX_SERIALIZED_WORK_ITEM_BYTES` on the request `payloadJson` input envelope before durable work-item persistence and rejects an oversized envelope with `TRIGGER_ADMISSION_OUTCOME_OUTPUT_BUDGET_EXCEEDED` / `work_item_size_exceeded`. This event-scope input-envelope check is distinct from target generated-output serialized-size violations: runtime evaluation additionally verifies the artifact-pinned cost metadata/cap digests and incrementally meters command count, per-entity count, serialized bytes, and data-dependent bounds before constructing output; a handler-local generated-output violation is `DSL_EVAL` / `work_item_size_exceeded`, and the atomic output contract leaves no generated output or handoff.
 - Current plugin-trigger ingress requires the request `(pluginId, pluginVersionId)` to match Automation's enabled runtime registry state for `(tenantId, gameInstanceId, pluginId)` before handler work is materialized. Missing, disabled, or displaced plugin versions are rejected at ingress with `TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE` and a bounded reason such as `plugin_not_active`, `plugin_disabled`, or `plugin_version_unavailable`.
+- After a plugin handler resolves, admission must also check the exact-version/runtime-scope breaker state. `breakerState=DISABLED_DUE_TO_ERRORS` blocks new work for that version/scope with the bounded handler outcome above while preserving the lifecycle `pluginState`; a new plugin version starts with `breakerState=CLOSED`, and an audited reset may clear the breaker without changing lifecycle state.
 - For events that fan out to multiple handlers:
   - `admitted=true` means the request passed ingress-time fences and was accepted for handler resolution.
   - Per-handler Trigger Identities and outcomes are recorded asynchronously in `script_event_audit` (one row per resolved handler).

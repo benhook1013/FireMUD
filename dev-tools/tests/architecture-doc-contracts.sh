@@ -170,6 +170,13 @@ def require_contains(path, snippets):
     if missing:
         raise SystemExit(f"{path}: missing required snippets: {missing}")
 
+
+def require_absent(path, snippets):
+    text = (root / path).read_text(encoding="utf-8")
+    present = [snippet for snippet in snippets if snippet in text]
+    if present:
+        raise SystemExit(f"{path}: contains forbidden snippets: {present}")
+
 obsolete_redis_rebind_envelope = re.compile(
     r"\brebind(?:[-_\s]?handle)?[-_\s]?envelope\b",
     re.IGNORECASE,
@@ -1488,6 +1495,300 @@ require_contains(
         "A phase failure retains the lock and paused fence.",
         "abandonment does not authorize resume",
     ],
+)
+
+require_contains(
+    "design/architecture/system-architecture-scripting-contracts.md",
+    [
+        "always-isolated test-only breaker or gate",
+        "no environment, tenant, or request opt-in may cross that boundary",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-scripting-contracts.md",
+    ["separate breaker or explicitly opt-in per environment/tenant"],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-quotas-and-operations.md",
+    [
+        "always-isolated test-only breaker or gate",
+        "no environment, tenant, or request opt-in may cross that boundary",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-scripting-quotas-and-operations.md",
+    ["separate breaker or explicit opt-in"],
+)
+require_contains(
+    "design/architecture/decisions/adr-0166-attributable-script-breakers-and-tenant-first-fairness.md",
+    [
+        "For a core script, the Automation & Scripting Service owns the authoritative persisted `breakerState` aggregate",
+        "A legacy/read-model `runtimeStatus=DISABLED_DUE_TO_ERRORS`, when exposed, is only a read-only effective-admission projection",
+        "it is not persisted breaker authority and does not own transition history or reset",
+    ],
+)
+require_contains(
+    "design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md",
+    [
+        "with mandatory dry-run/test isolation",
+        "live-only boundary",
+        "ScriptDryRunCapacityService",
+        "never invokes `ScriptTenantBudgetService`",
+    ],
+)
+require_absent(
+    "design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md",
+    [
+        "dry-run/test isolation by default",
+        "even for dry-run/test work",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-normative-contract-tables.md",
+    [
+        "live-only `ScriptTenantBudgetService` denied after executor claim",
+        "This row is live-only (`isDryRun=false`)",
+        "materialized dry-run/test capacity denied",
+        "ScriptDryRunCapacityService",
+        "event-level catch-up candidate ceiling route",
+    ],
+)
+normative_contracts = (
+    root / "design/architecture/system-architecture-scripting-normative-contract-tables.md"
+).read_text(encoding="utf-8")
+dsl_eval_rows = [
+    line.strip()
+    for line in normative_contracts.splitlines()
+    if line.strip().startswith(
+        "| `DSL_EVAL` | DSL graph evaluation and sandbox enforcement"
+    )
+]
+if len(dsl_eval_rows) != 1:
+    raise SystemExit(
+        "system-architecture-scripting-normative-contract-tables.md: expected exactly one DSL_EVAL stage row"
+    )
+for required_clause in (
+    "Only `readiness_success` or `completed_no_commands` in their declared cases",
+    "`dry_run_completed` is permitted only when `executionSurface=LEGACY_TRIGGER_DRY_RUN`",
+):
+    if required_clause not in dsl_eval_rows[0]:
+        raise SystemExit(
+            "system-architecture-scripting-normative-contract-tables.md: DSL_EVAL outcome contract drifted"
+        )
+if "DRY_RUN_RESULT" in dsl_eval_rows[0] or "dry_run_success" in dsl_eval_rows[0]:
+    raise SystemExit(
+        "system-architecture-scripting-normative-contract-tables.md: ADR 0114 preview outcome leaked into DSL_EVAL"
+    )
+catch_up_rows = [
+    line.strip()
+    for line in normative_contracts.splitlines()
+    if line.strip().startswith("| Recurring/durable-recurring leader failover or short downtime |")
+]
+if len(catch_up_rows) != 1:
+    raise SystemExit(
+        "system-architecture-scripting-normative-contract-tables.md: expected exactly one catch-up candidate row"
+    )
+for required_clause in (
+    "this candidate-level route does not invoke `ScriptTenantBudgetService`",
+    "For `isDryRun=false`, a tenant-ceiling denial records candidate-audit",
+    "increments `automation_script_skips_total` once with `scope=\"tenant\"` and `reason=\"tenant_budget_exceeded\"`",
+    "A cluster-ceiling denial records candidate-audit",
+    "increments `automation_script_skips_total` once with `scope=\"cluster\"` and `reason=\"cluster_limit_reached\"`",
+    "For `isDryRun=true`, neither live-only family is emitted",
+    "settled candidate audit and mode-specific resume-window outcome are the complete observability surface",
+    "handler-scoped test families are not used because the denial occurs before handler materialization",
+):
+    if required_clause not in catch_up_rows[0]:
+        raise SystemExit(
+            "system-architecture-scripting-normative-contract-tables.md: catch-up candidate route drifted"
+        )
+if "`automation_script_triggers_dropped_total`" in catch_up_rows[0]:
+    raise SystemExit(
+        "system-architecture-scripting-normative-contract-tables.md: catch-up cluster denial uses ingress-drop metric"
+    )
+require_contains(
+    "design/architecture/system-architecture-scripting-control-plane-api.md",
+    [
+        "bounded immutable `lastResetReason`",
+        "bounded immutable `resetReason`",
+        "`lastResetValidationEvidence`",
+        "bounded `validationEvidence`",
+        "`resetReason` is absent from lifecycle and trip rows",
+        "persisted non-identity `playableStateNamespaceId` evidence",
+        "`currentRuntimePlayableStateNamespaceId`",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-scripting-control-plane-api.md",
+    ["`lastResetEvidence`", "`resetEvidence`"],
+)
+require_contains(
+    "design/architecture/microservices/automation-scripting-service/operations.md",
+    ["inspect `automation_script_queue_delay_seconds` by bounded priority"],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-operations-cookbook.md",
+    [
+        "`automation_script_test_runs_total{result=\"quota_denied\"}`",
+        "`automation_script_test_capacity_denied_total{scope=~\"tenant|cluster\"}`",
+        "never increments the live `automation_script_triggers_total` family",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-normative-contract-tables.md",
+    [
+        "`finalOutcome=dry_run_completed` maps to metric `result=dry_run_success`",
+        "For every classified non-success Table 2 outcome, metric `result` uses that same canonical outcome value",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-scripting-operations-cookbook.md",
+    ["priority_throttled"],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-scheduler-and-timers.md",
+    [
+        "resume-window record per `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun>`",
+        "its `resumeWindowId` is `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>`",
+        "retains the authoritative `playableStateNamespaceId` as immutable non-identity scope evidence",
+        "missing or mismatched evidence fails closed without changing any canonical identity tuple",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-dsl-for-designers.md",
+    [
+        "`resumeWindowId` identified by `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>`",
+        "one-tenant, one-mode ID",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-scripting-dsl-for-designers.md",
+    [
+        "`resumeWindowId` identified by `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, resumeGeneration>`",
+    ],
+)
+require_contains(
+    "design/architecture/decisions/adr-0072-class-specific-timer-durability-and-recovery.md",
+    [
+        "resume-window record per runtime scope, epoch, and `isDryRun` mode",
+        "`resumeWindowId` is the exact tuple `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>`",
+        "each prior epoch's `OPEN` resume window, independently for each `isDryRun` mode",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-normative-contract-tables.md",
+    [
+        "resume window identified by `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>`",
+        "Durable compare-and-set creates or reuses one `OPEN` window per runtime scope, epoch, and `isDryRun` mode",
+    ],
+)
+require_contains(
+    "design/architecture/decisions/adr-0001-scripting-event-ingress-idempotency-identity.md",
+    [
+        "The canonical scheduler preimage fields are serialized in this fixed order:",
+        "`resumeWindowId` is absent for non-catch-up triggers",
+        "Fields marked `when ...` are omitted, not replaced by empty or sentinel values",
+    ],
+)
+adr0001 = (
+    root
+    / "design/architecture/decisions/adr-0001-scripting-event-ingress-idempotency-identity.md"
+).read_text(encoding="utf-8")
+preimage_matches = re.findall(
+    r"The canonical scheduler preimage fields are serialized in this fixed order: `([^`]+)`",
+    adr0001,
+)
+if len(preimage_matches) != 1:
+    raise SystemExit(
+        "adr-0001-scripting-event-ingress-idempotency-identity.md: expected exactly one canonical scheduler preimage"
+    )
+expected_scheduler_preimage = [
+    "tenantId",
+    "gameInstanceId",
+    "playableStateScope",
+    "stableOwnerKind",
+    "stableOwnerId",
+    "regionId",
+    "regionEpoch",
+    "entityId when targetScopeType=ENTITY",
+    "scriptId when core-owned",
+    "eventType",
+    "eventSchemaVersion",
+    "scriptPatchVersion",
+    "scriptPinEpoch",
+    "scheduleDefinitionId",
+    "targetScopeType",
+    "targetScopeId",
+    "duePoint",
+    "isDryRun",
+    "triggerMode",
+    "pluginId when plugin-owned",
+    "pluginVersionId when plugin-owned",
+    "bindingId when plugin-owned",
+    "pluginActivationEpoch when plugin-owned",
+    "resumeWindowId when triggerMode=CATCH_UP",
+]
+actual_scheduler_preimage = [
+    field.strip()
+    for field in preimage_matches[0].strip("<>").split(",")
+]
+if actual_scheduler_preimage != expected_scheduler_preimage:
+    raise SystemExit(
+        "adr-0001-scripting-event-ingress-idempotency-identity.md: canonical scheduler preimage fields/order drifted"
+    )
+specialized_inventory = (
+    root / "design/project-management/design-alignment/decision-inventory-specialized-runtime.md"
+).read_text(encoding="utf-8")
+adr0017_reference = re.compile(r"\badr(?:[ \t-]+)?0017(?=\b|-)", re.IGNORECASE)
+for adr0017_fixture in (
+    "ADR 0017",
+    "[ADR-0017](../../architecture/decisions/adr-0017-capability-gated-operational-tracing.md)",
+    "../../architecture/decisions/adr-0017-capability-gated-operational-tracing.md",
+):
+    if adr0017_reference.search(adr0017_fixture) is None:
+        raise SystemExit(
+            "decision-inventory-specialized-runtime.md: ADR 0017 fixture was not recognized"
+        )
+trace03_rows = [
+    line for line in specialized_inventory.splitlines() if line.startswith("| `TRACE-03` |")
+]
+if len(trace03_rows) != 1:
+    raise SystemExit(
+        "decision-inventory-specialized-runtime.md: expected exactly one TRACE-03 row"
+    )
+if adr0017_reference.search(trace03_rows[0]) is not None:
+    raise SystemExit(
+        "decision-inventory-specialized-runtime.md: TRACE-03 must not inherit ADR 0017 provenance"
+    )
+require_contains(
+    "design/architecture/system-architecture-scripting.md",
+    ["Terminal completed_no_commands"],
+)
+require_absent(
+    "design/architecture/system-architecture-scripting.md",
+    ["Terminal no_commands_emitted"],
+)
+require_contains(
+    "design/architecture/decisions/adr-0064-stage-qualified-script-outcomes.md",
+    [
+        "the live no-command terminal path now records the canonical `completed_no_commands` outcome with focused proof",
+        "The live handoff path still needs convergence to `handoff_accepted`",
+    ],
+)
+require_absent(
+    "design/architecture/decisions/adr-0064-stage-qualified-script-outcomes.md",
+    ["the live taxonomy still needs convergence to `handoff_accepted`/`completed_no_commands`"],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-normative-contract-tables.md",
+    [
+        "| `automation_script_queue_delay_seconds` | `service`, `scope`, `script_kind`, `priority` |",
+        "canonical priority-starvation signal",
+    ],
+)
+require_contains(
+    "design/project-management/implementation-tracking/automation-and-scheduler-runtime.md",
+    ["priority-sensitive queue-delay/starvation emission"],
 )
 
 print("architecture doc contracts passed")

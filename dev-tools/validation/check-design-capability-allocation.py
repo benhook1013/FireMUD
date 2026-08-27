@@ -633,6 +633,12 @@ ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/adr-0165-authoritative-control-actions-during-observability-loss.md": adr_allocation(
         "PO-4", "Accepted", "PO-1", "SF-1", "SF-2"
     ),
+    "design/architecture/decisions/adr-0166-attributable-script-breakers-and-tenant-first-fairness.md": adr_allocation(
+        "AS-1", "Accepted", "PO-1", "PO-4", "GR-1", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0167-allowlisted-sensitive-trace-attributes.md": adr_allocation(
+        "PO-4", "Accepted", "SF-1", "PO-1", "PO-3"
+    ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
     "README.md": "Service overview",

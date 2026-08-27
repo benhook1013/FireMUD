@@ -21,15 +21,17 @@ Each environment must advertise its proved level and covered workflows. Runbooks
 
 All services emit spans using the OpenTelemetry SDK. A dedicated **OpenTelemetry Collector** runs inside the Kubernetes cluster to receive OTLP traffic and forward it to storage backends. A sample manifest is provided at `k8s/monitoring/otel-collector.yaml`.
 
-- Deploy using the official [`opentelemetry-collector`](https://github.com/open-telemetry/opentelemetry-helm-charts) Helm chart or apply the sample manifest for local demos.
-- The collector runs as the `otel-collector` service inside the cluster so other pods can reach it via `http://otel-collector:4317`.
-- The collector exposes a `4317` gRPC endpoint. Services export spans to `http://otel-collector:4317` by default (see `.env.sample`). Override the address with the `OTEL_ENDPOINT` environment variable (`otel.endpoint` property). See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#observability) for details.
+- **Target transport contract:** Every telemetry hop that can carry an [ADR 0167](./decisions/adr-0167-allowlisted-sensitive-trace-attributes.md)-controlled attribute must use TLS with workload authentication (mTLS where both ends are FireMUD workloads), from producer to collector and from collector through every exporter or backend. A plaintext hop is permitted only after the producer has redacted all ADR-0167-controlled attributes before serialization; that path must not advertise sensitive-attribute tracing. This requirement applies equally to external or shared exporters and backends, which must also preserve producer/collector filtering, environment isolation, least-privilege query authorization, query auditing, retention, export, and deletion controls.
+- **Current/sample status:** The repository does not yet prove that target path. The shared SDK defaults and the sample manifest use plaintext OTLP (`http://otel-collector:4317` and `http://jaeger:14250` with `tls.insecure: true`), and the default `OTEL_ENDPOINT` is documented for local/demo use. Those fixtures must not be used for ADR-0167-controlled attributes or treated as shared/player-facing deployment evidence; no TLS credentials are implied by the sample. A shared or player-facing environment must remain fail-closed for sensitive telemetry until it configures and proves the target TLS/mTLS path or proves producer-side redaction before each unavoidable plaintext hop.
+- Deploy using the official [`opentelemetry-collector`](https://github.com/open-telemetry/opentelemetry-helm-charts) Helm chart or apply the sample manifest for local demos only.
+- The collector runs as the `otel-collector` service inside the cluster so other pods can reach it via the environment's configured OTLP listener. The collector exposes a `4317` gRPC endpoint. Override the address with the `OTEL_ENDPOINT` environment variable (`otel.endpoint` property). See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#observability) for details.
 
   ```bash
+  # Local/demo-only plaintext endpoint; never use this path for ADR-0167-controlled attributes.
   OTEL_ENDPOINT=http://collector.internal:4317
   ```
 
-- The collector forwards spans to Jaeger over gRPC port `14250`.
+- The collector forwards spans to Jaeger over gRPC port `14250`; the target deployment must secure this exporter hop as described above, while the checked-in local/demo fixture remains plaintext and is not sensitive-trace evidence.
 - Metrics about the collector itself are scraped by Prometheus from `/metrics`
   on port `8888`.
 - The repository provides example Kubernetes collector and Jaeger manifests. A local or hosted environment must deploy and verify its own supported tracing path; the current Docker Compose file does not include those services.
@@ -51,30 +53,44 @@ Traces are stored and visualized with **Jaeger**. A minimal Jaeger deployment is
 
 - Jaeger receives OTLP data from the collector.
 - The web UI is exposed on port `16686` within the cluster.
-- Retention settings are environment specific; development keeps a few days of data, while production retains up to 30 days.
+- Retention is finite and profile-specific according to the sensitivity, incident need, storage budget, and privacy/export/erasure policy. FireMUD makes no universal 30-day production promise.
 - Access the UI locally with:
 
   ```bash
   kubectl port-forward service/jaeger 16686:16686
   ```
 
+## ADR-0163 Trace-Retention Mapping
+
+Trace storage is diagnostic evidence, not authoritative domain or operator-audit state. The following is the canonical application of [ADR 0163](./decisions/adr-0163-service-owned-retention-classes-with-cross-service-safety.md) to the trace profiles and span families in this document. A new retained profile or span family must complete a row before the environment advertises it; a profile that disables trace export has no retained trace family.
+
+| Retained trace family/profile | Owner | ADR-0163 class | Eligibility predicate | Blocking references | Minimum horizon | Cleanup method | Hold behavior | Export and erasure controls | Bounded health fields |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Baseline generic RPC spans and named workflow spans retained by an indexed profile | Producing service for span semantics; Platform/Observability for collector and backend storage | Diagnostic or content payload | Span has ended, contains no ADR-0167-controlled attribute, the declared finite profile horizon has elapsed, and no active export, incident, legal-hold, or restore reference protects it | Open span/export work, active incident or legal hold, and an in-progress authorized export; producer retry or domain correctness receipts are not replaced by traces | The profile-declared finite duration needed for its stated diagnostic purpose; no universal duration | Backend TTL/compaction plus bounded owner cleanup and cleanup-lag reconciliation under the owning service's [ADR-0163 retention declaration](./decisions/adr-0163-service-owned-retention-classes-with-cross-service-safety.md), which must declare GC cadence and batch bound; cleanup must not be age-only while a blocker exists | Hold preserves the retained record and its access controls until a durable release; cleanup resumes only after the release is observed | Least-privilege audited export; erase or pseudonymize sensitive attributes in the backend and derived indexes/exports when the governing policy requires it; backup expiry or erasure overlays handle immutable copies | `oldest_retained_age`, retained bytes/count, eligible backlog, cleanup lag, exporter backlog, and blocked-record count, all with bounded profile/environment dimensions |
+| Sensitive identifier-bearing span families and profiles governed by ADR 0167 | Producing service for allowlisted attributes; Platform/Observability for collector and backend storage | Diagnostic or content payload | The span has ended and the applicable finite profile/privacy-policy horizon has elapsed, with no export, incident, legal-hold, or erasure-workflow blocker; a stricter policy horizon cannot be widened by a backend default | Active authorized query/export, incident case, legal hold, erasure workflow, or backend reconciliation; exact identifiers are never a blocker label | The finite profile horizon declared for the incident/privacy purpose, bounded by the governing privacy and erasure policy | Producer/collector filtering followed by backend TTL/compaction and bounded cleanup under the owning service's [ADR-0163 retention declaration](./decisions/adr-0163-service-owned-retention-classes-with-cross-service-safety.md), which must declare GC cadence and batch bound; derived indexes and authorized exports follow the same disposition | Preserve the held trace and its sensitive-data controls; a hold cannot widen query access or suspend required access auditing | Export only through the authorized, audited profile path; apply the governing erasure/pseudonymization disposition to primary data, indexes, exports, and restore overlays, without treating cache loss as erasure proof | `oldest_retained_age`, sensitive retained bytes/count, cleanup lag, exporter backlog, held-record count, and erasure backlog with bounded profile/environment dimensions |
+| Incident-mode elevated service- or tenant-scoped traces | Producing services plus the authorized Platform/Observability collector-control owner | Diagnostic or content payload | The span has ended, the incident escalation and any authorized analysis/export window are terminal, the declared incident horizon has elapsed, and no active incident, temporary sampling lease, legal hold, erasure workflow, export reference, restore reconciliation, or other retention blocker protects it | Active incident record, temporary sampling lease, export job, legal hold, erasure workflow, or restore reconciliation | A finite, incident-specific horizon declared with the escalation and sufficient for the approved analysis purpose; expiry must be enforceable | Durable expiry/reconciliation removes temporary sampling and backend retention extensions, then bounded TTL/compaction cleans eligible traces under the owning service's [ADR-0163 retention declaration](./decisions/adr-0163-service-owned-retention-classes-with-cross-service-safety.md), which must declare GC cadence and batch bound, and reports lag | Retain the trace and its case/hold reference after incident expiry; release is explicit and durable before cleanup | Incident exports require audited authorization and inherit the same erasure and immutable-backup treatment as the source profile; trace evidence never becomes a substitute for authoritative incident or domain records | Active escalation count, expiry/reconciliation lag, oldest retained incident trace age, held/export backlog, retained bytes, and cleanup lag with bounded service/profile dimensions |
+
+These rows keep traces in ADR-0163's **Diagnostic or content payload** class. If a future policy promotes a trace-derived record to ADR-0163's **Purpose-bound audit or safety evidence** class, it must receive a separate owner, retention, access, hold, export, erasure, and health mapping; this document does not claim that promotion is implemented.
+
+Retention-profile selection is attribute-driven and mutually exclusive at the baseline boundary. Any span carrying an [ADR 0167](./decisions/adr-0167-allowlisted-sensitive-trace-attributes.md)-controlled attribute, including `characterId`, is ineligible for the baseline profile and uses the sensitive identifier-bearing profile even when its span family would otherwise be generic. That precedence remains in force during an active erasure workflow; the workflow is a sensitive-profile cleanup blocker until its required disposition and reconciliation are complete, not permission to fall back to baseline retention.
+
 ## Span Catalog and Conventions
 
-To make traces consistently useful across services and runbooks, FireMUD uses a small, shared span vocabulary and attribute set. New instrumentation should reuse these names and attributes rather than introducing ad hoc patterns.
+To make traces consistently useful across services and runbooks, FireMUD uses a small, shared span vocabulary and attribute set. New instrumentation should reuse these names and attributes rather than introducing ad hoc patterns. Catalog membership does not select baseline retention: a span with any ADR-0167-controlled attribute always follows the sensitive identifier-bearing profile above.
 
 - **Gateway and command path**
   - Gateway spans:
     - `gateway_request` – inbound HTTP and WebSocket and Telnet-bridged request into Spring Cloud Gateway or the TCP Proxy Service, tagged with `route`, `method`, `tenantId`, and, where applicable, `characterId`.
     - `gateway_command_dispatch` – dispatch from Gateway/Proxy into Game Session or other domain services, tagged with `command`, `tenantId`, `gameInstanceId`, `regionId`, and `characterId`.
   - Game Session and domain spans:
-    - `gamesession_handle_command` – top-level span for handling a gameplay command, tagged with `command`, `tenantId`, `gameInstanceId`, `regionId`, `characterId`, and `instanceId`.
-    - Domain-specific spans such as `entity_apply_damage`, `inventory_transfer`, `room_resolve_look`, and `quest_update_state`, tagged with `tenantId`, `gameInstanceId`, `regionId`, and any relevant aggregate identifiers.
+    - `gamesession_handle_command` – top-level span for handling a gameplay command, tagged with `command`, `tenantId`, `gameInstanceId`, `regionId`, and `characterId`.
+    - Domain-specific spans such as `entity_apply_damage`, `inventory_transfer`, `room_resolve_look`, and `quest_update_state`, tagged with `tenantId`, `gameInstanceId`, `regionId`, and only the exact aggregate attribute(s) explicitly allowlisted for that span family's documented incident query; an open-ended set of “relevant aggregate identifiers” is not permitted.
 - **Tick executor and coordination**
   - `tick_schedule` – scheduling of ticks for a `<tenantId, gameInstanceId, regionId>`, tagged with `tenantId`, `gameInstanceId`, `regionId`, `tickId`, and `regionEpoch`.
   - `tick_execute` – execution of a single tick, tagged with `tenantId`, `gameInstanceId`, `regionId`, `tickId`, `regionEpoch`, and a `tick_phase` attribute for major phases (for example `load_effects`, `apply_effects`, `persist_ledger`, `drain_followups`).
   - `tick_apply_effect` – per-effect spans for calls into domain services, tagged with `tenantId`, `gameInstanceId`, `regionId`, `tickId`, `effectKey`, `effect_type`, and `targetAggregateType`.
 - **Telnet/TCP Proxy and WebSocket bridge**
-  - `tcpproxy_connection` – lifecycle of a Telnet connection at the DMZ edge, tagged with `remote_ip_hash` (and optionally `remote_ip_prefix`), `tenantId`, and high-level `connection_outcome` (for example `ok`, `limit_exceeded`, `malformed`).
+  - `tcpproxy_connection` – lifecycle of a Telnet connection at the DMZ edge, tagged with `remote_ip_hash`, `tenantId`, and high-level `connection_outcome` using the shared bounded values `success`, `server_failure`, `user_rejection`, `policy_rejection`, or `unknown`. `remote_ip_prefix` is disabled by default and may be added only under a justified short-retention abuse-investigation profile when the producer-side allowlist and collector/exporter filtering required by [ADR 0167](./decisions/adr-0167-allowlisted-sensitive-trace-attributes.md) permit it. Specific causes remain diagnostic context in a separately documented bounded reason dimension or protected logs; they are not free-form span values.
   - `tcpproxy_command` – command forwarding from Telnet to Gateway, tagged with `command`, `tenantId`, and `characterId`.
   - `tcpproxy_notify_disconnect` – spans for `NotifyDisconnect` calls into Game Session, tagged with `tenantId`, `characterId`, and `disconnect_reason`.
 - **Cross-region and saga flows**
@@ -86,45 +102,51 @@ To make traces consistently useful across services and runbooks, FireMUD uses a 
   - `recovery_converge_participant` – span for one declared recovery participant's safe disposition, tagged with bounded participant type and outcome.
   - Tick pause/resume spans belong to maintenance, reset, migration, and future scoped-recovery traces. Routine backup does not emit or require them.
 
-All spans should include, where applicable:
+Named span families may include only the attributes their documented incident queries require. Availability in request context is not permission to copy an attribute onto every span. Where allowlisted:
 
-- `tenantId`, `gameInstanceId`, `regionId`, `characterId`, and `trace_locale` (for example `prod-us-east-1` or `dev-local`) so traces can be filtered by tenant, game instance, region, and environment.
+- `tenantId`, `gameInstanceId`, `regionId`, and `characterId` may support tenant/runtime investigation on the named span families that require them. The canonical deployment environment resource attribute is `deployment.environment.name` (for example `production` or `development`); do not introduce a trace-local alias such as `trace_locale`.
 - Error attributes such as `error.code` and `error.type` drawn from the same bounded catalogs used by `grpc.app_error` and domain error handling.
+
+The `command` attribute is always a normalized bounded verb/type, never the raw command line. Free-form application error messages are not span attributes.
 
 ## Sampling and Sensitive Attributes
 
 - **Sampling**
-  - An environment at a sampling-capable level declares and proves its baseline. A common target for high-volume entry paths is at least ~1%, but this is an operational usability target rather than a correctness boundary.
-  - Incident mode may be promised only at a proved service-scoped or tenant/game-instance/region-scoped level, and every escalation must return to its declared baseline.
+  - A deployment may explicitly disable tracing and rely on metrics, structured logs, health, durable audit, and authoritative owner state. It advertises no workflow-tracing or sampling-escalation capability.
+  - An environment at a sampling-capable level declares and proves its baseline, covered workflows, root-trace ratio, span/byte budget, and evidence. Approximately 1% may be a calibration seed for high-volume entry paths, not a universal minimum or correctness boundary.
+  - Incident mode may be promised only at a proved service-scoped or tenant/game-instance/region-scoped level. Every escalation is time- and volume-bounded, audited, has an automatic revert deadline, and verifies return to the declared baseline.
   - Runbooks must treat traces as a best-effort diagnostic: when sampling is too low to find a representative trace, operators should pivot to metrics (SLO/SLI panels) and logs (Kibana searches filtered by `tenantId`, `gameInstanceId`, `regionId`, and `traceId` when available).
-  - If a workflow requires trace availability as part of an operational contract (for example debugging a recurring tick stall), document the minimum sampling expectations for that workflow explicitly in the owning runbook.
+  - Absence of a sampled trace is absence of trace evidence, not proof that an event did not occur. Traces never gate mitigation, reset, recovery, or an authoritative domain decision.
 - **Sensitive attributes**
-  - Attributes such as `characterId` are operationally useful but should be treated as sensitive data and kept bounded (IDs only, no message payloads).
-  - `characterId` is allowed in production traces as an identifier for correlation and incident drilldown, but it must be protected by access controls and retention policies appropriate to player-linked data.
-  - Client address attributes in production traces must be privacy-safe and bounded: use `remote_ip_hash` for stable correlation and optionally `remote_ip_prefix` (`/24` for IPv4, `/56` for IPv6) for coarse network triage. Do not store raw full client IP addresses in long-retention traces.
-  - Do not attach user-provided text (chat content, command payloads, free-form error messages) as span attributes; keep that data in logs with appropriate redaction and retention controls.
-  - When exporting traces outside of the cluster or into shared tooling, ensure access controls and retention policies match the sensitivity of these identifiers.
+  - Exact gameplay identifiers such as `characterId` are operationally useful but sensitive. They appear only on allowlisted named span families and require least-privilege environment-scoped query access, query auditing, finite retention, and declared export/privacy/erasure handling.
+  - Raw client IP addresses are forbidden in all traces. Where stable network correlation is justified, `remote_ip_hash` is a rotating environment-specific keyed HMAC with documented custody and correlation window. It remains pseudonymous network data.
+  - `remote_ip_prefix` (`/24` for IPv4 or `/56` for IPv6) is disabled by default. A separately enabled short-retention abuse-investigation profile may permit it only for a justified investigation, with equivalent least-privilege access/audit controls and the producer-side allowlist and collector/exporter filtering required by [ADR 0167](./decisions/adr-0167-allowlisted-sensitive-trace-attributes.md).
+  - Do not attach user-provided text, chat, raw commands, descriptions, payloads, free-form error or exception messages, secrets, or credentials as span attributes. Use bounded codes and types; separately protected logs may carry redacted detail under their own policy.
+  - External/shared exporters and backends require equivalent producer/collector filtering, encryption, environment isolation, query authorization/audit, retention, export, and deletion controls.
+
+See [ADR 0167](./decisions/adr-0167-allowlisted-sensitive-trace-attributes.md).
 
 ### Incident-Mode Sampling Procedure (Design Contract)
 
-FireMUD defines two target escalation levels for incident-mode sampling. An operator may use only a level advertised and proved by that environment, must choose the least invasive sufficient option, and must record start/end times and scope in the incident timeline.
+FireMUD defines two optional target escalation levels for incident-mode sampling. An operator may use only a level advertised and proved by that environment, must choose the least invasive sufficient option, and must record scope, incident identity, start time, automatic expiry, volume budget, completion, and verified reversion.
 
 1. **Service-scoped sampling (fast, coarse)**
-   - Mechanism: adjust head sampling in the affected service(s) via standard OpenTelemetry env vars:
+   - Availability gate: this control is unavailable (design-only) until the shared SDK consumes the sampler variables, the environment catalog advertises them as supported for the affected deployment, and a focused increase/observe/revert drill proves the complete path. Their presence in configuration alone is not support.
+   - Mechanism, once that gate is met: adjust head sampling in the affected service(s) via standard OpenTelemetry env vars:
      - `OTEL_TRACES_SAMPLER=parentbased_traceidratio`
      - `OTEL_TRACES_SAMPLER_ARG=<ratio>` (for example `0.10` for 10%)
    - Operational shape:
-     - Roll out a temporary configuration change to the affected Deployment(s).
+     - Through the environment's authorized deployment-control owner, roll out a temporary configuration change to the affected Deployment(s). Persist the affected service/workflow scope, incident identity, start time, positive TTL/lease, volume budget, and expiry with the change; the owner or a durable expiry/reconciliation controller must automatically roll it back at expiry even if the initiating operator disappears.
      - Verify: in Jaeger, `service.name="<service>"` should show a visibly higher trace volume within a few minutes.
-     - Revert: restore the baseline ratio after the incident.
+     - Revert: at the expiry deadline, a durable expiry/reconciliation path must retry removal and apply a safe deployment reload/rollback, including when the incident workflow is abandoned. If that operation fails, the expired elevated configuration must not be retained as terminal “last valid” state: keep completion blocked, continue durable reconciliation, and use an emergency disable-to-baseline path when available, with its own safe reload/rollback and verification. Mark the escalation complete only after sampled volume returns to the measured pre-escalation baseline; until then retain an explicit incomplete/degraded state.
    - Limits: this cannot scope sampling to a specific `tenantId`, `gameInstanceId`, or `regionId`; it increases volume for the service overall.
 
 2. **Tenant/game-instance/region-scoped sampling (precise, requires collector support)**
    - Mechanism: configure the OpenTelemetry Collector to apply tail-sampling policies based on span attributes such as `tenantId`, `gameInstanceId`, and `regionId` (as defined in this document’s span catalog).
    - Operational shape:
-     - Add a temporary “always sample” policy for the target `<tenantId, gameInstanceId, regionId>` (and optionally `service.name`) and a time-bound note in the collector config (for example “remove after incident X”).
+     - Add a temporary “always sample” policy for the target `<tenantId, gameInstanceId, regionId>` (and optionally `service.name`) through the environment's authorized collector-control owner. Persist the incident scope, owner identity, start time, positive TTL/lease, volume budget, and expiry with the policy; the owner or a durable expiry controller must remove it automatically when the TTL/lease expires, including if the initiating operator disappears. A free-form time-bound note alone is not enforceable support.
      - Verify: in Jaeger, filtering by `tenantId`/`gameInstanceId`/`regionId` should yield traces even when baseline sampling is low.
-     - Revert: remove the temporary policy and reload the collector configuration.
+     - Revert: at the declared deadline, a durable expiry/reconciliation path must retry removal of the temporary policy and apply and validate a safe collector reload. If reload or rollback fails, the expired elevated policy must not be retained as terminal “last valid” state: keep completion blocked, continue durable reconciliation, and use an emergency disable-to-baseline path when available, with safe reload/rollback and verification. Mark incident sampling complete only after sampled volume returns to the measured pre-escalation baseline; until then retain an explicit incomplete/degraded state.
    - Limits: this requires tail sampling, candidate delivery from every upstream service participating in the scoped workflow, and full propagation of the scope attributes across the workflow. Tail sampling cannot recover a trace already discarded by service-side head sampling.
 
 Declared sampler controls and their current support status are documented in `design/architecture/infrastructure/environment-and-secrets-catalog.md#observability`.
@@ -138,9 +160,10 @@ Environments that claim support for tenant/game-instance/region-scoped incident 
 - Every upstream service that can create spans for the scoped workflow delivers candidate traces to the collector for the incident window; service-side head sampling must not discard those candidates before tail sampling.
 - Every relevant span in the scoped workflow carries the complete `<tenantId, gameInstanceId, regionId>` scope, and service-to-service propagation preserves all three attributes on downstream spans rather than relying on the entry span alone.
 - Collector config supports safe runtime update/reload for temporary incident policies.
+- Temporary policy changes are owned by an authorized control-plane identity and carry an enforceable positive TTL/lease; a durable expiry/reconciliation path removes expired policies even after the initiating request or operator is gone.
 - Runbook-level verification exists:
   - Positive check: candidate traces from each participating upstream service, including downstream spans with the complete scoped `<tenantId, gameInstanceId, regionId>`, appear above baseline after policy enablement.
-  - Negative check: trace volume returns to baseline after policy removal.
+  - Negative check: the collector accepts the removal/reload safely and trace volume returns to the measured pre-escalation baseline before support is marked complete.
 
 If an environment does not meet this contract, it must advertise its highest proved lower level—service-scoped sampling or baseline observability—and incident procedures must not claim tenant/game-instance/region-scoped escalation there.
 

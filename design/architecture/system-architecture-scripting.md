@@ -24,10 +24,10 @@ This section is a high-level snapshot. For the current implementation record, us
 
 ### Implementation Notes
 
-The live Automation runtime is bounded to durable work-item execution, quotas, sandbox resource enforcement, and the current structured command-template evaluator. The broader visual graph DSL, compiled-artifact execution, advanced NPC behavior modules, procedural population, and richer sandbox/runtime seams described below are target-state architecture, not evidence of live end-to-end implementation. Readiness proof is also partial: complete manifest-completion and monotonic publication-sequence fencing remain unproved, and stale `ONLOAD_RUNNING` executor work is not yet reclaimed or terminalized; the target recovery-owner path remains defined by the DSL lifecycle owner.
+The live Automation runtime provides durable work-item execution, per-script quota and aggregate tenant-tier accounting, reset-tolerant queue coordination, and the current structured command-template evaluator with narrow output, target, and DSL-shape limits. Broader sandbox resource guards and output metering, failure-rate breaker authority, tenant-first scheduling, the visual graph DSL, compiled-artifact execution, advanced NPC behavior modules, procedural population, and richer runtime seams described below are target-state architecture, not evidence of live end-to-end implementation. In particular, the current structured evaluator does not prove per-run CPU, wall-clock, or iteration guards; references to those guards below describe the target sandbox contract unless they are explicitly identified as current evaluator checks. Readiness proof is also partial: complete manifest-completion and monotonic publication-sequence fencing remain unproved, and stale `ONLOAD_RUNNING` executor work is not yet reclaimed or terminalized; the target recovery-owner path remains defined by the DSL lifecycle owner.
 
 - **Implemented and in active use**
-  - Bounded sandboxed script runtime and core Automation & Scripting Service, including quota enforcement via `ScriptQuotaService`, durable work-item execution, structured command-template evaluation, and reset-tolerant queue-pointer projection.
+  - The current Automation & Scripting runtime, including per-script quota and aggregate tenant-tier counters, durable work-item execution, structured command-template evaluation with narrow output, target, and DSL-shape checks, and reset-tolerant queue-pointer projection.
   - Hot reloading of scripts published by the Game Design Service and version-aware script execution, aligned with the versioning model in [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#script-only-patch-versions).
 
 - **Implemented and evolving**
@@ -46,11 +46,11 @@ The table below summarizes high-level implementation status categories; verify c
 
 | Area | Status | Notes |
 | --- | --- | --- |
-| Script runtime & DSL | Implemented at a bounded runtime boundary | Sandbox execution, core Automation & Scripting Service, structured command-template evaluation, and basic quotas are live; the broader graph DSL/editor runtime remains target-state work. |
+| Script runtime & DSL | Partially implemented runtime boundary | Structured command-template evaluation and narrow output, target, and DSL-shape checks are live; the broader graph DSL/editor and sandbox resource policy remain target-state work. |
 | Automation queues & durable execution | Implemented / evolving | Instance-aware automation queue indexes (for example `automation:queue:{tenantInstanceTag}:<entityId>`), canonical `automation:quota:<tenantId>:<scriptId>` counters, the durable work-item executor, and reset-tolerant queue rebuild are implemented; remaining `10.4` work is richer runtime output and any later queue-consumer evolution, not restoring a separate staging layer. |
 | Integration with tick commands | Implemented / active | Script-generated gameplay commands now hand off to Game Session through the idempotent automation command API and enter the same per-entity tick queues used by player commands; ongoing `10.4` work is about richer runtime output semantics and observability, not a missing bridge. |
 | Scheduler leadership & timers | Implemented / evolving | Scheduler leases and heartbeat-driven interval scheduling are implemented; region-scoped Redis timer/checkpoint coordination (for example `automation:timer:{tenantRegionTag}`) with instance-aware stored identities, and long-term audit-retention jobs are tracked in the Automation & Scripting Service README and task list. |
-| Quotas & fairness | Implemented / evolving | Per-script quotas (`ScriptQuotaService`) and basic fairness rules are implemented; multi-level budgets and advanced throttling controls continue to evolve. |
+| Quotas & fairness | Partial | Per-script quota and aggregate tenant-tier counters are live. [ADR 0166](./decisions/adr-0166-attributable-script-breakers-and-tenant-first-fairness.md) breaker authority, audited reset, tenant-first scheduling, cluster ceilings, broader resource guards, control-plane surfaces, and focused proof remain target/unimplemented; the [runtime tracker](../project-management/implementation-tracking/automation-and-scheduler-runtime.md) owns current status. |
 | Audit & metrics | Implemented / evolving | `script_event_audit` and core automation metrics exist; retention policies and additional dashboards are being refined. |
 
 ## Table of Contents
@@ -103,14 +103,17 @@ The table below summarizes high-level implementation status categories; verify c
 
 At a high level, a script (or plugin) must pass through several stages before it can execute in production. Different services own different steps:
 
-1. **Editor graph validation (Game Design Service)**
-   - The visual editor enforces type correctness, required connections, and basic structural rules (for example, no missing inputs, no dangling edges).
-   - Loop safety is checked at the graph level using the bounded-loop rules described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md#loop-safety-analysis`.
-   - Errors at this stage are shown directly in the editor; scripts cannot be published until they are resolved.
+1. **Target-state editor graph validation (Game Design Service)**
+   - **Target state:** The visual editor enforces type correctness, required connections, and basic structural rules (for example, no missing inputs, no dangling edges).
+   - **Target state:** Loop safety is checked at the graph level using the bounded-loop rules described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md#loop-safety-analysis`.
+   - **Target state:** Errors at this stage are shown directly in the editor, and scripts cannot be published until they are resolved.
+   - **Current status:** The creator/editor capability is partial and audited: [`ScriptEditor.tsx`](../../web-client/src/ScriptEditor.tsx) is a starter text/test surface, and the [Game Authoring, Publishing, and Activation tracker](../project-management/implementation-tracking/game-authoring-publishing-and-activation.md#capability-status) records the designed creator application, graph editor workflows, and focused frontend proof as absent. No current Game Design or Automation code path proves the target visual graph validator or loop-safety analysis, so these remain unimplemented target behavior rather than live publication gates.
 
-2. **Compile-time validation and persistence (Automation & Scripting Service)**
-   - When designers publish a new script patch, the Game Design Service drives the durable publish workflow that compiles the editor graph into the runtime DSL representation and persists it in the Automation & Scripting Service schema.
-   - The Automation & Scripting Service revalidates the compiled graph (for example, type checks, guard-node presence in loops, supported component versions) and will reject or mark the patch as `FAILED` if compilation or validation fails.
+2. **Target-state compile-time validation and persistence (Automation & Scripting Service)**
+   - **Target state:** When designers publish a new script patch, the Game Design Service drives the durable publish workflow that compiles the editor graph into the runtime DSL representation and persists it in the Automation & Scripting Service schema.
+   - **Target state:** The Automation & Scripting Service revalidates the compiled graph (for example, type checks, guard-node presence in loops, supported component versions) and will reject or mark the patch as `FAILED` if compilation or validation fails.
+   - **Current status:** Automation's `AS-1.2` boundary is partial: the live service evaluates stored structured command templates with narrow output, target, and DSL-shape checks, while the [Automation and Scheduler Runtime tracker](../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status) records the broader graph compiler/validator and sandbox policy as gaps. The current [`ScriptDefinitionServiceImpl`](../../services/automation-scripting-service/src/main/java/net/firedevops/firemud/automationscripting/service/impl/ScriptDefinitionServiceImpl.java) validates event bindings and persists definitions but does not implement the target compiled-graph or loop-safety gate.
+   - **Current publication boundary:** Game Design does have a design-time script-patch publication path through [`VersionServiceImpl`](../../services/game-design-service/src/main/java/net/firedevops/firemud/gamedesign/service/impl/VersionServiceImpl.java), but the owning authoring tracker records broader authoring/publication capability as partial and a published patch is only a readiness candidate; publication does not prove the target visual graph, loop-safety, or runtime readiness gates. Automation's tenant readiness remains the later `PENDING_VALIDATION` -> `ONLOAD_RUNNING` -> `READY`/`FAILED` lifecycle.
 
 3. **`onLoad` initialization (Automation & Scripting Service, per tenant patch)**
    - For each `<tenantId, scriptPatchVersion>`, the Automation & Scripting Service runs any configured `onLoad` handlers after static validation succeeds but **before** the patch is marked `READY` for that tenant. `READY` only means the patch is eligible for pinning; runtime admission, timers, reload pause, and rollback remain instance-scoped.
@@ -127,16 +130,16 @@ At a high level, a script (or plugin) must pass through several stages before it
    - The Automation & Scripting Service never silently substitutes a different version; if it receives an unknown or `FAILED` patch for a tenant, it rejects the trigger rather than falling back.
 
 5. **Quota and budget admission (Automation & Scripting Service)**
-   - Only after a trigger passes version checks does `ScriptQuotaService` and the multi-level budgeting model decide whether it is allowed to run. Quota denials (`quota_denied`) happen **before** any sandbox work and do not consume CPU/memory budgets.
+   - After version checks and handler resolution, current ordinary live `STANDARD_RUNTIME` handler admission applies the `ScriptQuotaService` per-script counter before creating durable parent work. An allowed handler then creates its durable parent work item and rebuildable queue pointer. After the executor claims that parent and before evaluator work, it separately applies the aggregate tenant priority-tier reservation. A per-script denial records `quota_denied`; a tenant-tier denial records `tenant_budget_exceeded`. Both stop that handler before evaluator work. Current `PUBLISH_READINESS`/`onLoad` and dry-run handlers skip both live counters; after their durable parent is claimed, they reserve their respective isolated readiness or dry-run capacity before evaluator work. The [quotas and operations owner](./system-architecture-scripting-quotas-and-operations.md#implementation-status) defines those current isolated branches and the broader target multi-level model; tenant-first scheduling, cluster ceilings, and complete fairness proof remain unimplemented under [ADR 0166](./decisions/adr-0166-attributable-script-breakers-and-tenant-first-fairness.md).
    - Ingress admission is evaluated first at the event scope. If the event is accepted for handler resolution, each resolved handler then records its own stage-aware outcome independently in `script_event_audit`; one inbound event can therefore yield a mixed set of handler-level success, quota, disable, or policy outcomes.
 
 6. **Sandbox execution (Automation & Scripting Service)**
-   - Admitted triggers run in the sandboxed DSL engine with per-run CPU/iteration and memory budgets as described in `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md`.
-   - Runtime guard violations are recorded as `sandbox_error` outcomes with specific reasons (for example, `cpu_budget_exceeded`, `memory_budget_exceeded`) and feed into failure-rate circuit breakers.
+   - Current admitted handlers run through the structured command-template evaluator with narrow output, target, and DSL-shape limits. The [sandbox runtime design](./microservices/automation-scripting-service/sandbox-runtime-design.md) owns the broader target per-run CPU, time, iteration, and memory guards and records their implementation gaps.
+   - In the target contract, attributable resource-guard violations use bounded `sandbox_error` outcomes and feed the [ADR 0166](./decisions/adr-0166-attributable-script-breakers-and-tenant-first-fairness.md) failure-rate breaker. That breaker authority, reset path, operator surfaces, and focused proof are not live.
 
 7. **Command staging and tick execution**
-   - Successful runs produce durable work items plus `automation:queue:{tenantInstanceTag}:<entityId>` pointer entries. Automation's execution loop claims those work items, evaluates their emitted commands, and then hands those commands to the Game Session Service for enqueue into tick queues, where they follow the standard tick idempotency and replay semantics.
-   - Before persistence/handoff, explicit output ceilings cap the number of emitted commands and the serialized work-item size so one admitted trigger cannot create an unbounded backlog.
+   - Commands from successful evaluations are handed to the Game Session Service for enqueue into tick queues, where they follow the standard tick idempotency and replay semantics. The durable parent work item and `automation:queue:{tenantInstanceTag}:<entityId>` pointer were created earlier for the admitted handler; a successful evaluation does not create a second parent or queue pointer.
+   - Current checks cap generated command count and per-entity output after construction and bound ingress payload and DSL shape. Full generated-output serialized-byte enforcement, pre-construction metering, and atomic all-or-none per-handler output remain target gaps owned by [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#output-budgeting-and-command-fan-out).
 
 All stages emit metrics and audit records (especially `script_event_audit`) so designers and operators can see where a script failed to progress. The quotas and operations document (`design/architecture/system-architecture-scripting-quotas-and-operations.md`) is the primary reference for interpreting these outcomes in production.
 
@@ -146,8 +149,8 @@ All stages emit metrics and audit records (especially `script_event_audit`) so d
 
 From a system perspective, script safety comes from three layers:
 
-- The **DSL and editor** restrict behavior to curated components with strong validation and loop-safety checks.
-- The **sandbox runtime** in the Automation & Scripting Service enforces CPU, time, and memory budgets per run and per tenant, treating budget violations as `sandbox_error` outcomes that feed into failure-rate circuit breakers.
+- The current **structured evaluator** applies narrow output, target, and DSL-shape checks. The broader graph/editor component and loop-safety contract remains target state.
+- The target **sandbox runtime** adds per-run CPU, time, iteration, and memory guards with bounded failure outcomes. The target [ADR 0166](./decisions/adr-0166-attributable-script-breakers-and-tenant-first-fairness.md) breaker consumes only attributable failures; its authority and proof remain unimplemented.
 - **Infrastructure limits** (Kubernetes resource limits, Redis and database quotas) provide outer guards for catastrophic failures.
 
 Detailed sandbox behavior and resource limits live in:
@@ -162,32 +165,71 @@ For security and trust boundaries around plugins and external content, see the m
 At a high level, scripting follows this pipeline:
 
 1. **Event fires** – Game Session or another service emits a standard or custom event for an entity.
-2. **Bindings & quotas** – The Automation & Scripting Service looks up bound handlers for that `<tenantId, eventType>` and applies per-script and per-tenant limits via `ScriptQuotaService`.
-3. **Durable parent work persistence and queue staging** – After binding and quota admission, Automation persists the admitted parent work item in the durable outbox with `PENDING_EVALUATION` and stages a rebuildable pre-DSL queue pointer keyed and deduplicated by `outboxWorkItemId`. Current queue semantics and the target post-DSL evaluated-descriptor/child boundary are owned by [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#current-implementation-status); the pointer is a best-effort derived coordination index whose loss/reset is acceptable because the parent work item is durable and the index can be rebuilt. Loss/reset must still be observable. Region-scoped tick keys remain the responsibility of the Game Session Service.
-4. **Sandboxed DSL execution** – Automation's durable executor picks up the persisted parent work item, runs the allowed handler in the sandboxed DSL runtime, reads world state via gRPC, and produces domain commands rather than mutating state directly. Those resulting commands proceed to durable execution and handoff below.
-5. **Post-evaluation validation & handoff** – Automation validates the evaluated output and applies the applicable output-budget checks, then hands the resulting **domain commands** to the Game Session Service over internal gRPC so Game Session can enqueue them into per-entity tick queues through the shared [`firemud-common` Lua Script Registry, descriptors, key builders, and invocation helpers](./system-architecture-shared-libraries.md#redis-key-naming--lua-script-helpers), while retaining its tick invariants. `automation:queue:{tenantInstanceTag}:<entityId>` remains a rebuildable pointer index, not a second source of work truth.
+2. **Bindings & per-script quota** – The Automation & Scripting Service accepts the event for handler resolution at event scope, then resolves the applicable handlers. Each resolved handler proceeds through its own admission, persistence, capacity, evaluation, and terminal-result path independently; a quota, capacity, validation, or other terminal outcome for one non-exclusive handler records that handler's result and does not suppress or merge its siblings. Ordinary non-dry-run `STANDARD_RUNTIME` handlers apply the current per-script handler-admission counter, and a denied handler produces its quota audit outcome without creating durable parent work. Dry-run mode takes precedence over the persisted quota class and skips this live counter; non-dry-run `PUBLISH_READINESS`/`onLoad` also skips it.
+3. **Durable parent work persistence and queue staging** – After binding and the applicable handler admission, Automation persists each admitted parent work item in the durable outbox with `PENDING_EVALUATION` and stages a rebuildable pre-DSL queue pointer keyed and deduplicated by `outboxWorkItemId`. Current queue semantics and the target post-DSL evaluated-descriptor/child boundary are owned by [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#current-implementation-status); the pointer is a best-effort derived coordination index whose loss/reset is acceptable because the parent work item is durable and the index can be rebuilt. Loss/reset must still be observable. Region-scoped tick keys remain the responsibility of the Game Session Service.
+4. **Capacity reservation and current DSL execution** – Automation's durable executor claims the persisted parent. Dry-run work, regardless of persisted quota class, reserves isolated dry-run capacity. Non-dry-run `PUBLISH_READINESS`/`onLoad` reserves isolated readiness capacity, while ordinary non-dry-run `STANDARD_RUNTIME` work applies the current aggregate tenant priority-tier reservation. When the applicable reservation allows execution, Automation runs the handler in the structured command-template evaluator using the persisted work-item inputs and stored script definition. The evaluator produces domain commands rather than mutating state directly; detailed current capacity behavior is owned by [Scripting Quotas and Operations](./system-architecture-scripting-quotas-and-operations.md#implementation-status), while broader tenant-first scheduling and sandbox guards remain target state.
+5. **Post-evaluation validation & disposition** – Automation applies the current command-count and per-entity output checks. Only ordinary non-dry-run `STANDARD_RUNTIME` work with emitted **domain commands** proceeds to the Game Session Service over internal gRPC for enqueue into per-entity tick queues through the shared [`firemud-common` Lua Script Registry, descriptors, key builders, and invocation helpers](./system-architecture-shared-libraries.md#redis-key-naming--lua-script-helpers). Ordinary live work with no commands terminates locally. Current materialized dry-run work terminates locally with `finalStage=DSL_EVAL`, `finalOutcome=dry_run_completed`, and `finalReason=dry_run_no_handoff`; this does not imply gameplay handoff or an alternative terminal outcome. Target [ADR 0114](./decisions/adr-0114-command-plan-preview-dry-run-isolation.md) previews remain isolated from live work persistence and gameplay handoff. Current `PUBLISH_READINESS`/`onLoad` rejects emitted commands and otherwise terminates with its local readiness result under the [ADR 0115](./decisions/adr-0115-manifest-complete-onload-readiness-without-durable-game-initialization.md) boundary. Full target output metering and atomic persistence are owned by [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#output-budgeting-and-command-fan-out). `automation:queue:{tenantInstanceTag}:<entityId>` remains a rebuildable pointer index, not a second source of work truth.
 6. **Game tick execution** – The Game Session Service selects at most one root actor action per eligible entity from the `actor_action` lane; the separately bounded `passive_effect` lane includes passive, inbound, and actor-generated effect sources without consuming that actor-action slot. Both lanes apply the canonical lock, fairness, ordering, and replay rules.
 
 ```mermaid
 sequenceDiagram
-    participant Player
+    participant Caller as Event Producer / Authorized Tooling
     participant GameSession as Game Session Service
     participant Scripting as Automation & Scripting Service
     participant Redis as Redis (automation & tick queues)
     participant GameLogic as Game Logic / Domain Services
 
-    Player->>GameSession: Command / world event
-    GameSession-->>Scripting: Script trigger (event + metadata)
-    Scripting->>Scripting: Persist parent work item (PENDING_EVALUATION)
-    Scripting->>Redis: Stage pre-DSL pointer to automation:queue:{tenantInstanceTag}:<entityId>
-    Scripting->>Scripting: Claim parent and run sandboxed DSL handler
-    Scripting->>Scripting: Validate evaluated domain commands
-    Scripting->>GameSession: Enqueue automation commands (internal gRPC)
-    GameSession->>Redis: Append into tick:{tenantRegionTag}:queue:<entityId> (Lua)
-    GameSession->>Redis: Read per-entity tick queue on tick
-    GameSession->>GameLogic: Apply command under locks / ticks
-    GameLogic-->>GameSession: Effects, updates, events
-    GameSession-->>Player: Updated state / messages
+    Caller-->>Scripting: Script trigger (event + metadata)
+    Scripting->>Scripting: Accept event for handler resolution (event scope)
+    Scripting->>Scripting: Resolve applicable handlers
+    loop Each resolved non-exclusive handler independently
+    alt handler admission succeeds
+        alt dry-run (any quota class)
+            Scripting->>Scripting: Skip live per-script handler quota (allowed)
+        else non-dry-run PUBLISH_READINESS / onLoad
+            Scripting->>Scripting: Skip live per-script handler quota (allowed)
+        else non-dry-run STANDARD_RUNTIME (per-script quota available)
+            Scripting->>Scripting: Apply per-script handler quota (allowed)
+        end
+        Scripting->>Scripting: Persist parent work item (PENDING_EVALUATION)
+        Scripting->>Redis: Stage pre-DSL pointer to automation:queue:{tenantInstanceTag}:<entityId>
+        Scripting->>Scripting: Claim persisted parent
+        alt capacity reservation succeeds
+            alt dry-run (any quota class)
+                Scripting->>Scripting: Reserve isolated dry-run capacity (allowed)
+            else non-dry-run PUBLISH_READINESS / onLoad
+                Scripting->>Scripting: Reserve isolated readiness capacity (allowed)
+            else non-dry-run STANDARD_RUNTIME
+                Scripting->>Scripting: Reserve aggregate tenant priority tier (allowed)
+            end
+            Scripting->>Scripting: Run structured evaluator
+            Scripting->>Scripting: Validate evaluated domain commands
+            alt dry-run (any quota class)
+                Scripting->>Scripting: Terminal finalStage=DSL_EVAL, finalOutcome=dry_run_completed, finalReason=dry_run_no_handoff
+            else non-dry-run PUBLISH_READINESS / onLoad
+                Scripting->>Scripting: Reject emitted commands; otherwise record readiness result
+            else non-dry-run STANDARD_RUNTIME with no commands
+                Scripting->>Scripting: Terminal completed_no_commands
+            else non-dry-run STANDARD_RUNTIME with emitted commands
+                Scripting->>GameSession: Enqueue automation commands (internal gRPC)
+                GameSession->>Redis: Append into tick:{tenantRegionTag}:queue:<entityId> (Lua)
+                GameSession->>Redis: Read per-entity tick queue on tick
+                GameSession->>GameLogic: Apply command under locks / ticks
+                GameLogic-->>GameSession: Effects, updates, events
+            end
+        else capacity denied
+            alt dry-run (any quota class)
+                Scripting->>Scripting: ADMISSION/quota_denied/dry_run_capacity_exhausted; terminal
+            else non-dry-run PUBLISH_READINESS / onLoad
+                Scripting->>Scripting: ADMISSION/quota_denied/onload_budget_exceeded; terminal
+            else non-dry-run STANDARD_RUNTIME
+                Scripting->>Scripting: ADMISSION/tenant_budget_exceeded/tenant_budget_exceeded; terminal
+            end
+        end
+    else non-dry-run STANDARD_RUNTIME per-script quota denied
+        Scripting-->>Caller: ADMISSION/quota_denied/script_quota_denied; terminal; no parent work item
+    end
+    end
 ```
 
 ---

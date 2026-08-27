@@ -22,7 +22,8 @@ This file intentionally owns the detailed allocation-validation history; the des
 - Packet 6 P0 allocation validation on 2026-08-24 (Pacific/Auckland): with active ADRs 0146-0152, the canonical validator confirmed `325` discovered sources (`322` allocated, `3` explicit exemptions), including `150` ADR records (`139` reviewed and `11` pre-formal); `linkCheck` checked `5,902` total links (`5,865` OK, `0` errors, `37` excluded); `lintMarkdown` checked `502` files (`0` issues); `git diff --check` was clean.
 - Combined Packet 5 tail and Packet 6 P0 allocation import: the expected arithmetic with active ADRs 0146-0159 is `332` discovered sources (`329` allocated, `3` explicit exemptions), including `157` ADR records (`146` reviewed and `11` pre-formal); final validation evidence is recorded below.
 - Final combined Packet 5 tail and Packet 6 P0 validation record on 2026-08-25 Pacific/Auckland (2026-08-24 UTC): all active ADRs 0146-0159 are allocated; `linkCheck` checked `6,039` total links (`6,002` OK, `37` excluded, `0` errors); `lintMarkdown` checked `509` files (`0` issues); allocation reported `332` sources (`329` allocated, `3` explicit exemptions); ADR review status was `146` reviewed / `11` pre-formal; architecture doc contracts, allocation regression `28` tests, ADR review regression `141` tests, and authorization-route regression `216` tests passed; the focused preflight, player-experience evidence, player-experience runner, and observability-validator contract tests passed; and Ruff, ShellCheck, Python syntax, and `git diff --check` were clean. No environment-backed runtime proof is required for validating this allocation ledger itself. That ledger-only exemption does not waive runtime-proof requirements for the allocated architecture documents or operational validation tooling; changes requiring canonical fresh-image rebuild-and-boot proof must retain and report that requirement separately.
-- Packet 6 P1 foundation allocation state: ADRs 0160-0165 add 6 reviewed records, bringing the canonical source set to `338` discovered sources (`335` allocated, `3` explicit exemptions) and the ADR registry to `163` records (`152` reviewed and `11` pre-formal). The four-decision Packet 6 tail and Packet 7 remain pending selective import. This structural state does not upgrade implementation or runtime proof for the allocated decisions; detailed allocation-validation history remains in this ledger, while parcel-level validation status is summarized by the design-alignment workstream rather than inferred from allocation arithmetic.
+- Packet 6 P1-P3 allocation state: ADRs 0160-0167 add 8 reviewed records, bringing the canonical source set to `340` discovered sources (`337` allocated, `3` explicit exemptions) and the ADR registry to `165` records. Packet 7 remains pending selective import. This structural state does not upgrade implementation or runtime proof for the allocated decisions; detailed allocation-validation history remains in this ledger, while parcel-level validation status is summarized by the design-alignment workstream rather than inferred from allocation arithmetic.
+- Fresh allocation-validator run on 2026-08-27 Pacific/Auckland: `python3 dev-tools/validation/check-design-capability-allocation.py` passed with `340` discovered sources (`337` allocated, `3` explicit exemptions). This confirms allocation coverage only and does not claim implementation or runtime proof.
 - Runtime proof is not applicable to this documentation-only allocation-ledger change; this statement does not classify runtime proof for allocated documents or operational tooling as inapplicable.
 - Implementation and verification evidence do not belong in this allocation ledger. The initial cross-capability baseline is preserved in the frozen [capability implementation reconciliation snapshot](./capability-implementation-reconciliation.md); live status and focused-proof anchors are maintained in the permanent implementation trackers.
 
@@ -41,16 +42,16 @@ This file intentionally owns the detailed allocation-validation history; the des
 | Infrastructure | 6 | 6 | 0 | 100% classified |
 | Generated references | 2 | 2 | 0 | 100% classified |
 | Microservice architecture | 76 | 74 | 0; 2 explicit governance/template exemptions | 100% classified |
-| Architecture decisions | 164 | 163 | 0; 1 registry exemption | 100% classified |
+| Architecture decisions | 166 | 165 | 0; 1 registry exemption | 100% classified |
 | Product documentation | 7 | 7 | 0 | 100% classified |
-| **Total** | **338** | **335** | **0; 3 explicit exemptions** | **100% classified** |
+| **Total** | **340** | **337** | **0; 3 explicit exemptions** | **100% classified** |
 
 ## Allocation Ledger
 
 | Design source | Heading or scope | Primary capability | Secondary handoffs | Source class | Notes or gap |
 | --- | --- | --- | --- | --- | --- |
 | [Microservice architecture allocation](./design-capability-allocation-microservices.md) | All 76 files under `design/architecture/microservices/**` | Per-source allocation | Per-source handoffs | Service design, contract, runtime/data, configuration, operations, and reference sources | All 76 files are accounted for as 74 allocated sources plus 2 exempt governance/template files: `service-documentation-structure.md` and `service-template.md`; complete path-set coverage |
-| [Architecture decision registry](../../architecture/decisions/README.md) | Registry plus 163 ADRs | Per-record allocation | Per-record affected capabilities | Decision record | The registry is an index; reviewed, accepted, superseded, and withdrawn records remain distinguishable |
+| [Architecture decision registry](../../architecture/decisions/README.md) | Registry plus 165 ADRs | Per-record allocation | Per-record affected capabilities | Decision record | The registry is an index; reviewed, accepted, superseded, and withdrawn records remain distinguishable |
 | [System architecture allocation](./design-capability-allocation-system.md) | All 83 direct architecture, 6 infrastructure, and 2 generated sources | Per-source allocation | Per-source handoffs | Normative design, runbook, reference, index, and generated sources | Complete path-set coverage |
 | [Product documentation](../../product/README.md#canonical-sources) | All 7 files under `design/product/**` | Per-source allocation | Per-source product behavior scope | Requirements, taxonomy, index, and observable product behavior | Complete path-set coverage |
 
@@ -222,6 +223,8 @@ This file intentionally owns the detailed allocation-validation history; the des
 | `design/architecture/decisions/adr-0163-service-owned-retention-classes-with-cross-service-safety.md` | `SF-2` | `GR-1`, `PO-4` | Accepted |
 | `design/architecture/decisions/adr-0164-three-boundary-profile-aware-verification-evidence.md` | `PO-4` | `PO-3` | Accepted |
 | `design/architecture/decisions/adr-0165-authoritative-control-actions-during-observability-loss.md` | `PO-4` | `PO-1`, `SF-1`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0166-attributable-script-breakers-and-tenant-first-fairness.md` | `AS-1` | `PO-1`, `PO-4`, `GR-1`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0167-allowlisted-sensitive-trace-attributes.md` | `PO-4` | `SF-1`, `PO-1`, `PO-3` | Accepted |
 
 ADR 0121 is superseded by [ADR 0114](../../architecture/decisions/adr-0114-command-plan-preview-dry-run-isolation.md); its historical capability allocation remains recorded above.
 

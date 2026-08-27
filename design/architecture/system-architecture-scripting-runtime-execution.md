@@ -190,6 +190,8 @@ Target-state rule: stable schedule rows carry the mutable current reconciled `(p
 
 The current `script_work_items` statuses span two target layers. `workItemStatus` on an evaluated descriptor is per descriptor/command; pre-DSL trigger status and any parent aggregate are separate scopes. Tooling must not collapse them into one command-outbox state machine:
 
+Current legacy single-row marker: when the current executor completes a live non-`onLoad` zero-command evaluation on the `completed_no_commands` path, it stores that work item with `status=HANDED_OFF` as a terminal storage marker even though no command dispatch or Game Session handoff occurred. The authoritative outcome remains `finalStage=DSL_EVAL` / `finalOutcome=completed_no_commands`, with no dispatch identity; `HANDED_OFF` in this legacy single-row context is not evidence of a command handoff or `handoff_accepted`. This is implementation drift from the target two-layer status model and must not be treated as the target descriptor meaning below.
+
 | Current or target status | Canonical target meaning | Drain and rebuild treatment |
 | --- | --- | --- |
 | `PENDING_EVALUATION` | Pre-DSL trigger state pending evaluation; it is not an evaluated command outbox row. | Count as pending pre-DSL work. During asynchronous cancellation/cleanup, compare-and-set it to terminal `CANCELED`, persist `cancelReason`, and record `finalStage=ADMISSION` / `finalOutcome=canceled` with the bounded cancellation reason, without entering the DSL. Do not publish it as an evaluated command pointer. |

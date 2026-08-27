@@ -56,7 +56,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
         .thenReturn(Optional.of(definition));
     when(auditRepository.findByWorkItemId(Mockito.anyLong()))
-        .thenReturn(Optional.of(new ScriptEventAudit()));
+        .thenAnswer(invocation -> Optional.of(new ScriptEventAudit()));
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
     ScriptWorkItemExecutionService service =
@@ -79,6 +79,16 @@ class ScriptWorkItemExecutionServiceImplTest {
 
     assertThat(result.claimedCount()).isEqualTo(2);
     assertThat(result.completedCount()).isEqualTo(2);
+    ArgumentCaptor<ScriptEventAudit> auditCaptor = ArgumentCaptor.forClass(ScriptEventAudit.class);
+    verify(auditRepository, Mockito.times(2)).save(auditCaptor.capture());
+    assertThat(auditCaptor.getAllValues())
+        .allSatisfy(
+            audit -> {
+              assertThat(audit.getFinalStage()).isEqualTo("DSL_EVAL");
+              assertThat(audit.getFinalOutcome()).isEqualTo("completed_no_commands");
+              assertThat(audit.getFinalReason()).isEqualTo("script_emitted_no_commands");
+            });
+    Mockito.verifyNoInteractions(handoffService);
     verify(workItemService).claimPendingForEvaluation(List.of(99L), 10);
     verify(workItemService).claimPendingForEvaluation(9);
   }

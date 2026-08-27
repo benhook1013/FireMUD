@@ -2,28 +2,41 @@
 
 This file contains reference PromQL expressions and Alertmanager rules that cover the scripting execution-policy contract surfaced through `automation_script_*` and `script_*` meters.
 
+[Normative Table 4](../../architecture/system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix) is the sole owner of scripting metric labels and increment units. Some counter names below may be current for their families, but every expression is a target template until its producer exposes the canonical Table 4 constant `service="automation-scripting-service"` label and finite labels. Keep the canonical `service` selector; do not bridge producer drift with compatibility recording rules.
+
 ## Scripting Execution Policy Health
 
 ```yaml
 - alert: ScriptTenantBudgetDeniedSpike
   expr: |
-    sum by (scope, tier) (rate(automation_script_tenant_budget_denied_total[5m])) > 0.5
+    sum by (service, scope, tier) (rate(automation_script_tenant_budget_denied_total{service="automation-scripting-service"}[5m])) > 0.5
   for: 10m
   labels:
     service: automation-scripting-service
     component: automation-budgets
     severity: P1
     owner: gameplay
-    runbook: design/architecture/system-architecture-observability-incident-runbook.md#scripting-tenant-budget-pressure
+    runbook: design/architecture/system-architecture-scripting-operations-cookbook.md#operational-cookbook-quotas-budgets-and-metrics
   annotations:
     summary: Script tenant budget denials are sustained
     description: Tenant/script priority-tier budget denies are sustained; script execution admission is throttling non-dry-run work items.
 
 - alert: ScriptWorkItemQuotaDenialRate
   expr: |
-    sum(rate(script_quota_denied_total[5m]))
+    sum by (service, scope, script_kind) (rate(script_quota_denied_total{service="automation-scripting-service"}[5m]))
       /
-    (sum(rate(script_quota_allowed_total[5m])) + sum(rate(script_quota_denied_total[5m])) + 1e-9)
+    (
+      sum by (service, scope, script_kind) (rate(script_quota_denied_total{service="automation-scripting-service"}[5m]))
+        +
+      (
+        sum by (service, scope, script_kind) (rate(script_quota_allowed_total{service="automation-scripting-service"}[5m]))
+          or on (service, scope, script_kind)
+        (
+          0 * sum by (service, scope, script_kind) (rate(script_quota_denied_total{service="automation-scripting-service"}[5m]))
+        )
+      )
+      + 1e-9
+    )
       > 0.20
   for: 5m
   labels:
@@ -31,29 +44,29 @@ This file contains reference PromQL expressions and Alertmanager rules that cove
     component: automation-budgets
     severity: P1
     owner: gameplay
-    runbook: design/architecture/system-architecture-scripting-quotas-and-operations.md#quota-denials
+    runbook: design/architecture/system-architecture-scripting-operations-cookbook.md#operational-cookbook-quotas-budgets-and-metrics
   annotations:
-    summary: Script per-handler quota denials above 20% of attempts
-    description: The handler admission quota deny ratio is high; inspect handler load, misrouted dry-runs, and trigger bursts before gameplay impact rises.
+    summary: Script admission quota denials above 20% of attempts
+    description: The bounded script-class admission quota deny ratio is high; inspect service/scope/script-kind load, misrouted dry-runs, and trigger bursts before gameplay impact rises.
 
 - alert: ScriptDryRunCapacitySaturated
   expr: |
-    sum by (scope) (rate(automation_script_test_capacity_denied_total[5m])) > 0
+    sum by (service, scope) (rate(automation_script_test_capacity_denied_total{service="automation-scripting-service"}[5m])) > 0
   for: 10m
   labels:
     service: automation-scripting-service
     component: dry-run-capacity
     severity: P2
     owner: gameplay
-    runbook: design/architecture/system-architecture-scripting-quotas-and-operations.md#dry-run-capacity-controls
+    runbook: design/architecture/system-architecture-scripting-quotas-and-operations.md#dry-run-budgets--limits
   annotations:
     summary: Automation dry-run execution capacity is saturated
     description: Tenant dry-run capacity reservation is denied; test traffic is being back-pressured by configured dry-run tenant or cluster concurrency limits.
 
 - alert: ScriptWorkItemBudgetOutcomeCritical
   expr: |
-    sum by (eventType, priorityTag, sourceKind, sourceService, dryRun) (
-      rate(automation_script_work_item_outcomes_total{stage="ADMISSION", outcome="tenant_budget_exceeded"}[10m])
+    sum by (service, scope, script_kind, event_class, plugin_origin, priority) (
+      rate(automation_script_triggers_total{service="automation-scripting-service", outcome="tenant_budget_exceeded"}[10m])
     ) > 0
   for: 10m
   labels:
@@ -61,33 +74,18 @@ This file contains reference PromQL expressions and Alertmanager rules that cove
     component: work-item-admission
     severity: P2
     owner: gameplay
-    runbook: design/architecture/system-architecture-scripting-control-plane-operations.md#work-item-admission-denials
+    runbook: design/architecture/system-architecture-scripting-observability-contract.md#metrics-consequences-table-4-owned-schema
   annotations:
     summary: Work-item tenant budget admission denials are occurring
-    description: Script work items are being rejected at admission because tenant budget limits were exceeded for the source/event profile.
-
-- alert: ScriptWorkItemDryRunCapacityOutcomeCritical
-  expr: |
-    sum by (eventType, priorityTag, sourceKind, sourceService) (
-      rate(automation_script_work_item_outcomes_total{stage="ADMISSION", outcome="dry_run_capacity_exhausted"}[10m])
-    ) > 0
-  for: 10m
-  labels:
-    service: automation-scripting-service
-    component: dry-run-capacity
-    severity: P2
-    owner: gameplay
-    runbook: design/architecture/system-architecture-scripting-quotas-and-operations.md#dry-run-capacity-controls
-  annotations:
-    summary: Dry-run execution capacity is saturated
-    description: Dry-run script work item evaluations are being denied by dry-run capacity reservation; reduce concurrent dry-runs or increase runbook-defined limits.
+    description: Live script handlers are being denied after durable work-item claim but before executor acceptance because tenant budget limits were exceeded for the bounded priority and source dimensions.
 
 - alert: ScriptWorkItemOutcomeFailingBurst
   expr: |
-    sum by (service, outcome, eventType) (
+    sum by (service, stage, outcome, priority, source_class) (
       rate(automation_script_work_item_outcomes_total{
-        stage=~"DSL_EVAL|TICK_HANDOFF|SCRIPT_EVAL",
-        outcome!~"success|dry_run_completed|readiness_success"
+        service="automation-scripting-service",
+        stage=~"DSL_EVAL|TICK_HANDOFF",
+        outcome=~"sandbox_error|validation_error|infrastructure_error"
       }[5m])
     ) > 0.05
   for: 10m
@@ -96,8 +94,8 @@ This file contains reference PromQL expressions and Alertmanager rules that cove
     component: execution-health
     severity: P1
     owner: gameplay
-    runbook: design/architecture/system-architecture-scripting-runtime-execution.md#work-item-processing-failures
+    runbook: design/architecture/system-architecture-scripting-runtime-execution.md#failure-modes-and-error-handling
   annotations:
     summary: Script work-item failures are elevated
-    description: Elevated non-success outcomes in script work-item processing indicate execution or DSL/handoff issues that should be investigated with `script_event_audit` and runtime logs.
+    description: Elevated `sandbox_error`, `validation_error`, or `infrastructure_error` outcomes during DSL evaluation or tick handoff indicate execution or DSL/handoff issues that should be investigated with `script_event_audit` and runtime logs.
 ```

@@ -260,6 +260,8 @@ Validation precedence is fixed: first parse every checked queue row and validate
 | [ADR 0163](./adr-0163-service-owned-retention-classes-with-cross-service-safety.md) | Accepted | `SF-2.1` | `GR-1.4`, `PO-4.2`, `PO-4.3` | Service-owned retention classes with cross-service safety |
 | [ADR 0164](./adr-0164-three-boundary-profile-aware-verification-evidence.md) | Accepted | `PO-4.4` | `PO-4.3`, `PO-3.4`, `PO-3.1` | Three-boundary profile-aware verification evidence |
 | [ADR 0165](./adr-0165-authoritative-control-actions-during-observability-loss.md) | Accepted | `PO-4.2` | `PO-1.1`, `PO-4.1`, `PO-4.4`, `SF-2.2`, `SF-1.1` | Authoritative control actions during observability loss |
+| [ADR 0166](./adr-0166-attributable-script-breakers-and-tenant-first-fairness.md) | Accepted | `AS-1.6` | `PO-4.2`, `PO-1.2`, `GR-1.2`, `SF-2.2` | Attributable script breakers and tenant-first fairness |
+| [ADR 0167](./adr-0167-allowlisted-sensitive-trace-attributes.md) | Accepted | `PO-4.1` | `SF-1.3`, `PO-3.4`, `PO-1.3` | Allowlisted sensitive trace attributes |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../../product/capability-taxonomy.md).
 

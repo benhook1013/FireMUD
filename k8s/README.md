@@ -60,23 +60,22 @@ Hosted preview/dev-demo now also render their own checked-in baseline internal-s
 
 ## Monitoring Components
 
-The `monitoring/` folder provides example manifests for observability tools:
+The `monitoring/` folder provides example manifests for observability tools. These are not a shared/player-facing deployment contract:
 
 - `redis-exporter.yaml` exposes Redis metrics to Prometheus.
-- `otel-collector.yaml` receives OTLP spans from the services.
+- `otel-collector.yaml` is a local/demo-only OTLP collector fixture. It accepts plaintext OTLP and must be adapted into an environment-owned overlay before use; shared/player-facing deployments must configure TLS/mTLS on every telemetry hop or prove producer-side redaction before each unavoidable plaintext hop.
 - `jaeger.yaml` stores traces and offers a web UI on port `16686`.
 - `alertmanager.yaml` handles alert notifications from Prometheus.
 
-Apply them with:
+The other local/demo samples may be adapted and applied individually:
 
 ```bash
 kubectl apply -n firemud -f k8s/monitoring/redis-exporter.yaml
-kubectl apply -n firemud -f k8s/monitoring/otel-collector.yaml
 kubectl apply -n firemud -f k8s/monitoring/jaeger.yaml
 kubectl apply -n firemud -f k8s/monitoring/alertmanager.yaml
 ```
 
-Customize these manifests with proper image repositories and resource limits before running in production.
+Do not apply `otel-collector.yaml` directly. Its plaintext receiver/exporter and `tls.insecure: true` setting are retained only for local/demo compatibility; replace them with environment-owned TLS/mTLS configuration and credentials, or with an explicitly proven producer-side redaction boundary, before any shared or player-facing deployment. Customize the other sample manifests with proper image repositories and resource limits before running in production.
 All Spring Boot services are configured to run with the `prod` profile by default via the `SPRING_PROFILES_ACTIVE` environment variable.
 
 Services follow the port scheme described in the infrastructure docs: most

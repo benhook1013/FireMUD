@@ -118,6 +118,7 @@ done
 
 python3 - "$ROOT_DIR" <<'PY'
 import copy
+from collections import Counter
 import importlib.util
 import json
 import re
@@ -141,6 +142,35 @@ if spec is None or spec.loader is None:
 validator = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = validator
 spec.loader.exec_module(validator)
+
+checked_in_alert_snippets = set(
+    (root / "design/observability/grafana").glob("*alerts-snippets.md")
+)
+declared_alert_snippet_paths = list(validator.ALERT_SNIPPET_PATHS)
+duplicate_alert_snippets = sorted(
+    str(path.relative_to(root))
+    for path, count in Counter(declared_alert_snippet_paths).items()
+    if count > 1
+)
+if duplicate_alert_snippets:
+    raise AssertionError(
+        "validator ALERT_SNIPPET_PATHS contains duplicate paths; "
+        f"duplicates={duplicate_alert_snippets!r}"
+    )
+declared_alert_snippets = set(declared_alert_snippet_paths)
+if declared_alert_snippets != checked_in_alert_snippets:
+    missing = sorted(
+        str(path.relative_to(root))
+        for path in checked_in_alert_snippets - declared_alert_snippets
+    )
+    unexpected = sorted(
+        str(path.relative_to(root))
+        for path in declared_alert_snippets - checked_in_alert_snippets
+    )
+    raise AssertionError(
+        "canonical alert-snippet validation sources differ from the checked-in "
+        f"contract files; missing={missing!r}, unexpected={unexpected!r}"
+    )
 
 expected_ampersand_anchor = "backup-verification--restoration-testing"
 actual_ampersand_anchor = validator._github_anchor_from_heading(
