@@ -427,9 +427,8 @@ jobs:
               status, bootstrap_body = post_json(
                 public_account_url("/auth/player-bootstrap"),
                 {
-                  "tenantId": tenant_id,
-                  "username": email,
-                  "password": password,
+                  "accountIdentifier": email,
+                  "secret": password,
                 },
               )
               print(f"Player bootstrap attempt {attempt} returned {status}")

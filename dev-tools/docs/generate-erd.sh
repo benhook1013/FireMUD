@@ -31,9 +31,28 @@ docker run --name "$POSTGRES_CONTAINER" -e POSTGRES_USER=firemud \
   -e POSTGRES_PASSWORD=firemud -e POSTGRES_DB=firemud -p 5432:5432 -d postgres:16
 trap 'docker rm -f "$POSTGRES_CONTAINER" >/dev/null' EXIT
 
-until docker exec "$POSTGRES_CONTAINER" pg_isready -U firemud -d firemud >/dev/null 2>&1; do
+POSTGRES_READY_ATTEMPTS=60
+POSTGRES_STABLE_PROBES=2
+postgres_ready=false
+for attempt in $(seq 1 "$POSTGRES_READY_ATTEMPTS"); do
+  if docker exec "$POSTGRES_CONTAINER" psql -U firemud -d firemud \
+      -v ON_ERROR_STOP=1 -Atqc 'SELECT 1' >/dev/null 2>&1; then
+    sleep 1
+    if docker exec "$POSTGRES_CONTAINER" psql -U firemud -d firemud \
+        -v ON_ERROR_STOP=1 -Atqc 'SELECT 1' >/dev/null 2>&1; then
+      postgres_ready=true
+      echo "PostgreSQL passed $POSTGRES_STABLE_PROBES stable SQL readiness probes on attempt $attempt."
+      break
+    fi
+  fi
   sleep 1
 done
+
+if [[ "$postgres_ready" != true ]]; then
+  echo "PostgreSQL did not pass stable SQL readiness probes within ${POSTGRES_READY_ATTEMPTS} attempts." >&2
+  docker logs --tail 100 "$POSTGRES_CONTAINER" >&2 || true
+  exit 1
+fi
 
 export FIREMUD_POSTGRES_HOST=localhost
 export FIREMUD_POSTGRES_PORT=5432

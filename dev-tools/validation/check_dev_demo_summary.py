@@ -53,6 +53,11 @@ HEREDOC_OPEN = re.compile(
     r"(?P=quote)"
 )
 SHELL_IF_START = re.compile(r"^if\b.*;[ \t]*then$")
+PLAYER_BOOTSTRAP_REQUEST = re.compile(
+    r'public_account_url\("/auth/player-bootstrap"\),\s*'
+    r'\{\s*"accountIdentifier":\s*email,\s*"secret":\s*password,\s*\},',
+    re.DOTALL,
+)
 
 BOOTSTRAP_SECRET_COMMAND_PREFIX = (
     "kubectl",
@@ -708,6 +713,12 @@ def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
     if post_log_cleanup not in normalized_lines:
         raise AssertionError(
             "dev-demo bootstrap must remove its credential secret after successful pod logging"
+        )
+
+    if PLAYER_BOOTSTRAP_REQUEST.search(bootstrap_manifest) is None:
+        raise AssertionError(
+            "dev-demo bootstrap must send exactly accountIdentifier and secret "
+            "to /auth/player-bootstrap"
         )
 
     bootstrap_lines = [line.strip() for line in bootstrap_manifest.splitlines()]
