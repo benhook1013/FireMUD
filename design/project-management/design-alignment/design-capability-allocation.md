@@ -22,8 +22,8 @@ This file intentionally owns the detailed allocation-validation history; the des
 - Packet 6 P0 allocation validation on 2026-08-24 (Pacific/Auckland): with active ADRs 0146-0152, the canonical validator confirmed `325` discovered sources (`322` allocated, `3` explicit exemptions), including `150` ADR records (`139` reviewed and `11` pre-formal); `linkCheck` checked `5,902` total links (`5,865` OK, `0` errors, `37` excluded); `lintMarkdown` checked `502` files (`0` issues); `git diff --check` was clean.
 - Combined Packet 5 tail and Packet 6 P0 allocation import: the expected arithmetic with active ADRs 0146-0159 is `332` discovered sources (`329` allocated, `3` explicit exemptions), including `157` ADR records (`146` reviewed and `11` pre-formal); final validation evidence is recorded below.
 - Final combined Packet 5 tail and Packet 6 P0 validation record on 2026-08-25 Pacific/Auckland (2026-08-24 UTC): all active ADRs 0146-0159 are allocated; `linkCheck` checked `6,039` total links (`6,002` OK, `37` excluded, `0` errors); `lintMarkdown` checked `509` files (`0` issues); allocation reported `332` sources (`329` allocated, `3` explicit exemptions); ADR review status was `146` reviewed / `11` pre-formal; architecture doc contracts, allocation regression `28` tests, ADR review regression `141` tests, and authorization-route regression `216` tests passed; the focused preflight, player-experience evidence, player-experience runner, and observability-validator contract tests passed; and Ruff, ShellCheck, Python syntax, and `git diff --check` were clean. No environment-backed runtime proof is required for validating this allocation ledger itself. That ledger-only exemption does not waive runtime-proof requirements for the allocated architecture documents or operational validation tooling; changes requiring canonical fresh-image rebuild-and-boot proof must retain and report that requirement separately.
-- Packet 6 P1-P3 allocation state: ADRs 0160-0167 add 8 reviewed records, bringing the canonical source set to `340` discovered sources (`337` allocated, `3` explicit exemptions) and the ADR registry to `165` records. Packet 7 remains pending selective import. This structural state does not upgrade implementation or runtime proof for the allocated decisions; detailed allocation-validation history remains in this ledger, while parcel-level validation status is summarized by the design-alignment workstream rather than inferred from allocation arithmetic.
-- Fresh allocation-validator run on 2026-08-27 Pacific/Auckland: `python3 dev-tools/validation/check-design-capability-allocation.py` passed with `340` discovered sources (`337` allocated, `3` explicit exemptions). This confirms allocation coverage only and does not claim implementation or runtime proof.
+- Packet 6 P1-P3 allocation state: ADRs 0160-0167 add 8 reviewed records, bringing the canonical source set to `340` discovered sources (`337` allocated, `3` explicit exemptions) and the ADR registry to `165` records. The final reviewed import through Packet 7 ADRs 0168-0178 adds 11 more ADR records (19 reviewed records across both parcels), yielding `351` discovered sources (`348` allocated, `3` explicit exemptions) and `176` ADR records. Current validator reports `168` reviewed and `11` pre-formal records; those categories overlap where accepted legacy pre-formal records now carry exact review metadata. This structural state does not upgrade implementation or runtime proof for the allocated decisions; final parcel validation is reported by the design-alignment workstream rather than inferred from allocation arithmetic.
+- Fresh allocation-validator run on 2026-08-27 Pacific/Auckland: `python3 dev-tools/validation/check-design-capability-allocation.py` passed with `340` discovered sources (`337` allocated, `3` explicit exemptions). This confirms the Packet 6 baseline allocation coverage only and does not claim implementation or runtime proof.
 - Runtime proof is not applicable to this documentation-only allocation-ledger change; this statement does not classify runtime proof for allocated documents or operational tooling as inapplicable.
 - Implementation and verification evidence do not belong in this allocation ledger. The initial cross-capability baseline is preserved in the frozen [capability implementation reconciliation snapshot](./capability-implementation-reconciliation.md); live status and focused-proof anchors are maintained in the permanent implementation trackers.
 
@@ -42,16 +42,16 @@ This file intentionally owns the detailed allocation-validation history; the des
 | Infrastructure | 6 | 6 | 0 | 100% classified |
 | Generated references | 2 | 2 | 0 | 100% classified |
 | Microservice architecture | 76 | 74 | 0; 2 explicit governance/template exemptions | 100% classified |
-| Architecture decisions | 166 | 165 | 0; 1 registry exemption | 100% classified |
+| Architecture decisions | 177 | 176 | 0; 1 registry exemption | 100% classified |
 | Product documentation | 7 | 7 | 0 | 100% classified |
-| **Total** | **340** | **337** | **0; 3 explicit exemptions** | **100% classified** |
+| **Total** | **351** | **348** | **0; 3 explicit exemptions** | **100% classified** |
 
 ## Allocation Ledger
 
 | Design source | Heading or scope | Primary capability | Secondary handoffs | Source class | Notes or gap |
 | --- | --- | --- | --- | --- | --- |
 | [Microservice architecture allocation](./design-capability-allocation-microservices.md) | All 76 files under `design/architecture/microservices/**` | Per-source allocation | Per-source handoffs | Service design, contract, runtime/data, configuration, operations, and reference sources | All 76 files are accounted for as 74 allocated sources plus 2 exempt governance/template files: `service-documentation-structure.md` and `service-template.md`; complete path-set coverage |
-| [Architecture decision registry](../../architecture/decisions/README.md) | Registry plus 165 ADRs | Per-record allocation | Per-record affected capabilities | Decision record | The registry is an index; reviewed, accepted, superseded, and withdrawn records remain distinguishable |
+| [Architecture decision registry](../../architecture/decisions/README.md) | Registry plus 176 ADRs | Per-record allocation | Per-record affected capabilities | Decision record | The registry is an index; reviewed, accepted, superseded, and withdrawn records remain distinguishable |
 | [System architecture allocation](./design-capability-allocation-system.md) | All 83 direct architecture, 6 infrastructure, and 2 generated sources | Per-source allocation | Per-source handoffs | Normative design, runbook, reference, index, and generated sources | Complete path-set coverage |
 | [Product documentation](../../product/README.md#canonical-sources) | All 7 files under `design/product/**` | Per-source allocation | Per-source product behavior scope | Requirements, taxonomy, index, and observable product behavior | Complete path-set coverage |
 
@@ -60,17 +60,17 @@ This file intentionally owns the detailed allocation-validation history; the des
 | Design source | Primary capability | Secondary handoffs | Status or classification |
 | --- | --- | --- | --- |
 | `design/architecture/decisions/README.md` | Exempt | — | Decision registry/index |
-| `design/architecture/decisions/adr-0001-scripting-event-ingress-idempotency-identity.md` | `AS-1` | `SF-1`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0001-scripting-event-ingress-idempotency-identity.md` | `AS-1` | `SF-1`, `SF-2` | Superseded by ADR 0172 |
 | `design/architecture/decisions/adr-0002-automation-handoff-reliability-and-success-semantics.md` | `AS-1` | `GR-1`, `SF-2`, `PO-4` | Accepted |
-| `design/architecture/decisions/adr-0003-reload-backpressure-and-retry-contract.md` | `AS-1` | `AR-3`, `GR-1`, `PO-4` | Accepted |
+| `design/architecture/decisions/adr-0003-reload-backpressure-and-retry-contract.md` | `AS-1` | `AR-3`, `GR-1`, `PO-4` | Superseded by ADR 0173 |
 | `design/architecture/decisions/adr-0004-gameplay-reroute-vs-backend-unavailable.md` | `PO-2` | `AA-2`, `GR-1`, `PO-4` | Superseded by ADR 0007 |
-| `design/architecture/decisions/adr-0005-tenant-identifiers-in-gameplay-protocol.md` | `AA-3` | `EA-1`, `SF-1` | Accepted |
+| `design/architecture/decisions/adr-0005-tenant-identifiers-in-gameplay-protocol.md` | `AA-3` | `EA-1`, `SF-1` | Superseded by ADR 0168 |
 | `design/architecture/decisions/adr-0006-gameplay-shard-routing-key-transport.md` | `PO-2` | `AA-3`, `GR-1`, `SF-1` | Withdrawn; superseded by ADR 0007 |
 | `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md` | `PO-2` | `AA-2`, `GR-1`, `PO-4` | Accepted |
 | `design/architecture/decisions/adr-0008-multi-cluster-gameplay-sharding-scope.md` | `GR-1` | `PO-2`, `PO-3`, `SF-2` | Accepted |
 | `design/architecture/decisions/adr-0009-coordination-redis-ownership-boundary.md` | `SF-2` | `AA-2`, `GR-1`, `AS-1` | Accepted |
-| `design/architecture/decisions/adr-0010-tcp-proxy-identity-canonicalization.md` | `SF-1` | `PO-2`, `PO-3` | Accepted |
-| `design/architecture/decisions/adr-0011-gameplay-session-front-end-and-region-execution.md` | `GR-1` | `AA-2`, `SF-1`, `SF-2`, `PO-2` | Accepted |
+| `design/architecture/decisions/adr-0010-tcp-proxy-identity-canonicalization.md` | `SF-1` | `PO-2`, `PO-3` | Superseded by ADR 0169 |
+| `design/architecture/decisions/adr-0011-gameplay-session-front-end-and-region-execution.md` | `GR-1` | `AA-2`, `SF-1`, `SF-2`, `PO-2` | Superseded by ADR 0170 |
 | `design/architecture/decisions/adr-0012-settings-value-precedence-and-constraints.md` | `AR-2` | `EA-1`, `GR-1`, `SF-2` | Accepted |
 | `design/architecture/decisions/adr-0013-bounded-invisible-non-edge-restart-recovery.md` | `GR-1` | `AA-2`, `PO-2`, `PO-4`, `SF-2` | Accepted |
 | `design/architecture/decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md` | `SF-1` | `AA-1`, `PO-1`, `PO-3`, `PO-4` | Accepted |
@@ -225,6 +225,17 @@ This file intentionally owns the detailed allocation-validation history; the des
 | `design/architecture/decisions/adr-0165-authoritative-control-actions-during-observability-loss.md` | `PO-4` | `PO-1`, `SF-1`, `SF-2` | Accepted |
 | `design/architecture/decisions/adr-0166-attributable-script-breakers-and-tenant-first-fairness.md` | `AS-1` | `PO-1`, `PO-4`, `GR-1`, `SF-2` | Accepted |
 | `design/architecture/decisions/adr-0167-allowlisted-sensitive-trace-attributes.md` | `PO-4` | `SF-1`, `PO-1`, `PO-3` | Accepted |
+| `design/architecture/decisions/adr-0168-snapshot-bound-lobby-selectors-and-stable-realm-identity.md` | `AA-3` | `AA-2`, `SF-1` | Accepted |
+| `design/architecture/decisions/adr-0169-exclusive-environment-bound-tcp-proxy-trust.md` | `SF-1` | `PO-2`, `PO-3` | Accepted |
+| `design/architecture/decisions/adr-0170-fenced-command-forwarding-and-authoritative-region-transition.md` | `GR-1` | `AA-2`, `SF-1`, `SF-2`, `PO-2` | Accepted |
+| `design/architecture/decisions/adr-0171-separated-redis-role-processes-and-owned-keyspaces.md` | `SF-2` | `AA-2`, `GR-1`, `AS-1`, `PO-3`, `PO-4` | Accepted |
+| `design/architecture/decisions/adr-0172-parent-event-and-frozen-handler-execution-identity.md` | `AS-1` | `GR-1`, `SF-1`, `SF-2` | Accepted |
+| `design/architecture/decisions/adr-0173-registry-classified-reload-admission-policy.md` | `AS-1` | `GR-1`, `PO-2` | Accepted |
+| `design/architecture/decisions/adr-0174-maturity-scoped-protobuf-compatibility.md` | `SF-1` | `AS-1`, `SF-2`, `PO-3`, `PO-4` | Accepted |
+| `design/architecture/decisions/adr-0175-release-pinned-command-capabilities-and-private-history.md` | `EA-1` | `AA-2`, `AR-2` | Accepted |
+| `design/architecture/decisions/adr-0176-owner-local-redis-execution-with-aggregated-contracts.md` | `SF-1` | `AS-1`, `SF-2`, `PO-4` | Accepted |
+| `design/architecture/decisions/adr-0177-exact-plan-authorized-automated-production-deployment.md` | `PO-3` | `PO-1`, `PO-4`, `SF-1` | Accepted |
+| `design/architecture/decisions/adr-0178-disposable-transport-complete-pr-preview-proof.md` | `PO-4` | `AA-2`, `EA-3`, `PO-3` | Accepted |
 
 ADR 0121 is superseded by [ADR 0114](../../architecture/decisions/adr-0114-command-plan-preview-dry-run-isolation.md); its historical capability allocation remains recorded above.
 

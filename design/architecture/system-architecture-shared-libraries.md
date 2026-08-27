@@ -1,12 +1,12 @@
 # Shared Libraries Overview
 
-FireMUD's microservices share a set of utility classes and data transfer objects so each service can stay lightweight and consistent. The common library is published as a Gradle artifact and reused by all modules. It is released under the **group ID** `net.firedevops.firemud` with the **artifact ID** `firemud-common`. The Gradle subproject lives under `services/common-library`.
+FireMUD's microservices share a set of narrowly scoped modules so each service can stay lightweight and consistent without inheriting unrelated runtime behavior. Shared artifacts use the **group ID** `net.firedevops.firemud`; the repository's `common-*` modules divide platform core, data runtime, security, saga, Temporal, web, and test concerns. References to a common library describe this family, not a requirement to rebuild one monolithic `firemud-common` artifact.
 
 **Target-state:** Shared DTOs and correlation helpers that carry scripting work must preserve the exact `scriptPatchVersion` plus `scriptPinEpoch` tuple and must not synthesize a local active/latest/fallback pin. The canonical owner is [Scripting Contracts](./system-architecture-scripting-contracts.md); this library document owns only transport/projection reuse and shared error-shape consequences. Linked plugins and embedded scripts use the same DSL/runtime security boundary but keep their distinct artifact and lifecycle metadata as defined by the [DSL lifecycle reference](./system-architecture-scripting-dsl-reference-and-lifecycle.md).
 
 ## Implementation Status
 
-The current `EnqueueAutomationCommandIfAbsentRequest` carries `scriptPatchVersion` but not `scriptPinEpoch`, so shared code must not synthesize an absent epoch; exact tuple propagation and final enforcement remain implementation and focused-proof gaps at that boundary. See the [Automation and Scheduler Runtime tracker](../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status) for current status and proof evidence.
+The current `EnqueueAutomationCommandIfAbsentRequest` carries `scriptPatchVersion` but not `scriptPinEpoch`, so shared code must not synthesize an absent epoch; exact tuple propagation and final enforcement remain implementation and focused-proof gaps at that boundary. The narrow shared Redis-contract foundation, owner-local descriptor contributions, repository aggregation, ownership enforcement, and descriptor-driven proof required by [ADR 0176](./decisions/adr-0176-owner-local-redis-execution-with-aggregated-contracts.md) are not implemented. See the [Automation and Scheduler Runtime tracker](../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status) for current status and proof evidence.
 
 ---
 
@@ -49,23 +49,22 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
 
 ### Redis Key Naming & Lua Script Helpers
 
-Tick coordination and other Redis-backed workflows rely on a small set of shared helpers provided by the common library:
+Redis helpers follow the owner-local execution and aggregated-contract boundary in [ADR 0176](decisions/adr-0176-owner-local-redis-execution-with-aggregated-contracts.md).
 
-- **Key Naming helpers** – A `RedisKeyNaming` (or similarly named) utility centralizes construction of tick-related keys such as `tick:{tenantRegionTag}:lock:<entityId>`, `tick:{tenantRegionTag}:pending`, `retry:{tenantRegionTag}`, and `timer:{tenantRegionTag}`. Application code must build these keys exclusively through the helper; direct string concatenation of `tick:`, `retry:`, or `timer:` prefixes in services is discouraged so hash-tag and naming rules remain consistent. The helper enforces the `{tenantRegionTag}` hash tag and is the single source of truth for tick key shapes.
-- **Lua scripts, descriptors, and invocation helpers** – The common library owns:
-  - All coordination-related Lua scripts (tick staging/commit/cleanup, locks, timers, retries, session CAS, automation scheduling) under a shared `redis/` resources path.
-  - Machine-readable script descriptors that declare `KEYS` order, allowed prefixes, and shard-locality for each script.
-  - A small Redis/Lua helper class that wraps `EVALSHA` calls for tick/session/automation scripts. It ensures that:
-  - Scripts are invoked with the correct first key (a tick key with the `{tenantRegionTag}` hash tag).
-  - `NOSCRIPT` errors are handled by reloading the script on the appropriate master and retrying once.
-  - Callers pass keys built via `RedisKeyNaming` so multi-key operations stay shard-local.
-- **Test and lint hooks** – Shared test fixtures validate that:
-  - Keys produced by `RedisKeyNaming` share a common hash tag substring and map to the same cluster slot for multi-key operations.
-  - Lua scripts respect the configured `MAX_TICK_SCRIPT_KEYS` bound and do not introduce “just one more key” without extending tests.
-  - Session scripts are declared as **single-key** in their descriptors; tests assert that their `KEYS` length is exactly one and fail fast if additional keys are introduced without an explicit design change.
-  - Automation scripts are forbidden from mixing `automation:*` keys with `tick:{tenantRegionTag}:*` keys in a single invocation; tests assert slot alignment for any multi-key automation operations.
-  - Prefix discipline is enforced consistently: tick scripts are allowed only tick/coordination prefixes (`tick:`, `retry:`, `timer:`, `remote:`), session scripts only `session:`, and automation scripts only documented Automation-owned prefixes such as `automation:queue:`. CI lints Lua sources against these rules so mixed `tick:*` + `automation:*` or `tick:*` + `session:*` scripts cannot be added inadvertently.
-  - Any new tick-related script or key path added by a service includes corresponding updates to the shared scripts, descriptors, helpers, and tests in `firemud-common`; individual services do not define their own independent copies.
+A narrow shared Redis-contract module owns the descriptor schema, common outcome types, Redis-role and prefix-owner rules, hash-tag/cluster-slot validation, compatibility metadata rules, and repository registry/test aggregation. It owns executable key builders, invocation machinery, or Lua only for mutations genuinely executed by multiple independently deployed callers.
+
+For an exclusively owned key family, the owning service contributes descriptors through the shared schema and retains its generated or typed key builders, invocation adapter, executable Lua source, and semantic tests. Direct string concatenation remains forbidden where a declared builder exists. Non-owner services do not gain executable access to private keyspaces merely by depending on the shared schema.
+
+The aggregated registry and CI harness validate that:
+
+- every Lua source and owned key family has one descriptor and owner;
+- `KEYS`/`ARGV` order, allowed prefixes, Redis role, outcome codes, reset sensitivity, tail-loss behavior, and compatibility metadata are complete;
+- every multi-key invocation uses the declared hash tag and resolves to one Redis Cluster slot;
+- session scripts declared single-key remain single-key and bounded script-key limits remain enforced;
+- scripts cannot mix owners or Coordination and Cache key families;
+- caller adapters and focused tests match the registered descriptor and supported coexistence set.
+
+Operator visibility comes from this catalog and owner APIs. Supported tooling normally requests mutations through the owning service; if it must execute the same Lua directly, that mutation becomes a genuinely shared contract and moves into the shared module.
 
 For Redis-backed caches and rate limiting, the common library may also provide:
 
@@ -74,37 +73,19 @@ For Redis-backed caches and rate limiting, the common library may also provide:
   - Require explicit TTL parameters and validate that they fall within configured per-key budgets, so caches cannot silently accumulate effectively permanent entries.
   - Prefer single atomic commands (set value + TTL together) over multi-step delete/insert sequences.
 
-Services that add new tick, retry, timer, or session flows should extend the common library’s key helpers and script helpers first, then use those helpers from their own code. This keeps Redis key shapes, hash-tag rules, and Lua invocation behavior consistent across the platform.
+Services that add new tick, retry, timer, or session flows first add their owner-scoped descriptor contribution and then implement through generated or typed owner-local helpers. Repository aggregation keeps key shapes, hash-tag rules, outcomes, and Lua invocation behavior consistent without globalizing owner-exclusive execution.
 
 ---
 
 ## Publishing Strategy
 
-The shared code is built as a **Gradle Java library** and published to **GitHub Packages** so all services can depend on it.
+Shared code is organized as the narrowly scoped Gradle modules currently included by `settings.gradle.kts`: `common-data-runtime`, `common-platform-core`, `common-saga`, `common-security`, `common-temporal`, `common-test-support`, and `common-web-support`. Services depend only on the modules needed for their contract and must not recreate a monolithic `common-library` or `firemud-common` artifact.
 
-1. Define a Gradle module (e.g., `common-library`) with the `java-library` plugin. A separate `protos` subproject publishes the `firemud-protos` artifact containing all shared `.proto` files.
-2. Configure publishing to GitHub Packages using `maven-publish`:
+The versioned definitions under `protos/` remain the source for generated service stubs; they are not a replacement for the split Java modules. If a module is published for a supported distribution workflow, it retains its module-specific coordinates under the `net.firedevops.firemud` group rather than being folded into one shared runtime artifact.
 
-   ```kotlin
-   publishing {
-       repositories {
-           maven {
-               name = "github"
-               url = uri("https://maven.pkg.github.com/<org>/firemud")
-               credentials {
-                   username = project.findProperty("gpr.user") as String? ?: System.getenv("USERNAME")
-                   password = project.findProperty("gpr.key") as String? ?: System.getenv("TOKEN")
-               }
-           }
-       }
-   }
-   ```
+Redis contracts follow [ADR 0176](decisions/adr-0176-owner-local-redis-execution-with-aggregated-contracts.md): a future narrow foundation such as `common-redis-contracts` may carry descriptor schemas, bounded outcomes, role/owner/slot validation, and repository aggregation. Owner-exclusive Redis builders, adapters, executable Lua, and semantic tests remain in the owning service. The foundation is not evidence that this target module or its registry has been implemented.
 
-3. Version releases using semantic versioning (e.g., `1.0.0`) and publish from CI.
-4. Automate tagging and version bumps using `release-please`.
-5. Deploy both `firemud-common` and `firemud-protos` artifacts to GitHub Packages via CI/CD.
-
-This library aligns with the shared-platform direction recorded in [Shared Runtime, Service Contracts, and Persistence implementation tracking](../project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md) and keeps code reuse simple across all FireMUD services.
+This split-module boundary aligns with the [Shared Runtime, Service Contracts, and Persistence implementation tracking](../project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md) record and keeps reuse explicit without globalizing owner-exclusive execution.
 
 ## Example Usage
 

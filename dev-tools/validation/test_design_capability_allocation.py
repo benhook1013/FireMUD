@@ -375,7 +375,7 @@ class DesignCapabilityAllocationRegressionTests(unittest.TestCase):
             )
             original = self.validator.ADR_ALLOCATION_EXPECTATIONS[source_path]
             self.validator.ADR_ALLOCATION_EXPECTATIONS[source_path] = self.validator.adr_allocation(
-                "AS-1", "Accepted"
+                "AS-1", "Superseded by ADR 0172"
             )
             try:
                 rows = self.validator.validate_top_allocation_ledger(

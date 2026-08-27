@@ -97,17 +97,17 @@ Validation precedence is fixed: first parse every checked queue row and validate
 
 | ADR | Status | Primary capability | Secondary capabilities | Decision |
 | --- | --- | --- | --- | --- |
-| [ADR 0001](./adr-0001-scripting-event-ingress-idempotency-identity.md) | Accepted | `AS-1` | `SF-1`, `SF-2` | Canonical scripting trigger identity and retry deduplication boundary |
+| [ADR 0001](./adr-0001-scripting-event-ingress-idempotency-identity.md) | Superseded | `AS-1` | `SF-1`, `SF-2` | Historical flat scripting trigger identity |
 | [ADR 0002](./adr-0002-automation-handoff-reliability-and-success-semantics.md) | Accepted | `AS-1` | `GR-1`, `SF-2`, `PO-4` | Durable automation-to-tick handoff and success semantics |
-| [ADR 0003](./adr-0003-reload-backpressure-and-retry-contract.md) | Accepted | `AS-1` | `AR-3`, `GR-1`, `PO-4` | Reload backpressure, bounded retry, and timer behavior |
+| [ADR 0003](./adr-0003-reload-backpressure-and-retry-contract.md) | Superseded | `AS-1` | `AR-3`, `GR-1`, `PO-4` | Historical generic reload retry contract |
 | [ADR 0004](./adr-0004-gameplay-reroute-vs-backend-unavailable.md) | Superseded | `PO-2` | `AA-2`, `GR-1`, `PO-4` | Historical distinct reroute close taxonomy |
-| [ADR 0005](./adr-0005-tenant-identifiers-in-gameplay-protocol.md) | Accepted | `AA-3` | `EA-1`, `SF-1` | Internal tenant identity and player-facing world selector boundary |
+| [ADR 0005](./adr-0005-tenant-identifiers-in-gameplay-protocol.md) | Superseded | `AA-3` | `EA-1`, `SF-1` | Historical tenant and world selector boundary |
 | [ADR 0006](./adr-0006-gameplay-shard-routing-key-transport.md) | Withdrawn | `PO-2` | `AA-3`, `GR-1`, `SF-1` | Historical client-carried gameplay shard routing proposal |
 | [ADR 0007](./adr-0007-edge-sharding-and-close-taxonomy.md) | Accepted | `PO-2` | `AA-2`, `GR-1`, `PO-4` | Shard-unaware edge and unified client-visible close taxonomy |
 | [ADR 0008](./adr-0008-multi-cluster-gameplay-sharding-scope.md) | Accepted | `GR-1` | `PO-2`, `PO-3`, `SF-2` | Single-cluster gameplay execution and multi-cluster adoption gate |
 | [ADR 0009](./adr-0009-coordination-redis-ownership-boundary.md) | Accepted | `SF-2` | `AA-2`, `GR-1`, `AS-1` | Coordination Redis ownership and participation boundaries |
-| [ADR 0010](./adr-0010-tcp-proxy-identity-canonicalization.md) | Accepted | `SF-1` | `PO-2`, `PO-3` | TCP Proxy URI SAN identity and constrained fallback modes |
-| [ADR 0011](./adr-0011-gameplay-session-front-end-and-region-execution.md) | Accepted | `GR-1` | `AA-2`, `SF-1`, `SF-2`, `PO-2` | Session front-end and fenced lease-owner execution model |
+| [ADR 0010](./adr-0010-tcp-proxy-identity-canonicalization.md) | Superseded | `SF-1` | `PO-2`, `PO-3` | Historical ordered TCP Proxy identity fallback |
+| [ADR 0011](./adr-0011-gameplay-session-front-end-and-region-execution.md) | Superseded | `GR-1` | `AA-2`, `SF-1`, `SF-2`, `PO-2` | Historical session front-end and region execution forwarding contract |
 | [ADR 0012](./adr-0012-settings-value-precedence-and-constraints.md) | Accepted | `AR-2` | `EA-1`, `GR-1`, `SF-2` | Settings value precedence, source eligibility, and separately enforced constraints |
 | [ADR 0013](./adr-0013-bounded-invisible-non-edge-restart-recovery.md) | Accepted | `GR-1` | `AA-2`, `PO-2`, `PO-4`, `SF-2` | Bounded invisible non-edge restart recovery and explicit fallback |
 | [ADR 0014](./adr-0014-phased-jwt-signing-key-rotation-and-readiness.md) | Accepted | `SF-1` | `AA-1`, `PO-1`, `PO-3`, `PO-4` | Phased planned JWT rotation, compromise hard cutover, validator convergence, and player-facing readiness |
@@ -262,6 +262,17 @@ Validation precedence is fixed: first parse every checked queue row and validate
 | [ADR 0165](./adr-0165-authoritative-control-actions-during-observability-loss.md) | Accepted | `PO-4.2` | `PO-1.1`, `PO-4.1`, `PO-4.4`, `SF-2.2`, `SF-1.1` | Authoritative control actions during observability loss |
 | [ADR 0166](./adr-0166-attributable-script-breakers-and-tenant-first-fairness.md) | Accepted | `AS-1.6` | `PO-4.2`, `PO-1.2`, `GR-1.2`, `SF-2.2` | Attributable script breakers and tenant-first fairness |
 | [ADR 0167](./adr-0167-allowlisted-sensitive-trace-attributes.md) | Accepted | `PO-4.1` | `SF-1.3`, `PO-3.4`, `PO-1.3` | Allowlisted sensitive trace attributes |
+| [ADR 0168](./adr-0168-snapshot-bound-lobby-selectors-and-stable-realm-identity.md) | Accepted | `AA-3.1` | `AA-2.1`, `AA-3.3`, `SF-1.2` | Snapshot-bound lobby selectors and stable realm identity |
+| [ADR 0169](./adr-0169-exclusive-environment-bound-tcp-proxy-trust.md) | Accepted | `SF-1.3` | `PO-2.1`, `PO-2.2`, `PO-3.2` | Exclusive environment-bound TCP Proxy trust |
+| [ADR 0170](./adr-0170-fenced-command-forwarding-and-authoritative-region-transition.md) | Accepted | `GR-1.1` | `GR-1.3`, `AA-2.1`, `SF-1.2`, `SF-2.3`, `PO-2.2` | Fenced command forwarding and authoritative region transition |
+| [ADR 0171](./adr-0171-separated-redis-role-processes-and-owned-keyspaces.md) | Accepted | `SF-2.2` | `GR-1.3`, `AA-2.2`, `AS-1.5`, `PO-3.2`, `PO-4.4` | Separated Redis role processes and owned keyspaces |
+| [ADR 0172](./adr-0172-parent-event-and-frozen-handler-execution-identity.md) | Accepted | `AS-1.1` | `AS-1.5`, `SF-1.2`, `SF-2.3`, `GR-1.2` | Parent event and frozen handler execution identity |
+| [ADR 0173](./adr-0173-registry-classified-reload-admission-policy.md) | Accepted | `AS-1.6` | `AS-1.1`, `AS-1.4`, `AS-1.5`, `GR-1.2`, `PO-2.4` | Registry-classified reload admission policy |
+| [ADR 0174](./adr-0174-maturity-scoped-protobuf-compatibility.md) | Accepted | `SF-1.1` | `SF-2.3`, `PO-3.1`, `PO-4.3`, `AS-1.5` | Maturity-scoped Protobuf compatibility |
+| [ADR 0175](./adr-0175-release-pinned-command-capabilities-and-private-history.md) | Accepted | `EA-1.1` | `AR-2.2`, `EA-1.3`, `AA-2.1` | Release-pinned command capabilities and private history |
+| [ADR 0176](./adr-0176-owner-local-redis-execution-with-aggregated-contracts.md) | Accepted | `SF-1.5` | `SF-2.2`, `PO-4.4`, `AS-1.5` | Owner-local Redis execution with aggregated contracts |
+| [ADR 0177](./adr-0177-exact-plan-authorized-automated-production-deployment.md) | Accepted | `PO-3.1` | `PO-3.2`, `PO-4.4`, `PO-1.3`, `SF-1.3` | Exact-plan-authorized automated production deployment |
+| [ADR 0178](./adr-0178-disposable-transport-complete-pr-preview-proof.md) | Accepted | `PO-4.4` | `PO-3.1`, `PO-3.4`, `AA-2.1`, `EA-3.1` | Disposable transport-complete PR preview proof |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../../product/capability-taxonomy.md).
 
@@ -271,8 +282,13 @@ This is a hand-maintained index, not an independent authority. The ADR review-st
 
 | ADR | Status | Replacement ADR |
 | --- | --- | --- |
+| [ADR 0001](./adr-0001-scripting-event-ingress-idempotency-identity.md) | Superseded | [ADR 0172](./adr-0172-parent-event-and-frozen-handler-execution-identity.md) |
+| [ADR 0003](./adr-0003-reload-backpressure-and-retry-contract.md) | Superseded | [ADR 0173](./adr-0173-registry-classified-reload-admission-policy.md) |
 | [ADR 0004](./adr-0004-gameplay-reroute-vs-backend-unavailable.md) | Superseded | [ADR 0007](./adr-0007-edge-sharding-and-close-taxonomy.md) |
+| [ADR 0005](./adr-0005-tenant-identifiers-in-gameplay-protocol.md) | Superseded | [ADR 0168](./adr-0168-snapshot-bound-lobby-selectors-and-stable-realm-identity.md) |
 | [ADR 0006](./adr-0006-gameplay-shard-routing-key-transport.md) | Withdrawn | [ADR 0007](./adr-0007-edge-sharding-and-close-taxonomy.md) |
+| [ADR 0010](./adr-0010-tcp-proxy-identity-canonicalization.md) | Superseded | [ADR 0169](./adr-0169-exclusive-environment-bound-tcp-proxy-trust.md) |
+| [ADR 0011](./adr-0011-gameplay-session-front-end-and-region-execution.md) | Superseded | [ADR 0170](./adr-0170-fenced-command-forwarding-and-authoritative-region-transition.md) |
 | [ADR 0121](./adr-0121-historical-broad-dry-run-semantics.md) | Superseded | [ADR 0114](./adr-0114-command-plan-preview-dry-run-isolation.md) |
 | [ADR 0130](./adr-0130-historical-equipment-body-layout-authority.md) | Superseded | [ADR 0127](./adr-0127-game-authored-equipment-layouts-with-fail-closed-publication.md) |
 

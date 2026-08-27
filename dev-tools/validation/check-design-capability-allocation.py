@@ -145,19 +145,19 @@ PRODUCT_ALLOCATION_EXPECTATIONS = {
 ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/README.md": ("Exempt", "Decision registry/index"),
     "design/architecture/decisions/adr-0001-scripting-event-ingress-idempotency-identity.md": adr_allocation(
-        "AS-1", "Accepted", "SF-1", "SF-2"
+        "AS-1", "Superseded by ADR 0172", "SF-1", "SF-2"
     ),
     "design/architecture/decisions/adr-0002-automation-handoff-reliability-and-success-semantics.md": adr_allocation(
         "AS-1", "Accepted", "GR-1", "SF-2", "PO-4"
     ),
     "design/architecture/decisions/adr-0003-reload-backpressure-and-retry-contract.md": adr_allocation(
-        "AS-1", "Accepted", "AR-3", "GR-1", "PO-4"
+        "AS-1", "Superseded by ADR 0173", "AR-3", "GR-1", "PO-4"
     ),
     "design/architecture/decisions/adr-0004-gameplay-reroute-vs-backend-unavailable.md": adr_allocation(
         "PO-2", "Superseded by ADR 0007", "AA-2", "GR-1", "PO-4"
     ),
     "design/architecture/decisions/adr-0005-tenant-identifiers-in-gameplay-protocol.md": adr_allocation(
-        "AA-3", "Accepted", "EA-1", "SF-1"
+        "AA-3", "Superseded by ADR 0168", "EA-1", "SF-1"
     ),
     "design/architecture/decisions/adr-0006-gameplay-shard-routing-key-transport.md": adr_allocation(
         "PO-2", "Withdrawn; superseded by ADR 0007", "AA-3", "GR-1", "SF-1"
@@ -172,10 +172,10 @@ ADR_ALLOCATION_EXPECTATIONS = {
         "SF-2", "Accepted", "AA-2", "GR-1", "AS-1"
     ),
     "design/architecture/decisions/adr-0010-tcp-proxy-identity-canonicalization.md": adr_allocation(
-        "SF-1", "Accepted", "PO-2", "PO-3"
+        "SF-1", "Superseded by ADR 0169", "PO-2", "PO-3"
     ),
     "design/architecture/decisions/adr-0011-gameplay-session-front-end-and-region-execution.md": adr_allocation(
-        "GR-1", "Accepted", "AA-2", "SF-1", "SF-2", "PO-2"
+        "GR-1", "Superseded by ADR 0170", "AA-2", "SF-1", "SF-2", "PO-2"
     ),
     "design/architecture/decisions/adr-0012-settings-value-precedence-and-constraints.md": adr_allocation(
         "AR-2", "Accepted", "EA-1", "GR-1", "SF-2"
@@ -638,6 +638,39 @@ ADR_ALLOCATION_EXPECTATIONS = {
     ),
     "design/architecture/decisions/adr-0167-allowlisted-sensitive-trace-attributes.md": adr_allocation(
         "PO-4", "Accepted", "SF-1", "PO-1", "PO-3"
+    ),
+    "design/architecture/decisions/adr-0168-snapshot-bound-lobby-selectors-and-stable-realm-identity.md": adr_allocation(
+        "AA-3", "Accepted", "AA-2", "SF-1"
+    ),
+    "design/architecture/decisions/adr-0169-exclusive-environment-bound-tcp-proxy-trust.md": adr_allocation(
+        "SF-1", "Accepted", "PO-2", "PO-3"
+    ),
+    "design/architecture/decisions/adr-0170-fenced-command-forwarding-and-authoritative-region-transition.md": adr_allocation(
+        "GR-1", "Accepted", "AA-2", "SF-1", "SF-2", "PO-2"
+    ),
+    "design/architecture/decisions/adr-0171-separated-redis-role-processes-and-owned-keyspaces.md": adr_allocation(
+        "SF-2", "Accepted", "AA-2", "GR-1", "AS-1", "PO-3", "PO-4"
+    ),
+    "design/architecture/decisions/adr-0172-parent-event-and-frozen-handler-execution-identity.md": adr_allocation(
+        "AS-1", "Accepted", "GR-1", "SF-1", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0173-registry-classified-reload-admission-policy.md": adr_allocation(
+        "AS-1", "Accepted", "GR-1", "PO-2"
+    ),
+    "design/architecture/decisions/adr-0174-maturity-scoped-protobuf-compatibility.md": adr_allocation(
+        "SF-1", "Accepted", "AS-1", "SF-2", "PO-3", "PO-4"
+    ),
+    "design/architecture/decisions/adr-0175-release-pinned-command-capabilities-and-private-history.md": adr_allocation(
+        "EA-1", "Accepted", "AA-2", "AR-2"
+    ),
+    "design/architecture/decisions/adr-0176-owner-local-redis-execution-with-aggregated-contracts.md": adr_allocation(
+        "SF-1", "Accepted", "AS-1", "SF-2", "PO-4"
+    ),
+    "design/architecture/decisions/adr-0177-exact-plan-authorized-automated-production-deployment.md": adr_allocation(
+        "PO-3", "Accepted", "PO-1", "PO-4", "SF-1"
+    ),
+    "design/architecture/decisions/adr-0178-disposable-transport-complete-pr-preview-proof.md": adr_allocation(
+        "PO-4", "Accepted", "AA-2", "EA-3", "PO-3"
     ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {

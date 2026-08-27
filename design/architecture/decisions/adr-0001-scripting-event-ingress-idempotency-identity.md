@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR 0172](./adr-0172-parent-event-and-frozen-handler-execution-identity.md)
 
 ## Implementation Status
 
