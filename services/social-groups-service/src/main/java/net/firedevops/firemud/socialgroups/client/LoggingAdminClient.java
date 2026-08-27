@@ -11,6 +11,7 @@ import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.security.GrpcClientAuth;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.loggingadmin.v1.CreateReportRequest;
+import net.firedevops.firemud.loggingadmin.v1.CreateReportResponse;
 import net.firedevops.firemud.loggingadmin.v1.ReportServiceGrpc;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
@@ -72,6 +73,10 @@ public class LoggingAdminClient
             .setType("CHAT_PROFANITY")
             .setDescription(description)
             .build();
-    stub().createReport(request);
+    CreateReportResponse response = stub().createReport(request);
+    if (response.hasError()) {
+      throw new IllegalStateException(
+          "Chat violation report failed: " + response.getError().getCode());
+    }
   }
 }

@@ -1,7 +1,13 @@
 package net.firedevops.firemud.socialgroups.client;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import io.grpc.CallOptions;
 import io.grpc.ClientCall;
@@ -23,7 +29,9 @@ import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.v1.CreateReportRequest;
+import net.firedevops.firemud.loggingadmin.v1.CreateReportResponse;
 import net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyRequest;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
@@ -95,6 +103,34 @@ class SocialInternalGrpcClientAuthTest {
   }
 
   @Test
+  void loggingAdminClientPropagatesApplicationErrors() throws Exception {
+    CapturingChannel channel =
+        new CapturingChannel(
+            CreateReportResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("UNAVAILABLE")
+                        .setMessage("Report creation unavailable"))
+                .build()
+                .toByteArray());
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    when(channelFactory.buildChannel(anyString(), anyInt(), any(), anyBoolean()))
+        .thenReturn(channel);
+    LoggingAdminClient client =
+        new LoggingAdminClient(
+            new ServiceEndpointsProperties(),
+            plaintextGrpcProperties(),
+            channelFactory,
+            jwtUtil,
+            runtimeIdentityProvider());
+    client.init();
+
+    assertThatThrownBy(() -> client.reportChatViolation(7L, 42L, "Filtered profanity"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Chat violation report failed: UNAVAILABLE");
+  }
+
+  @Test
   void moderationPolicyClientUsesUnknownServiceFallbackWhenRuntimeIdentityUnavailable() {
     CapturingChannel channel = new CapturingChannel();
     ModerationPolicyClient client =
@@ -155,6 +191,15 @@ class SocialInternalGrpcClientAuthTest {
 
   private static final class CapturingChannel extends ManagedChannel {
     private String lastAuthorization;
+    private final byte[] responseBytes;
+
+    private CapturingChannel() {
+      this(new byte[0]);
+    }
+
+    private CapturingChannel(byte[] responseBytes) {
+      this.responseBytes = responseBytes;
+    }
 
     @Override
     public String authority() {
@@ -169,7 +214,7 @@ class SocialInternalGrpcClientAuthTest {
         public void start(Listener<RespT> responseListener, Metadata headers) {
           lastAuthorization = headers.get(AUTH_HEADER);
           responseListener.onMessage(
-              methodDescriptor.parseResponse(new ByteArrayInputStream(new byte[0])));
+              methodDescriptor.parseResponse(new ByteArrayInputStream(responseBytes)));
           responseListener.onClose(Status.OK, new Metadata());
         }
 
