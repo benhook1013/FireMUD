@@ -9,7 +9,7 @@ re-invocation behavior for tick-related scripts.
 
 ## Implementation Status
 
-The shared Redis-contract schema, owner-local descriptor contributions, aggregated Lua registry, ownership enforcement, and descriptor-driven CI described here are [ADR 0176](./decisions/adr-0176-owner-local-redis-execution-with-aggregated-contracts.md) target state and are not implemented. Existing scripts and key families require reconciliation against that contract.
+The shared Redis-contract schema, owner-local descriptor contributions, aggregated Lua registry, role/prefix/slot validators, ownership enforcement, and descriptor-driven CI described here are [ADR 0176](./decisions/adr-0176-owner-local-redis-execution-with-aggregated-contracts.md) target state and are not implemented. Existing scripts and key families require reconciliation against that contract.
 
 ## Default Author/Reviewer Expectations
 
@@ -61,7 +61,7 @@ Before authoring or reviewing a new script, use this quick checklist:
   - Lock and lease operations treat repeated acquire/refresh calls as no-ops with stable outcomes.
   - Queue/timer/effect insertion uses set-style semantics to avoid duplicate entries on replay.
 - Error outcomes are explicit and non-mutating (for example `"STALE_LEASE"`, `"STALE_LOCK"`, `"SESSION_VERSION_MISMATCH"`); callers can safely retry or escalate based on return codes.
-- The script has an entry in the aggregated **Lua Script Registry** (with the shared schema/registry foundation and an owning-service contribution) that describes:
+- Target-state proof requirement (the shared registry and harness are not implemented): the script has an entry in the aggregated **Lua Script Registry** (with the shared schema/registry foundation and an owning-service contribution) that describes:
   - Key roles and order (`KEYS[1]`, `KEYS[2]`, etc.).
   - Allowed prefixes and hash-tag assumptions.
   - The script category and whether it is single-key or shard-local multi-key; an entity-lock script declares and receives at most one entity-lock key.
@@ -413,9 +413,9 @@ Script changes must be rolled out in a way that respects both AOF replay semanti
   - `schemaVersion` changes must support every caller and stored-payload version in the evidenced coexistence set; unknown or ambiguous versions, including unproven missing versions, must fail before mutation with `"UNSUPPORTED_SCHEMA_VERSION"` or the equivalent so AOF replay cannot apply effects with mismatched schemas.
   - When a reset-required change is introduced, operators follow the reset runbooks so that any surviving AOF history for old scripts is discarded for the relevant scope rather than replayed under incompatible semantics.
 
-## Lua Script Registry and CI Expectations
+## Target-State Lua Script Registry and CI Expectations (Not Implemented)
 
-All coordination-related Lua scripts contribute entries to one aggregated **Lua Script Registry**. The shared Redis-contract foundation owns the registry schema and aggregation; each owning service contributes entries and retains executable Lua for exclusive key families. For each script, the registry records:
+The registry, validators, ownership enforcement, generic test harness, and CI checks in this section are target state and are not currently implemented. Once delivered, all coordination-related Lua scripts contribute entries to one aggregated **Lua Script Registry**. The shared Redis-contract foundation owns the registry schema and aggregation; each owning service contributes entries and retains executable Lua for exclusive key families. For each script, the registry records:
 
 - Script identifier and file path.
 - Expected `KEYS` and `ARGV` ordering and allowed prefixes (including hash-tag rules).
