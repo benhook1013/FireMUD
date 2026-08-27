@@ -27,7 +27,7 @@ The required baseline documents were read before the assigned corpus: [product c
 
 ## Coverage Proof
 
-The assigned corpus contains 12 Redis companions, 15 scripting companions, 4 tick companions, and 7 named specialized documents: 38 files and 10,982 source lines at this reconciliation snapshot. This is the exact middle partition of the disjoint `22 + 38 + 35` source allocation. Every assigned path is listed below with the exact visible headings inspected and the resulting inventory disposition.
+The assigned corpus contains 12 Redis companions, 15 scripting companions, 4 tick companions, and 7 named specialized documents: 38 files and 10,982 source lines at this reconciliation snapshot. This is the exact middle partition of the disjoint `22 + 38 + 38` source allocation. Every assigned path is listed below with the exact visible headings inspected and the resulting inventory disposition.
 
 | Assigned path | Exact headings considered | Disposition |
 | --- | --- | --- |

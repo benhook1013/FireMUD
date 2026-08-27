@@ -684,10 +684,10 @@ Redis features and assumptions in FireMUD must work across both single‑instanc
 In all non-ephemeral topologies:
 
 - Coordination Redis and Cache/Rate‑Limit Redis are **separate deployments** (distinct processes/containers) even when they share the same host or Kubernetes node.
-- Application and tooling configuration **must not** point `FIREMUD_REDIS_COORD_*` and `FIREMUD_REDIS_CACHE_*` to the same endpoint.
-- Shared configuration helpers should perform a best‑effort check (for example, comparing host/port pairs) and emit a clear log/health warning when both roles resolve to the same target.
+- Application and tooling configuration **must not** point `FIREMUD_REDIS_COORD_*` and `FIREMUD_REDIS_CACHE_*` to the same endpoint; endpoint overlap is an invalid topology.
+- Shared configuration helpers must detect endpoint overlap (for example, by comparing resolved host/port pairs), fail health checks, and emit a clear failing health indicator when both roles resolve to the same target. This is a hard configuration/health failure in every non-ephemeral environment, including `dev_local`, staging, production, and long-lived hobby/self-hosted deployments.
 
-Only an explicitly labelled one-shot test/CI environment may collapse both roles into one process and endpoint. That ephemeral exception must be reset-tolerant, visibly surface the shared endpoint, and cannot provide coordination-isolation, replay, or SLO evidence; hosted `pr-preview` and every persistent or player-facing environment retain the normal split. See [ADR 0171](./decisions/adr-0171-separated-redis-role-processes-and-owned-keyspaces.md) and [Redis Usage & Profiles](./system-architecture-redis-usage-and-profiles.md#environment-mappings).
+Only an explicitly labelled one-shot test/CI environment may collapse both roles into one process and endpoint. In that narrow ephemeral exception, overlap produces warning/visibility in logs, metrics, and health output but does not fail health checks solely for that reason. The stack must be reset-tolerant and cannot provide coordination-isolation, replay, or SLO evidence; hosted `pr-preview` and every persistent or player-facing environment retain the normal split. See [ADR 0171](./decisions/adr-0171-separated-redis-role-processes-and-owned-keyspaces.md) and [Redis Usage & Profiles](./system-architecture-redis-usage-and-profiles.md#environment-mappings).
 
 ---
 
