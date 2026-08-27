@@ -178,23 +178,41 @@ sequenceDiagram
 
     Caller-->>Scripting: Script trigger (event + metadata)
     alt dry-run (any quota class)
-        Scripting->>Scripting: Skip live per-script handler quota
+        Scripting->>Scripting: Skip live per-script handler quota (allowed)
     else non-dry-run PUBLISH_READINESS / onLoad
-        Scripting->>Scripting: Skip live per-script handler quota
+        Scripting->>Scripting: Skip live per-script handler quota (allowed)
     else non-dry-run STANDARD_RUNTIME
-        Scripting->>Scripting: Apply per-script handler quota
+        alt per-script quota available
+            Scripting->>Scripting: Apply per-script handler quota (allowed)
+        else quota denied
+            Scripting-->>Caller: ADMISSION/quota_denied/script_quota_denied; no parent work item
+        end
     end
-    Scripting->>Scripting: Persist parent work item (PENDING_EVALUATION)
+    Note over Scripting,Caller: A denied quota branch returns before parent persistence and does not continue to queue or claim.
+    Scripting->>Scripting: Persist parent work item (PENDING_EVALUATION; allowed quota branches only)
     Scripting->>Redis: Stage pre-DSL pointer to automation:queue:{tenantInstanceTag}:<entityId>
     Scripting->>Scripting: Claim persisted parent
     alt dry-run (any quota class)
-        Scripting->>Scripting: Reserve isolated dry-run capacity
+        alt isolated dry-run capacity available
+            Scripting->>Scripting: Reserve isolated dry-run capacity (allowed)
+        else capacity denied
+            Scripting->>Scripting: ADMISSION/quota_denied/dry_run_capacity_exhausted; terminal
+        end
     else non-dry-run PUBLISH_READINESS / onLoad
-        Scripting->>Scripting: Reserve isolated readiness capacity
+        alt isolated readiness capacity available
+            Scripting->>Scripting: Reserve isolated readiness capacity (allowed)
+        else capacity denied
+            Scripting->>Scripting: ADMISSION/quota_denied/onload_budget_exceeded; terminal
+        end
     else non-dry-run STANDARD_RUNTIME
-        Scripting->>Scripting: Reserve aggregate tenant priority tier
+        alt aggregate tenant priority tier available
+            Scripting->>Scripting: Reserve aggregate tenant priority tier (allowed)
+        else capacity denied
+            Scripting->>Scripting: ADMISSION/tenant_budget_exceeded/tenant_budget_exceeded; terminal
+        end
     end
-    Scripting->>Scripting: Run structured evaluator
+    Note over Scripting: A denied capacity branch terminalizes before evaluator execution and does not continue below.
+    Scripting->>Scripting: Run structured evaluator (allowed capacity branches only)
     Scripting->>Scripting: Validate evaluated domain commands
     alt dry-run (any quota class)
         Scripting->>Scripting: Terminal dry_run_completed / dry_run_no_handoff

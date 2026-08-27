@@ -4,7 +4,7 @@ Status: Inventory and human-led review are complete and independently coverage/f
 
 ## Implementation Status
 
-`Complete` applies to inventory coverage and the human-owned review run, not to decision import or runtime implementation/proof. The checked provenance below records reviewed outcomes already applied and merged to `develop`; unchecked Packet 7 rows remain pending selective import. Canonical design and accepted ADRs define merged target state, while the domain trackers define implementation and proof status.
+`Complete` applies to inventory coverage and the human-owned review run, not to decision import or runtime implementation/proof. The checked provenance below records reviewed outcomes already applied and merged to `develop`; unchecked Packet 7 rows remain pending selective import. Canonical design owns the merged target state; accepted ADRs provide consequential rationale, while the domain trackers define implementation and proof status.
 
 This inventory identifies important explicit and implicit product and architecture decisions in canonical FireMUD design. It preserves the evidence and merged provenance for the completed human-led review. Automated work on this inventory must not accept, reject, supersede, or resolve a future decision; accepted target state remains in canonical design and consequential rationale belongs in an ADR.
 

@@ -127,7 +127,8 @@ See [ADR 0167](./decisions/adr-0167-allowlisted-sensitive-trace-attributes.md).
 FireMUD defines two optional target escalation levels for incident-mode sampling. An operator may use only a level advertised and proved by that environment, must choose the least invasive sufficient option, and must record scope, incident identity, start time, automatic expiry, volume budget, completion, and verified reversion.
 
 1. **Service-scoped sampling (fast, coarse)**
-   - Mechanism: adjust head sampling in the affected service(s) via standard OpenTelemetry env vars:
+   - Availability gate: this control is unavailable (design-only) until the shared SDK consumes the sampler variables, the environment catalog advertises them as supported for the affected deployment, and a focused increase/observe/revert drill proves the complete path. Their presence in configuration alone is not support.
+   - Mechanism, once that gate is met: adjust head sampling in the affected service(s) via standard OpenTelemetry env vars:
      - `OTEL_TRACES_SAMPLER=parentbased_traceidratio`
      - `OTEL_TRACES_SAMPLER_ARG=<ratio>` (for example `0.10` for 10%)
    - Operational shape:

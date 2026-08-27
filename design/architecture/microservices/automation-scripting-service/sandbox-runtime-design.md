@@ -273,9 +273,9 @@ When diagnosing sandbox-related issues in production, operators should:
   - `automation_script_runtime_seconds`
   - `script_quota_denied_total` and related quota metrics
   - For preview/test runs, the existing `automation_script_test_runs_total`, `automation_script_test_runtime_seconds`, and `automation_script_test_sandbox_failures_total` families instead of live-traffic counters
-- For target-state core-script breaker incidents, query the exact tuple through `GetScriptBreakerStatus`; if a legacy/read-model `runtimeStatus=DISABLED_DUE_TO_ERRORS` is shown, treat it only as the read-only effective-admission projection for that queried tuple and not as breaker history or reset authority. Decide whether to:
+- For target-state core-script breaker incidents, query the exact tuple through `GetScriptBreakerStatus`; if a legacy/read-model `runtimeStatus=DISABLED_DUE_TO_ERRORS` is shown, treat it only as the read-only effective-admission projection for that queried tuple and not as breaker history or reset authority. Recovery requires either publishing a new immutable script version (which starts with a closed breaker) or invoking the exact audited `ResetScriptBreaker` operation for the same `(tenantId, gameInstanceId, scriptPatchVersion, scriptPinEpoch, scriptId)` tuple while the authoritative state is `DISABLED_DUE_TO_ERRORS`. The reset must compare the expected current breaker revision, validate digest-bound remediation evidence, and store one idempotent result bound to the request; do not re-enable by changing the projection. Decide whether to:
   - Adjust quotas or budgets
   - Fix the script definition
-  - Re-enable the script after remediation
+  - Publish a new immutable version or execute the audited exact-tuple reset after remediation
 
 Future implementation work should keep this observable behavior intact even if the internal enforcement mechanisms evolve (for example, moving from cooperative checks to dedicated worker processes).
