@@ -510,7 +510,7 @@ To keep operational scripts aligned with application code:
   - Cache/rate-limit scripts introduce Redis prefixes that are not listed in the Cache/Rate-Limit Redis key catalog maintained in the Redis cache design docs (Redis cheat sheet plus `system-architecture-redis-cache.md`), or misuse those prefixes against the wrong Redis role.
   - Automation-related Lua or tooling scripts reference both `automation:*` and `tick:*` prefixes in a single operation, violating the automation cluster slotting rules in `system-architecture-redis-lua-patterns.md` and the Automation & Scripting service design.
 
-Maintenance scripts that genuinely need to work with coordination keys must:
+Once the target maintenance surface is implemented and proven, maintenance scripts that genuinely need to work with coordination keys must:
 
 - Use the owning service's typed maintenance API and the same aggregated registry contract used by services; direct executable key-builder/Lua reuse is reserved for a genuinely shared mutation contract.
 - Document their scope (which prefixes/tenants/regions they touch) and the runbook they implement.
