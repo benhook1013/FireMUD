@@ -2503,12 +2503,8 @@ def canonical_expected_bindings_ref(environment: str) -> str:
     return f"design/operations/environments/{environment}/expected-bindings.yaml"
 
 
-def canonical_queryability_binding(root_dir: Path, environment: str) -> dict[str, Any]:
-    """Load the target environment's authoritative queryability posture."""
-    expected_path = root_dir / canonical_expected_bindings_ref(environment)
-    data = load_yaml(expected_path)
-    if not isinstance(data, dict) or data.get("environment") != environment:
-        raise ValueError(f"expected-bindings manifest must target {environment}")
+def validated_queryability_binding(data: Any) -> dict[str, Any]:
+    """Return a queryability binding after validating its canonical shape."""
     observability = data.get("observability")
     queryability = observability.get("logPipelineQueryability") if isinstance(observability, dict) else None
     required = {"selectedProfile", "capability", "evidenceFreshnessBudgetSeconds"}
@@ -2531,6 +2527,15 @@ def canonical_queryability_binding(root_dir: Path, environment: str) -> dict[str
             "observability.logPipelineQueryability.evidenceFreshnessBudgetSeconds must be positive"
         )
     return queryability
+
+
+def canonical_queryability_binding(root_dir: Path, environment: str) -> dict[str, Any]:
+    """Load the target environment's authoritative queryability posture."""
+    expected_path = root_dir / canonical_expected_bindings_ref(environment)
+    data = load_yaml(expected_path)
+    if not isinstance(data, dict) or data.get("environment") != environment:
+        raise ValueError(f"expected-bindings manifest must target {environment}")
+    return validated_queryability_binding(data)
 
 
 def canonical_promotion_attestation_ref(deployment_ref: str) -> str | None:
@@ -4224,6 +4229,10 @@ def expected_bindings_schema_issues(data: Any) -> list[str]:
                 target_value,
                 conditional_value_keys,
             )
+    try:
+        validated_queryability_binding(data)
+    except (TypeError, ValueError) as exc:
+        issues.append(str(exc))
     return issues
 
 
@@ -4283,7 +4292,7 @@ def expected_binding_checks(
                 "PREFLIGHT-SECRETS-002",
                 True,
                 "fail",
-                "Expected-bindings schema contains unknown keys: " + "; ".join(schema_issues),
+                "Expected-bindings schema is invalid: " + "; ".join(schema_issues),
             )
         )
     else:

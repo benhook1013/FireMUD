@@ -3175,6 +3175,16 @@ for case_name, mutate, expected_fragment in (
         lambda data: data["internalBindings"]["jwt"].__setitem__("jwksReff", "secret://firemud/jwt-jwks"),
         "internalBindings.jwt.jwksReff",
     ),
+    (
+        "missing-queryability",
+        lambda data: data["observability"].pop("logPipelineQueryability"),
+        "observability.logPipelineQueryability must contain exactly",
+    ),
+    (
+        "malformed-queryability-capability",
+        lambda data: data["observability"]["logPipelineQueryability"].__setitem__("capability", []),
+        "observability.logPipelineQueryability.capability must be a string",
+    ),
 ):
     malformed = yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
     mutate(malformed)
@@ -3191,7 +3201,7 @@ for case_name, mutate, expected_fragment in (
     )
     if malformed_secrets.status != "fail" or expected_fragment not in malformed_secrets.message:
         raise SystemExit(
-            f"{case_name}: unknown expected-bindings key was accepted: {malformed_secrets.message}"
+            f"{case_name}: invalid expected-bindings schema was accepted: {malformed_secrets.message}"
         )
 
 requirements = module.expected_preflight_policy_requirements("hobby-self-hosted", None)

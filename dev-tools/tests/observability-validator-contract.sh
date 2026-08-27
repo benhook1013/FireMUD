@@ -1461,11 +1461,15 @@ entry_path_contracts = {
     "WebSocketEntryPathBlackboxUnavailable": {
         "path": "websocket",
         "other_path": "telnet",
+        "target": "gateway",
+        "other_target": "tcp_proxy",
         "service": "spring-cloud-gateway",
     },
     "TelnetEntryPathBlackboxUnavailable": {
         "path": "telnet",
         "other_path": "websocket",
+        "target": "tcp_proxy",
+        "other_target": "gateway",
         "service": "tcp-proxy-service",
     },
 }
@@ -1480,7 +1484,8 @@ for source_text, check in entry_path_sources:
         )
     for alert_name, contract in entry_path_contracts.items():
         expression_message = (
-            f'{alert_name} must use only the exact path="{contract["path"]}" '
+            f'{alert_name} must use only the exact path="{contract["path"]}", '
+            f'target="{contract["target"]}" '
             "entrypath_blackbox_probe_success selector and compare it to zero"
         )
         hold_message = f"{alert_name} must use a rule-level for: 2m hold"
@@ -1501,13 +1506,18 @@ for source_text, check in entry_path_sources:
                 f'{alert_name} must use labels.service={contract["service"]}',
             ),
             (
-                f'entrypath_blackbox_probe_success{{path="{contract["path"]}"}}',
-                f'entrypath_blackbox_probe_success{{path="{contract["other_path"]}"}}',
+                f'entrypath_blackbox_probe_success{{path="{contract["path"]}",target="{contract["target"]}"}}',
+                f'entrypath_blackbox_probe_success{{path="{contract["other_path"]}",target="{contract["target"]}"}}',
                 expression_message,
             ),
             (
-                f'entrypath_blackbox_probe_success{{path="{contract["path"]}"}}',
-                f'entrypath_blackbox_probe_success{{path="{contract["path"]}",profile="independent-required"}}',
+                f'entrypath_blackbox_probe_success{{path="{contract["path"]}",target="{contract["target"]}"}}',
+                f'entrypath_blackbox_probe_success{{path="{contract["path"]}",target="{contract["other_target"]}"}}',
+                expression_message,
+            ),
+            (
+                f'entrypath_blackbox_probe_success{{path="{contract["path"]}",target="{contract["target"]}"}}',
+                f'entrypath_blackbox_probe_success{{path="{contract["path"]}",target="{contract["target"]}",profile="independent-required"}}',
                 expression_message,
             ),
         )
@@ -1517,11 +1527,11 @@ for source_text, check in entry_path_sources:
             require_message(findings_for(mutated, check), expected_message)
 
         canonical_expression = (
-            f'entrypath_blackbox_probe_success{{path="{contract["path"]}"}} == 0'
+            f'entrypath_blackbox_probe_success{{path="{contract["path"]}",target="{contract["target"]}"}} == 0'
         )
         range_expression = (
             "max_over_time("
-            f'entrypath_blackbox_probe_success{{path="{contract["path"]}"}}[2m]'
+            f'entrypath_blackbox_probe_success{{path="{contract["path"]}",target="{contract["target"]}"}}[2m]'
             ") == 0"
         )
         range_selector = mutate_alert_rule(
@@ -1545,11 +1555,15 @@ entry_path_absence_contracts = {
     "WebSocketEntryPathBlackboxMetricsAbsent": {
         "path": "websocket",
         "other_path": "telnet",
+        "target": "gateway",
+        "other_target": "tcp_proxy",
         "service": "spring-cloud-gateway",
     },
     "TelnetEntryPathBlackboxMetricsAbsent": {
         "path": "telnet",
         "other_path": "websocket",
+        "target": "tcp_proxy",
+        "other_target": "gateway",
         "service": "tcp-proxy-service",
     },
 }
@@ -1561,7 +1575,8 @@ for source_text, check in entry_path_sources:
         )
     for alert_name, contract in entry_path_absence_contracts.items():
         expression_message = (
-            f'{alert_name} must use only the exact path="{contract["path"]}" '
+            f'{alert_name} must use only the exact path="{contract["path"]}", '
+            f'target="{contract["target"]}" '
             "entrypath_blackbox_probe_success selector with absent()"
         )
         hold_message = f"{alert_name} must use a rule-level for: 2m hold"
@@ -1582,13 +1597,18 @@ for source_text, check in entry_path_sources:
                 f'{alert_name} must use labels.service={contract["service"]}',
             ),
             (
-                f'absent(entrypath_blackbox_probe_success{{path="{contract["path"]}"}})',
-                f'absent(entrypath_blackbox_probe_success{{path="{contract["other_path"]}"}})',
+                f'absent(entrypath_blackbox_probe_success{{path="{contract["path"]}",target="{contract["target"]}"}})',
+                f'absent(entrypath_blackbox_probe_success{{path="{contract["other_path"]}",target="{contract["target"]}"}})',
                 expression_message,
             ),
             (
-                f'absent(entrypath_blackbox_probe_success{{path="{contract["path"]}"}})',
-                f'entrypath_blackbox_probe_success{{path="{contract["path"]}"}} == 0',
+                f'absent(entrypath_blackbox_probe_success{{path="{contract["path"]}",target="{contract["target"]}"}})',
+                f'absent(entrypath_blackbox_probe_success{{path="{contract["path"]}",target="{contract["other_target"]}"}})',
+                expression_message,
+            ),
+            (
+                f'absent(entrypath_blackbox_probe_success{{path="{contract["path"]}",target="{contract["target"]}"}})',
+                f'entrypath_blackbox_probe_success{{path="{contract["path"]}",target="{contract["target"]}"}} == 0',
                 expression_message,
             ),
         )
@@ -1607,7 +1627,7 @@ for source_text, check in entry_path_sources:
 
 nested_for_source = """rules:
   - alert: WebSocketEntryPathBlackboxUnavailable
-    expr: entrypath_blackbox_probe_success{path="websocket"} == 0
+    expr: entrypath_blackbox_probe_success{path="websocket",target="gateway"} == 0
     for: 2m
     labels:
       service: spring-cloud-gateway
@@ -1635,7 +1655,7 @@ valid_blackbox_rule = """groups:
   - name: parser-contract
     rules:
       - alert: WebSocketEntryPathBlackboxUnavailable
-        expr: entrypath_blackbox_probe_success{path="websocket"} == 0
+        expr: entrypath_blackbox_probe_success{path="websocket",target="gateway"} == 0
         for: 2m
         labels:
           service: spring-cloud-gateway
@@ -2588,7 +2608,7 @@ if noncanonical_spacing_findings:
         f"{noncanonical_spacing_findings!r}"
     )
 
-blackbox_expression = 'entrypath_blackbox_probe_success{path="websocket"} == 0'
+blackbox_expression = 'entrypath_blackbox_probe_success{path="websocket",target="gateway"} == 0'
 for malformed_block_scalar in ("|0", "|9", "|--", ">0", ">9", "|2++", ">++", ">2++"):
     malformed_block_scalar_rule = valid_sequence_rule.replace(
         f"    expr: {blackbox_expression}",
@@ -2675,8 +2695,8 @@ require_message(
 )
 
 field_indentation_mutation = valid_blackbox_rule.replace(
-    "        expr: entrypath_blackbox_probe_success{path=\"websocket\"} == 0",
-    "          expr: entrypath_blackbox_probe_success{path=\"websocket\"} == 0",
+    "        expr: entrypath_blackbox_probe_success{path=\"websocket\",target=\"gateway\"} == 0",
+    "          expr: entrypath_blackbox_probe_success{path=\"websocket\",target=\"gateway\"} == 0",
     1,
 )
 require_message(
@@ -2692,8 +2712,8 @@ require_message(
 )
 
 nested_sequence_mutation = valid_blackbox_rule.replace(
-    "        expr: entrypath_blackbox_probe_success{path=\"websocket\"} == 0",
-    "        - alert: HiddenEntryPathRule\n          expr: vector(1)\n        expr: entrypath_blackbox_probe_success{path=\"websocket\"} == 0",
+    "        expr: entrypath_blackbox_probe_success{path=\"websocket\",target=\"gateway\"} == 0",
+    "        - alert: HiddenEntryPathRule\n          expr: vector(1)\n        expr: entrypath_blackbox_probe_success{path=\"websocket\",target=\"gateway\"} == 0",
     1,
 )
 require_message(

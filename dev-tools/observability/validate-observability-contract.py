@@ -69,21 +69,25 @@ PROFILE_DEPENDENT_ALERTS = {
 ENTRY_PATH_BLACKBOX_ALERT_CONTRACTS = {
     "WebSocketEntryPathBlackboxMetricsAbsent": {
         "path": "websocket",
+        "target": "gateway",
         "service": "spring-cloud-gateway",
         "expression": "absent",
     },
     "WebSocketEntryPathBlackboxUnavailable": {
         "path": "websocket",
+        "target": "gateway",
         "service": "spring-cloud-gateway",
         "expression": "zero",
     },
     "TelnetEntryPathBlackboxMetricsAbsent": {
         "path": "telnet",
+        "target": "tcp_proxy",
         "service": "tcp-proxy-service",
         "expression": "absent",
     },
     "TelnetEntryPathBlackboxUnavailable": {
         "path": "telnet",
+        "target": "tcp_proxy",
         "service": "tcp-proxy-service",
         "expression": "zero",
     },
@@ -1211,7 +1215,10 @@ def _entry_path_blackbox_findings(
     if contract is None:
         return []
 
-    metric_selector = f'entrypath_blackbox_probe_success{{path="{contract["path"]}"}}'
+    metric_selector = (
+        "entrypath_blackbox_probe_success"
+        f'{{path="{contract["path"]}",target="{contract["target"]}"}}'
+    )
     expected_expr = _compact_promql(
         f"absent({metric_selector})"
         if contract["expression"] == "absent"
@@ -1248,7 +1255,8 @@ def _entry_path_blackbox_findings(
             Finding(
                 path=path,
                 message=(
-                    f'{alert_name} must use only the exact path="{contract["path"]}" '
+                    f'{alert_name} must use only the exact path="{contract["path"]}", '
+                    f'target="{contract["target"]}" '
                     f"{expression_description}"
                 ),
             )

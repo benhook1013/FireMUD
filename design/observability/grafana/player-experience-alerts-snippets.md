@@ -309,7 +309,7 @@ When eventually installed, the `PlayerFlowCanary*` and blackbox rules must remai
   # An absent non-exposed path is not_applicable; missing evidence for an
   # exposed path is unknown/degraded rather than not_applicable.
   # A two-minute rule hold confirms continuous failure before paging.
-  expr: entrypath_blackbox_probe_success{path="websocket"} == 0
+  expr: entrypath_blackbox_probe_success{path="websocket",target="gateway"} == 0
   for: 2m
   labels:
     service: spring-cloud-gateway
@@ -324,7 +324,7 @@ When eventually installed, the `PlayerFlowCanary*` and blackbox rules must remai
 - alert: WebSocketEntryPathBlackboxMetricsAbsent
   # Missing required-path evidence is unknown/degraded, not an observed outage.
   # Use the same two-minute hold as the zero-value path alert.
-  expr: absent(entrypath_blackbox_probe_success{path="websocket"})
+  expr: absent(entrypath_blackbox_probe_success{path="websocket",target="gateway"})
   for: 2m
   labels:
     service: spring-cloud-gateway
@@ -340,7 +340,7 @@ When eventually installed, the `PlayerFlowCanary*` and blackbox rules must remai
   # An absent non-exposed path is not_applicable; missing evidence for an
   # exposed path is unknown/degraded rather than not_applicable.
   # A two-minute rule hold confirms continuous failure before paging.
-  expr: entrypath_blackbox_probe_success{path="telnet"} == 0
+  expr: entrypath_blackbox_probe_success{path="telnet",target="tcp_proxy"} == 0
   for: 2m
   labels:
     service: tcp-proxy-service
@@ -355,7 +355,7 @@ When eventually installed, the `PlayerFlowCanary*` and blackbox rules must remai
 - alert: TelnetEntryPathBlackboxMetricsAbsent
   # Missing required-path evidence is unknown/degraded, not an observed outage.
   # Use the same two-minute hold as the zero-value path alert.
-  expr: absent(entrypath_blackbox_probe_success{path="telnet"})
+  expr: absent(entrypath_blackbox_probe_success{path="telnet",target="tcp_proxy"})
   for: 2m
   labels:
     service: tcp-proxy-service
