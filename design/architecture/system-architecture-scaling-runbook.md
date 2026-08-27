@@ -66,6 +66,8 @@ Key steps:
 
 ### Data Retention and High-Churn Tables
 
+The following are **target obligations** under [ADR 0163](./decisions/adr-0163-service-owned-retention-classes-with-cross-service-safety.md), not evidence that the current deployment has already implemented a shared retention policy:
+
 - Partition and retention strategy must be explicit for the full high-churn tick-history surface:
   - tick effect ledger / tick-batch tables
   - cross-region follow-up tables
@@ -83,6 +85,8 @@ Key steps:
 
 Exact durations are deployment policy derived from declared retry, recovery, and governance horizons and measured growth, not one platform-wide constant. See [ADR 0163](./decisions/adr-0163-service-owned-retention-classes-with-cross-service-safety.md).
 
+**Current implementation status:** The shared retention-class declarations, cross-service horizon compatibility and blockers, safe-watermark cleanup, holds, and complete focused proof remain unimplemented; core Game Session tick, command, and remote-work tables are unpartitioned and lack coordinated retention, while some service-local sweeps exist. The owning status record is [Shared Runtime, Service Contracts, and Persistence — `SF-2.1`](../project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md#capability-status). Do not treat the target obligations above, or any measured envelope below, as proof that the shared retention contract is live.
+
 ## Verification
 
 - After scaling changes, re-run smoke tests and a subset of load tests.
@@ -99,7 +103,8 @@ When deciding **what** to scale, prefer signals tied to the tick model and Redis
   - Treat any `tick_interval_ms` change as a topology-level/runtime-contract change for the affected live `regionEpoch`, not as a harmless tuning knob. If cadence changes would alter timer ordering normalization, perform them with an epoch bump and timer re-derivation as required by the tick invariants.
   - Example: moving a live region from `100ms` cadence to `200ms` cadence requires pause, epoch bump, timer `due_tick_id` re-derivation, and resume on the new epoch; it is not an in-place tuning-only change.
 - Coordination-write exposure envelopes:
-  - Validate measured Coordination Redis unreplicated-write exposure against `redis_unreplicated_write_window_slo_ms` only in profiles eligible to claim that measured SLO under [Redis operations](./system-architecture-redis-operations.md). Ephemeral preview/CI profiles may opt out of that SLO; they must instead validate reset tolerance and latency, while still requiring canonical `RUNNING` or bounded `DEGRADED` region status.
+  - **Profiles that support and claim the measured envelope:** validate measured Coordination Redis unreplicated-write exposure against `redis_unreplicated_write_window_slo_ms` under [Redis operations](./system-architecture-redis-operations.md).
+  - **Profiles that omit the measured envelope:** record that omission explicitly in profile/evidence; omission is not a zero-valued measurement or an SLO pass. Validate reset tolerance and latency instead, while still requiring canonical `RUNNING` or bounded `DEGRADED` region status. Ephemeral preview/CI profiles are examples of this opt-out posture.
   - For eligible profiles, monitor measured Coordination Redis unreplicated-write exposure against `redis_unreplicated_write_window_slo_ms`; use the [Redis metrics catalog](./system-architecture-redis-metrics-catalog.md) for metric definitions and [Redis operations](./system-architecture-redis-operations.md) for operational response/SLO procedures.
   - If measured unreplicated-write exposure regularly exceeds `redis_unreplicated_write_window_slo_ms`, prioritize scaling or tuning **Coordination Redis** (hardware, AOF configuration, or shard layout) before adding more tick producers.
 - Cross-region backlog:
@@ -123,7 +128,8 @@ The exact safe limits for a deployment depend on hardware and tuning, but the fo
   - Aim for `tick:{tenantRegionTag}:pending` to represent at most **one in-flight tick** plus a small buffer of staged work; thousands of uncommitted effects for a single region should be treated as an anomaly and investigated.
   - Keep `timer:{tenantRegionTag}` and `retry:{tenantRegionTag}` counts per region within the “tens of thousands” envelope from the Redis operations doc; sustained higher values usually indicate that timers or retries are being used as data stores rather than scheduling hints.
 - **Redis unreplicated-write exposure envelope**
-  - Size Coordination Redis so that measured unreplicated-write exposure remains within `redis_unreplicated_write_window_slo_ms` under expected peak load.
+  - **Target obligation for profiles that support and claim the measured envelope:** size Coordination Redis so that measured unreplicated-write exposure remains within `redis_unreplicated_write_window_slo_ms` under expected peak load.
+  - **Target obligation for profiles that omit the measured envelope:** retain an explicit omission plus reset-tolerance and latency evidence; do not substitute a zero or claim the measured SLO.
   - If measured unreplicated-write exposure regularly exceeds that envelope after scaling application services, prioritize Coordination Redis capacity (CPU, memory, AOF layout) or region density before adding more tick producers.
 
 ## Capacity Model (Required Inputs)

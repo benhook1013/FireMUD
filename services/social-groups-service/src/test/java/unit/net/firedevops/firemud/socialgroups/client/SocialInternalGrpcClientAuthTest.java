@@ -2,7 +2,6 @@ package net.firedevops.firemud.socialgroups.client;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 import io.grpc.CallOptions;
 import io.grpc.ClientCall;
@@ -79,10 +78,56 @@ class SocialInternalGrpcClientAuthTest {
     assertInternalSocialServiceToken(channel);
   }
 
+  @Test
+  void loggingAdminClientUsesUnknownServiceFallbackWhenRuntimeIdentityUnavailable() {
+    CapturingChannel channel = new CapturingChannel();
+    LoggingAdminClient client =
+        new LoggingAdminClient(
+            new ServiceEndpointsProperties(),
+            plaintextGrpcProperties(),
+            mock(GrpcChannelFactory.class),
+            jwtUtil,
+            nullRuntimeIdentityProvider());
+
+    client.buildStub(channel).createReport(CreateReportRequest.getDefaultInstance());
+
+    assertInternalServiceToken(channel, "unknown-service");
+  }
+
+  @Test
+  void moderationPolicyClientUsesUnknownServiceFallbackWhenRuntimeIdentityUnavailable() {
+    CapturingChannel channel = new CapturingChannel();
+    ModerationPolicyClient client =
+        new ModerationPolicyClient(
+            new ServiceEndpointsProperties(),
+            plaintextGrpcProperties(),
+            mock(GrpcChannelFactory.class),
+            jwtUtil,
+            nullRuntimeIdentityProvider());
+
+    client
+        .buildStub(channel)
+        .evaluateModerationPolicy(EvaluateModerationPolicyRequest.getDefaultInstance());
+
+    assertInternalServiceToken(channel, "unknown-service");
+  }
+
   private ObjectProvider<RuntimeIdentity> runtimeIdentityProvider() {
-    ObjectProvider<RuntimeIdentity> provider = mock(ObjectProvider.class);
-    when(provider.getIfAvailable()).thenReturn(runtimeIdentity);
-    return provider;
+    return new ObjectProvider<>() {
+      @Override
+      public RuntimeIdentity getIfAvailable() {
+        return runtimeIdentity;
+      }
+    };
+  }
+
+  private static ObjectProvider<RuntimeIdentity> nullRuntimeIdentityProvider() {
+    return new ObjectProvider<>() {
+      @Override
+      public RuntimeIdentity getIfAvailable() {
+        return null;
+      }
+    };
   }
 
   private static CommonGrpcClientProperties plaintextGrpcProperties() {
@@ -92,17 +137,20 @@ class SocialInternalGrpcClientAuthTest {
   }
 
   private void assertInternalSocialServiceToken(CapturingChannel channel) {
+    assertInternalServiceToken(channel, "social-groups-service");
+  }
+
+  private void assertInternalServiceToken(CapturingChannel channel, String expectedServiceName) {
     assertThat(channel.lastAuthorization).startsWith("Bearer ");
     String token = channel.lastAuthorization.substring("Bearer ".length());
     Jws<Claims> claims = jwtUtil.parseToken(token);
 
-    assertThat(claims.getPayload().getSubject()).isEqualTo("service:social-groups-service");
+    assertThat(claims.getPayload().getSubject()).isEqualTo("service:" + expectedServiceName);
     assertThat(claims.getPayload().get("internalService", Boolean.class)).isTrue();
-    assertThat(claims.getPayload().get("serviceName", String.class))
-        .isEqualTo("social-groups-service");
+    assertThat(claims.getPayload().get("serviceName", String.class)).isEqualTo(expectedServiceName);
     assertThat(claims.getPayload()).doesNotContainKey("accountId");
-    assertThat(claims.getPayload().get("globalRoles", List.class)).isEmpty();
-    assertThat(claims.getPayload().get("scopedRoles", Map.class)).isEmpty();
+    assertThat(claims.getPayload().get("globalRoles", Object.class)).isEqualTo(List.of());
+    assertThat(claims.getPayload().get("scopedRoles", Object.class)).isEqualTo(Map.of());
   }
 
   private static final class CapturingChannel extends ManagedChannel {

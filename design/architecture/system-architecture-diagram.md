@@ -4,7 +4,7 @@
 
 The room-state assembly shown in this diagram is target-state. Current World and Entity room-read requests remain floor-free, and the causal-floor/served-through protocol is not implemented; current scope markers do not prove freshness.
 
-The observability nodes and arrows also show the target default indexed profile, not universal or current Logging & Admin integration. The current service queries only its PostgreSQL `log_events` table and has no Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, or Alertmanager client, embedded-dashboard endpoint, or separate admin UI. Compatible indexed profiles map equivalent components, while reduced profiles use their declared console/journal path or explicitly omit indexed search.
+The observability nodes and arrows also show the target default indexed profile, not universal or current Logging & Admin integration. The dashed Logging & Admin edges in the diagram are target-profile query, routed-alert-view, or dashboard-embedding paths; they are not current clients or observability pushes. The current service queries only its PostgreSQL `log_events` table and has no Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, or Alertmanager client, embedded-dashboard endpoint, or separate admin UI. Compatible indexed profiles map equivalent components, while reduced profiles use their declared console/journal path or explicitly omit indexed search.
 
 ```mermaid
 flowchart TD
@@ -116,13 +116,13 @@ flowchart TD
     Prom --> Grafana
     OTel --> Jaeger
     ES --> Kibana
-    ES -- logs --> Logging
-    Prom -- metrics --> Logging
-    Jaeger -- traces --> Logging
-    Alertmgr -- alerts --> Logging
+    Logging -. target log query .-> ES
+    Logging -. target metric query .-> Prom
+    Logging -. target trace query .-> Jaeger
+    Logging -. target routed-alert view .-> Alertmgr
     Alertmgr -- alerts/email --> SMTP
-    Kibana -- dashboards --> Logging
-    Grafana -- dashboards --> Logging
+    Logging -. target dashboard embedding .-> Kibana
+    Logging -. target dashboard embedding .-> Grafana
 
     Account -- email --> SMTP
     Logging -- email --> SMTP

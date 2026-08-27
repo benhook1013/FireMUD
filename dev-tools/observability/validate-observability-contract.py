@@ -1628,7 +1628,11 @@ def _player_slo_calibration_findings(
 
 
 def _command_scope_query_findings(path: Path, expr: str) -> list[Finding]:
-    if "command_end_to_end_latency_ms_bucket" not in expr:
+    # Restrict command-scope checks to PromQL code. Metric names in
+    # label_replace values, comments, and other string literals are data, not
+    # command-latency expressions to be grouped.
+    code_expr = _mask_promql_non_code(expr)
+    if "command_end_to_end_latency_ms_bucket" not in code_expr:
         return []
 
     findings: list[Finding] = []
@@ -1639,7 +1643,7 @@ def _command_scope_query_findings(path: Path, expr: str) -> list[Finding]:
             if label.strip()
         }
         for grouping in re.finditer(
-            r"sum\s+by\s*\(([^)]*)\)", expr, re.IGNORECASE
+            r"sum\s+by\s*\(([^)]*)\)", code_expr, re.IGNORECASE
         )
     ]
     if any("region" in grouping for grouping in groupings):

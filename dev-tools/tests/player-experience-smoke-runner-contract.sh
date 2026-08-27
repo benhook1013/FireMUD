@@ -16,6 +16,7 @@ from pathlib import Path
 root = Path(sys.argv[1]) / "dev-tools" / "observability"
 sys.path.insert(0, str(root))
 shared = __import__("numeric_validation")
+observability_contract = __import__("observability_contract")
 for name in ("run-player-experience-smoke.py", "validate-player-experience-smoke-evidence.py"):
     spec = importlib.util.spec_from_file_location(name, root / name)
     module = importlib.util.module_from_spec(spec)
@@ -26,6 +27,13 @@ for name in ("run-player-experience-smoke.py", "validate-player-experience-smoke
     if name == "run-player-experience-smoke.py":
         assert module.parse_bounded_positive_seconds is shared.parse_bounded_positive_seconds
         runner_module = module
+    else:
+        evidence_validator_module = module
+
+assert runner_module.CANARY_IDENTITY_REQUIRED_FIELDS is observability_contract.CANARY_IDENTITY_REQUIRED_FIELDS
+assert evidence_validator_module.CANARY_IDENTITY_REQUIRED_FIELDS is observability_contract.CANARY_IDENTITY_REQUIRED_FIELDS
+assert runner_module.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE is observability_contract.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE
+assert evidence_validator_module.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE is observability_contract.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE
 
 os.environ["PLAYER_EXPERIENCE_QUERYABILITY_PROFILE"] = "staging"
 os.environ["PLAYER_EXPERIENCE_QUERYABILITY_FRESHNESS_BUDGET_SECONDS"] = "7200"
@@ -227,14 +235,26 @@ SMOKE_CONFIG_ENV_UNSETS=(
   -u PLAYER_EXPERIENCE_DEPLOYMENT_REF
 )
 SMOKE_CONFIG_ENV_OVERRIDES=()
+SMOKE_CONFIG_ACCOUNT_ENV=(
+  SMOKE_USERNAME=canary-contract@example.com
+  SMOKE_PASSWORD=contract-canary-secret
+)
+SMOKE_CONFIG_CANARY_ENV=(
+  "${SMOKE_CONFIG_ACCOUNT_ENV[@]}"
+  PLAYER_EXPERIENCE_SYNTHETIC_IDENTITY_EVIDENCE="$CANARY_IDENTITY_EVIDENCE"
+)
+SMOKE_CONFIG_QUERYABILITY_ENV=(
+  PLAYER_EXPERIENCE_QUERYABILITY_PROFILE=staging
+  PLAYER_EXPERIENCE_QUERYABILITY_FRESHNESS_BUDGET_SECONDS=7200
+)
+SMOKE_CONFIG_DEFAULT_ENV=(
+  "${SMOKE_CONFIG_CANARY_ENV[@]}"
+  "${SMOKE_CONFIG_QUERYABILITY_ENV[@]}"
+)
 
 run_smoke_runner() {
   env "${SMOKE_CONFIG_ENV_UNSETS[@]}" \
-    SMOKE_USERNAME=canary-contract@example.com \
-    SMOKE_PASSWORD=contract-canary-secret \
-    PLAYER_EXPERIENCE_SYNTHETIC_IDENTITY_EVIDENCE="$CANARY_IDENTITY_EVIDENCE" \
-    PLAYER_EXPERIENCE_QUERYABILITY_PROFILE=staging \
-    PLAYER_EXPERIENCE_QUERYABILITY_FRESHNESS_BUDGET_SECONDS=7200 \
+    "${SMOKE_CONFIG_DEFAULT_ENV[@]}" \
     python3 "$RUNNER" "$@"
 }
 
@@ -243,11 +263,7 @@ run_smoke_runner_with_deployment_ref() {
   shift
   env "${SMOKE_CONFIG_ENV_UNSETS[@]}" \
     PLAYER_EXPERIENCE_DEPLOYMENT_REF="$deployment_ref" \
-    SMOKE_USERNAME=canary-contract@example.com \
-    SMOKE_PASSWORD=contract-canary-secret \
-    PLAYER_EXPERIENCE_SYNTHETIC_IDENTITY_EVIDENCE="$CANARY_IDENTITY_EVIDENCE" \
-    PLAYER_EXPERIENCE_QUERYABILITY_PROFILE=staging \
-    PLAYER_EXPERIENCE_QUERYABILITY_FRESHNESS_BUDGET_SECONDS=7200 \
+    "${SMOKE_CONFIG_DEFAULT_ENV[@]}" \
     python3 "$RUNNER" "$@"
 }
 
@@ -255,38 +271,21 @@ run_smoke_runner_without_canary_identity() {
   env "${SMOKE_CONFIG_ENV_UNSETS[@]}" \
     SMOKE_USERNAME=demo@example.com \
     SMOKE_PASSWORD=swordfish \
-    PLAYER_EXPERIENCE_QUERYABILITY_PROFILE=staging \
-    PLAYER_EXPERIENCE_QUERYABILITY_FRESHNESS_BUDGET_SECONDS=7200 \
+    "${SMOKE_CONFIG_QUERYABILITY_ENV[@]}" \
     python3 "$RUNNER" "$@"
 }
 
 run_smoke_runner_without_queryability_config() {
   env "${SMOKE_CONFIG_ENV_UNSETS[@]}" \
-    SMOKE_USERNAME=canary-contract@example.com \
-    SMOKE_PASSWORD=contract-canary-secret \
-    PLAYER_EXPERIENCE_SYNTHETIC_IDENTITY_EVIDENCE="$CANARY_IDENTITY_EVIDENCE" \
+    "${SMOKE_CONFIG_CANARY_ENV[@]}" \
     python3 "$RUNNER" "$@"
 }
 
 run_clean_python() {
-  if [ "${#SMOKE_CONFIG_ENV_OVERRIDES[@]}" -gt 0 ]; then
-    env "${SMOKE_CONFIG_ENV_UNSETS[@]}" \
-      "${SMOKE_CONFIG_ENV_OVERRIDES[@]}" \
-      SMOKE_USERNAME=canary-contract@example.com \
-      SMOKE_PASSWORD=contract-canary-secret \
-      PLAYER_EXPERIENCE_SYNTHETIC_IDENTITY_EVIDENCE="$CANARY_IDENTITY_EVIDENCE" \
-      PLAYER_EXPERIENCE_QUERYABILITY_PROFILE=staging \
-      PLAYER_EXPERIENCE_QUERYABILITY_FRESHNESS_BUDGET_SECONDS=7200 \
-      python3 "$@"
-  else
-    env "${SMOKE_CONFIG_ENV_UNSETS[@]}" \
-      SMOKE_USERNAME=canary-contract@example.com \
-      SMOKE_PASSWORD=contract-canary-secret \
-      PLAYER_EXPERIENCE_SYNTHETIC_IDENTITY_EVIDENCE="$CANARY_IDENTITY_EVIDENCE" \
-      PLAYER_EXPERIENCE_QUERYABILITY_PROFILE=staging \
-      PLAYER_EXPERIENCE_QUERYABILITY_FRESHNESS_BUDGET_SECONDS=7200 \
-      python3 "$@"
-  fi
+  env "${SMOKE_CONFIG_ENV_UNSETS[@]}" \
+    "${SMOKE_CONFIG_ENV_OVERRIDES[@]}" \
+    "${SMOKE_CONFIG_DEFAULT_ENV[@]}" \
+    python3 "$@"
 }
 
 refresh_external_authority_fixture() {
@@ -2299,7 +2298,7 @@ def assert_producers_empty(player_flow_canary, verifier_available):
 def assert_producers_emit(player_flow_canary, verifier_available):
     runner.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE = verifier_available
     for result in producer_results(player_flow_canary):
-        assert all(records for records in result), (player_flow_canary, result)
+        assert result and all(records for records in result), (player_flow_canary, result)
 
 
 assert_producers_empty("advertised", False)

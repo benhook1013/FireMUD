@@ -27,6 +27,8 @@ from numeric_validation import (
     parse_bounded_positive_seconds,
 )
 from observability_contract import (
+    AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE,
+    CANARY_IDENTITY_REQUIRED_FIELDS,
     OMITTED_QUERYABILITY_CAPABILITY,
 )
 
@@ -65,20 +67,6 @@ CAPABILITY_VALUES = {
     PROMETHEUS_MIRRORS_CAPABILITY: {"published", "omitted"},
     PLAYER_FLOW_CANARY_CAPABILITY: {"advertised", "omitted"},
 }
-CANARY_IDENTITY_REQUIRED_FIELDS = frozenset(
-    {
-        "authority",
-        "classification",
-        "analyticsSloExclusion",
-        "credentials",
-        "transportCharacters",
-        "evidenceRef",
-    }
-)
-# The repository currently has no shipped Account-owned verifier that can bind
-# synthetic classification and per-transport character identities to a smoke
-# execution. Local JSON therefore cannot authorize an advertised canary.
-AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE = False
 FAILURE_INJECTION_SIGNAL_VALUES = frozenset(
     {"websocket", "telnet", "login", "command", "deadman"}
 )

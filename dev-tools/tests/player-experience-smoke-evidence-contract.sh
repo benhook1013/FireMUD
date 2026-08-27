@@ -162,6 +162,9 @@ spec = importlib.util.spec_from_file_location("smoke_evidence_validator", valida
 validator = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(validator)
+observability_contract = __import__("observability_contract")
+assert validator.CANARY_IDENTITY_REQUIRED_FIELDS is observability_contract.CANARY_IDENTITY_REQUIRED_FIELDS
+assert validator.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE is observability_contract.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE
 
 cases = [
     (omitted_path, "executionMode", ["live"], "executionMode must be live or simulated"),
@@ -1369,6 +1372,11 @@ if python3 "$VALIDATOR" "$MINIMUM_CANARY_BUDGET_EVIDENCE" >"$TMP_DIR/minimum-can
 fi
 grep -q "cannot be advertised until an authoritative Account synthetic identity verifier is implemented" \
   "$TMP_DIR/minimum-canary-budget.out"
+if grep -q "externalAuthority.detectionBudgetSeconds must be at least 180 seconds" \
+  "$TMP_DIR/minimum-canary-budget.out"; then
+  echo "minimum canary alert hold budget was rejected at the boundary" >&2
+  exit 1
+fi
 
 SMALL_CANARY_BUDGET_EVIDENCE="$TMP_DIR/small-canary-budget-evidence.json"
 python3 - "$MINIMUM_CANARY_BUDGET_EVIDENCE" "$SMALL_CANARY_BUDGET_EVIDENCE" <<'PY'
@@ -1492,6 +1500,11 @@ if python3 "$VALIDATOR" "$SCOPED_REQUIRED_EVIDENCE" >"$TMP_DIR/scoped.out" 2>&1;
 fi
 grep -q "cannot be advertised until an authoritative Account synthetic identity verifier is implemented" \
   "$TMP_DIR/scoped.out"
+if grep -q "externalAuthority.publicPathChecks.telnet\|entrypath_blackbox_probe_success missing passing paths: telnet\|playerflow_canary_success missing passing flows for path 'telnet'" \
+  "$TMP_DIR/scoped.out"; then
+  echo "scoped required posture unexpectedly required the omitted telnet path" >&2
+  exit 1
+fi
 
 cat >"$INVALID_EVIDENCE" <<'JSON'
 {
@@ -1647,6 +1660,11 @@ if python3 "$VALIDATOR" "$OMITTED_CANARY_EVIDENCE" >"$TMP_DIR/omitted-canary.out
 fi
 grep -q "cannot be advertised until an authoritative Account synthetic identity verifier is implemented" \
   "$TMP_DIR/omitted-canary.out"
+if grep -q "externalAuthority.independent-omitted must not include external authority fields" \
+  "$TMP_DIR/omitted-canary.out"; then
+  echo "omitted external authority unexpectedly retained authority fields" >&2
+  exit 1
+fi
 
 OMITTED_CANARY_NO_BUDGET_EVIDENCE="$TMP_DIR/omitted-canary-no-budget-evidence.json"
 python3 - "$OMITTED_CANARY_EVIDENCE" "$OMITTED_CANARY_NO_BUDGET_EVIDENCE" <<'PY'
@@ -1822,6 +1840,11 @@ if python3 "$VALIDATOR" --allow-failure-evidence "$FRESH_FAILURE_EVIDENCE" \
 fi
 grep -q "cannot be advertised until an authoritative Account synthetic identity verifier is implemented" \
   "$TMP_DIR/fresh-failure-incident.out"
+if grep -q "entrypath_blackbox_probe_success missing passing paths\|playerflow_canary_success missing passing flows" \
+  "$TMP_DIR/fresh-failure-incident.out"; then
+  echo "fresh incident failure evidence was incorrectly treated as readiness evidence" >&2
+  exit 1
+fi
 
 RED_EXTERNAL_INCIDENT_EVIDENCE="$TMP_DIR/red-external-incident-evidence.json"
 python3 - "$VALID_EVIDENCE" "$RED_EXTERNAL_INCIDENT_EVIDENCE" <<'PY'
@@ -1852,6 +1875,11 @@ if python3 "$VALIDATOR" --allow-failure-evidence "$RED_EXTERNAL_INCIDENT_EVIDENC
 fi
 grep -q "cannot be advertised until an authoritative Account synthetic identity verifier is implemented" \
   "$TMP_DIR/red-external-incident.out"
+if grep -q "deadmanAuthority.status must be green\|publicPathChecks\..*status must be green\|pageEvidenceRef is required" \
+  "$TMP_DIR/red-external-incident.out"; then
+  echo "red external incident evidence was incorrectly subject to readiness-only requirements" >&2
+  exit 1
+fi
 
 FALSE_CURRENT_RED_DEADMAN_MIRROR="$TMP_DIR/false-current-red-deadman-mirror.json"
 python3 - "$RED_EXTERNAL_INCIDENT_EVIDENCE" "$FALSE_CURRENT_RED_DEADMAN_MIRROR" <<'PY'
@@ -1900,6 +1928,11 @@ if python3 "$VALIDATOR" --allow-failure-evidence "$MIXED_FAILURE_EVIDENCE" \
 fi
 grep -q "cannot be advertised until an authoritative Account synthetic identity verifier is implemented" \
   "$TMP_DIR/mixed-failure-incident.out"
+if grep -q "entrypath_blackbox_probe_success missing passing paths\|playerflow_canary_success missing passing flows" \
+  "$TMP_DIR/mixed-failure-incident.out"; then
+  echo "mixed incident failure evidence was incorrectly treated as readiness evidence" >&2
+  exit 1
+fi
 
 EMPTY_FAILURE_EVIDENCE="$TMP_DIR/empty-failure-evidence.json"
 python3 - "$FRESH_FAILURE_EVIDENCE" "$EMPTY_FAILURE_EVIDENCE" <<'PY'

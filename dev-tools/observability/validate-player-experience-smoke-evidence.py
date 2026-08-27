@@ -19,6 +19,8 @@ from numeric_validation import (
     is_finite_number,
 )
 from observability_contract import (
+    AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE,
+    CANARY_IDENTITY_REQUIRED_FIELDS,
     OMITTED_QUERYABILITY_CAPABILITY,
     QUERYABILITY_CAPABILITIES,
 )
@@ -52,22 +54,9 @@ CAPABILITY_VALUES = {
     "prometheusMirrors": {"published", "omitted"},
     "playerFlowCanary": {"advertised", "omitted"},
 }
-CANARY_IDENTITY_REQUIRED_FIELDS = frozenset(
-    {
-        "authority",
-        "classification",
-        "analyticsSloExclusion",
-        "credentials",
-        "transportCharacters",
-        "evidenceRef",
-    }
-)
 EXECUTION_MODES = {"live", "simulated"}
 AUTHORITY_PROVENANCES = {"retained-external", "synthetic"}
 QUERYABILITY_RESULTS = frozenset({"passed", "failed", "not_applicable"})
-# No authoritative Account-owned synthetic identity verifier is shipped yet.
-# Retained evidence cannot promote a canary to advertised on local assertions.
-AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE = False
 OMITTED_QUERYABILITY_ALLOWED_FIELDS = frozenset(
     {
         "selectedProfile",

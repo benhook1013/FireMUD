@@ -265,11 +265,14 @@ Live-traffic SLIs remain the authoritative compliance view for player experience
   - Do not label these metrics with canary account IDs, character IDs, tenant IDs, or trace IDs.
 - Operational contract:
   - Each monitored transport uses a separate restricted synthetic character and isolated, deterministic canary data so overlapping WebSocket and Telnet probes cannot trigger one-session takeover against each other.
+  - Advertised execution is single-flight per deployment/profile/path journey: at most one run may hold the verifier-owned run lease for a given exposed path at a time. Each run has a unique protected run identity and verifier-bound identity/data-set revision; its login and command evidence must remain bound to that run and may not borrow credentials, characters, fixtures, timestamps, or results from another run. A concurrent same-path invocation is skipped or deferred and recorded as runner-health evidence; it must not update the path's canary result. Different exposed paths may run concurrently because they use separate restricted transport characters and independently bound evidence. If the authoritative verifier cannot enforce this single-flight/identity binding, the advertised capability remains omitted.
   - Synthetic identities are marked authoritatively and remain subject to authentication, abuse protection, authorization, moderation, security monitoring, and durable audit. Synthetic status is never a security bypass.
   - Validated canary traffic is excluded only from product analytics, ordinary player-behavior interpretation, and live-player SLO denominators.
   - Provisioning, least-privilege access, credential delivery, rotation and revocation, deterministic reset, and retirement are supported lifecycle operations; production credentials are never seeded defaults.
   - These canaries are an outage-detection path, not the primary SLO compliance metric. They complement, but do not replace, `login_requests_total` and `command_end_to_end_latency_ms_bucket`.
   - Advertised execution follows the declared monitoring profile and must alert independently from live-traffic volume. An `independent-omitted` profile may retain a local canary timing contract, but it does not claim external deadman, public-path, or off-cluster paging authority.
+
+The single-flight rule is a target verifier/lifecycle obligation, not current runner proof. The checked-in runner has no continuous scheduler or Account-owned synthetic identity/isolation verifier and therefore downgrades requested advertised canaries to `omitted`.
 
 #### Canary Alert Contract (Target-State Profile-Advertised Contract)
 

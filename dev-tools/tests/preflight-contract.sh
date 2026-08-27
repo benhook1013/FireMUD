@@ -6340,6 +6340,18 @@ if (
 ):
     raise SystemExit(f"missing recoveryCompatibility did not fail closed: {missing_message}")
 
+naive_promotion_status, _, naive_promotion_message, _, _ = module.promotion_check(
+    missing_compatibility_attestation,
+    [],
+    tmp,
+    evaluation_time=module.dt.datetime(2026, 3, 19, 10, 55),
+)
+if naive_promotion_status != "fail" or "evaluation time must include a timezone" not in naive_promotion_message:
+    raise SystemExit(
+        "naive promotion evaluation time was not rejected before normalization: "
+        + naive_promotion_message
+    )
+
 def promotion_attestation(compatibility, rollback_mode="rollback-compatible"):
     return {
         "attestationVersion": "v1",
@@ -6530,6 +6542,57 @@ roll_forward_status, roll_forward_message = module.production_recovery_check(
 )
 if roll_forward_status != "fail" or "FIREMUD_BACKUP_READINESS_EVIDENCE" not in roll_forward_message:
     raise SystemExit(f"roll-forward promotion without readiness evidence did not fail: {roll_forward_message}")
+
+naive_recovery_status, naive_recovery_message = module.production_recovery_check(
+    "pass",
+    "roll-forward-only",
+    "promotion valid",
+    str(readiness_point_path),
+    "contract-production",
+    tmp,
+    evaluation_time=module.dt.datetime(2026, 3, 19, 10, 55),
+)
+if naive_recovery_status != "fail" or "evaluation time must include a timezone" not in naive_recovery_message:
+    raise SystemExit(
+        "naive roll-forward evaluation time was not rejected before normalization: "
+        + naive_recovery_message
+    )
+
+captured_recovery_evaluation_times = []
+original_backup_readiness_check = module.backup_readiness_check
+original_utc_now = module.utc_now
+
+def capture_backup_readiness(path, now_value, deployment_ref, root_dir):
+    captured_recovery_evaluation_times.append(now_value)
+    return ("pass", "captured")
+
+def unexpected_utc_now():
+    raise AssertionError("roll-forward recovery independently sampled utc_now")
+
+module.backup_readiness_check = capture_backup_readiness
+module.utc_now = unexpected_utc_now
+try:
+    captured_status, captured_message = module.production_recovery_check(
+        "pass",
+        "roll-forward-only",
+        "promotion valid",
+        str(readiness_point_path),
+        "contract-production",
+        tmp,
+        evaluation_time=module.dt.datetime(
+            2026, 3, 19, 10, 55, 0, 123456, tzinfo=module.dt.timezone(module.dt.timedelta(hours=1))
+        ),
+    )
+finally:
+    module.backup_readiness_check = original_backup_readiness_check
+    module.utc_now = original_utc_now
+if captured_status != "pass" or captured_message != "captured":
+    raise SystemExit(f"roll-forward recovery capture failed: {captured_status}, {captured_message}")
+if captured_recovery_evaluation_times != ["2026-03-19T09:55:00.123456Z"]:
+    raise SystemExit(
+        "roll-forward recovery did not reuse the normalized evaluation time: "
+        + repr(captured_recovery_evaluation_times)
+    )
 
 gateway_image = "ghcr.io/benhook1013/spring-cloud-gateway@sha256:gateway"
 account_image = "ghcr.io/benhook1013/account-service@sha256:account"

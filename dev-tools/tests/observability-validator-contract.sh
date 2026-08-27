@@ -1242,17 +1242,11 @@ require_message(
     "canonical command latency panels grouped by bounded scope must not claim a raw region grouping",
 )
 
-calibration_alerts = (
-    "LoginSuccessRatioLowGateway",
-    "LoginSuccessRatioLowTcpProxy",
-    "CommandLatencyP99HighGateway",
-    "CommandLatencyP99HighTcpProxy",
-    "ChatDeliveryLatencyP99High",
-    "EntryPathAvailabilityLowGateway",
-    "EntryPathAvailabilityLowGatewayCompliance",
-    "EntryPathAvailabilityLowTcpProxy",
-    "EntryPathAvailabilityLowTcpProxyCompliance",
-)
+calibration_alerts = tuple(sorted(validator.PLAYER_SLO_CALIBRATION_ALERTS))
+if not calibration_alerts:
+    raise AssertionError("validator calibration alert contract must be non-empty")
+if set(calibration_alerts) != validator.PLAYER_SLO_CALIBRATION_ALERTS:
+    raise AssertionError("calibration alert test set drifted from the validator contract")
 calibration_sources = (
     (valid_playerflow_snippet, validator._validate_alert_snippet),
     (valid_text, validator._validate_reference_prometheus_rules),
@@ -2450,6 +2444,14 @@ valid_scope_expr = (
 )
 if validator._command_scope_query_findings(Path("scope.json"), valid_scope_expr):
     raise AssertionError("valid command scope grouping was rejected")
+non_code_scope_expr = (
+    'label_replace(foo, "metric", "command_end_to_end_latency_ms_bucket", "a", "b") '
+    "# sum by (region, command) command_end_to_end_latency_ms_bucket"
+)
+if validator._command_scope_query_findings(Path("scope.json"), non_code_scope_expr):
+    raise AssertionError(
+        "command scope checker treated a label_replace string or comment as PromQL code"
+    )
 mixed_scope_expr = (
     valid_scope_expr
     + " + sum by (service) "

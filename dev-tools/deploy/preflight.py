@@ -795,6 +795,14 @@ def utc_now() -> str:
     return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def normalize_evaluation_time(evaluation_time: dt.datetime | None = None) -> dt.datetime:
+    """Return one timezone-normalized instant for a preflight decision."""
+    effective_time = evaluation_time or dt.datetime.now(dt.timezone.utc)
+    if effective_time.tzinfo is None:
+        raise ValueError("evaluation time must include a timezone")
+    return effective_time.astimezone(dt.timezone.utc)
+
+
 def parse_timestamp(value: Any, field_name: str) -> dt.datetime:
     if not isinstance(value, str) or not value:
         raise ValueError(f"missing {field_name}")
@@ -5148,10 +5156,10 @@ def promotion_check(
         return ("fail", "unknown", message, "fail", "Recovery compatibility attestation must be a JSON object")
 
     rollback_mode = str(att.get("rollbackMode", "unknown"))
-    now_dt = evaluation_time or dt.datetime.now(dt.timezone.utc)
-    if now_dt.tzinfo is None:
-        return ("fail", "unknown", "Promotion evaluation time must include a timezone", "fail", "Promotion evaluation time must include a timezone")
-    now_dt = now_dt.astimezone(dt.timezone.utc)
+    try:
+        now_dt = normalize_evaluation_time(evaluation_time)
+    except ValueError as exc:
+        return ("fail", "unknown", f"Promotion {exc}", "fail", f"Promotion {exc}")
     recovery_status, recovery_message = recovery_compatibility_check(att, rollback_mode, root_dir, now_dt)
     promotion_status, promotion_rollback_mode, promotion_message = _promotion_check(
         att,
@@ -5847,6 +5855,8 @@ def production_recovery_check(
     backup_readiness_evidence: str,
     deployment_ref: str,
     root_dir: Path,
+    *,
+    evaluation_time: dt.datetime | None = None,
 ) -> tuple[str, str]:
     if rollback_mode == "rollback-compatible":
         return (compatibility_status, compatibility_message)
@@ -5859,7 +5869,12 @@ def production_recovery_check(
     backup_path = Path(backup_readiness_evidence)
     if not backup_path.exists():
         return ("fail", f"Backup-readiness evidence file not found: {backup_readiness_evidence}")
-    return backup_readiness_check(backup_path, utc_now(), deployment_ref, root_dir)
+    try:
+        now_dt = normalize_evaluation_time(evaluation_time)
+    except ValueError as exc:
+        return ("fail", f"Recovery {exc}")
+    now = now_dt.isoformat().replace("+00:00", "Z")
+    return backup_readiness_check(backup_path, now, deployment_ref, root_dir)
 
 
 def production_traffic_check() -> tuple[str, str]:
@@ -6169,6 +6184,7 @@ def main() -> int:
             has_required_failure = append_result(check_results, "PREFLIGHT-PROMOTION-001", True, "fail", f"Attestation file not found: {promotion_attestation}") or has_required_failure
             has_required_failure = append_result(check_results, "PREFLIGHT-BACKUP-001", True, "fail", "Recovery compatibility cannot be evaluated because the promotion attestation is missing") or has_required_failure
         else:
+            now_dt = normalize_evaluation_time()
             (
                 promotion_status,
                 recovery_rollback_mode,
@@ -6180,6 +6196,7 @@ def main() -> int:
                 service_images,
                 root_dir,
                 expected_production_overlay_ref=deployment_ref,
+                evaluation_time=now_dt,
             )
             has_required_failure = append_result(
                 check_results,
@@ -6195,6 +6212,7 @@ def main() -> int:
                 backup_readiness_evidence,
                 deployment_ref,
                 root_dir,
+                evaluation_time=now_dt,
             )
             has_required_failure = append_result(check_results, "PREFLIGHT-BACKUP-001", True, recovery_status, recovery_message) or has_required_failure
 
