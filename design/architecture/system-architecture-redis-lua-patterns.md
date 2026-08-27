@@ -7,6 +7,10 @@ re-invocation behavior for tick-related scripts.
 > 🔗 The high-level Redis coordination model, key naming, and failure modes are
 > described in [System Architecture: Redis](./system-architecture-redis.md).
 
+## Implementation Status
+
+The shared Redis-contract schema, owner-local descriptor contributions, aggregated Lua registry, ownership enforcement, and descriptor-driven CI described here are [ADR 0176](./decisions/adr-0176-owner-local-redis-execution-with-aggregated-contracts.md) target state and are not implemented. Existing scripts and key families require reconciliation against that contract.
+
 ## Default Author/Reviewer Expectations
 
 - New or changed scripts must fit one of the existing **script categories** and satisfy the idempotency, determinism, and `schemaVersion` rules described here.
@@ -57,7 +61,7 @@ Before authoring or reviewing a new script, use this quick checklist:
   - Lock and lease operations treat repeated acquire/refresh calls as no-ops with stable outcomes.
   - Queue/timer/effect insertion uses set-style semantics to avoid duplicate entries on replay.
 - Error outcomes are explicit and non-mutating (for example `"STALE_LEASE"`, `"STALE_LOCK"`, `"SESSION_VERSION_MISMATCH"`); callers can safely retry or escalate based on return codes.
-- The script has an entry in the **Lua Script Registry** (in `firemud-common`) that describes:
+- The script has an entry in the aggregated **Lua Script Registry** (with the shared schema/registry foundation and an owning-service contribution) that describes:
   - Key roles and order (`KEYS[1]`, `KEYS[2]`, etc.).
   - Allowed prefixes and hash-tag assumptions.
   - The script category and whether it is single-key or shard-local multi-key; an entity-lock script declares and receives at most one entity-lock key.
@@ -411,7 +415,7 @@ Script changes must be rolled out in a way that respects both AOF replay semanti
 
 ## Lua Script Registry and CI Expectations
 
-All coordination-related Lua scripts live in a **Lua Script Registry** in the shared library. For each script, the registry records:
+All coordination-related Lua scripts contribute entries to one aggregated **Lua Script Registry**. The shared Redis-contract foundation owns the registry schema and aggregation; each owning service contributes entries and retains executable Lua for exclusive key families. For each script, the registry records:
 
 - Script identifier and file path.
 - Expected `KEYS` and `ARGV` ordering and allowed prefixes (including hash-tag rules).

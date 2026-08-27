@@ -2,6 +2,10 @@
 
 This document defines adopter, registry, test, and runbook mechanics for Lua script evolution without violating the replay and reset assumptions of Coordination Redis. The deterministic script, outcome, schema-validation, and compatibility authority remains [Redis Lua Patterns](./system-architecture-redis-lua-patterns.md).
 
+## Implementation Status
+
+The aggregated Redis-contract registry and owner-contribution model in this document are [ADR 0176](./decisions/adr-0176-owner-local-redis-execution-with-aggregated-contracts.md) target state and are not implemented. Current script placement and rollout proof require reconciliation against this contract.
+
 ## Lua Compatibility Modes and Rollout Matrix
 
 Script changes are classified into a small set of compatibility modes:
@@ -24,7 +28,7 @@ Script rollout compatibility applies to Coordination Redis. Cache/Rate-Limit Red
 
 ## Lua Compatibility Registry and Script Upgrades
 
-The Lua Compatibility Registry lives in the shared `firemud-common` module alongside key builders and Lua descriptors. It is owned by platform/coordination maintainers and declares per script:
+The Lua Compatibility Registry is part of the aggregated Redis-contract registry. The shared foundation owns its schema and aggregation, while each owning service contributes compatibility metadata for its scripts; executable key builders and Lua remain owner-local for exclusive families. It declares per script:
 
 - `callerVersionsSupported`, identifying the application/caller versions that may invoke the script
 - `schemaVersionsSupported`, identifying the stored payload schema versions the script can interpret, with the evidence and retention window that makes each version possible
@@ -61,7 +65,7 @@ Potentially compatible when proven by tests:
 ## Runbook: Upgrading Scripts
 
 1. Classify changes and update the registry rationale.
-2. Add or update compatibility tests in `firemud-common` for any script tagged `compatible`.
+2. Add or update compatibility tests in the owning service for any owner-local script tagged `compatible`; shared-mutation tests belong in the shared foundation.
 3. Run the coordination upgrade planner from `dev-tools`.
 4. If all changes are `compatible` for the evidenced coexistence set, deploy through the normal rollout path.
 5. If any script is tagged `requires_*_reset`, use the smallest required reset scope:

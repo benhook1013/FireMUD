@@ -28,7 +28,7 @@ Before applying the detailed checklists below, follow this high‑level workflow
      - Ensure the cheat sheet remains consistent with the cache reference catalog for any representative entries it lists.
 3. **Update service‑specific docs and shared libraries**
    - Document prefix ownership, reset behavior, and Redis role (Coordination vs Cache/Rate‑Limit) in the relevant service README(s) under their Redis sections (for example, Game Session, Automation & Scripting, Game Logic, Gateway).
-   - For coordination changes, update the Lua Script Registry descriptors and key‑builder helpers in `firemud-common` so services and ops tooling share the same key shapes and hash‑tag rules.
+   - For coordination changes, update the owning service's descriptor contribution, owner-local key-builder/Lua implementation, and focused tests; update the shared Redis-contract registry/schema and aggregated validation so services and approved tooling share the declared key shapes and hash-tag rules. Executable builders or Lua belong in the shared foundation only for mutations genuinely executed by multiple independently deployed callers.
 4. **Apply the detailed checklists**
    - Run through the relevant sections below:
      - **Coordination Prefix Checklist** for any coordination prefix changes.

@@ -23,7 +23,7 @@ Defining additional Redis users, ACL variations, or ad-hoc tools is considered *
 ## Coordination Redis Access Rules
 
 - Coordination Redis is treated as an **application-only write surface**:
-  - All mutations to coordination prefixes (`tick:*`, `retry:*`, `timer:*`, `remote:*`, `session:*`, `tick-executor-lease:*`, and related keys) always go through owned typed key and mutation helpers in `firemud-common`. Lua is mandatory for atomic multi-key behavior and may be used for an explicitly documented single-key atomic guard or compare-and-set contract; every registered script is invoked through the same typed helper and registry path. Ordinary single-key mutations use the typed helpers without Lua.
+  - All mutations to coordination prefixes (`tick:*`, `retry:*`, `timer:*`, `remote:*`, `session:*`, `tick-executor-lease:*`, and related keys) always go through the owning service's typed key and mutation helpers, with the shared Redis-contract foundation validating descriptors and aggregation. Lua is mandatory for atomic multi-key behavior and may be used for an explicitly documented single-key atomic guard or compare-and-set contract; every registered script is invoked through its owning service adapter and the aggregated registry path. Ordinary single-key mutations use owner-local typed helpers without Lua. Executable helpers or Lua are shared only for mutations genuinely executed by multiple independently deployed callers.
   - Application services (Game Session, Automation & Scripting, and any future tick participants) never bypass those helpers with raw Redis commands.
 - Human operators and ad-hoc tools:
   - May use `redis-cli`, RedisInsight, or similar tools with **read-only ops users** to inspect coordination state.
@@ -36,7 +36,7 @@ These rules keep the script registry’s invariants and hash-tag discipline mean
 Redis ACLs enforce a clear split between application and operations clients:
 
 - Application user (for example `coord_app`):
-  - Used only by application services and shared maintenance tools that import `firemud-common` helpers.
+  - Used only by application services and approved maintenance tooling that calls the owning service's typed maintenance API (or, when it is itself an independently deployed executor, the corresponding shared mutation contract).
   - Permitted to execute `EVALSHA`/`SCRIPT LOAD` and write commands on coordination databases.
   - Not used from interactive shells or general-purpose admin tooling in production.
 - Read-only ops user (for example `coord_ops_ro`):
@@ -476,11 +476,11 @@ Direct `redis-cli` writes to coordination prefixes are reserved for **break-glas
 The coordination maintenance client/CLI is treated as a first-class part of the system, not an ad-hoc script:
 
 - It lives in the same repository and modules as:
-  - The shared key builders and Lua Script Registry descriptors (`firemud-common`).
+  - The aggregated Redis-contract registry/schema and each owning service's key builders and Lua Script Registry contributions.
   - The integration tests that exercise script behavior and key shapes.
 - It is **versioned alongside the main services**; there is no separate, free-floating versioning scheme for tooling.
 - Any change to coordination key formats or Lua script contracts must:
-  - Update the shared descriptors and key-builder helpers.
+  - Update the owning service's descriptor contribution and owner-local key-builder/Lua implementation, plus the shared schema/aggregation when the declared contract changes.
   - Update the maintenance CLI code that uses those helpers.
   - Extend or adjust the shared integration tests so both services and tooling are validated against the same expectations.
 
@@ -511,7 +511,7 @@ To keep operational scripts aligned with application code:
 
 Maintenance scripts that genuinely need to work with coordination keys must:
 
-- Import the same key-builder APIs and Lua registry helpers used by services.
+- Use the owning service's typed maintenance API and the same aggregated registry contract used by services; direct executable key-builder/Lua reuse is reserved for a genuinely shared mutation contract.
 - Document their scope (which prefixes/tenants/regions they touch) and the runbook they implement.
 
 This keeps human-driven maintenance and automation under the same discipline as regular application code, reducing the chance that debugging or emergency fixes introduce silent hash-tag or lock/lease violations.
