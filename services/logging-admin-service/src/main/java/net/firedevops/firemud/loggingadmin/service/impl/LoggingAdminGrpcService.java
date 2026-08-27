@@ -345,8 +345,10 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
 
   private static void requireAllowlistedInternalService(
       Set<String> allowedServices, String methodName) {
+    String serviceName = SessionContext.getServiceName();
     if (!SessionContext.isInternalService()
-        || !allowedServices.contains(SessionContext.getServiceName())) {
+        || serviceName == null
+        || !allowedServices.contains(serviceName)) {
       throw new AdminAuthorizationException(
           methodName + " requires an allowlisted internal service caller");
     }

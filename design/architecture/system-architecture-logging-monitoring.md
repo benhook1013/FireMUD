@@ -313,7 +313,7 @@ To keep advertised synthetic canaries actionable instead of merely visible, prof
 
 Moderation and admin workflows should remain usable even when parts of the observability stack are degraded. To avoid coupling core actions to non‑authoritative systems:
 
-- **Hard dependencies:** Logging & Admin Service itself, the domain services that own authoritative game data (for example, Game Session Service, Entity Management Service, Account Service), and Spring Cloud Gateway are required for core moderation and admin actions such as inspecting live sessions, muting, banning, or kicking players, or updating feature flags.
+- **Hard dependencies:** Logging & Admin Service itself, the domain services that own authoritative game data (for example, Game Session Service, Entity Management Service, Account Service), and Spring Cloud Gateway are required for core moderation and admin actions such as inspecting live sessions, muting, banning, or kicking players, or updating feature flags. Feature-flag writes remain unavailable until the complete [ADR 0048](./decisions/adr-0048-durable-idempotent-operator-write-execution.md) owner-write gate is implemented and proved, including durable intent/tuple state, Account reference redemption at the owner, owner idempotency and fencing, durable result evidence, and read-only recovery/reconciliation.
 - **Soft dependencies:** Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, and Alertmanager are treated as **best‑effort enrichments**. When any of these backends are unavailable or degraded, the Logging & Admin UI should:
   - Clearly indicate which data sources are unavailable (for example, “logs currently unavailable”, “metrics degraded”, or “traces unavailable”).
   - Continue to expose core moderation and admin APIs based on authoritative game data wherever possible.
@@ -504,7 +504,7 @@ For scripting and automation workloads, dashboards and alerts must include both 
 
 ## Error Tracking and Hotfixes
 
-For the default indexed target profile, operators may use Kibana to search for uncaught exceptions or repeated crashes; compatible profiles use their mapped query path, and reduced profiles use only their declared console/journal path or explicit indexed-search omission. Profiles that install Prometheus/Alertmanager may alert on high error rates. These are selected-profile operational paths, not evidence that the current Logging & Admin service embeds or proxies them. When issues arise, operators follow the runbooks to deploy a hotfix image built from the `main` branch.
+For the default indexed target profile, operators may use Kibana to search for uncaught exceptions or repeated crashes; compatible profiles use their mapped query path, and reduced profiles use only their declared console/journal path or explicit indexed-search omission. Profiles that install Prometheus/Alertmanager may alert on high error rates. These are selected-profile operational paths, not evidence that the current Logging & Admin service embeds or proxies them. When issues arise, operators follow the runbooks to build and deploy a hotfix image from an immutable reviewed source revision (for example, a commit SHA or signed release tag), never a moving branch tip. After the incident, the fix is returned to the active release line through the normal reviewed change flow before the hotfix is retired.
 
 ## Related Documentation
 

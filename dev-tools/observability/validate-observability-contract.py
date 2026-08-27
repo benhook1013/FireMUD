@@ -38,6 +38,7 @@ SERVICE_OPTIONAL_ALERTS = {
     "PlayerFlowCanaryCommandFailed",
     "PlayerFlowCanaryLatencyHigh",
 }
+SERVICE_DERIVED_ALERTS = {"ChatDeliveryLatencyP99High"}
 PLAYER_SLO_CALIBRATION_ALERTS = {
     "LoginSuccessRatioLowGateway",
     "LoginSuccessRatioLowTcpProxy",
@@ -420,11 +421,22 @@ def _looks_like_mapping_header(text: str) -> bool:
     content = _strip_yaml_comment(text).strip()
     if not content or _parse_mapping_header(content) is not None:
         return False
+    # Keep malformed spellings of the supported rule fields visible (for
+    # example ``expr:value``) without treating arbitrary scalar text such as
+    # URLs or PromQL string values as mapping headers.
+    if re.match(
+        r"^(?:alert|record|expr|for|keep_firing_for|query_offset|labels|annotations):(?:[^ \t]|[ \t]+\S)",
+        content,
+    ):
+        return True
     # Keep this deliberately broad: YAML permits numeric, flow, tagged, and
     # otherwise non-identifier mapping keys. In a rule entry, an over-indented
     # header outside labels/annotations is not a valid scalar continuation and
     # must fail closed instead of being folded into the PromQL expression.
-    return re.match(r"^(?:[^\s#][^:]*|\[[^\]]*\]|\{.*\}|\?\s+.+):\s*", content) is not None
+    return re.match(
+        r"^(?:[^\s#][^:]*|\[[^\]]*\]|\{.*\}|\?\s+.+):(?:[ \t]+|$)",
+        content,
+    ) is not None
 
 
 def _parse_rule_name(value: str) -> tuple[str | None, bool]:
@@ -1262,6 +1274,16 @@ def _playerflow_canary_label_findings(
 def _playerflow_canary_service_findings(
     path: Path, alert_name: str, labels: dict[str, str]
 ) -> list[Finding]:
+    if alert_name in SERVICE_DERIVED_ALERTS and "service" in labels:
+        return [
+            Finding(
+                path=path,
+                message=(
+                    f"{alert_name} must not set labels.service; use the "
+                    "recording-rule service label"
+                ),
+            )
+        ]
     if alert_name in SERVICE_OPTIONAL_ALERTS and "service" in labels:
         return [
             Finding(
@@ -1604,6 +1626,29 @@ def _recipient_dispatch_selector_finding(
     )
 
 
+def _chat_recording_grouping_finding(path: Path, expr: str) -> Finding | None:
+    required_grouping = {
+        "service",
+        "scope",
+        "completion_boundary",
+        "channel_type",
+        "le",
+    }
+    groupings = [
+        {label.strip() for label in match.group(1).split(",") if label.strip()}
+        for match in re.finditer(r"sum\s+by\s*\(([^)]*)\)", expr, re.IGNORECASE)
+    ]
+    if any(required_grouping.issubset(grouping) for grouping in groupings):
+        return None
+    return Finding(
+        path=path,
+        message=(
+            "canonical chat delivery recording rule must group by service, "
+            "scope, completion_boundary, channel_type, and le"
+        ),
+    )
+
+
 def _player_slo_calibration_findings(
     path: Path, alert_name: str, labels: dict[str, str]
 ) -> list[Finding]:
@@ -1728,7 +1773,9 @@ def _validate_alert_snippet(path: Path) -> list[Finding]:
                 _playerflow_canary_service_findings(path, entry.name, labels)
             )
             required_labels = REQUIRED_ALERT_LABELS - (
-                {"service"} if entry.name in SERVICE_OPTIONAL_ALERTS else set()
+                {"service"}
+                if entry.name in SERVICE_OPTIONAL_ALERTS | SERVICE_DERIVED_ALERTS
+                else set()
             )
             missing = sorted(required_labels - labels.keys())
             if missing:
@@ -2480,7 +2527,9 @@ def _validate_reference_prometheus_rules(
             _playerflow_canary_service_findings(path, alert_name, labels)
         )
         required_labels = REQUIRED_ALERT_LABELS - (
-            {"service"} if alert_name in SERVICE_OPTIONAL_ALERTS else set()
+            {"service"}
+            if alert_name in SERVICE_OPTIONAL_ALERTS | SERVICE_DERIVED_ALERTS
+            else set()
         )
         missing = sorted(required_labels - labels.keys())
         if missing:
@@ -2722,6 +2771,11 @@ def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
         )
         if chat_selector_issue:
             findings.append(chat_selector_issue)
+        chat_grouping_issue = _chat_recording_grouping_finding(
+            path, chat_recording_expressions[0]
+        )
+        if chat_grouping_issue:
+            findings.append(chat_grouping_issue)
     blocked_convergence_expr = recordings.get("recovery_participant_convergence_blocked") or ""
     if _compact_promql(blocked_convergence_expr) != CURRENT_BLOCKED_CONVERGENCE_EXPR:
         findings.append(

@@ -539,7 +539,6 @@ spec:
           expr: chat_delivery_latency_ms_p99_5m{completion_boundary="recipient_dispatch"} > 1000
           for: 10m
           labels:
-            service: '{{ $labels.service }}'
             severity: P2
             slo_state: calibration
             owner: gameplay

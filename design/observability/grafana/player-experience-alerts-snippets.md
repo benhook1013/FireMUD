@@ -88,7 +88,6 @@ The `PlayerFlowCanary*` rules below, together with the P0 `WebSocketEntryPathBla
         ) > 1000
   for: 10m
   labels:
-    service: '{{ $labels.service }}'
     severity: P2
     slo_state: calibration
     owner: gameplay

@@ -676,4 +676,40 @@ class LoggingAdminGrpcServiceAuthTest {
     assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
     verifyNoInteractions(moderationService);
   }
+
+  @Test
+  void evaluateModerationPolicyRejectsInternalCallerWithMissingServiceNameBeforeDispatch() {
+    SessionContext.setContext("", List.of(), Map.of(), true, null, "test-instance");
+    ModerationService moderationService = Mockito.mock(ModerationService.class);
+    LoggingAdminGrpcService service =
+        new LoggingAdminGrpcService(
+            Mockito.mock(LogQueryService.class),
+            Mockito.mock(LogEventService.class),
+            moderationService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<EvaluateModerationPolicyResponse> ref = new AtomicReference<>();
+    service.evaluateModerationPolicy(
+        EvaluateModerationPolicyRequest.newBuilder()
+            .setTenantId("1")
+            .setAccountId("2")
+            .setScope("CHAT_SEND")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(EvaluateModerationPolicyResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+    verifyNoInteractions(moderationService);
+  }
 }

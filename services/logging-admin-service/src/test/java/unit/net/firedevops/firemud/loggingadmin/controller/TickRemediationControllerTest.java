@@ -237,6 +237,52 @@ class TickRemediationControllerTest {
   }
 
   @Test
+  void pauseRejectsEmptyRegionIdBeforeUnavailableResponse() throws Exception {
+    TickRemediationRequest request = new TickRemediationRequest(1L, "7", "", "maintenance");
+    String token =
+        jwtUtil.generateToken(
+            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            post("/tick-remediation/pause")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(
+            jsonPath("$.error.message")
+                .value(
+                    "gameInstanceId is required and regionId is not supported for pause/resume"));
+
+    verifyNoInteractions(tickRemediationService);
+  }
+
+  @Test
+  void resumeRejectsBlankRegionIdBeforeUnavailableResponse() throws Exception {
+    TickRemediationRequest request = new TickRemediationRequest(1L, "7", "   ", "maintenance");
+    String token =
+        jwtUtil.generateToken(
+            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            post("/tick-remediation/resume")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(
+            jsonPath("$.error.message")
+                .value(
+                    "gameInstanceId is required and regionId is not supported for pause/resume"));
+
+    verifyNoInteractions(tickRemediationService);
+  }
+
+  @Test
   void resumeRejectsCrossTenantScopedAdmin() throws Exception {
     TickRemediationRequest request = new TickRemediationRequest(1L, "7", null, "maintenance");
     String token =

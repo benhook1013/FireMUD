@@ -1846,10 +1846,12 @@ def validate_external_monitor_record(
         raise RuntimeError(
             f"External authority evidence at {path} requires {key}.status=green"
         )
-    required_fields = list(required_fields)
-    if status == "green" or not allow_failure_evidence:
-        required_fields.append("pageEvidenceRef")
-    for field in required_fields:
+    fields = (
+        (*required_fields, "pageEvidenceRef")
+        if status == "green" or not allow_failure_evidence
+        else required_fields
+    )
+    for field in fields:
         value = record.get(field)
         if not isinstance(value, str) or not value.strip():
             raise RuntimeError(

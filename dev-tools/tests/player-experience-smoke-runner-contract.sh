@@ -312,23 +312,6 @@ path.write_text(json.dumps(source), encoding="utf-8")
 PY
 }
 
-mark_canary_alerts_passed() {
-  local source_path="$1"
-  local target_path="$2"
-  run_clean_python - "$source_path" "$target_path" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-source_path = Path(sys.argv[1])
-target_path = Path(sys.argv[2])
-data = json.loads(source_path.read_text(encoding="utf-8"))
-for record in data.get("canaryAlerts", []):
-    record["exerciseResult"] = "passed"
-target_path.write_text(json.dumps(data), encoding="utf-8")
-PY
-}
-
 SMOKE_CONFIG_ENV_OVERRIDES=(
   PLAYER_EXPERIENCE_DEPLOYMENT_EVENT_ID=not-a-uuid
   SMOKE_TIMEOUT_SECONDS=not-an-integer
@@ -1085,7 +1068,6 @@ grep -q 'observability_deadman_heartbeat_timestamp_seconds{source="contract-test
 
 REQUIRED_180_MIRRORS_OMITTED_AUTHORITY="$TMP_DIR/required-180-mirrors-omitted-authority.json"
 REQUIRED_180_MIRRORS_OMITTED_EVIDENCE="$TMP_DIR/required-180-mirrors-omitted-evidence.json"
-REQUIRED_180_MIRRORS_OMITTED_READY_EVIDENCE="$TMP_DIR/required-180-mirrors-omitted-ready-evidence.json"
 refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
 python3 - "$AUTHORITY_EVIDENCE" "$REQUIRED_180_MIRRORS_OMITTED_AUTHORITY" <<'PY'
 import json
@@ -1105,10 +1087,7 @@ run_smoke_runner \
   --evidence-out "$REQUIRED_180_MIRRORS_OMITTED_EVIDENCE" \
   --source "contract-test" \
   --canary-path websocket >/dev/null
-mark_canary_alerts_passed \
-  "$REQUIRED_180_MIRRORS_OMITTED_EVIDENCE" \
-  "$REQUIRED_180_MIRRORS_OMITTED_READY_EVIDENCE"
-python3 "$VALIDATOR" "$REQUIRED_180_MIRRORS_OMITTED_READY_EVIDENCE" \
+python3 "$VALIDATOR" "$REQUIRED_180_MIRRORS_OMITTED_EVIDENCE" \
   >"$TMP_DIR/required-180-mirrors-omitted.out"
 python3 - "$REQUIRED_180_MIRRORS_OMITTED_EVIDENCE" <<'PY'
 import json
@@ -1147,6 +1126,17 @@ if ! run_smoke_runner \
   echo "runner failed to downgrade the unverified canary budget to omitted" >&2
   exit 1
 fi
+python3 - "$TMP_DIR/required-179-canary-evidence.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert data["capabilities"]["playerFlowCanary"] == "omitted"
+assert "playerFlowCanaryIdentity" not in data
+assert not any(key.startswith("playerflow_canary_") for key in data["mirroredSignals"])
+assert "canaryAlerts" not in data
+PY
 
 MISSING_TIMESTAMP_AUTHORITY="$TMP_DIR/missing-timestamp-authority.json"
 refresh_external_authority_fixture "$AUTHORITY_EVIDENCE"
@@ -1319,18 +1309,21 @@ cases = {
               "lastSuccessfulHeartbeatObservedAt must be an RFC3339 UTC timestamp ending in Z"),
     "unparseable": (lambda data: data.__setitem__("lastSuccessfulHeartbeatObservedAt", "not-a-timestampZ"),
                     "lastSuccessfulHeartbeatObservedAt is invalid"),
-    "non-positive": (lambda data: data.__setitem__("lastSuccessfulHeartbeatObservedAt", -1),
-                     "lastSuccessfulHeartbeatObservedAt must be an RFC3339 UTC timestamp ending in Z"),
+    "non-positive": (lambda data: data.__setitem__("lastSuccessfulHeartbeatObservedAt", "1970-01-01T00:00:00Z"),
+                     "requires a positive finite lastSuccessfulHeartbeatObservedAt timestamp"),
 }
 for name, (mutate, expected) in cases.items():
     candidate = copy.deepcopy(source)
     mutate(candidate)
     try:
-        runner.validate_external_authority_shape(
-            candidate,
-            authority_path,
-            evaluation_epoch=evaluation_epoch,
-        )
+        if name == "non-positive":
+            runner.external_authority_heartbeat_timestamp(candidate)
+        else:
+            runner.validate_external_authority_shape(
+                candidate,
+                authority_path,
+                evaluation_epoch=evaluation_epoch,
+            )
     except (RuntimeError, TypeError) as exc:
         assert expected in str(exc), (name, str(exc))
     else:
@@ -1989,7 +1982,6 @@ PY
 
 OMITTED_CANARY_AUTHORITY_EVIDENCE="$TMP_DIR/omitted-canary-authority.json"
 OMITTED_CANARY_EVIDENCE="$TMP_DIR/omitted-canary-evidence.json"
-OMITTED_CANARY_READY_EVIDENCE="$TMP_DIR/omitted-canary-ready-evidence.json"
 cat >"$OMITTED_CANARY_AUTHORITY_EVIDENCE" <<'JSON'
 {
   "profile": "independent-omitted",
@@ -2008,10 +2000,7 @@ run_smoke_runner \
   --source "contract-test" \
   --canary-path websocket
 
-mark_canary_alerts_passed \
-  "$OMITTED_CANARY_EVIDENCE" \
-  "$OMITTED_CANARY_READY_EVIDENCE"
-python3 "$VALIDATOR" "$OMITTED_CANARY_READY_EVIDENCE" \
+python3 "$VALIDATOR" "$OMITTED_CANARY_EVIDENCE" \
   >"$TMP_DIR/omitted-canary.out"
 python3 - "$OMITTED_CANARY_EVIDENCE" <<'PY'
 import json
@@ -2050,6 +2039,17 @@ if ! run_smoke_runner \
   echo "runner failed to downgrade independent-omitted canary to omitted" >&2
   exit 1
 fi
+python3 - "$TMP_DIR/omitted-179-canary-evidence.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert data["capabilities"]["playerFlowCanary"] == "omitted"
+assert "playerFlowCanaryIdentity" not in data
+assert not any(key.startswith("playerflow_canary_") for key in data["mirroredSignals"])
+assert "canaryAlerts" not in data
+PY
 
 MISSING_OMITTED_CANARY_BUDGET="$TMP_DIR/missing-omitted-canary-budget.json"
 python3 - "$OMITTED_CANARY_AUTHORITY_EVIDENCE" "$MISSING_OMITTED_CANARY_BUDGET" <<'PY'
@@ -2073,6 +2073,17 @@ if ! run_smoke_runner \
   echo "runner failed to downgrade canary without authority budget" >&2
   exit 1
 fi
+python3 - "$TMP_DIR/missing-omitted-canary-budget-evidence.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert data["capabilities"]["playerFlowCanary"] == "omitted"
+assert "playerFlowCanaryIdentity" not in data
+assert not any(key.startswith("playerflow_canary_") for key in data["mirroredSignals"])
+assert "canaryAlerts" not in data
+PY
 
 NO_OPTIONAL_EVIDENCE="$TMP_DIR/no-optional-evidence.json"
 run_smoke_runner \
@@ -2124,7 +2135,6 @@ fi
 
 REQUIRED_SINGLE_PATH_AUTHORITY_EVIDENCE="$TMP_DIR/required-single-path-authority.json"
 REQUIRED_SINGLE_PATH_EVIDENCE="$TMP_DIR/required-single-path-evidence.json"
-REQUIRED_SINGLE_PATH_READY_EVIDENCE="$TMP_DIR/required-single-path-ready-evidence.json"
 cat >"$REQUIRED_SINGLE_PATH_AUTHORITY_EVIDENCE" <<'JSON'
 {
   "profile": "independent-required",
@@ -2154,10 +2164,7 @@ run_smoke_runner \
   --evidence-out "$REQUIRED_SINGLE_PATH_EVIDENCE" \
   --source "contract-test" \
   --canary-path telnet
-mark_canary_alerts_passed \
-  "$REQUIRED_SINGLE_PATH_EVIDENCE" \
-  "$REQUIRED_SINGLE_PATH_READY_EVIDENCE"
-python3 "$VALIDATOR" "$REQUIRED_SINGLE_PATH_READY_EVIDENCE" \
+python3 "$VALIDATOR" "$REQUIRED_SINGLE_PATH_EVIDENCE" \
   >"$TMP_DIR/required-single-path.out"
 python3 - "$REQUIRED_SINGLE_PATH_EVIDENCE" <<'PY'
 import json

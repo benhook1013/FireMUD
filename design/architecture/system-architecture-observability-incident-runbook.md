@@ -49,12 +49,12 @@ The target-state `PlayerFlowCanary*` alert family is also not currently installe
 
 - **Service health**
   - Use `/actuator/health/readiness` and `/actuator/health/liveness` endpoints (and Kubernetes readiness/liveness) as the first source of truth for whether pods are healthy.
-  - Prefer querying the owning service directly (Gateway, Game Session, Account, etc.) rather than relying on a missing dashboard.
+  - Use the selected profile's declared console/journal path for log retrieval; if no such path is declared, report log retrieval as unavailable. Continue using owning-service health endpoints rather than relying on a missing dashboard.
 - **Kubernetes signals**
   - Check pod restarts, crash loops, and events for the affected namespace(s).
   - Confirm resource pressure (CPU/memory) and node-level issues that can explain observability loss.
 - **Direct dependency checks**
-  - Validate PostgreSQL connectivity and basic query latency from service logs or health endpoints.
+  - Validate PostgreSQL connectivity and basic query latency from health endpoints or the selected profile's declared console/journal path; if no log path is declared, report log evidence as unavailable.
   - Validate Redis coordination availability via service-level health checks and the tick controls that depend on it.
 
 ## Prometheus Down or Stale
@@ -77,7 +77,7 @@ The target-state `PlayerFlowCanary*` alert family is also not currently installe
 
 - Treat Alertmanager state as unreliable if Prometheus is stale.
 - Whenever Prometheus is unavailable, stale, or otherwise untrusted, retrieve and validate authoritative off-cluster evidence from the independent monitor or its retained evidence store before classifying the public player-facing state. Local service health endpoints, Kubernetes events, logs, and dependency checks are supplementary diagnostics and cannot substitute for that authority; when no independent authority is configured, keep the result `unknown`/degraded and retain the documented operator-dependent posture.
-- Use service health endpoints, Kubernetes events, and logs to determine whether player-facing SLOs are likely being violated.
+- Use service health endpoints, Kubernetes events, and the selected profile's declared console/journal path to determine whether player-facing SLOs are likely being violated; if no such path is declared, log evidence is unavailable.
 - If tick safety is in question, prefer defensive actions (pause affected regions/tenants) based on authoritative tick controls and error logs rather than waiting for metrics to recover.
   - If your deployment does not yet expose `region_id`-scoped pause controls end-to-end, apply the closest available scope (for example `tenant_id` + `game_instance_id` alias) and record the scope substitution in the incident timeline.
 
@@ -139,7 +139,7 @@ Apply this section when the selected profile advertises indexed-log observabilit
 
 ### Operator fallback
 
-- Use Kubernetes pod logs and service logs directly for the affected service(s).
+- Use the selected profile's declared console/journal path for the affected service(s); if no such path is declared, report log retrieval as unavailable.
 - Prefer structured log fields (`service`, `traceId`, `correlationId`) when manually filtering logs, adding `tenantId`, `gameInstanceId`, `regionId`, and `characterId` only when those fields are present and expected by the affected record's logging contract.
 - Loss of the indexed query path removes its trace-to-log correlation and log-based drilldown, but does not by itself make a separately healthy tracing path unreliable. Continue using the profile's supported trace query path when healthy; pivot to metrics/health endpoints only when tracing is also unavailable or insufficient for the incident.
 
@@ -148,7 +148,7 @@ Apply this section when the selected profile advertises indexed-log observabilit
 Implementation status: Steps 3–5 below are target-state-only and are not currently executable recovery automation. Current tooling does not emit and retrieve a new recovery record through the selected operator query path or independently prove its queryability; the evidence validator checks structural, field, and chronology constraints of a supplied retained object. Do not treat a manually emitted record, an existing log, or these instructions alone as recovery proof. Until this automation and its focused proof exist, keep the applicable queryability claim closed.
 
 1. Restore the selected backend and query-path health. For the default indexed profile, restore Elasticsearch cluster health and Kibana access. For a reduced profile, restore its declared console/journal retention and operator-access path without introducing an indexed dependency.
-2. Verify recent logs appear for a known active service as diagnostic evidence only; existing records do not replace fresh end-to-end recovery proof.
+2. Verify that the selected profile's declared console/journal path shows recent records for a known active service as diagnostic evidence only; if no such path is declared, record log retrieval as unavailable. Existing records do not replace fresh end-to-end recovery proof.
 3. Emit a uniquely identifiable new recovery smoke record carrying a known `service` and `traceId`, and record its emission time. Include gameplay identity fields (`tenantId`, `gameInstanceId`, `regionId`, and `characterId` when applicable) only when the exercised record's canonical logging schema requires them.
 4. Poll the supported operator query path for that exact record and verify retrieval by `service` and `traceId` within the selected profile's configured queryability-delay target; apply gameplay identity filters only when those fields are expected by the logging contract for that record. The default indexed profile uses a Kibana saved search or API, a compatible backend uses its mapped equivalent, and a reduced profile uses its declared console/journal query path.
 5. Retain the canonical recovery object using the shape for the selected capability:

@@ -1399,6 +1399,49 @@ for old, replacement in (
         snippet_alert_message,
     )
 
+chat_service_label_message = (
+    "ChatDeliveryLatencyP99High must not set labels.service; use the "
+    "recording-rule service label"
+)
+chat_service_label_mutations = (
+    (
+        valid_text,
+        validator._validate_reference_prometheus_rules,
+        "          labels:\n",
+        "          labels:\n            service: '{{ $labels.service }}'\n",
+    ),
+    (
+        valid_playerflow_snippet,
+        validator._validate_alert_snippet,
+        "  labels:\n",
+        "  labels:\n    service: '{{ $labels.service }}'\n",
+    ),
+)
+for source_text, source_validator, old, replacement in chat_service_label_mutations:
+    require_message(
+        findings_for(
+            mutate_alert_rule(
+                source_text, "ChatDeliveryLatencyP99High", old, replacement
+            ),
+            source_validator,
+        ),
+        chat_service_label_message,
+    )
+
+chat_recording_without_service = mutate_recording_rule(
+    valid_text,
+    "chat_delivery_latency_ms_p99_5m",
+    "sum by (service, scope, completion_boundary, channel_type, le)",
+    "sum by (scope, completion_boundary, channel_type, le)",
+)
+require_message(
+    findings_for(
+        chat_recording_without_service,
+        validator._validate_reference_prometheus_recordings,
+    ),
+    "canonical chat delivery recording rule must group by service, scope, completion_boundary, channel_type, and le",
+)
+
 entry_path_contracts = {
     "WebSocketEntryPathBlackboxUnavailable": {
         "path": "websocket",
@@ -1888,6 +1931,24 @@ if findings_for(
     ),
 ):
     raise AssertionError("valid mapping-like block-scalar content was rejected")
+
+valid_colon_scalar_continuation = replace_once(
+    minimal_alert_rule,
+    "        expr: backup_pipeline_recent_backup_slo_breached > 0\n",
+    "        expr: backup_pipeline_recent_backup_slo_breached > 0\n"
+    "          http://example:8080\n",
+)
+require_pyyaml_acceptance(
+    valid_colon_scalar_continuation,
+    "valid scalar continuation containing a URL colon",
+)
+if findings_for(
+    valid_colon_scalar_continuation,
+    lambda path: validator._validate_reference_prometheus_rules(
+        path, {"BackupPipelineNoRecentBackup"}
+    ),
+):
+    raise AssertionError("valid URL-like scalar continuation was rejected")
 
 indentless_sequence_alert_rule = """groups:
 - name: parser-contract

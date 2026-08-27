@@ -87,7 +87,7 @@ public class TickRemediationController {
     SessionContext.requireTenantAccess(tenantId);
     boolean hasGameInstanceId =
         request.gameInstanceId() != null && !request.gameInstanceId().isBlank();
-    boolean hasRegionId = request.regionId() != null && !request.regionId().isBlank();
+    boolean hasRegionId = request.regionId() != null;
     if (!hasGameInstanceId || hasRegionId) {
       throw new IllegalArgumentException(
           "gameInstanceId is required and regionId is not supported for pause/resume");
