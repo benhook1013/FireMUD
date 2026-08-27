@@ -23,9 +23,9 @@ This file contains reference PromQL expressions and Alertmanager rules that cove
 
 - alert: ScriptWorkItemQuotaDenialRate
   expr: |
-    sum(rate(script_quota_denied_total{service="automation-scripting-service"}[5m]))
+    sum by (service, scope, script_kind) (rate(script_quota_denied_total{service="automation-scripting-service"}[5m]))
       /
-    (sum(rate(script_quota_allowed_total{service="automation-scripting-service"}[5m])) + sum(rate(script_quota_denied_total{service="automation-scripting-service"}[5m])) + 1e-9)
+    (sum by (service, scope, script_kind) (rate(script_quota_allowed_total{service="automation-scripting-service"}[5m])) + sum by (service, scope, script_kind) (rate(script_quota_denied_total{service="automation-scripting-service"}[5m])) + 1e-9)
       > 0.20
   for: 5m
   labels:
@@ -35,8 +35,8 @@ This file contains reference PromQL expressions and Alertmanager rules that cove
     owner: gameplay
     runbook: design/architecture/system-architecture-scripting-operations-cookbook.md#operational-cookbook-quotas-budgets-and-metrics
   annotations:
-    summary: Script per-handler quota denials above 20% of attempts
-    description: The handler admission quota deny ratio is high; inspect handler load, misrouted dry-runs, and trigger bursts before gameplay impact rises.
+    summary: Script admission quota denials above 20% of attempts
+    description: The bounded script-class admission quota deny ratio is high; inspect service/scope/script-kind load, misrouted dry-runs, and trigger bursts before gameplay impact rises.
 
 - alert: ScriptDryRunCapacitySaturated
   expr: |
@@ -54,8 +54,8 @@ This file contains reference PromQL expressions and Alertmanager rules that cove
 
 - alert: ScriptWorkItemBudgetOutcomeCritical
   expr: |
-    sum by (service, priority, source_class) (
-      rate(automation_script_work_item_outcomes_total{service="automation-scripting-service", stage="ADMISSION", outcome="tenant_budget_exceeded"}[10m])
+    sum by (service, scope, script_kind, event_class, plugin_origin, priority) (
+      rate(automation_script_triggers_total{service="automation-scripting-service", outcome="tenant_budget_exceeded"}[10m])
     ) > 0
   for: 10m
   labels:
@@ -66,7 +66,7 @@ This file contains reference PromQL expressions and Alertmanager rules that cove
     runbook: design/architecture/system-architecture-scripting-observability-contract.md#metrics-consequences-table-4-owned-schema
   annotations:
     summary: Work-item tenant budget admission denials are occurring
-    description: Live script work items are being rejected at admission because tenant budget limits were exceeded for the bounded priority and source class.
+    description: Live script handlers are being denied after durable work-item claim but before executor acceptance because tenant budget limits were exceeded for the bounded priority and source dimensions.
 
 - alert: ScriptWorkItemOutcomeFailingBurst
   expr: |

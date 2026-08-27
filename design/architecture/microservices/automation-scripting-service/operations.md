@@ -69,7 +69,7 @@ The authoritative metric-family names, labels, and increment units live only in 
 
 - `automation_script_triggers_total`, `automation_script_skips_total`, and `automation_script_triggers_dropped_total` for scheduler activity and drops.
 - `automation_script_queue_delay_seconds` by its Table 4 bounded priority class for queue latency/starvation, and `automation_script_leadership_changes_total` for leader stability.
-- `automation_script_timer_catchup_truncated_total` for catch-up firings intentionally truncated by resume-window limits.
+- `automation_script_timer_catchup_truncated_total` for each cap-excluded catch-up candidate settled by the resume-window limit; cap-excluded candidates create no firing.
 - `automation_script_tenant_budget_allowed_total` / `automation_script_tenant_budget_denied_total` for bounded operator-facing automation budget pressure, with tenant-specific drilldown coming from audit rows and control-plane reads rather than raw metric labels.
 - `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total` for quota enforcement and tick integration.
 - `automation_script_sandbox_failures_total`, `automation_script_errors_total`, and `automation_script_runtime_seconds` for sandbox and runtime health.

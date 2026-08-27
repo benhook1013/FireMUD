@@ -1611,6 +1611,13 @@ require_contains(
         "never increments the live `automation_script_triggers_total` family",
     ],
 )
+require_contains(
+    "design/architecture/system-architecture-scripting-normative-contract-tables.md",
+    [
+        "`finalOutcome=dry_run_completed` maps to metric `result=dry_run_success`",
+        "For every classified non-success Table 2 outcome, metric `result` uses that same canonical outcome value",
+    ],
+)
 require_absent(
     "design/architecture/system-architecture-scripting-operations-cookbook.md",
     ["priority_throttled"],
@@ -1709,6 +1716,16 @@ if actual_scheduler_preimage != expected_scheduler_preimage:
 specialized_inventory = (
     root / "design/project-management/design-alignment/decision-inventory-specialized-runtime.md"
 ).read_text(encoding="utf-8")
+adr0017_reference = re.compile(r"\badr(?:[ \t-]+)?0017(?=\b|-)", re.IGNORECASE)
+for adr0017_fixture in (
+    "ADR 0017",
+    "[ADR-0017](../../architecture/decisions/adr-0017-capability-gated-operational-tracing.md)",
+    "../../architecture/decisions/adr-0017-capability-gated-operational-tracing.md",
+):
+    if adr0017_reference.search(adr0017_fixture) is None:
+        raise SystemExit(
+            "decision-inventory-specialized-runtime.md: ADR 0017 fixture was not recognized"
+        )
 trace03_rows = [
     line for line in specialized_inventory.splitlines() if line.startswith("| `TRACE-03` |")
 ]
@@ -1716,7 +1733,7 @@ if len(trace03_rows) != 1:
     raise SystemExit(
         "decision-inventory-specialized-runtime.md: expected exactly one TRACE-03 row"
     )
-if "ADR 0017" in trace03_rows[0]:
+if adr0017_reference.search(trace03_rows[0]) is not None:
     raise SystemExit(
         "decision-inventory-specialized-runtime.md: TRACE-03 must not inherit ADR 0017 provenance"
     )
