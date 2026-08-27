@@ -1711,7 +1711,7 @@ expected_scheduler_preimage = [
     "regionId",
     "regionEpoch",
     "entityId when targetScopeType=ENTITY",
-    "scriptId",
+    "scriptId when core-owned",
     "eventType",
     "eventSchemaVersion",
     "scriptPatchVersion",

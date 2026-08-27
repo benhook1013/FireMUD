@@ -86,6 +86,8 @@ Prove successful zero-command evaluation; one- and multi-command handoff; mixed 
 
 Current implementation and focused proof must be evaluated separately; this decision does not claim the contract is already implemented.
 
+Select and report the required checks and evidence under [Validation and Runtime Proof](../../developer-workflows/validation-and-runtime-proof.md); record execution results in PR/CI evidence or implementation-tracking documents rather than in this decision record.
+
 ## Reversibility and Revisit Triggers
 
 Outcome labels and projections may evolve additively while authority remains stage-qualified. Revisit only if Game Session command ownership changes or a concrete cross-service workflow requirement demonstrates that linked records cannot provide truthful lifecycle correlation without a unified ledger.

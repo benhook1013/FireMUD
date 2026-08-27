@@ -1,3 +1,9 @@
+# Local/demo reference fixture only. The plaintext receiver/exporter below must
+# not carry ADR-0167-controlled attributes and is not valid evidence for a
+# shared or player-facing environment. Target deployments must configure
+# TLS/mTLS on every telemetry hop, or redact those attributes before any
+# unavoidable plaintext hop, with environment-scoped credentials supplied by
+# the deployment (never embedded in this fixture).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -58,6 +64,8 @@ data:
       batch:
     exporters:
       jaeger:
+        # Plaintext is retained only for local/demo compatibility. It is not
+        # permitted for sensitive attributes or shared/player-facing traffic.
         endpoint: http://jaeger:14250
         tls:
           insecure: true
