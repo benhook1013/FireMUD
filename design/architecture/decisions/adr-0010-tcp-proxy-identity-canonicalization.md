@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR 0169](./adr-0169-exclusive-environment-bound-tcp-proxy-trust.md)
+
+This record preserves the historical ordered-fallback proposal. [ADR 0169](./adr-0169-exclusive-environment-bound-tcp-proxy-trust.md) is the current authority for TCP Proxy trust; its exclusive-profile model supersedes the URI SAN -> DNS SAN -> fingerprint fallback order below. That fallback order is obsolete transitional guidance and is not current target-state behavior.
 
 ## Context
 

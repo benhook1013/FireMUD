@@ -15,7 +15,7 @@ The current evaluator supports a bounded emitted-command collection per work ite
 ### 1) Tick Queue Ownership (`tick:*`)
 
 - The Game Session Service is the **only** service that writes to `tick:{tenantRegionTag}:*` coordination keys and per-entity tick queues.
-- The Automation & Scripting Service never mutates `tick:*` keys directly (including via Redis Lua). It hands off script-generated commands to Game Session via internal gRPC so Game Session can enqueue them through the shared [`firemud-common` Lua Script Registry, descriptors, key builders, and invocation helpers](./system-architecture-shared-libraries.md#redis-key-naming--lua-script-helpers), while retaining ownership of tick-key mutations and invariants.
+- The Automation & Scripting Service never mutates `tick:*` keys directly (including via Redis Lua). It hands off script-generated commands to Game Session via internal gRPC. Game Session owns the executable tick-key builders, Lua, invocation boundary, and tick invariants; the ADR 0176 target shared foundation contributes only the common contract schema, outcome vocabulary, Redis-role/prefix-owner and compatibility metadata rules, aggregated registry, `KEYS`/`ARGV` and descriptor/slot validation, and repository aggregation of owner adapters and focused tests for that owner-local implementation. The current shared foundation and aggregated registry are not implemented, so this target validation must not be reported as current evidence.
 
 ### 2) Script Work Item vs Tick Command Boundary
 
@@ -69,7 +69,7 @@ To make script patch rollback meaningful:
 - `onLoad` handler code may not create durable or semi-durable shared effects, including gameplay/tick commands or handler-owned records in shared stores. Platform-owned execution and readiness state, including required `script_event_audit` metadata, is permitted and required to claim, fence, record, and complete readiness; it is not a handler-created shared effect.
 - A stale `onLoad` execution is terminalized under the DSL lifecycle's fencing rule and cannot transition its patch to `READY`. Readiness/publication generations are fences, not execution identity; retry after durable stale terminalization requires republishing a new immutable `scriptPatchVersion`, not minting another execution identity for the stale patch.
 
-Callers must reuse the same full applicable Trigger Identity on retries for live ingress, including the same `scriptEventId`. For downstream command-handoff retries, reuse of the complete Command-Handoff Identity, including its complete source scope and any distinct target scope plus `automationDispatchId` and `commandOrdinal`, is target-state; the current live fallback reuses the available work-item/command identity and does not claim complete fan-out deduplication. For dry-run/test ingress, server-generated IDs are preferred by default; if caller-supplied IDs are accepted, they must be collision-validated in the dry-run namespace.
+For live ingress, only a `DURABLE_RETRY` policy permits callers to reuse the same full applicable parent event identity, including the same `scriptEventId`, for a delayed pre-resolution retry. After handler resolution, a policy-allowed handler retry reuses that handler's full applicable Trigger Identity, including the same propagated `scriptEventId`. `REJECT_VISIBLE` finalizes the current intent and must not reuse that parent identity for delayed retry; `SKIP_RECONCILE` follows its declared reconciliation or catch-up rule and likewise does not reclaim stale intent. For downstream command-handoff retries, reuse of the complete Command-Handoff Identity, including its complete source scope and any distinct target scope plus `automationDispatchId` and `commandOrdinal`, is target-state; the current live fallback reuses the available work-item/command identity and does not claim complete fan-out deduplication. For dry-run/test ingress, server-generated IDs are preferred by default; if caller-supplied IDs are accepted, they must be collision-validated in the dry-run namespace.
 
 Ingress ownership is endpoint-specific and must follow the matrix in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1a-event-ingress-scripteventid-ownership-matrix`.
 
@@ -107,11 +107,12 @@ Dry-run executions are privileged and must not destabilize production:
 ### 7) Reload Backpressure Contract
 
 - During `reloadState=RELOADING`, the Automation & Scripting Service must return an explicit application-level backpressure outcome (not a silent drop).
-- For low-rate external events, callers must retry with the same full applicable Trigger Identity, including the same `scriptEventId`, using bounded exponential backoff and jitter:
+- Each event-registry entry selects exactly one reload policy. Only `DURABLE_RETRY` low-rate external events may be retried with the same full applicable Trigger Identity, including the same `scriptEventId`, using bounded exponential backoff and jitter:
   - `maxAttempts` must be finite and documented per client.
   - `maxElapsedMs` must be finite and documented per client.
   - Jitter must be non-zero to avoid synchronized retry storms.
-- Backpressure responses must include a server hint (`retryAfterMs`) so callers can align retries with expected reload/rollback progress.
+- `REJECT_VISIBLE` finalizes the current intent as an explicit rejection and never executes it later; a new business intent must use a new parent event identity. `SKIP_RECONCILE` records the skipped attempt and follows the event's declared reconciliation or catch-up rule; it does not reclaim stale intent.
+- Only a `DURABLE_RETRY` response includes a server hint (`retryAfterMs`) and permits reclaiming the same retry-eligible parent claim. A rejected or skipped event has no automatic delayed admission.
 - For timer-derived scheduler events, best-effort timer semantics apply; triggers not admitted during reload are not backfilled unless explicitly covered by a bounded catch-up rule.
 
 ### 7a) Runtime Scope Isolation

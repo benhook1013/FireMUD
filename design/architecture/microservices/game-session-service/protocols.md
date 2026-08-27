@@ -63,10 +63,10 @@ For direct text/Telnet, `HELP` is non-discovery, `WORLDS` is the sole anonymous 
 | `LOGOUT` / `LOGOFF` / `QUIT` | Ends the current session and closes the transport. `LOGOFF` and `QUIT` are exact aliases for canonical `LOGOUT`. | `LOGOUT` |
 | `WORLDS` | Lists worlds visible to the caller. Before `LOGIN`, this is a public browse/discovery command intended to let players explore the platform before signing up or logging in. After `LOGIN`, it may also include caller-specific membership or entitlement context. | `WORLDS` |
 | `HELP` | Returns static command/help content. It is non-discovery: it does not list worlds, realms, characters, membership, or admission state, and it does not replace `WORLDS`. | `HELP` |
-| `REALMS <world>` | Requires successful `LOGIN` and lists visible realms for a world, where `<world>` is the stable selector or menu index returned by `WORLDS`. The default public production realm may be visible before membership exists; additional realms require explicit grants. | `REALMS demo` |
-| `JOIN <world>` | **Target-only; not currently implemented.** Explicitly joins the selected world's public production realm through the Account-owned idempotent membership writer. The resulting membership is durable and powers later return discovery. | `JOIN demo` |
-| `CHARS <world> [realm]` | Requires successful `LOGIN` and presents Entity's persisted roster/policy result for the resolved realm. It is discovery evidence, not admission authority; `PLAY` revalidates the selected actor and current runtime fence. | `CHARS demo production` |
-| `PLAY <world> [realm] [character]` | Binds the authenticated connection to a world, optional realm, and optional character after the discovery, `LOGIN`, and conditional membership/character gates, enforcing tenant authorization, realm routing, and entitlements. Players may omit `[realm]` or `[character]` only when the fresh target resolution is unambiguous; direct text never reuses the first-party WebSocket discovery snapshot. A first-time public player must complete `JOIN <world>` first; a grant-backed non-public path may proceed only when its required durable `membershipLifecycleState=ACTIVE` membership already exists. `PLAY` returns `JOIN_REQUIRED` for the current eligible public-production predicate and never creates or substitutes membership implicitly. | `PLAY demo production Sora` |
+| `REALMS <world>` | Requires successful `LOGIN` and lists visible realms for a world, where `<world>` is the stable `tenantSlug/worldSlug` selector or menu index returned by `WORLDS`. A bare `tenantSlug` is accepted only when that tenant exposes exactly one visible authored world; a bare `worldSlug` is never resolved globally. The default public production realm may be visible before membership exists; additional realms require explicit grants. | `REALMS demo/demo` |
+| `JOIN <world>` | **Target-only; not currently implemented.** Explicitly joins the selected world's public production realm through the Account-owned idempotent membership writer. The resulting membership is durable and powers later return discovery. `<world>` follows the same tenant-scoped selector rules as `REALMS`. | `JOIN demo/demo` |
+| `CHARS <world> [realm]` | Requires successful `LOGIN` and presents Entity's persisted roster/policy result for the resolved realm. It is discovery evidence, not admission authority; `PLAY` revalidates the selected actor and current runtime fence. | `CHARS demo/demo production` |
+| `PLAY <world> [realm] [character]` | Binds the authenticated connection to a world, optional realm, and optional character after the discovery, `LOGIN`, and conditional membership/character gates, enforcing tenant authorization, realm routing, and entitlements. Players may omit `[realm]` or `[character]` only when the fresh target resolution is unambiguous; direct text never reuses the first-party WebSocket discovery snapshot. A first-time public player must complete `JOIN <world>` first; a grant-backed non-public path may proceed only when its required durable `membershipLifecycleState=ACTIVE` membership already exists. `PLAY` returns `JOIN_REQUIRED` for the current eligible public-production predicate and never creates or substitutes membership implicitly. | `PLAY demo/demo production Sora` |
 | `LOOK` | Requests the current room snapshot aggregated from Game Logic plus World and Entity services. | `LOOK` |
 | `INVENTORY` / `INV HERE` | Lists carried items or the current room-ground item holder. The command is rendered by Game Session, but item state is read through Game Logic and Entity Management. | `INV HERE` |
 | `GET <item>` / `DROP <item>` | Moves a visible room-ground item into carried inventory, or a carried item into the current room. Game Session forwards the raw selector and quantity to Game Logic; Game Logic resolves names, visible refs, container refs, and stack refs before Entity Management mutates state. | `GET torch1` |
@@ -76,7 +76,7 @@ For direct text/Telnet, `HELP` is non-discovery, `WORLDS` is the sole anonymous 
 | `WHISPER <character> <text>` | Standard directed in-room communication action. Targets one nearby character in the current room; baseline default is full content for sender and target, with observer handling controlled by communication-type and target rules. | `WHISPER Sora The forge smells of brimstone` |
 | `TELL <character> <text>` | Standard direct communication action. Targets one character directly, outside room scope by default, while still flowing through the shared communication model and Game Logic. | `TELL Sora Meet me at the forge` |
 
-Selector rules for `PLAY` match the lobby helpers. `WORLDS` returns both `tenantSlug` and tenant-scoped `worldSlug`; the canonical textual `<world>` form is `tenantSlug/worldSlug`, while a bare `tenantSlug` is shorthand only when that tenant exposes exactly one visible authored world. A bare `worldSlug` is never resolved across tenants. `<world>` may instead be a menu index from the exact `WORLDS` browse snapshot, `[realm]` accepts a `realmSlug` under the resolved world or an index from its exact `REALMS` snapshot, and `[character]` is an optional name or response-local index. If a selector is ambiguous or stale, the response guides the player toward `WORLDS`, `REALMS`, `CHARS`, or a more specific `PLAY` form rather than guessing or returning a backend-flavored error.
+Selector rules for `PLAY` match the lobby helpers. `WORLDS` returns the stable `tenantSlug/worldSlug` selector for each visible world; `<world>` accepts that pair or a menu index from the exact `WORLDS` browse snapshot. A bare `tenantSlug` is accepted only when that tenant exposes exactly one visible authored world, and a bare `worldSlug` is never resolved globally. `[realm]` accepts a tenant-local `realmSlug` or an index from its exact `REALMS` snapshot, and `[character]` is an optional name or response-local index. World, realm, and character menu indices are bound to the exact connection-local response snapshot and catalog revision that produced them, with bounded expiry. A later catalog reorder never changes an existing index's meaning; an expired, ambiguous, stale, or invalidated selector requires the player to list again rather than being guessed or producing a backend-flavored error. The exact snapshot resolves `{tenantId, worldSlug}` and then durable `realmId`; the admission pointer resolves `gameInstanceId`; clients never select a raw runtime ID as authority.
 
 ### JOIN Translation and Status
 
@@ -84,7 +84,7 @@ The canonical JOIN and membership-admission contract is defined in [Authenticati
 
 The target Account membership operation is `JoinPublicProductionMembership`; it remains target-only and unimplemented, so there is no current implicit membership writer. When the explicit text action is implemented, Game Session translates `JOIN <world>` to the sole target operation `JoinPublicProductionMembership`; it does not create membership locally or use another join writer.
 
-- Game Session resolves `<world>` from the exact `WORLDS` snapshot to the tenant-scoped `worldSlug`, then resolves the world's configured default public-production `realmSlug`. The resolved `worldSlug` and `realmSlug` identify the operation target but are not independent client authority.
+- Game Session resolves `<world>` from the exact `WORLDS` snapshot to the tenant-scoped `{tenantId, worldSlug}` pair, selects the unique visible player-addressable realm marked `publicProduction=true` in that catalog/policy snapshot, and resolves that realm to durable `realmId` plus its current admission-pointer target. The resolved slugs identify the operation target for people but are not independent client authority.
 - Authenticated caller identity and subject authority come only from the validated caller-bound `PlayerExecutionContext`; Account separately validates that context and never treats `connectScopeId` as caller authority. Game Session generates and owns the high-entropy join-attempt `requestId` for the direct-text `JOIN <world>` command; that command carries no client-selected request ID or `playableStateScope`, and Game Session retains the generated identity with the pending transport-local scope and passes the same identity to Account for retries. The resolved target's opaque `connectScopeId` selects and binds the target world/realm and routing snapshot. Account validates the target scope at its commit boundary; a client-supplied request ID, runtime ID, playable-state scope, or independently supplied slug cannot replace the retained scope or attempt identity.
 - An ambiguous or stale world/realm selector is a lobby-selection error: Game Session does not guess, does not invoke Account, and directs the client to refresh `WORLDS`/`REALMS`. A discovered scope that is stale or no longer matches the resolved `worldSlug`/`realmSlug` fails closed with the applicable scope or admission error rather than being translated to a newer target.
 - JOIN idempotency uses the canonical preimage, field order, and UTF-8 encoding defined in [Authentication](../../system-architecture-authentication.md#direct-text-realms-to-join-scope-normative). Game Session generates and retains the server-side `requestId`, passes the verified local digest inputs and retained scope to Account, and reuses that identity through retries and scope-expiry cleanup. Account replays an exact `{requestId, digest}` outcome and rejects a different digest as `IDEMPOTENCY_CONFLICT`; a new `requestId` is a distinct attempt after a new scope.
@@ -125,8 +125,8 @@ Target-state/unimplemented world-selection transcript showing public browsing pl
 ```text
 WORLDS
 OK WORLDS
-1) Demo World (demo)
-2) Builder Sandbox (sandbox)
+1) Demo World (demo/demo)
+2) Builder Sandbox (demo/sandbox)
 
 LOGIN demo@example.com swordfish
 OK LOGIN Logged in as demo@example.com
@@ -136,7 +136,7 @@ OK REALMS
 1) Live Realm (production)
 2) Playtest Dock (playtest-docks)
 
-JOIN demo
+JOIN demo/demo
 OK JOIN Joined Demo World
 
 CHARS 1 production
@@ -144,7 +144,7 @@ OK CHARS
 1) Emberline
 2) Sora
 
-CHARS demo production
+CHARS demo/demo production
 OK CHARS
 1) Emberline
 2) Sora
@@ -153,7 +153,7 @@ PLAY 1 production 2
 OK PLAY Entered world: Demo World / Live Realm as Sora
 ```
 
-The same resolution rules apply to `PLAY demo/main production 2`: `demo/main` is one qualified world-selector token (`tenantSlug/worldSlug`), `production` is the realm selector, and `2` is a response-local character index. `PLAY 1 1 Sora` likewise uses response-local menu indices and a character name to identify the same player-facing choices. Game Session resolves the current admissible runtime target and stable namespace, then binds the internal session to the durable controller identity `{tenantId, playableStateNamespaceId, characterId}` while retaining the authenticated `accountId` as binding-owner evidence, `playableStateScope` as server-derived scope context, and `{gameInstanceId, regionId, regionEpoch}` as the current runtime fence where applicable; the player never selects `gameInstanceId`, `playableStateScope`, or a storage namespace directly.
+The same resolution rules apply to `PLAY demo/demo production 2`: `demo/demo` is the stable `tenantSlug/worldSlug` selector from the exact snapshot, `production` is the tenant-local realm selector, and `2` is a response-local character index. `PLAY 1 1 Sora` likewise uses response-local menu indices and a character name to identify the same player-facing choices. Game Session resolves the selectors to `{tenantId, realmId}`, resolves the current admissible runtime target and stable namespace, then binds the internal session to the durable controller identity `{tenantId, playableStateNamespaceId, characterId}` while retaining the authenticated `accountId` as binding-owner evidence, `realmId` and `playableStateScope` as server-derived scope context, and `{gameInstanceId, regionId, regionEpoch}` as the current runtime fence where applicable; the player never selects `realmId`, `gameInstanceId`, `playableStateScope`, or a storage namespace directly.
 
 The Account Service returns canonical `AUTH_*` error codes such as `AUTH_INVALID_CREDENTIALS`, `AUTH_RETRY_LATER`, `AUTH_ACCOUNT_LOCKED`, and `AUTH_UNAVAILABLE`. Game Session translates them into protocol-level responses such as `ERROR INVALID_CREDENTIALS`, `ERROR RETRY_LATER`, and `ERROR AUTH_UNAVAILABLE` so Telnet and WebSocket clients can rely on stable error semantics while the human-readable message remains flexible. `AUTH_ACCOUNT_LOCKED` is reserved for verified compromise or an explicit account-security policy after sufficient identity proof; ordinary failed-login throttling uses `AUTH_RETRY_LATER`.
 

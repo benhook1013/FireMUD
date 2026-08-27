@@ -4,6 +4,13 @@
 
 Accepted
 
+## Decision Record
+
+- Human review status: Completed
+- Human review date: 2026-07-21
+- Human review disposition: Accepted
+- Review source: `EDGE-01`
+
 ## Context
 
 Several documents and proposals assumed two target-state capabilities at the edge:

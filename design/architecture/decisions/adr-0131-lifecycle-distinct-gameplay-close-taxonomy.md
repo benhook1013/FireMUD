@@ -20,6 +20,7 @@ Existing liveness gaps remain separate implementation obligations: the configure
 - Review source: `EDGE-05`
 - Decision date: 2026-07-20
 - Decision key: `EDGE-05`
+- Related review key: `SESSION-05`, aligned on 2026-07-21
 - Primary capability: `PO-2.4` player-edge liveness and shutdown behaviour
 - Affected capabilities: `PO-2.2`, `GR-1.1`, `AA-2.2`, `PO-4.2`
 - Decision owner: FireMUD human product and architecture owner

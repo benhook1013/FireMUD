@@ -7,6 +7,10 @@ re-invocation behavior for tick-related scripts.
 > 🔗 The high-level Redis coordination model, key naming, and failure modes are
 > described in [System Architecture: Redis](./system-architecture-redis.md).
 
+## Implementation Status
+
+The shared Redis-contract schema, owner-local descriptor contributions, aggregated Lua registry, role/prefix/slot validators, ownership enforcement, and descriptor-driven CI described here are [ADR 0176](./decisions/adr-0176-owner-local-redis-execution-with-aggregated-contracts.md) target state and are not implemented. Existing scripts and key families require reconciliation against that contract.
+
 ## Default Author/Reviewer Expectations
 
 - New or changed scripts must fit one of the existing **script categories** and satisfy the idempotency, determinism, and `schemaVersion` rules described here.
@@ -57,7 +61,7 @@ Before authoring or reviewing a new script, use this quick checklist:
   - Lock and lease operations treat repeated acquire/refresh calls as no-ops with stable outcomes.
   - Queue/timer/effect insertion uses set-style semantics to avoid duplicate entries on replay.
 - Error outcomes are explicit and non-mutating (for example `"STALE_LEASE"`, `"STALE_LOCK"`, `"SESSION_VERSION_MISMATCH"`); callers can safely retry or escalate based on return codes.
-- The script has an entry in the **Lua Script Registry** (in `firemud-common`) that describes:
+- Target-state proof requirement (the shared registry and harness are not implemented): the script has an entry in the aggregated **Lua Script Registry** (with the shared schema/registry foundation and an owning-service contribution) that describes:
   - Key roles and order (`KEYS[1]`, `KEYS[2]`, etc.).
   - Allowed prefixes and hash-tag assumptions.
   - The script category and whether it is single-key or shard-local multi-key; an entity-lock script declares and receives at most one entity-lock key.
@@ -183,7 +187,7 @@ Every post-acquisition region-lease script must perform the following validation
 
 The Redis operations docs and metrics catalog should treat `current_tick_state` transitions as first-class observability surfaces so operators can tell whether regions are stuck in `STAGED` or `RESOLVING`, how often ticks terminate as `APPLIED` vs `ABANDONED`, and whether stale-timeline outcomes correlate with reset or recovery activity.
 
-These checks are enforced via the Lua Script Registry descriptors, generated key-builder helpers, and CI linting so reviewers can automatically catch regressions. Scripts that cannot make these validations are not allowed to touch tick/coordination prefixes.
+Once ADR 0176 is implemented, these checks will be enforced via the aggregated Lua Script Registry descriptors, the owning service's generated key-builder helpers, and CI linting so reviewers can automatically catch regressions. The registry and validators are target-state controls; they are not current implementation evidence. In that target state, scripts that cannot make these validations will not be accepted for tick/coordination prefixes.
 
 #### Session-only scripts
 
@@ -250,6 +254,8 @@ Scripts that do not clearly fit one of these categories should be refactored unt
 
 Automation-related Redis operations follow stricter slotting rules to avoid `CROSSSLOT` errors and keep coordination boundaries clear:
 
+The Automation & Scripting Service does not construct or invoke `tick:*` keys. Game Session owns the gameplay tick builders, Lua, and mutation boundary; Automation hands work to Game Session through the documented gRPC contract. ADR 0176's shared foundation supplies only the common schema, aggregated registry, and validation surface for these owner-local contributions unless a mutation later gains multiple legitimate independently deployed executors. The shared foundation does not supply executable `tick:*` builders through `firemud-common`.
+
 - Scripts that operate on `automation:queue:{tenantInstanceTag}:*` keys:
   - Use only `automation:queue:{tenantInstanceTag}:*` keys for a single runtime instance scope in `KEYS`; all such keys must share the same `{tenantInstanceTag}` hash tag and Redis Cluster slot.
   - Must not include `tick:*` keys in the same invocation.
@@ -259,10 +265,7 @@ Automation-related Redis operations follow stricter slotting rules to avoid `CRO
   - Current live timer rows may expose an optional `dueTickId` alongside the existing due-state fields and derived projections; live Redis scripts must not assume that the tagged `duePoint` migration shape is already present. In target state, schedule-derived work uses the complete due-candidate and firing-claim projection defined by the [Scripting Scheduler and Timer Lifecycle](./system-architecture-scripting-scheduler-and-timers.md#script-timers-vs-tick-timers): it includes mandatory `stableOwnerKind` and `stableOwnerId`, `entityId` only for an entity-scoped target, `resumeWindowId` only for `triggerMode=CATCH_UP`, the exact script pin, `isDryRun`, and applicable plugin provenance. For plugin-owned candidates, `pluginActivationEpoch` is a tagged candidate/firing-claim and derived-`scriptEventId` identity field, while `lifecycleRevision` is required non-identity fence evidence. The winning claim derives `scriptEventId` from that complete candidate identity; it is not a pre-claim input, and retries reuse the derived value. Scheduled rows require exactly one tagged `duePoint`, either `dueTickId:<value>` or `dueAt:<epochMillis>`; both forms, neither form, empty values, and zero placeholders are invalid. Immediate event rows use the distinct event-driven identity branch, omit scheduler-only fields and `duePoint`, and have both physical `dueTickId` and `dueAt` columns explicitly `NULL`. A versioned migration must translate live due fields before enforcing the target tagged form. The per-command `automationDispatchId` plus `commandOrdinal` is the suffix of the complete source/optional-target-scoped Command-Handoff Identity and must not be replaced by `scriptEventId` or `commandKind` alone.
   - Before invoking the Redis enqueue script, Game Session must insert or confirm a durable admission row whose uniqueness key is the complete [Command-Handoff Identity](./system-architecture-scripting-normative-contract-tables.md#command-handoff-identity-target-state): source runtime scope, optional distinct target runtime scope, `automationDispatchId`, and `commandOrdinal`. When a distinct target applies, its `targetGameInstanceId`, `targetPlayableStateScope`, `targetRegionId`, and `targetRegionEpoch` are part of that optional target runtime identity. The parent Trigger Identity, due point, command payload, and any current-routing fields outside the immutable source/optional-target scopes are retained as immutable comparison and readback evidence; they do not extend command identity. Scheduled rows retain exactly one tagged due point (`dueTickId:<value>` or `dueAt:<epochMillis>`); immediate event rows use the separate immediate branch and keep scheduler-only fields and both physical due columns `NULL`. Redis enqueue scripts may project that complete Command-Handoff Identity into an idempotent member key for hot-path dedupe; the dispatch-plus-ordinal suffix alone is insufficient because `automationDispatchId` is not globally unique. The durable admission row and durable trigger-instance uniqueness projection remain the authorities used after resets, gRPC retries, and failover.
 
-CI must reject automation Lua scripts that:
-
-- Reference both `automation:*` and `tick:*` keys in their registry descriptors, or
-- Construct `tick:*` keys by hand instead of using shared key builders.
+Once ADR 0176's target descriptor validation is implemented, CI must reject automation Lua/descriptors that construct or reference any `tick:*` key; Game Session alone uses its owner-local tick builders.
 
 From a correctness perspective, `automation:queue:*` and related automation caches are always treated as **best-effort buffers**:
 
@@ -409,9 +412,9 @@ Script changes must be rolled out in a way that respects both AOF replay semanti
   - `schemaVersion` changes must support every caller and stored-payload version in the evidenced coexistence set; unknown or ambiguous versions, including unproven missing versions, must fail before mutation with `"UNSUPPORTED_SCHEMA_VERSION"` or the equivalent so AOF replay cannot apply effects with mismatched schemas.
   - When a reset-required change is introduced, operators follow the reset runbooks so that any surviving AOF history for old scripts is discarded for the relevant scope rather than replayed under incompatible semantics.
 
-## Lua Script Registry and CI Expectations
+## Target-State Lua Script Registry and CI Expectations (Not Implemented)
 
-All coordination-related Lua scripts live in a **Lua Script Registry** in the shared library. For each script, the registry records:
+The registry, validators, ownership enforcement, generic test harness, and CI checks in this section are target state and are not currently implemented. Once delivered, all coordination-related Lua scripts contribute entries to one aggregated **Lua Script Registry**. The shared Redis-contract foundation owns the registry schema and aggregation; each owning service contributes entries and retains executable Lua for exclusive key families. For each script, the registry records:
 
 - Script identifier and file path.
 - Expected `KEYS` and `ARGV` ordering and allowed prefixes (including hash-tag rules).

@@ -9,6 +9,7 @@ The target control-plane and maintenance contract in this document is ahead of t
 - Game Session currently ships `PauseTicksForScope` / `ResumeTicksForScope` plus `GetRuntimeOwnershipStatus` on the control-plane gRPC surface.
 - The live implementation supports the current `{tenantId, gameInstanceId}` queue boundary; `regionId` is present in the proto contract but is currently rejected by the service implementation.
 - The bounded `coordination-maintenance ...` public surface remains target state, not a description of fully implemented repo-local tooling today. No public recovery scope is currently implemented and proven; recovery phases may be implemented and tested behind the high-level operation without becoming separate public commands.
+- The owning-service typed maintenance API, role-bound Redis helper surface, aggregated registry, descriptor validators, and ownership-enforcement checks described below are target state and are not implemented; current direct access remains subject to the generic runtime seam and the incident-only fallback.
 - Reset-smoke isolation is a separate mechanism decision: the existing [Game Session readiness-only identity contract](./microservices/game-session-service/operations.md#readiness-and-liveness) and [synthetic player-flow canary contract](./system-architecture-logging-monitoring.md#synthetic-player-flow-canaries-target-state-prod-like-contract) do not define an isolated reset-smoke namespace or durable synthetic identity that can safely map to tick staging and ledger rows. Automation's separate [`isDryRun=true` namespace](./system-architecture-scripting-contracts.md#6-dry-run--test-traffic-safety) is explicitly non-committing and cannot reach tick queues, so it is not a reset-smoke identity. Until a reset-smoke mechanism decision is accepted and implemented, `RunPostResetSmokeCheck` is non-mutating for real PostgreSQL tick state, real Redis tick metadata/staging/pending, and real tick-ledger rows. It may perform only bounded sampled lease acquire/renew/release probes and, when the workflow affects the shared replay domain, a disposable replay-marker write and consume probe on the canonical same Redis connection: first write the marker and obtain the configured same-connection `WAITAOF` local/replica durability acknowledgement, then consume the marker and obtain a second same-connection `WAITAOF` acknowledgement. Only after both acknowledgements may the probe return `DURABLE_REPLAY_CONSUME_ACK`; it must fail closed on timeout, malformed, below-threshold, or uncertain marker results and must not enter real staging or ledger paths.
 
 Use this doc as the canonical target-state contract for later reset/replay tooling, but do not assume every operation below is already available in the running codebase. Current operators, runbooks, Helm hooks, Jobs, and dashboards must not invoke the `coordination-maintenance` commands described below until that surface is implemented and end-to-end proven.
@@ -22,9 +23,9 @@ Defining additional Redis users, ACL variations, or ad-hoc tools is considered *
 
 ## Coordination Redis Access Rules
 
-- Coordination Redis is treated as an **application-only write surface**:
-  - All mutations to coordination prefixes (`tick:*`, `retry:*`, `timer:*`, `remote:*`, `session:*`, `tick-executor-lease:*`, and related keys) always go through owned typed key and mutation helpers in `firemud-common`. Lua is mandatory for atomic multi-key behavior and may be used for an explicitly documented single-key atomic guard or compare-and-set contract; every registered script is invoked through the same typed helper and registry path. Ordinary single-key mutations use the typed helpers without Lua.
-  - Application services (Game Session, Automation & Scripting, and any future tick participants) never bypass those helpers with raw Redis commands.
+- Coordination Redis is treated as an **application-only write surface during normal operation**:
+  - Current normal-operation access uses the generic `common-data-runtime` `firemud.redis.*` properties and its auto-configured `RedisConnectionFactory`, `RedisTemplate`, and `StringRedisTemplate`; deployment configuration routes a service to the appropriate role-specific endpoint. The ADR 0176 owner-local descriptor/key-builder foundation, shared contract validation, and aggregated registry are target state and are not implemented. Target state requires coordination mutations to use the owning service's typed key and mutation helpers, with the shared foundation validating descriptors and aggregation; Lua is mandatory for atomic multi-key behavior and may be used for an explicitly documented single-key atomic guard or compare-and-set contract. Ordinary single-key mutations use owner-local typed helpers without Lua, and executable helpers or Lua are shared only for mutations genuinely executed by multiple independently deployed callers. The audited incident-only break-glass path below is the explicit exception to this normal-operation rule and must follow its evidence, fencing, reset, and verification gates.
+  - In target state, application services (Game Session, Automation & Scripting, and any future tick participants) never bypass those helpers with raw Redis commands; current direct usages require reconciliation against the owner-local contract rather than being treated as proof that the target helpers exist.
 - Human operators and ad-hoc tools:
   - May use `redis-cli`, RedisInsight, or similar tools with **read-only ops users** to inspect coordination state.
   - Must not issue raw `EVAL`/`EVALSHA`, `SET`, `DEL`, or TTL-changing commands against coordination prefixes in normal operation.
@@ -36,7 +37,7 @@ These rules keep the script registry’s invariants and hash-tag discipline mean
 Redis ACLs enforce a clear split between application and operations clients:
 
 - Application user (for example `coord_app`):
-  - Used only by application services and shared maintenance tools that import `firemud-common` helpers.
+- Target state: used only by application services and approved maintenance tooling that calls the owning service's typed maintenance API (or, when it is itself an independently deployed executor, the corresponding shared mutation contract).
   - Permitted to execute `EVALSHA`/`SCRIPT LOAD` and write commands on coordination databases.
   - Not used from interactive shells or general-purpose admin tooling in production.
 - Read-only ops user (for example `coord_ops_ro`):
@@ -78,18 +79,18 @@ All tools and services refer to Redis deployments via **role-specific configurat
 - Coordination clients and ops tools read connection settings from `FIREMUD_REDIS_COORD_HOST` / `FIREMUD_REDIS_COORD_PORT` (or an equivalent `FIREMUD_REDIS_COORD_URL`), which identify the **Coordination Redis** deployment.
 - Cache/rate-limit clients and tools read from `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT` (or `FIREMUD_REDIS_CACHE_URL`), which identify the **Cache/Rate-Limit Redis** deployment.
 
-A small shared configuration module (in `firemud-common` or a dedicated tooling library) exposes **typed configs and helpers** such as:
+The current shared Redis connection seam is the generic `firemud.redis.*` `RedisProperties` binding and `common-data-runtime` auto-configuration, which provides the injected Spring Redis connection factory/templates used by services. Deployment configuration supplies the role-specific endpoint routing through `FIREMUD_REDIS_COORD_*` and `FIREMUD_REDIS_CACHE_*`; this is not a current role-bound maintenance client or typed contract surface. The ADR 0176 shared foundation, owner-local descriptor contributions, and repository aggregation remain unimplemented. Target state may add a dedicated tooling/contract module (for example, a future `common-redis-contracts` module, not an implemented module) exposing **typed configs and helpers** such as:
 
 - `RedisCoordConfig` + `createCoordinationRedisClient(...)`
 - `RedisCacheConfig` + `createCacheRedisClient(...)`
 
-All ops scripts and maintenance tools must:
+Target-state ops scripts and maintenance tools, once the role-bound helper surface is implemented, must:
 
 - Accept an explicit `RedisCoordConfig` when they touch coordination prefixes.
 - Accept an explicit `RedisCacheConfig` when they operate only on cache/rate-limit prefixes.
 - Never construct Redis host/port or URLs by hand.
 
-This makes the target Redis role part of the tool’s type signature and configuration, reducing the chance that coordination tooling accidentally points at Cache Redis (or vice versa).
+This target contract makes the Redis role part of the tool’s type signature and configuration, reducing the chance that coordination tooling accidentally points at Cache Redis (or vice versa); it is not a current operator invocation path.
 
 Some health checks and observability tools legitimately need to talk to **both** roles in a single process (for example, a composite “Redis health” check or a diagnostic CLI). These multi-role tools must:
 
@@ -473,14 +474,14 @@ Direct `redis-cli` writes to coordination prefixes are reserved for **break-glas
 
 ### Tooling Maintenance and Versioning
 
-The coordination maintenance client/CLI is treated as a first-class part of the system, not an ad-hoc script:
+The target coordination maintenance client/CLI, once implemented, is treated as a first-class part of the system, not an ad-hoc script:
 
 - It lives in the same repository and modules as:
-  - The shared key builders and Lua Script Registry descriptors (`firemud-common`).
+  - The aggregated Redis-contract registry/schema and each owning service's key builders and Lua Script Registry contributions.
   - The integration tests that exercise script behavior and key shapes.
 - It is **versioned alongside the main services**; there is no separate, free-floating versioning scheme for tooling.
 - Any change to coordination key formats or Lua script contracts must:
-  - Update the shared descriptors and key-builder helpers.
+  - Update the owning service's descriptor contribution and owner-local key-builder/Lua implementation, plus the shared schema/aggregation when the declared contract changes.
   - Update the maintenance CLI code that uses those helpers.
   - Extend or adjust the shared integration tests so both services and tooling are validated against the same expectations.
 
@@ -507,11 +508,11 @@ To keep operational scripts aligned with application code:
   - Scripts construct `tick:*`, `timer:*`, `retry:*`, `remote:*`, or `session:*` keys by hand instead of calling shared helpers.
   - Scripts hard-code Redis host/port or URLs instead of using the shared `RedisCoordConfig` / `RedisCacheConfig` helpers and role-specific environment variables.
   - Cache/rate-limit scripts introduce Redis prefixes that are not listed in the Cache/Rate-Limit Redis key catalog maintained in the Redis cache design docs (Redis cheat sheet plus `system-architecture-redis-cache.md`), or misuse those prefixes against the wrong Redis role.
-  - Automation-related Lua or tooling scripts reference both `automation:*` and `tick:*` prefixes in a single operation, violating the automation cluster slotting rules in `system-architecture-redis-lua-patterns.md` and the Automation & Scripting service design.
+  - Target-state descriptor validation rejects every Automation Lua or tooling descriptor that constructs or references any `tick:*` key, including tick-only artifacts and regardless of whether an `automation:*` prefix is also present. Game Session owner-local tick builders are the sole exception; Automation must hand work to Game Session through the documented contract, in accordance with the automation cluster slotting rules in `system-architecture-redis-lua-patterns.md` and the Automation & Scripting service design.
 
-Maintenance scripts that genuinely need to work with coordination keys must:
+Once the target maintenance surface is implemented and proven, maintenance scripts that genuinely need to work with coordination keys must:
 
-- Import the same key-builder APIs and Lua registry helpers used by services.
+- Use the owning service's typed maintenance API and the same aggregated registry contract used by services; direct executable key-builder/Lua reuse is reserved for a genuinely shared mutation contract.
 - Document their scope (which prefixes/tenants/regions they touch) and the runbook they implement.
 
 This keeps human-driven maintenance and automation under the same discipline as regular application code, reducing the chance that debugging or emergency fixes introduce silent hash-tag or lock/lease violations.
