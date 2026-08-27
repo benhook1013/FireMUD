@@ -22,7 +22,7 @@ Script changes are classified into a small set of compatibility modes:
 
 These compatibility modes and their registry/CI enforcement are target-state rules; the registry and enforcement tooling are not currently shipped.
 
-The Lua Script Registry records the compatibility mode for each script version. CI should reject script changes that downgrade from a stricter mode to a looser one without explicit design updates.
+Once the target registry is implemented, the Lua Script Registry will record the compatibility mode for each script version. CI should reject script changes that downgrade from a stricter mode to a looser one without explicit design updates.
 
 ## Cache/Rate-Limit Redis Reset Relationship
 
