@@ -68,15 +68,15 @@ These nine pre-inventory keys are navigation aliases for current decision keys. 
 
 | Legacy key | Current decision key | Human review outcome | Merged canonical source |
 | --- | --- | --- | --- |
-| `AS-INGRESS-IDEMPOTENCY` | `AUTO-01` | `revised`; applied | [replacement ADR 0172](../../architecture/decisions/adr-0172-parent-event-and-frozen-handler-execution-identity.md), superseding [historical ADR 0001](../../architecture/decisions/adr-0001-scripting-event-ingress-idempotency-identity.md), and the [trigger identity table](../../architecture/system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields) |
+| `AS-INGRESS-IDEMPOTENCY` | `AUTO-01` | `revised`; applied | [replacement ADR 0172](../../architecture/decisions/adr-0172-parent-event-and-frozen-handler-execution-identity.md) |
 | `AS-HANDOFF-SUCCESS` | `AUTO-02` | `accepted`; reviewed clarification applied | [ADR 0002](../../architecture/decisions/adr-0002-automation-handoff-reliability-and-success-semantics.md) |
-| `AS-RELOAD-BACKPRESSURE` | `AUTO-03` | `revised`; applied | [replacement ADR 0173](../../architecture/decisions/adr-0173-registry-classified-reload-admission-policy.md), superseding [historical ADR 0003](../../architecture/decisions/adr-0003-reload-backpressure-and-retry-contract.md) |
-| `AA-WORLD-SELECTOR-IDENTITY` | `AUTH-01` | `revised`; applied | [replacement ADR 0168](../../architecture/decisions/adr-0168-snapshot-bound-lobby-selectors-and-stable-realm-identity.md), superseding [historical ADR 0005](../../architecture/decisions/adr-0005-tenant-identifiers-in-gameplay-protocol.md) |
+| `AS-RELOAD-BACKPRESSURE` | `AUTO-03` | `revised`; applied | [replacement ADR 0173](../../architecture/decisions/adr-0173-registry-classified-reload-admission-policy.md) |
+| `AA-WORLD-SELECTOR-IDENTITY` | `AUTH-01` | `revised`; applied | [replacement ADR 0168](../../architecture/decisions/adr-0168-snapshot-bound-lobby-selectors-and-stable-realm-identity.md) |
 | `PO-EDGE-SHARDING` | `EDGE-01` | `accepted`; applied without replacement | [ADR 0007](../../architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md) |
 | `GR-GAMEPLAY-CLUSTER-SCOPE` | `EDGE-02` | `accepted`; reviewed clarification applied | [ADR 0008](../../architecture/decisions/adr-0008-multi-cluster-gameplay-sharding-scope.md) |
 | `SF-COORDINATION-REDIS-OWNERSHIP` | `REDIS-02` | `accepted`; applied extension | [ADR 0171](../../architecture/decisions/adr-0171-separated-redis-role-processes-and-owned-keyspaces.md), extending [ADR 0009](../../architecture/decisions/adr-0009-coordination-redis-ownership-boundary.md) |
-| `SF-TCP-PROXY-IDENTITY` | `EDGE-03` | `revised`; applied | [replacement ADR 0169](../../architecture/decisions/adr-0169-exclusive-environment-bound-tcp-proxy-trust.md), superseding [historical ADR 0010](../../architecture/decisions/adr-0010-tcp-proxy-identity-canonicalization.md), and [historical ADR 0038](../../architecture/decisions/adr-0038-explicit-jwt-profiles-and-mtls-workload-identity.md) |
-| `GR-SESSION-FRONTEND-EXECUTION` | `SESSION-01` | `revised`; applied | [replacement ADR 0170](../../architecture/decisions/adr-0170-fenced-command-forwarding-and-authoritative-region-transition.md), superseding [historical ADR 0011](../../architecture/decisions/adr-0011-gameplay-session-front-end-and-region-execution.md) |
+| `SF-TCP-PROXY-IDENTITY` | `EDGE-03` | `revised`; applied | [replacement ADR 0169](../../architecture/decisions/adr-0169-exclusive-environment-bound-tcp-proxy-trust.md) |
+| `GR-SESSION-FRONTEND-EXECUTION` | `SESSION-01` | `revised`; applied | [replacement ADR 0170](../../architecture/decisions/adr-0170-fenced-command-forwarding-and-authoritative-region-transition.md) |
 
 ## Conflicts And Missing Decisions
 
