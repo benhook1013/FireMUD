@@ -116,8 +116,8 @@ Model assistance is optional design-time tooling, not a gameplay chatbot or an a
 ## Runtime Settings
 
 - Feature flags and pacing options such as tick intervals are stored in per-tenant configuration tables (see [Multi-Tenancy](./system-architecture-multi-tenancy.md)). Per-tenant tick intervals let games customize pacing across worlds.
-- Flags are defined in the Game Design Service (see [Feature Flags](./microservices/game-design-service/feature-flags.md)) but toggled through the [Logging & Admin Service](./microservices/logging-admin-service/README.md).
-- The [Game Session Service](./microservices/game-session-service/README.md) loads these settings at runtime so changes can take effect without republishing.
+- Flags are defined in the Game Design Service (see [Feature Flags](./microservices/game-design-service/feature-flags.md)); **target state:** the [Logging & Admin Service](./microservices/logging-admin-service/README.md) operator surface forwards a toggle request to the Game Session owner only after the complete gate passes: action-family schema, shared cross-language `mutationDigest/v1` golden vectors, Account authorization-reference issuance and owner redemption, plus [ADR 0048](./decisions/adr-0048-durable-idempotent-operator-write-execution.md)'s durable, idempotent, fenced owner execution and read-only recovery/reconciliation. **Current implementation:** Logging & Admin has no separate live admin UI or forwarding path; its toggle ingress fails closed as unavailable.
+- The [Game Session Service](./microservices/game-session-service/README.md) owns runtime application and loads these settings so target-state changes can take effect without republishing. The current external operator toggle remains unavailable.
 
 These options allow extensive personalization while keeping the underlying platform maintainable.
 

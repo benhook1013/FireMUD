@@ -6,9 +6,24 @@ import argparse
 import datetime as dt
 import json
 import math
+import os
 import sys
 from pathlib import Path
 from typing import Any
+
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+from numeric_validation import (
+    format_bounded_positive_seconds_error,
+    is_bounded_positive_seconds,
+    is_finite_number,
+)
+from observability_contract import (
+    AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE,
+    CANARY_IDENTITY_REQUIRED_FIELDS,
+    OMITTED_QUERYABILITY_CAPABILITY,
+    QUERYABILITY_CAPABILITIES,
+)
 
 REQUIRED_PLAYERFLOW_FLOWS = {"login", "command"}
 # Canonical serialized monitoring-profile enum from ADR 0159. Keep these values
@@ -23,7 +38,7 @@ PLAYERFLOW_CANARY_FRESHNESS_BUDGET_METRIC = (
     "playerflow_canary_freshness_budget_seconds"
 )
 REQUIRED_CANARY_ALERTS = {
-    "PlayerFlowCanaryLoginFailed": "P0",
+    "PlayerFlowCanaryLoginFailed": "P1",
     "PlayerFlowCanaryCommandFailed": "P1",
     "PlayerFlowCanaryLatencyHigh": "P1",
     "PlayerFlowCanaryEvidenceStale": "P1",
@@ -41,6 +56,19 @@ CAPABILITY_VALUES = {
 }
 EXECUTION_MODES = {"live", "simulated"}
 AUTHORITY_PROVENANCES = {"retained-external", "synthetic"}
+QUERYABILITY_RESULTS = frozenset({"passed", "failed", "not_applicable"})
+OMITTED_QUERYABILITY_ALLOWED_FIELDS = frozenset(
+    {
+        "selectedProfile",
+        "capability",
+        "result",
+        "omissionReason",
+        "evidenceObservedAt",
+        "evidenceFreshnessBudgetSeconds",
+        "evidenceExpiresAt",
+        "evidenceRef",
+    }
+)
 
 
 def main() -> int:
@@ -49,11 +77,19 @@ def main() -> int:
     )
     parser.add_argument("evidence", type=Path, help="Path to the smoke evidence JSON file")
     parser.add_argument(
+        "--evaluation-time",
+        help=(
+            "Trusted RFC3339 UTC evaluation time used for freshness checks. "
+            "Defaults to the current UTC time."
+        ),
+    )
+    parser.add_argument(
         "--allow-failure-evidence",
         action="store_true",
         help=(
             "Accept fresh structurally complete canary/path results, including "
-            "zero-valued failures, for incident evidence. "
+            "zero-valued failures and explicitly unexercised alert paths, for "
+            "incident evidence. "
             "External-authority/deadman structure, provenance, chronology, completeness, "
             "and freshness remain strict; current red outcomes are permitted only as "
             "non-authorizing incident evidence. Readiness and promotion consumers "
@@ -62,8 +98,16 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    try:
+        evaluation_time = _parse_evaluation_time(
+            args.evaluation_time or os.environ.get("FIREMUD_SMOKE_EVALUATION_TIME")
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     findings = validate_evidence(
-        args.evidence, allow_failure_evidence=args.allow_failure_evidence
+        args.evidence,
+        allow_failure_evidence=args.allow_failure_evidence,
+        evaluation_time=evaluation_time,
     )
     if findings:
         for finding in findings:
@@ -74,7 +118,10 @@ def main() -> int:
 
 
 def validate_evidence(
-    path: Path, *, allow_failure_evidence: bool = False
+    path: Path,
+    *,
+    allow_failure_evidence: bool = False,
+    evaluation_time: dt.datetime | None = None,
 ) -> list[str]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -84,11 +131,26 @@ def validate_evidence(
         return ["evidence root must be a JSON object"]
 
     findings: list[str] = []
+    evaluation_time = evaluation_time or dt.datetime.now(dt.timezone.utc)
+    if evaluation_time.tzinfo is None:
+        return ["evaluation_time must include a timezone"]
+    evaluation_epoch = evaluation_time.timestamp()
     if not data.get("deploymentRef") and not data.get("recoveryRef"):
         findings.append("deploymentRef or recoveryRef is required")
     findings.extend(_require_non_empty_string(data, "verifiedBy"))
     findings.extend(_require_non_empty_string(data, "preflightEvidenceRef"))
     findings.extend(_validate_timestamp(data.get("verifiedAt"), "verifiedAt"))
+    verified_epoch = _timestamp_epoch(data.get("verifiedAt"))
+    if verified_epoch is not None and verified_epoch > evaluation_epoch + STALE_NUMERIC_TOLERANCE_SECONDS:
+        findings.append("verifiedAt cannot be later than the trusted evaluation time")
+    findings.extend(
+        _validate_log_pipeline_queryability(
+            data.get("logPipelineQueryability"),
+            data.get("verifiedAt"),
+            evaluation_time,
+            allow_failure_evidence=allow_failure_evidence,
+        )
+    )
     execution_mode = data.get("executionMode")
     authority_provenance = data.get("externalAuthorityProvenance")
     findings.extend(_validate_execution_provenance(execution_mode, authority_provenance))
@@ -100,10 +162,18 @@ def validate_evidence(
         execution_mode,
         authority_provenance,
         data.get("verifiedAt"),
+        evaluation_time,
         capabilities.get("playerFlowCanary") == "advertised",
         allow_failure_evidence,
     )
     findings.extend(external_authority_findings)
+    findings.extend(
+        _validate_player_flow_canary_identity(
+            data.get("playerFlowCanaryIdentity"),
+            exposed_paths,
+            capabilities.get("playerFlowCanary") == "advertised",
+        )
+    )
     findings.extend(
         _validate_mirrored_signals(
             data.get("mirroredSignals"),
@@ -111,6 +181,7 @@ def validate_evidence(
             exposed_paths,
             capabilities,
             data.get("verifiedAt"),
+            evaluation_time,
             allow_failure_evidence,
         )
     )
@@ -118,8 +189,70 @@ def validate_evidence(
         _validate_canary_alerts(
             data.get("canaryAlerts"),
             capabilities.get("playerFlowCanary") == "advertised",
+            allow_failure_evidence,
         )
     )
+    return findings
+
+
+def _validate_player_flow_canary_identity(
+    value: Any, exposed_paths: set[str], advertised: bool
+) -> list[str]:
+    key = "playerFlowCanaryIdentity"
+    if not advertised:
+        if value is not None:
+            return [f"{key} is only allowed when capabilities.playerFlowCanary=advertised"]
+        return []
+    findings: list[str] = []
+    if not AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE:
+        findings.append(
+            f"{key} cannot be advertised until an authoritative Account synthetic identity verifier is implemented"
+        )
+    if not isinstance(value, dict):
+        findings.append(f"{key} is required when capabilities.playerFlowCanary=advertised")
+        return findings
+    if set(value) != CANARY_IDENTITY_REQUIRED_FIELDS:
+        findings.append(
+            f"{key} must contain exactly "
+            + ", ".join(sorted(CANARY_IDENTITY_REQUIRED_FIELDS))
+        )
+    if value.get("authority") != "account-service":
+        findings.append(f"{key}.authority must be account-service")
+    if value.get("classification") != "synthetic":
+        findings.append(f"{key}.classification must be synthetic")
+    if value.get("analyticsSloExclusion") is not True:
+        findings.append(f"{key}.analyticsSloExclusion must be true")
+    if not isinstance(value.get("evidenceRef"), str) or not value["evidenceRef"].strip():
+        findings.append(f"{key}.evidenceRef must be a non-empty string")
+    credentials = value.get("credentials")
+    if (
+        not isinstance(credentials, dict)
+        or set(credentials) != {"nonDefault", "productionSafe"}
+        or credentials.get("nonDefault") is not True
+        or credentials.get("productionSafe") is not True
+    ):
+        findings.append(
+            f"{key}.credentials must prove nonDefault=true and productionSafe=true"
+        )
+    transport_characters = value.get("transportCharacters")
+    if not isinstance(transport_characters, dict) or not exposed_paths.issubset(
+        set(transport_characters)
+    ):
+        findings.append(
+            f"{key}.transportCharacters must contain every exposed public path"
+        )
+    elif isinstance(transport_characters, dict):
+        for path in sorted(exposed_paths):
+            identity = transport_characters[path]
+            if (
+                not isinstance(identity, dict)
+                or set(identity) != {"restricted", "isolated"}
+                or identity.get("restricted") is not True
+                or identity.get("isolated") is not True
+            ):
+                findings.append(
+                    f"{key}.transportCharacters.{path} must prove restricted=true and isolated=true"
+                )
     return findings
 
 
@@ -140,13 +273,216 @@ def _validate_timestamp(value: Any, key: str) -> list[str]:
     return []
 
 
+def _validate_log_pipeline_queryability(
+    value: Any,
+    verified_at: Any,
+    evaluation_time: dt.datetime,
+    *,
+    allow_failure_evidence: bool,
+) -> list[str]:
+    """Validate queryability evidence or an explicit posture-bound omission."""
+    if value is None:
+        return [
+            "logPipelineQueryability is required; provide queryability evidence or an explicit omission"
+        ]
+    key = "logPipelineQueryability"
+    if not isinstance(value, dict):
+        return [f"{key} must be a JSON object"]
+
+    findings: list[str] = []
+    for field in ("selectedProfile", "capability", "result", "evidenceRef"):
+        if not isinstance(value.get(field), str) or not value[field].strip():
+            findings.append(f"{key}.{field} is required")
+    capability = value.get("capability")
+    result = value.get("result")
+    if not isinstance(capability, str) or capability not in QUERYABILITY_CAPABILITIES:
+        findings.append(
+            f"{key}.capability must be one of "
+            + ", ".join(sorted(QUERYABILITY_CAPABILITIES))
+        )
+    if not isinstance(result, str) or result not in QUERYABILITY_RESULTS:
+        findings.append(
+            f"{key}.result must be one of " + ", ".join(sorted(QUERYABILITY_RESULTS))
+        )
+    omitted = capability == OMITTED_QUERYABILITY_CAPABILITY
+    if omitted:
+        if result != "not_applicable":
+            findings.append(
+                f"{key}.result must be 'not_applicable' when capability is {OMITTED_QUERYABILITY_CAPABILITY}"
+            )
+        if not isinstance(value.get("omissionReason"), str) or not value["omissionReason"].strip():
+            findings.append(f"{key}.omissionReason is required when queryability is omitted")
+        for field in sorted(set(value) - OMITTED_QUERYABILITY_ALLOWED_FIELDS):
+            findings.append(
+                f"{key}.{field} is not allowed when queryability is omitted"
+            )
+    else:
+        if result == "not_applicable":
+            findings.append(
+                f"{key}.result must be 'passed' or 'failed' for a non-omitted capability"
+            )
+        if result == "failed" and not allow_failure_evidence:
+            findings.append(
+                f"{key}.result must be 'passed' for readiness validation; 'failed' is only allowed with --allow-failure-evidence"
+            )
+        for field in (
+            "backend",
+            "storageTarget",
+            "recordId",
+            "service",
+            "traceId",
+            "queryPath",
+        ):
+            if not isinstance(value.get(field), str) or not value[field].strip():
+                findings.append(f"{key}.{field} is required")
+        query_path = value.get("queryPath")
+        storage_target = value.get("storageTarget")
+        if (
+            isinstance(query_path, str)
+            and query_path.strip()
+            and isinstance(storage_target, str)
+            and storage_target.strip()
+        ):
+            normalized_query_path = query_path.strip()
+            normalized_storage_target = storage_target.strip()
+            bare_index_convention = (
+                "*" in normalized_query_path
+                and not any(separator in normalized_query_path for separator in (":", "/", "?"))
+            )
+            if (
+                normalized_query_path == normalized_storage_target
+                or bare_index_convention
+            ):
+                findings.append(
+                    f"{key}.queryPath must identify a final supported operator surface, not only a storageTarget or index convention"
+                )
+
+    budget_key = f"{key}.evidenceFreshnessBudgetSeconds"
+    budget_findings = _validate_positive_finite_number(
+        value.get("evidenceFreshnessBudgetSeconds"), budget_key
+    )
+    findings.extend(budget_findings)
+
+    timestamp_keys = ["evidenceObservedAt", "evidenceExpiresAt"]
+    if not omitted:
+        timestamp_keys[0:0] = ["emittedAt", "retrievedAt"]
+    timestamp_epochs: dict[str, float] = {}
+    for field in timestamp_keys:
+        field_key = f"{key}.{field}"
+        timestamp_findings = _validate_timestamp(value.get(field), field_key)
+        findings.extend(timestamp_findings)
+        if not timestamp_findings:
+            parsed = _timestamp_epoch(value[field])
+            if parsed is not None:
+                timestamp_epochs[field] = parsed
+
+    verified_epoch = _timestamp_epoch(verified_at)
+    evaluation_epoch = evaluation_time.timestamp()
+    emitted_epoch = timestamp_epochs.get("emittedAt")
+    retrieved_epoch = timestamp_epochs.get("retrievedAt")
+    observed_epoch = timestamp_epochs.get("evidenceObservedAt")
+    expires_epoch = timestamp_epochs.get("evidenceExpiresAt")
+    if emitted_epoch is not None and retrieved_epoch is not None and retrieved_epoch < emitted_epoch:
+        findings.append(
+            f"{key}.retrievedAt must be at or after {key}.emittedAt"
+        )
+    if retrieved_epoch is not None and observed_epoch is not None and observed_epoch < retrieved_epoch:
+        findings.append(
+            f"{key}.evidenceObservedAt must be at or after {key}.retrievedAt"
+        )
+    if observed_epoch is not None and verified_epoch is not None and observed_epoch > verified_epoch:
+        findings.append(
+            f"{key}.evidenceObservedAt cannot be in the future relative to verifiedAt"
+        )
+    if not omitted:
+        for field, timestamp_epoch in (
+            ("emittedAt", emitted_epoch),
+            ("retrievedAt", retrieved_epoch),
+        ):
+            if timestamp_epoch is not None and verified_epoch is not None and timestamp_epoch > verified_epoch:
+                findings.append(
+                    f"{key}.{field} cannot be in the future relative to verifiedAt"
+                )
+    if observed_epoch is not None and expires_epoch is not None:
+        if expires_epoch <= observed_epoch:
+            findings.append(
+                f"{key}.evidenceExpiresAt must be after {key}.evidenceObservedAt"
+            )
+        if verified_epoch is not None and verified_epoch >= expires_epoch:
+            findings.append(
+                f"{key}.evidenceExpiresAt cannot be in the past relative to verifiedAt"
+            )
+        if observed_epoch > evaluation_epoch:
+            findings.append(
+                f"{key}.evidenceObservedAt cannot be later than the trusted evaluation time"
+            )
+        if expires_epoch <= evaluation_epoch:
+            findings.append(
+                f"{key}.evidenceExpiresAt must be later than the trusted evaluation time"
+            )
+        if not budget_findings:
+            expected_expiry = observed_epoch + value["evidenceFreshnessBudgetSeconds"]
+            if abs(expires_epoch - expected_expiry) > STALE_NUMERIC_TOLERANCE_SECONDS:
+                findings.append(
+                    f"{key}.evidenceExpiresAt must equal evidenceObservedAt plus evidenceFreshnessBudgetSeconds within numeric tolerance"
+                )
+
+    if not omitted:
+        for field in ("configuredDelayTargetSeconds", "observedDelaySeconds"):
+            number_key = f"{key}.{field}"
+            findings.extend(_validate_nonnegative_finite_number(value.get(field), number_key))
+        target = value.get("configuredDelayTargetSeconds")
+        if (
+            not isinstance(target, bool)
+            and isinstance(target, (int, float))
+            and is_finite_number(target)
+            and target <= 0
+        ):
+            findings.append(
+                f"{key}.configuredDelayTargetSeconds must be a positive finite number"
+            )
+        observed_delay = value.get("observedDelaySeconds")
+        if emitted_epoch is not None and retrieved_epoch is not None and not (
+            isinstance(observed_delay, bool)
+            or not isinstance(observed_delay, (int, float))
+            or not is_finite_number(observed_delay)
+        ):
+            expected_delay = retrieved_epoch - emitted_epoch
+            if abs(observed_delay - expected_delay) > STALE_NUMERIC_TOLERANCE_SECONDS:
+                findings.append(
+                    f"{key}.observedDelaySeconds must equal retrievedAt minus emittedAt within numeric tolerance"
+                )
+        if (
+            result == "passed"
+            and isinstance(target, (int, float))
+            and not isinstance(target, bool)
+            and is_finite_number(target)
+            and isinstance(observed_delay, (int, float))
+            and not isinstance(observed_delay, bool)
+            and is_finite_number(observed_delay)
+            and observed_delay > target
+        ):
+            findings.append(
+                f"{key}.observedDelaySeconds must be no greater than configuredDelayTargetSeconds for a passed result"
+            )
+        verified_fields = value.get("verifiedFields")
+        if not isinstance(verified_fields, list) or not verified_fields or any(
+            not isinstance(field, str) or not field.strip() for field in verified_fields
+        ):
+            findings.append(f"{key}.verifiedFields must be a non-empty list of strings")
+    return findings
+
+
 def _validate_execution_provenance(
     execution_mode: Any, authority_provenance: Any
 ) -> list[str]:
     findings: list[str] = []
-    if execution_mode not in EXECUTION_MODES:
+    if not isinstance(execution_mode, str) or execution_mode not in EXECUTION_MODES:
         findings.append("executionMode must be live or simulated")
-    if authority_provenance not in AUTHORITY_PROVENANCES:
+    if (
+        not isinstance(authority_provenance, str)
+        or authority_provenance not in AUTHORITY_PROVENANCES
+    ):
         findings.append(
             "externalAuthorityProvenance must be retained-external or synthetic"
         )
@@ -170,7 +506,7 @@ def _validate_capabilities(value: Any) -> tuple[dict[str, str], list[str]]:
     capabilities: dict[str, str] = {}
     for key in sorted(REQUIRED_CAPABILITIES & set(value)):
         capability = value[key]
-        if capability not in CAPABILITY_VALUES[key]:
+        if not isinstance(capability, str) or capability not in CAPABILITY_VALUES[key]:
             findings.append(
                 f"capabilities.{key} must be one of "
                 + ", ".join(sorted(CAPABILITY_VALUES[key]))
@@ -185,6 +521,7 @@ def _validate_external_authority(
     execution_mode: Any,
     authority_provenance: Any,
     verified_at: Any,
+    evaluation_time: dt.datetime,
     canary_advertised: bool,
     allow_failure_evidence: bool = False,
 ) -> tuple[list[str], set[str]]:
@@ -194,7 +531,7 @@ def _validate_external_authority(
     allow_synthetic_refs = (
         execution_mode == "simulated" and authority_provenance == "synthetic"
     )
-    if profile not in MONITORING_PROFILES:
+    if not isinstance(profile, str) or profile not in MONITORING_PROFILES:
         return [
             "externalAuthority.profile must be independent-required or independent-omitted"
         ], set()
@@ -237,7 +574,9 @@ def _validate_external_authority(
         )
     )
     findings.extend(
-        _validate_external_authority_freshness(value, verified_at, exposed_paths)
+        _validate_external_authority_freshness(
+            value, verified_at, evaluation_time, exposed_paths
+        )
     )
 
     deadman = value.get("deadmanAuthority")
@@ -323,36 +662,15 @@ def _validate_authority_record(
     allow_synthetic_refs: bool,
     allow_failure_evidence: bool = False,
 ) -> list[str]:
-    findings: list[str] = []
-    status = record.get("status")
-    if status not in {"green", "red"}:
-        findings.append(f"{key}.status must be green or red")
-    elif require_green and status != "green" and not allow_failure_evidence:
-        findings.append(f"{key}.status must be green")
-    required_fields = ("evidenceRef", "target", "checkRef")
-    if status == "green" or not allow_failure_evidence:
-        required_fields = (*required_fields, "pageEvidenceRef")
-    for field in required_fields:
-        value = record.get(field)
-        if not isinstance(value, str) or not value.strip():
-            findings.append(f"{key}.{field} is required")
-        else:
-            findings.extend(
-                _validate_reference_provenance(
-                    value, f"{key}.{field}", allow_synthetic_refs
-                )
-            )
-    if status == "red" and allow_failure_evidence and "pageEvidenceRef" in record:
-        page_evidence_ref = record["pageEvidenceRef"]
-        if not isinstance(page_evidence_ref, str) or not page_evidence_ref.strip():
-            findings.append(f"{key}.pageEvidenceRef must be a non-empty string when present")
-        else:
-            findings.extend(
-                _validate_reference_provenance(
-                    page_evidence_ref, f"{key}.pageEvidenceRef", allow_synthetic_refs
-                )
-            )
-    return findings
+    return _validate_external_monitor_record(
+        record,
+        key,
+        required_fields=("evidenceRef", "target", "checkRef"),
+        require_green=require_green,
+        allow_synthetic_refs=allow_synthetic_refs,
+        allow_failure_evidence=allow_failure_evidence,
+        invalid_status_message=f"{key}.status must be green or red",
+    )
 
 
 def _validate_public_path_record(
@@ -361,11 +679,33 @@ def _validate_public_path_record(
     allow_synthetic_refs: bool,
     allow_failure_evidence: bool = False,
 ) -> list[str]:
+    return _validate_external_monitor_record(
+        record,
+        key,
+        required_fields=("evidenceRef", "target"),
+        require_green=True,
+        allow_synthetic_refs=allow_synthetic_refs,
+        allow_failure_evidence=allow_failure_evidence,
+        invalid_status_message=f"{key}.status must be green",
+    )
+
+
+def _validate_external_monitor_record(
+    record: dict[str, Any],
+    key: str,
+    *,
+    required_fields: tuple[str, ...],
+    require_green: bool,
+    allow_synthetic_refs: bool,
+    allow_failure_evidence: bool,
+    invalid_status_message: str,
+) -> list[str]:
     findings: list[str] = []
     status = record.get("status")
-    if status != "green" and not (status == "red" and allow_failure_evidence):
+    if not isinstance(status, str) or status not in {"green", "red"}:
+        findings.append(invalid_status_message)
+    elif require_green and status != "green" and not allow_failure_evidence:
         findings.append(f"{key}.status must be green")
-    required_fields = ("evidenceRef", "target")
     if status == "green" or not allow_failure_evidence:
         required_fields = (*required_fields, "pageEvidenceRef")
     for field in required_fields:
@@ -436,6 +776,7 @@ def _validate_mirrored_signals(
     exposed_paths: set[str],
     capabilities: dict[str, str],
     verified_at: Any,
+    evaluation_time: dt.datetime,
     allow_failure_evidence: bool = False,
 ) -> list[str]:
     if not isinstance(value, dict):
@@ -460,7 +801,13 @@ def _validate_mirrored_signals(
             findings.append(f"mirroredSignals.{deadman_key} must be absent for independent-omitted")
     elif mirrors_published:
         findings.extend(
-            _validate_deadman_signal(value.get(deadman_key), verified_at)
+            _validate_deadman_signal(
+                value.get(deadman_key),
+                verified_at,
+                external_authority,
+                evaluation_time,
+                allow_failure_evidence,
+            )
         )
     elif deadman_key in value:
         findings.append(
@@ -499,6 +846,7 @@ def _validate_mirrored_signals(
                 value.get(PLAYERFLOW_CANARY_LAST_RUN_TIMESTAMP_METRIC),
                 exposed_paths,
                 verified_at,
+                evaluation_time,
                 freshness_budget,
                 profile,
             )
@@ -563,30 +911,78 @@ def _validate_entrypath_signals(
     return target_findings
 
 
-def _validate_deadman_signal(value: Any, verified_at: Any) -> list[str]:
+def _validate_deadman_signal(
+    value: Any,
+    verified_at: Any,
+    external_authority: Any,
+    evaluation_time: dt.datetime,
+    allow_failure_evidence: bool = False,
+) -> list[str]:
     if not isinstance(value, dict):
         return ["mirroredSignals.observability_deadman_heartbeat_timestamp_seconds is required"]
     findings: list[str] = []
     if not isinstance(value.get("source"), str) or not value.get("source").strip():
         findings.append("observability_deadman_heartbeat_timestamp_seconds.source is required")
     timestamp = value.get("value")
-    if (
-        isinstance(timestamp, bool)
-        or not isinstance(timestamp, (int, float))
-        or not math.isfinite(timestamp)
-        or timestamp <= 0
-    ):
+    timestamp_findings = _validate_positive_finite_number(
+        timestamp, "observability_deadman_heartbeat_timestamp_seconds.value"
+    )
+    findings.extend(timestamp_findings)
+    if not timestamp_findings and timestamp > evaluation_time.timestamp():
         findings.append(
-            "observability_deadman_heartbeat_timestamp_seconds.value must be a positive finite number"
+            "observability_deadman_heartbeat_timestamp_seconds.value cannot be in the future relative to the trusted evaluation time"
         )
-    elif (
-        (verified_epoch := _timestamp_epoch(verified_at)) is not None
-        and timestamp > verified_epoch
+    expected_timestamp = (
+        _timestamp_epoch(external_authority.get("lastSuccessfulHeartbeatObservedAt"))
+        if isinstance(external_authority, dict)
+        else None
+    )
+    if (
+        not findings
+        and expected_timestamp is not None
+        and not math.isclose(
+            timestamp,
+            expected_timestamp,
+            rel_tol=0.0,
+            abs_tol=STALE_NUMERIC_TOLERANCE_SECONDS,
+        )
+        and not _is_allowed_injected_stale_deadman_mirror(
+            timestamp,
+            verified_at,
+            external_authority,
+            allow_failure_evidence,
+        )
     ):
         findings.append(
-            "observability_deadman_heartbeat_timestamp_seconds.value cannot be in the future relative to verifiedAt"
+            "observability_deadman_heartbeat_timestamp_seconds.value must equal "
+            "externalAuthority.lastSuccessfulHeartbeatObservedAt unless incident "
+            "validation is preserving an explicitly stale injected mirror"
         )
     return findings
+
+
+def _is_allowed_injected_stale_deadman_mirror(
+    timestamp: float,
+    verified_at: Any,
+    external_authority: Any,
+    allow_failure_evidence: bool,
+) -> bool:
+    if not allow_failure_evidence or not isinstance(external_authority, dict):
+        return False
+    verified_epoch = _timestamp_epoch(verified_at)
+    stale_threshold = external_authority.get("staleThresholdSeconds")
+    if (
+        verified_epoch is None
+        or isinstance(stale_threshold, bool)
+        or not isinstance(stale_threshold, (int, float))
+        or not is_finite_number(stale_threshold)
+        or stale_threshold <= 0
+    ):
+        return False
+    return (
+        verified_epoch - timestamp
+        > stale_threshold + STALE_NUMERIC_TOLERANCE_SECONDS
+    )
 
 
 def _validate_playerflow_success(
@@ -617,7 +1013,7 @@ def _validate_playerflow_success(
             )
             continue
         flow = record.get("flow")
-        if flow not in REQUIRED_PLAYERFLOW_FLOWS:
+        if not isinstance(flow, str) or flow not in REQUIRED_PLAYERFLOW_FLOWS:
             findings.append(
                 f"playerflow_canary_success contains unsupported flow: {flow}"
             )
@@ -664,7 +1060,7 @@ def _validate_boolean_like_metric(value: Any, metric: str) -> list[str]:
     if (
         isinstance(value, bool)
         or not isinstance(value, (int, float))
-        or not math.isfinite(value)
+        or not is_finite_number(value)
         or value not in {0, 1}
     ):
         return [f"{metric} values must be finite numeric 0 or 1"]
@@ -739,6 +1135,7 @@ def _validate_playerflow_last_run(
     value: Any,
     exposed_paths: set[str],
     verified_at: Any,
+    evaluation_time: dt.datetime,
     freshness_budget: Any,
     profile: Any,
 ) -> list[str]:
@@ -750,11 +1147,12 @@ def _validate_playerflow_last_run(
     findings: list[str] = []
     seen: set[tuple[str, str]] = set()
     verified_epoch = _timestamp_epoch(verified_at)
+    evaluation_epoch = evaluation_time.timestamp()
     budget = (
         freshness_budget
         if isinstance(freshness_budget, (int, float))
         and not isinstance(freshness_budget, bool)
-        and math.isfinite(freshness_budget)
+        and is_finite_number(freshness_budget)
         and freshness_budget > 0
         else None
     )
@@ -776,7 +1174,7 @@ def _validate_playerflow_last_run(
                 f"{PLAYERFLOW_CANARY_LAST_RUN_TIMESTAMP_METRIC} contains unsupported path: {path}"
             )
             continue
-        if flow not in REQUIRED_PLAYERFLOW_FLOWS:
+        if not isinstance(flow, str) or flow not in REQUIRED_PLAYERFLOW_FLOWS:
             findings.append(
                 f"{PLAYERFLOW_CANARY_LAST_RUN_TIMESTAMP_METRIC} contains unsupported flow: {flow}"
             )
@@ -799,22 +1197,25 @@ def _validate_playerflow_last_run(
         if (
             isinstance(timestamp, bool)
             or not isinstance(timestamp, (int, float))
-            or not math.isfinite(timestamp)
+            or not is_finite_number(timestamp)
             or timestamp <= 0
         ):
             findings.append(
                 f"{PLAYERFLOW_CANARY_LAST_RUN_TIMESTAMP_METRIC} values must be positive finite timestamps"
             )
             continue
-        if verified_epoch is not None:
-            if timestamp > verified_epoch + 1:
-                findings.append(
-                    f"{PLAYERFLOW_CANARY_LAST_RUN_TIMESTAMP_METRIC} value cannot be in the future"
-                )
-            if budget is not None and verified_epoch - timestamp > budget:
-                findings.append(
-                    f"{PLAYERFLOW_CANARY_LAST_RUN_TIMESTAMP_METRIC} value is older than the configured detection budget"
-                )
+        if verified_epoch is not None and timestamp > verified_epoch + 1:
+            findings.append(
+                f"{PLAYERFLOW_CANARY_LAST_RUN_TIMESTAMP_METRIC} value cannot be in the future"
+            )
+        if timestamp > evaluation_epoch + 1:
+            findings.append(
+                f"{PLAYERFLOW_CANARY_LAST_RUN_TIMESTAMP_METRIC} value cannot be later than the trusted evaluation time"
+            )
+        if budget is not None and evaluation_epoch - timestamp > budget:
+            findings.append(
+                f"{PLAYERFLOW_CANARY_LAST_RUN_TIMESTAMP_METRIC} value is older than the configured detection budget relative to the trusted evaluation time"
+            )
     required = {(flow, path) for flow in REQUIRED_PLAYERFLOW_FLOWS for path in exposed_paths}
     missing = sorted(required - seen)
     if missing:
@@ -849,7 +1250,7 @@ def _validate_canary_detection_budget_minimum(value: Any) -> list[str]:
     if (
         isinstance(value, bool)
         or not isinstance(value, (int, float))
-        or not math.isfinite(value)
+        or not is_finite_number(value)
         or value <= 0
         or value >= MIN_CANARY_DETECTION_BUDGET_SECONDS
     ):
@@ -862,7 +1263,10 @@ def _validate_canary_detection_budget_minimum(value: Any) -> list[str]:
 
 
 def _validate_external_authority_freshness(
-    value: dict[str, Any], verified_at: Any, exposed_paths: set[str]
+    value: dict[str, Any],
+    verified_at: Any,
+    evaluation_time: dt.datetime,
+    exposed_paths: set[str],
 ) -> list[str]:
     key = "externalAuthority.evidenceObservedAt"
     findings = _validate_timestamp(value.get("evidenceObservedAt"), key)
@@ -870,7 +1274,12 @@ def _validate_external_authority_freshness(
         return findings
     observed_epoch = _timestamp_epoch(value.get("evidenceObservedAt"))
     verified_epoch = _timestamp_epoch(verified_at)
+    evaluation_epoch = evaluation_time.timestamp()
     if observed_epoch is not None:
+        if verified_epoch is not None and observed_epoch > verified_epoch:
+            findings.append(
+                f"{key} cannot be in the future relative to verifiedAt"
+            )
         findings.extend(
             _validate_source_timestamp_chronology(
                 value.get("lastSuccessfulHeartbeatObservedAt"),
@@ -887,7 +1296,7 @@ def _validate_external_authority_freshness(
             if (
                 isinstance(observed_staleness, (int, float))
                 and not isinstance(observed_staleness, bool)
-                and math.isfinite(observed_staleness)
+                and is_finite_number(observed_staleness)
                 and not math.isclose(
                     observed_staleness,
                     expected_staleness,
@@ -907,10 +1316,10 @@ def _validate_external_authority_freshness(
                 and deadman.get("status") == "green"
                 and isinstance(observed_staleness, (int, float))
                 and not isinstance(observed_staleness, bool)
-                and math.isfinite(observed_staleness)
+                and is_finite_number(observed_staleness)
                 and isinstance(stale_threshold, (int, float))
                 and not isinstance(stale_threshold, bool)
-                and math.isfinite(stale_threshold)
+                and is_finite_number(stale_threshold)
                 and observed_staleness
                 > stale_threshold + STALE_NUMERIC_TOLERANCE_SECONDS
             ):
@@ -924,7 +1333,7 @@ def _validate_external_authority_freshness(
         budget_valid = (
             not isinstance(budget, bool)
             and isinstance(budget, (int, float))
-            and math.isfinite(budget)
+            and is_finite_number(budget)
             and budget > 0
         )
         if isinstance(checks, dict):
@@ -955,7 +1364,7 @@ def _validate_external_authority_freshness(
                     if (
                         isinstance(observed_probe_age, (int, float))
                         and not isinstance(observed_probe_age, bool)
-                        and math.isfinite(observed_probe_age)
+                        and is_finite_number(observed_probe_age)
                         and not math.isclose(
                             observed_probe_age,
                             expected_probe_age,
@@ -971,7 +1380,7 @@ def _validate_external_authority_freshness(
                         and budget_valid
                         and isinstance(observed_probe_age, (int, float))
                         and not isinstance(observed_probe_age, bool)
-                        and math.isfinite(observed_probe_age)
+                        and is_finite_number(observed_probe_age)
                         and observed_probe_age
                         > budget + STALE_NUMERIC_TOLERANCE_SECONDS
                     ):
@@ -979,23 +1388,23 @@ def _validate_external_authority_freshness(
                             f"externalAuthority.publicPathChecks.{path}.green observedProbeAgeSeconds must be no greater than detectionBudgetSeconds"
                         )
     budget = value.get("detectionBudgetSeconds")
-    if observed_epoch is None or verified_epoch is None:
+    if observed_epoch is None:
         return findings
+    if observed_epoch > evaluation_epoch + STALE_NUMERIC_TOLERANCE_SECONDS:
+        findings.append(
+            f"{key} cannot be later than the trusted evaluation time"
+        )
     if (
         isinstance(budget, bool)
         or not isinstance(budget, (int, float))
-        or not math.isfinite(budget)
+        or not is_finite_number(budget)
         or budget <= 0
     ):
         return findings
-    evidence_age = verified_epoch - observed_epoch
-    if evidence_age < 0:
+    evidence_age = evaluation_epoch - observed_epoch
+    if evidence_age > budget:
         findings.append(
-            f"{key} cannot be in the future relative to verifiedAt"
-        )
-    elif evidence_age > budget:
-        findings.append(
-            f"{key} is older than externalAuthority.detectionBudgetSeconds"
+            f"{key} is older than externalAuthority.detectionBudgetSeconds relative to the trusted evaluation time"
         )
     return findings
 
@@ -1015,13 +1424,8 @@ def _validate_source_timestamp_chronology(
 
 
 def _validate_positive_finite_number(value: Any, key: str) -> list[str]:
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, (int, float))
-        or not math.isfinite(value)
-        or value <= 0
-    ):
-        return [f"{key} must be a positive finite number"]
+    if not is_bounded_positive_seconds(value):
+        return [format_bounded_positive_seconds_error(key)]
     return []
 
 
@@ -1029,11 +1433,25 @@ def _validate_nonnegative_finite_number(value: Any, key: str) -> list[str]:
     if (
         isinstance(value, bool)
         or not isinstance(value, (int, float))
-        or not math.isfinite(value)
+        or not is_finite_number(value)
         or value < 0
     ):
         return [f"{key} must be a nonnegative finite number"]
     return []
+
+
+def _parse_evaluation_time(value: str | None) -> dt.datetime:
+    if value is None:
+        return dt.datetime.now(dt.timezone.utc)
+    if not isinstance(value, str) or not value.endswith("Z"):
+        raise ValueError("evaluation time must be an RFC3339 UTC timestamp ending in Z")
+    try:
+        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"evaluation time is not parseable: {exc}") from exc
+    if parsed.tzinfo is None:
+        raise ValueError("evaluation time must include a timezone")
+    return parsed
 
 
 def _timestamp_epoch(value: Any) -> float | None:
@@ -1062,7 +1480,9 @@ def _validate_metric_target(
     return findings
 
 
-def _validate_canary_alerts(value: Any, required: bool) -> list[str]:
+def _validate_canary_alerts(
+    value: Any, required: bool, allow_failure_evidence: bool = False
+) -> list[str]:
     if not required:
         if value in (None, []):
             return []
@@ -1070,8 +1490,27 @@ def _validate_canary_alerts(value: Any, required: bool) -> list[str]:
     records = _records(value)
     if records is None:
         return ["canaryAlerts must be a list"]
-    by_name = {record.get("alert"): record for record in records}
+    alert_names = [record.get("alert") for record in records]
+    string_names = [name for name in alert_names if isinstance(name, str)]
     findings: list[str] = []
+    if len(string_names) != len(alert_names):
+        findings.append("canaryAlerts alert names must be strings")
+    duplicate_names = sorted(
+        {name for name in string_names if string_names.count(name) > 1}
+    )
+    if duplicate_names:
+        findings.append(
+            "canaryAlerts must contain exactly one record per alert family: "
+            + ", ".join(duplicate_names)
+        )
+    unsupported = sorted(set(string_names) - set(REQUIRED_CANARY_ALERTS))
+    if unsupported:
+        findings.append("canaryAlerts has unsupported alert families: " + ", ".join(unsupported))
+    by_name = {
+        record["alert"]: record
+        for record in records
+        if isinstance(record.get("alert"), str)
+    }
     missing = sorted(REQUIRED_CANARY_ALERTS - by_name.keys())
     if missing:
         findings.append("canaryAlerts missing: " + ", ".join(missing))
@@ -1081,8 +1520,21 @@ def _validate_canary_alerts(value: Any, required: bool) -> list[str]:
             continue
         if record.get("severity") != severity:
             findings.append(f"{alert} severity must be {severity}")
-        if record.get("exerciseResult") != "passed":
-            findings.append(f"{alert} exerciseResult must be passed")
+        allowed_results = {"passed"}
+        if allow_failure_evidence:
+            allowed_results.update({"failed", "not_exercised"})
+        exercise_result = record.get("exerciseResult")
+        if (
+            not isinstance(exercise_result, str)
+            or exercise_result not in allowed_results
+        ):
+            if allow_failure_evidence:
+                findings.append(
+                    f"{alert} exerciseResult must be one of "
+                    + ", ".join(sorted(allowed_results))
+                )
+            else:
+                findings.append(f"{alert} exerciseResult must be passed")
     return findings
 
 

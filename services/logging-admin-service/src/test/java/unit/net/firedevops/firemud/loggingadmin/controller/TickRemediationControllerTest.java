@@ -14,7 +14,6 @@ import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfigurati
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.dto.RuntimeOwnershipStatusDto;
-import net.firedevops.firemud.loggingadmin.dto.TickRemediationActionDto;
 import net.firedevops.firemud.loggingadmin.dto.TickRemediationRequest;
 import net.firedevops.firemud.loggingadmin.service.TickRemediationService;
 import net.firedevops.firemud.test.WithFiremudPrivilegedHttpAuthTestProperties;
@@ -140,11 +139,8 @@ class TickRemediationControllerTest {
   }
 
   @Test
-  void pauseReturnsActionDto() throws Exception {
+  void pauseRejectsAuthorizedCallerWhileMutationGateIsUnavailable() throws Exception {
     TickRemediationRequest request = new TickRemediationRequest(1L, "7", null, "maintenance");
-    when(tickRemediationService.pauseTicksForScope(request))
-        .thenReturn(
-            new TickRemediationActionDto(1L, "game_instance", "7", "pause", "42", "maintenance"));
     String token =
         jwtUtil.generateToken(
             "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
@@ -155,9 +151,135 @@ class TickRemediationControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.data.action").value("pause"))
-        .andExpect(jsonPath("$.data.scopeType").value("game_instance"));
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(jsonPath("$.status").value("ERROR"))
+        .andExpect(jsonPath("$.error.code").value("TICK_REMEDIATION_UNAVAILABLE"))
+        .andExpect(
+            jsonPath("$.error.message")
+                .value(
+                    "Tick remediation actions are unavailable until the shared mutation gate is implemented"));
+
+    verifyNoInteractions(tickRemediationService);
+  }
+
+  @Test
+  void resumeRejectsAuthorizedCallerWhileMutationGateIsUnavailable() throws Exception {
+    TickRemediationRequest request = new TickRemediationRequest(1L, "7", null, "maintenance");
+    String token =
+        jwtUtil.generateToken(
+            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            post("/tick-remediation/resume")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(jsonPath("$.status").value("ERROR"))
+        .andExpect(jsonPath("$.error.code").value("TICK_REMEDIATION_UNAVAILABLE"))
+        .andExpect(
+            jsonPath("$.error.message")
+                .value(
+                    "Tick remediation actions are unavailable until the shared mutation gate is implemented"));
+
+    verifyNoInteractions(tickRemediationService);
+  }
+
+  @Test
+  void pauseRejectsRegionOnlyScopeBeforeUnavailableResponse() throws Exception {
+    TickRemediationRequest request =
+        new TickRemediationRequest(1L, null, "region-7", "maintenance");
+    String token =
+        jwtUtil.generateToken(
+            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            post("/tick-remediation/pause")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.status").value("ERROR"))
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(
+            jsonPath("$.error.message")
+                .value(
+                    "gameInstanceId is required and regionId is not supported for pause/resume"));
+
+    verifyNoInteractions(tickRemediationService);
+  }
+
+  @Test
+  void resumeRejectsRegionOnlyScopeBeforeUnavailableResponse() throws Exception {
+    TickRemediationRequest request =
+        new TickRemediationRequest(1L, null, "region-7", "maintenance");
+    String token =
+        jwtUtil.generateToken(
+            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            post("/tick-remediation/resume")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.status").value("ERROR"))
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(
+            jsonPath("$.error.message")
+                .value(
+                    "gameInstanceId is required and regionId is not supported for pause/resume"));
+
+    verifyNoInteractions(tickRemediationService);
+  }
+
+  @Test
+  void pauseRejectsEmptyRegionIdBeforeUnavailableResponse() throws Exception {
+    TickRemediationRequest request = new TickRemediationRequest(1L, "7", "", "maintenance");
+    String token =
+        jwtUtil.generateToken(
+            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            post("/tick-remediation/pause")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(
+            jsonPath("$.error.message")
+                .value(
+                    "gameInstanceId is required and regionId is not supported for pause/resume"));
+
+    verifyNoInteractions(tickRemediationService);
+  }
+
+  @Test
+  void resumeRejectsBlankRegionIdBeforeUnavailableResponse() throws Exception {
+    TickRemediationRequest request = new TickRemediationRequest(1L, "7", "   ", "maintenance");
+    String token =
+        jwtUtil.generateToken(
+            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            post("/tick-remediation/resume")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+        .andExpect(
+            jsonPath("$.error.message")
+                .value(
+                    "gameInstanceId is required and regionId is not supported for pause/resume"));
+
+    verifyNoInteractions(tickRemediationService);
   }
 
   @Test

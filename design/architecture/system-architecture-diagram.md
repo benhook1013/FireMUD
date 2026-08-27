@@ -4,6 +4,8 @@
 
 The room-state assembly shown in this diagram is target-state. Current World and Entity room-read requests remain floor-free, and the causal-floor/served-through protocol is not implemented; current scope markers do not prove freshness.
 
+The observability nodes and arrows also show the target default indexed profile, not universal or current Logging & Admin integration. The dashed Logging & Admin edges in the diagram are target-profile query, routed-alert-view, or dashboard-embedding paths; they are not current clients or observability pushes. The current service queries only its PostgreSQL `log_events` table and has no Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, or Alertmanager client, embedded-dashboard endpoint, or separate admin UI. Compatible indexed profiles map equivalent components, while reduced profiles use their declared console/journal path or explicitly omit indexed search.
+
 ```mermaid
 flowchart TD
     subgraph Clients
@@ -114,13 +116,13 @@ flowchart TD
     Prom --> Grafana
     OTel --> Jaeger
     ES --> Kibana
-    ES -- logs --> Logging
-    Prom -- metrics --> Logging
-    Jaeger -- traces --> Logging
-    Alertmgr -- alerts --> Logging
+    Logging -. target log query .-> ES
+    Logging -. target metric query .-> Prom
+    Logging -. target trace query .-> Jaeger
+    Logging -. target routed-alert view .-> Alertmgr
     Alertmgr -- alerts/email --> SMTP
-    Kibana -- dashboards --> Logging
-    Grafana -- dashboards --> Logging
+    Logging -. target dashboard embedding .-> Kibana
+    Logging -. target dashboard embedding .-> Grafana
 
     Account -- email --> SMTP
     Logging -- email --> SMTP
@@ -164,11 +166,11 @@ The diagram covers every microservice in the repository:
 - **[Game Design Service](./microservices/game-design-service/README.md)** – Provides authoring tools for game data and feature flags with version publishing copy steps and a web-based editor.
 - **[Automation & Scripting Service](./microservices/automation-scripting-service/README.md)** – Executes AI behaviors and custom scripts.
 - **[Social & Groups Service](./microservices/social-groups-service/README.md)** – Manages chat, guilds, and social networking.
-- **[Logging & Admin Service](./microservices/logging-admin-service/README.md)** – Centralizes logging, metrics, and admin tools; owns moderation policy and audit state while using Elasticsearch, Prometheus, and Jaeger for supplemental investigation dashboards.
+- **[Logging & Admin Service](./microservices/logging-admin-service/README.md)** – Target state presents the selected profile's log-query and observability tools and owns moderation policy and audit state. Current log query is limited to its PostgreSQL `log_events` table, with no observability-backend clients or separate admin UI.
 
 Only the **TCP Proxy Service** and **Spring Cloud Gateway** are reachable from the internet. They operate in the network DMZ while the remaining microservices run on the internal network. Admin and creator tools always connect to **Logging & Admin Service and other domain services via the Gateway**; Logging & Admin is not exposed directly at the edge. See [Security Architecture](./system-architecture-security.md#network-security--boundary-design) and [System Architecture Overview](./system-architecture-overview.md#admin-entry-points-and-control-plane) for details.
 
-All internal synchronous communication from the **Game Session Service** to downstream microservices uses **gRPC** for high performance and strict schema enforcement. Asynchronous signaling flows (for example, `NotifyDisconnect`, lifecycle metrics/events, and audit/saga event streams) are documented separately and use explicit idempotency/ownership contracts. Stateful domain microservices persist data in PostgreSQL and use Redis for transient state; DMZ components such as the TCP Proxy Service and Spring Cloud Gateway remain stateless with respect to PostgreSQL but use Redis for rate limiting and caches. All services emit metrics to Prometheus and send structured logs to Elasticsearch.
+All internal synchronous communication from the **Game Session Service** to downstream microservices uses **gRPC** for high performance and strict schema enforcement. Asynchronous signaling flows (for example, `NotifyDisconnect`, lifecycle metrics/events, and audit/saga event streams) are documented separately and use explicit idempotency/ownership contracts. Stateful domain microservices persist data in PostgreSQL and use Redis for transient state; DMZ components such as the TCP Proxy Service and Spring Cloud Gateway remain stateless with respect to PostgreSQL but use Redis for rate limiting and caches. Services emit their implemented metrics and structured logs; the target default indexed profile collects those logs through Fluent Bit into Elasticsearch, while other profiles use their mapped or reduced posture.
 
 Coordination Redis arrows in this diagram follow ownership boundaries from ADR 0009: Game Session owns gameplay coordination prefixes (for example `session:game:*`, `tick:*`, `timer:*`, `retry:*`, and `tick-executor-lease:*`), Account owns `session:auth:*`, Automation & Scripting owns `automation:*`, and non-owner services (for example Entity) participate only through approved shared-helper contracts rather than ad hoc key ownership.
 
@@ -183,7 +185,7 @@ Databases and caches shared across all services capture authoritative world stat
 - For Game Session specifically, the DB arrows represent durable control-plane/runtime metadata (for example game-instance records, pinned runtime version/script patch state, feature-flag overrides, and disconnect/remediation bookkeeping). Gameplay session bindings, queues, timers, retries, and lease coordination remain Redis-owned.
 - **Coordination Redis** – Volatile session and tick coordination state; Lua scripts enforce atomic command execution and reconnect recovery while TTLs keep the data transient. In production this runs as a dedicated cluster so cache and rate-limit spikes cannot interfere with gameplay coordination.
 - **Cache/Rate-Limit Redis** – Best-effort caches, quotas, and rate limiting; this runs as a separate cluster in production and is safe to evict or scale independently of Coordination Redis.
-- **Elasticsearch** – Stores structured logs emitted by every service (via Fluent Bit); the Logging & Admin Service reads directly from it for dashboards and audits.
+- **Elasticsearch (target default indexed profile)** – Stores structured logs collected through Fluent Bit for the supported Kibana query path. Direct Logging & Admin querying and embedding remain unimplemented target integrations rather than current audit storage.
 - **S3-compatible Asset Store** – Stores published game assets and exported content produced by the Game Design Service; other services and clients consume these assets via configured URLs, typically fronted by the gateway or a CDN.
 
 These datastores appear in the diagram as individual nodes (`PostgreSQL`, `Redis - Coordination`, `Redis - Cache/Rate Limit`, `Elasticsearch`, and the asset store) and are wired to service traffic and observability pipelines in the mermaid flowchart above.
@@ -192,19 +194,19 @@ All datastores are shared across games. Tenant-scoped tables include a `tenantId
 
 ## Observability Components
 
-Fluent Bit, Prometheus, and the OpenTelemetry Collector work together so logs, metrics, and traces share the same `traceId`. This makes it easy to correlate game events across Kibana, Grafana, and Jaeger dashboards.
-The Logging & Admin Service queries Elasticsearch, Prometheus, and Jaeger and consumes Alertmanager notifications for observability-backed investigation. It may embed Kibana and Grafana dashboards, but moderation policy writes, audit capture, feature-flag requests, quota overrides, and tick-remediation controls must remain available when those observability backends are degraded.
+In the target default indexed profile, Fluent Bit, Prometheus, and the OpenTelemetry Collector provide correlated logs, metrics, and traces for Kibana, Grafana, and Jaeger. A compatible profile documents equivalent supported paths, and a reduced profile does not claim omitted components.
+Target Logging & Admin integration may query the selected profile's log, metric, and trace paths, consume its routed-alert view, and embed supported dashboards. The current service implements none of those clients, views, or endpoints; its PostgreSQL `log_events` query remains distinct. Core moderation policy, audit, and owner-control behavior must remain independent of observability backend health once those workflows are supported.
 
-The diagram also illustrates the monitoring stack shared by every service:
+The diagram illustrates the target default-profile monitoring stack:
 
 - **Fluent Bit** – Collects structured logs from each container.
 - **Elasticsearch** – Stores logs for search and troubleshooting.
 - **Prometheus** – Scrapes metrics and forwards alerts to **Alertmanager**.
-- **Alertmanager** – Routes alerts and notifies the Logging & Admin Service.
-- **Grafana** – Visualizes dashboards based on Prometheus data and exposes an API that the Logging & Admin Service uses for embedding.
+- **Alertmanager** – Routes alerts; target Logging & Admin integration may present that routed state.
+- **Grafana** – Visualizes dashboards based on Prometheus data; target Logging & Admin integration may embed supported views.
 - **OpenTelemetry Collector** – Aggregates distributed traces.
 - **Jaeger** – Provides a UI for end‑to‑end trace analysis.
-- **Kibana** – Queries and visualizes Elasticsearch logs and exposes an API that the Logging & Admin Service uses for embedding.
+- **Kibana** – Queries and visualizes Elasticsearch logs; target Logging & Admin integration may embed supported views.
 
 See [Logging & Monitoring](./system-architecture-logging-monitoring.md) for deployment details.
 

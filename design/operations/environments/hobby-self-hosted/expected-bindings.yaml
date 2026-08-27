@@ -38,3 +38,8 @@ operatorCredentials:
   bindingRef: cert-manager://firemud/hobby-operator-client
 serviceDiscovery:
   mode: kubernetes-dns-default
+observability:
+  logPipelineQueryability:
+    selectedProfile: hobby-self-hosted
+    capability: log-queryability-omitted
+    evidenceFreshnessBudgetSeconds: 7200

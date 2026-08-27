@@ -2,25 +2,20 @@ package net.firedevops.firemud.loggingadmin.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusResponse;
-import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeResponse;
-import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeResponse;
 import net.firedevops.firemud.gamesession.v1.RuntimeOwnershipStatus;
 import net.firedevops.firemud.loggingadmin.client.GameSessionControlPlaneClient;
-import net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest;
 import net.firedevops.firemud.loggingadmin.dto.RuntimeOwnershipStatusDto;
-import net.firedevops.firemud.loggingadmin.dto.TickRemediationRequest;
-import net.firedevops.firemud.loggingadmin.service.LogEventService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.Mockito;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -34,7 +29,6 @@ class TickRemediationServiceImplTest {
   void getRuntimeOwnershipStatusReturnsCanonicalStatus() {
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
-    LogEventService logEventService = Mockito.mock(LogEventService.class);
     when(gameSessionClient.getRuntimeOwnershipStatus(1L, "7", null))
         .thenReturn(
             GetRuntimeOwnershipStatusResponse.newBuilder()
@@ -57,8 +51,7 @@ class TickRemediationServiceImplTest {
                         .setRemoteFollowupDrainLagMs(2000L)
                         .build())
                 .build());
-    TickRemediationServiceImpl service =
-        new TickRemediationServiceImpl(gameSessionClient, logEventService);
+    TickRemediationServiceImpl service = new TickRemediationServiceImpl(gameSessionClient);
 
     RuntimeOwnershipStatusDto result = service.getRuntimeOwnershipStatus(1L, "7", null);
 
@@ -66,13 +59,40 @@ class TickRemediationServiceImplTest {
     assertThat(result.regionId()).isEqualTo("region-7");
     assertThat(result.pendingGameplayCommandCount()).isEqualTo(3L);
     assertThat(result.remoteFollowupDrainLagMs()).isEqualTo(2000L);
+    verify(gameSessionClient).getRuntimeOwnershipStatus(1L, "7", null);
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "INVALID_ARGUMENT, 400 BAD_REQUEST",
+    "PERMISSION_DENIED, 403 FORBIDDEN",
+    "NOT_FOUND, 404 NOT_FOUND",
+    "FUTURE_ERROR, 500 INTERNAL_SERVER_ERROR"
+  })
+  void getRuntimeOwnershipStatusMapsControlPlaneErrors(String errorCode, String expectedStatus) {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getRuntimeOwnershipStatus(1L, "7", null))
+        .thenReturn(
+            GetRuntimeOwnershipStatusResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode(errorCode)
+                        .setMessage("runtime ownership unavailable"))
+                .build());
+    TickRemediationServiceImpl service = new TickRemediationServiceImpl(gameSessionClient);
+
+    assertThatThrownBy(() -> service.getRuntimeOwnershipStatus(1L, "7", null))
+        .isInstanceOf(ResponseStatusException.class)
+        .hasMessageContaining(expectedStatus)
+        .hasMessageContaining("runtime ownership unavailable");
+    verify(gameSessionClient).getRuntimeOwnershipStatus(1L, "7", null);
   }
 
   @Test
   void getRuntimeOwnershipStatusRejectsMismatchedRegion() {
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
-    LogEventService logEventService = Mockito.mock(LogEventService.class);
     when(gameSessionClient.getRuntimeOwnershipStatus(1L, null, "region-7"))
         .thenReturn(
             GetRuntimeOwnershipStatusResponse.newBuilder()
@@ -83,34 +103,31 @@ class TickRemediationServiceImplTest {
                         .setRegionId("region-9")
                         .build())
                 .build());
-    TickRemediationServiceImpl service =
-        new TickRemediationServiceImpl(gameSessionClient, logEventService);
+    TickRemediationServiceImpl service = new TickRemediationServiceImpl(gameSessionClient);
 
     assertThatThrownBy(() -> service.getRuntimeOwnershipStatus(1L, null, "region-7"))
         .isInstanceOf(ResponseStatusException.class)
         .hasMessageContaining("500 INTERNAL_SERVER_ERROR");
+    verify(gameSessionClient).getRuntimeOwnershipStatus(1L, null, "region-7");
   }
 
   @Test
   void getRuntimeOwnershipStatusRejectsMalformedGameInstanceIdBeforeDispatch() {
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
-    LogEventService logEventService = Mockito.mock(LogEventService.class);
-    TickRemediationServiceImpl service =
-        new TickRemediationServiceImpl(gameSessionClient, logEventService);
+    TickRemediationServiceImpl service = new TickRemediationServiceImpl(gameSessionClient);
 
     assertThatThrownBy(() -> service.getRuntimeOwnershipStatus(1L, "not-a-number", null))
         .isInstanceOf(ResponseStatusException.class)
         .hasMessageContaining("400 BAD_REQUEST")
         .hasMessageContaining("gameInstanceId must be numeric");
-    Mockito.verifyNoInteractions(gameSessionClient, logEventService);
+    Mockito.verifyNoInteractions(gameSessionClient);
   }
 
   @Test
   void getRuntimeOwnershipStatusRejectsZeroGameInstanceIdForRegionScope() {
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
-    LogEventService logEventService = Mockito.mock(LogEventService.class);
     when(gameSessionClient.getRuntimeOwnershipStatus(1L, null, "region-7"))
         .thenReturn(
             GetRuntimeOwnershipStatusResponse.newBuilder()
@@ -121,8 +138,7 @@ class TickRemediationServiceImplTest {
                         .setRegionId("region-7")
                         .build())
                 .build());
-    TickRemediationServiceImpl service =
-        new TickRemediationServiceImpl(gameSessionClient, logEventService);
+    TickRemediationServiceImpl service = new TickRemediationServiceImpl(gameSessionClient);
 
     assertThatThrownBy(() -> service.getRuntimeOwnershipStatus(1L, null, "region-7"))
         .isInstanceOf(ResponseStatusException.class)
@@ -130,109 +146,26 @@ class TickRemediationServiceImplTest {
   }
 
   @Test
-  void pauseForGameInstanceForwardsAndAudits() {
+  void getRuntimeOwnershipStatusRejectsMissingScopeBeforeDispatch() {
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
-    LogEventService logEventService = Mockito.mock(LogEventService.class);
-    when(gameSessionClient.pauseTicksForScope(any()))
-        .thenReturn(PauseTicksForScopeResponse.newBuilder().setSuccess(true).build());
-    SessionContext.setContext("42", java.util.List.of("platformAdmin"), java.util.Map.of());
-    TickRemediationServiceImpl service =
-        new TickRemediationServiceImpl(gameSessionClient, logEventService);
-
-    var result = service.pauseTicksForScope(new TickRemediationRequest(1L, "7", null, "maint"));
-
-    assertThat(result.action()).isEqualTo("pause");
-    assertThat(result.scopeType()).isEqualTo("game_instance");
-    assertThat(result.scopeId()).isEqualTo("7");
-    ArgumentCaptor<CreateLogEventRequest> auditCaptor =
-        ArgumentCaptor.forClass(CreateLogEventRequest.class);
-    verify(logEventService).createLogEvent(auditCaptor.capture());
-    assertThat(auditCaptor.getValue().type()).isEqualTo("tick_remediation_pause");
-    assertThat(auditCaptor.getValue().tenantId()).isEqualTo(1L);
-    assertThat(auditCaptor.getValue().accountId()).isEqualTo(42L);
-    assertThat(auditCaptor.getValue().message()).contains("game_instance=7");
-  }
-
-  @Test
-  void pauseRejectsMalformedCurrentAccountClaimBeforeDispatchAndAudit() {
-    GameSessionControlPlaneClient gameSessionClient =
-        Mockito.mock(GameSessionControlPlaneClient.class);
-    LogEventService logEventService = Mockito.mock(LogEventService.class);
-    SessionContext.setContext("not-a-long", java.util.List.of("platformAdmin"), java.util.Map.of());
-    TickRemediationServiceImpl service =
-        new TickRemediationServiceImpl(gameSessionClient, logEventService);
-
-    assertThatThrownBy(
-            () -> service.pauseTicksForScope(new TickRemediationRequest(1L, "7", null, "maint")))
-        .isInstanceOf(ResponseStatusException.class)
-        .hasMessageContaining("400 BAD_REQUEST");
-    Mockito.verifyNoInteractions(gameSessionClient, logEventService);
-  }
-
-  @Test
-  void pauseRejectsZeroGameInstanceIdBeforeDispatchAndAudit() {
-    GameSessionControlPlaneClient gameSessionClient =
-        Mockito.mock(GameSessionControlPlaneClient.class);
-    LogEventService logEventService = Mockito.mock(LogEventService.class);
-    TickRemediationServiceImpl service =
-        new TickRemediationServiceImpl(gameSessionClient, logEventService);
-
-    assertThatThrownBy(
-            () -> service.pauseTicksForScope(new TickRemediationRequest(1L, "0", null, "maint")))
-        .isInstanceOf(ResponseStatusException.class)
-        .hasMessageContaining("400 BAD_REQUEST")
-        .hasMessageContaining("gameInstanceId must be positive");
-    Mockito.verifyNoInteractions(gameSessionClient, logEventService);
-  }
-
-  @Test
-  void resumeForRegionPropagatesGrpcValidationError() {
-    GameSessionControlPlaneClient gameSessionClient =
-        Mockito.mock(GameSessionControlPlaneClient.class);
-    LogEventService logEventService = Mockito.mock(LogEventService.class);
-    when(gameSessionClient.resumeTicksForScope(any()))
-        .thenReturn(
-            ResumeTicksForScopeResponse.newBuilder()
-                .setSuccess(false)
-                .setError(
-                    ErrorDetail.newBuilder()
-                        .setCode("INVALID_ARGUMENT")
-                        .setMessage("region_id is not supported")
-                        .build())
-                .build());
-    SessionContext.setContext("42", java.util.List.of("platformAdmin"), java.util.Map.of());
-    TickRemediationServiceImpl service =
-        new TickRemediationServiceImpl(gameSessionClient, logEventService);
-
-    assertThatThrownBy(
-            () -> service.resumeTicksForScope(new TickRemediationRequest(1L, null, "region-1", "")))
-        .isInstanceOf(ResponseStatusException.class)
-        .hasMessageContaining("400 BAD_REQUEST");
-  }
-
-  @Test
-  void pauseRejectsMissingOrAmbiguousScope() {
-    TickRemediationServiceImpl service =
-        new TickRemediationServiceImpl(
-            Mockito.mock(GameSessionControlPlaneClient.class), Mockito.mock(LogEventService.class));
+    TickRemediationServiceImpl service = new TickRemediationServiceImpl(gameSessionClient);
 
     assertThatThrownBy(() -> service.getRuntimeOwnershipStatus(1L, null, null))
         .isInstanceOf(ResponseStatusException.class)
         .hasMessageContaining("Exactly one of gameInstanceId or regionId is required");
+    Mockito.verifyNoInteractions(gameSessionClient);
+  }
+
+  @Test
+  void getRuntimeOwnershipStatusRejectsAmbiguousScopeBeforeDispatch() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    TickRemediationServiceImpl service = new TickRemediationServiceImpl(gameSessionClient);
 
     assertThatThrownBy(() -> service.getRuntimeOwnershipStatus(1L, "7", "r1"))
         .isInstanceOf(ResponseStatusException.class)
         .hasMessageContaining("Exactly one of gameInstanceId or regionId is required");
-
-    assertThatThrownBy(
-            () -> service.pauseTicksForScope(new TickRemediationRequest(1L, null, null, "")))
-        .isInstanceOf(ResponseStatusException.class)
-        .hasMessageContaining("Exactly one of gameInstanceId or regionId is required");
-
-    assertThatThrownBy(
-            () -> service.pauseTicksForScope(new TickRemediationRequest(1L, "7", "r1", "")))
-        .isInstanceOf(ResponseStatusException.class)
-        .hasMessageContaining("Exactly one of gameInstanceId or regionId is required");
+    Mockito.verifyNoInteractions(gameSessionClient);
   }
 }

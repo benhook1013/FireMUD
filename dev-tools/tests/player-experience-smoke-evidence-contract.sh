@@ -3,14 +3,18 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 VALIDATOR="$ROOT_DIR/dev-tools/observability/validate-player-experience-smoke-evidence.py"
+# All fixtures use this trusted evaluation instant; production invocations
+# default to current UTC when the seam is not supplied.
+export FIREMUD_SMOKE_EVALUATION_TIME="2026-03-19T10:55:00Z"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 HELP_OUTPUT="$TMP_DIR/help.out"
 COLUMNS=80 python3 "$VALIDATOR" --help >"$HELP_OUTPUT"
 NORMALIZED_HELP_OUTPUT="$(tr '\n' ' ' <"$HELP_OUTPUT" | tr -s '[:space:]' ' ')"
-grep -q "evidence. External-authority/deadman structure, provenance, chronology, completeness, and freshness" <<<"$NORMALIZED_HELP_OUTPUT"
-grep -q "current red outcomes are permitted only as non-authorizing incident evidence." <<<"$NORMALIZED_HELP_OUTPUT"
+grep -q "explicitly unexercised alert paths, for incident evidence." <<<"$NORMALIZED_HELP_OUTPUT"
+grep -q "External-authority/deadman structure, provenance, chronology, completeness, and freshness" <<<"$NORMALIZED_HELP_OUTPUT"
+grep -q "current red outcomes are permitted only as" <<<"$NORMALIZED_HELP_OUTPUT"
 
 VALID_EVIDENCE="$TMP_DIR/valid-evidence.json"
 INVALID_EVIDENCE="$TMP_DIR/invalid-evidence.json"
@@ -23,6 +27,37 @@ cat >"$VALID_EVIDENCE" <<'JSON'
   "preflightEvidenceRef": "ci://observability-smoke/2026-03-19T10:40:00Z",
   "executionMode": "live",
   "externalAuthorityProvenance": "retained-external",
+  "logPipelineQueryability": {
+    "selectedProfile": "staging",
+    "capability": "indexed-log-observability",
+    "backend": "elasticsearch",
+    "storageTarget": "firemud-logs-*",
+    "recordId": "log-smoke-11111111-2222-4333-8444-555555555555",
+    "service": "game-session-service",
+    "traceId": "9c8d7e6f5a4b3210",
+    "queryPath": "kibana-saved-search:player-incident-drilldown",
+    "configuredDelayTargetSeconds": 120,
+    "emittedAt": "2026-03-19T10:53:20Z",
+    "retrievedAt": "2026-03-19T10:54:34Z",
+    "observedDelaySeconds": 74,
+    "result": "passed",
+    "evidenceObservedAt": "2026-03-19T10:55:00Z",
+    "evidenceFreshnessBudgetSeconds": 7200,
+    "evidenceExpiresAt": "2026-03-19T12:55:00Z",
+    "evidenceRef": "query-proof://staging/log-smoke-11111111-2222-4333-8444-555555555555",
+    "verifiedFields": ["recordId", "service", "traceId"]
+  },
+  "playerFlowCanaryIdentity": {
+    "authority": "account-service",
+    "classification": "synthetic",
+    "analyticsSloExclusion": true,
+    "credentials": {"nonDefault": true, "productionSafe": true},
+    "transportCharacters": {
+      "websocket": {"restricted": true, "isolated": true},
+      "telnet": {"restricted": true, "isolated": true}
+    },
+    "evidenceRef": "account://contract-test/synthetic-canary"
+  },
   "capabilities": {
     "prometheusMirrors": "published",
     "playerFlowCanary": "advertised"
@@ -54,7 +89,7 @@ cat >"$VALID_EVIDENCE" <<'JSON'
     ],
     "observability_deadman_heartbeat_timestamp_seconds": {
       "source": "staging",
-      "value": 1773917600
+      "value": 1773917640
     },
     "playerflow_canary_success": [
       {"flow": "login", "path": "websocket", "target": "gateway", "profile": "independent-required", "value": 1},
@@ -78,7 +113,7 @@ cat >"$VALID_EVIDENCE" <<'JSON'
     }
   },
   "canaryAlerts": [
-    {"alert": "PlayerFlowCanaryLoginFailed", "severity": "P0", "exerciseResult": "passed"},
+    {"alert": "PlayerFlowCanaryLoginFailed", "severity": "P1", "exerciseResult": "passed"},
     {"alert": "PlayerFlowCanaryCommandFailed", "severity": "P1", "exerciseResult": "passed"},
     {"alert": "PlayerFlowCanaryLatencyHigh", "severity": "P1", "exerciseResult": "passed"},
     {"alert": "PlayerFlowCanaryEvidenceStale", "severity": "P1", "exerciseResult": "passed"}
@@ -86,7 +121,694 @@ cat >"$VALID_EVIDENCE" <<'JSON'
 }
 JSON
 
-python3 "$VALIDATOR" "$VALID_EVIDENCE" >"$TMP_DIR/valid.out"
+# Advertised canaries remain a target-state shape until an authoritative
+# Account-owned verifier is shipped. Keep a separate current-posture fixture.
+OMITTED_VALID_EVIDENCE="$TMP_DIR/omitted-valid-evidence.json"
+python3 - "$VALID_EVIDENCE" "$OMITTED_VALID_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+data = json.loads(path.read_text(encoding="utf-8"))
+data["capabilities"]["playerFlowCanary"] = "omitted"
+data.pop("playerFlowCanaryIdentity", None)
+for key in (
+    "playerflow_canary_success",
+    "playerflow_canary_latency_ms",
+    "playerflow_canary_last_run_timestamp_seconds",
+    "playerflow_canary_freshness_budget_seconds",
+):
+    data["mirroredSignals"].pop(key, None)
+data.pop("canaryAlerts", None)
+Path(sys.argv[2]).write_text(json.dumps(data), encoding="utf-8")
+PY
+
+python3 "$VALIDATOR" "$OMITTED_VALID_EVIDENCE" >"$TMP_DIR/valid.out"
+
+# Every enum-like value comes from retained JSON. Malformed JSON values must
+# produce ordinary findings rather than leaking an unhashable-value TypeError
+# from set/frozenset membership checks.
+python3 - "$OMITTED_VALID_EVIDENCE" "$VALID_EVIDENCE" "$ROOT_DIR" \
+  "$FIREMUD_SMOKE_EVALUATION_TIME" <<'PY'
+import copy
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+omitted_path, advertised_path, root = map(Path, sys.argv[1:4])
+validator_path = root / "dev-tools/observability/validate-player-experience-smoke-evidence.py"
+spec = importlib.util.spec_from_file_location("smoke_evidence_validator", validator_path)
+validator = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(validator)
+observability_contract = __import__("observability_contract")
+assert validator.CANARY_IDENTITY_REQUIRED_FIELDS is observability_contract.CANARY_IDENTITY_REQUIRED_FIELDS
+identity_verifier_sentinel = object()
+original_identity_verifier = (
+    observability_contract.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE
+)
+try:
+    observability_contract.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE = (
+        identity_verifier_sentinel
+    )
+    probe_spec = importlib.util.spec_from_file_location(
+        "smoke_evidence_validator_shared_contract_probe", validator_path
+    )
+    assert probe_spec is not None
+    shared_contract_probe = importlib.util.module_from_spec(probe_spec)
+    assert probe_spec.loader is not None
+    probe_spec.loader.exec_module(shared_contract_probe)
+    assert (
+        shared_contract_probe.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE
+        is identity_verifier_sentinel
+    )
+finally:
+    observability_contract.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE = (
+        original_identity_verifier
+    )
+evaluation_time = validator._parse_evaluation_time(sys.argv[4])
+
+cases = [
+    (omitted_path, "executionMode", ["live"], "executionMode must be live or simulated"),
+    (omitted_path, "externalAuthorityProvenance", {"value": "synthetic"}, "externalAuthorityProvenance must be retained-external or synthetic"),
+    (omitted_path, ("capabilities", "prometheusMirrors"), ["published"], "capabilities.prometheusMirrors must be one of"),
+    (omitted_path, ("capabilities", "playerFlowCanary"), {"value": "omitted"}, "capabilities.playerFlowCanary must be one of"),
+    (omitted_path, ("externalAuthority", "profile"), ["independent-omitted"], "externalAuthority.profile must be independent-required or independent-omitted"),
+    (omitted_path, ("externalAuthority", "deadmanAuthority", "status"), {"value": "green"}, "externalAuthority.deadmanAuthority.status must be green or red"),
+    (advertised_path, ("mirroredSignals", "playerflow_canary_success", 0, "flow"), {"value": "login"}, "playerflow_canary_success contains unsupported flow"),
+    (advertised_path, ("canaryAlerts", 0, "exerciseResult"), ["passed"], "PlayerFlowCanaryLoginFailed exerciseResult must be passed"),
+]
+
+for source_path, field_path, malformed, expected in cases:
+    data = json.loads(source_path.read_text(encoding="utf-8"))
+    target = data
+    parts = (field_path,) if isinstance(field_path, str) else field_path
+    for part in parts[:-1]:
+        target = target[part]
+    target[parts[-1]] = malformed
+    case_path = source_path.with_name("malformed-enum-case.json")
+    case_path.write_text(json.dumps(data), encoding="utf-8")
+    try:
+        findings = validator.validate_evidence(
+            case_path, evaluation_time=evaluation_time
+        )
+    except TypeError as exc:
+        raise AssertionError(f"{field_path!r} leaked TypeError: {exc}") from exc
+    assert any(expected in finding for finding in findings), (field_path, findings)
+PY
+
+STALE_TRUSTED_EVALUATION="$TMP_DIR/stale-trusted-evaluation.json"
+cp "$OMITTED_VALID_EVIDENCE" "$STALE_TRUSTED_EVALUATION"
+if python3 "$VALIDATOR" --evaluation-time "2026-03-19T13:00:00Z" \
+  "$STALE_TRUSTED_EVALUATION" >"$TMP_DIR/stale-trusted-evaluation.out" 2>&1; then
+  echo "expired evidence unexpectedly passed trusted-time validation" >&2
+  exit 1
+fi
+grep -q "evidenceExpiresAt must be later than the trusted evaluation time" \
+  "$TMP_DIR/stale-trusted-evaluation.out"
+
+STALE_EXTERNAL_TRUSTED_EVALUATION="$TMP_DIR/stale-external-trusted-evaluation.json"
+cp "$VALID_EVIDENCE" "$STALE_EXTERNAL_TRUSTED_EVALUATION"
+if python3 "$VALIDATOR" --evaluation-time "2026-03-19T10:59:00Z" \
+  "$STALE_EXTERNAL_TRUSTED_EVALUATION" >"$TMP_DIR/stale-external-trusted-evaluation.out" 2>&1; then
+  echo "stale external authority unexpectedly passed trusted-time validation" >&2
+  exit 1
+fi
+grep -q "older than externalAuthority.detectionBudgetSeconds relative to the trusted evaluation time" \
+  "$TMP_DIR/stale-external-trusted-evaluation.out"
+
+MISSING_QUERYABILITY_EVIDENCE="$TMP_DIR/missing-queryability-evidence.json"
+python3 - "$OMITTED_VALID_EVIDENCE" "$MISSING_QUERYABILITY_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source.pop("logPipelineQueryability")
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+if python3 "$VALIDATOR" "$MISSING_QUERYABILITY_EVIDENCE" \
+  >"$TMP_DIR/missing-queryability.out" 2>&1; then
+  echo "missing queryability posture unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "logPipelineQueryability is required" "$TMP_DIR/missing-queryability.out"
+
+REDUCED_QUERYABILITY_EVIDENCE="$TMP_DIR/reduced-queryability-evidence.json"
+OMITTED_QUERYABILITY_EVIDENCE="$TMP_DIR/omitted-queryability-evidence.json"
+python3 - "$OMITTED_VALID_EVIDENCE" "$REDUCED_QUERYABILITY_EVIDENCE" "$OMITTED_QUERYABILITY_EVIDENCE" <<'PY'
+import copy
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+reduced = copy.deepcopy(source)
+reduced["logPipelineQueryability"].update(
+    {
+        "capability": "console-journal-log-observability",
+        "backend": "journald",
+        "storageTarget": "firemud-journal",
+        "queryPath": "journalctl:firemud-logs",
+    }
+)
+Path(sys.argv[2]).write_text(json.dumps(reduced), encoding="utf-8")
+
+omitted = copy.deepcopy(source)
+omitted["logPipelineQueryability"] = {
+    "selectedProfile": "hobby-self-hosted",
+    "capability": "log-queryability-omitted",
+    "result": "not_applicable",
+    "omissionReason": "indexed search is not deployed",
+    "evidenceObservedAt": "2026-03-19T10:55:00Z",
+    "evidenceFreshnessBudgetSeconds": 7200,
+    "evidenceExpiresAt": "2026-03-19T12:55:00Z",
+    "evidenceRef": "operator://hobby/queryability-omission/2026-03-19T10:55:00Z",
+}
+Path(sys.argv[3]).write_text(json.dumps(omitted), encoding="utf-8")
+PY
+
+python3 "$VALIDATOR" "$REDUCED_QUERYABILITY_EVIDENCE" >"$TMP_DIR/reduced-queryability.out"
+python3 "$VALIDATOR" "$OMITTED_QUERYABILITY_EVIDENCE" >"$TMP_DIR/omitted-queryability.out"
+
+NON_OMITTED_NOT_APPLICABLE="$TMP_DIR/non-omitted-not-applicable.json"
+FAILED_QUERYABILITY="$TMP_DIR/failed-queryability.json"
+UNSUPPORTED_QUERYABILITY="$TMP_DIR/unsupported-queryability.json"
+FABRICATED_OMISSION="$TMP_DIR/fabricated-omission.json"
+python3 - "$OMITTED_VALID_EVIDENCE" "$OMITTED_QUERYABILITY_EVIDENCE" "$NON_OMITTED_NOT_APPLICABLE" "$FAILED_QUERYABILITY" "$UNSUPPORTED_QUERYABILITY" "$FABRICATED_OMISSION" <<'PY'
+import copy
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+not_applicable = copy.deepcopy(source)
+not_applicable["logPipelineQueryability"]["result"] = "not_applicable"
+Path(sys.argv[3]).write_text(json.dumps(not_applicable), encoding="utf-8")
+
+failed = copy.deepcopy(source)
+failed["logPipelineQueryability"]["result"] = "failed"
+Path(sys.argv[4]).write_text(json.dumps(failed), encoding="utf-8")
+
+unsupported = copy.deepcopy(source)
+unsupported["logPipelineQueryability"]["capability"] = "elasticsearch-log-search"
+Path(sys.argv[5]).write_text(json.dumps(unsupported), encoding="utf-8")
+
+fabricated = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+fabricated["logPipelineQueryability"].update(
+    {
+        "backend": "elasticsearch",
+        "storageTarget": "firemud-logs-*",
+        "queryPath": "kibana:saved-search",
+        "emittedAt": "2026-03-19T10:53:20Z",
+        "retrievedAt": "2026-03-19T10:54:34Z",
+        "configuredDelayTargetSeconds": 120,
+        "observedDelaySeconds": 74,
+        "recordId": "log-smoke-11111111-2222-4333-8444-555555555555",
+        "service": "game-session-service",
+        "traceId": "9c8d7e6f5a4b3210",
+        "verifiedFields": ["recordId", "service", "traceId"],
+        "retrievalProof": "query-proof://fabricated",
+    }
+)
+Path(sys.argv[6]).write_text(json.dumps(fabricated), encoding="utf-8")
+PY
+
+if python3 "$VALIDATOR" "$NON_OMITTED_NOT_APPLICABLE" >"$TMP_DIR/non-omitted-not-applicable.out" 2>&1; then
+  echo "non-omitted not_applicable queryability unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "logPipelineQueryability.result must be 'passed' or 'failed' for a non-omitted capability" \
+  "$TMP_DIR/non-omitted-not-applicable.out"
+
+if python3 "$VALIDATOR" "$FAILED_QUERYABILITY" >"$TMP_DIR/failed-queryability.out" 2>&1; then
+  echo "failed queryability unexpectedly authorized readiness" >&2
+  exit 1
+fi
+grep -q "logPipelineQueryability.result must be 'passed' for readiness validation" \
+  "$TMP_DIR/failed-queryability.out"
+python3 "$VALIDATOR" --allow-failure-evidence "$FAILED_QUERYABILITY" >"$TMP_DIR/failed-queryability-incident.out"
+
+if python3 "$VALIDATOR" "$UNSUPPORTED_QUERYABILITY" >"$TMP_DIR/unsupported-queryability.out" 2>&1; then
+  echo "unsupported queryability capability unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "logPipelineQueryability.capability must be one of" "$TMP_DIR/unsupported-queryability.out"
+
+if python3 "$VALIDATOR" "$FABRICATED_OMISSION" >"$TMP_DIR/fabricated-omission.out" 2>&1; then
+  echo "fabricated omitted queryability fields unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "logPipelineQueryability.backend is not allowed when queryability is omitted" \
+  "$TMP_DIR/fabricated-omission.out"
+grep -q "logPipelineQueryability.recordId is not allowed when queryability is omitted" \
+  "$TMP_DIR/fabricated-omission.out"
+grep -q "logPipelineQueryability.retrievalProof is not allowed when queryability is omitted" \
+  "$TMP_DIR/fabricated-omission.out"
+
+python3 - "$VALID_EVIDENCE" "$TMP_DIR" <<'PY'
+import copy
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+output = Path(sys.argv[2])
+mutations = {
+    "expired": lambda evidence: evidence.update({"verifiedAt": "2026-03-19T13:00:00Z"}),
+    "future-dated": lambda evidence: evidence["logPipelineQueryability"].update(
+        {"evidenceObservedAt": "2026-03-19T11:00:00Z"}
+    ),
+    "non-positive": lambda evidence: evidence["logPipelineQueryability"].update(
+        {"evidenceFreshnessBudgetSeconds": 0}
+    ),
+    "non-finite": lambda evidence: evidence["logPipelineQueryability"].update(
+        {"evidenceFreshnessBudgetSeconds": float("nan")}
+    ),
+    "inconsistent-expiry": lambda evidence: evidence["logPipelineQueryability"].update(
+        {"evidenceExpiresAt": "2026-03-19T13:00:00Z"}
+    ),
+    "retrieved-before-emitted": lambda evidence: evidence["logPipelineQueryability"].update(
+        {"retrievedAt": "2026-03-19T10:53:19Z"}
+    ),
+    "observed-before-retrieved": lambda evidence: evidence["logPipelineQueryability"].update(
+        {
+            "evidenceObservedAt": "2026-03-19T10:54:00Z",
+            "evidenceExpiresAt": "2026-03-19T12:54:00Z",
+        }
+    ),
+    "emitted-after-verified": lambda evidence: evidence["logPipelineQueryability"].update(
+        {"emittedAt": "2026-03-19T10:56:00Z"}
+    ),
+    "retrieved-after-verified": lambda evidence: evidence["logPipelineQueryability"].update(
+        {"retrievedAt": "2026-03-19T10:56:00Z"}
+    ),
+    "delay-mismatch": lambda evidence: evidence["logPipelineQueryability"].update(
+        {"observedDelaySeconds": 73}
+    ),
+    "passed-delay-over-target": lambda evidence: evidence["logPipelineQueryability"].update(
+        {"configuredDelayTargetSeconds": 73}
+    ),
+    "missing-selected-profile": lambda evidence: evidence["logPipelineQueryability"].pop(
+        "selectedProfile"
+    ),
+    "blank-selected-profile": lambda evidence: evidence["logPipelineQueryability"].update(
+        {"selectedProfile": "   "}
+    ),
+    "unhashable-capability": lambda evidence: evidence["logPipelineQueryability"].update(
+        {"capability": []}
+    ),
+    "unhashable-result": lambda evidence: evidence["logPipelineQueryability"].update(
+        {"result": {}}
+    ),
+    "huge-budget": lambda evidence: evidence["logPipelineQueryability"].update(
+        {"evidenceFreshnessBudgetSeconds": 10**1000}
+    ),
+    "too-large-budget": lambda evidence: evidence["logPipelineQueryability"].update(
+        {"evidenceFreshnessBudgetSeconds": 1e308}
+    ),
+    "subresolution-budget": lambda evidence: evidence["logPipelineQueryability"].update(
+        {"evidenceFreshnessBudgetSeconds": 1e-100}
+    ),
+    "huge-delay-target": lambda evidence: evidence["logPipelineQueryability"].update(
+        {"configuredDelayTargetSeconds": 10**1000}
+    ),
+    "huge-observed-delay": lambda evidence: evidence["logPipelineQueryability"].update(
+        {"observedDelaySeconds": 10**1000}
+    ),
+}
+for name, mutate in mutations.items():
+    evidence = copy.deepcopy(source)
+    mutate(evidence)
+    (output / f"queryability-{name}.json").write_text(
+        json.dumps(evidence), encoding="utf-8"
+    )
+PY
+
+for queryability_case in \
+  expired future-dated non-positive non-finite inconsistent-expiry \
+  retrieved-before-emitted observed-before-retrieved emitted-after-verified \
+  retrieved-after-verified delay-mismatch passed-delay-over-target \
+  missing-selected-profile blank-selected-profile unhashable-capability \
+  unhashable-result huge-budget too-large-budget \
+  subresolution-budget huge-delay-target \
+  huge-observed-delay; do
+  queryability_path="$TMP_DIR/queryability-$queryability_case.json"
+  if python3 "$VALIDATOR" "$queryability_path" >"$TMP_DIR/queryability-$queryability_case.out" 2>&1; then
+    echo "$queryability_case queryability mutation unexpectedly passed" >&2
+    exit 1
+  fi
+done
+grep -q "logPipelineQueryability.evidenceExpiresAt cannot be in the past relative to verifiedAt" \
+  "$TMP_DIR/queryability-expired.out"
+grep -q "logPipelineQueryability.evidenceObservedAt cannot be in the future relative to verifiedAt" \
+  "$TMP_DIR/queryability-future-dated.out"
+grep -Fxq -- "ERROR: logPipelineQueryability.evidenceFreshnessBudgetSeconds must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]" \
+  "$TMP_DIR/queryability-non-positive.out"
+grep -Fxq -- "ERROR: logPipelineQueryability.evidenceFreshnessBudgetSeconds must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]" \
+  "$TMP_DIR/queryability-non-finite.out"
+grep -q "logPipelineQueryability.evidenceExpiresAt must equal evidenceObservedAt plus evidenceFreshnessBudgetSeconds within numeric tolerance" \
+  "$TMP_DIR/queryability-inconsistent-expiry.out"
+grep -q "logPipelineQueryability.retrievedAt must be at or after logPipelineQueryability.emittedAt" \
+  "$TMP_DIR/queryability-retrieved-before-emitted.out"
+grep -q "logPipelineQueryability.evidenceObservedAt must be at or after logPipelineQueryability.retrievedAt" \
+  "$TMP_DIR/queryability-observed-before-retrieved.out"
+grep -q "logPipelineQueryability.emittedAt cannot be in the future relative to verifiedAt" \
+  "$TMP_DIR/queryability-emitted-after-verified.out"
+grep -q "logPipelineQueryability.retrievedAt cannot be in the future relative to verifiedAt" \
+  "$TMP_DIR/queryability-retrieved-after-verified.out"
+grep -q "logPipelineQueryability.observedDelaySeconds must equal retrievedAt minus emittedAt within numeric tolerance" \
+  "$TMP_DIR/queryability-delay-mismatch.out"
+grep -q "logPipelineQueryability.observedDelaySeconds must be no greater than configuredDelayTargetSeconds for a passed result" \
+  "$TMP_DIR/queryability-passed-delay-over-target.out"
+grep -q "logPipelineQueryability.selectedProfile is required" \
+  "$TMP_DIR/queryability-missing-selected-profile.out"
+grep -q "logPipelineQueryability.selectedProfile is required" \
+  "$TMP_DIR/queryability-blank-selected-profile.out"
+grep -Fxq -- "ERROR: logPipelineQueryability.evidenceFreshnessBudgetSeconds must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]" \
+  "$TMP_DIR/queryability-huge-budget.out"
+grep -Fxq -- "ERROR: logPipelineQueryability.evidenceFreshnessBudgetSeconds must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]" \
+  "$TMP_DIR/queryability-too-large-budget.out"
+grep -Fxq -- "ERROR: logPipelineQueryability.evidenceFreshnessBudgetSeconds must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]" \
+  "$TMP_DIR/queryability-subresolution-budget.out"
+grep -q "logPipelineQueryability.capability must be one of" \
+  "$TMP_DIR/queryability-unhashable-capability.out"
+grep -q "logPipelineQueryability.result must be one of" \
+  "$TMP_DIR/queryability-unhashable-result.out"
+grep -q "logPipelineQueryability.configuredDelayTargetSeconds must be a nonnegative finite number" \
+  "$TMP_DIR/queryability-huge-delay-target.out"
+grep -q "logPipelineQueryability.observedDelaySeconds must be a nonnegative finite number" \
+  "$TMP_DIR/queryability-huge-observed-delay.out"
+
+HUGE_NUMERIC_EVIDENCE_DIR="$TMP_DIR/huge-numeric-evidence"
+mkdir -p "$HUGE_NUMERIC_EVIDENCE_DIR"
+python3 - "$VALID_EVIDENCE" "$HUGE_NUMERIC_EVIDENCE_DIR" <<'PY'
+import copy
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+output = Path(sys.argv[2])
+mutations = {
+    "external-detection-budget": lambda evidence: evidence["externalAuthority"].update(
+        {"detectionBudgetSeconds": 10**1000}
+    ),
+    "external-stale-threshold": lambda evidence: evidence["externalAuthority"].update(
+        {"staleThresholdSeconds": 10**1000}
+    ),
+    "external-observed-staleness": lambda evidence: evidence["externalAuthority"].update(
+        {"observedStalenessSeconds": 10**1000}
+    ),
+    "mirrored-probe-age": lambda evidence: evidence["externalAuthority"][
+        "publicPathChecks"
+    ]["websocket"].update({"observedProbeAgeSeconds": 10**1000}),
+    "mirrored-deadman": lambda evidence: evidence["mirroredSignals"][
+        "observability_deadman_heartbeat_timestamp_seconds"
+    ].update({"value": 10**1000}),
+    "mirrored-canary-success": lambda evidence: evidence["mirroredSignals"][
+        "playerflow_canary_success"
+    ][0].update({"value": 10**1000}),
+    "mirrored-canary-latency": lambda evidence: evidence["mirroredSignals"][
+        "playerflow_canary_latency_ms"
+    ][0].update({"value": 10**1000}),
+    "mirrored-canary-last-run": lambda evidence: evidence["mirroredSignals"][
+        "playerflow_canary_last_run_timestamp_seconds"
+    ][0].update({"value": 10**1000}),
+    "mirrored-canary-budget": lambda evidence: evidence["mirroredSignals"][
+        "playerflow_canary_freshness_budget_seconds"
+    ].update({"value": 10**1000}),
+}
+for name, mutate in mutations.items():
+    evidence = copy.deepcopy(source)
+    mutate(evidence)
+    (output / f"{name}.json").write_text(json.dumps(evidence), encoding="utf-8")
+PY
+
+for huge_numeric_case in \
+  external-detection-budget external-stale-threshold external-observed-staleness \
+  mirrored-probe-age mirrored-deadman mirrored-canary-success mirrored-canary-latency \
+  mirrored-canary-last-run mirrored-canary-budget; do
+  huge_numeric_path="$HUGE_NUMERIC_EVIDENCE_DIR/$huge_numeric_case.json"
+  huge_numeric_output="$TMP_DIR/$huge_numeric_case.out"
+  if python3 "$VALIDATOR" "$huge_numeric_path" >"$huge_numeric_output" 2>&1; then
+    echo "$huge_numeric_case unexpectedly passed" >&2
+    exit 1
+  fi
+  if grep -q "Traceback" "$huge_numeric_output"; then
+    echo "$huge_numeric_case raised an unexpected traceback" >&2
+    cat "$huge_numeric_output" >&2
+    exit 1
+  fi
+done
+grep -Fxq -- "ERROR: externalAuthority.detectionBudgetSeconds must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]" \
+  "$TMP_DIR/external-detection-budget.out"
+grep -Fxq -- "ERROR: externalAuthority.staleThresholdSeconds must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]" \
+  "$TMP_DIR/external-stale-threshold.out"
+grep -q "externalAuthority.observedStalenessSeconds must be a nonnegative finite number" \
+  "$TMP_DIR/external-observed-staleness.out"
+grep -q "publicPathChecks.websocket.observedProbeAgeSeconds must be a nonnegative finite number" \
+  "$TMP_DIR/mirrored-probe-age.out"
+grep -Fxq -- "ERROR: observability_deadman_heartbeat_timestamp_seconds.value must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]" \
+  "$TMP_DIR/mirrored-deadman.out"
+grep -q "playerflow_canary_success values must be finite numeric 0 or 1" \
+  "$TMP_DIR/mirrored-canary-success.out"
+grep -q "playerflow_canary_latency_ms values must be a nonnegative finite number" \
+  "$TMP_DIR/mirrored-canary-latency.out"
+grep -q "playerflow_canary_last_run_timestamp_seconds values must be positive finite timestamps" \
+  "$TMP_DIR/mirrored-canary-last-run.out"
+grep -Fxq -- "ERROR: mirroredSignals.playerflow_canary_freshness_budget_seconds.value must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]" \
+  "$TMP_DIR/mirrored-canary-budget.out"
+
+QUERY_PATH_STORAGE_TARGET="$TMP_DIR/queryability-storage-target-path.json"
+QUERY_PATH_BARE_INDEX="$TMP_DIR/queryability-bare-index-path.json"
+python3 - "$VALID_EVIDENCE" "$QUERY_PATH_STORAGE_TARGET" "$QUERY_PATH_BARE_INDEX" <<'PY'
+import copy
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+storage_target = copy.deepcopy(source)
+storage_target["logPipelineQueryability"]["queryPath"] = (
+    storage_target["logPipelineQueryability"]["storageTarget"]
+)
+Path(sys.argv[2]).write_text(json.dumps(storage_target), encoding="utf-8")
+
+bare_index = copy.deepcopy(source)
+bare_index["logPipelineQueryability"].update(
+    {"storageTarget": "other-log-storage", "queryPath": "firemud-logs-*"}
+)
+Path(sys.argv[3]).write_text(json.dumps(bare_index), encoding="utf-8")
+PY
+
+for query_path_case in storage-target-path bare-index-path; do
+  query_path_file="$TMP_DIR/queryability-$query_path_case.json"
+  if python3 "$VALIDATOR" "$query_path_file" >"$TMP_DIR/queryability-$query_path_case.out" 2>&1; then
+    echo "$query_path_case query path unexpectedly passed" >&2
+    exit 1
+  fi
+  grep -q "logPipelineQueryability.queryPath must identify a final supported operator surface" \
+    "$TMP_DIR/queryability-$query_path_case.out"
+done
+
+OMITTED_WRONG_RESULT="$TMP_DIR/omitted-queryability-wrong-result.json"
+OMITTED_MISSING_REASON="$TMP_DIR/omitted-queryability-missing-reason.json"
+OMITTED_BLANK_REASON="$TMP_DIR/omitted-queryability-blank-reason.json"
+python3 - \
+  "$OMITTED_QUERYABILITY_EVIDENCE" \
+  "$OMITTED_WRONG_RESULT" \
+  "$OMITTED_MISSING_REASON" \
+  "$OMITTED_BLANK_REASON" <<'PY'
+import copy
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+
+wrong_result = copy.deepcopy(source)
+wrong_result["logPipelineQueryability"]["result"] = "failed"
+Path(sys.argv[2]).write_text(json.dumps(wrong_result), encoding="utf-8")
+
+missing_reason = copy.deepcopy(source)
+del missing_reason["logPipelineQueryability"]["omissionReason"]
+Path(sys.argv[3]).write_text(json.dumps(missing_reason), encoding="utf-8")
+
+blank_reason = copy.deepcopy(source)
+blank_reason["logPipelineQueryability"]["omissionReason"] = "  "
+Path(sys.argv[4]).write_text(json.dumps(blank_reason), encoding="utf-8")
+PY
+
+if python3 "$VALIDATOR" "$OMITTED_WRONG_RESULT" >"$TMP_DIR/omitted-queryability-wrong-result.out" 2>&1; then
+  echo "omitted queryability wrong result unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "logPipelineQueryability.result must be 'not_applicable' when capability is log-queryability-omitted" \
+  "$TMP_DIR/omitted-queryability-wrong-result.out"
+
+for omission_reason_case in missing-reason blank-reason; do
+  omission_reason_file="$TMP_DIR/omitted-queryability-$omission_reason_case.json"
+  if python3 "$VALIDATOR" "$omission_reason_file" >"$TMP_DIR/omitted-queryability-$omission_reason_case.out" 2>&1; then
+    echo "$omission_reason_case omitted queryability reason unexpectedly passed" >&2
+    exit 1
+  fi
+  grep -q "logPipelineQueryability.omissionReason is required when queryability is omitted" \
+    "$TMP_DIR/omitted-queryability-$omission_reason_case.out"
+done
+
+FALSE_CURRENT_DEADMAN_MIRROR="$TMP_DIR/false-current-deadman-mirror.json"
+STALE_INJECTED_DEADMAN_MIRROR="$TMP_DIR/stale-injected-deadman-mirror.json"
+python3 - \
+  "$OMITTED_VALID_EVIDENCE" \
+  "$FALSE_CURRENT_DEADMAN_MIRROR" \
+  "$STALE_INJECTED_DEADMAN_MIRROR" <<'PY'
+import copy
+import json
+import sys
+from datetime import datetime
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+verified_epoch = datetime.fromisoformat(
+    source["verifiedAt"].replace("Z", "+00:00")
+).timestamp()
+
+false_current = copy.deepcopy(source)
+false_current["mirroredSignals"][
+    "observability_deadman_heartbeat_timestamp_seconds"
+]["value"] = verified_epoch
+Path(sys.argv[2]).write_text(json.dumps(false_current), encoding="utf-8")
+
+stale_injected = copy.deepcopy(source)
+stale_injected["mirroredSignals"][
+    "observability_deadman_heartbeat_timestamp_seconds"
+]["value"] = verified_epoch - source["externalAuthority"]["staleThresholdSeconds"] - 1
+Path(sys.argv[3]).write_text(json.dumps(stale_injected), encoding="utf-8")
+PY
+
+if python3 "$VALIDATOR" --allow-failure-evidence "$FALSE_CURRENT_DEADMAN_MIRROR" \
+  >"$TMP_DIR/false-current-deadman-mirror.out" 2>&1; then
+  echo "current-looking deadman mirror unexpectedly diverged from retained authority" >&2
+  exit 1
+fi
+grep -q "must equal externalAuthority.lastSuccessfulHeartbeatObservedAt" \
+  "$TMP_DIR/false-current-deadman-mirror.out"
+
+if python3 "$VALIDATOR" "$STALE_INJECTED_DEADMAN_MIRROR" \
+  >"$TMP_DIR/stale-injected-deadman-readiness.out" 2>&1; then
+  echo "injected stale deadman mirror unexpectedly authorized readiness" >&2
+  exit 1
+fi
+grep -q "must equal externalAuthority.lastSuccessfulHeartbeatObservedAt" \
+  "$TMP_DIR/stale-injected-deadman-readiness.out"
+python3 "$VALIDATOR" --allow-failure-evidence "$STALE_INJECTED_DEADMAN_MIRROR" \
+  >"$TMP_DIR/stale-injected-deadman-incident.out"
+
+FAILED_CANARY_ALERT_EVIDENCE="$TMP_DIR/failed-canary-alert-evidence.json"
+python3 - "$VALID_EVIDENCE" "$FAILED_CANARY_ALERT_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["canaryAlerts"][0]["exerciseResult"] = "failed"
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if python3 "$VALIDATOR" "$FAILED_CANARY_ALERT_EVIDENCE" >"$TMP_DIR/failed-canary-alert-readiness.out" 2>&1; then
+  echo "readiness validator unexpectedly accepted failed canary alert evidence" >&2
+  exit 1
+fi
+grep -q "PlayerFlowCanaryLoginFailed exerciseResult must be passed" \
+  "$TMP_DIR/failed-canary-alert-readiness.out"
+if python3 "$VALIDATOR" --allow-failure-evidence "$FAILED_CANARY_ALERT_EVIDENCE" \
+  >"$TMP_DIR/failed-canary-alert-incident.out" 2>&1; then
+  echo "self-attested failed canary alert unexpectedly passed incident validation" >&2
+  exit 1
+fi
+grep -q "cannot be advertised until an authoritative Account synthetic identity verifier is implemented" \
+  "$TMP_DIR/failed-canary-alert-incident.out"
+
+INVALID_CANARY_ALERT_EXERCISE_RESULT="$TMP_DIR/invalid-canary-alert-exercise-result.json"
+python3 - "$VALID_EVIDENCE" "$INVALID_CANARY_ALERT_EXERCISE_RESULT" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["canaryAlerts"][0]["exerciseResult"] = "unknown"
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if python3 "$VALIDATOR" --allow-failure-evidence "$INVALID_CANARY_ALERT_EXERCISE_RESULT" \
+  >"$TMP_DIR/invalid-canary-alert-exercise-result.out" 2>&1; then
+  echo "invalid canary alert exercise result unexpectedly passed incident validation" >&2
+  exit 1
+fi
+grep -q "PlayerFlowCanaryLoginFailed exerciseResult must be one of failed, not_exercised, passed" \
+  "$TMP_DIR/invalid-canary-alert-exercise-result.out"
+
+UNEXERCISED_CANARY_ALERT_EVIDENCE="$TMP_DIR/unexercised-canary-alert-evidence.json"
+python3 - "$VALID_EVIDENCE" "$UNEXERCISED_CANARY_ALERT_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+for record in source["canaryAlerts"]:
+    record["exerciseResult"] = "not_exercised"
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if python3 "$VALIDATOR" "$UNEXERCISED_CANARY_ALERT_EVIDENCE" \
+  >"$TMP_DIR/unexercised-canary-alert-readiness.out" 2>&1; then
+  echo "unexercised canary alert declarations unexpectedly authorized readiness" >&2
+  exit 1
+fi
+grep -q "PlayerFlowCanaryLoginFailed exerciseResult must be passed" \
+  "$TMP_DIR/unexercised-canary-alert-readiness.out"
+if python3 "$VALIDATOR" --allow-failure-evidence "$UNEXERCISED_CANARY_ALERT_EVIDENCE" \
+  >"$TMP_DIR/unexercised-canary-alert-incident.out" 2>&1; then
+  echo "self-attested unexercised canary alert unexpectedly passed incident validation" >&2
+  exit 1
+fi
+grep -q "cannot be advertised until an authoritative Account synthetic identity verifier is implemented" \
+  "$TMP_DIR/unexercised-canary-alert-incident.out"
+
+MALFORMED_CANARY_ALERT_SHAPE="$TMP_DIR/malformed-canary-alert-shape.json"
+python3 - "$VALID_EVIDENCE" "$MALFORMED_CANARY_ALERT_SHAPE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["canaryAlerts"].append(dict(source["canaryAlerts"][0]))
+source["canaryAlerts"].append(
+    {"alert": "UnsupportedCanaryAlert", "severity": "P1", "exerciseResult": "passed"}
+)
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+
+if python3 "$VALIDATOR" "$MALFORMED_CANARY_ALERT_SHAPE" >"$TMP_DIR/malformed-canary-alert-shape.out" 2>&1; then
+  echo "duplicate/unsupported canary alert families unexpectedly passed readiness validation" >&2
+  exit 1
+fi
+grep -q "canaryAlerts must contain exactly one record per alert family" \
+  "$TMP_DIR/malformed-canary-alert-shape.out"
+grep -q "canaryAlerts has unsupported alert families: UnsupportedCanaryAlert" \
+  "$TMP_DIR/malformed-canary-alert-shape.out"
+if python3 "$VALIDATOR" --allow-failure-evidence "$MALFORMED_CANARY_ALERT_SHAPE" \
+  >"$TMP_DIR/malformed-canary-alert-shape-incident.out" 2>&1; then
+  echo "duplicate/unsupported canary alert families unexpectedly passed incident validation" >&2
+  exit 1
+fi
+grep -q "canaryAlerts must contain exactly one record per alert family" \
+  "$TMP_DIR/malformed-canary-alert-shape-incident.out"
+grep -q "canaryAlerts has unsupported alert families: UnsupportedCanaryAlert" \
+  "$TMP_DIR/malformed-canary-alert-shape-incident.out"
 
 INVALID_CAPABILITIES_EVIDENCE="$TMP_DIR/invalid-capabilities-evidence.json"
 python3 - "$VALID_EVIDENCE" "$INVALID_CAPABILITIES_EVIDENCE" <<'PY'
@@ -161,7 +883,7 @@ if python3 "$VALIDATOR" "$MISSING_STALE_THRESHOLD_EVIDENCE" >"$TMP_DIR/missing-s
   echo "missing stale threshold unexpectedly passed" >&2
   exit 1
 fi
-grep -q "externalAuthority.staleThresholdSeconds must be a positive finite number" \
+grep -Fxq -- "ERROR: externalAuthority.staleThresholdSeconds must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]" \
   "$TMP_DIR/missing-stale-threshold.out"
 
 INVALID_STALE_THRESHOLD_EVIDENCE="$TMP_DIR/invalid-stale-threshold-evidence.json"
@@ -179,7 +901,7 @@ if python3 "$VALIDATOR" "$INVALID_STALE_THRESHOLD_EVIDENCE" >"$TMP_DIR/invalid-s
   echo "invalid stale threshold unexpectedly passed" >&2
   exit 1
 fi
-grep -q "externalAuthority.staleThresholdSeconds must be a positive finite number" \
+grep -Fxq -- "ERROR: externalAuthority.staleThresholdSeconds must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]" \
   "$TMP_DIR/invalid-stale-threshold.out"
 
 OVER_THRESHOLD_DEADMAN_EVIDENCE="$TMP_DIR/over-threshold-deadman-evidence.json"
@@ -381,7 +1103,31 @@ if python3 "$VALIDATOR" "$FUTURE_EXTERNAL_EVIDENCE_TIMESTAMP" >"$TMP_DIR/future-
   echo "future external evidence timestamp unexpectedly passed" >&2
   exit 1
 fi
-grep -q "externalAuthority.evidenceObservedAt cannot be in the future relative to verifiedAt" "$TMP_DIR/future-external-evidence-timestamp.out"
+grep -q "externalAuthority.evidenceObservedAt cannot be later than the trusted evaluation time" "$TMP_DIR/future-external-evidence-timestamp.out"
+
+FUTURE_EXTERNAL_BEFORE_TRUSTED_EVIDENCE="$TMP_DIR/future-external-before-trusted-evidence.json"
+python3 - "$VALID_EVIDENCE" "$FUTURE_EXTERNAL_BEFORE_TRUSTED_EVIDENCE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["verifiedAt"] = "2026-03-19T10:54:00Z"
+source["logPipelineQueryability"]["evidenceObservedAt"] = "2026-03-19T10:54:00Z"
+source["logPipelineQueryability"]["evidenceExpiresAt"] = "2026-03-19T12:54:00Z"
+source["externalAuthority"]["evidenceObservedAt"] = "2026-03-19T10:54:30Z"
+source["externalAuthority"]["lastSuccessfulHeartbeatObservedAt"] = "2026-03-19T10:54:30Z"
+for record in source["externalAuthority"]["publicPathChecks"].values():
+    record["lastSuccessfulProbeObservedAt"] = "2026-03-19T10:54:30Z"
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+if python3 "$VALIDATOR" "$FUTURE_EXTERNAL_BEFORE_TRUSTED_EVIDENCE" \
+  >"$TMP_DIR/future-external-before-trusted.out" 2>&1; then
+  echo "external evidence after verifiedAt unexpectedly passed chronology validation" >&2
+  exit 1
+fi
+grep -q "externalAuthority.evidenceObservedAt cannot be in the future relative to verifiedAt" \
+  "$TMP_DIR/future-external-before-trusted.out"
 
 FUTURE_HEARTBEAT_TIMESTAMP="$TMP_DIR/future-heartbeat-timestamp.json"
 python3 - "$VALID_EVIDENCE" "$FUTURE_HEARTBEAT_TIMESTAMP" <<'PY'
@@ -646,7 +1392,17 @@ source["mirroredSignals"]["playerflow_canary_freshness_budget_seconds"]["value"]
 Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
 PY
 
-python3 "$VALIDATOR" "$MINIMUM_CANARY_BUDGET_EVIDENCE" >"$TMP_DIR/minimum-canary-budget.out"
+if python3 "$VALIDATOR" "$MINIMUM_CANARY_BUDGET_EVIDENCE" >"$TMP_DIR/minimum-canary-budget.out" 2>&1; then
+  echo "self-attested advertised canary budget unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "cannot be advertised until an authoritative Account synthetic identity verifier is implemented" \
+  "$TMP_DIR/minimum-canary-budget.out"
+if grep -q "externalAuthority.detectionBudgetSeconds must be at least 180 seconds" \
+  "$TMP_DIR/minimum-canary-budget.out"; then
+  echo "minimum canary alert hold budget was rejected at the boundary" >&2
+  exit 1
+fi
 
 SMALL_CANARY_BUDGET_EVIDENCE="$TMP_DIR/small-canary-budget-evidence.json"
 python3 - "$MINIMUM_CANARY_BUDGET_EVIDENCE" "$SMALL_CANARY_BUDGET_EVIDENCE" <<'PY'
@@ -764,7 +1520,17 @@ source["mirroredSignals"]["playerflow_canary_last_run_timestamp_seconds"] = [
 Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
 PY
 
-python3 "$VALIDATOR" "$SCOPED_REQUIRED_EVIDENCE" >"$TMP_DIR/scoped.out"
+if python3 "$VALIDATOR" "$SCOPED_REQUIRED_EVIDENCE" >"$TMP_DIR/scoped.out" 2>&1; then
+  echo "self-attested scoped advertised canary unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "cannot be advertised until an authoritative Account synthetic identity verifier is implemented" \
+  "$TMP_DIR/scoped.out"
+if grep -q "externalAuthority.publicPathChecks.telnet\|entrypath_blackbox_probe_success missing passing paths: telnet\|playerflow_canary_success missing passing flows for path 'telnet'" \
+  "$TMP_DIR/scoped.out"; then
+  echo "scoped required posture unexpectedly required the omitted telnet path" >&2
+  exit 1
+fi
 
 cat >"$INVALID_EVIDENCE" <<'JSON'
 {
@@ -806,7 +1572,7 @@ cat >"$INVALID_EVIDENCE" <<'JSON'
     "playerflow_canary_latency_ms": []
   },
   "canaryAlerts": [
-    {"alert": "PlayerFlowCanaryLoginFailed", "severity": "P0", "exerciseResult": "passed"}
+    {"alert": "PlayerFlowCanaryLoginFailed", "severity": "P1", "exerciseResult": "passed"}
   ]
 }
 JSON
@@ -839,6 +1605,7 @@ source["externalAuthority"] = {
     "exposedPublicPlayerPaths": ["websocket"],
 }
 source["capabilities"]["playerFlowCanary"] = "omitted"
+source.pop("playerFlowCanaryIdentity", None)
 source["mirroredSignals"]["entrypath_blackbox_probe_success"] = [
     record
     for record in source["mirroredSignals"]["entrypath_blackbox_probe_success"]
@@ -913,7 +1680,17 @@ source["mirroredSignals"]["playerflow_canary_freshness_budget_seconds"] = {
 Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
 PY
 
-python3 "$VALIDATOR" "$OMITTED_CANARY_EVIDENCE" >"$TMP_DIR/omitted-canary.out"
+if python3 "$VALIDATOR" "$OMITTED_CANARY_EVIDENCE" >"$TMP_DIR/omitted-canary.out" 2>&1; then
+  echo "self-attested advertised canary with omitted authority unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "cannot be advertised until an authoritative Account synthetic identity verifier is implemented" \
+  "$TMP_DIR/omitted-canary.out"
+if grep -q "externalAuthority.independent-omitted must not include external authority fields" \
+  "$TMP_DIR/omitted-canary.out"; then
+  echo "omitted external authority unexpectedly retained authority fields" >&2
+  exit 1
+fi
 
 OMITTED_CANARY_NO_BUDGET_EVIDENCE="$TMP_DIR/omitted-canary-no-budget-evidence.json"
 python3 - "$OMITTED_CANARY_EVIDENCE" "$OMITTED_CANARY_NO_BUDGET_EVIDENCE" <<'PY'
@@ -991,7 +1768,7 @@ if python3 "$VALIDATOR" "$MISSING_OMITTED_CANARY_BUDGET" >"$TMP_DIR/missing-omit
   echo "missing advertised-canary freshness budget unexpectedly passed" >&2
   exit 1
 fi
-grep -q "externalAuthority.detectionBudgetSeconds must be a positive finite number" \
+grep -Fxq -- "ERROR: externalAuthority.detectionBudgetSeconds must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]" \
   "$TMP_DIR/missing-omitted-canary-budget.out"
 
 DUPLICATE_PLAYERFLOW_SUCCESS="$TMP_DIR/duplicate-playerflow-success.json"
@@ -1082,8 +1859,18 @@ if python3 "$VALIDATOR" "$FRESH_FAILURE_EVIDENCE" >"$TMP_DIR/fresh-failure-readi
   exit 1
 fi
 grep -q "missing passing paths" "$TMP_DIR/fresh-failure-readiness.out"
-python3 "$VALIDATOR" --allow-failure-evidence "$FRESH_FAILURE_EVIDENCE" \
-  >"$TMP_DIR/fresh-failure-incident.out"
+if python3 "$VALIDATOR" --allow-failure-evidence "$FRESH_FAILURE_EVIDENCE" \
+  >"$TMP_DIR/fresh-failure-incident.out" 2>&1; then
+  echo "self-attested canary failure evidence unexpectedly passed incident validation" >&2
+  exit 1
+fi
+grep -q "cannot be advertised until an authoritative Account synthetic identity verifier is implemented" \
+  "$TMP_DIR/fresh-failure-incident.out"
+if grep -q "entrypath_blackbox_probe_success missing passing paths\|playerflow_canary_success missing passing flows" \
+  "$TMP_DIR/fresh-failure-incident.out"; then
+  echo "fresh incident failure evidence was incorrectly treated as readiness evidence" >&2
+  exit 1
+fi
 
 RED_EXTERNAL_INCIDENT_EVIDENCE="$TMP_DIR/red-external-incident-evidence.json"
 python3 - "$VALID_EVIDENCE" "$RED_EXTERNAL_INCIDENT_EVIDENCE" <<'PY'
@@ -1107,8 +1894,42 @@ if python3 "$VALIDATOR" "$RED_EXTERNAL_INCIDENT_EVIDENCE" \
   exit 1
 fi
 grep -q "deadmanAuthority.status must be green" "$TMP_DIR/red-external-readiness.out"
-python3 "$VALIDATOR" --allow-failure-evidence "$RED_EXTERNAL_INCIDENT_EVIDENCE" \
-  >"$TMP_DIR/red-external-incident.out"
+if python3 "$VALIDATOR" --allow-failure-evidence "$RED_EXTERNAL_INCIDENT_EVIDENCE" \
+  >"$TMP_DIR/red-external-incident.out" 2>&1; then
+  echo "self-attested red canary authority unexpectedly passed incident validation" >&2
+  exit 1
+fi
+grep -q "cannot be advertised until an authoritative Account synthetic identity verifier is implemented" \
+  "$TMP_DIR/red-external-incident.out"
+if grep -q "deadmanAuthority.status must be green\|publicPathChecks\..*status must be green\|pageEvidenceRef is required" \
+  "$TMP_DIR/red-external-incident.out"; then
+  echo "red external incident evidence was incorrectly subject to readiness-only requirements" >&2
+  exit 1
+fi
+
+FALSE_CURRENT_RED_DEADMAN_MIRROR="$TMP_DIR/false-current-red-deadman-mirror.json"
+python3 - "$RED_EXTERNAL_INCIDENT_EVIDENCE" "$FALSE_CURRENT_RED_DEADMAN_MIRROR" <<'PY'
+import json
+import sys
+from datetime import datetime
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["mirroredSignals"][
+    "observability_deadman_heartbeat_timestamp_seconds"
+]["value"] = datetime.fromisoformat(
+    source["verifiedAt"].replace("Z", "+00:00")
+).timestamp()
+Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
+PY
+if python3 "$VALIDATOR" --allow-failure-evidence \
+  "$FALSE_CURRENT_RED_DEADMAN_MIRROR" \
+  >"$TMP_DIR/false-current-red-deadman-mirror.out" 2>&1; then
+  echo "red retained authority accepted a false current deadman mirror" >&2
+  exit 1
+fi
+grep -q "must equal externalAuthority.lastSuccessfulHeartbeatObservedAt" \
+  "$TMP_DIR/false-current-red-deadman-mirror.out"
 
 MIXED_FAILURE_EVIDENCE="$TMP_DIR/mixed-failure-evidence.json"
 python3 - "$VALID_EVIDENCE" "$MIXED_FAILURE_EVIDENCE" <<'PY'
@@ -1126,8 +1947,18 @@ for record in canary:
 Path(sys.argv[2]).write_text(json.dumps(source), encoding="utf-8")
 PY
 
-python3 "$VALIDATOR" --allow-failure-evidence "$MIXED_FAILURE_EVIDENCE" \
-  >"$TMP_DIR/mixed-failure-incident.out"
+if python3 "$VALIDATOR" --allow-failure-evidence "$MIXED_FAILURE_EVIDENCE" \
+  >"$TMP_DIR/mixed-failure-incident.out" 2>&1; then
+  echo "self-attested mixed canary failure evidence unexpectedly passed incident validation" >&2
+  exit 1
+fi
+grep -q "cannot be advertised until an authoritative Account synthetic identity verifier is implemented" \
+  "$TMP_DIR/mixed-failure-incident.out"
+if grep -q "entrypath_blackbox_probe_success missing passing paths\|playerflow_canary_success missing passing flows" \
+  "$TMP_DIR/mixed-failure-incident.out"; then
+  echo "mixed incident failure evidence was incorrectly treated as readiness evidence" >&2
+  exit 1
+fi
 
 EMPTY_FAILURE_EVIDENCE="$TMP_DIR/empty-failure-evidence.json"
 python3 - "$FRESH_FAILURE_EVIDENCE" "$EMPTY_FAILURE_EVIDENCE" <<'PY'
@@ -1164,7 +1995,7 @@ if python3 "$VALIDATOR" --allow-failure-evidence "$BOOL_DEADMAN_EVIDENCE" >"$TMP
   echo "boolean deadman timestamp unexpectedly accepted" >&2
   exit 1
 fi
-grep -q "value must be a positive finite number" "$TMP_DIR/bool-deadman.out"
+grep -Fxq -- "ERROR: observability_deadman_heartbeat_timestamp_seconds.value must be a positive finite number of seconds in the inclusive range [1e-06, 1000000000000]" "$TMP_DIR/bool-deadman.out"
 
 FUTURE_DEADMAN_EVIDENCE="$TMP_DIR/future-deadman-evidence.json"
 python3 - "$VALID_EVIDENCE" "$FUTURE_DEADMAN_EVIDENCE" <<'PY'
@@ -1184,6 +2015,6 @@ if python3 "$VALIDATOR" --allow-failure-evidence "$FUTURE_DEADMAN_EVIDENCE" >"$T
   echo "future deadman timestamp unexpectedly accepted" >&2
   exit 1
 fi
-grep -q "cannot be in the future relative to verifiedAt" "$TMP_DIR/future-deadman.out"
+grep -q "cannot be in the future relative to the trusted evaluation time" "$TMP_DIR/future-deadman.out"
 
 echo "player-experience smoke evidence contract checks passed"

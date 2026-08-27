@@ -184,7 +184,7 @@ To make the re-submission contract enforceable across failover and scoped coordi
   - A same-ID mismatch in subject, actor/character, command type, or semantic payload fails closed without returning the existing acknowledgement or status.
   - `GetGameplayCommandStatus` authorizes the read against the immutable ingress identity or an explicitly authorized internal/operator route; knowledge of `commandId` is insufficient.
   - Region/tenant/cluster coordination resets do not delete this dedupe record; they only affect volatile queue state.
-  - Retention is TTL-based at the SQL layer and must outlive expected client retry windows.
+  - Retention follows the shared service-owned retention-class contract rather than a client-only SQL TTL. The compact deduplication/status receipt must outlive every supported client and internal retry, reconnect, replay, restore, and reconciliation horizon for the logical command. Age alone never makes the receipt eligible for deletion: Game Session cleanup also requires the owning terminality predicate, absence of blocking references, and the applicable safe watermark. See [Scaling Runbook](./system-architecture-scaling-runbook.md#data-retention-and-high-churn-tables) and [ADR 0163](./decisions/adr-0163-service-owned-retention-classes-with-cross-service-safety.md) for the canonical retention and compatibility rules.
 - `ACCEPTED_VOLATILE` remains volatile for execution semantics: the dedupe record guarantees no duplicate logical enqueue for the same `commandId`, not guaranteed eventual execution, but it does guarantee eventual convergence to a terminal command outcome.
 
 Storage rule:

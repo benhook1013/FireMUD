@@ -615,6 +615,24 @@ ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/adr-0159-profile-dependent-independent-deadman-and-public-path-monitoring.md": adr_allocation(
         "PO-4", "Accepted", "PO-2"
     ),
+    "design/architecture/decisions/adr-0160-staged-profile-aware-player-experience-slo-contract.md": adr_allocation(
+        "PO-4", "Accepted", "PO-2", "GR-1", "EA-2"
+    ),
+    "design/architecture/decisions/adr-0161-profile-aware-isolated-synthetic-player-flow-canaries.md": adr_allocation(
+        "PO-4", "Accepted", "EA-3", "PO-2", "AA-1"
+    ),
+    "design/architecture/decisions/adr-0162-profile-aware-asynchronous-end-to-end-log-queryability-evidence.md": adr_allocation(
+        "PO-4", "Accepted"
+    ),
+    "design/architecture/decisions/adr-0163-service-owned-retention-classes-with-cross-service-safety.md": adr_allocation(
+        "SF-2", "Accepted", "GR-1", "PO-4"
+    ),
+    "design/architecture/decisions/adr-0164-three-boundary-profile-aware-verification-evidence.md": adr_allocation(
+        "PO-4", "Accepted", "PO-3"
+    ),
+    "design/architecture/decisions/adr-0165-authoritative-control-actions-during-observability-loss.md": adr_allocation(
+        "PO-4", "Accepted", "PO-1", "SF-1", "SF-2"
+    ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
     "README.md": "Service overview",

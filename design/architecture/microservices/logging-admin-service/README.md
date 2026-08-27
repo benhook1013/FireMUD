@@ -2,7 +2,7 @@
 
 ## Overview
 
-Centralized logging and administration tools for the platform. The service collects log data from all services, defines the target fixed-category moderation policy, case, bounded-appeal, and audit contracts for game operators, embeds shared observability tools, and acts as the operator-facing coordinator for coordination-health monitoring. Runtime restriction state remains owned by Account, Game Session, or Social & Groups. Per-instance tick pause/resume forwarding is implemented but unavailable as a supported operator mutation until the owner-side variant of the [Operator Mutation Support Gate](./admin-ui.md#implementation-status) is complete.
+Target state: centralized logging and administration tools present the selected profile's cross-service log-query and observability capabilities, fixed-category moderation policy, case, bounded-appeal, and audit contracts, and operator-facing coordination-health views. The current service does not collect the deployed structured-log stream, embed observability tools, or provide a separate admin UI; its narrower live surfaces are recorded in [Implementation Status](#implementation-status). Runtime restriction state remains owned by Account, Game Session, or Social & Groups. Per-instance tick pause/resume ingress is declared but hard fail closed; no Logging & Admin forwarding method is callable until the owner-side variant of the [Operator Mutation Support Gate](./admin-ui.md#implementation-status) is complete.
 
 ## Script-transition audit and observability boundary (target state; complete composition unavailable)
 
@@ -10,29 +10,31 @@ Target state only: Logging & Admin presents script-transition evidence but is no
 
 ## Implementation Status
 
-Logging & Admin owns fixed safety policy intent, moderation cases, bounded appeal cases/evidence, and audit. `GAMEPLAY_ADMISSION` is the gameplay enforcement boundary owned by Game Session, and `CHAT_SEND` is the chat enforcement boundary owned by Social & Groups; Account owns account-wide safety restrictions. **Current:** Game Session and Social & Groups synchronously call Logging & Admin's `EvaluateModerationPolicy` read at those boundaries, and the callers fail closed when the policy read is unavailable or not fresh. `/moderation/actions` and `ApplyModerationAction` are gated/unavailable and currently persist only the generic legacy `moderation_actions` row; separate fixed-category audit evidence and owner-side enforcement are absent, and the local path is not Gateway-forwarded. **Target:** routine enforcement is owner-local under [Moderation Policies](./moderation-policies.md), with typed commands and durable owner state rather than a synchronous Logging & Admin dependency. Complete fixed categories, owner revisions, appeals, and digest-bound outcome commands remain unimplemented and unproved. Per-instance `<tenantId, gameInstanceId>` `PauseTicksForScope`/`ResumeTicksForScope` forwarding is implemented, but it is unavailable under the owner-side variant of the Operator Mutation Support Gate; when enabled, the receiving owner redeems its forwarded reference with Account. `ToggleFeatureFlag` is unavailable under that gate as well. Regional reset and general remediation are not live capabilities.
+Current log-query status is narrower than the target profile-aware surface: `LogQueryServiceImpl` reads the service-owned PostgreSQL `log_events` domain table. That path is distinct from deployed structured-log collection and does not prove emitter-to-query delivery, `firemud-logs-*` indexing, Elasticsearch/Kibana queryability, a compatible indexed backend, or console/journal retrieval.
+
+Logging & Admin owns fixed safety policy intent, moderation cases, bounded appeal cases/evidence, and audit. `GAMEPLAY_ADMISSION` is the gameplay enforcement boundary owned by Game Session, and `CHAT_SEND` is the chat enforcement boundary owned by Social & Groups; Account owns account-wide safety restrictions. **Current:** Game Session and Social & Groups synchronously call Logging & Admin's `EvaluateModerationPolicy` compatibility read at those boundaries, and the callers fail closed when the policy read is unavailable or not fresh. This compatibility seam is a legacy, deny-only lookup over generic action rows ordered by recency; it is nonconformant with ADR 0141's broadest-effect response precedence (`platform_access_ban` over `account_security_lock`, `chat_ban` over `chat_mute`) and does not implement or prove all five fixed categories or their independent lifecycles. `/moderation/actions` and `ApplyModerationAction` are present legacy transport stubs that hard fail closed after narrow tenant/admin checks: HTTP returns `503 Service Unavailable`, gRPC returns an application-level `UNAVAILABLE` error, and neither path dispatches or persists the generic legacy `moderation_actions` row. They are unsupported/nonconformant drift, must not be wired or called as available mutations, and are not Gateway-forwarded. Separate fixed-category audit evidence and owner-side enforcement are absent. The interim `EvaluateModerationPolicy` and `CreateReport` receivers reject non-internal JWTs and unallowlisted service names, and the Social & Groups clients emit internal-service JWTs for those calls; certificate-derived exact workload/method allowlisting remains unproved, so this is not target conformance. These seams are internal, not public routes. **Target:** routine enforcement is owner-local under [Moderation Policies](./moderation-policies.md), with typed commands and durable owner state rather than a synchronous Logging & Admin dependency. Complete fixed categories, owner revisions, appeals, and digest-bound outcome commands remain unimplemented and unproved. Per-instance `<tenantId, gameInstanceId>` `PauseTicksForScope`/`ResumeTicksForScope` ingress is declared but hard fail closed; no Logging & Admin forwarding method remains callable until the owner-side variant of the Operator Mutation Support Gate is complete. `ToggleFeatureFlag` is unavailable under that gate as well. Regional reset and general remediation are not live capabilities.
 
 ## Responsibilities
 
-- Aggregate logs from every microservice via Fluent Bit sidecars and expose search APIs.
-- Offer dashboards and search for operators and moderators by embedding Kibana and Grafana views.
+- **Target-state responsibility:** Present the log collection and supported operator-query capabilities advertised by the selected deployment profile. The default indexed profile aggregates service logs through Fluent Bit; compatible indexed backends use their documented mapping, while reduced profiles expose only their declared console/journal posture or explicit indexed-search omission.
+- **Target-state responsibility:** Offer the selected profile's dashboards and search to operators and moderators. Kibana and Grafana embedding is the default indexed-profile integration, not a universal service dependency.
 - **Target-state responsibility:** Define the fixed safety policy vocabulary, retain moderation cases and bounded appeals/evidence, and keep append-only auditable policy/review records; do not own runtime restriction state.
 - Record live audit trails for account events and target/operator-intent audit for feature-flag override requests; intent does not prove a runtime feature-flag mutation.
-- Monitor coordination and tick health across tenant and region scopes. Automated per-instance `<tenantId, gameInstanceId>` `PauseTicksForScope`/`ResumeTicksForScope` forwarding exists but remains unavailable pending the owner-side variant of the Operator Mutation Support Gate; Logging & Admin forwards the opaque reference and does not redeem it. Regional pause/resume, regional reset, and broader/general remediation remain target-only.
+- Monitor coordination and tick health across tenant and region scopes. Automated per-instance `<tenantId, gameInstanceId>` `PauseTicksForScope`/`ResumeTicksForScope` ingress is declared but hard fail closed pending the owner-side variant of the Operator Mutation Support Gate; no Logging & Admin forwarding method is callable. Regional pause/resume, regional reset, and broader/general remediation remain target-only.
 
 ## Key Features
 
-- Central log search for entries collected via Fluent Bit sidecars.
-- [Analytics dashboards](./analytics-dashboards.md) for operators, embedding Kibana and Grafana panels, including Telnet ingress views based on the TCP Proxy metrics described in [Logging & Monitoring](../../system-architecture-logging-monitoring.md) and the example Grafana snippets under `design/observability/grafana/`.
-- Tools for reviewing account-related evidence and target-state restriction workflows; Account owns and enforces account restrictions, while Logging & Admin does not currently record or enforce them.
-- [Role-based admin UI](./admin-ui.md) for moderators.
-- [Moderation policies](./moderation-policies.md) including profanity filters.
-- Target-only UI for requesting runtime feature-flag overrides through owning domain control-plane APIs; `ToggleFeatureFlag` is not externally supported until the owner-side variant of the Operator Mutation Support Gate is complete.
-- Audit trail for account actions and world changes; target-state audit trail for moderation actions.
-- Transaction logs for purchases and subscription events.
-- Operator review of failed login attempts and suspicious activity reported by Game Session.
-- Automated alerts for suspicious activity via Alertmanager.
-- Real-time analytics on game performance.
+- **Target state:** Profile-advertised log retrieval: central indexed search for the default or a compatible indexed profile, console/journal retrieval for a declared reduced profile, or an explicit unavailable indexed-search state.
+- **Target state:** [Analytics dashboards](./analytics-dashboards.md) for operators. The default indexed profile embeds Kibana and Grafana panels, including Telnet ingress views based on the TCP Proxy metrics described in [Logging & Monitoring](../../system-architecture-logging-monitoring.md) and the example Grafana snippets under `design/observability/grafana/`; another profile maps equivalent views or marks omitted panels `not_applicable`.
+- **Target state:** Tools for reviewing account-related evidence and restriction workflows; Account owns and enforces account restrictions, while Logging & Admin does not currently record or enforce them.
+- **Target state:** [Role-based admin UI](./admin-ui.md) for moderators; no separate admin application or embedded-dashboard endpoint is currently implemented.
+- **Target state:** [Moderation policies](./moderation-policies.md) including profanity filters.
+- **Target state:** UI for requesting runtime feature-flag overrides through owning domain control-plane APIs; `ToggleFeatureFlag` is not externally supported until the owner-side variant of the Operator Mutation Support Gate is complete.
+- **Target state:** Audit trail for account actions and world changes, plus moderation-action audit evidence.
+- **Target state:** Transaction logs for purchases and subscription events.
+- **Target state:** Operator review of failed login attempts and suspicious activity reported by Game Session.
+- **Target state:** Automated alerts for suspicious activity via Alertmanager.
+- **Target state:** Real-time analytics on game performance.
 
 ## Document Map
 
@@ -57,7 +59,7 @@ Logging & Admin owns fixed safety policy intent, moderation cases, bounded appea
   - Account Service forwards account events and payment notifications.
   - Game Session Service streams session lifecycle metrics and owns runtime coordination state.
   - Social & Groups Service delivers chat logs for moderation.
-- **External:** Elasticsearch, Prometheus, Kibana, Grafana, and Alertmanager for storage, visualization, embedding, and alerting.
+- **External, profile-dependent:** the default indexed profile uses Fluent Bit, Elasticsearch, Kibana, Prometheus, Grafana, Alertmanager, the OpenTelemetry Collector, and Jaeger for log collection/storage/querying, metrics/dashboards, alerting, and trace collection/analysis. Compatible profiles declare equivalent dependencies and evidence mappings; reduced profiles omit unavailable indexed-search dependencies and retain their explicit operator limitations.
 
 See [Gateway Architecture](../../system-architecture-gateway.md), [Deployment Environments](../../infrastructure/deployment-environments.md), and [Protocol Bridging](../../system-architecture-protocol-bridging.md) for details on shared infrastructure components.
 

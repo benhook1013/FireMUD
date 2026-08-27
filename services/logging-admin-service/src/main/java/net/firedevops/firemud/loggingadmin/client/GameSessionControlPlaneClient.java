@@ -39,12 +39,8 @@ import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupResultsRequest;
 import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupResultsResponse;
 import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupsRequest;
 import net.firedevops.firemud.gamesession.v1.ListRemoteFollowupsResponse;
-import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeRequest;
-import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeResponse;
 import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeRequest;
 import net.firedevops.firemud.gamesession.v1.PrepareVersionUpgradeResponse;
-import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeRequest;
-import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeResponse;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerRequest;
 import net.firedevops.firemud.gamesession.v1.SetAdmissionPointerResponse;
 import net.firedevops.firemud.gamesession.v1.ValidateBuiltInCommandAliasRequest;
@@ -231,13 +227,5 @@ public class GameSessionControlPlaneClient
       builder.setRegionId(regionId);
     }
     return stub().getRuntimeOwnershipStatus(builder.build());
-  }
-
-  public PauseTicksForScopeResponse pauseTicksForScope(PauseTicksForScopeRequest request) {
-    return stub().pauseTicksForScope(request);
-  }
-
-  public ResumeTicksForScopeResponse resumeTicksForScope(ResumeTicksForScopeRequest request) {
-    return stub().resumeTicksForScope(request);
   }
 }

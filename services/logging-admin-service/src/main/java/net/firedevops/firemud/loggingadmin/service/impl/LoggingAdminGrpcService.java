@@ -5,11 +5,12 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
+import java.util.Set;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.common.security.RequestIdValidation;
-import net.firedevops.firemud.loggingadmin.service.FeatureFlagService;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.service.LogEventService;
 import net.firedevops.firemud.loggingadmin.service.LogQueryService;
 import net.firedevops.firemud.loggingadmin.service.ModerationService;
@@ -21,8 +22,13 @@ import org.springframework.grpc.server.service.GrpcService;
 @GrpcService
 public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdminServiceImplBase {
   private static final Logger logger = LoggerFactory.getLogger(LoggingAdminGrpcService.class);
+  private static final String MODERATION_ACTION_UNAVAILABLE_MESSAGE =
+      "Moderation actions are unavailable until the shared mutation gate is implemented";
+  private static final String FEATURE_FLAG_TOGGLE_UNAVAILABLE_MESSAGE =
+      "Feature-flag toggles are unavailable until the shared mutation gate is implemented";
+  private static final Set<String> MODERATION_POLICY_CALLERS =
+      Set.of("game-session-service", "social-groups-service");
 
-  private final FeatureFlagService featureFlagService;
   private final LogQueryService logQueryService;
   private final LogEventService logEventService;
   private final ModerationService moderationService;
@@ -33,12 +39,10 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
   private final MeterRegistry meterRegistry;
 
   public LoggingAdminGrpcService(
-      FeatureFlagService featureFlagService,
       LogQueryService logQueryService,
       LogEventService logEventService,
       ModerationService moderationService,
       MeterRegistry meterRegistry) {
-    this.featureFlagService = featureFlagService;
     this.logQueryService = logQueryService;
     this.logEventService = logEventService;
     this.moderationService = moderationService;
@@ -60,13 +64,19 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
       StreamObserver<ToggleFeatureFlagResponse> responseObserver) {
     try {
       AdminRoleGuard.requireAdminRole();
-      featureFlagService.toggleFlag(
-          new net.firedevops.firemud.loggingadmin.dto.ToggleFeatureFlagRequest(
-              RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
-              request.getName(),
-              request.getEnabled()));
+      RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId");
+      validateFeatureFlagName(request.getName());
       ToggleFeatureFlagResponse response =
-          ToggleFeatureFlagResponse.newBuilder().setSuccess(true).build();
+          ToggleFeatureFlagResponse.newBuilder()
+              .setSuccess(false)
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "ToggleFeatureFlag",
+                      "UNAVAILABLE",
+                      FEATURE_FLAG_TOGGLE_UNAVAILABLE_MESSAGE))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
@@ -105,6 +115,15 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    }
+  }
+
+  private void validateFeatureFlagName(String name) {
+    if (name == null || name.isBlank()) {
+      throw new IllegalArgumentException("name must not be blank");
+    }
+    if (name.length() > 100) {
+      throw new IllegalArgumentException("name size must be between 1 and 100");
     }
   }
 
@@ -207,15 +226,20 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
       StreamObserver<ApplyModerationActionResponse> responseObserver) {
     try {
       AdminRoleGuard.requireAdminRole();
-      moderationService.applyAction(
-          new net.firedevops.firemud.loggingadmin.dto.ApplyModerationActionRequest(
-              RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
-              RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId"),
-              RequestIdValidation.requirePositiveLong(request.getSessionId(), "sessionId"),
-              request.getAction(),
-              request.getReason()));
+      RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId");
+      RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId");
+      RequestIdValidation.requirePositiveLong(request.getSessionId(), "sessionId");
       ApplyModerationActionResponse response =
-          ApplyModerationActionResponse.newBuilder().setSuccess(true).build();
+          ApplyModerationActionResponse.newBuilder()
+              .setSuccess(false)
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "ApplyModerationAction",
+                      "UNAVAILABLE",
+                      MODERATION_ACTION_UNAVAILABLE_MESSAGE))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
@@ -263,6 +287,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
       EvaluateModerationPolicyRequest request,
       StreamObserver<EvaluateModerationPolicyResponse> responseObserver) {
     try {
+      requireAllowlistedInternalService(MODERATION_POLICY_CALLERS, "EvaluateModerationPolicy");
       var decision =
           moderationService.evaluatePolicy(
               RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
@@ -277,6 +302,20 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
         response.setExpiresAtEpochSeconds(decision.expiresAt().getEpochSecond());
       }
       responseObserver.onNext(response.build());
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      EvaluateModerationPolicyResponse response =
+          EvaluateModerationPolicyResponse.newBuilder()
+              .setAllowed(false)
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "EvaluateModerationPolicy",
+                      "PERMISSION_DENIED",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       EvaluateModerationPolicyResponse response =
@@ -301,6 +340,17 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    }
+  }
+
+  private static void requireAllowlistedInternalService(
+      Set<String> allowedServices, String methodName) {
+    String serviceName = SessionContext.getServiceName();
+    if (!SessionContext.isInternalService()
+        || serviceName == null
+        || !allowedServices.contains(serviceName)) {
+      throw new AdminAuthorizationException(
+          methodName + " requires an allowlisted internal service caller");
     }
   }
 }

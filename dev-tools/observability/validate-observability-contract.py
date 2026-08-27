@@ -14,12 +14,41 @@ def _compact_promql(expr: str) -> str:
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
+KIBANA_DEFAULT_LOG_INDEX = "firemud-logs-*"
+KIBANA_ENVIRONMENT_INDEX_SENTINEL = "firemud-logs-env-__REQUIRED_ENVIRONMENT__-*"
+KIBANA_SAFE_LOG_INDEX_PATTERN = re.compile(
+    r"^firemud-logs-(?:\*|[A-Za-z0-9][A-Za-z0-9._-]*\*?)$"
+)
+
 ALLOWED_SEVERITIES = {"P0", "P1", "P2"}
 REQUIRED_ALERT_LABELS = {"service", "severity", "owner", "runbook"}
+SUPPORTED_RULE_ROOT_FIELDS = {
+    "alert",
+    "record",
+    "expr",
+    "for",
+    "keep_firing_for",
+    "query_offset",
+    "labels",
+    "annotations",
+}
+SUPPORTED_RULE_INLINE_FIELDS = SUPPORTED_RULE_ROOT_FIELDS - {"alert", "record"}
 SERVICE_OPTIONAL_ALERTS = {
     "PlayerFlowCanaryLoginFailed",
     "PlayerFlowCanaryCommandFailed",
     "PlayerFlowCanaryLatencyHigh",
+}
+SERVICE_DERIVED_ALERTS = {"ChatDeliveryLatencyP99High"}
+PLAYER_SLO_CALIBRATION_ALERTS = {
+    "LoginSuccessRatioLowGateway",
+    "LoginSuccessRatioLowTcpProxy",
+    "CommandLatencyP99HighGateway",
+    "CommandLatencyP99HighTcpProxy",
+    "ChatDeliveryLatencyP99High",
+    "EntryPathAvailabilityLowGateway",
+    "EntryPathAvailabilityLowGatewayCompliance",
+    "EntryPathAvailabilityLowTcpProxy",
+    "EntryPathAvailabilityLowTcpProxyCompliance",
 }
 PLAYERFLOW_CANARY_ALERTS = SERVICE_OPTIONAL_ALERTS | {
     "PlayerFlowCanaryEvidenceStale",
@@ -32,6 +61,36 @@ PLAYERFLOW_CANARY_REQUIRED_LABELS = {
 PROFILE_DEPENDENT_ALERTS = {
     "ObservabilityDeadmanHeartbeatMissing",
     "ObservabilityDeadmanHeartbeatStale",
+    "WebSocketEntryPathBlackboxMetricsAbsent",
+    "WebSocketEntryPathBlackboxUnavailable",
+    "TelnetEntryPathBlackboxMetricsAbsent",
+    "TelnetEntryPathBlackboxUnavailable",
+}
+ENTRY_PATH_BLACKBOX_ALERT_CONTRACTS = {
+    "WebSocketEntryPathBlackboxMetricsAbsent": {
+        "path": "websocket",
+        "target": "gateway",
+        "service": "spring-cloud-gateway",
+        "expression": "absent",
+    },
+    "WebSocketEntryPathBlackboxUnavailable": {
+        "path": "websocket",
+        "target": "gateway",
+        "service": "spring-cloud-gateway",
+        "expression": "zero",
+    },
+    "TelnetEntryPathBlackboxMetricsAbsent": {
+        "path": "telnet",
+        "target": "tcp_proxy",
+        "service": "tcp-proxy-service",
+        "expression": "absent",
+    },
+    "TelnetEntryPathBlackboxUnavailable": {
+        "path": "telnet",
+        "target": "tcp_proxy",
+        "service": "tcp-proxy-service",
+        "expression": "zero",
+    },
 }
 DISALLOWED_ALERT_SERVICE_LABELS = {"gateway", "game-session"}
 GRAFANA_DIR = REPO_ROOT / "design" / "observability" / "grafana"
@@ -41,6 +100,11 @@ CORE_ALERT_SNIPPET_PATHS = [
     GRAFANA_DIR / "backup-alerts-snippets.md",
     GRAFANA_DIR / "player-experience-alerts-snippets.md",
     GRAFANA_DIR / "observability-stack-alerts-snippets.md",
+]
+ALERT_SNIPPET_PATHS = [
+    GRAFANA_DIR / "core-alerts-snippets.md",
+    *CORE_ALERT_SNIPPET_PATHS,
+    GRAFANA_DIR / "tcp-proxy-alerts-snippets.md",
 ]
 REQUIRED_BACKUP_RECORDINGS = {
     "backup_pipeline_recent_backup_slo_breached",
@@ -260,6 +324,38 @@ def _github_anchors_for_markdown(path: Path) -> set[str]:
     return anchors
 
 
+def _alert_runbook_findings(path: Path, runbook: str) -> list[Finding]:
+    if not runbook.startswith("design/") or ".md" not in runbook or "#" not in runbook:
+        return [
+            Finding(
+                path=path,
+                message=(
+                    "alert rule runbook label must be a design doc anchor "
+                    f"(design/...md#section); got {runbook!r}"
+                ),
+            )
+        ]
+
+    runbook_path_s, anchor = runbook.split("#", 1)
+    runbook_path = REPO_ROOT / runbook_path_s
+    if not runbook_path.exists():
+        return [
+            Finding(
+                path=path,
+                message=f"alert rule runbook file does not exist: {runbook!r}",
+            )
+        ]
+
+    if anchor not in _github_anchors_for_markdown(runbook_path):
+        return [
+            Finding(
+                path=path,
+                message=f"alert rule runbook anchor does not exist: {runbook!r}",
+            )
+        ]
+    return []
+
+
 def _split_alert_rules(yaml_text: str) -> list[_RuleEntry]:
     return _split_rule_entries(yaml_text, "alert")
 
@@ -310,13 +406,41 @@ def _is_sequence_item(line: str, indent: int | None = None) -> bool:
 
 def _parse_mapping_header(text: str) -> tuple[str, str] | None:
     match = re.match(
-        r"^(?P<key>[A-Za-z_][A-Za-z0-9_-]*|\"[^\"]+\"|'[^']+')\s*:\s*(?P<value>.*)$",
+        # A plain mapping value must be separated from ``:`` by a space. A
+        # bare ``key:`` remains valid for an empty/null value, while
+        # ``key:value`` and ``key:\tvalue`` are scalar/malformed YAML rather
+        # than mappings. Keep this aligned with the dependency-free parser's
+        # safe subset so it cannot silently reinterpret malformed input.
+        r"^(?P<key>[A-Za-z_][A-Za-z0-9_-]*|\"[^\"]+\"|'[^']+')[ \t]*:(?:(?P<spaces> +)(?P<value>.*)|(?P<empty>))$",
         _strip_yaml_comment(text).strip(),
     )
     if not match:
         return None
     key = match.group("key").strip("\"'")
-    return key, match.group("value").strip()
+    return key, (match.group("value") or "").strip()
+
+
+def _looks_like_mapping_header(text: str) -> bool:
+    """Recognize YAML mapping-key syntax the dependency-free parser cannot parse."""
+    content = _strip_yaml_comment(text).strip()
+    if not content or _parse_mapping_header(content) is not None:
+        return False
+    # Keep malformed spellings of the supported rule fields visible (for
+    # example ``expr:value``) without treating arbitrary scalar text such as
+    # URLs or PromQL string values as mapping headers.
+    if re.match(
+        r"^(?:alert|record|expr|for|keep_firing_for|query_offset|labels|annotations):(?:[^ \t]|[ \t]+\S)",
+        content,
+    ):
+        return True
+    # Keep this deliberately broad: YAML permits numeric, flow, tagged, and
+    # otherwise non-identifier mapping keys. In a rule entry, an over-indented
+    # header outside labels/annotations is not a valid scalar continuation and
+    # must fail closed instead of being folded into the PromQL expression.
+    return re.match(
+        r"^(?:[^\s#][^:]*|\[[^\]]*\]|\{.*\}|\?\s+.+):(?:[ \t]+|$)",
+        content,
+    ) is not None
 
 
 def _parse_rule_name(value: str) -> tuple[str | None, bool]:
@@ -327,9 +451,15 @@ def _parse_rule_name(value: str) -> tuple[str | None, bool]:
         quote = value[0]
         if len(value) < 2 or value[-1] != quote:
             return None, True
-        name = value[1:-1]
-        if quote == "'":
-            name = name.replace("''", "'")
+        if quote == '"':
+            try:
+                name = json.loads(value)
+            except json.JSONDecodeError:
+                return None, True
+            if not isinstance(name, str):
+                return None, True
+        else:
+            name = value[1:-1].replace("''", "'")
     else:
         if value.startswith(("&", "*", "!", "{", "[", "|", ">")):
             return None, True
@@ -520,17 +650,7 @@ def _standalone_rule_mapping_entry(lines: list[str]) -> _RuleEntry | None:
         return _RuleEntry(lines=[lines[first_line]], key=None, name=None)
 
     root_indent = _leading_space_count(lines[first_line])
-    supported_root_fields = {
-        "alert",
-        "record",
-        "expr",
-        "for",
-        "keep_firing_for",
-        "query_offset",
-        "labels",
-        "annotations",
-    }
-    root_rule_fields = supported_root_fields | {"name"}
+    root_rule_fields = SUPPORTED_RULE_ROOT_FIELDS | {"name"}
     root_rule_mappings: list[tuple[int, str, str]] = []
     root_rule_like = False
     malformed_root_shape = False
@@ -568,7 +688,7 @@ def _standalone_rule_mapping_entry(lines: list[str]) -> _RuleEntry | None:
             continue
         if parsed and parsed[0] in {"alert", "record"}:
             root_rule_mappings.append((index, parsed[0], parsed[1]))
-        if parsed and parsed[0] not in supported_root_fields:
+        if parsed and parsed[0] not in SUPPORTED_RULE_ROOT_FIELDS:
             unsupported_root_mapping = True
         if parsed and parsed[0] in root_rule_fields:
             root_rule_like = True
@@ -602,9 +722,183 @@ def _standalone_rule_mapping_entry(lines: list[str]) -> _RuleEntry | None:
     )
 
 
+def _rule_sequence_structure_findings(
+    lines: list[str],
+    rules_index: int,
+    rules_indent: int,
+    sequence_indent: int,
+) -> list[_RuleEntry]:
+    """Reject shapes the dependency-free scanner cannot safely interpret."""
+    findings: list[_RuleEntry] = []
+    section_end = rules_index + 1
+    while section_end < len(lines):
+        if _meaningful_yaml_line(lines[section_end]):
+            current_indent = _leading_space_count(lines[section_end])
+            if current_indent < rules_indent:
+                break
+            # YAML permits an indentationless sequence directly under a
+            # mapping key (for example ``rules:\n- alert: ...``). Keep those
+            # same-indent sequence items in the section so malformed nested
+            # entries remain visible while the enclosing mapping boundary
+            # remains outside the section.
+            if current_indent == rules_indent and not (
+                current_indent == sequence_indent
+                and _is_sequence_item(lines[section_end], sequence_indent)
+            ):
+                break
+        section_end += 1
+
+    block_scalar_indent: int | None = None
+    for line in lines[rules_index + 1 : section_end]:
+        if not _meaningful_yaml_line(line):
+            continue
+        indent = _leading_space_count(line)
+        content = _strip_yaml_comment(line).strip()
+        if block_scalar_indent is not None:
+            if indent <= block_scalar_indent:
+                block_scalar_indent = None
+            else:
+                continue
+
+        if _is_sequence_item(line) and indent != sequence_indent:
+            findings.append(
+                _RuleEntry(
+                    lines=[line],
+                    key=None,
+                    name=None,
+                    issue="inconsistent or nested rule sequence indentation",
+                )
+            )
+        elif indent == sequence_indent and not _is_sequence_item(line):
+            findings.append(
+                _RuleEntry(
+                    lines=[line],
+                    key=None,
+                    name=None,
+                    issue="unsupported rule sequence entry boundary",
+                )
+            )
+
+        if re.search(r":\s*[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?)?)?(?:\s+#.*)?$", content):
+            block_scalar_indent = indent
+
+    starts = [
+        index
+        for index in range(rules_index + 1, section_end)
+        if _is_sequence_item(lines[index], sequence_indent)
+    ]
+    if not starts:
+        return findings
+    for entry_start, entry_end in zip(
+        starts, [*starts[1:], section_end], strict=True
+    ):
+        entry_lines = lines[entry_start:entry_end]
+        sequence_header = _strip_yaml_comment(lines[entry_start]).lstrip()
+        inline_mapping_match = re.match(r"^-([ \t]+)(?P<key>[^\s].*)$", sequence_header)
+        inline_mapping_indent = (
+            sequence_indent + 1 + len(inline_mapping_match.group(1))
+            if inline_mapping_match is not None
+            else None
+        )
+        root_field_indents = [
+            _leading_space_count(line)
+            for line in entry_lines
+            if _meaningful_yaml_line(line)
+            and _parse_mapping_header(line) is not None
+            and _parse_mapping_header(line)[0]
+            in SUPPORTED_RULE_ROOT_FIELDS
+            and _leading_space_count(line) > sequence_indent
+        ]
+        direct_indent = min(root_field_indents, default=None)
+        nested_mapping_indent: int | None = None
+        entry_block_scalar_indent: int | None = None
+        for line in entry_lines:
+            if not _meaningful_yaml_line(line):
+                continue
+            indent = _leading_space_count(line)
+            content = _strip_yaml_comment(line).strip()
+            if entry_block_scalar_indent is not None:
+                if indent <= entry_block_scalar_indent:
+                    entry_block_scalar_indent = None
+                else:
+                    continue
+            parsed = _parse_mapping_header(line)
+            if parsed is not None and indent > sequence_indent:
+                if nested_mapping_indent is not None and indent <= nested_mapping_indent:
+                    nested_mapping_indent = None
+                if (
+                    (
+                        direct_indent is not None
+                        and nested_mapping_indent is None
+                        and parsed[0]
+                        in SUPPORTED_RULE_ROOT_FIELDS
+                        and indent != direct_indent
+                    )
+                    or (
+                        inline_mapping_indent is not None
+                        and nested_mapping_indent is None
+                        and parsed[0]
+                        in SUPPORTED_RULE_INLINE_FIELDS
+                        and indent != inline_mapping_indent
+                    )
+                ):
+                    findings.append(
+                        _RuleEntry(
+                            lines=[line],
+                            key=None,
+                            name=None,
+                            issue="inconsistent rule root-field indentation",
+                        )
+                    )
+                elif (
+                    direct_indent is not None
+                    and indent == direct_indent
+                    and parsed[0] in {"labels", "annotations"}
+                ):
+                    nested_mapping_indent = indent
+                elif (
+                    nested_mapping_indent is None
+                    and parsed[0] not in SUPPORTED_RULE_ROOT_FIELDS
+                ):
+                    findings.append(
+                        _RuleEntry(
+                            lines=[line],
+                            key=None,
+                            name=None,
+                            issue=(
+                                "unsupported rule mapping header outside labels/annotations"
+                            ),
+                        )
+                    )
+            elif (
+                parsed is None
+                and not _is_sequence_item(line)
+                and indent > sequence_indent
+                and nested_mapping_indent is None
+                and _looks_like_mapping_header(content)
+            ):
+                findings.append(
+                    _RuleEntry(
+                        lines=[line],
+                        key=None,
+                        name=None,
+                        issue=(
+                            "unsupported rule mapping header outside labels/annotations"
+                        ),
+                    )
+                )
+            if re.search(
+                r":\s*[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?)?)?(?:\s+#.*)?$",
+                content,
+            ):
+                entry_block_scalar_indent = indent
+    return findings
+
+
 def _scan_rule_entries(yaml_text: str) -> list[_RuleEntry]:
     lines = yaml_text.splitlines()
     entries: list[_RuleEntry] = _unsupported_rules_key_shapes(lines)
+    entries.extend(_duplicate_group_rules_keys(lines))
     standalone_mapping = _standalone_rule_mapping_entry(lines)
     if standalone_mapping is not None:
         entries.append(standalone_mapping)
@@ -627,10 +921,20 @@ def _scan_rule_entries(yaml_text: str) -> list[_RuleEntry]:
         )
         if (
             child is None
-            or _leading_space_count(lines[child]) <= rules_indent
+            or _leading_space_count(lines[child]) < rules_indent
             or not _is_sequence_item(lines[child])
         ):
             entries.append(_RuleEntry(lines=[line], key=None, name=None))
+
+        if child is not None and _is_sequence_item(lines[child]):
+            entries.extend(
+                _rule_sequence_structure_findings(
+                    lines,
+                    index,
+                    rules_indent,
+                    _leading_space_count(lines[child]),
+                )
+            )
 
     ranges = _rule_sequence_ranges(lines)
     if not ranges:
@@ -653,6 +957,24 @@ def _scan_rule_entries(yaml_text: str) -> list[_RuleEntry]:
                     name=name,
                 )
             )
+    duplicate_entries: list[_RuleEntry] = []
+    for entry in entries:
+        if entry.key is None:
+            continue
+        duplicate_keys = _duplicate_rule_mapping_keys(entry.lines)
+        if duplicate_keys:
+            duplicate_entries.append(
+                _RuleEntry(
+                    lines=entry.lines,
+                    key=None,
+                    name=None,
+                    issue=(
+                        "duplicate rule mapping keys are unsupported: "
+                        + ", ".join(duplicate_keys)
+                    ),
+                )
+            )
+    entries.extend(duplicate_entries)
     return entries
 
 
@@ -682,26 +1004,279 @@ def _unrecognized_rule_entry_finding(path: Path, entry_key: str, entry: _RuleEnt
 
 
 def _parse_labels(rule_lines: list[str]) -> dict[str, str]:
+    labels_indent = _rule_mapping_indent(rule_lines)
+    if labels_indent is None:
+        return {}
     for index, line in enumerate(rule_lines):
-        match = re.match(r"^(?P<indent>\s*)labels:\s*$", line)
-        if not match:
+        if _leading_space_count(line) != labels_indent:
             continue
-        labels_indent = len(match.group("indent"))
+        parsed_section = _parse_mapping_header(line)
+        if parsed_section is None or parsed_section[0] != "labels" or parsed_section[1]:
+            continue
         labels: dict[str, str] = {}
         for next_line in rule_lines[index + 1 :]:
             if next_line.strip() == "":
                 continue
-            next_indent = len(next_line) - len(next_line.lstrip(" "))
+            next_indent = _leading_space_count(next_line)
             if next_indent <= labels_indent:
                 break
-            kv_match = re.match(r"^\s*(?P<key>[A-Za-z0-9_]+):\s*(?P<value>.+?)\s*$", next_line)
-            if not kv_match:
+            parsed = _parse_mapping_header(next_line)
+            if parsed is None or not parsed[1]:
                 continue
-            key = kv_match.group("key")
-            value = kv_match.group("value").strip().strip('"').strip("'")
-            labels[key] = value
+            key, raw_value = parsed
+            value, unsupported = _parse_rule_name(raw_value)
+            labels[key] = "" if unsupported or value is None else value
         return labels
     return {}
+
+
+def _rule_mapping_indent(rule_lines: list[str]) -> int | None:
+    if not rule_lines:
+        return None
+
+    first_line = rule_lines[0]
+    first_indent = _leading_space_count(first_line)
+    if not _is_sequence_item(first_line, first_indent):
+        return first_indent
+    return next(
+        (
+            _leading_space_count(line)
+            for line in rule_lines[1:]
+            if _meaningful_yaml_line(line)
+            and _leading_space_count(line) > first_indent
+            and _parse_mapping_header(line) is not None
+        ),
+        None,
+    )
+
+
+def _duplicate_rule_mapping_keys(rule_lines: list[str]) -> list[str]:
+    mapping_indent = _rule_mapping_indent(rule_lines)
+    if mapping_indent is None:
+        return []
+
+    keys: list[str] = []
+    first_line = rule_lines[0]
+    if _is_sequence_item(first_line, _leading_space_count(first_line)):
+        key, _ = _parse_rule_entry_header(first_line)
+        if key is not None:
+            keys.append(key)
+    for line in rule_lines[1:] if keys else rule_lines:
+        if _leading_space_count(line) != mapping_indent:
+            continue
+        parsed = _parse_mapping_header(line)
+        if parsed is not None:
+            keys.append(parsed[0])
+    duplicates = {key for key in keys if keys.count(key) > 1}
+
+    # Labels and annotations are nested mappings. Detect duplicate keys within
+    # each mapping independently; the same key in two separate mappings is
+    # valid YAML and must not be conflated.
+    for index, line in enumerate(rule_lines):
+        if _leading_space_count(line) != mapping_indent:
+            continue
+        parsed = _parse_mapping_header(line)
+        if parsed is None or parsed[1]:
+            continue
+        child_indent = next(
+            (
+                _leading_space_count(candidate)
+                for candidate in rule_lines[index + 1 :]
+                if _meaningful_yaml_line(candidate)
+                and _leading_space_count(candidate) > mapping_indent
+            ),
+            None,
+        )
+        if child_indent is None:
+            continue
+        nested_keys: list[str] = []
+        for candidate in rule_lines[index + 1 :]:
+            if not _meaningful_yaml_line(candidate):
+                continue
+            candidate_indent = _leading_space_count(candidate)
+            if candidate_indent <= mapping_indent:
+                break
+            if candidate_indent != child_indent:
+                continue
+            nested = _parse_mapping_header(candidate)
+            if nested is not None:
+                nested_keys.append(nested[0])
+        duplicates.update(
+            f"{parsed[0]}.{key}"
+            for key in set(nested_keys)
+            if nested_keys.count(key) > 1
+        )
+
+    return sorted(duplicates)
+
+
+def _duplicate_group_rules_keys(lines: list[str]) -> list[_RuleEntry]:
+    """Reject duplicate ``rules`` keys within one Prometheus group mapping."""
+    findings: list[_RuleEntry] = []
+    for index, line in enumerate(lines):
+        parsed = _parse_mapping_header(line)
+        if not parsed or parsed[0] != "groups" or parsed[1]:
+            continue
+        groups_indent = _leading_space_count(line)
+        first_item = next(
+            (
+                candidate
+                for candidate in range(index + 1, len(lines))
+                if _meaningful_yaml_line(lines[candidate])
+            ),
+            None,
+        )
+        if first_item is None or _leading_space_count(lines[first_item]) < groups_indent:
+            continue
+        if not _is_sequence_item(lines[first_item]):
+            continue
+        sequence_indent = _leading_space_count(lines[first_item])
+        section_end = first_item
+        while section_end < len(lines):
+            if _meaningful_yaml_line(lines[section_end]):
+                current_indent = _leading_space_count(lines[section_end])
+                if current_indent < groups_indent:
+                    break
+                # YAML permits an indentationless sequence directly under a
+                # mapping key. Same-indent sequence items remain part of this
+                # groups section; any other same-indent node closes it.
+                if current_indent == groups_indent and not (
+                    current_indent == sequence_indent
+                    and _is_sequence_item(lines[section_end], sequence_indent)
+                ):
+                    break
+            section_end += 1
+        starts = [
+            candidate
+            for candidate in range(first_item, section_end)
+            if _meaningful_yaml_line(lines[candidate])
+            and _leading_space_count(lines[candidate]) == sequence_indent
+            and _is_sequence_item(lines[candidate])
+        ]
+        for start, end in zip(starts, [*starts[1:], section_end], strict=True):
+            group_lines = lines[start:end]
+            direct_indents = [
+                _leading_space_count(candidate)
+                for candidate in group_lines[1:]
+                if _meaningful_yaml_line(candidate)
+                and _parse_mapping_header(candidate) is not None
+                and _leading_space_count(candidate) > sequence_indent
+            ]
+            if not direct_indents:
+                continue
+            mapping_indent = min(direct_indents)
+            rules_lines = [
+                candidate
+                for candidate in group_lines[1:]
+                if _leading_space_count(candidate) == mapping_indent
+                and _parse_mapping_header(candidate) is not None
+                and _parse_mapping_header(candidate)[0] == "rules"
+            ]
+            if len(rules_lines) > 1:
+                findings.append(
+                    _RuleEntry(
+                        lines=rules_lines,
+                        key=None,
+                        name=None,
+                        issue="duplicate group mapping keys are unsupported: rules",
+                    )
+                )
+    return findings
+
+
+def _parse_rule_scalar(rule_lines: list[str], field: str) -> str | None:
+    if not rule_lines:
+        return None
+
+    mapping_indent = _rule_mapping_indent(rule_lines)
+    if mapping_indent is None:
+        return None
+
+    for line in rule_lines:
+        if _leading_space_count(line) != mapping_indent:
+            continue
+        parsed = _parse_mapping_header(line)
+        if not parsed or parsed[0] != field:
+            continue
+        value, unsupported = _parse_rule_name(parsed[1])
+        return None if unsupported else value
+    return None
+
+
+def _rule_scalar_is_present(rule_lines: list[str], field: str) -> bool:
+    if not rule_lines:
+        return False
+
+    mapping_indent = _rule_mapping_indent(rule_lines)
+    if mapping_indent is None:
+        return False
+
+    return any(
+        _leading_space_count(line) == mapping_indent
+        and (parsed := _parse_mapping_header(line)) is not None
+        and parsed[0] == field
+        for line in rule_lines
+    )
+
+
+def _entry_path_blackbox_findings(
+    path: Path,
+    alert_name: str,
+    labels: dict[str, str],
+    expr: str,
+    hold: str | None,
+) -> list[Finding]:
+    contract = ENTRY_PATH_BLACKBOX_ALERT_CONTRACTS.get(alert_name)
+    if contract is None:
+        return []
+
+    metric_selector = (
+        "entrypath_blackbox_probe_success"
+        f'{{path="{contract["path"]}",target="{contract["target"]}"}}'
+    )
+    expected_expr = _compact_promql(
+        f"absent({metric_selector})"
+        if contract["expression"] == "absent"
+        else f"{metric_selector} == 0"
+    )
+    findings: list[Finding] = []
+    expected_labels = {
+        "severity": "P1" if contract["expression"] == "absent" else "P0",
+        "component": "entrypath",
+        "service": contract["service"],
+    }
+    for label, expected in expected_labels.items():
+        if labels.get(label) != expected:
+            findings.append(
+                Finding(
+                    path=path,
+                    message=f"{alert_name} must use labels.{label}={expected}",
+                )
+            )
+    if hold != "2m":
+        findings.append(
+            Finding(
+                path=path,
+                message=f"{alert_name} must use a rule-level for: 2m hold",
+            )
+        )
+    if _compact_promql(expr) != expected_expr:
+        expression_description = (
+            "entrypath_blackbox_probe_success selector with absent()"
+            if contract["expression"] == "absent"
+            else "entrypath_blackbox_probe_success selector and compare it to zero"
+        )
+        findings.append(
+            Finding(
+                path=path,
+                message=(
+                    f'{alert_name} must use only the exact path="{contract["path"]}", '
+                    f'target="{contract["target"]}" '
+                    f"{expression_description}"
+                ),
+            )
+        )
+    return findings
 
 
 def _playerflow_canary_label_findings(
@@ -722,6 +1297,16 @@ def _playerflow_canary_label_findings(
 def _playerflow_canary_service_findings(
     path: Path, alert_name: str, labels: dict[str, str]
 ) -> list[Finding]:
+    if alert_name in SERVICE_DERIVED_ALERTS and "service" in labels:
+        return [
+            Finding(
+                path=path,
+                message=(
+                    f"{alert_name} must not set labels.service; use the "
+                    "recording-rule service label"
+                ),
+            )
+        ]
     if alert_name in SERVICE_OPTIONAL_ALERTS and "service" in labels:
         return [
             Finding(
@@ -748,12 +1333,18 @@ def _playerflow_canary_service_findings(
 
 
 def _parse_expr(rule_lines: list[str]) -> str | None:
+    expr_mapping_indent = _rule_mapping_indent(rule_lines)
+    if expr_mapping_indent is None:
+        return None
     for index, line in enumerate(rule_lines):
-        match = re.match(r"^(?P<indent>\s*)expr:\s*(?P<rest>.*)$", line)
-        if not match:
+        if _leading_space_count(line) != expr_mapping_indent:
             continue
-        expr_indent = len(match.group("indent"))
-        scalar = match.group("rest").strip()
+        parsed = _parse_mapping_header(line)
+        if parsed is None or parsed[0] != "expr":
+            continue
+        expr_indent = _leading_space_count(line)
+        raw_scalar = parsed[1]
+        scalar = _strip_yaml_comment(raw_scalar).strip()
         is_block_scalar = (
             re.fullmatch(
                 r"[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?(?:\s+#.*)?",
@@ -761,6 +1352,17 @@ def _parse_expr(rule_lines: list[str]) -> str | None:
             )
             is not None
         )
+        block_scalar_indent_indicator = None
+        if is_block_scalar:
+            block_scalar_header = _strip_yaml_comment(scalar).strip()
+            indicator = re.search(r"[1-9]", block_scalar_header)
+            if indicator is not None:
+                block_scalar_indent_indicator = int(indicator.group(0))
+        elif scalar.startswith(("|", ">")):
+            return ""
+        normalized_scalar, unsupported_scalar = _parse_rule_name(scalar)
+        if not is_block_scalar and not unsupported_scalar and normalized_scalar is not None:
+            scalar = normalized_scalar
         expr_lines = [] if is_block_scalar or not scalar else [scalar]
         for next_line in rule_lines[index + 1 :]:
             next_indent = len(next_line) - len(next_line.lstrip(" "))
@@ -770,6 +1372,17 @@ def _parse_expr(rule_lines: list[str]) -> str | None:
             if next_indent <= expr_indent:
                 break
             expr_lines.append(next_line.rstrip())
+        if block_scalar_indent_indicator is not None:
+            first_content_line = next(
+                (line for line in rule_lines[index + 1 :] if line.strip()),
+                None,
+            )
+            if (
+                first_content_line is not None
+                and _leading_space_count(first_content_line)
+                < expr_indent + block_scalar_indent_indicator
+            ):
+                return ""
         expression = "\n".join(expr_lines).strip()
         if not is_block_scalar:
             first_value_line = next(
@@ -781,6 +1394,7 @@ def _parse_expr(rule_lines: list[str]) -> str | None:
                 first_value_line,
                 re.IGNORECASE,
             )
+            malformed_block_scalar = first_value_line.startswith(("|", ">"))
             unsupported_indirection = first_value_line.startswith(("#", "!", "&", "*"))
             collection_node = first_value_line.startswith(("{", "[")) or (
                 not scalar
@@ -791,46 +1405,375 @@ def _parse_expr(rule_lines: list[str]) -> str | None:
                     is not None
                 )
             )
-            if empty_scalar or unsupported_indirection or collection_node:
+            if (
+                empty_scalar
+                or malformed_block_scalar
+                or unsupported_indirection
+                or collection_node
+            ):
                 return ""
         return expression
     return None
 
 
+def _mask_promql_non_code(expr: str) -> str:
+    """Mask strings/comments while preserving offsets for lexical checks."""
+    characters = list(expr)
+    quote: str | None = None
+    escaped = False
+    index = 0
+    while index < len(expr):
+        character = expr[index]
+        if quote is not None:
+            characters[index] = " " if character != "\n" else "\n"
+            if quote != "`" and escaped:
+                escaped = False
+            elif quote != "`" and character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+            index += 1
+            continue
+        if character in {'"', "'", "`"}:
+            characters[index] = " "
+            quote = character
+            index += 1
+            continue
+        if character == "#":
+            characters[index] = " "
+            index += 1
+            while index < len(expr) and expr[index] != "\n":
+                characters[index] = " "
+                index += 1
+            continue
+        index += 1
+    return "".join(characters)
+
+
+def _mask_promql_comments(expr: str) -> str:
+    """Mask PromQL comments while preserving quoted matcher values."""
+    characters = list(expr)
+    quote: str | None = None
+    escaped = False
+    index = 0
+    while index < len(expr):
+        character = expr[index]
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+            index += 1
+            continue
+        if character in {'"', "'", "`"}:
+            quote = character
+            index += 1
+            continue
+        if character == "#":
+            characters[index] = " "
+            index += 1
+            while index < len(expr) and expr[index] != "\n":
+                characters[index] = " "
+                index += 1
+            continue
+        index += 1
+    return "".join(characters)
+
+
+def _promql_metric_occurrences(expr: str, metric_name: str) -> list[re.Match[str]]:
+    metric_pattern = re.compile(
+        rf"(?<![A-Za-z0-9_:]){re.escape(metric_name)}(?![A-Za-z0-9_:])"
+    )
+    return list(metric_pattern.finditer(_mask_promql_non_code(expr)))
+
+
+def _promql_selector_after(expr: str, end: int) -> str | None:
+    index = end
+    while index < len(expr):
+        if expr[index].isspace():
+            index += 1
+            continue
+        if expr[index] == "#":
+            newline = expr.find("\n", index + 1)
+            index = len(expr) if newline == -1 else newline + 1
+            continue
+        break
+    if index >= len(expr) or expr[index] != "{":
+        return None
+
+    start = index
+    depth = 0
+    quote: str | None = None
+    escaped = False
+    while index < len(expr):
+        character = expr[index]
+        if quote is not None:
+            if quote != "`" and escaped:
+                escaped = False
+            elif quote != "`" and character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+        elif character in {'"', "'", "`"}:
+            quote = character
+        elif character == "#":
+            newline = expr.find("\n", index + 1)
+            index = len(expr) if newline == -1 else newline
+            continue
+        elif character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if depth == 0:
+                return expr[start : index + 1]
+        index += 1
+    return None
+
+
 def _check_ms_thresholds(expr: str) -> str | None:
-    if "_ms_" not in expr:
+    code_expr = _mask_promql_non_code(expr)
+    if not re.search(r"_ms(?:_|\b)", code_expr):
         return None
-    normalized = re.sub(r"\s+", "", expr)
-    if re.search(r"_ms[^)]*/[^)]*_ms", normalized):
-        return None
-    numeric_comparisons = re.findall(r">\s*([0-9]+(?:\.[0-9]+)?)", expr)
-    if not numeric_comparisons:
-        return None
-    threshold = float(numeric_comparisons[-1])
-    if threshold < 10:
-        return f"expression compares an `_ms` metric against {threshold}; this looks like seconds, but `_ms` metrics are milliseconds"
+
+    # A compound PromQL expression can contain unrelated numeric comparisons.
+    # Keep each logical clause with the metric it constrains so a later
+    # `queue_depth > 0` cannot be mistaken for the threshold of an earlier
+    # `latency_ms > 1000` comparison.
+    clause_starts = [0]
+    clause_ends: list[int] = []
+    for logical_operator in re.finditer(
+        r"\b(?:and|or|unless)\b", code_expr, re.IGNORECASE
+    ):
+        clause_ends.append(logical_operator.start())
+        clause_starts.append(logical_operator.end())
+    clause_ends.append(len(expr))
+
+    for clause_start, clause_end in zip(clause_starts, clause_ends, strict=True):
+        clause_code = code_expr[clause_start:clause_end]
+        if not re.search(r"_ms(?:_|\b)", clause_code):
+            continue
+        normalized = re.sub(r"\s+", "", clause_code)
+        if re.search(r"_ms[^)]*/[^)]*_ms", normalized):
+            continue
+        # PromQL supports decimal and exponent-form float literals. Match the
+        # complete literal after any scalar comparison so `1e2` is not parsed
+        # as `1`, and cover both directions used by alert expressions.
+        promql_number = r"(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?"
+        numeric_comparisons = re.findall(
+            rf"(?:<=|>=|<|>)\s*({promql_number})(?![A-Za-z0-9_.])",
+            clause_code,
+        )
+        if not numeric_comparisons:
+            continue
+        threshold = float(numeric_comparisons[-1])
+        if threshold < 10:
+            return f"expression compares an `_ms` metric against {threshold}; this looks like seconds, but `_ms` metrics are milliseconds"
     return None
 
 
 def _check_grpc_app_error_scoping(expr: str) -> str | None:
-    if "grpc_app_error" not in expr:
-        return None
-    matcher = re.search(r"grpc_app_error(?:_total)?(\{[^}]*\})", expr)
-    if not matcher:
-        return "expression references grpc_app_error_total without a `{...}` matcher; shared dashboards/snippets must scope by `service`"
-    if "service=" not in matcher.group(1):
+    if not _all_metric_selectors_have_label(expr, "grpc_app_error_total", "service"):
         return "expression references grpc_app_error_total without a `service=...` matcher; shared dashboards/snippets must scope by `service`"
     return None
 
 
+def _all_metric_selectors_have_label(
+    expr: str, metric_name: str, label_name: str
+) -> bool:
+    label_matcher = re.compile(
+        rf'(?:^|,)\s*{re.escape(label_name)}\s*=\s*'
+        r'(?:~\s*)?"(?:\\.|[^"\\])*"\s*(?:,|$)'
+    )
+    occurrences = _promql_metric_occurrences(expr, metric_name)
+    if not occurrences:
+        return True
+    for occurrence in occurrences:
+        selector = _promql_selector_after(expr, occurrence.end())
+        if selector is None or not label_matcher.search(
+            _mask_promql_comments(selector[1:-1])
+        ):
+            return False
+    return True
+
+
 def _check_dotted_metric_tokens(expr: str) -> str | None:
-    for token in re.findall(r"\b[A-Za-z_][A-Za-z0-9_\.]*\b", expr):
+    for token in re.findall(
+        r"\b[A-Za-z_][A-Za-z0-9_\.]*\b", _mask_promql_non_code(expr)
+    ):
         if "." not in token:
             continue
         if re.fullmatch(r"\d+\.\d+", token):
             continue
         return f"expression references dotted token {token!r}; Prometheus metric names in shared assets must use snake_case"
     return None
+
+
+def _exact_metric_label_selector_finding(
+    path: Path,
+    expr: str,
+    metric_name: str,
+    label_name: str,
+    label_value: str,
+    message: str,
+) -> Finding | None:
+    exact_matcher = re.compile(
+        rf'(?:\{{|,)\s*{re.escape(label_name)}\s*=\s*'
+        rf'"{re.escape(label_value)}"\s*(?:,|\}})'
+    )
+    occurrences = _promql_metric_occurrences(expr, metric_name)
+    if occurrences and all(
+        (selector := _promql_selector_after(expr, occurrence.end())) is not None
+        and exact_matcher.search(_mask_promql_comments(selector))
+        for occurrence in occurrences
+    ):
+        return None
+    return Finding(path=path, message=message)
+
+
+def _recipient_dispatch_selector_finding(
+    path: Path, expr: str, metric_name: str, context: str
+) -> Finding | None:
+    return _exact_metric_label_selector_finding(
+        path,
+        expr,
+        metric_name,
+        "completion_boundary",
+        "recipient_dispatch",
+        (
+            f"{context} must select "
+            'completion_boundary="recipient_dispatch" on every '
+            f"{metric_name} selector"
+        ),
+    )
+
+
+def _chat_recording_grouping_finding(path: Path, expr: str) -> Finding | None:
+    required_grouping = {
+        "service",
+        "scope",
+        "completion_boundary",
+        "channel_type",
+        "le",
+    }
+    groupings = [
+        {label.strip() for label in match.group(1).split(",") if label.strip()}
+        for match in re.finditer(
+            r"sum\s+by\s*\(([^)]*)\)",
+            _mask_promql_non_code(expr),
+            re.IGNORECASE,
+        )
+    ]
+    if any(required_grouping.issubset(grouping) for grouping in groupings):
+        return None
+    return Finding(
+        path=path,
+        message=(
+            "canonical chat delivery recording rule must group by service, "
+            "scope, completion_boundary, channel_type, and le"
+        ),
+    )
+
+
+def _player_slo_calibration_findings(
+    path: Path, alert_name: str, labels: dict[str, str]
+) -> list[Finding]:
+    if alert_name not in PLAYER_SLO_CALIBRATION_ALERTS:
+        return []
+    findings: list[Finding] = []
+    if labels.get("severity") != "P2":
+        findings.append(
+            Finding(
+                path=path,
+                message=f"{alert_name} calibration alert must use severity=P2",
+            )
+        )
+    if labels.get("slo_state") != "calibration":
+        findings.append(
+            Finding(
+                path=path,
+                message=f"{alert_name} calibration alert must use slo_state=calibration",
+            )
+        )
+    return findings
+
+
+def _command_scope_query_findings(path: Path, expr: str) -> list[Finding]:
+    # Restrict command-scope checks to PromQL code. Metric names in
+    # label_replace values, comments, and other string literals are data, not
+    # command-latency expressions to be grouped.
+    code_expr = _mask_promql_non_code(expr)
+    if "command_end_to_end_latency_ms_bucket" not in code_expr:
+        return []
+
+    findings: list[Finding] = []
+    groupings = [
+        {
+            label.strip().lower()
+            for label in grouping.group(1).split(",")
+            if label.strip()
+        }
+        for grouping in re.finditer(
+            r"sum\s+by\s*\(([^)]*)\)", code_expr, re.IGNORECASE
+        )
+    ]
+    if any("region" in grouping for grouping in groupings):
+        findings.append(
+            Finding(
+                path=path,
+                message=(
+                    "canonical command latency by-scope panels must not group "
+                    "command latency expressions by raw region"
+                ),
+            )
+        )
+    if not groupings or any(
+        not {"scope", "command"}.issubset(grouping) for grouping in groupings
+    ):
+        findings.append(
+            Finding(
+                path=path,
+                message=(
+                    "canonical command latency by-scope panels must group each "
+                    "command latency expression by bounded scope and command"
+                ),
+            )
+        )
+    return findings
+
+
+def _mask_kibana_query_strings(query: str) -> str:
+    """Mask quoted KQL values while preserving operators outside strings."""
+    characters = list(query)
+    quote: str | None = None
+    escaped = False
+    for index, character in enumerate(query):
+        if quote is not None:
+            characters[index] = "\n" if character == "\n" else " "
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+            continue
+        if character in {'"', "'"}:
+            characters[index] = " "
+            quote = character
+    return "".join(characters)
+
+
+def _split_kibana_query_clauses(query: str) -> list[str]:
+    """Split conjunctions at operators outside quoted KQL values."""
+    masked_query = _mask_kibana_query_strings(query)
+    clauses: list[str] = []
+    start = 0
+    for separator in re.finditer(r"\band\b", masked_query, re.IGNORECASE):
+        clauses.append(query[start : separator.start()].strip())
+        start = separator.end()
+    clauses.append(query[start:].strip())
+    return clauses
 
 
 def _validate_alert_snippet(path: Path) -> list[Finding]:
@@ -848,13 +1791,18 @@ def _validate_alert_snippet(path: Path) -> list[Finding]:
             rule_lines = entry.lines
             labels = _parse_labels(rule_lines)
             findings.extend(
+                _player_slo_calibration_findings(path, entry.name, labels)
+            )
+            findings.extend(
                 _playerflow_canary_label_findings(path, entry.name, labels)
             )
             findings.extend(
                 _playerflow_canary_service_findings(path, entry.name, labels)
             )
             required_labels = REQUIRED_ALERT_LABELS - (
-                {"service"} if entry.name in SERVICE_OPTIONAL_ALERTS else set()
+                {"service"}
+                if entry.name in SERVICE_OPTIONAL_ALERTS | SERVICE_DERIVED_ALERTS
+                else set()
             )
             missing = sorted(required_labels - labels.keys())
             if missing:
@@ -877,18 +1825,7 @@ def _validate_alert_snippet(path: Path) -> list[Finding]:
                     )
                 )
 
-            runbook = labels.get("runbook", "")
-            if not runbook.startswith("design/") or ".md" not in runbook or "#" not in runbook:
-                findings.append(Finding(path=path, message=f"alert rule runbook label must be a design doc anchor (design/...md#section); got {runbook!r}"))
-            else:
-                runbook_path_s, anchor = runbook.split("#", 1)
-                runbook_path = REPO_ROOT / runbook_path_s
-                if not runbook_path.exists():
-                    findings.append(Finding(path=path, message=f"alert rule runbook file does not exist: {runbook!r}"))
-                else:
-                    anchors = _github_anchors_for_markdown(runbook_path)
-                    if anchor not in anchors:
-                        findings.append(Finding(path=path, message=f"alert rule runbook anchor does not exist: {runbook!r}"))
+            findings.extend(_alert_runbook_findings(path, labels.get("runbook", "")))
 
             alert_class = labels.get("alert_class")
             if alert_class == "test" and severity != "P2":
@@ -898,6 +1835,25 @@ def _validate_alert_snippet(path: Path) -> list[Finding]:
             if not expr:
                 findings.append(Finding(path=path, message="alert rule is missing expr"))
                 continue
+
+            findings.extend(
+                _entry_path_blackbox_findings(
+                    path,
+                    entry.name,
+                    labels,
+                    expr,
+                    _parse_rule_scalar(rule_lines, "for"),
+                )
+            )
+            if entry.name == "ChatDeliveryLatencyP99High":
+                chat_selector_issue = _recipient_dispatch_selector_finding(
+                    path,
+                    expr,
+                    "chat_delivery_latency_ms_bucket",
+                    "ChatDeliveryLatencyP99High alert snippet",
+                )
+                if chat_selector_issue:
+                    findings.append(chat_selector_issue)
 
             ms_issue = _check_ms_thresholds(expr)
             if ms_issue:
@@ -927,9 +1883,35 @@ def _validate_grafana_dashboards(grafana_dir: Path) -> list[Finding]:
             findings.append(Finding(path=json_path, message=f"invalid JSON: {exc}"))
             continue
 
+        if not isinstance(dashboard, dict):
+            findings.append(
+                Finding(path=json_path, message="Grafana dashboard root must be a JSON object")
+            )
+            continue
         panels = dashboard.get("panels", [])
+        if not isinstance(panels, list):
+            findings.append(
+                Finding(path=json_path, message="Grafana dashboard panels must be a JSON array")
+            )
+            continue
         for panel in panels:
-            for target in panel.get("targets", []):
+            if not isinstance(panel, dict):
+                findings.append(
+                    Finding(path=json_path, message="Grafana dashboard panels must contain JSON objects")
+                )
+                continue
+            targets = panel.get("targets", [])
+            if not isinstance(targets, list):
+                findings.append(
+                    Finding(path=json_path, message="Grafana dashboard panel targets must be a JSON array")
+                )
+                continue
+            for target in targets:
+                if not isinstance(target, dict):
+                    findings.append(
+                        Finding(path=json_path, message="Grafana dashboard targets must contain JSON objects")
+                    )
+                    continue
                 expr = target.get("expr")
                 if not expr or not isinstance(expr, str):
                     continue
@@ -937,14 +1919,18 @@ def _validate_grafana_dashboards(grafana_dir: Path) -> list[Finding]:
                 if grpc_scope_issue:
                     findings.append(Finding(path=json_path, message=grpc_scope_issue))
 
-                if "redis_coordination_used_memory_bytes" in expr and "role=" not in expr:
+                if not _all_metric_selectors_have_label(
+                    expr, "redis_coordination_used_memory_bytes", "role"
+                ):
                     findings.append(
                         Finding(
                             path=json_path,
                             message="expression references redis_coordination_used_memory_bytes without a role matcher; shared dashboards must scope coordination role explicitly",
                         )
                     )
-                if "redis_coordination_keys_total" in expr and "role=" not in expr:
+                if not _all_metric_selectors_have_label(
+                    expr, "redis_coordination_keys_total", "role"
+                ):
                     findings.append(
                         Finding(
                             path=json_path,
@@ -954,6 +1940,187 @@ def _validate_grafana_dashboards(grafana_dir: Path) -> list[Finding]:
                 dotted_metric_issue = _check_dotted_metric_tokens(expr)
                 if dotted_metric_issue:
                     findings.append(Finding(path=json_path, message=dotted_metric_issue))
+    return findings
+
+
+def _validate_player_experience_dashboard(path: Path) -> list[Finding]:
+    try:
+        dashboard = json.loads(_read_text(path))
+    except json.JSONDecodeError:
+        return []
+
+    findings: list[Finding] = []
+    if not isinstance(dashboard, dict):
+        return [Finding(path=path, message="Grafana dashboard root must be a JSON object")]
+    description = dashboard.get("description")
+    if (
+        not isinstance(description, str)
+        or "calibration" not in description.lower()
+        or "non-enforcing" not in description.lower()
+    ):
+        findings.append(
+            Finding(
+                path=path,
+                message=(
+                    "canonical player-experience dashboard must identify its "
+                    "views as calibration and non-enforcing until profile promotion"
+                ),
+            )
+        )
+    panels = dashboard.get("panels", [])
+    if not isinstance(panels, list):
+        return findings + [
+            Finding(path=path, message="Grafana dashboard panels must be a JSON array")
+        ]
+    for panel in panels:
+        if not isinstance(panel, dict):
+            findings.append(
+                Finding(path=path, message="Grafana dashboard panels must contain JSON objects")
+            )
+            continue
+        title = panel.get("title") if isinstance(panel, dict) else None
+        targets = panel.get("targets", [])
+        if not isinstance(targets, list):
+            findings.append(
+                Finding(path=path, message="Grafana dashboard panel targets must be a JSON array")
+            )
+            continue
+        if (
+            isinstance(title, str)
+            and re.search(r"\bslo\b", title, re.IGNORECASE)
+            and not re.search(r"\bcalibration\b", title, re.IGNORECASE)
+        ):
+            findings.append(
+                Finding(
+                    path=path,
+                    message=(
+                        "canonical player-experience calibration panels must not "
+                        "use enforceable SLO wording before profile promotion"
+                    ),
+                )
+            )
+        if (
+            isinstance(title, str)
+            and re.search(r"\bcommand\s+latency\b", title, re.IGNORECASE)
+            and re.search(r"\bregion\b", title, re.IGNORECASE)
+            and isinstance(panel, dict)
+                and any(
+                    isinstance(target.get("expr"), str)
+                    and "command_end_to_end_latency_ms_bucket" in target["expr"]
+                for target in targets
+                if isinstance(target, dict)
+            )
+        ):
+            findings.append(
+                Finding(
+                    path=path,
+                    message=(
+                        "canonical command latency panels grouped by bounded scope "
+                        "must not claim a raw region grouping"
+                    ),
+                )
+            )
+        # Apply the bounded-scope contract to every command-latency query,
+        # independent of presentation titles. A canonical query can retain a
+        # concise panel title without escaping its scope and command checks.
+        for target in targets:
+            if isinstance(target, dict) and isinstance(
+                expr := target.get("expr"), str
+            ):
+                findings.extend(_command_scope_query_findings(path, expr))
+
+    chat_expressions: list[str] = []
+    for panel in panels:
+        if not isinstance(panel, dict):
+            continue
+        targets = panel.get("targets", [])
+        if not isinstance(targets, list):
+            continue
+        for target in targets:
+            if not isinstance(target, dict):
+                continue
+            expr = target.get("expr")
+            if isinstance(expr, str) and "chat_delivery_latency_ms_bucket" in expr:
+                chat_expressions.append(expr)
+    if not chat_expressions:
+        findings.append(
+            Finding(
+                path=path,
+                message=(
+                    "canonical player-experience dashboard must include a chat "
+                    "delivery latency panel"
+                ),
+            )
+        )
+        return findings
+
+    for expr in chat_expressions:
+        chat_selector_issue = _recipient_dispatch_selector_finding(
+            path,
+            expr,
+            "chat_delivery_latency_ms_bucket",
+            "canonical player-experience chat latency panels",
+        )
+        if chat_selector_issue:
+            findings.append(chat_selector_issue)
+    return findings
+
+
+def _validate_player_experience_drilldown(path: Path) -> list[Finding]:
+    try:
+        dashboard = json.loads(_read_text(path))
+    except json.JSONDecodeError:
+        return []
+
+    if not isinstance(dashboard, dict):
+        return [Finding(path=path, message="Grafana dashboard root must be a JSON object")]
+    panels = dashboard.get("panels", [])
+    if not isinstance(panels, list):
+        return [Finding(path=path, message="Grafana dashboard panels must be a JSON array")]
+    findings: list[Finding] = []
+    chat_expressions: list[str] = []
+    for panel in panels:
+        if not isinstance(panel, dict):
+            findings.append(
+                Finding(path=path, message="Grafana dashboard panels must contain JSON objects")
+            )
+            continue
+        targets = panel.get("targets", [])
+        if not isinstance(targets, list):
+            findings.append(
+                Finding(path=path, message="Grafana dashboard panel targets must be a JSON array")
+            )
+            continue
+        for target in targets:
+            if not isinstance(target, dict):
+                findings.append(
+                    Finding(path=path, message="Grafana dashboard targets must contain JSON objects")
+                )
+                continue
+            expr = target.get("expr")
+            if isinstance(expr, str) and "chat_delivery_latency_ms_bucket" in expr:
+                chat_expressions.append(expr)
+    if not chat_expressions:
+        findings.append(
+            Finding(
+                path=path,
+                message=(
+                    "player-experience drilldown must include a chat delivery "
+                    "latency panel"
+                ),
+            )
+        )
+        return findings
+
+    for expr in chat_expressions:
+        chat_selector_issue = _recipient_dispatch_selector_finding(
+            path,
+            expr,
+            "chat_delivery_latency_ms_bucket",
+            "player-experience drilldown chat latency panels",
+        )
+        if chat_selector_issue:
+            findings.append(chat_selector_issue)
     return findings
 
 
@@ -976,8 +2143,40 @@ def _validate_kibana_saved_objects(kibana_dir: Path) -> list[Finding]:
         if expected is None:
             continue
 
-        serialized = json.dumps(payload)
-        missing = sorted(column for column in expected if column not in serialized)
+        objects = payload if isinstance(payload, list) else [payload]
+        candidate_pairs: list[tuple[dict[str, object], dict[str, object]]] = []
+        invalid_object_shape = False
+        for saved_object in objects:
+            if not isinstance(saved_object, dict):
+                invalid_object_shape = True
+                continue
+            if saved_object.get("type") == "index-pattern":
+                continue
+            if saved_object.get("type") == "dashboard":
+                saved_search = saved_object.get("savedSearch")
+                if isinstance(saved_search, dict):
+                    candidate_pairs.append((saved_search, saved_object))
+                else:
+                    candidate_pairs.append((saved_object, saved_object))
+                continue
+            candidate_pairs.append((saved_object, saved_object))
+
+        column_lists: list[object | None] = []
+        for candidate, _ in candidate_pairs:
+            attributes = candidate.get("attributes")
+            column_lists.append(
+                attributes.get("columns")
+                if isinstance(attributes, dict)
+                else None
+            )
+        if invalid_object_shape or not column_lists:
+            column_lists.append(None)
+        missing = sorted(
+            column
+            for columns in column_lists
+            for column in expected
+            if not isinstance(columns, list) or column not in columns
+        )
         if missing:
             findings.append(
                 Finding(
@@ -985,6 +2184,158 @@ def _validate_kibana_saved_objects(kibana_dir: Path) -> list[Finding]:
                     message=f"Kibana saved object is missing required structured log fields for runbooks: {', '.join(missing)}",
                 )
             )
+        if json_path.name == "player-incident-drilldown.json":
+            player_sources = [
+                (candidate, owner)
+                for candidate, owner in candidate_pairs
+                if isinstance(candidate.get("attributes"), dict)
+                and isinstance(
+                    candidate["attributes"].get("kibanaSavedObjectMeta"), dict
+                )
+                and "searchSourceJSON"
+                in candidate["attributes"]["kibanaSavedObjectMeta"]
+            ]
+            if len(player_sources) != 1:
+                findings.append(
+                    Finding(
+                        path=json_path,
+                        message=(
+                            "player incident Kibana saved object must contain exactly "
+                            "one relevant search object"
+                        ),
+                    )
+                )
+                continue
+            player_payload, references_payload = player_sources[0]
+            try:
+                search_source = player_payload["attributes"]["kibanaSavedObjectMeta"]["searchSourceJSON"]
+                search_source_payload = json.loads(search_source)
+                query = search_source_payload["query"]["query"]
+                index_ref_name = search_source_payload.get("indexRefName")
+            except (KeyError, TypeError, json.JSONDecodeError):
+                query = ""
+                index_ref_name = None
+            if not isinstance(query, str):
+                findings.append(
+                    Finding(
+                        path=json_path,
+                        message=(
+                            "player incident Kibana saved object query must be a "
+                            "string before index/access safety checks"
+                        ),
+                    )
+                )
+                query = ""
+            if re.search(r"\benvironment\s*:", query, re.IGNORECASE):
+                findings.append(
+                    Finding(
+                        path=json_path,
+                        message=(
+                            "player incident Kibana saved object must scope environment "
+                            "through its index/access boundary rather than a log field predicate"
+                        ),
+                    )
+                )
+            query_clauses = _split_kibana_query_clauses(query)
+            required_conjunctive_clauses = {
+                "service": r"service\s*:\s*\*",
+                "traceId": r"traceId\s*:\s*\*",
+            }
+            if any(
+                not any(
+                    re.fullmatch(pattern, clause, re.IGNORECASE)
+                    for clause in query_clauses
+                )
+                for pattern in required_conjunctive_clauses.values()
+            ):
+                findings.append(
+                    Finding(
+                        path=json_path,
+                        message=(
+                            "player incident Kibana saved object query must contain "
+                            "exact conjunctive service and traceId bounds"
+                        ),
+                    )
+                )
+            if re.search(
+                r"\bor\b", _mask_kibana_query_strings(query), re.IGNORECASE
+            ):
+                findings.append(
+                    Finding(
+                        path=json_path,
+                        message=(
+                            "player incident Kibana saved object query must keep "
+                            "service and traceId clauses conjunctive"
+                        ),
+                    )
+                )
+
+            references = references_payload.get("references")
+            index_references = (
+                references
+                if isinstance(references, list)
+                else []
+            )
+            if (
+                len(index_references) != 1
+                or not isinstance(index_references[0], dict)
+                or index_references[0].get("name") != "searchSourceJSON.index"
+                or index_references[0].get("type") != "index-pattern"
+            ):
+                findings.append(
+                    Finding(
+                        path=json_path,
+                        message=(
+                            "player incident Kibana saved object must have exactly "
+                            "one searchSourceJSON.index index-pattern reference"
+                        ),
+                    )
+                )
+            else:
+                index_id = index_references[0].get("id")
+                if not isinstance(index_ref_name, str) or not index_ref_name:
+                    findings.append(
+                        Finding(
+                            path=json_path,
+                            message=(
+                                "player incident Kibana saved object must have a "
+                                "non-empty searchSourceJSON.indexRefName"
+                            ),
+                        )
+                    )
+                elif index_ref_name != index_references[0].get("name"):
+                    findings.append(
+                        Finding(
+                            path=json_path,
+                            message=(
+                                "player incident Kibana saved object "
+                                "searchSourceJSON.indexRefName must exactly match "
+                                "the searchSourceJSON.index reference name"
+                            ),
+                        )
+                    )
+                if not isinstance(index_id, str) or not KIBANA_SAFE_LOG_INDEX_PATTERN.fullmatch(index_id):
+                    findings.append(
+                        Finding(
+                            path=json_path,
+                            message=(
+                                "player incident Kibana saved object index reference "
+                                f"must use {KIBANA_ENVIRONMENT_INDEX_SENTINEL} or an explicit "
+                                "environment-scoped FireMUD log index"
+                            ),
+                        )
+                    )
+                elif index_id == KIBANA_DEFAULT_LOG_INDEX:
+                    findings.append(
+                        Finding(
+                            path=json_path,
+                            message=(
+                                "player incident Kibana saved object index reference must "
+                                "use the __REQUIRED_ENVIRONMENT__ fail-closed sentinel or "
+                                "an explicit environment-scoped FireMUD log index"
+                            ),
+                        )
+                    )
     return findings
 
 
@@ -1117,7 +2468,7 @@ def _validate_doc_semantics() -> list[Finding]:
 
     player_dashboard = REPO_ROOT / "design" / "observability" / "grafana" / "player-experience.json"
     player_dashboard_text = _read_text(player_dashboard)
-    if "Telnet/WebSocket Path Availability (1d SLO)" not in player_dashboard_text:
+    if "Telnet/WebSocket Path Availability (1d Calibration)" not in player_dashboard_text:
         findings.append(
             Finding(
                 path=player_dashboard,
@@ -1137,6 +2488,7 @@ def _validate_reference_prometheus_rules(
     findings: list[Finding] = []
     text = _read_text(path)
     alerts_seen: set[str] = set()
+    alert_occurrences: dict[str, int] = {}
 
     for entry in _split_alert_rules(text):
         if entry.key is None:
@@ -1146,6 +2498,7 @@ def _validate_reference_prometheus_rules(
         if not alert_name:
             findings.append(Finding(path=path, message="alert rule is missing name"))
             continue
+        alert_occurrences[alert_name] = alert_occurrences.get(alert_name, 0) + 1
         if (
             alert_name in PROFILE_DEPENDENT_ALERTS
             and not allow_profile_dependent_alerts
@@ -1168,13 +2521,36 @@ def _validate_reference_prometheus_rules(
 
         labels = _parse_labels(rule_lines)
         findings.extend(
+            _player_slo_calibration_findings(path, alert_name, labels)
+        )
+        findings.extend(
+            _entry_path_blackbox_findings(
+                path,
+                alert_name,
+                labels,
+                expr,
+                _parse_rule_scalar(rule_lines, "for"),
+            )
+        )
+        if alert_name == "ChatDeliveryLatencyP99High":
+            chat_selector_issue = _recipient_dispatch_selector_finding(
+                path,
+                expr,
+                "chat_delivery_latency_ms_p99_5m",
+                "shipped ChatDeliveryLatencyP99High alert",
+            )
+            if chat_selector_issue:
+                findings.append(chat_selector_issue)
+        findings.extend(
             _playerflow_canary_label_findings(path, alert_name, labels)
         )
         findings.extend(
             _playerflow_canary_service_findings(path, alert_name, labels)
         )
         required_labels = REQUIRED_ALERT_LABELS - (
-            {"service"} if alert_name in SERVICE_OPTIONAL_ALERTS else set()
+            {"service"}
+            if alert_name in SERVICE_OPTIONAL_ALERTS | SERVICE_DERIVED_ALERTS
+            else set()
         )
         missing = sorted(required_labels - labels.keys())
         if missing:
@@ -1196,6 +2572,8 @@ def _validate_reference_prometheus_rules(
                     ),
                 )
             )
+
+        findings.extend(_alert_runbook_findings(path, labels.get("runbook", "")))
 
         ms_issue = _check_ms_thresholds(expr)
         if ms_issue:
@@ -1272,13 +2650,6 @@ def _validate_reference_prometheus_rules(
             "EntryPathAvailabilityLowTcpProxy",
             "EntryPathAvailabilityLowGatewayCompliance",
             "EntryPathAvailabilityLowTcpProxyCompliance",
-            "PlayerFlowCanaryLoginFailed",
-            "PlayerFlowCanaryCommandFailed",
-            "PlayerFlowCanaryLatencyHigh",
-            "PlayerFlowCanaryFreshnessBudgetMissing",
-            "PlayerFlowCanaryEvidenceStale",
-            "WebSocketEntryPathBlackboxUnavailable",
-            "TelnetEntryPathBlackboxUnavailable",
             "ChatDeliveryLatencyP99High",
             "TickReplayFairnessStarved",
             "TickReplayScanLagHigh",
@@ -1303,6 +2674,24 @@ def _validate_reference_prometheus_rules(
                 message=f"reference rules are missing required alerts: {', '.join(missing_required)}",
             )
         )
+
+    if allow_profile_dependent_alerts:
+        duplicate_profile_alerts = sorted(
+            alert_name
+            for alert_name in ENTRY_PATH_BLACKBOX_ALERT_CONTRACTS
+            if alert_occurrences.get(alert_name, 0) > 1
+        )
+        if duplicate_profile_alerts:
+            findings.append(
+                Finding(
+                    path=path,
+                    message=(
+                        "profile-dependent entry-path blackbox alerts must appear exactly once; "
+                        "duplicate declarations: "
+                        + ", ".join(duplicate_profile_alerts)
+                    ),
+                )
+            )
 
     if "LoginSuccessRatioLow" in alerts_seen:
         findings.append(Finding(path=path, message="reference rules must not include legacy LoginSuccessRatioLow; use split ingress alerts"))
@@ -1372,6 +2761,42 @@ def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
         for recording, expressions in recording_occurrences.items()
         if len(expressions) == 1
     }
+    chat_recording_name = "chat_delivery_latency_ms_p99_5m"
+    chat_recording_expressions = recording_occurrences.get(chat_recording_name, [])
+    if len(chat_recording_expressions) != 1:
+        findings.append(
+            Finding(
+                path=path,
+                message=(
+                    "canonical chat delivery recording rule must be declared "
+                    f"exactly once: {chat_recording_name}"
+                ),
+            )
+        )
+    elif not chat_recording_expressions[0]:
+        findings.append(
+            Finding(
+                path=path,
+                message=(
+                    "canonical chat delivery recording rule is missing expr: "
+                    f"{chat_recording_name}"
+                ),
+            )
+        )
+    else:
+        chat_selector_issue = _recipient_dispatch_selector_finding(
+            path,
+            chat_recording_expressions[0],
+            "chat_delivery_latency_ms_bucket",
+            "canonical chat delivery recording rule",
+        )
+        if chat_selector_issue:
+            findings.append(chat_selector_issue)
+        chat_grouping_issue = _chat_recording_grouping_finding(
+            path, chat_recording_expressions[0]
+        )
+        if chat_grouping_issue:
+            findings.append(chat_grouping_issue)
     blocked_convergence_expr = recordings.get("recovery_participant_convergence_blocked") or ""
     if _compact_promql(blocked_convergence_expr) != CURRENT_BLOCKED_CONVERGENCE_EXPR:
         findings.append(
@@ -1441,13 +2866,19 @@ def main() -> int:
     findings: list[Finding] = []
 
     grafana_dir = GRAFANA_DIR
-    for alert_snippet in [
-        grafana_dir / "core-alerts-snippets.md",
-        *CORE_ALERT_SNIPPET_PATHS,
-        grafana_dir / "tcp-proxy-alerts-snippets.md",
-    ]:
+    for alert_snippet in ALERT_SNIPPET_PATHS:
         findings.extend(_validate_alert_snippet(alert_snippet))
     findings.extend(_validate_grafana_dashboards(grafana_dir))
+    findings.extend(
+        _validate_player_experience_dashboard(
+            grafana_dir / "player-experience.json"
+        )
+    )
+    findings.extend(
+        _validate_player_experience_drilldown(
+            grafana_dir / "player-experience-drilldown.json"
+        )
+    )
     findings.extend(_validate_kibana_saved_objects(REPO_ROOT / "design" / "observability" / "kibana"))
     findings.extend(_validate_doc_semantics())
     prometheus_rules = REPO_ROOT / "k8s" / "monitoring" / "prometheus-rules-firemud.yaml"

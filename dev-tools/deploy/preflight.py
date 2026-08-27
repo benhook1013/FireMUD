@@ -21,8 +21,16 @@ import yaml
 DEV_TOOLS_DIR = Path(__file__).resolve().parents[1]
 if str(DEV_TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(DEV_TOOLS_DIR))
+OBSERVABILITY_DIR = DEV_TOOLS_DIR / "observability"
+if str(OBSERVABILITY_DIR) not in sys.path:
+    sys.path.insert(0, str(OBSERVABILITY_DIR))
 
 from evidence_digest import canonical_evidence_digest
+from numeric_validation import is_bounded_positive_seconds
+from observability_contract import (
+    OMITTED_QUERYABILITY_CAPABILITY,
+    QUERYABILITY_CAPABILITIES,
+)
 
 USAGE = """Usage: preflight.py <staging|production|hobby-self-hosted>
 
@@ -785,6 +793,14 @@ def repo_root() -> Path:
 
 def utc_now() -> str:
     return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def normalize_evaluation_time(evaluation_time: dt.datetime | None = None) -> dt.datetime:
+    """Return one timezone-normalized instant for a preflight decision."""
+    effective_time = evaluation_time or dt.datetime.now(dt.timezone.utc)
+    if effective_time.tzinfo is None:
+        raise ValueError("evaluation time must include a timezone")
+    return effective_time.astimezone(dt.timezone.utc)
 
 
 def parse_timestamp(value: Any, field_name: str) -> dt.datetime:
@@ -1594,6 +1610,8 @@ def _load_validated_retained_smoke_evidence(
     label: str,
     expected_content_digests: list[str] | None = None,
     reference_diagnostic_suffix: str = "",
+    evaluation_time: dt.datetime | None = None,
+    expected_queryability_binding: dict[str, Any] | None = None,
 ) -> tuple[str, str, list[tuple[int, Path, dict[str, Any]]]]:
     """Validate smoke evidence through the canonical player-experience validator.
 
@@ -1668,8 +1686,13 @@ def _load_validated_retained_smoke_evidence(
             )
 
         try:
+            validator_args = [sys.executable, str(PLAYER_EXPERIENCE_SMOKE_VALIDATOR), str(evidence_path)]
+            if evaluation_time is not None:
+                validator_args.extend(
+                    ["--evaluation-time", evaluation_time.astimezone(dt.timezone.utc).isoformat().replace("+00:00", "Z")]
+                )
             validation = subprocess.run(
-                [sys.executable, str(PLAYER_EXPERIENCE_SMOKE_VALIDATOR), str(evidence_path)],
+                validator_args,
                 check=False,
                 capture_output=True,
                 text=True,
@@ -1695,6 +1718,26 @@ def _load_validated_retained_smoke_evidence(
                 f"{entry_label} failed canonical player-experience smoke evidence validation: {detail}",
                 [],
             )
+        if expected_queryability_binding is not None:
+            queryability = evidence.get("logPipelineQueryability")
+            expected_profile = expected_queryability_binding["selectedProfile"]
+            expected_capability = expected_queryability_binding["capability"]
+            expected_budget = expected_queryability_binding["evidenceFreshnessBudgetSeconds"]
+            if (
+                not isinstance(queryability, dict)
+                or queryability.get("selectedProfile") != expected_profile
+                or queryability.get("capability") != expected_capability
+                or queryability.get("evidenceFreshnessBudgetSeconds") != expected_budget
+            ):
+                return (
+                    "fail",
+                    (
+                        f"{entry_label} logPipelineQueryability does not match the target environment binding "
+                        f"(selectedProfile={expected_profile!r}, capability={expected_capability!r}, "
+                        f"evidenceFreshnessBudgetSeconds={expected_budget!r})"
+                    ),
+                    [],
+                )
         loaded_evidence.append((index, evidence_path, evidence))
 
     return ("pass", f"{label} is valid retained player-experience smoke evidence", loaded_evidence)
@@ -1704,11 +1747,14 @@ def validate_retained_smoke_evidence(
     root_dir: Path,
     smoke_evidence: Any,
     label: str,
+    *,
+    evaluation_time: dt.datetime | None = None,
 ) -> tuple[str, str]:
     status, message, _ = _load_validated_retained_smoke_evidence(
         root_dir,
         smoke_evidence,
         label,
+        evaluation_time=evaluation_time,
     )
     return (status, message)
 
@@ -1750,6 +1796,8 @@ def validate_promotion_smoke_evidence(
     label: str,
     staging_deployment_ref: str,
     staging_event_id: str,
+    *,
+    evaluation_time: dt.datetime | None = None,
 ) -> tuple[str, str]:
     shape_status, shape_message = validate_promotion_smoke_evidence_entry_shape(
         smoke_evidence,
@@ -1757,6 +1805,11 @@ def validate_promotion_smoke_evidence(
     )
     if shape_status != "pass":
         return (shape_status, shape_message)
+
+    try:
+        expected_queryability_binding = canonical_queryability_binding(root_dir, "staging")
+    except (OSError, UnicodeError, ValueError, TypeError, KeyError, yaml.YAMLError) as exc:
+        return ("fail", f"Target staging queryability binding is unavailable: {exc}")
 
     references = [entry["ref"] for entry in smoke_evidence]
     expected_content_digests = [entry["contentDigest"] for entry in smoke_evidence]
@@ -1766,6 +1819,8 @@ def validate_promotion_smoke_evidence(
         label,
         expected_content_digests,
         reference_diagnostic_suffix=".ref",
+        evaluation_time=evaluation_time,
+        expected_queryability_binding=expected_queryability_binding,
     )
     if retained_status != "pass":
         return (retained_status, retained_message)
@@ -1778,6 +1833,16 @@ def validate_promotion_smoke_evidence(
             return (
                 "fail",
                 f"{label}[{index}] externalAuthority.profile independent-omitted cannot satisfy promotion smoke evidence",
+            )
+        queryability = evidence.get("logPipelineQueryability")
+        if (
+            not isinstance(queryability, dict)
+            or queryability.get("capability") == OMITTED_QUERYABILITY_CAPABILITY
+            or queryability.get("result") != "passed"
+        ):
+            return (
+                "fail",
+                f"{label}[{index}] promotion smoke evidence requires a passing non-omitted logPipelineQueryability result",
             )
         if evidence.get("deploymentRef") != staging_deployment_ref:
             return (
@@ -2132,12 +2197,18 @@ def validate_recovery_baseline(
     smoke_expected_content_digests = [
         entry["contentDigest"] for entry in baseline["smokeEvidence"]
     ]
+    try:
+        recovery_queryability_binding = canonical_queryability_binding(root_dir, "production")
+    except (OSError, UnicodeError, ValueError, TypeError, KeyError, yaml.YAMLError) as exc:
+        return ("fail", f"Recovery compatibility baseline production queryability binding could not be loaded: {exc}")
     smoke_status, smoke_message, _ = _load_validated_retained_smoke_evidence(
         root_dir,
         smoke_references,
         "Recovery compatibility baseline smokeEvidence",
         smoke_expected_content_digests,
         reference_diagnostic_suffix=".ref",
+        evaluation_time=now_dt,
+        expected_queryability_binding=recovery_queryability_binding,
     )
     if smoke_status != "pass":
         return ("fail", smoke_message)
@@ -2430,6 +2501,41 @@ def immutable_file_digest(path: Path) -> str:
 
 def canonical_expected_bindings_ref(environment: str) -> str:
     return f"design/operations/environments/{environment}/expected-bindings.yaml"
+
+
+def validated_queryability_binding(data: Any) -> dict[str, Any]:
+    """Return a queryability binding after validating its canonical shape."""
+    observability = data.get("observability")
+    queryability = observability.get("logPipelineQueryability") if isinstance(observability, dict) else None
+    required = {"selectedProfile", "capability", "evidenceFreshnessBudgetSeconds"}
+    if not isinstance(queryability, dict) or set(queryability) != required:
+        raise ValueError(
+            f"observability.logPipelineQueryability must contain exactly {sorted(required)}"
+        )
+    if not isinstance(queryability["selectedProfile"], str) or not queryability["selectedProfile"].strip():
+        raise ValueError("observability.logPipelineQueryability.selectedProfile must be non-empty")
+    capability = queryability["capability"]
+    if not isinstance(capability, str):
+        raise TypeError(
+            "observability.logPipelineQueryability.capability must be a string"
+        )
+    if capability not in QUERYABILITY_CAPABILITIES:
+        raise ValueError("observability.logPipelineQueryability.capability is unsupported")
+    budget = queryability["evidenceFreshnessBudgetSeconds"]
+    if not is_bounded_positive_seconds(budget):
+        raise ValueError(
+            "observability.logPipelineQueryability.evidenceFreshnessBudgetSeconds must be positive"
+        )
+    return queryability
+
+
+def canonical_queryability_binding(root_dir: Path, environment: str) -> dict[str, Any]:
+    """Load the target environment's authoritative queryability posture."""
+    expected_path = root_dir / canonical_expected_bindings_ref(environment)
+    data = load_yaml(expected_path)
+    if not isinstance(data, dict) or data.get("environment") != environment:
+        raise ValueError(f"expected-bindings manifest must target {environment}")
+    return validated_queryability_binding(data)
 
 
 def canonical_promotion_attestation_ref(deployment_ref: str) -> str | None:
@@ -4064,7 +4170,7 @@ def expected_bindings_schema_issues(data: Any) -> list[str]:
         "outboundComms": {"enabled", "smtpHost", "webhookTargets"},
         "operatorCredentials": {"bindingRef", "fingerprint"},
         "serviceDiscovery": {"mode", "allowedOverrides"},
-        "observability": {"otelCollectorEndpoint"},
+        "observability": {"otelCollectorEndpoint", "logPipelineQueryability"},
         "backupMaintenancePause": {"enabled"},
     }
     child_keys: dict[str, set[str] | None] = {
@@ -4082,6 +4188,9 @@ def expected_bindings_schema_issues(data: Any) -> list[str]:
         },
         "internalBindings.registry": {"imagePullSecretRef"},
         "observability.otelCollectorEndpoint": {"value", "shared", "sharedRationale"},
+        "observability.logPipelineQueryability": {
+            "selectedProfile", "capability", "evidenceFreshnessBudgetSeconds"
+        },
     }
     conditional_value_keys = {"value", "shared", "sharedRationale"}
     allowed_top_level = {
@@ -4120,6 +4229,10 @@ def expected_bindings_schema_issues(data: Any) -> list[str]:
                 target_value,
                 conditional_value_keys,
             )
+    try:
+        validated_queryability_binding(data)
+    except (TypeError, ValueError) as exc:
+        issues.append(str(exc))
     return issues
 
 
@@ -4179,7 +4292,7 @@ def expected_binding_checks(
                 "PREFLIGHT-SECRETS-002",
                 True,
                 "fail",
-                "Expected-bindings schema contains unknown keys: " + "; ".join(schema_issues),
+                "Expected-bindings schema is invalid: " + "; ".join(schema_issues),
             )
         )
     else:
@@ -5038,6 +5151,8 @@ def promotion_check(
     images: list[str],
     root_dir: Path,
     expected_production_overlay_ref: str | None = None,
+    *,
+    evaluation_time: dt.datetime | None = None,
 ) -> tuple[str, str, str, str, str]:
     try:
         att = load_json_rejecting_duplicate_keys(attestation_path)
@@ -5050,7 +5165,10 @@ def promotion_check(
         return ("fail", "unknown", message, "fail", "Recovery compatibility attestation must be a JSON object")
 
     rollback_mode = str(att.get("rollbackMode", "unknown"))
-    now_dt = dt.datetime.now(dt.timezone.utc)
+    try:
+        now_dt = normalize_evaluation_time(evaluation_time)
+    except ValueError as exc:
+        return ("fail", "unknown", f"Promotion {exc}", "fail", f"Promotion {exc}")
     recovery_status, recovery_message = recovery_compatibility_check(att, rollback_mode, root_dir, now_dt)
     promotion_status, promotion_rollback_mode, promotion_message = _promotion_check(
         att,
@@ -5189,6 +5307,7 @@ def _promotion_check(
         "Attestation smokeEvidence",
         staging_sha,
         staging_event_id,
+        evaluation_time=now_dt,
     )
     if smoke_status != "pass":
         return ("fail", rollback_mode, smoke_message)
@@ -5745,6 +5864,8 @@ def production_recovery_check(
     backup_readiness_evidence: str,
     deployment_ref: str,
     root_dir: Path,
+    *,
+    evaluation_time: dt.datetime | None = None,
 ) -> tuple[str, str]:
     if rollback_mode == "rollback-compatible":
         return (compatibility_status, compatibility_message)
@@ -5757,7 +5878,12 @@ def production_recovery_check(
     backup_path = Path(backup_readiness_evidence)
     if not backup_path.exists():
         return ("fail", f"Backup-readiness evidence file not found: {backup_readiness_evidence}")
-    return backup_readiness_check(backup_path, utc_now(), deployment_ref, root_dir)
+    try:
+        now_dt = normalize_evaluation_time(evaluation_time)
+    except ValueError as exc:
+        return ("fail", f"Recovery {exc}")
+    now = now_dt.isoformat().replace("+00:00", "Z")
+    return backup_readiness_check(backup_path, now, deployment_ref, root_dir)
 
 
 def production_traffic_check() -> tuple[str, str]:
@@ -6067,6 +6193,7 @@ def main() -> int:
             has_required_failure = append_result(check_results, "PREFLIGHT-PROMOTION-001", True, "fail", f"Attestation file not found: {promotion_attestation}") or has_required_failure
             has_required_failure = append_result(check_results, "PREFLIGHT-BACKUP-001", True, "fail", "Recovery compatibility cannot be evaluated because the promotion attestation is missing") or has_required_failure
         else:
+            now_dt = normalize_evaluation_time()
             (
                 promotion_status,
                 recovery_rollback_mode,
@@ -6078,6 +6205,7 @@ def main() -> int:
                 service_images,
                 root_dir,
                 expected_production_overlay_ref=deployment_ref,
+                evaluation_time=now_dt,
             )
             has_required_failure = append_result(
                 check_results,
@@ -6093,6 +6221,7 @@ def main() -> int:
                 backup_readiness_evidence,
                 deployment_ref,
                 root_dir,
+                evaluation_time=now_dt,
             )
             has_required_failure = append_result(check_results, "PREFLIGHT-BACKUP-001", True, recovery_status, recovery_message) or has_required_failure
 

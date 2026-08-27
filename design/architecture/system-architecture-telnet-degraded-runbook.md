@@ -15,6 +15,8 @@ The [TCP Proxy Service Operations](./microservices/tcp-proxy-service/operations.
 - Other or invalid established-connection close outcomes currently fall back to minimal Telnet text (`backend_unavailable`) and bridge `unattributed_failure`; pre-session trust failures remain separately classified as `policy_violation`. Standalone `session_replaced`/`service_restart` remain target-only lifecycle classes until runtime and focused proof converge; opaque `policy_violation` suffix preservation is current behavior, not proof of bounded subreason validation.
 - **Convergence gate:** do not report a target-only lifecycle row below as a current observation until `TelnetServerHandler` and focused tests/proof recognize and validate that class; current opaque `policy_violation` suffix preservation does not establish bounded subreason validation.
 
+Validation and runtime-proof selection for changes to this runbook follows the shared [Validation and Runtime Proof workflow](../developer-workflows/validation-and-runtime-proof.md); record execution results in PR/CI evidence or the owning implementation tracker.
+
 ## Symptoms
 
 - Players using Telnet cannot connect or experience frequent disconnects.
@@ -41,7 +43,7 @@ The [TCP Proxy Service Operations](./microservices/tcp-proxy-service/operations.
      - If Telnet client IP preservation relies on PROXY protocol, verify that `tcpproxy.telnet.discarded{reason="proxy_protocol"}` is not elevated; sustained `proxy_protocol` discard reasons often indicate a misconfigured Telnet edge proxy (for example PROXY headers sent to the wrong listener or malformed headers).
 4. **Compare Telnet vs WebSocket flows**
    - Pick a specific `{gameInstanceId, tenantId}` (or user) when available and:
-     - Use Logging & Admin Service / Kibana to find the Telnet-side logs (from the TCP Proxy) and confirm that `LOGIN`/`LOOK` commands are received, with credentials redacted.
+     - Use the selected profile's supported operator-query path to find the Telnet-side logs from TCP Proxy and confirm that `LOGIN`/`LOOK` commands are received, with credentials redacted. The default indexed profile uses Kibana directly, a compatible indexed profile uses its mapped equivalent, and a reduced profile uses only its declared console/journal path. If a reduced profile has no declared console/journal path, report log-query retrieval as unavailable rather than using an undefined direct service/pod path. Do not imply a current Logging & Admin query integration or treat explicit indexed-search omission as a failed check.
      - Find the corresponding WebSocket session in Spring Cloud Gateway logs and the downstream Game Session logs to verify whether the commands reach the backend and whether responses are emitted.
    - If WebSocket flows succeed while Telnet flows stall or drop, the problem is likely in the TCP Proxy, Gateway WebSocket route, or mTLS between them.
 

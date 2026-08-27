@@ -138,14 +138,14 @@ spec:
             (
               sum by (scope) (rate(login_requests_total{service="spring-cloud-gateway",outcome="success"}[15m]))
                 /
-              sum by (scope) (rate(login_requests_total{service="spring-cloud-gateway"}[15m]))
+              sum by (scope) (rate(login_requests_total{service="spring-cloud-gateway",outcome=~"success|server_failure"}[15m]))
             )
         - record: login_success_ratio_tcpproxy_15m
           expr: |
             (
               sum by (scope) (rate(login_requests_total{service="tcp-proxy-service",outcome="success"}[15m]))
                 /
-              sum by (scope) (rate(login_requests_total{service="tcp-proxy-service"}[15m]))
+              sum by (scope) (rate(login_requests_total{service="tcp-proxy-service",outcome=~"success|server_failure"}[15m]))
             )
         - record: command_latency_ms_p99_gateway_5m
           expr: |
@@ -167,35 +167,35 @@ spec:
           expr: |
             histogram_quantile(
               0.99,
-              sum by (scope, channel_type, le) (rate(chat_delivery_latency_ms_bucket[5m]))
+              sum by (service, scope, completion_boundary, channel_type, le) (rate(chat_delivery_latency_ms_bucket{completion_boundary="recipient_dispatch"}[5m]))
             )
         - record: entrypath_availability_gateway_1d
           expr: |
             (
               sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway",outcome="success"}[1d]))
                 /
-              sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway"}[1d]))
+              sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway",outcome=~"success|server_failure"}[1d]))
             )
         - record: entrypath_availability_gateway_5m
           expr: |
             (
               sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway",outcome="success"}[5m]))
                 /
-              sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway"}[5m]))
+              sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway",outcome=~"success|server_failure"}[5m]))
             )
         - record: entrypath_availability_tcpproxy_1d
           expr: |
             (
               sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service",outcome="success"}[1d]))
                 /
-              sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service"}[1d]))
+              sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service",outcome=~"success|server_failure"}[1d]))
             )
         - record: entrypath_availability_tcpproxy_5m
           expr: |
             (
               sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service",outcome="success"}[5m]))
                 /
-              sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service"}[5m]))
+              sum by (service, scope, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service",outcome=~"success|server_failure"}[5m]))
             )
 
     - name: firemud.alerts.redis
@@ -483,74 +483,82 @@ spec:
             description: A controller-authoritative recovery release was attempted before cold-start convergence completed. Keep traffic quarantined and investigate the operation evidence and participant dispositions immediately.
 
     - name: firemud.alerts.player_experience
+      # These live-traffic rules are calibration/degradation signals only. A
+      # promoted profile must replace them with minimum-sample and
+      # short/long-burn policy before treating an SLO as enforceable.
       rules:
         - alert: LoginSuccessRatioLowGateway
           expr: login_success_ratio_gateway_15m < 0.995
           for: 15m
           labels:
             service: spring-cloud-gateway
-            severity: P0
+            severity: P2
+            slo_state: calibration
             owner: platform
             runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#login-success-ratio-below-slo
           annotations:
-            summary: Login success ratio below SLO
-            description: Gateway login success ratio has fallen below 99.5% over the last 15 minutes.
+            summary: Login success calibration below starting point
+            description: Gateway login success ratio is below the 99.5% calibration starting point over the last 15 minutes. This is non-enforcing until a profile promotes a measured objective with minimum-sample and multi-window policy.
         - alert: LoginSuccessRatioLowTcpProxy
           expr: login_success_ratio_tcpproxy_15m < 0.995
           for: 15m
           labels:
             service: tcp-proxy-service
-            severity: P0
+            severity: P2
+            slo_state: calibration
             owner: platform
             runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#login-success-ratio-below-slo
           annotations:
-            summary: Login success ratio below SLO (TCP Proxy)
-            description: TCP Proxy login success ratio has fallen below 99.5% over the last 15 minutes.
+            summary: Login success calibration below starting point (TCP Proxy)
+            description: TCP Proxy login success ratio is below the 99.5% calibration starting point over the last 15 minutes. This is non-enforcing until a profile promotes a measured objective with minimum-sample and multi-window policy.
         - alert: CommandLatencyP99HighGateway
           expr: command_latency_ms_p99_gateway_5m > 250
           for: 10m
           labels:
             service: spring-cloud-gateway
-            severity: P1
+            severity: P2
+            slo_state: calibration
             owner: gameplay
             runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#command-latency-above-slo
           annotations:
-            summary: Command p99 latency above SLO
-            description: Gateway command end-to-end p99 latency has exceeded 250ms for core commands.
+            summary: Command p99 calibration above starting point
+            description: Gateway command end-to-end p99 latency has exceeded the 250ms calibration starting point for core commands. This is non-enforcing until a profile promotes a measured objective with minimum-sample and multi-window policy.
         - alert: CommandLatencyP99HighTcpProxy
           expr: command_latency_ms_p99_tcpproxy_5m > 250
           for: 10m
           labels:
             service: tcp-proxy-service
-            severity: P1
+            severity: P2
+            slo_state: calibration
             owner: gameplay
             runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#command-latency-above-slo
           annotations:
-            summary: Command p99 latency above SLO (TCP Proxy)
-            description: TCP Proxy command end-to-end p99 latency has exceeded 250ms for core commands.
+            summary: Command p99 calibration above starting point (TCP Proxy)
+            description: TCP Proxy command end-to-end p99 latency has exceeded the 250ms calibration starting point for core commands. This is non-enforcing until a profile promotes a measured objective with minimum-sample and multi-window policy.
         - alert: ChatDeliveryLatencyP99High
-          expr: chat_delivery_latency_ms_p99_5m > 1000
+          expr: chat_delivery_latency_ms_p99_5m{completion_boundary="recipient_dispatch"} > 1000
           for: 10m
           labels:
-            service: social-groups-service
-            severity: P1
+            severity: P2
+            slo_state: calibration
             owner: gameplay
             runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#chat-delivery-latency-above-slo
           annotations:
-            summary: Chat delivery latency above SLO
-            description: Chat delivery p99 latency has exceeded 1s over the last 5 minutes for active regions.
+            summary: Chat delivery p99 calibration above starting point
+            description: Chat delivery p99 latency has exceeded the 1s calibration starting point over the last 5 minutes for one emitting service at the canonical recipient-dispatch completion boundary. This is non-enforcing until a profile promotes a measured objective with minimum-sample and multi-window policy; diagnostic completion boundaries must not be combined with or satisfy this SLI.
         - alert: EntryPathAvailabilityLowGateway
           expr: entrypath_availability_gateway_5m < 0.995
           for: 10m
           labels:
             service: spring-cloud-gateway
             component: entrypath
-            severity: P0
+            severity: P2
+            slo_state: calibration
             owner: platform
             runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
           annotations:
-            summary: Gateway entry-path availability degraded
-            description: One or more approved scopes have acute connection failures on a gateway-owned entry path.
+            summary: Gateway entry-path calibration degraded
+            description: One or more approved scopes have acute connection failures on a gateway-owned entry path. This calibration signal is non-enforcing until a profile promotes a measured objective with minimum-sample and multi-window policy.
         - alert: EntryPathAvailabilityLowGatewayCompliance
           expr: entrypath_availability_gateway_1d < 0.999
           for: 30m
@@ -558,23 +566,25 @@ spec:
             service: spring-cloud-gateway
             component: entrypath
             severity: P2
+            slo_state: calibration
             owner: platform
             runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
           annotations:
-            summary: Gateway entry-path availability below 1-day SLO
-            description: One or more approved scopes have sustained connection failures on a gateway-owned entry path over the compliance window.
+            summary: Gateway entry-path calibration below starting point
+            description: One or more approved scopes have sustained connection failures on a gateway-owned entry path over the calibration window. This is non-enforcing until a profile promotes a measured objective with minimum-sample and multi-window policy.
         - alert: EntryPathAvailabilityLowTcpProxy
           expr: entrypath_availability_tcpproxy_5m < 0.995
           for: 10m
           labels:
             service: tcp-proxy-service
             component: entrypath
-            severity: P0
+            severity: P2
+            slo_state: calibration
             owner: platform
             runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
           annotations:
-            summary: TCP Proxy entry-path availability degraded
-            description: One or more approved scopes have acute connection failures on TCP Proxy entry paths.
+            summary: TCP Proxy entry-path calibration degraded
+            description: One or more approved scopes have acute connection failures on TCP Proxy entry paths. This calibration signal is non-enforcing until a profile promotes a measured objective with minimum-sample and multi-window policy.
         - alert: EntryPathAvailabilityLowTcpProxyCompliance
           expr: entrypath_availability_tcpproxy_1d < 0.999
           for: 30m
@@ -582,158 +592,12 @@ spec:
             service: tcp-proxy-service
             component: entrypath
             severity: P2
+            slo_state: calibration
             owner: platform
             runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
           annotations:
-            summary: TCP Proxy entry-path availability below 1-day SLO
-            description: One or more approved scopes have sustained connection failures on TCP Proxy entry paths over the compliance window.
-        - alert: PlayerFlowCanaryLoginFailed
-          expr: >-
-            playerflow_canary_success{flow="login"} == 0
-            and on (flow, path, target, profile)
-            (
-              time() - playerflow_canary_last_run_timestamp_seconds{flow="login"} >= 0
-              and on (flow, path, target, profile)
-              (
-                time() - playerflow_canary_last_run_timestamp_seconds{flow="login"}
-                <= on (profile) group_left()
-                  playerflow_canary_freshness_budget_seconds
-              )
-            )
-          for: 2m
-          labels:
-            component: playerflow-canary
-            path: '{{ $labels.path }}'
-            target: '{{ $labels.target }}'
-            profile: '{{ $labels.profile }}'
-            severity: P0
-            owner: platform
-            runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#login-success-ratio-below-slo
-          annotations:
-            summary: Synthetic login canary failing
-            description: The independent player-flow login canary is failing on at least one monitored public path.
-        - alert: PlayerFlowCanaryFreshnessBudgetMissing
-          expr: >-
-            count by (profile) (
-              playerflow_canary_success
-              or playerflow_canary_latency_ms
-              or playerflow_canary_last_run_timestamp_seconds
-            )
-            unless on (profile)
-            count by (profile) (playerflow_canary_freshness_budget_seconds)
-          for: 2m
-          labels:
-            service: prometheus
-            component: playerflow-canary
-            profile: '{{ $labels.profile }}'
-            severity: P1
-            owner: platform
-            runbook: design/architecture/system-architecture-observability-incident-runbook.md#prometheus-down-or-stale
-          annotations:
-            summary: Player-flow canary freshness budget series missing
-            description: Canary result series are present without a matching freshness budget for this profile, so the canary failure and latency alerts cannot evaluate. Treat player-flow health as unknown until the budget mirror is restored.
-        - alert: PlayerFlowCanaryCommandFailed
-          expr: >-
-            playerflow_canary_success{flow="command"} == 0
-            and on (flow, path, target, profile)
-            (
-              time() - playerflow_canary_last_run_timestamp_seconds{flow="command"} >= 0
-              and on (flow, path, target, profile)
-              (
-                time() - playerflow_canary_last_run_timestamp_seconds{flow="command"}
-                <= on (profile) group_left()
-                  playerflow_canary_freshness_budget_seconds
-              )
-            )
-          for: 2m
-          labels:
-            component: playerflow-canary
-            path: '{{ $labels.path }}'
-            target: '{{ $labels.target }}'
-            profile: '{{ $labels.profile }}'
-            severity: P1
-            owner: gameplay
-            runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#command-latency-above-slo
-          annotations:
-            summary: Synthetic command canary failing
-            description: The independent player-flow representative command canary is failing after gameplay admission on at least one monitored public path.
-        - alert: PlayerFlowCanaryLatencyHigh
-          expr: >-
-            playerflow_canary_latency_ms{flow="command"} > 1000
-            and on (flow, path, target, profile)
-            (
-              time() - playerflow_canary_last_run_timestamp_seconds{flow="command"} >= 0
-              and on (flow, path, target, profile)
-              (
-                time() - playerflow_canary_last_run_timestamp_seconds{flow="command"}
-                <= on (profile) group_left()
-                  playerflow_canary_freshness_budget_seconds
-              )
-            )
-          for: 2m
-          labels:
-            component: playerflow-canary
-            path: '{{ $labels.path }}'
-            target: '{{ $labels.target }}'
-            profile: '{{ $labels.profile }}'
-            severity: P1
-            owner: gameplay
-            runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#command-latency-above-slo
-          annotations:
-            summary: Synthetic command canary latency high
-            description: The independent player-flow representative command canary has exceeded 1000ms for at least one monitored public path.
-        - alert: PlayerFlowCanaryEvidenceStale
-          expr: >-
-            (
-              playerflow_canary_success
-              unless on (flow, path, target, profile)
-              playerflow_canary_last_run_timestamp_seconds
-            )
-            or
-            time() - playerflow_canary_last_run_timestamp_seconds < 0
-            or on (flow, path, target, profile)
-            time() - playerflow_canary_last_run_timestamp_seconds
-            > on (profile) group_left()
-              playerflow_canary_freshness_budget_seconds
-          for: 1m
-          labels:
-            service: prometheus
-            component: playerflow-canary
-            flow: '{{ $labels.flow }}'
-            path: '{{ $labels.path }}'
-            target: '{{ $labels.target }}'
-            profile: '{{ $labels.profile }}'
-            severity: P1
-            owner: platform
-            runbook: design/architecture/system-architecture-observability-incident-runbook.md#prometheus-down-or-stale
-          annotations:
-            summary: Synthetic player-flow canary evidence stale
-            description: The advertised player-flow canary run evidence is missing its matching last-run timestamp, future-dated, or older than the profile-derived freshness budget; treat player-flow health as unknown or degraded until a fresh run is retained.
-        - alert: WebSocketEntryPathBlackboxUnavailable
-          expr: max_over_time(entrypath_blackbox_probe_success{path="websocket"}[2m]) == 0
-          for: 2m
-          labels:
-            service: spring-cloud-gateway
-            component: entrypath
-            severity: P0
-            owner: platform
-            runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
-          annotations:
-            summary: WebSocket entry path unreachable from external probe
-            description: Independent blackbox probes cannot reach the public WebSocket gameplay path; this may be an LB, DNS, TLS, or ingress failure before requests reach Gateway.
-        - alert: TelnetEntryPathBlackboxUnavailable
-          expr: max_over_time(entrypath_blackbox_probe_success{path="telnet"}[2m]) == 0
-          for: 2m
-          labels:
-            service: tcp-proxy-service
-            component: entrypath
-            severity: P0
-            owner: platform
-            runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
-          annotations:
-            summary: Telnet entry path unreachable from external probe
-            description: Independent blackbox probes cannot reach the public Telnet gameplay path; this may be an LB, DNS, TLS, or ingress failure before requests reach TCP Proxy.
-
+            summary: TCP Proxy entry-path calibration below starting point
+            description: One or more approved scopes have sustained connection failures on TCP Proxy entry paths over the calibration window. This is non-enforcing until a profile promotes a measured objective with minimum-sample and multi-window policy.
     - name: firemud.alerts.observability
       rules:
         - alert: AlertmanagerServiceUnavailable
@@ -798,7 +662,7 @@ spec:
             service: elasticsearch
             severity: P1
             owner: platform
-            runbook: design/architecture/system-architecture-observability-incident-runbook.md#elasticsearchkibana-down-or-indexing-stalled
+            runbook: design/architecture/system-architecture-observability-incident-runbook.md#indexed-log-query-path-down-or-ingest-stalled
           annotations:
             summary: Elasticsearch cluster health is red
             description: Elasticsearch cluster health is red, which can break log ingest, search, and Kibana-backed incident triage.
@@ -809,7 +673,7 @@ spec:
             service: elasticsearch
             severity: P1
             owner: platform
-            runbook: design/architecture/system-architecture-observability-incident-runbook.md#elasticsearchkibana-down-or-indexing-stalled
+            runbook: design/architecture/system-architecture-observability-incident-runbook.md#indexed-log-query-path-down-or-ingest-stalled
           annotations:
             summary: Elasticsearch indexing failures detected
             description: Elasticsearch is failing to index a non-zero stream of documents, so recent logs may be missing or incomplete.
@@ -820,7 +684,7 @@ spec:
             service: otel-collector
             severity: P1
             owner: platform
-            runbook: design/architecture/system-architecture-observability-incident-runbook.md#jaeger-opentelemetry-collector-down
+            runbook: design/architecture/system-architecture-observability-incident-runbook.md#jaeger--opentelemetry-collector-down
           annotations:
             summary: OpenTelemetry Collector is failing to export spans
             description: Distributed tracing data is being dropped before it reaches Jaeger or the configured backend.
@@ -831,7 +695,7 @@ spec:
             service: otel-collector
             severity: P1
             owner: platform
-            runbook: design/architecture/system-architecture-observability-incident-runbook.md#jaeger-opentelemetry-collector-down
+            runbook: design/architecture/system-architecture-observability-incident-runbook.md#jaeger--opentelemetry-collector-down
           annotations:
             summary: OpenTelemetry Collector unavailable
             description: The collector is unreachable, so new traces cannot be received even before downstream export/storage is considered.
@@ -842,7 +706,7 @@ spec:
             service: jaeger
             severity: P1
             owner: platform
-            runbook: design/architecture/system-architecture-observability-incident-runbook.md#jaeger-opentelemetry-collector-down
+            runbook: design/architecture/system-architecture-observability-incident-runbook.md#jaeger--opentelemetry-collector-down
           annotations:
             summary: Jaeger query service unavailable
             description: Jaeger query is unavailable, so operators cannot search or inspect traces even if spans are still being ingested.
@@ -853,7 +717,7 @@ spec:
             service: jaeger
             severity: P1
             owner: platform
-            runbook: design/architecture/system-architecture-observability-incident-runbook.md#jaeger-opentelemetry-collector-down
+            runbook: design/architecture/system-architecture-observability-incident-runbook.md#jaeger--opentelemetry-collector-down
           annotations:
             summary: Jaeger is dropping spans
             description: Jaeger storage or collector paths are dropping spans, so trace data is incomplete even when services still export successfully.
@@ -864,7 +728,7 @@ spec:
             service: fluent-bit
             severity: P1
             owner: platform
-            runbook: design/architecture/system-architecture-observability-incident-runbook.md#elasticsearchkibana-down-or-indexing-stalled
+            runbook: design/architecture/system-architecture-observability-incident-runbook.md#indexed-log-query-path-down-or-ingest-stalled
           annotations:
             summary: Fluent Bit output errors detected
             description: Log shipping is failing or backpressured; Kibana may lose recent log visibility.

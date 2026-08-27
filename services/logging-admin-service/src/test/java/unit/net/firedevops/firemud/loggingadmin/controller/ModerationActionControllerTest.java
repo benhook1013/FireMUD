@@ -1,7 +1,6 @@
 package net.firedevops.firemud.loggingadmin.controller;
 
 import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -14,7 +13,6 @@ import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfigurati
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.dto.ApplyModerationActionRequest;
-import net.firedevops.firemud.loggingadmin.dto.ModerationActionDto;
 import net.firedevops.firemud.loggingadmin.service.ModerationService;
 import net.firedevops.firemud.test.WithFiremudPrivilegedHttpAuthTestProperties;
 import org.junit.jupiter.api.AfterEach;
@@ -51,11 +49,8 @@ class ModerationActionControllerTest {
   }
 
   @Test
-  void applyReturnsDto() throws Exception {
+  void applyRejectsAuthorizedCallerWhileMutationGateIsUnavailable() throws Exception {
     ApplyModerationActionRequest req = new ApplyModerationActionRequest(1L, 2L, 9L, "ban", "");
-    ModerationActionDto dto =
-        new ModerationActionDto(1L, 1L, 2L, "ban", "", java.time.Instant.now(), null);
-    when(service.applyAction(req)).thenReturn(dto);
     String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
@@ -64,8 +59,15 @@ class ModerationActionControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(req))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.status").value("SUCCESS"));
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(jsonPath("$.status").value("ERROR"))
+        .andExpect(jsonPath("$.error.code").value("MODERATION_ACTION_UNAVAILABLE"))
+        .andExpect(
+            jsonPath("$.error.message")
+                .value(
+                    "Moderation actions are unavailable until the shared mutation gate is implemented"));
+
+    verifyNoInteractions(service);
   }
 
   @Test

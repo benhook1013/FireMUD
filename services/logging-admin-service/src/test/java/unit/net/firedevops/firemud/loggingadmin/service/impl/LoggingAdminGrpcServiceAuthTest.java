@@ -17,7 +17,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.dto.LogEventDto;
-import net.firedevops.firemud.loggingadmin.service.FeatureFlagService;
+import net.firedevops.firemud.loggingadmin.dto.ModerationPolicyDecisionDto;
 import net.firedevops.firemud.loggingadmin.service.LogEventService;
 import net.firedevops.firemud.loggingadmin.service.LogQueryService;
 import net.firedevops.firemud.loggingadmin.service.ModerationService;
@@ -46,7 +46,6 @@ class LoggingAdminGrpcServiceAuthTest {
     SessionContext.setContext("1", List.of("player"), Map.of());
     LoggingAdminGrpcService service =
         new LoggingAdminGrpcService(
-            Mockito.mock(FeatureFlagService.class),
             Mockito.mock(LogQueryService.class),
             Mockito.mock(LogEventService.class),
             Mockito.mock(ModerationService.class),
@@ -89,7 +88,6 @@ class LoggingAdminGrpcServiceAuthTest {
                 Instant.parse("2026-01-01T00:00:00Z")));
     LoggingAdminGrpcService service =
         new LoggingAdminGrpcService(
-            Mockito.mock(FeatureFlagService.class),
             Mockito.mock(LogQueryService.class),
             logEventService,
             moderationService,
@@ -125,20 +123,89 @@ class LoggingAdminGrpcServiceAuthTest {
   @Test
   void toggleFeatureFlagRejectsZeroTenantIdBeforeDispatch() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
-    FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+
+    ToggleFeatureFlagResponse response = invokeToggleFeatureFlag("0", "demo");
+
+    assertNotNull(response);
+    assertFalse(response.getSuccess());
+    assertEquals("INVALID_ARGUMENT", response.getError().getCode());
+    assertEquals("tenantId must be positive", response.getError().getMessage());
+  }
+
+  @Test
+  void toggleFeatureFlagRejectsAuthorizedCallerWhileMutationGateIsUnavailable() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+
+    ToggleFeatureFlagResponse response = invokeToggleFeatureFlag("1", "demo");
+
+    assertNotNull(response);
+    assertFalse(response.getSuccess());
+    assertEquals("UNAVAILABLE", response.getError().getCode());
+    assertEquals(
+        "Feature-flag toggles are unavailable until the shared mutation gate is implemented",
+        response.getError().getMessage());
+  }
+
+  @Test
+  void toggleFeatureFlagRejectsUnauthorizedCallerBeforeUnavailableResponse() {
+    SessionContext.setContext("1", List.of("player"), Map.of());
+
+    ToggleFeatureFlagResponse response = invokeToggleFeatureFlag("1", "demo");
+
+    assertNotNull(response);
+    assertFalse(response.getSuccess());
+    assertEquals("PERMISSION_DENIED", response.getError().getCode());
+  }
+
+  @Test
+  void toggleFeatureFlagRejectsEmptyNameBeforeUnavailableResponse() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+
+    ToggleFeatureFlagResponse response = invokeToggleFeatureFlag("1", "");
+
+    assertNotNull(response);
+    assertFalse(response.getSuccess());
+    assertEquals("INVALID_ARGUMENT", response.getError().getCode());
+    assertEquals("name must not be blank", response.getError().getMessage());
+  }
+
+  @Test
+  void toggleFeatureFlagRejectsBlankNameBeforeUnavailableResponse() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+
+    ToggleFeatureFlagResponse response = invokeToggleFeatureFlag("1", "   ");
+
+    assertNotNull(response);
+    assertFalse(response.getSuccess());
+    assertEquals("INVALID_ARGUMENT", response.getError().getCode());
+    assertEquals("name must not be blank", response.getError().getMessage());
+  }
+
+  @Test
+  void toggleFeatureFlagRejectsOverlongNameBeforeUnavailableResponse() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+
+    ToggleFeatureFlagResponse response = invokeToggleFeatureFlag("1", "x".repeat(101));
+
+    assertNotNull(response);
+    assertFalse(response.getSuccess());
+    assertEquals("INVALID_ARGUMENT", response.getError().getCode());
+    assertEquals("name size must be between 1 and 100", response.getError().getMessage());
+  }
+
+  private ToggleFeatureFlagResponse invokeToggleFeatureFlag(String tenantId, String name) {
+    LogQueryService logQueryService = Mockito.mock(LogQueryService.class);
+    LogEventService logEventService = Mockito.mock(LogEventService.class);
+    ModerationService moderationService = Mockito.mock(ModerationService.class);
     LoggingAdminGrpcService service =
         new LoggingAdminGrpcService(
-            featureFlagService,
-            Mockito.mock(LogQueryService.class),
-            Mockito.mock(LogEventService.class),
-            Mockito.mock(ModerationService.class),
-            new SimpleMeterRegistry());
-
+            logQueryService, logEventService, moderationService, new SimpleMeterRegistry());
     AtomicReference<ToggleFeatureFlagResponse> ref = new AtomicReference<>();
+
     service.toggleFeatureFlag(
         ToggleFeatureFlagRequest.newBuilder()
-            .setTenantId("0")
-            .setName("demo")
+            .setTenantId(tenantId)
+            .setName(name)
             .setEnabled(true)
             .build(),
         new StreamObserver<>() {
@@ -154,11 +221,8 @@ class LoggingAdminGrpcServiceAuthTest {
           public void onCompleted() {}
         });
 
-    assertNotNull(ref.get());
-    assertFalse(ref.get().getSuccess());
-    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("tenantId must be positive", ref.get().getError().getMessage());
-    verifyNoInteractions(featureFlagService);
+    verifyNoInteractions(logQueryService, logEventService, moderationService);
+    return ref.get();
   }
 
   @Test
@@ -167,7 +231,6 @@ class LoggingAdminGrpcServiceAuthTest {
     LogQueryService logQueryService = Mockito.mock(LogQueryService.class);
     LoggingAdminGrpcService service =
         new LoggingAdminGrpcService(
-            Mockito.mock(FeatureFlagService.class),
             logQueryService,
             Mockito.mock(LogEventService.class),
             Mockito.mock(ModerationService.class),
@@ -201,7 +264,6 @@ class LoggingAdminGrpcServiceAuthTest {
     LogEventService logEventService = Mockito.mock(LogEventService.class);
     LoggingAdminGrpcService service =
         new LoggingAdminGrpcService(
-            Mockito.mock(FeatureFlagService.class),
             Mockito.mock(LogQueryService.class),
             logEventService,
             Mockito.mock(ModerationService.class),
@@ -240,7 +302,6 @@ class LoggingAdminGrpcServiceAuthTest {
     ModerationService moderationService = Mockito.mock(ModerationService.class);
     LoggingAdminGrpcService service =
         new LoggingAdminGrpcService(
-            Mockito.mock(FeatureFlagService.class),
             Mockito.mock(LogQueryService.class),
             Mockito.mock(LogEventService.class),
             moderationService,
@@ -276,11 +337,54 @@ class LoggingAdminGrpcServiceAuthTest {
   }
 
   @Test
-  void evaluateModerationPolicyRejectsZeroAccountIdBeforeDispatch() {
+  void applyModerationActionRejectsAuthorizedCallerWhileMutationGateIsUnavailable() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     ModerationService moderationService = Mockito.mock(ModerationService.class);
     LoggingAdminGrpcService service =
         new LoggingAdminGrpcService(
-            Mockito.mock(FeatureFlagService.class),
+            Mockito.mock(LogQueryService.class),
+            Mockito.mock(LogEventService.class),
+            moderationService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<ApplyModerationActionResponse> ref = new AtomicReference<>();
+    service.applyModerationAction(
+        ApplyModerationActionRequest.newBuilder()
+            .setTenantId("1")
+            .setAccountId("2")
+            .setSessionId("9")
+            .setAction("ban")
+            .setReason("bad")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ApplyModerationActionResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertFalse(ref.get().getSuccess());
+    assertEquals("UNAVAILABLE", ref.get().getError().getCode());
+    assertEquals(
+        "Moderation actions are unavailable until the shared mutation gate is implemented",
+        ref.get().getError().getMessage());
+    verifyNoInteractions(moderationService);
+  }
+
+  @Test
+  void evaluateModerationPolicyRejectsZeroAccountIdBeforeDispatch() {
+    SessionContext.setContext(
+        "", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    ModerationService moderationService = Mockito.mock(ModerationService.class);
+    LoggingAdminGrpcService service =
+        new LoggingAdminGrpcService(
             Mockito.mock(LogQueryService.class),
             Mockito.mock(LogEventService.class),
             moderationService,
@@ -310,6 +414,230 @@ class LoggingAdminGrpcServiceAuthTest {
     assertFalse(ref.get().getAllowed());
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     assertEquals("accountId must be positive", ref.get().getError().getMessage());
+    verifyNoInteractions(moderationService);
+  }
+
+  @Test
+  void evaluateModerationPolicyAllowsAllowlistedInternalService() {
+    SessionContext.setContext(
+        "", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    ModerationService moderationService = Mockito.mock(ModerationService.class);
+    when(moderationService.evaluatePolicy(1L, 2L, "CHAT_SEND"))
+        .thenReturn(new ModerationPolicyDecisionDto(true, "", "allowed", null));
+    LoggingAdminGrpcService service =
+        new LoggingAdminGrpcService(
+            Mockito.mock(LogQueryService.class),
+            Mockito.mock(LogEventService.class),
+            moderationService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<EvaluateModerationPolicyResponse> ref = new AtomicReference<>();
+    service.evaluateModerationPolicy(
+        EvaluateModerationPolicyRequest.newBuilder()
+            .setTenantId("1")
+            .setAccountId("2")
+            .setScope("CHAT_SEND")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(EvaluateModerationPolicyResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertFalse(ref.get().hasError());
+    assertEquals(true, ref.get().getAllowed());
+    verify(moderationService).evaluatePolicy(1L, 2L, "CHAT_SEND");
+  }
+
+  @Test
+  void evaluateModerationPolicyAllowsSocialGroupsInternalService() {
+    SessionContext.setContext(
+        "", List.of(), Map.of(), true, "social-groups-service", "test-instance");
+    ModerationService moderationService = Mockito.mock(ModerationService.class);
+    when(moderationService.evaluatePolicy(1L, 2L, "CHAT_SEND"))
+        .thenReturn(new ModerationPolicyDecisionDto(true, "", "allowed", null));
+    LoggingAdminGrpcService service =
+        new LoggingAdminGrpcService(
+            Mockito.mock(LogQueryService.class),
+            Mockito.mock(LogEventService.class),
+            moderationService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<EvaluateModerationPolicyResponse> ref = new AtomicReference<>();
+    service.evaluateModerationPolicy(
+        EvaluateModerationPolicyRequest.newBuilder()
+            .setTenantId("1")
+            .setAccountId("2")
+            .setScope("CHAT_SEND")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(EvaluateModerationPolicyResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertFalse(ref.get().hasError());
+    assertEquals(true, ref.get().getAllowed());
+    verify(moderationService).evaluatePolicy(1L, 2L, "CHAT_SEND");
+  }
+
+  @Test
+  void evaluateModerationPolicyRejectsMissingCallerBeforeDispatch() {
+    SessionContext.clear();
+    ModerationService moderationService = Mockito.mock(ModerationService.class);
+    LoggingAdminGrpcService service =
+        new LoggingAdminGrpcService(
+            Mockito.mock(LogQueryService.class),
+            Mockito.mock(LogEventService.class),
+            moderationService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<EvaluateModerationPolicyResponse> ref = new AtomicReference<>();
+    service.evaluateModerationPolicy(
+        EvaluateModerationPolicyRequest.newBuilder()
+            .setTenantId("1")
+            .setAccountId("2")
+            .setScope("CHAT_SEND")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(EvaluateModerationPolicyResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+    verifyNoInteractions(moderationService);
+  }
+
+  @Test
+  void evaluateModerationPolicyRejectsAuthenticatedEndUserBeforeDispatch() {
+    SessionContext.setContext("42", List.of("player"), Map.of());
+    ModerationService moderationService = Mockito.mock(ModerationService.class);
+    LoggingAdminGrpcService service =
+        new LoggingAdminGrpcService(
+            Mockito.mock(LogQueryService.class),
+            Mockito.mock(LogEventService.class),
+            moderationService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<EvaluateModerationPolicyResponse> ref = new AtomicReference<>();
+    service.evaluateModerationPolicy(
+        EvaluateModerationPolicyRequest.newBuilder()
+            .setTenantId("1")
+            .setAccountId("2")
+            .setScope("CHAT_SEND")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(EvaluateModerationPolicyResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+    verifyNoInteractions(moderationService);
+  }
+
+  @Test
+  void evaluateModerationPolicyRejectsNonAllowlistedInternalServiceBeforeDispatch() {
+    SessionContext.setContext("", List.of(), Map.of(), true, "account-service", "test-instance");
+    ModerationService moderationService = Mockito.mock(ModerationService.class);
+    LoggingAdminGrpcService service =
+        new LoggingAdminGrpcService(
+            Mockito.mock(LogQueryService.class),
+            Mockito.mock(LogEventService.class),
+            moderationService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<EvaluateModerationPolicyResponse> ref = new AtomicReference<>();
+    service.evaluateModerationPolicy(
+        EvaluateModerationPolicyRequest.newBuilder()
+            .setTenantId("1")
+            .setAccountId("2")
+            .setScope("CHAT_SEND")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(EvaluateModerationPolicyResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+    verifyNoInteractions(moderationService);
+  }
+
+  @Test
+  void evaluateModerationPolicyRejectsInternalCallerWithMissingServiceNameBeforeDispatch() {
+    SessionContext.setContext("", List.of(), Map.of(), true, null, "test-instance");
+    ModerationService moderationService = Mockito.mock(ModerationService.class);
+    LoggingAdminGrpcService service =
+        new LoggingAdminGrpcService(
+            Mockito.mock(LogQueryService.class),
+            Mockito.mock(LogEventService.class),
+            moderationService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<EvaluateModerationPolicyResponse> ref = new AtomicReference<>();
+    service.evaluateModerationPolicy(
+        EvaluateModerationPolicyRequest.newBuilder()
+            .setTenantId("1")
+            .setAccountId("2")
+            .setScope("CHAT_SEND")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(EvaluateModerationPolicyResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
     verifyNoInteractions(moderationService);
   }
 }

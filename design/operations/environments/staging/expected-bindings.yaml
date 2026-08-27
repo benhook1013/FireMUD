@@ -38,3 +38,8 @@ operatorCredentials:
   bindingRef: cert-manager://firemud/staging-operator-client
 serviceDiscovery:
   mode: kubernetes-dns-default
+observability:
+  logPipelineQueryability:
+    selectedProfile: staging
+    capability: indexed-log-observability
+    evidenceFreshnessBudgetSeconds: 7200

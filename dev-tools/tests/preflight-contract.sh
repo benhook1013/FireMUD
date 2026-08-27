@@ -3175,6 +3175,16 @@ for case_name, mutate, expected_fragment in (
         lambda data: data["internalBindings"]["jwt"].__setitem__("jwksReff", "secret://firemud/jwt-jwks"),
         "internalBindings.jwt.jwksReff",
     ),
+    (
+        "missing-queryability",
+        lambda data: data["observability"].pop("logPipelineQueryability"),
+        "observability.logPipelineQueryability must contain exactly",
+    ),
+    (
+        "malformed-queryability-capability",
+        lambda data: data["observability"]["logPipelineQueryability"].__setitem__("capability", []),
+        "observability.logPipelineQueryability.capability must be a string",
+    ),
 ):
     malformed = yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
     mutate(malformed)
@@ -3191,7 +3201,7 @@ for case_name, mutate, expected_fragment in (
     )
     if malformed_secrets.status != "fail" or expected_fragment not in malformed_secrets.message:
         raise SystemExit(
-            f"{case_name}: unknown expected-bindings key was accepted: {malformed_secrets.message}"
+            f"{case_name}: invalid expected-bindings schema was accepted: {malformed_secrets.message}"
         )
 
 requirements = module.expected_preflight_policy_requirements("hobby-self-hosted", None)
@@ -3756,12 +3766,22 @@ if undeclared_pause_secrets.status != "fail" or "must be omitted" not in undecla
     raise SystemExit(f"undeclared backup maintenance identity did not fail closed: {undeclared_pause_secrets.message}")
 
 now = module.dt.datetime.now(module.dt.timezone.utc).replace(microsecond=0)
+current_timestamp = now.isoformat().replace("+00:00", "Z")
+current_epoch = int(now.timestamp())
 past_time = now - module.dt.timedelta(minutes=5)
 past_timestamp = past_time.isoformat().replace("+00:00", "Z")
 past_epoch = int(past_time.timestamp())
 future_timestamp = (now + module.dt.timedelta(hours=1)).isoformat().replace("+00:00", "Z")
 freshness_timestamp = (now - module.dt.timedelta(minutes=15)).isoformat().replace("+00:00", "Z")
 older_freshness_timestamp = (now - module.dt.timedelta(minutes=20)).isoformat().replace("+00:00", "Z")
+# Recovery validation runs against this isolated repository root, so retain the
+# production expected-bindings manifest as the authoritative target binding.
+production_expected_bindings_path = tmp / "design/operations/environments/production/expected-bindings.yaml"
+production_expected_bindings_path.parent.mkdir(parents=True, exist_ok=True)
+production_expected_bindings_path.write_text(
+    (root / "design/operations/environments/production/expected-bindings.yaml").read_text(encoding="utf-8"),
+    encoding="utf-8",
+)
 smoke_evidence_ref = "evidence/player-experience-smoke.json"
 smoke_evidence_path = tmp / smoke_evidence_ref
 smoke_evidence_path.parent.mkdir(parents=True)
@@ -3769,22 +3789,42 @@ smoke_evidence_path.write_text(
     json.dumps(
         {
             "deploymentRef": "staging-contract",
-            "verifiedAt": past_timestamp,
+            "verifiedAt": current_timestamp,
             "verifiedBy": "preflight-contract",
             "preflightEvidenceRef": "ci://preflight-contract",
             "executionMode": "live",
             "externalAuthorityProvenance": "retained-external",
+            "logPipelineQueryability": {
+                "selectedProfile": "production",
+                "capability": "indexed-log-observability",
+                "backend": "elasticsearch",
+                "storageTarget": "firemud-logs-*",
+                "recordId": "preflight-contract-log-smoke-11111111-2222-4333-8444-555555555555",
+                "service": "game-session-service",
+                "traceId": "preflight-contract-trace-9c8d7e6f5a4b3210",
+                "queryPath": "kibana-saved-search:player-incident-drilldown",
+                "configuredDelayTargetSeconds": 120,
+                "emittedAt": (now - module.dt.timedelta(seconds=120)).isoformat().replace("+00:00", "Z"),
+                "retrievedAt": (now - module.dt.timedelta(seconds=60)).isoformat().replace("+00:00", "Z"),
+                "observedDelaySeconds": 60,
+                "result": "passed",
+                "evidenceObservedAt": current_timestamp,
+                "evidenceFreshnessBudgetSeconds": 7200,
+                "evidenceExpiresAt": (now + module.dt.timedelta(hours=2)).isoformat().replace("+00:00", "Z"),
+                "evidenceRef": "query-proof://preflight-contract/log-smoke-11111111-2222-4333-8444-555555555555",
+                "verifiedFields": ["recordId", "service", "traceId"],
+            },
             "capabilities": {
                 "prometheusMirrors": "published",
-                "playerFlowCanary": "advertised",
+                "playerFlowCanary": "omitted",
             },
             "externalAuthority": {
                 "profile": "independent-required",
                 "exposedPublicPlayerPaths": ["websocket", "telnet"],
                 "detectionBudgetSeconds": 195,
                 "staleThresholdSeconds": 180,
-                "evidenceObservedAt": past_timestamp,
-                "lastSuccessfulHeartbeatObservedAt": past_timestamp,
+                "evidenceObservedAt": current_timestamp,
+                "lastSuccessfulHeartbeatObservedAt": current_timestamp,
                 "observedStalenessSeconds": 0,
                 "deadmanAuthority": {
                     "status": "green",
@@ -3799,7 +3839,7 @@ smoke_evidence_path.write_text(
                         "evidenceRef": "probe://staging-contract/websocket",
                         "pageEvidenceRef": "pager://staging-contract/websocket/page",
                         "target": "staging-contract-websocket",
-                        "lastSuccessfulProbeObservedAt": past_timestamp,
+                        "lastSuccessfulProbeObservedAt": current_timestamp,
                         "observedProbeAgeSeconds": 0,
                     },
                     "telnet": {
@@ -3807,7 +3847,7 @@ smoke_evidence_path.write_text(
                         "evidenceRef": "probe://staging-contract/telnet",
                         "pageEvidenceRef": "pager://staging-contract/telnet/page",
                         "target": "staging-contract-telnet",
-                        "lastSuccessfulProbeObservedAt": past_timestamp,
+                        "lastSuccessfulProbeObservedAt": current_timestamp,
                         "observedProbeAgeSeconds": 0,
                     },
                 },
@@ -3819,35 +3859,9 @@ smoke_evidence_path.write_text(
                 ],
                 "observability_deadman_heartbeat_timestamp_seconds": {
                     "source": "staging-contract",
-                    "value": 1773917600,
-                },
-                "playerflow_canary_success": [
-                    {"flow": "login", "path": "websocket", "target": "gateway", "value": 1, "profile": "independent-required"},
-                    {"flow": "command", "path": "websocket", "target": "gateway", "value": 1, "profile": "independent-required"},
-                    {"flow": "login", "path": "telnet", "target": "tcp_proxy", "value": 1, "profile": "independent-required"},
-                    {"flow": "command", "path": "telnet", "target": "tcp_proxy", "value": 1, "profile": "independent-required"},
-                ],
-                "playerflow_canary_latency_ms": [
-                    {"flow": "command", "path": "websocket", "target": "gateway", "value": 184, "profile": "independent-required"},
-                    {"flow": "command", "path": "telnet", "target": "tcp_proxy", "value": 201, "profile": "independent-required"},
-                ],
-                "playerflow_canary_last_run_timestamp_seconds": [
-                    {"flow": "login", "path": "websocket", "target": "gateway", "value": past_epoch, "profile": "independent-required"},
-                    {"flow": "command", "path": "websocket", "target": "gateway", "value": past_epoch, "profile": "independent-required"},
-                    {"flow": "login", "path": "telnet", "target": "tcp_proxy", "value": past_epoch, "profile": "independent-required"},
-                    {"flow": "command", "path": "telnet", "target": "tcp_proxy", "value": past_epoch, "profile": "independent-required"},
-                ],
-                "playerflow_canary_freshness_budget_seconds": {
-                    "profile": "independent-required",
-                    "value": 195,
+                    "value": current_epoch,
                 },
             },
-            "canaryAlerts": [
-                {"alert": "PlayerFlowCanaryLoginFailed", "severity": "P0", "exerciseResult": "passed"},
-                {"alert": "PlayerFlowCanaryCommandFailed", "severity": "P1", "exerciseResult": "passed"},
-                {"alert": "PlayerFlowCanaryLatencyHigh", "severity": "P1", "exerciseResult": "passed"},
-                {"alert": "PlayerFlowCanaryEvidenceStale", "severity": "P1", "exerciseResult": "passed"},
-            ],
         }
     ),
     encoding="utf-8",
@@ -3892,6 +3906,24 @@ finally:
     module.subprocess.run = original_subprocess_run
 if unavailable_status != "fail" or "could not run: validator executable missing" not in unavailable_message:
     raise SystemExit(f"smoke evidence validator launch failure did not fail closed: {unavailable_message}")
+
+missing_queryability_evidence = json.loads(smoke_evidence_path.read_text(encoding="utf-8"))
+missing_queryability_evidence.pop("logPipelineQueryability", None)
+original_smoke_evidence_bytes = smoke_evidence_path.read_bytes()
+smoke_evidence_path.write_text(json.dumps(missing_queryability_evidence), encoding="utf-8")
+try:
+    missing_queryability_status, missing_queryability_message = module.validate_retained_smoke_evidence(
+        tmp,
+        [smoke_evidence_ref],
+        "Contract smokeEvidence",
+    )
+finally:
+    smoke_evidence_path.write_bytes(original_smoke_evidence_bytes)
+if missing_queryability_status != "fail" or "logPipelineQueryability is required" not in missing_queryability_message:
+    raise SystemExit(
+        "missing queryability posture evidence did not fail closed: "
+        + missing_queryability_message
+    )
 
 recovery_dir = tmp / "design/operations/deployments/production/recovery"
 recovery_dir.mkdir(parents=True)
@@ -4467,6 +4499,35 @@ baseline_status, baseline_message = module.validate_recovery_baseline(
 )
 if baseline_status != "pass":
     raise SystemExit(f"valid recovery baseline did not pass: {baseline_message}")
+
+original_load_yaml = module.load_yaml
+try:
+    for binding_load_error in (
+        UnicodeError("invalid expected-bindings text"),
+        yaml.YAMLError("malformed expected-bindings YAML"),
+    ):
+        def raise_binding_load_error(path, error=binding_load_error):
+            raise error
+
+        module.load_yaml = raise_binding_load_error
+        binding_error_status, binding_error_message = module.validate_recovery_baseline(
+            tmp,
+            str(baseline_path.relative_to(tmp)),
+            "sha256:recovery-contract",
+            now,
+            now,
+        )
+        if (
+            binding_error_status != "fail"
+            or "production queryability binding could not be loaded" not in binding_error_message
+        ):
+            raise SystemExit(
+                "recovery baseline binding read error did not fail closed: "
+                + binding_error_message
+            )
+finally:
+    module.load_yaml = original_load_yaml
+
 if set(valid_baseline["secretComplianceRefresh"]["credentialClasses"]) != {
     "jwt-signing-keys-jwks",
     "postgres-application-credentials",
@@ -6294,6 +6355,18 @@ if (
 ):
     raise SystemExit(f"missing recoveryCompatibility did not fail closed: {missing_message}")
 
+naive_promotion_status, _, naive_promotion_message, _, _ = module.promotion_check(
+    missing_compatibility_attestation,
+    [],
+    tmp,
+    evaluation_time=module.dt.datetime(2026, 3, 19, 10, 55),
+)
+if naive_promotion_status != "fail" or "evaluation time must include a timezone" not in naive_promotion_message:
+    raise SystemExit(
+        "naive promotion evaluation time was not rejected before normalization: "
+        + naive_promotion_message
+    )
+
 def promotion_attestation(compatibility, rollback_mode="rollback-compatible"):
     return {
         "attestationVersion": "v1",
@@ -6485,6 +6558,57 @@ roll_forward_status, roll_forward_message = module.production_recovery_check(
 if roll_forward_status != "fail" or "FIREMUD_BACKUP_READINESS_EVIDENCE" not in roll_forward_message:
     raise SystemExit(f"roll-forward promotion without readiness evidence did not fail: {roll_forward_message}")
 
+naive_recovery_status, naive_recovery_message = module.production_recovery_check(
+    "pass",
+    "roll-forward-only",
+    "promotion valid",
+    str(readiness_point_path),
+    "contract-production",
+    tmp,
+    evaluation_time=module.dt.datetime(2026, 3, 19, 10, 55),
+)
+if naive_recovery_status != "fail" or "evaluation time must include a timezone" not in naive_recovery_message:
+    raise SystemExit(
+        "naive roll-forward evaluation time was not rejected before normalization: "
+        + naive_recovery_message
+    )
+
+captured_recovery_evaluation_times = []
+original_backup_readiness_check = module.backup_readiness_check
+original_utc_now = module.utc_now
+
+def capture_backup_readiness(path, now_value, deployment_ref, root_dir):
+    captured_recovery_evaluation_times.append(now_value)
+    return ("pass", "captured")
+
+def unexpected_utc_now():
+    raise AssertionError("roll-forward recovery independently sampled utc_now")
+
+module.backup_readiness_check = capture_backup_readiness
+module.utc_now = unexpected_utc_now
+try:
+    captured_status, captured_message = module.production_recovery_check(
+        "pass",
+        "roll-forward-only",
+        "promotion valid",
+        str(readiness_point_path),
+        "contract-production",
+        tmp,
+        evaluation_time=module.dt.datetime(
+            2026, 3, 19, 10, 55, 0, 123456, tzinfo=module.dt.timezone(module.dt.timedelta(hours=1))
+        ),
+    )
+finally:
+    module.backup_readiness_check = original_backup_readiness_check
+    module.utc_now = original_utc_now
+if captured_status != "pass" or captured_message != "captured":
+    raise SystemExit(f"roll-forward recovery capture failed: {captured_status}, {captured_message}")
+if captured_recovery_evaluation_times != ["2026-03-19T09:55:00.123456Z"]:
+    raise SystemExit(
+        "roll-forward recovery did not reuse the normalized evaluation time: "
+        + repr(captured_recovery_evaluation_times)
+    )
+
 gateway_image = "ghcr.io/benhook1013/spring-cloud-gateway@sha256:gateway"
 account_image = "ghcr.io/benhook1013/account-service@sha256:account"
 extracted_images = module.extract_service_images(
@@ -6537,6 +6661,34 @@ staging_expected_bindings.write_text(
 )
 expected_bindings_ref = "design/operations/environments/staging/expected-bindings.yaml"
 expected_bindings_digest = module.immutable_file_digest(staging_expected_bindings)
+
+if module.canonical_queryability_binding(promotion_root, "staging")[
+    "evidenceFreshnessBudgetSeconds"
+] != 7200:
+    raise SystemExit("valid staging queryability binding was not loaded canonically")
+for invalid_budget in (0, -1, 1e-100, 1e308, float("inf"), float("nan")):
+    malformed_budget_data = copy.deepcopy(staging_expected_data)
+    malformed_budget_data["observability"]["logPipelineQueryability"][
+        "evidenceFreshnessBudgetSeconds"
+    ] = invalid_budget
+    staging_expected_bindings.write_text(
+        yaml.safe_dump(malformed_budget_data, sort_keys=False), encoding="utf-8"
+    )
+    try:
+        module.canonical_queryability_binding(promotion_root, "staging")
+    except ValueError as exc:
+        if "evidenceFreshnessBudgetSeconds must be positive" not in str(exc):
+            raise SystemExit(
+                "invalid staging queryability budget produced the wrong diagnostic: "
+                + str(exc)
+            )
+    else:
+        raise SystemExit(
+            f"invalid staging queryability budget was accepted: {invalid_budget!r}"
+        )
+staging_expected_bindings.write_text(
+    yaml.safe_dump(staging_expected_data, sort_keys=False), encoding="utf-8"
+)
 
 for env in ("production", "hobby-self-hosted"):
     expected_path = promotion_root / "design/operations/environments" / env / "expected-bindings.yaml"
@@ -6728,6 +6880,7 @@ promotion_smoke_evidence_path.parent.mkdir(parents=True)
 promotion_smoke_evidence = json.loads(smoke_evidence_path.read_text(encoding="utf-8"))
 promotion_smoke_evidence["deploymentRef"] = staging_sha
 promotion_smoke_evidence["deploymentEventId"] = staging_event_id
+promotion_smoke_evidence["logPipelineQueryability"]["selectedProfile"] = "staging"
 promotion_smoke_evidence_path.write_text(json.dumps(promotion_smoke_evidence), encoding="utf-8")
 promotion_smoke_entry = {
     "ref": smoke_evidence_ref,
@@ -6754,6 +6907,31 @@ if shared_event_status != "pass":
         "multiple smoke artifacts sharing the selected deployment event were rejected: "
         + shared_event_message
     )
+
+malformed_queryability_bindings = copy.deepcopy(staging_expected_data)
+malformed_queryability_bindings["observability"]["logPipelineQueryability"]["capability"] = []
+staging_expected_bindings.write_text(
+    yaml.safe_dump(malformed_queryability_bindings, sort_keys=False), encoding="utf-8"
+)
+malformed_queryability_status, malformed_queryability_message = module.validate_promotion_smoke_evidence(
+    promotion_root,
+    [promotion_smoke_entry],
+    "Malformed queryability smokeEvidence",
+    staging_sha,
+    staging_event_id,
+)
+staging_expected_bindings.write_text(
+    yaml.safe_dump(staging_expected_data, sort_keys=False), encoding="utf-8"
+)
+if (
+    malformed_queryability_status != "fail"
+    or "capability must be a string" not in malformed_queryability_message
+):
+    raise SystemExit(
+        "unhashable staging queryability capability did not fail closed: "
+        + malformed_queryability_message
+    )
+
 promotion_baseline_smoke_path = promotion_root / "evidence/recovery-baseline-smoke.json"
 promotion_baseline_smoke_path.write_bytes(smoke_evidence_path.read_bytes())
 promotion_baseline_smoke_entry = {
@@ -6936,7 +7114,6 @@ independent_omitted_smoke = {
         "profile": "independent-omitted",
         "reason": "contract test omits independent external authority",
         "exposedPublicPlayerPaths": ["websocket", "telnet"],
-        "detectionBudgetSeconds": 195,
     },
 }
 independent_omitted_smoke["mirroredSignals"] = {
@@ -6945,24 +7122,12 @@ independent_omitted_smoke["mirroredSignals"] = {
 independent_omitted_smoke["mirroredSignals"].pop(
     "observability_deadman_heartbeat_timestamp_seconds", None
 )
-for signal_name in (
-    "playerflow_canary_success",
-    "playerflow_canary_latency_ms",
-    "playerflow_canary_last_run_timestamp_seconds",
-):
-    independent_omitted_smoke["mirroredSignals"][signal_name] = [
-        {**signal, "profile": "independent-omitted"}
-        for signal in independent_omitted_smoke["mirroredSignals"][signal_name]
-    ]
-independent_omitted_smoke["mirroredSignals"]["playerflow_canary_freshness_budget_seconds"] = {
-    "profile": "independent-omitted",
-    "value": 195,
-}
 promotion_smoke_evidence_path.write_text(json.dumps(independent_omitted_smoke), encoding="utf-8")
 independent_omitted_entry = {
     "ref": smoke_evidence_ref,
     "contentDigest": "sha256:" + hashlib.sha256(promotion_smoke_evidence_path.read_bytes()).hexdigest(),
 }
+independent_omitted_smoke_bytes = promotion_smoke_evidence_path.read_bytes()
 promotion_attestation_path.write_text(
     json.dumps({**promotion_attestation_data, "smokeEvidence": [independent_omitted_entry]}),
     encoding="utf-8",
@@ -6986,8 +7151,108 @@ if (
         + independent_omitted_message
     )
 
+queryability_omitted_smoke = {
+    **valid_smoke_evidence,
+    "logPipelineQueryability": {
+        "selectedProfile": "staging",
+        "capability": "log-queryability-omitted",
+        "result": "not_applicable",
+        "omissionReason": "contract test omits indexed queryability",
+        "evidenceObservedAt": valid_smoke_evidence["verifiedAt"],
+        "evidenceFreshnessBudgetSeconds": 7200,
+        "evidenceExpiresAt": (
+            module.dt.datetime.fromisoformat(
+                valid_smoke_evidence["verifiedAt"].replace("Z", "+00:00")
+            )
+            + module.dt.timedelta(hours=2)
+        ).isoformat().replace("+00:00", "Z"),
+        "evidenceRef": "query-proof://staging/queryability-omitted",
+    },
+}
+promotion_smoke_evidence_path.write_text(json.dumps(queryability_omitted_smoke), encoding="utf-8")
+queryability_omitted_entry = {
+    "ref": smoke_evidence_ref,
+    "contentDigest": "sha256:" + hashlib.sha256(promotion_smoke_evidence_path.read_bytes()).hexdigest(),
+}
+promotion_attestation_path.write_text(
+    json.dumps({**promotion_attestation_data, "smokeEvidence": [queryability_omitted_entry]}),
+    encoding="utf-8",
+)
+staging_record_path.write_text(
+    json.dumps({**staging_record, "smokeEvidence": [queryability_omitted_entry]}),
+    encoding="utf-8",
+)
+queryability_omitted_status, _, queryability_omitted_message, _, _ = module.promotion_check(
+    promotion_attestation_path,
+    [gateway_image, account_image],
+    promotion_root,
+    expected_production_overlay_ref="contract-production",
+)
+if (
+    queryability_omitted_status != "fail"
+    or "does not match the target environment binding" not in queryability_omitted_message
+):
+    raise SystemExit(
+        "omitted queryability promotion smoke evidence was accepted: "
+        + queryability_omitted_message
+    )
+
+profile_mismatch_smoke = copy.deepcopy(valid_smoke_evidence)
+profile_mismatch_smoke["logPipelineQueryability"]["selectedProfile"] = "hobby-self-hosted"
+promotion_smoke_evidence_path.write_text(json.dumps(profile_mismatch_smoke), encoding="utf-8")
+profile_mismatch_entry = {
+    "ref": smoke_evidence_ref,
+    "contentDigest": "sha256:" + hashlib.sha256(promotion_smoke_evidence_path.read_bytes()).hexdigest(),
+}
+profile_mismatch_status, profile_mismatch_message = module.validate_promotion_smoke_evidence(
+    promotion_root,
+    [profile_mismatch_entry],
+    "Profile-mismatch smokeEvidence",
+    staging_sha,
+    staging_event_id,
+    evaluation_time=now,
+)
+if profile_mismatch_status != "fail" or "does not match the target environment binding" not in profile_mismatch_message:
+    raise SystemExit("queryability profile mismatch was accepted: " + profile_mismatch_message)
+
+stale_promotion_smoke = copy.deepcopy(valid_smoke_evidence)
+stale_promotion_smoke["verifiedAt"] = past_timestamp
+stale_promotion_smoke["externalAuthority"]["evidenceObservedAt"] = past_timestamp
+stale_promotion_smoke["externalAuthority"]["lastSuccessfulHeartbeatObservedAt"] = past_timestamp
+stale_promotion_smoke["externalAuthority"]["publicPathChecks"]["websocket"]["lastSuccessfulProbeObservedAt"] = past_timestamp
+stale_promotion_smoke["externalAuthority"]["publicPathChecks"]["telnet"]["lastSuccessfulProbeObservedAt"] = past_timestamp
+stale_promotion_smoke["logPipelineQueryability"]["evidenceObservedAt"] = past_timestamp
+stale_promotion_smoke["logPipelineQueryability"]["evidenceExpiresAt"] = (now - module.dt.timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+stale_promotion_smoke["mirroredSignals"]["observability_deadman_heartbeat_timestamp_seconds"]["value"] = past_epoch
+promotion_smoke_evidence_path.write_text(json.dumps(stale_promotion_smoke), encoding="utf-8")
+stale_promotion_entry = {
+    "ref": smoke_evidence_ref,
+    "contentDigest": "sha256:" + hashlib.sha256(promotion_smoke_evidence_path.read_bytes()).hexdigest(),
+}
+stale_promotion_status, stale_promotion_message = module.validate_promotion_smoke_evidence(
+    promotion_root,
+    [stale_promotion_entry],
+    "Stale smokeEvidence",
+    staging_sha,
+    staging_event_id,
+    evaluation_time=now,
+)
+if stale_promotion_status != "fail" or "trusted evaluation time" not in stale_promotion_message:
+    raise SystemExit("stale promotion smoke evidence was accepted: " + stale_promotion_message)
+
+promotion_smoke_evidence_path.write_bytes(independent_omitted_smoke_bytes)
 recovery_independent_omitted_path = promotion_recovery_dir / "independent-omitted-baseline.json"
-recovery_independent_omitted = {**valid_baseline, "smokeEvidence": [independent_omitted_entry]}
+recovery_independent_omitted_smoke = copy.deepcopy(independent_omitted_smoke)
+recovery_independent_omitted_smoke["logPipelineQueryability"]["selectedProfile"] = "production"
+recovery_independent_omitted_smoke_path = promotion_root / "evidence/recovery-independent-omitted-smoke.json"
+recovery_independent_omitted_smoke_path.write_text(
+    json.dumps(recovery_independent_omitted_smoke), encoding="utf-8"
+)
+recovery_independent_omitted_entry = {
+    "ref": str(recovery_independent_omitted_smoke_path.relative_to(promotion_root)),
+    "contentDigest": "sha256:" + hashlib.sha256(recovery_independent_omitted_smoke_path.read_bytes()).hexdigest(),
+}
+recovery_independent_omitted = {**valid_baseline, "smokeEvidence": [recovery_independent_omitted_entry]}
 recovery_independent_omitted_path.write_text(json.dumps(recovery_independent_omitted), encoding="utf-8")
 recovery_independent_omitted_status, recovery_independent_omitted_message = module.validate_recovery_baseline(
     promotion_root,

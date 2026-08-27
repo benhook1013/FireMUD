@@ -1,6 +1,10 @@
 # Runtime Feature Flags
 
-Runtime feature flags let FireMUD enable or disable optional behaviour without publishing a new game version. The **Game Design Service** is the source of truth for flag definitions, while the **Game Session Service** applies flag values during play.
+Runtime feature flags are a target-state mechanism for enabling or disabling optional behaviour without publishing a new game version. The **Game Design Service** is the source of truth for flag definitions; under the target behavior, the **Game Session Service** applies flag values during play.
+
+## Implementation Status
+
+Logging & Admin has no separate live feature-flag UI or forwarding path: `/feature-flags/toggle` fails closed with `503 Service Unavailable`, and its internal toggle entrypoint returns application-level `UNAVAILABLE` without dispatch. Game Session owns the current toggle mutation and canonical `feature_flag` persistence, but proof covers only the toggle/persistence/read seam; richer runtime application and broader consumer coverage remain unimplemented and unproved.
 
 ## Design-Time Definitions
 
@@ -10,9 +14,9 @@ Runtime feature flags let FireMUD enable or disable optional behaviour without p
 
 ## Runtime Toggling and Persistence
 
-- Administrators toggle flag values through the [Logging & Admin Service](../logging-admin-service/README.md), which forwards changes via gRPC to the Game Session Service.
-- The Game Session Service persists active flag values in its `feature_flag` table and reapplies them before each tick cycle to keep world behaviour consistent across ticks.
-- Flag changes take effect immediately for active sessions, allowing safe experimentation with mechanics, layout tweaks or pacing options.
+- **Target state:** Administrators toggle flag values through the target [Logging & Admin Service](../logging-admin-service/README.md) operator surface, which forwards a gated owner request to the Game Session Service.
+- **Target state:** The Game Session Service owns runtime flag state, persists active values in its `feature_flag` table, and reapplies them before each tick cycle to keep world behaviour consistent across ticks.
+- Under the target owner operation, an accepted flag change takes effect at the next tick boundary for active sessions, not retroactively in the current tick. Reapplying the value before each tick keeps world behaviour consistent while allowing safe experimentation with mechanics, layout tweaks or pacing options.
 
 ## Customization Examples
 
