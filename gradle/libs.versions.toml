@@ -1,7 +1,7 @@
 [versions]
 spring-boot = "4.1.1"
 jooq = "3.21.7"
-flyway = "13.3.0"
+flyway = "13.4.0"
 mapstruct = "1.6.3"
 lombok = "1.18.46"
 lombok-mapstruct-binding = "0.2.0"
@@ -11,7 +11,7 @@ spotbugs = "4.10.4"
 opentelemetry = "1.65.0"
 micrometer = "1.17.1"
 jjwt = "0.13.0"
-aws-sdk = "2.54.4"
+aws-sdk = "2.54.5"
 argon2 = "2.12"
 h2 = "2.4.240"
 testcontainers = "1.21.4"
@@ -100,5 +100,5 @@ temporal-sdk = { module = "io.temporal:temporal-sdk", version.ref = "temporal" }
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
-flyway = { id = "org.flywaydb.flyway", version = "13.3.0" }
+flyway = { id = "org.flywaydb.flyway", version = "13.4.0" }
 protobuf = { id = "com.google.protobuf", version = "0.10.0" }
