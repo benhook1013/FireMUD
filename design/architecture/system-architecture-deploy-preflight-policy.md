@@ -361,10 +361,11 @@ The report artifact must include:
 - `startedAt` and `completedAt` timestamps
 - `toolVersion`
 - `context` (`operator` or `ci-static`)
-- `assuranceProfile` and each capability-specific `proved`, `omitted`, or `not-applicable` posture
-- `evidenceBoundary` (`change`, `environment`, or `recovery-event`)
-- `evidenceExpiresAt` where freshness is required
-- content digest or immutable reference for the underlying automated tool output
+- `assuranceProfile`, exactly `{ "id": <non-empty profile id>, "version": <positive integer> }`; the profile catalogue resolves the allowed capability keys and freshness rules, so a report cannot self-select an undefined profile
+- `capabilities`, an object whose keys are exactly the profile-resolved capability keys and whose values are one of the strings `proved`, `omitted`, or `not-applicable`; required capabilities must be `proved`, while `omitted` is allowed only where the selected profile permits it and `not-applicable` only where the catalogue marks it applicable-by-event
+- `evidenceBoundary`, exactly `{ "kind": "change" | "environment" | "recovery-event", "ref": <non-empty immutable boundary reference> }`; `change` binds to the exact change/commit, `environment` to the exact live environment identity, and `recovery-event` to the exact restore/rewind/traffic-open event. The `ref` is not a free-form description or a substitute for the event/artifact binding fields above.
+- `evidenceExpiresAt`, an RFC 3339 UTC timestamp later than `completedAt` for `environment` and `recovery-event` evidence, and `null` only for a `change` report whose selected profile declares no freshness budget; consumers fail closed on a missing, malformed, expired, or boundary-inconsistent value
+- `automatedOutput`, exactly one of `{ "kind": "content-digest", "value": "sha256:<64 lowercase hex>" }` or `{ "kind": "immutable-reference", "value": <non-empty immutable digest-qualified reference> }`; the first identifies the exact output bytes and the second identifies an immutable retained object. A URL, path, mutable alias, truncated digest, or digest-looking manual assertion is not either form.
 
 For `ci-static` runs, `expectedBindingsRef` should point to the same repository path that operator preflight would use for the target environment, even when CI validates only static contracts and not live cluster bindings. A consumed report for a protected player-facing deployment, production promotion or production attestation, traffic-open event, or fresh-boundary restore must have `context=operator`, the canonical `preflight.py-v1` tool version, ordered non-future execution timestamps, exact environment/event applicability, an authorizing `jwtCustodyProof`, and every required policy result at `pass`; ordinary non-player deployment, drill, maintenance, and diagnostic reports may be consumed without `jwtCustodyProof` but are never eligible to authorize a protected player-facing transition. A `ci-static` report cannot authorize promotion, player traffic, or a custody mode, and any JWT custody result it carries remains non-authorizing static evidence. A deployment record may consume only the canonical event-scoped report path whose `deploymentEventId` matches both the path and that record, whose `completedAt` is not later than `appliedAt`, and whose completion is no more than 30 minutes before apply. A recovery controller must consume and re-check the event-scoped report no more than 30 minutes before its traffic-release decision. No renewable report artifact is defined, so an expired report requires a new preflight event. A later finalized traffic-open projection references that already-consumed report and controller evidence; export time does not re-consume the report or create a second freshness gate.
 
@@ -396,7 +397,26 @@ Illustrative abbreviated `ci-static` report shape (non-consumable; omitted polic
   "startedAt": "2026-03-13T08:00:00Z",
   "completedAt": "2026-03-13T08:00:03Z",
   "toolVersion": "preflight.py-v1",
-  "context": "ci-static"
+  "context": "ci-static",
+  "assuranceProfile": {
+    "id": "staging",
+    "version": 1
+  },
+  "capabilities": {
+    "live-bindings": "not-applicable",
+    "independent-monitoring": "not-applicable",
+    "indexed-log-queryability": "not-applicable",
+    "recovery-event": "not-applicable"
+  },
+  "evidenceBoundary": {
+    "kind": "change",
+    "ref": "git:abc123def456"
+  },
+  "evidenceExpiresAt": null,
+  "automatedOutput": {
+    "kind": "content-digest",
+    "value": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  }
 }
 ```
 

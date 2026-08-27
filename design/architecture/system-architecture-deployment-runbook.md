@@ -2,14 +2,13 @@
 
 This runbook describes the **standard deployment flow** for FireMUD in Kubernetes-backed environments.
 
-For high-level CI/CD architecture, see `design/architecture/system-architecture-cicd.md`. This document focuses on the concrete steps and checks the protected deployment executor or, in the current implementation and break-glass path, an operator performs when rolling out a new version.
+For high-level CI/CD architecture, see `design/architecture/system-architecture-cicd.md`. This document focuses on the concrete steps and checks for the accepted protected-executor target and the current operator-controlled paths. The executor is the actor that performs an approved steady-state production plan; an operator remains the actor for bootstrap, current implementation, and audited break-glass work.
 
 ## Prerequisites
 
-- CI pipeline has produced immutable image digests for each service to deploy.
-- Database migrations have been validated (see `design/architecture/system-architecture-database-migrations.md`).
-- Redis, PostgreSQL, and core infrastructure components (Gateway, TCP Proxy, Observability stack) are healthy.
-- The operator has `kubectl` access and a kubeconfig for the target Kubernetes cluster (staging, production, or hobby-self-hosted) from a secure admin workstation or bastion host.
+- Common: CI has produced immutable image digests for each service to deploy; database migrations have been validated (see `design/architecture/system-architecture-database-migrations.md`); and Redis, PostgreSQL, and core infrastructure components (Gateway, TCP Proxy, Observability stack) are healthy.
+- Protected-executor path (the ADR 0177 target): a human has authorized one exact immutable plan, including its target environment/generation, rendered-manifest and service-digest set, evidence references, rollback policy where applicable, and the protected workflow identity/version. The executor identity and workflow must be independently bound to that plan, obtain short-lived least-privilege credentials only after authorization, and revalidate every input and live precondition before mutation. No operator `kubectl` session is a prerequisite for this path.
+- Operator paths (current implementation, bootstrap, and audited break-glass): the authorized operator has target-environment-scoped `kubectl` access and kubeconfig from an approved secure workstation or bastion host, with the applicable operator identity recorded in deployment evidence. This access is required only for the operator-controlled path being used; it is not executor identity or executor authorization, and it must not be inferred from a protected plan.
 
 ## Implementation Notes
 

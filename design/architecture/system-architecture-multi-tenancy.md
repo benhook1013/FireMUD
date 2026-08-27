@@ -159,7 +159,7 @@ Contract rules:
 
 Required read contract:
 
-- `GetAdmissionPointer(tenantId, realmId)` is the authoritative gameplay-admission lookup after selector resolution.
+- Target contract: `GetAdmissionPointer(tenantId, realmId)` is the authoritative gameplay-admission lookup after selector resolution. The current Game Session proto and `GameplayAdmissionPointerAuthorityService` implementation still use `(tenantId, worldSlug, realmSlug)`; realm-ID lookup and caller support remain implementation drift and are not claimed as live.
 - Multi-Tenancy owns the realm-catalog/admission-pointer identity and `OPEN`/`CLOSED` semantics. Game Session remains the runtime owner that persists, mutates, and serves the pointer read; Authentication owns admission and continuation authorization, while Gateway owns edge carrier, replay, and signed-context authorization. See [Authentication & Authorization](./system-architecture-authentication.md#admission-routing-convergence-rule) and [Gateway architecture](./system-architecture-gateway.md#tenant-aware-edge-connect-token-gameplay-handshake) for those consuming contracts.
 - Callers must treat missing required pointer fields, ambiguous results, or stale pointer state as contract failures rather than inferring defaults. A complete `CLOSED` record is not an incomplete pointer.
 - The result mapping is stable: complete `CLOSED` authority maps to `REALM_UNAVAILABLE`; reachable missing results, malformed required fields, ambiguous or stale evidence, and a `catalogRevision` that cannot resolve to the referenced catalog/policy snapshot map to `ADMISSION_POINTER_UNAVAILABLE`; an unreachable or timed-out authority maps to `AUTH_UNAVAILABLE` rather than pointer-invalid evidence.

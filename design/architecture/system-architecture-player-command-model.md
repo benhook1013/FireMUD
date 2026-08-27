@@ -2,6 +2,10 @@
 
 This document defines FireMUD's canonical player-command model. It is the architecture source of truth for standard commands, command stages, command capability policy, and game-authored command extension. Service protocol documents describe transport framing and service-local execution; they do not redefine player command semantics.
 
+## Implementation Status
+
+The current `RevisionServiceImpl` validation requires `historyRecordable` to be present and boolean on every `COMMAND_DEFINITION` revision, so an omitted field is rejected before persistence. `RevisionServiceImplTest.saveRevisionRejectsCommandDefinitionWithoutExplicitHistoryPolicy` covers this behavior. The authored/plugin omission normalization to non-recordable described below remains target-state behavior; current authored/plugin revisions must explicitly provide `historyRecordable: false`.
+
 ## Implementation Notes
 
 `HISTORY [count]` is live through the shared parser, registry, dispatch, capability, persistence, and presentation path. It reads only safe, accepted gameplay commands under the resolved tenant/game/character identity, applies the effective bounded retention policy, and never records its own display invocation. History persistence runs independently and remains best-effort, so it cannot change the outcome of the player command it observes. Retention uses a durable bounded-pass cursor, avoiding replica-loss and starvation of earlier scopes.

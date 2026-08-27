@@ -31,7 +31,7 @@ The normative contract below remains mTLS for internal gRPC outside intentionall
   protos/player/v1/player_service.proto
   ```
 
-The current `v1` namespace does not freeze every unreleased internal contract. Before FireMUD supports external gRPC consumers, an incompatible internal change may converge directly in `v1` when no retained wire representation requires the old shape and all callers and servers deploy as one coordinated change. Such a deployment is recreate/coordinated or roll-forward-only unless mixed-version compatibility is separately proven.
+The current `v1` namespace does not freeze every unreleased internal contract. For each individual contract, an incompatible internal change may converge directly in `v1` when that contract has no supported external consumers, no retained wire representation requires the old shape, and all callers and servers deploy as one coordinated change. An external consumer of one contract does not constrain unrelated internal contracts. Such a deployment is recreate/coordinated or roll-forward-only unless mixed-version compatibility is separately proven.
 
 If old and new internal binaries must overlap for rolling deployment or rollback, use a temporary additive bridge in `v1`, deploy in a compatible order, and remove the obsolete shape only after no supported binary or rollback target needs it. A parallel `v2` is reserved for an incompatible replacement that must coexist with a formally supported external or otherwise deliberately long-lived `v1` contract; ordinary pre-v1 redesign does not create `v2` APIs. See [ADR 0174](decisions/adr-0174-maturity-scoped-protobuf-compatibility.md).
 
