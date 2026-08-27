@@ -22,8 +22,8 @@ Defining additional Redis users, ACL variations, or ad-hoc tools is considered *
 
 ## Coordination Redis Access Rules
 
-- Coordination Redis is treated as an **application-only write surface**:
-  - All mutations to coordination prefixes (`tick:*`, `retry:*`, `timer:*`, `remote:*`, `session:*`, `tick-executor-lease:*`, and related keys) always go through the owning service's typed key and mutation helpers, with the shared Redis-contract foundation validating descriptors and aggregation. Lua is mandatory for atomic multi-key behavior and may be used for an explicitly documented single-key atomic guard or compare-and-set contract; every registered script is invoked through its owning service adapter and the aggregated registry path. Ordinary single-key mutations use owner-local typed helpers without Lua. Executable helpers or Lua are shared only for mutations genuinely executed by multiple independently deployed callers.
+- Coordination Redis is treated as an **application-only write surface during normal operation**:
+  - Normal-operation mutations to coordination prefixes (`tick:*`, `retry:*`, `timer:*`, `remote:*`, `session:*`, `tick-executor-lease:*`, and related keys) go through the owning service's typed key and mutation helpers, with the target shared Redis-contract foundation validating descriptors and aggregation. Lua is mandatory for atomic multi-key behavior and may be used for an explicitly documented single-key atomic guard or compare-and-set contract; every registered script is invoked through its owning service adapter and the target aggregated registry path. Ordinary single-key mutations use owner-local typed helpers without Lua. Executable helpers or Lua are shared only for mutations genuinely executed by multiple independently deployed callers. The audited incident-only break-glass path below is the explicit exception to this normal-operation rule and must follow its evidence, fencing, reset, and verification gates.
   - Application services (Game Session, Automation & Scripting, and any future tick participants) never bypass those helpers with raw Redis commands.
 - Human operators and ad-hoc tools:
   - May use `redis-cli`, RedisInsight, or similar tools with **read-only ops users** to inspect coordination state.
@@ -78,7 +78,7 @@ All tools and services refer to Redis deployments via **role-specific configurat
 - Coordination clients and ops tools read connection settings from `FIREMUD_REDIS_COORD_HOST` / `FIREMUD_REDIS_COORD_PORT` (or an equivalent `FIREMUD_REDIS_COORD_URL`), which identify the **Coordination Redis** deployment.
 - Cache/rate-limit clients and tools read from `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT` (or `FIREMUD_REDIS_CACHE_URL`), which identify the **Cache/Rate-Limit Redis** deployment.
 
-A small shared configuration module (in `firemud-common` or a dedicated tooling library) exposes **typed configs and helpers** such as:
+The current shared Redis connection properties and auto-configuration are provided by `common-data-runtime`; no role-bound maintenance-tool config/client helper surface is implemented today. Target state may add that surface in a dedicated tooling/contract module (for example, a future `common-redis-contracts` module, not an implemented module) exposing **typed configs and helpers** such as:
 
 - `RedisCoordConfig` + `createCoordinationRedisClient(...)`
 - `RedisCacheConfig` + `createCacheRedisClient(...)`
