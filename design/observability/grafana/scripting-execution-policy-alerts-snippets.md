@@ -86,5 +86,5 @@ This file contains reference PromQL expressions and Alertmanager rules that cove
     runbook: design/architecture/system-architecture-scripting-runtime-execution.md#failure-modes-and-error-handling
   annotations:
     summary: Script work-item failures are elevated
-    description: Elevated non-success outcomes in script work-item processing indicate execution or DSL/handoff issues that should be investigated with `script_event_audit` and runtime logs.
+    description: Elevated `sandbox_error`, `validation_error`, or `infrastructure_error` outcomes during DSL evaluation or tick handoff indicate execution or DSL/handoff issues that should be investigated with `script_event_audit` and runtime logs.
 ```

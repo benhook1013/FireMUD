@@ -1570,7 +1570,7 @@ for required_clause in (
     "For `isDryRun=false`, a tenant-ceiling denial records candidate-audit",
     "increments `automation_script_skips_total` once with `scope=\"tenant\"` and `reason=\"tenant_budget_exceeded\"`",
     "A cluster-ceiling denial records candidate-audit",
-    "increments `automation_script_triggers_dropped_total` once with `scope=\"cluster\"` and `reason=\"cluster_limit_reached\"`",
+    "increments `automation_script_skips_total` once with `scope=\"cluster\"` and `reason=\"cluster_limit_reached\"`",
     "For `isDryRun=true`, neither live-only family is emitted",
     "settled candidate audit and mode-specific resume-window outcome are the complete observability surface",
     "handler-scoped test families are not used because the denial occurs before handler materialization",
@@ -1579,6 +1579,10 @@ for required_clause in (
         raise SystemExit(
             "system-architecture-scripting-normative-contract-tables.md: catch-up candidate route drifted"
         )
+if 'automation_script_triggers_dropped_total` once with `scope="cluster"` and `reason="cluster_limit_reached"' in catch_up_rows[0]:
+    raise SystemExit(
+        "system-architecture-scripting-normative-contract-tables.md: catch-up cluster denial uses ingress-drop metric"
+    )
 require_contains(
     "design/architecture/system-architecture-scripting-control-plane-api.md",
     [

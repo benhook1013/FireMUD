@@ -162,10 +162,10 @@ For security and trust boundaries around plugins and external content, see the m
 At a high level, scripting follows this pipeline:
 
 1. **Event fires** – Game Session or another service emits a standard or custom event for an entity.
-2. **Bindings & per-script quota** – The Automation & Scripting Service looks up bound handlers for that `<tenantId, eventType>`. Ordinary non-dry-run `STANDARD_RUNTIME` handlers apply the current per-script handler-admission counter, and a denied handler produces its quota audit outcome without creating durable parent work. Dry-run mode takes precedence over the persisted quota class and skips this live counter; non-dry-run `PUBLISH_READINESS`/`onLoad` also skips it.
+2. **Bindings & per-script quota** – The Automation & Scripting Service accepts the event for handler resolution at event scope, then resolves the applicable handlers. Each resolved handler proceeds through its own admission, persistence, capacity, evaluation, and terminal-result path independently; a quota, capacity, validation, or other terminal outcome for one non-exclusive handler records that handler's result and does not suppress or merge its siblings. Ordinary non-dry-run `STANDARD_RUNTIME` handlers apply the current per-script handler-admission counter, and a denied handler produces its quota audit outcome without creating durable parent work. Dry-run mode takes precedence over the persisted quota class and skips this live counter; non-dry-run `PUBLISH_READINESS`/`onLoad` also skips it.
 3. **Durable parent work persistence and queue staging** – After binding and the applicable handler admission, Automation persists each admitted parent work item in the durable outbox with `PENDING_EVALUATION` and stages a rebuildable pre-DSL queue pointer keyed and deduplicated by `outboxWorkItemId`. Current queue semantics and the target post-DSL evaluated-descriptor/child boundary are owned by [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#current-implementation-status); the pointer is a best-effort derived coordination index whose loss/reset is acceptable because the parent work item is durable and the index can be rebuilt. Loss/reset must still be observable. Region-scoped tick keys remain the responsibility of the Game Session Service.
 4. **Capacity reservation and current DSL execution** – Automation's durable executor claims the persisted parent. Dry-run work, regardless of persisted quota class, reserves isolated dry-run capacity. Non-dry-run `PUBLISH_READINESS`/`onLoad` reserves isolated readiness capacity, while ordinary non-dry-run `STANDARD_RUNTIME` work applies the current aggregate tenant priority-tier reservation. When the applicable reservation allows execution, Automation runs the handler in the structured command-template evaluator using the persisted work-item inputs and stored script definition. The evaluator produces domain commands rather than mutating state directly; detailed current capacity behavior is owned by [Scripting Quotas and Operations](./system-architecture-scripting-quotas-and-operations.md#implementation-status), while broader tenant-first scheduling and sandbox guards remain target state.
-5. **Post-evaluation validation & disposition** – Automation applies the current command-count and per-entity output checks. Only ordinary non-dry-run `STANDARD_RUNTIME` work with emitted **domain commands** proceeds to the Game Session Service over internal gRPC for enqueue into per-entity tick queues through the shared [`firemud-common` Lua Script Registry, descriptors, key builders, and invocation helpers](./system-architecture-shared-libraries.md#redis-key-naming--lua-script-helpers). Ordinary live work with no commands terminates locally. Current materialized dry-run work terminates locally as `dry_run_completed` / `dry_run_no_handoff`, while target [ADR 0114](./decisions/adr-0114-command-plan-preview-dry-run-isolation.md) previews remain isolated from live work persistence and gameplay handoff. Current `PUBLISH_READINESS`/`onLoad` rejects emitted commands and otherwise terminates with its local readiness result under the [ADR 0115](./decisions/adr-0115-manifest-complete-onload-readiness-without-durable-game-initialization.md) boundary. Full target output metering and atomic persistence are owned by [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#output-budgeting-and-command-fan-out). `automation:queue:{tenantInstanceTag}:<entityId>` remains a rebuildable pointer index, not a second source of work truth.
+5. **Post-evaluation validation & disposition** – Automation applies the current command-count and per-entity output checks. Only ordinary non-dry-run `STANDARD_RUNTIME` work with emitted **domain commands** proceeds to the Game Session Service over internal gRPC for enqueue into per-entity tick queues through the shared [`firemud-common` Lua Script Registry, descriptors, key builders, and invocation helpers](./system-architecture-shared-libraries.md#redis-key-naming--lua-script-helpers). Ordinary live work with no commands terminates locally. Current materialized dry-run work terminates locally with `finalStage=DSL_EVAL`, `finalOutcome=dry_run_completed`, and `finalReason=dry_run_no_handoff`; this does not imply gameplay handoff or an alternative terminal outcome. Target [ADR 0114](./decisions/adr-0114-command-plan-preview-dry-run-isolation.md) previews remain isolated from live work persistence and gameplay handoff. Current `PUBLISH_READINESS`/`onLoad` rejects emitted commands and otherwise terminates with its local readiness result under the [ADR 0115](./decisions/adr-0115-manifest-complete-onload-readiness-without-durable-game-initialization.md) boundary. Full target output metering and atomic persistence are owned by [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#output-budgeting-and-command-fan-out). `automation:queue:{tenantInstanceTag}:<entityId>` remains a rebuildable pointer index, not a second source of work truth.
 6. **Game tick execution** – The Game Session Service selects at most one root actor action per eligible entity from the `actor_action` lane; the separately bounded `passive_effect` lane includes passive, inbound, and actor-generated effect sources without consuming that actor-action slot. Both lanes apply the canonical lock, fairness, ordering, and replay rules.
 
 ```mermaid
@@ -177,6 +177,9 @@ sequenceDiagram
     participant GameLogic as Game Logic / Domain Services
 
     Caller-->>Scripting: Script trigger (event + metadata)
+    Scripting->>Scripting: Accept event for handler resolution (event scope)
+    Scripting->>Scripting: Resolve applicable handlers
+    loop Each resolved non-exclusive handler independently
     alt dry-run (any quota class)
         Scripting->>Scripting: Skip live per-script handler quota (allowed)
     else non-dry-run PUBLISH_READINESS / onLoad
@@ -215,7 +218,7 @@ sequenceDiagram
     Scripting->>Scripting: Run structured evaluator (allowed capacity branches only)
     Scripting->>Scripting: Validate evaluated domain commands
     alt dry-run (any quota class)
-        Scripting->>Scripting: Terminal dry_run_completed / dry_run_no_handoff
+        Scripting->>Scripting: Terminal finalStage=DSL_EVAL, finalOutcome=dry_run_completed, finalReason=dry_run_no_handoff
     else non-dry-run PUBLISH_READINESS / onLoad
         Scripting->>Scripting: Reject emitted commands; otherwise record readiness result
     else non-dry-run STANDARD_RUNTIME with no commands
@@ -226,6 +229,7 @@ sequenceDiagram
         GameSession->>Redis: Read per-entity tick queue on tick
         GameSession->>GameLogic: Apply command under locks / ticks
         GameLogic-->>GameSession: Effects, updates, events
+    end
     end
 ```
 
