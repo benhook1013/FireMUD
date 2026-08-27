@@ -180,55 +180,51 @@ sequenceDiagram
     Scripting->>Scripting: Accept event for handler resolution (event scope)
     Scripting->>Scripting: Resolve applicable handlers
     loop Each resolved non-exclusive handler independently
-    alt dry-run (any quota class)
-        Scripting->>Scripting: Skip live per-script handler quota (allowed)
-    else non-dry-run PUBLISH_READINESS / onLoad
-        Scripting->>Scripting: Skip live per-script handler quota (allowed)
-    else non-dry-run STANDARD_RUNTIME
-        alt per-script quota available
+    alt handler admission succeeds
+        alt dry-run (any quota class)
+            Scripting->>Scripting: Skip live per-script handler quota (allowed)
+        else non-dry-run PUBLISH_READINESS / onLoad
+            Scripting->>Scripting: Skip live per-script handler quota (allowed)
+        else non-dry-run STANDARD_RUNTIME (per-script quota available)
             Scripting->>Scripting: Apply per-script handler quota (allowed)
-        else quota denied
-            Scripting-->>Caller: ADMISSION/quota_denied/script_quota_denied; no parent work item
         end
-    end
-    Note over Scripting,Caller: A denied quota branch returns before parent persistence and does not continue to queue or claim.
-    Scripting->>Scripting: Persist parent work item (PENDING_EVALUATION; allowed quota branches only)
-    Scripting->>Redis: Stage pre-DSL pointer to automation:queue:{tenantInstanceTag}:<entityId>
-    Scripting->>Scripting: Claim persisted parent
-    alt dry-run (any quota class)
-        alt isolated dry-run capacity available
-            Scripting->>Scripting: Reserve isolated dry-run capacity (allowed)
+        Scripting->>Scripting: Persist parent work item (PENDING_EVALUATION)
+        Scripting->>Redis: Stage pre-DSL pointer to automation:queue:{tenantInstanceTag}:<entityId>
+        Scripting->>Scripting: Claim persisted parent
+        alt capacity reservation succeeds
+            alt dry-run (any quota class)
+                Scripting->>Scripting: Reserve isolated dry-run capacity (allowed)
+            else non-dry-run PUBLISH_READINESS / onLoad
+                Scripting->>Scripting: Reserve isolated readiness capacity (allowed)
+            else non-dry-run STANDARD_RUNTIME
+                Scripting->>Scripting: Reserve aggregate tenant priority tier (allowed)
+            end
+            Scripting->>Scripting: Run structured evaluator
+            Scripting->>Scripting: Validate evaluated domain commands
+            alt dry-run (any quota class)
+                Scripting->>Scripting: Terminal finalStage=DSL_EVAL, finalOutcome=dry_run_completed, finalReason=dry_run_no_handoff
+            else non-dry-run PUBLISH_READINESS / onLoad
+                Scripting->>Scripting: Reject emitted commands; otherwise record readiness result
+            else non-dry-run STANDARD_RUNTIME with no commands
+                Scripting->>Scripting: Terminal completed_no_commands
+            else non-dry-run STANDARD_RUNTIME with emitted commands
+                Scripting->>GameSession: Enqueue automation commands (internal gRPC)
+                GameSession->>Redis: Append into tick:{tenantRegionTag}:queue:<entityId> (Lua)
+                GameSession->>Redis: Read per-entity tick queue on tick
+                GameSession->>GameLogic: Apply command under locks / ticks
+                GameLogic-->>GameSession: Effects, updates, events
+            end
         else capacity denied
-            Scripting->>Scripting: ADMISSION/quota_denied/dry_run_capacity_exhausted; terminal
+            alt dry-run (any quota class)
+                Scripting->>Scripting: ADMISSION/quota_denied/dry_run_capacity_exhausted; terminal
+            else non-dry-run PUBLISH_READINESS / onLoad
+                Scripting->>Scripting: ADMISSION/quota_denied/onload_budget_exceeded; terminal
+            else non-dry-run STANDARD_RUNTIME
+                Scripting->>Scripting: ADMISSION/tenant_budget_exceeded/tenant_budget_exceeded; terminal
+            end
         end
-    else non-dry-run PUBLISH_READINESS / onLoad
-        alt isolated readiness capacity available
-            Scripting->>Scripting: Reserve isolated readiness capacity (allowed)
-        else capacity denied
-            Scripting->>Scripting: ADMISSION/quota_denied/onload_budget_exceeded; terminal
-        end
-    else non-dry-run STANDARD_RUNTIME
-        alt aggregate tenant priority tier available
-            Scripting->>Scripting: Reserve aggregate tenant priority tier (allowed)
-        else capacity denied
-            Scripting->>Scripting: ADMISSION/tenant_budget_exceeded/tenant_budget_exceeded; terminal
-        end
-    end
-    Note over Scripting: A denied capacity branch terminalizes before evaluator execution and does not continue below.
-    Scripting->>Scripting: Run structured evaluator (allowed capacity branches only)
-    Scripting->>Scripting: Validate evaluated domain commands
-    alt dry-run (any quota class)
-        Scripting->>Scripting: Terminal finalStage=DSL_EVAL, finalOutcome=dry_run_completed, finalReason=dry_run_no_handoff
-    else non-dry-run PUBLISH_READINESS / onLoad
-        Scripting->>Scripting: Reject emitted commands; otherwise record readiness result
-    else non-dry-run STANDARD_RUNTIME with no commands
-        Scripting->>Scripting: Terminal completed_no_commands
-    else non-dry-run STANDARD_RUNTIME with emitted commands
-        Scripting->>GameSession: Enqueue automation commands (internal gRPC)
-        GameSession->>Redis: Append into tick:{tenantRegionTag}:queue:<entityId> (Lua)
-        GameSession->>Redis: Read per-entity tick queue on tick
-        GameSession->>GameLogic: Apply command under locks / ticks
-        GameLogic-->>GameSession: Effects, updates, events
+    else non-dry-run STANDARD_RUNTIME per-script quota denied
+        Scripting-->>Caller: ADMISSION/quota_denied/script_quota_denied; terminal; no parent work item
     end
     end
 ```

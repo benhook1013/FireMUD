@@ -1556,10 +1556,33 @@ require_contains(
 normative_contracts = (
     root / "design/architecture/system-architecture-scripting-normative-contract-tables.md"
 ).read_text(encoding="utf-8")
-catch_up_rows = [
-    line
+dsl_eval_rows = [
+    line.strip()
     for line in normative_contracts.splitlines()
-    if line.startswith("| Recurring/durable-recurring leader failover or short downtime |")
+    if line.strip().startswith(
+        "| `DSL_EVAL` | DSL graph evaluation and sandbox enforcement"
+    )
+]
+if len(dsl_eval_rows) != 1:
+    raise SystemExit(
+        "system-architecture-scripting-normative-contract-tables.md: expected exactly one DSL_EVAL stage row"
+    )
+for required_clause in (
+    "Only `readiness_success` or `completed_no_commands` in their declared cases",
+    "`dry_run_completed` is permitted only when `executionSurface=LEGACY_TRIGGER_DRY_RUN`",
+):
+    if required_clause not in dsl_eval_rows[0]:
+        raise SystemExit(
+            "system-architecture-scripting-normative-contract-tables.md: DSL_EVAL outcome contract drifted"
+        )
+if "DRY_RUN_RESULT" in dsl_eval_rows[0] or "dry_run_success" in dsl_eval_rows[0]:
+    raise SystemExit(
+        "system-architecture-scripting-normative-contract-tables.md: ADR 0114 preview outcome leaked into DSL_EVAL"
+    )
+catch_up_rows = [
+    line.strip()
+    for line in normative_contracts.splitlines()
+    if line.strip().startswith("| Recurring/durable-recurring leader failover or short downtime |")
 ]
 if len(catch_up_rows) != 1:
     raise SystemExit(
@@ -1579,7 +1602,7 @@ for required_clause in (
         raise SystemExit(
             "system-architecture-scripting-normative-contract-tables.md: catch-up candidate route drifted"
         )
-if 'automation_script_triggers_dropped_total` once with `scope="cluster"` and `reason="cluster_limit_reached"' in catch_up_rows[0]:
+if "`automation_script_triggers_dropped_total`" in catch_up_rows[0]:
     raise SystemExit(
         "system-architecture-scripting-normative-contract-tables.md: catch-up cluster denial uses ingress-drop metric"
     )

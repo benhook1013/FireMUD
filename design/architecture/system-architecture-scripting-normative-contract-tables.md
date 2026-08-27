@@ -167,7 +167,7 @@ The ingress endpoint determines who owns `scriptEventId` generation and retry be
 | `finalStage` | Meaning | Successful terminal outcome allowed? |
 | --- | --- | --- |
 | `ADMISSION` | Handler-scoped post-resolution pre-evaluation decisions: quotas, reload backpressure, disabled scripts, invalid version, policy enforcement. No DSL run occurs. For event ingress, pre-handler rollback pause is ingress-only; timer candidates use the Table 3 candidate-audit surface. | No |
-| `DSL_EVAL` | DSL graph evaluation and sandbox enforcement (validation, loop safety, runtime budgets). | Only `readiness_success` or `completed_no_commands` in their declared cases |
+| `DSL_EVAL` | DSL graph evaluation and sandbox enforcement (validation, loop safety, runtime budgets). | Only `readiness_success` or `completed_no_commands` in their declared cases; `dry_run_completed` is permitted only when `executionSurface=LEGACY_TRIGGER_DRY_RUN` |
 | `WORK_ITEM_PERSIST` | Durable persistence of the resulting work item (outbox). | No |
 | `TICK_HANDOFF` | Durable handoff of every required dispatch to Game Session. | Only `handoff_accepted` |
 | `DRY_RUN_RESULT` | Target ADR 0114 non-committing preview after DSL evaluation; the would-be commands are returned directly to the authorized caller or retained on the isolated preview result/audit surface, never in handler `script_event_audit`, and are not persisted as live work or handed off. | Target preview only, with `finalOutcome=dry_run_success`. |
