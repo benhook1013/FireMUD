@@ -4491,27 +4491,32 @@ if baseline_status != "pass":
     raise SystemExit(f"valid recovery baseline did not pass: {baseline_message}")
 
 original_load_yaml = module.load_yaml
-for binding_load_error in (UnicodeError("invalid expected-bindings text"), yaml.YAMLError("malformed expected-bindings YAML")):
-    def raise_binding_load_error(path, error=binding_load_error):
-        raise error
-
-    module.load_yaml = raise_binding_load_error
-    binding_error_status, binding_error_message = module.validate_recovery_baseline(
-        tmp,
-        str(baseline_path.relative_to(tmp)),
-        "sha256:recovery-contract",
-        now,
-        now,
-    )
-    if (
-        binding_error_status != "fail"
-        or "production queryability binding could not be loaded" not in binding_error_message
+try:
+    for binding_load_error in (
+        UnicodeError("invalid expected-bindings text"),
+        yaml.YAMLError("malformed expected-bindings YAML"),
     ):
-        raise SystemExit(
-            "recovery baseline binding read error did not fail closed: "
-            + binding_error_message
+        def raise_binding_load_error(path, error=binding_load_error):
+            raise error
+
+        module.load_yaml = raise_binding_load_error
+        binding_error_status, binding_error_message = module.validate_recovery_baseline(
+            tmp,
+            str(baseline_path.relative_to(tmp)),
+            "sha256:recovery-contract",
+            now,
+            now,
         )
-module.load_yaml = original_load_yaml
+        if (
+            binding_error_status != "fail"
+            or "production queryability binding could not be loaded" not in binding_error_message
+        ):
+            raise SystemExit(
+                "recovery baseline binding read error did not fail closed: "
+                + binding_error_message
+            )
+finally:
+    module.load_yaml = original_load_yaml
 
 if set(valid_baseline["secretComplianceRefresh"]["credentialClasses"]) != {
     "jwt-signing-keys-jwks",

@@ -7,9 +7,45 @@ VALIDATOR="$ROOT_DIR/dev-tools/observability/validate-player-experience-smoke-ev
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-python3 - "$ROOT_DIR" <<'PY'
+SMOKE_CONFIG_ENV_UNSETS=(
+  -u PLAYER_EXPERIENCE_EXTERNAL_AUTHORITY_EVIDENCE
+  -u PLAYER_EXPERIENCE_FAILURE_INJECTION
+  -u PLAYER_EXPERIENCE_SOURCE
+  -u PLAYER_EXPERIENCE_DEPLOYMENT_EVENT_ID
+  -u PLAYER_EXPERIENCE_CANARY_PATH
+  -u PLAYER_EXPERIENCE_PROMETHEUS_MIRRORS
+  -u PLAYER_EXPERIENCE_PLAYER_FLOW_CANARY
+  -u PLAYER_EXPERIENCE_SYNTHETIC_IDENTITY_EVIDENCE
+  -u PLAYER_EXPERIENCE_QUERYABILITY_PROFILE
+  -u PLAYER_EXPERIENCE_QUERYABILITY_FRESHNESS_BUDGET_SECONDS
+  -u PLAYER_EXPERIENCE_WEBSOCKET_URL
+  -u SMOKE_GATEWAY_API_BASE
+  -u SMOKE_TELNET_HOST
+  -u TCP_PROXY_PORT
+  -u SMOKE_ACCOUNT_API_BASE
+  -u SMOKE_GAME_LOGIC_API_BASE
+  -u SMOKE_GAME_SESSION_API_BASE
+  -u SMOKE_TCP_PROXY_API_BASE
+  -u SMOKE_TENANT_ID
+  -u PLAYER_EXPERIENCE_REALM
+  -u PLAYER_EXPERIENCE_CHARACTER
+  -u SMOKE_USERNAME
+  -u SMOKE_PASSWORD
+  -u PLAYER_EXPERIENCE_WORLD
+  -u SMOKE_TIMEOUT_SECONDS
+  -u SMOKE_STARTUP_WAIT_SECONDS
+  -u PLAYER_EXPERIENCE_AUTH_API_BASE
+  -u PLAYER_EXPERIENCE_AUTH_API_PREFIX
+  -u PLAYER_EXPERIENCE_VERIFIED_BY
+  -u PLAYER_EXPERIENCE_PREFLIGHT_REF
+  -u PLAYER_EXPERIENCE_DEPLOYMENT_REF
+)
+
+env "${SMOKE_CONFIG_ENV_UNSETS[@]}" \
+  PLAYER_EXPERIENCE_QUERYABILITY_PROFILE=staging \
+  PLAYER_EXPERIENCE_QUERYABILITY_FRESHNESS_BUDGET_SECONDS=7200 \
+  python3 - "$ROOT_DIR" <<'PY'
 import importlib.util
-import os
 import sys
 from pathlib import Path
 
@@ -35,8 +71,6 @@ assert evidence_validator_module.CANARY_IDENTITY_REQUIRED_FIELDS is observabilit
 assert runner_module.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE is observability_contract.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE
 assert evidence_validator_module.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE is observability_contract.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE
 
-os.environ["PLAYER_EXPERIENCE_QUERYABILITY_PROFILE"] = "staging"
-os.environ["PLAYER_EXPERIENCE_QUERYABILITY_FRESHNESS_BUDGET_SECONDS"] = "7200"
 env_config = runner_module.SmokeConfig.from_env("contract-test", "websocket", None)
 assert env_config.queryability_profile == "staging"
 assert env_config.queryability_freshness_budget_seconds == 7200
@@ -146,6 +180,34 @@ for invalid_budget in (-1, "195", float("nan"), float("inf")):
             f"invalid independent-omitted detection budget was accepted: {invalid_budget!r}"
         )
 
+# canary_advertised=True is the post-identity-verifier authority boundary.
+for advertised_authority in (
+    {
+        "profile": "independent-required",
+        "exposedPublicPlayerPaths": ["websocket"],
+        "detectionBudgetSeconds": 179,
+    },
+    {
+        "profile": "independent-omitted",
+        "reason": "contract test",
+        "exposedPublicPlayerPaths": ["websocket"],
+        "detectionBudgetSeconds": 179,
+    },
+):
+    try:
+        runner_module.validate_external_authority_shape(
+            advertised_authority,
+            runner_module.Path("under-minimum-advertised-authority.json"),
+            canary_advertised=True,
+        )
+    except RuntimeError as exc:
+        assert "must be at least 180 seconds for an advertised player-flow canary" in str(exc)
+    else:
+        raise AssertionError(
+            "verifier-available advertised canary accepted a 179-second budget: "
+            f"{advertised_authority['profile']}"
+        )
+
 config = runner_module.SmokeConfig.from_env(
     "contract-test",
     "websocket",
@@ -201,39 +263,6 @@ cat >"$OMITTED_AUTHORITY_WITHOUT_CANARY_BUDGET" <<'JSON'
 }
 JSON
 
-SMOKE_CONFIG_ENV_UNSETS=(
-  -u PLAYER_EXPERIENCE_EXTERNAL_AUTHORITY_EVIDENCE
-  -u PLAYER_EXPERIENCE_FAILURE_INJECTION
-  -u PLAYER_EXPERIENCE_SOURCE
-  -u PLAYER_EXPERIENCE_DEPLOYMENT_EVENT_ID
-  -u PLAYER_EXPERIENCE_CANARY_PATH
-  -u PLAYER_EXPERIENCE_PROMETHEUS_MIRRORS
-  -u PLAYER_EXPERIENCE_PLAYER_FLOW_CANARY
-  -u PLAYER_EXPERIENCE_SYNTHETIC_IDENTITY_EVIDENCE
-  -u PLAYER_EXPERIENCE_QUERYABILITY_PROFILE
-  -u PLAYER_EXPERIENCE_QUERYABILITY_FRESHNESS_BUDGET_SECONDS
-  -u PLAYER_EXPERIENCE_WEBSOCKET_URL
-  -u SMOKE_GATEWAY_API_BASE
-  -u SMOKE_TELNET_HOST
-  -u TCP_PROXY_PORT
-  -u SMOKE_ACCOUNT_API_BASE
-  -u SMOKE_GAME_LOGIC_API_BASE
-  -u SMOKE_GAME_SESSION_API_BASE
-  -u SMOKE_TCP_PROXY_API_BASE
-  -u SMOKE_TENANT_ID
-  -u PLAYER_EXPERIENCE_REALM
-  -u PLAYER_EXPERIENCE_CHARACTER
-  -u SMOKE_USERNAME
-  -u SMOKE_PASSWORD
-  -u PLAYER_EXPERIENCE_WORLD
-  -u SMOKE_TIMEOUT_SECONDS
-  -u SMOKE_STARTUP_WAIT_SECONDS
-  -u PLAYER_EXPERIENCE_AUTH_API_BASE
-  -u PLAYER_EXPERIENCE_AUTH_API_PREFIX
-  -u PLAYER_EXPERIENCE_VERIFIED_BY
-  -u PLAYER_EXPERIENCE_PREFLIGHT_REF
-  -u PLAYER_EXPERIENCE_DEPLOYMENT_REF
-)
 SMOKE_CONFIG_ENV_OVERRIDES=()
 SMOKE_CONFIG_ACCOUNT_ENV=(
   SMOKE_USERNAME=canary-contract@example.com

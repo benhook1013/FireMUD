@@ -149,14 +149,15 @@ python3 "$VALIDATOR" "$OMITTED_VALID_EVIDENCE" >"$TMP_DIR/valid.out"
 # Every enum-like value comes from retained JSON. Malformed JSON values must
 # produce ordinary findings rather than leaking an unhashable-value TypeError
 # from set/frozenset membership checks.
-python3 - "$OMITTED_VALID_EVIDENCE" "$VALID_EVIDENCE" "$ROOT_DIR" <<'PY'
+python3 - "$OMITTED_VALID_EVIDENCE" "$VALID_EVIDENCE" "$ROOT_DIR" \
+  "$FIREMUD_SMOKE_EVALUATION_TIME" <<'PY'
 import copy
 import importlib.util
 import json
 import sys
 from pathlib import Path
 
-omitted_path, advertised_path, root = map(Path, sys.argv[1:])
+omitted_path, advertised_path, root = map(Path, sys.argv[1:4])
 validator_path = root / "dev-tools/observability/validate-player-experience-smoke-evidence.py"
 spec = importlib.util.spec_from_file_location("smoke_evidence_validator", validator_path)
 validator = importlib.util.module_from_spec(spec)
@@ -165,6 +166,7 @@ spec.loader.exec_module(validator)
 observability_contract = __import__("observability_contract")
 assert validator.CANARY_IDENTITY_REQUIRED_FIELDS is observability_contract.CANARY_IDENTITY_REQUIRED_FIELDS
 assert validator.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE is observability_contract.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE
+evaluation_time = validator._parse_evaluation_time(sys.argv[4])
 
 cases = [
     (omitted_path, "executionMode", ["live"], "executionMode must be live or simulated"),
@@ -187,7 +189,9 @@ for source_path, field_path, malformed, expected in cases:
     case_path = source_path.with_name("malformed-enum-case.json")
     case_path.write_text(json.dumps(data), encoding="utf-8")
     try:
-        findings = validator.validate_evidence(case_path)
+        findings = validator.validate_evidence(
+            case_path, evaluation_time=evaluation_time
+        )
     except TypeError as exc:
         raise AssertionError(f"{field_path!r} leaked TypeError: {exc}") from exc
     assert any(expected in finding for finding in findings), (field_path, findings)

@@ -1442,6 +1442,21 @@ require_message(
     "canonical chat delivery recording rule must group by service, scope, completion_boundary, channel_type, and le",
 )
 
+chat_grouping_message = (
+    "canonical chat delivery recording rule must group by service, scope, "
+    "completion_boundary, channel_type, and le"
+)
+for non_code_grouping in (
+    '# sum by (service, scope, completion_boundary, channel_type, le)',
+    'label_replace(foo, "sum by (service, scope, completion_boundary, channel_type, le)", "a", "b")',
+):
+    finding = validator._chat_recording_grouping_finding(
+        Path("chat-recording.yml"),
+        "sum by (scope, completion_boundary, channel_type, le) (foo)\n"
+        + non_code_grouping,
+    )
+    require_message([finding], chat_grouping_message)
+
 entry_path_contracts = {
     "WebSocketEntryPathBlackboxUnavailable": {
         "path": "websocket",

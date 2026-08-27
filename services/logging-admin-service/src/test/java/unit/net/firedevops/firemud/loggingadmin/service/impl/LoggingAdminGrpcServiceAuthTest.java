@@ -123,117 +123,45 @@ class LoggingAdminGrpcServiceAuthTest {
   @Test
   void toggleFeatureFlagRejectsZeroTenantIdBeforeDispatch() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
-    LoggingAdminGrpcService service =
-        new LoggingAdminGrpcService(
-            Mockito.mock(LogQueryService.class),
-            Mockito.mock(LogEventService.class),
-            Mockito.mock(ModerationService.class),
-            new SimpleMeterRegistry());
 
-    AtomicReference<ToggleFeatureFlagResponse> ref = new AtomicReference<>();
-    service.toggleFeatureFlag(
-        ToggleFeatureFlagRequest.newBuilder()
-            .setTenantId("0")
-            .setName("demo")
-            .setEnabled(true)
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(ToggleFeatureFlagResponse value) {
-            ref.set(value);
-          }
+    ToggleFeatureFlagResponse response = invokeToggleFeatureFlag("0", "demo");
 
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertNotNull(ref.get());
-    assertFalse(ref.get().getSuccess());
-    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("tenantId must be positive", ref.get().getError().getMessage());
+    assertNotNull(response);
+    assertFalse(response.getSuccess());
+    assertEquals("INVALID_ARGUMENT", response.getError().getCode());
+    assertEquals("tenantId must be positive", response.getError().getMessage());
   }
 
   @Test
   void toggleFeatureFlagRejectsAuthorizedCallerWhileMutationGateIsUnavailable() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
-    LoggingAdminGrpcService service =
-        new LoggingAdminGrpcService(
-            Mockito.mock(LogQueryService.class),
-            Mockito.mock(LogEventService.class),
-            Mockito.mock(ModerationService.class),
-            new SimpleMeterRegistry());
 
-    AtomicReference<ToggleFeatureFlagResponse> ref = new AtomicReference<>();
-    service.toggleFeatureFlag(
-        ToggleFeatureFlagRequest.newBuilder()
-            .setTenantId("1")
-            .setName("demo")
-            .setEnabled(true)
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(ToggleFeatureFlagResponse value) {
-            ref.set(value);
-          }
+    ToggleFeatureFlagResponse response = invokeToggleFeatureFlag("1", "demo");
 
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertNotNull(ref.get());
-    assertFalse(ref.get().getSuccess());
-    assertEquals("UNAVAILABLE", ref.get().getError().getCode());
+    assertNotNull(response);
+    assertFalse(response.getSuccess());
+    assertEquals("UNAVAILABLE", response.getError().getCode());
     assertEquals(
         "Feature-flag toggles are unavailable until the shared mutation gate is implemented",
-        ref.get().getError().getMessage());
+        response.getError().getMessage());
   }
 
   @Test
   void toggleFeatureFlagRejectsUnauthorizedCallerBeforeUnavailableResponse() {
     SessionContext.setContext("1", List.of("player"), Map.of());
-    LoggingAdminGrpcService service =
-        new LoggingAdminGrpcService(
-            Mockito.mock(LogQueryService.class),
-            Mockito.mock(LogEventService.class),
-            Mockito.mock(ModerationService.class),
-            new SimpleMeterRegistry());
 
-    AtomicReference<ToggleFeatureFlagResponse> ref = new AtomicReference<>();
-    service.toggleFeatureFlag(
-        ToggleFeatureFlagRequest.newBuilder()
-            .setTenantId("1")
-            .setName("demo")
-            .setEnabled(true)
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(ToggleFeatureFlagResponse value) {
-            ref.set(value);
-          }
+    ToggleFeatureFlagResponse response = invokeToggleFeatureFlag("1", "demo");
 
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertNotNull(ref.get());
-    assertFalse(ref.get().getSuccess());
-    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+    assertNotNull(response);
+    assertFalse(response.getSuccess());
+    assertEquals("PERMISSION_DENIED", response.getError().getCode());
   }
 
   @Test
   void toggleFeatureFlagRejectsEmptyNameBeforeUnavailableResponse() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
 
-    ToggleFeatureFlagResponse response = invokeToggleFeatureFlag("");
+    ToggleFeatureFlagResponse response = invokeToggleFeatureFlag("1", "");
 
     assertNotNull(response);
     assertFalse(response.getSuccess());
@@ -245,7 +173,7 @@ class LoggingAdminGrpcServiceAuthTest {
   void toggleFeatureFlagRejectsBlankNameBeforeUnavailableResponse() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
 
-    ToggleFeatureFlagResponse response = invokeToggleFeatureFlag("   ");
+    ToggleFeatureFlagResponse response = invokeToggleFeatureFlag("1", "   ");
 
     assertNotNull(response);
     assertFalse(response.getSuccess());
@@ -257,7 +185,7 @@ class LoggingAdminGrpcServiceAuthTest {
   void toggleFeatureFlagRejectsOverlongNameBeforeUnavailableResponse() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
 
-    ToggleFeatureFlagResponse response = invokeToggleFeatureFlag("x".repeat(101));
+    ToggleFeatureFlagResponse response = invokeToggleFeatureFlag("1", "x".repeat(101));
 
     assertNotNull(response);
     assertFalse(response.getSuccess());
@@ -265,7 +193,7 @@ class LoggingAdminGrpcServiceAuthTest {
     assertEquals("name size must be between 1 and 100", response.getError().getMessage());
   }
 
-  private ToggleFeatureFlagResponse invokeToggleFeatureFlag(String name) {
+  private ToggleFeatureFlagResponse invokeToggleFeatureFlag(String tenantId, String name) {
     LogQueryService logQueryService = Mockito.mock(LogQueryService.class);
     LogEventService logEventService = Mockito.mock(LogEventService.class);
     ModerationService moderationService = Mockito.mock(ModerationService.class);
@@ -276,7 +204,7 @@ class LoggingAdminGrpcServiceAuthTest {
 
     service.toggleFeatureFlag(
         ToggleFeatureFlagRequest.newBuilder()
-            .setTenantId("1")
+            .setTenantId(tenantId)
             .setName(name)
             .setEnabled(true)
             .build(),

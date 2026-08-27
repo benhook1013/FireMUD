@@ -1636,7 +1636,11 @@ def _chat_recording_grouping_finding(path: Path, expr: str) -> Finding | None:
     }
     groupings = [
         {label.strip() for label in match.group(1).split(",") if label.strip()}
-        for match in re.finditer(r"sum\s+by\s*\(([^)]*)\)", expr, re.IGNORECASE)
+        for match in re.finditer(
+            r"sum\s+by\s*\(([^)]*)\)",
+            _mask_promql_non_code(expr),
+            re.IGNORECASE,
+        )
     ]
     if any(required_grouping.issubset(grouping) for grouping in groupings):
         return None

@@ -14,7 +14,7 @@ This document collects Logging & Admin operational behavior, readiness expectati
 - Observability-backed features may become read-only, partially unavailable, or hidden behind degraded-state messaging.
 - Risk-reducing actions remain available when the applicable path's prerequisites hold. Exposure-increasing and recovery actions additionally retain their ordinary action-specific compatibility, recovery, freshness, and safety gates; the action-family schema, shared digest vectors, and Account authorization-reference path remain mandatory, and missing telemetry alone neither authorizes nor prohibits them.
 - Readiness and degradation reporting must distinguish core operator control-plane capability from observability backend degradation so moderation and remediation controls are not withdrawn just because Elasticsearch, Prometheus, Grafana, Kibana, Jaeger, or Alertmanager are unhealthy.
-- Fault-injection evidence must prove that backend failure and saturation cannot consume the pools or deadlines reserved for core control. Split the deployable if that isolation cannot be maintained.
+- Fault-injection evidence must prove that backend failure and saturation cannot consume the pools or deadlines reserved for core control. Split the deployable if that isolation cannot be maintained. Validation and runtime proof for implemented isolation follows [Validation and Runtime Proof](../../../developer-workflows/validation-and-runtime-proof.md), and direct execution results belong in PR/CI evidence or the owning implementation tracker.
 
 ## Operator Workflows
 
