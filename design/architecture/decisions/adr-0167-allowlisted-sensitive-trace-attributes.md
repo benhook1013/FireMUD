@@ -35,7 +35,7 @@ Trace attributes use a producer-side allowlist by named span family, with collec
 
 Raw client IP addresses are forbidden in every trace profile, not merely long-retention traces. When stable network correlation is justified, `remote_ip_hash` is a rotating environment-specific keyed HMAC with documented key custody, rotation, and finite correlation window. It is pseudonymous personal/network data, not anonymous data. Coarse address prefixes are disabled by default and require a separately enabled short-retention abuse-investigation profile.
 
-External or shared trace backends must preserve equivalent ingestion filtering, encryption, query authorization/audit, environment isolation, retention, export, and deletion controls. There is no universal 30-day retention promise.
+External or shared trace backends must preserve equivalent ingestion filtering, encryption, query authorization/audit, environment isolation, retention, export, and deletion controls. The canonical trace-profile mapping for the ADR-0163 owner, class, eligibility, blockers, minimum horizon, cleanup, hold, export/erasure, and bounded-health fields is [Tracing: ADR-0163 Trace-Retention Mapping](../system-architecture-tracing.md#adr-0163-trace-retention-mapping). There is no universal 30-day retention promise.
 
 ## Consequences
 
