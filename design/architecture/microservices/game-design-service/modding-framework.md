@@ -458,10 +458,10 @@ Live plugin executions (`isDryRun=false`) participate in the same observability 
 - Each resolved live plugin handler is recorded in `script_event_audit` with the required Trigger Identity fields (including `tenantId`, `gameInstanceId`, and for gameplay/runtime triggers `regionEpoch`), plus `pluginId` / `pluginVersionId` and stage-aware outcome fields (`finalStage`, `finalOutcome`, `finalReason`). Pre-handler admission outcomes are recorded in `script_event_ingress_audit` and create no handler row.
 - The shared Automation trigger, skip, drop, sandbox-failure, and runtime metric families expose plugin behavior alongside core automation using only the finite `script_kind`, `plugin_origin`, `event_class`, and other bounded dimensions defined by [normative Table 4](../../system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix). Exact plugin and version identities never become Prometheus labels.
 
-Logging & Admin audit, log, trace, and control-plane query tooling should surface the exact identifiers so operators can:
+Logging & Admin may surface exact plugin and version identities only through explicitly approved audit records, protected logs, named span families whose documented incident query requires them, and authorized control-plane or diagnostic queries. Trace use follows [ADR 0167](../../decisions/adr-0167-allowlisted-sensitive-trace-attributes.md): producer-side span-family allowlists, least-privilege environment-scoped access with audited queries, finite profile-defined retention, and declared export/privacy/erasure handling apply; availability in all logs, traces, or queries is not implied. On those approved surfaces, operators can:
 
 - Filter by `pluginId` / `pluginVersionId` to inspect plugin-specific health.
-- Jump from a player-visible tick log (using `scriptEventId` or `correlationId`) to matching plugin executions in `script_event_audit`.
+- Jump from an approved protected-log correlation record (using `scriptEventId` or `correlationId`) to matching plugin executions in `script_event_audit`.
 
 For details on the metrics glossary and cross-service correlation, see `design/architecture/system-architecture-scripting-quotas-and-operations.md#auditability--metrics` and `design/architecture/system-architecture-scripting-quotas-and-operations.md#cross-service-correlation`.
 
