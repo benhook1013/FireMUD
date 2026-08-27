@@ -6,7 +6,7 @@ These manifests are intentionally minimal and are meant to be adapted into your 
 
 ## Files
 
-- `otel-collector.yaml` – OpenTelemetry Collector deployment used by services to export spans.
+- `otel-collector.yaml` – Local/demo-only OpenTelemetry Collector fixture used by services to export spans. It accepts plaintext OTLP and is not valid shared/player-facing deployment evidence.
 - `jaeger.yaml` – Minimal Jaeger deployment for trace visualization.
 - `redis-exporter.yaml` – Redis exporter deployment for Redis core metrics.
 - `alertmanager.yaml` – Example Alertmanager configuration.
@@ -15,6 +15,8 @@ These manifests are intentionally minimal and are meant to be adapted into your 
 The shared rules deliberately do not install the target-state `PlayerFlowCanary*` alert family or use a global `absent()` expression for player-flow canary series. The advertised capability and exposed-path set are deployment-owned: the retained-evidence validator checks completeness of each retained advertised canary artifact, while the player-experience and observability runbooks classify missing or unavailable advertised evidence as `unknown`/degraded. The reference alert family remains target-only until a deployment-owned `playerFlowCanary=advertised` applicability and expected-series gate exists; the profile overlays do not supply that target-only gate.
 
 The base Kustomization and profile overlays install only the `PrometheusRule` resources. They do not install `otel-collector.yaml`, `jaeger.yaml`, `redis-exporter.yaml`, or `alertmanager.yaml`; those sample stack manifests require separate installation or adaptation for the target environment. The Kustomize profile overlays are the canonical installation path for the Prometheus rules. Only the `independent-required-prometheus-published` overlay has a distinct rendered manifest: it adds the profile-bound deadman rules. Public-path blackbox zero and absent-evidence rules, and the `PlayerFlowCanary*` alert family, are not installed at the current boundary because no deployment-owned applicability/expected-series gates exist for them. The two omitted overlays render only the shared non-profile-dependent rules.
+
+Do not apply `otel-collector.yaml` directly. Before adapting this local/demo fixture into an environment-owned deployment, configure TLS/mTLS on every telemetry hop or prove producer-side redaction before each unavoidable plaintext hop, with credentials supplied by the environment rather than this fixture. The `tls.insecure: true` exporter setting is therefore never a shared/player-facing deployment setting.
 
 Player-flow canary metrics, retained evidence, and the `PlayerFlowCanary*` alert contracts remain target-state. The current runner downgrades advertised canaries to `omitted`, and the shared PrometheusRule and all profile overlays withhold the canary alert family until a deployment-owned `playerFlowCanary=advertised` applicability/expected-series gate and safe advertised-to-omitted transition cleanup exist. The reference rules and validator preserve the target contract for that future boundary.
 
