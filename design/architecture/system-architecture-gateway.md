@@ -108,12 +108,14 @@ The current first-party public gameplay carrier is the protected `Firemud-Connec
 
 ### TCP Proxy → Gateway Authentication
 
-The TCP Proxy → Gateway hop uses **mutual TLS (mTLS)** by connecting to a dedicated **internal-only** Gateway WebSocket mTLS listener (for example a `spring-cloud-gateway-mtls` `ClusterIP` Service on a separate TLS port). Spring Cloud Gateway treats the upstream hop as authenticated as the TCP Proxy Service only when:
+The TCP Proxy → Gateway hop uses **mutual TLS (mTLS)** by connecting to a dedicated **internal-only** Gateway WebSocket mTLS listener (for example a `spring-cloud-gateway-mtls` `ClusterIP` Service on a separate TLS port). For the mTLS profiles, Spring Cloud Gateway first requires the presented client certificate to chain to the trust bundle or issuer assigned to this deployment environment and to have client-auth usage. It then applies exactly one predicate selected by the configured trust profile:
 
-- The presented client certificate chains to the trust bundle or issuer assigned to this deployment environment, has client-auth usage, and
-- The certificate contains the exact environment-specific URI SAN/SPIFFE identity allowlisted for the TCP Proxy Service.
+- **`production_uri`:** the certificate contains the exact environment-specific URI SAN/SPIFFE identity allowlisted for the TCP Proxy Service.
+- **`migration_dns`:** the certificate contains the exact allowlisted DNS SAN.
+- **`breakglass_fingerprint`:** the leaf certificate's SHA-256 fingerprint is the one explicitly pinned for the named, expiring incident.
+- **`development_cidr`:** local development or isolated automated tests use only the exact configured source CIDR predicate; this is an explicitly insecure exception and does not claim certificate identity.
 
-If either check fails, the gateway rejects the WebSocket handshake, strips/discards the raw `X-Proxy-*` inputs, and does not promote them.
+For mTLS profiles, missing peer-certificate data or a failed chain/client-auth check rejects the handshake; for every profile, a failed selected predicate rejects it, strips/discards the raw `X-Proxy-*` inputs, and does not promote them. The profiles are mutually exclusive: configured identities from another profile are not fallback matchers. Hosted, staging, hobby/self-hosted player-facing, and production profiles must not select `development_cidr`.
 
 Gateway config selects exactly one trust profile; settings from another profile make startup or admission fail closed:
 
@@ -373,7 +375,7 @@ This section is the canonical source of truth for connect-token enforcement and 
   - `pointerVersion` (admission-pointer fence, distinct from `playtestStateGeneration`)
   - `catalogRevision`
   - `connectScopeId`
-  - `requestId`
+  - `requestId` (the source connect-token issuance/request-operation identity; the signed Gateway → Game Session context names this field `connectRequestId`)
   - bounded selected-target `authorityTuple` including its applicable caller-membership generation and separate exact selected-tenant `membershipVersion: {tenantId: version}` map, carried as distinct fields under the [canonical JWT and token contract](./system-architecture-jwt-and-token-contracts.md#canonical-authority-tuple)
   - `iat` (absolute issuance time)
   - `exp` (absolute expiration)
@@ -556,7 +558,7 @@ The following table summarizes the main network surfaces exposed or used by Spri
 | Surface | Direction | Protocol(s) | Typical Port(s) | Auth / TLS Expectations |
 | --- | --- | --- | --- | --- |
 | Public player/admin ingress → Spring Cloud Gateway | Inbound | `HTTP(S)`, `WS(S)` | Load balancer ports (for example, `80`/`443`) | TLS terminates at the Internet-facing load balancer; gateway receives `http://` / `ws://` as described in [TLS Termination for Gateway](./system-architecture-security.md#tls-termination-for-gateway). |
-| TCP Proxy Service → Spring Cloud Gateway gameplay route | Inbound (internal only) | `WS(S)` | Gateway internal mTLS port (for example, `8443`) | Mutual TLS is required on the internal-only WebSocket listener; the gateway authenticates the TCP Proxy Service by verifying the client certificate chains to the cluster CA and carries the expected SAN identity before promoting any `X-Proxy-*` inputs. The host in `GATEWAY_WS_URL` must match the gateway certificate’s SANs. |
+| TCP Proxy Service → Spring Cloud Gateway gameplay route | Inbound (internal only) | `WS(S)` | Gateway internal mTLS port (for example, `8443`) | The internal-only listener applies the selected exclusive trust profile after certificate chain/client-auth checks: exact URI SAN, exact DNS SAN, one leaf SHA-256 fingerprint, or development-only source CIDR. The gateway promotes `X-Proxy-*` inputs only after that profile succeeds. The host in `GATEWAY_WS_URL` must match the gateway certificate’s SANs. |
 | Spring Cloud Gateway → backend services | Outbound | `HTTP`, `WS` | `8080` (typical) | In-cluster hop; protected by NetworkPolicies and namespace boundaries. Backend services handle JWT validation/authorization as applicable; gameplay traffic remains on the `/ws/game/**` WebSocket route to the Game Session Service. |
 | Spring Cloud Gateway management plane (REST/gRPC) | Inbound (internal only) | `HTTP(S)`, gRPC | `8080` (REST), `6565` (gRPC) | Exposed only on internal surfaces (`ClusterIP` / private ingress); management operations require mTLS client certificates and are authorized at the gateway boundary (not delegated to downstream services). |
 

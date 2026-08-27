@@ -91,6 +91,8 @@ Required semantics for those fields:
 - `reloadAdmissionPolicy`
   - Exactly one of `REJECT_VISIBLE`, `DURABLE_RETRY`, or `SKIP_RECONCILE` as defined by [ADR 0173](./decisions/adr-0173-registry-classified-reload-admission-policy.md).
   - `DURABLE_RETRY` also declares the owning producer, maximum elapsed time or expiry, and stable parent-event identity behavior. Timer families retain their separate catch-up and continuity contract.
+  - The first event-scope claim persists the selected policy, accepted catalogue revision/digest, owning producer, stable parent-event identity parameters, and, for `DURABLE_RETRY`, the exact maximum-elapsed or expiry boundary. A retry-eligible denial retains those values on the same durable parent claim and attempt history before returning `retryAfterMs`.
+  - A `DURABLE_RETRY` reclaim uses only that persisted policy tuple and the same parent-event identity; it must not reread the current registry to extend expiry, change ownership or identity, or upgrade a prior `REJECT_VISIBLE`/`SKIP_RECONCILE` decision. Once admission succeeds, retries and recovery reuse the frozen admitted candidate order, coalescing membership, executable positions, activation fences, and handler manifests rather than resolving either the policy or handlers again. A later registry revision applies only to a new parent event admitted under that revision.
 - `allowedBindingScopes`
   - Which target scopes are legal for handlers of this event, such as `ENTITY`, `REGION`, `GLOBAL`, or `COMMAND_ALIAS`.
 - `dryRunSupport`

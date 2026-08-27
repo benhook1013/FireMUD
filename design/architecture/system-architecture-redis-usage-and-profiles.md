@@ -66,7 +66,7 @@ Scope-key convention: `{tenantRegionTag}` is the canonical opaque tag for the co
     - `ratelimit:<tenantId>:<subjectHash>:<timeWindow>` (one opaque stable subject hash per individual subject)
     - `automation:queue:{tenantInstanceTag}:<entityId>` and automation quota counters.
 
-Coordination Redis and Cache/Rate‑Limit Redis are treated as **separate processes and endpoints** in all persistent, player-facing environments so cache eviction/pressure cannot silently impact coordination SLOs. They may be two containers or processes on the same hobby host or cluster node; separate hardware is not required. The only supported exception is explicitly ephemeral test/CI stacks that opt out of tail-loss and role-separation guarantees; those stacks may collapse roles temporarily, but must be clearly labelled as ephemeral and must not be used to validate coordination behavior or SLOs. See [ADR 0171](./decisions/adr-0171-separated-redis-role-processes-and-owned-keyspaces.md) and [Environment Profiles and Mappings](#environment-profiles-and-mappings).
+Coordination Redis and Cache/Rate‑Limit Redis are treated as **separate processes and endpoints** in all persistent, player-facing environments so cache eviction/pressure cannot silently impact coordination SLOs. They may be two containers or processes on the same hobby host or cluster node; separate hardware is not required. The only supported exception is an explicitly labelled one-shot test/CI stack; it may collapse roles temporarily only when reset-tolerant, must visibly surface the shared endpoint, forfeits role-isolation, replay, and SLO evidence, and must not be used to validate coordination behavior or SLOs. Hosted `pr-preview` is not exempt. See [ADR 0171](./decisions/adr-0171-separated-redis-role-processes-and-owned-keyspaces.md) and [Environment Profiles and Mappings](#environment-profiles-and-mappings).
 
 New prefixes must declare:
 
@@ -222,10 +222,11 @@ Each environment picks one of these profiles and documents the mapping:
   - This environment is **non‑ephemeral** for role separation: pointing `FIREMUD_REDIS_COORD_*` and `FIREMUD_REDIS_CACHE_*` to the same endpoint is treated as a misconfiguration.
 
 - **CI and preview stacks**
-  - Typically approximate `dev_local` or use an explicit **ephemeral coordination** profile:
+  - Hosted `pr-preview` retains the normal role split and is not an exception to ADR 0171. Other preview-like stacks must document their environment class and topology explicitly.
+  - One-shot test/CI stacks may use an explicit **ephemeral coordination** profile:
     - Coordination Redis may run with reduced or disabled AOF where tests are fully reset‑tolerant.
     - These stacks are **not** used to validate tail‑loss SLOs or replay guarantees.
-  - In truly ephemeral CI stacks it is acceptable to collapse roles into a single Redis instance **only** when:
+  - In an explicitly labelled one-shot test/CI stack it is acceptable to collapse roles into a single Redis instance **only** when:
     - Tests are explicitly designed to be reset‑tolerant and do not exercise coordination tail‑loss behavior.
     - The environment is clearly labelled as “ephemeral / single-Redis” in its documentation and configuration.
     - Misconfiguration checks and dashboards still surface the fact that roles are sharing an endpoint so it cannot be mistaken for a production-like topology.
