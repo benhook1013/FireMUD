@@ -27,6 +27,7 @@ All services emit spans using the OpenTelemetry SDK. A dedicated **OpenTelemetry
 - The collector runs as the `otel-collector` service inside the cluster so other pods can reach it via the environment's configured OTLP listener. The collector exposes a `4317` gRPC endpoint. Override the address with the `OTEL_ENDPOINT` environment variable (`otel.endpoint` property). See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#observability) for details.
 
   ```bash
+  # Local/demo-only plaintext endpoint; never use this path for ADR-0167-controlled attributes.
   OTEL_ENDPOINT=http://collector.internal:4317
   ```
 
