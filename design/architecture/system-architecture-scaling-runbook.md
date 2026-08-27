@@ -6,6 +6,10 @@ For the conceptual overview of scaling, see `design/architecture/system-architec
 
 Validation and runtime-proof selection for changes to this runbook follows the shared [Validation and Runtime Proof workflow](../developer-workflows/validation-and-runtime-proof.md); record execution results in PR/CI evidence or the owning implementation tracker.
 
+## Implementation Status
+
+The shared retention-class declarations, cross-service horizon compatibility and blockers, safe-watermark cleanup, holds, and complete focused proof remain unimplemented; core Game Session tick, command, and remote-work tables are unpartitioned and lack coordinated retention, while some service-local sweeps exist. The owning status record is [Shared Runtime, Service Contracts, and Persistence — `SF-2.1`](../project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md#capability-status). The [Data Retention and High-Churn Tables](#data-retention-and-high-churn-tables) section below defines target obligations under ADR 0163; do not treat those obligations, or any measured envelope below, as proof that the shared retention contract is live.
+
 ## Scaling Principles
 
 - Prefer **horizontal scaling** of stateless services (Gateway, TCP Proxy, game logic/stateless APIs).
@@ -84,8 +88,6 @@ The following are **target obligations** under [ADR 0163](./decisions/adr-0163-s
   - confirm dashboards and operator playbooks still map command-status rows onto the canonical terminal-state vocabulary in `design/architecture/system-architecture-tick-execution-flows.md`.
 
 Exact durations are deployment policy derived from declared retry, recovery, and governance horizons and measured growth, not one platform-wide constant. See [ADR 0163](./decisions/adr-0163-service-owned-retention-classes-with-cross-service-safety.md).
-
-**Current implementation status:** The shared retention-class declarations, cross-service horizon compatibility and blockers, safe-watermark cleanup, holds, and complete focused proof remain unimplemented; core Game Session tick, command, and remote-work tables are unpartitioned and lack coordinated retention, while some service-local sweeps exist. The owning status record is [Shared Runtime, Service Contracts, and Persistence — `SF-2.1`](../project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md#capability-status). Do not treat the target obligations above, or any measured envelope below, as proof that the shared retention contract is live.
 
 ## Verification
 

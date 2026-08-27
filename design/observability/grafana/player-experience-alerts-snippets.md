@@ -2,13 +2,23 @@
 
 This file contains reference PromQL expressions and Alertmanager rule snippets for player-centric SLO alerts. These complement the TCP Proxy-specific rules in `tcp-proxy-alerts-snippets.md` and are intended to be imported or adapted into environment-specific rulesets.
 
+## Implementation Status
+
+### Current Installation and Applicability Gaps
+
+The `PlayerFlowCanary*` rules below, together with the P0 `WebSocketEntryPathBlackboxUnavailable` and `TelnetEntryPathBlackboxUnavailable` rules and the P1 `WebSocketEntryPathBlackboxMetricsAbsent` and `TelnetEntryPathBlackboxMetricsAbsent` unknown/degraded evidence rules, are target-state reference fixtures only. They are not currently installed by the shared PrometheusRule or any profile overlay. Deployment-owned applicability/expected-series gating for the advertised capability and complete exposed path set remains pending; these fixtures must not be installed for omitted capabilities or non-exposed paths.
+
+### Target Alert Contract
+
+Promoted live-traffic SLO alerts must apply each profile's documented minimum eligible-sample guard and short/long error-budget burn evaluation. No-data, low-volume, or unknown required evidence is `unknown`/non-SLI, not a healthy or breached result. ADR 0160 leaves the exact profile minimums to representative-traffic calibration and incident exercises, so this file records the guard requirement without inventing a threshold or adding unconditional per-rule guards to calibration fixtures.
+
 ## Player Experience SLO Alerts
 
 These example rules are calibration and degradation signals for the target-state player-centric SLO families defined in the Logging & Monitoring architecture doc. They are not universal SLO gates or availability claims: until a deployment profile promotes a measured objective, keep these alerts at non-urgent severity and treat no-data or low-volume windows as `unknown`. A promoted objective must replace the calibration rule with profile-specific minimum-sample handling and short/long error-budget burn evaluation.
 
 The `profile` label uses ADR 0159's canonical monitoring-profile enum, `independent-required` or `independent-omitted`, across canary metrics, retained evidence, and profile-aware rules. Do not serialize the prose abbreviations `required` or `omitted` as profile values.
 
-The `PlayerFlowCanary*` rules below, together with the P0 `WebSocketEntryPathBlackboxUnavailable` and `TelnetEntryPathBlackboxUnavailable` rules and the P1 `WebSocketEntryPathBlackboxMetricsAbsent` and `TelnetEntryPathBlackboxMetricsAbsent` unknown/degraded evidence rules, are target-state reference fixtures only. They remain pending deployment-owned applicability/expected-series gating for the advertised capability and complete exposed path set, and are not currently installed by the shared PrometheusRule or any profile overlay. When eventually installed, they must remain local diagnostic mirrors of—not replacements for—the authoritative canary/external monitor and pager. They must not be installed for omitted capabilities or non-exposed paths.
+When eventually installed, the `PlayerFlowCanary*` and blackbox rules must remain local diagnostic mirrors of—not replacements for—the authoritative canary/external monitor and pager.
 
 ```yaml
 - alert: LoginSuccessRatioLowGateway
