@@ -8,6 +8,8 @@ The live automation handoff still carries optional `dueTickId` for scheduler/tim
 
 The target automation handoff also requires the complete Trigger Identity, including `scriptPinEpoch`, plus `automationDispatchId` and `commandOrdinal`. The current Game Session request does not yet carry that complete contract, including `scriptPinEpoch`, so the target fields and uniqueness rules below are not implementation proof.
 
+Separate Coordination and Cache/Rate-Limit Redis processes exist in current manifests, but role-specific application clients, ACLs, key/script registration, and ownership proof under [ADR 0171](./decisions/adr-0171-separated-redis-role-processes-and-owned-keyspaces.md) remain incomplete.
+
 ---
 
 ## Table of Contents
@@ -64,7 +66,7 @@ Scope-key convention: `{tenantRegionTag}` is the canonical opaque tag for the co
     - `ratelimit:<tenantId>:<subjectHash>:<timeWindow>` (one opaque stable subject hash per individual subject)
     - `automation:queue:{tenantInstanceTag}:<entityId>` and automation quota counters.
 
-Coordination Redis and Cache/Rate‑Limit Redis are treated as **separate deployments** in all non-ephemeral environments so cache eviction/pressure cannot silently impact coordination SLOs. The only supported exception is explicitly ephemeral test/CI stacks that opt out of tail-loss and role-separation guarantees; those stacks may collapse roles temporarily, but must be clearly labelled as ephemeral and must not be used to validate coordination behavior or SLOs. See [Environment Profiles and Mappings](#environment-profiles-and-mappings) for details.
+Coordination Redis and Cache/Rate‑Limit Redis must use **separate processes and endpoints** in every non-ephemeral or player-facing environment, including `local-dev` and hosted `pr-preview`, so cache eviction/pressure cannot silently impact coordination SLOs. They may be two containers or processes on the same hobby host or cluster node; separate hardware is not required. The only supported exception is an explicitly labelled one-shot ephemeral test/CI stack other than hosted `pr-preview`; it may collapse roles temporarily only when reset-tolerant, must visibly surface the shared endpoint, and provides no role-isolation, replay, tail-loss, or SLO evidence. Such a stack may still run reset-tolerant coordination tests, but it must not be used to establish role-isolation, replay, tail-loss, or SLO proof. See [ADR 0171](./decisions/adr-0171-separated-redis-role-processes-and-owned-keyspaces.md) and [Environment Profiles and Mappings](#environment-profiles-and-mappings).
 
 New prefixes must declare:
 
@@ -167,7 +169,7 @@ The following table summarizes how core services interact with Coordination Redi
 | **Spring Cloud Gateway** | Uses **Cache/Rate‑Limit Redis** for token‑bucket rate limiting and best‑effort caches, while its only **Coordination Redis** ownership/connection is the one-use connect-token replay marker `gateway:connect-token:jti:<jti>` and the associated `replayAdmissionFence`; it never touches tick, session, or other gameplay-coordination prefixes. The cache path connects via `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`. |
 | **Other microservices (Game Logic, Entity Management, World Management, Social & Groups, etc.)** | Do not define or own coordination prefixes; they participate in Coordination Redis **only** through shared helpers and Lua descriptors owned by Game Session (for example, `tick:{tenantRegionTag}:lock:<entityId>` for tick locks). Where they cache read‑heavy aggregates, they use **Cache/Rate‑Limit Redis** and the key patterns from the Redis Cache & Rate Limiting design. |
 
-These boundaries are part of the **Redis Coordination Invariants** described in `system-architecture-redis.md` and are enforced via shared key helpers, the Lua script registry, and CI tooling.
+These boundaries are part of the **Redis Coordination Invariants** described in `system-architecture-redis.md`. In the target state, they will be enforced via shared key helpers, the Lua script registry, and CI tooling; current role-specific clients, ACLs, key/script registration, and ownership proof remain incomplete as noted above.
 
 ---
 
@@ -220,10 +222,11 @@ Each environment picks one of these profiles and documents the mapping:
   - This environment is **non‑ephemeral** for role separation: pointing `FIREMUD_REDIS_COORD_*` and `FIREMUD_REDIS_CACHE_*` to the same endpoint is treated as a misconfiguration.
 
 - **CI and preview stacks**
-  - Typically approximate `dev_local` or use an explicit **ephemeral coordination** profile:
+  - Hosted `pr-preview` retains the normal role split and is not an exception to ADR 0171. Other preview-like stacks must document their environment class and topology explicitly.
+  - One-shot test/CI stacks may use an explicit **ephemeral coordination** profile:
     - Coordination Redis may run with reduced or disabled AOF where tests are fully reset‑tolerant.
     - These stacks are **not** used to validate tail‑loss SLOs or replay guarantees.
-  - In truly ephemeral CI stacks it is acceptable to collapse roles into a single Redis instance **only** when:
+  - In an explicitly labelled one-shot test/CI stack it is acceptable to collapse roles into a single Redis instance **only** when:
     - Tests are explicitly designed to be reset‑tolerant and do not exercise coordination tail‑loss behavior.
     - The environment is clearly labelled as “ephemeral / single-Redis” in its documentation and configuration.
     - Misconfiguration checks and dashboards still surface the fact that roles are sharing an endpoint so it cannot be mistaken for a production-like topology.
@@ -288,12 +291,12 @@ All services and tools select Redis roles via configuration, not hard‑coded UR
   - `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`  
     or `FIREMUD_REDIS_CACHE_URL`.
 
-Shared configuration helpers (for example in `firemud-common`) expose:
+Target-state shared configuration helpers (for example in `firemud-common`) will expose:
 
 - `RedisCoordConfig` + `createCoordinationRedisClient(...)`
 - `RedisCacheConfig` + `createCacheRedisClient(...)`
 
-Requirements:
+Target-state requirements once those helpers exist:
 
 - **Role explicitness**
   - Every service and ops script must accept a specific role config (`RedisCoordConfig` or `RedisCacheConfig`), not arbitrary host/port strings.

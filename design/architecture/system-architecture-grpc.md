@@ -4,7 +4,7 @@ These guidelines define how FireMUD microservices design and document their gRPC
 
 ## Implementation Status
 
-The normative contract below remains mTLS for internal gRPC outside intentionally relaxed local development. Hosted preview may temporarily use plaintext while the Spring gRPC `1.0.x` SSL-bundle migration and preview re-proof are in flight; this is preview-only and does not create a second target transport. The remaining hardening path is CI/static checking that rejects legacy or ignored server-TLS property usage. These current caveats do not weaken the workload identity, exact method allowlist, or canonical Spring SSL-bundle requirements.
+The normative contract below remains mTLS for internal gRPC outside intentionally relaxed local development. Hosted preview may temporarily use plaintext while the Spring gRPC `1.0.x` SSL-bundle migration and preview re-proof are in flight; this is preview-only and does not create a second target transport. The remaining hardening path is CI/static checking that rejects legacy or ignored server-TLS property usage. Protobuf generation exists, but deliberate Buf compatibility baselines, release compatibility classification, transitional bridge proof, and durable late-event safety proof under [ADR 0174](./decisions/adr-0174-maturity-scoped-protobuf-compatibility.md) remain incomplete. These current caveats do not weaken the workload identity, exact method allowlist, or canonical Spring SSL-bundle requirements.
 
 **Current implementation gap:** the live Redis sequence-dedupe path fails open on Redis errors and is therefore reset-loss-vulnerable; it has no current connection/generation binding guard before presence, region-exit, or `GameInstance` suspension effects. The live path does not yet satisfy this target advisory-safety contract. The eventual binding design is intentionally not defined here.
 
@@ -30,6 +30,10 @@ The normative contract below remains mTLS for internal gRPC outside intentionall
   ```text
   protos/player/v1/player_service.proto
   ```
+
+The current `v1` namespace does not freeze every unreleased internal contract. For each individual contract, an incompatible internal change may converge directly in `v1` when that contract has no supported external consumers, no retained wire representation requires the old shape, and all callers and servers deploy as one coordinated change. An external consumer of one contract does not constrain unrelated internal contracts. Such a deployment is recreate/coordinated or roll-forward-only unless mixed-version compatibility is separately proven.
+
+If old and new internal binaries must overlap for rolling deployment or rollback, use a temporary additive bridge in `v1`, deploy in a compatible order, and remove the obsolete shape only after no supported binary or rollback target needs it. A parallel `v2` is reserved for an incompatible replacement that must coexist with a formally supported external or otherwise deliberately long-lived `v1` contract; ordinary pre-v1 redesign does not create `v2` APIs. See [ADR 0174](decisions/adr-0174-maturity-scoped-protobuf-compatibility.md).
 
 ## Proto File Layout
 
@@ -65,7 +69,7 @@ All proto files use `syntax = "proto3"` and set `java_package` and `java_multipl
 
 ## Tooling
 
-- **Buf** ([buf.yaml](../../protos/buf.yaml)) — Lints proto files, detects breaking changes, and drives code generation. The repository stores this configuration under `protos/`. The workspace file [buf.work.yaml](../../config/protobuf/buf.work.yaml) and [buf.gen.yaml](../../config/protobuf/buf.gen.yaml) specify modules and plugins for generation.
+- **Buf** ([buf.yaml](../../protos/buf.yaml)) — Lints proto files and detects breaking changes against a deliberately selected baseline; it does not own build source generation. Linting applies to all contracts. Breaking checks compare compatibility-protected operational releases with the exact deployed or rollback-target proto set and supported external contracts with an immutable release, tag, or digest; an arbitrary moving development snapshot is not a permanent compatibility baseline. The repository stores this configuration under `protos/`, and [buf.work.yaml](../../config/protobuf/buf.work.yaml) defines the workspace used by Buf tooling. Gradle's `com.google.protobuf` plugin and `generateProto` task remain the authoritative Java source-generation path described below.
 - **`protoc-gen-grpc-java`** — Generates Java service stubs for gRPC communication. The generated code is included in service builds via Gradle.
 - **`protoc-gen-doc`** — Produces Markdown API documentation. Run
   `./dev-tools/docs/generate-grpc-docs.sh` after updating proto files to regenerate
@@ -77,10 +81,15 @@ Every gRPC service registers the `LoggingInterceptor`, `MetricsInterceptor`, and
 
 ## Schema Evolution Rules
 
-- Never reuse or remove field numbers — use `reserved` to prevent reuse.
-- Only **add optional fields** or new enum values to avoid breaking compatibility.
-- Use the `reserved` keyword to block deprecated field numbers or names.
-- Avoid changing the type of an existing field.
+These rules apply throughout a declared compatibility window. A window exists when external consumers upgrade independently, old and new binaries overlap, binary rollback is supported, or retained messages/data require an older reader:
+
+- Add fields with new field numbers; use explicit presence when absence and the default value have different meanings.
+- Do not remove an existing field while its compatibility window is active.
+- After that window closes, an approved removal must reserve both the field number and name in the same change, before either can be reused.
+- Add enum values only when every protected consumer safely handles unknown values.
+- Do not change an existing field's type or meaning inside the protected window.
+
+An intentionally incompatible pre-v1 internal change follows the coordinated-convergence or temporary-bridge rules in [Versioning Strategy](#versioning-strategy), rather than creating a permanent compatibility generation by default.
 
 ## Outcome and Transport Classification
 

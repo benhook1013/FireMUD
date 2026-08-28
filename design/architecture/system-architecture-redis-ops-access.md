@@ -24,20 +24,20 @@ Defining additional Redis users, ACL variations, or ad-hoc tools is considered *
 ## Coordination Redis Access Rules
 
 - Coordination Redis is treated as an **application-only write surface during normal operation**:
-  - Current normal-operation access uses the generic `common-data-runtime` `firemud.redis.*` properties and its auto-configured `RedisConnectionFactory`, `RedisTemplate`, and `StringRedisTemplate`; deployment configuration routes a service to the appropriate role-specific endpoint. The ADR 0176 owner-local descriptor/key-builder foundation, shared contract validation, and aggregated registry are target state and are not implemented. Target state requires coordination mutations to use the owning service's typed key and mutation helpers, with the shared foundation validating descriptors and aggregation; Lua is mandatory for atomic multi-key behavior and may be used for an explicitly documented single-key atomic guard or compare-and-set contract. Ordinary single-key mutations use owner-local typed helpers without Lua, and executable helpers or Lua are shared only for mutations genuinely executed by multiple independently deployed callers. The audited incident-only break-glass path below is the explicit exception to this normal-operation rule and must follow its evidence, fencing, reset, and verification gates.
+  - Current normal-operation access uses the generic `common-data-runtime` `firemud.redis.*` properties and its auto-configured `RedisConnectionFactory`, `RedisTemplate`, and `StringRedisTemplate`; deployment configuration routes a service to the appropriate role-specific endpoint. The ADR 0176 owner-local descriptor/key-builder foundation, shared contract validation, and aggregated registry are target state and are not implemented. Target state requires all mutations to coordination prefixes (`tick:*`, `retry:*`, `timer:*`, `remote:*`, `session:*`, `tick-executor-lease:*`, and related keys) to use the owning service's registered typed key and mutation helpers, with the shared foundation validating descriptors and aggregation; it does not centralize owner-exclusive execution. Lua is mandatory for atomic multi-key behavior and may be used for an explicitly documented single-key atomic guard or compare-and-set contract. Ordinary single-key mutations use owner-local typed helpers without Lua, and executable helpers or Lua are shared only for mutations genuinely executed by multiple independently deployed callers. The audited incident-only break-glass path below is the explicit exception to this normal-operation rule and must follow its evidence, fencing, reset, and verification gates.
   - In target state, application services (Game Session, Automation & Scripting, and any future tick participants) never bypass those helpers with raw Redis commands; current direct usages require reconciliation against the owner-local contract rather than being treated as proof that the target helpers exist.
 - Human operators and ad-hoc tools:
   - May use `redis-cli`, RedisInsight, or similar tools with **read-only ops users** to inspect coordination state.
   - Must not issue raw `EVAL`/`EVALSHA`, `SET`, `DEL`, or TTL-changing commands against coordination prefixes in normal operation.
 
-These rules keep the script registry’s invariants and hash-tag discipline meaningful by ensuring there is only one code path for mutating coordination keys.
+In target state, these rules keep the script registry's invariants and hash-tag discipline meaningful by ensuring that every coordination mutation follows exactly one supported path: the owning service's owner-local path for an owner-exclusive mutation, or the shared-foundation path only for a mutation genuinely executed by multiple independently deployed callers. Current unreconciled direct usages remain implementation drift and do not establish that guarantee.
 
 ## Ops User vs Application User
 
 Redis ACLs enforce a clear split between application and operations clients:
 
 - Application user (for example `coord_app`):
-- Target state: used only by application services and approved maintenance tooling that calls the owning service's typed maintenance API (or, when it is itself an independently deployed executor, the corresponding shared mutation contract).
+  - Target state: used only by application services and approved maintenance tooling that calls the owning service's typed maintenance API (or, when it is itself an independently deployed executor, the corresponding shared mutation contract and owner-local helpers).
   - Permitted to execute `EVALSHA`/`SCRIPT LOAD` and write commands on coordination databases.
   - Not used from interactive shells or general-purpose admin tooling in production.
 - Read-only ops user (for example `coord_ops_ro`):
@@ -79,7 +79,7 @@ All tools and services refer to Redis deployments via **role-specific configurat
 - Coordination clients and ops tools read connection settings from `FIREMUD_REDIS_COORD_HOST` / `FIREMUD_REDIS_COORD_PORT` (or an equivalent `FIREMUD_REDIS_COORD_URL`), which identify the **Coordination Redis** deployment.
 - Cache/rate-limit clients and tools read from `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT` (or `FIREMUD_REDIS_CACHE_URL`), which identify the **Cache/Rate-Limit Redis** deployment.
 
-The current shared Redis connection seam is the generic `firemud.redis.*` `RedisProperties` binding and `common-data-runtime` auto-configuration, which provides the injected Spring Redis connection factory/templates used by services. Deployment configuration supplies the role-specific endpoint routing through `FIREMUD_REDIS_COORD_*` and `FIREMUD_REDIS_CACHE_*`; this is not a current role-bound maintenance client or typed contract surface. The ADR 0176 shared foundation, owner-local descriptor contributions, and repository aggregation remain unimplemented. Target state may add a dedicated tooling/contract module (for example, a future `common-redis-contracts` module, not an implemented module) exposing **typed configs and helpers** such as:
+The current implemented Redis connection seam is the generic `firemud.redis.*` `RedisProperties` binding and `common-data-runtime` auto-configuration, which provides the injected Spring Redis connection factory/templates used by services. Deployment configuration supplies the role-specific endpoint routing through `FIREMUD_REDIS_COORD_*` and `FIREMUD_REDIS_CACHE_*`; this is not a current role-bound maintenance client or typed contract surface. The ADR 0176 shared foundation, owner-local descriptor contributions, and repository aggregation remain unimplemented. The following role-specific config types and factory methods are planned target-state examples only: they are not currently exposed by the repository and must not be presented as an available API. Target state may add a small shared configuration module in the existing split common modules or a dedicated tooling/contract module (for example, a future `common-redis-contracts` module, not an implemented module) exposing **role-specific typed configs and helpers** such as:
 
 - `RedisCoordConfig` + `createCoordinationRedisClient(...)`
 - `RedisCacheConfig` + `createCacheRedisClient(...)`
@@ -477,13 +477,14 @@ Direct `redis-cli` writes to coordination prefixes are reserved for **break-glas
 The target coordination maintenance client/CLI, once implemented, is treated as a first-class part of the system, not an ad-hoc script:
 
 - It lives in the same repository and modules as:
-  - The aggregated Redis-contract registry/schema and each owning service's key builders and Lua Script Registry contributions.
-  - The integration tests that exercise script behavior and key shapes.
+  - The aggregated Redis-contract registry/schema and each owning service's descriptor, key-builder, and Lua Script Registry contributions.
+  - For owner-exclusive mutations, the owning service's invocation adapters, executable Lua implementations, and focused semantic/integration tests at the owner boundary; the maintenance CLI normally calls that service's typed maintenance API rather than reusing its executable implementation directly.
+  - For a mutation genuinely executed by multiple independently deployed callers, the shared foundation's executable helper/Lua contract and semantic tests, with the owner descriptors and callers' integration coverage aggregated through the registry.
 - It is **versioned alongside the main services**; there is no separate, free-floating versioning scheme for tooling.
 - Any change to coordination key formats or Lua script contracts must:
   - Update the owning service's descriptor contribution and owner-local key-builder/Lua implementation, plus the shared schema/aggregation when the declared contract changes.
   - Update the maintenance CLI code that uses those helpers.
-  - Extend or adjust the shared integration tests so both services and tooling are validated against the same expectations.
+  - Extend or adjust the owning service's focused semantic/integration tests for an owner-exclusive mutation, or the shared foundation's semantic tests for a genuinely shared mutation; validate maintenance tooling through the typed API (or the shared contract when it is an independent executor) against the same registry expectations.
 
 This ensures that operators use the same abstractions as application code and reduces the risk that maintenance tools silently drift away from the main coordination design.
 

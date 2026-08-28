@@ -8,7 +8,7 @@ This document describes the continuous integration strategy for FireMUD using **
 
 - **Automate builds and tests** for all microservices whenever code changes are pushed by running the [`ci.yml`](../../.github/workflows/ci.yml) workflow.
 - **Build Docker images** without registry credentials for pull-request smoke, then publish only successful PR artifacts through a trusted workflow; trusted branch workflows push directly to GitHub Container Registry (GHCR).
-- **Deploy hosted Kubernetes development/demo environments** through the dedicated preview and dev-demo workflows. [`preview.yml`](../../.github/workflows/preview.yml) manages per-PR hosted preview releases, and [`dev-demo.yml`](../../.github/workflows/dev-demo.yml) manages the fixed `develop` dev-demo environment. Staging and production clusters use Kustomize overlays as described in the Deployment Runbook and are applied via `kubectl` from a secure admin environment rather than directly from CI.
+- **Deploy hosted Kubernetes development/demo environments** through the dedicated preview and dev-demo workflows. [`preview.yml`](../../.github/workflows/preview.yml) manages per-PR hosted preview releases, and [`dev-demo.yml`](../../.github/workflows/dev-demo.yml) manages the fixed `develop` dev-demo environment. Staging and production clusters use Kustomize overlays as described in the Deployment Runbook; the current production implementation applies them via `kubectl` from a secure admin environment, while the accepted steady-state target is an exact-plan-authorized protected executor.
 - Treat `dev-demo-cluster` as validation-only infrastructure that is excluded from production promotion evidence.
 - Keep the workflow configuration easy to maintain and extensible for additional security scans or nightly jobs.
 - **Generate release notes automatically** whenever version tags are pushed.
@@ -26,7 +26,7 @@ This document describes the continuous integration strategy for FireMUD using **
 
 ## Implementation Status
 
-The current executable unconditionally blocks every player-facing production promotion class, including `rollback-compatible`, until all required production evidence and validations are complete; incomplete evidence can never become promotion authority. Static CI validates checked-in evidence shape and available bindings, but it does not yet validate release-manifest presence, schema, or bindings (including the release tag where applicable, source commit, deployment ref, promotion attestation ref, staging deployment record ref, and exact `serviceDigests`). Production promotion remains blocked until that validator exists; target validation must reject missing, malformed, or mismatched manifests. Production preflight also does not yet execute the staging-lineage, expanded backup-readiness, nested candidate recovery-controller, `PREFLIGHT-JWT-002`, or `PREFLIGHT-JWT-ROTATION-001` validations behind that block. No rollback classification becomes current promotion authority until those diagnostics, recovery inventory membership, immutable evidence dereferencing, participant, confidentiality, hardening, JWT/JWKS, and controlled-reopen validations are implemented. The ADR 0156 automatic observation/pause, bounded-canary progression, and compatibility-bounded automatic restoration remain target-state-only; current staging and production rollout and rollback remain operator-controlled under the Deployment Runbook.
+The current executable unconditionally blocks every player-facing production promotion class, including `rollback-compatible`, until all required production evidence and validations are complete; incomplete evidence can never become promotion authority. Static CI validates checked-in evidence shape and available bindings, but it does not yet validate release-manifest presence, schema, or bindings (including the release tag where applicable, source commit, deployment ref, promotion attestation ref, staging deployment record ref, and exact `serviceDigests`). Production promotion remains blocked until that validator exists; target validation must reject missing, malformed, or mismatched manifests. Production preflight also does not yet execute the staging-lineage, expanded backup-readiness, nested candidate recovery-controller, `PREFLIGHT-JWT-INTERIM-001`, `PREFLIGHT-JWT-002`, or `PREFLIGHT-JWT-ROTATION-001` validations behind that block. No rollback classification becomes current promotion authority until those diagnostics, recovery inventory membership, immutable evidence dereferencing, participant, confidentiality, hardening, JWT/JWKS, and controlled-reopen validations are implemented. The [ADR 0177](./decisions/adr-0177-exact-plan-authorized-automated-production-deployment.md) protected executor, ADR 0156 automatic observation/pause, bounded-canary progression, and compatibility-bounded automatic restoration remain target-state-only; current staging and production rollout and rollback remain operator-controlled under the Deployment Runbook.
 
 ---
 
@@ -152,7 +152,7 @@ Hosted Kubernetes rollouts use environment-specific GitHub Actions workflows rat
 - [`dev-demo.yml`](../../.github/workflows/dev-demo.yml) renders and deploys the same chart for the fixed `develop` dev-demo environment.
 - Local Kubernetes iteration uses direct `helm template`, `helm lint`, `helm install`, and `kubectl apply -k` commands rather than a GitHub-hosted workflow wrapper.
 
-Staging and production deployments rely on environment-specific overlays (for example `k8s/overlays/stage` and `k8s/overlays/prod`) applied according to the Deployment Runbook by operators using `kubectl` from a secured workstation or bastion host.
+Staging and production deployments rely on environment-specific overlays (for example `k8s/overlays/stage` and `k8s/overlays/prod`). The steady-state production target follows [ADR 0177](decisions/adr-0177-exact-plan-authorized-automated-production-deployment.md): an operator approves one immutable exact plan, then a protected executor revalidates and runs preflight, apply, observation, evidence capture, and only pre-authorized compatible restoration. Manual `kubectl` from a secured workstation or bastion remains the bootstrap, current implementation, and audited break-glass path.
 
 ### Rollback Strategy
 
@@ -202,15 +202,11 @@ FireMUD's preview workflow is reserved for real reviewer-accessible PR environme
 - Expose the environment at `https://pr-<PR_NUMBER>.preview.<DOMAIN>` using cluster ingress/TLS.
 - Expose a reviewer-usable TCP/Telnet entry path for the preview stack so manual gameplay proof can happen through the normal MUD client surface.
 - Reset the preview namespace on each deploy, then seed the minimum bootstrap state needed for reviewer proof so the hosted environment remains reproducible across preview updates.
-- Tear the preview down when the PR closes or merges.
+- Tear the preview down when the pull request closes or merges, is explicitly released, or its visible bounded renewable lease expires. Capacity-constrained deployments may require explicit eligibility; an active lease is not silently evicted.
 
-Main CI remains responsible for stack startup, smoke, and cross-service verification. Preview deployment is intentionally a separate concern focused on reviewer-accessible environments.
+Main CI remains responsible for stack startup, smoke, and cross-service verification. Preview deployment is intentionally a separate concern focused on reviewer-accessible environments. Capacity exhaustion or infrastructure failure reports preview proof as unavailable; it never records a pass, and any claimed hosted proof is bound to the current pull-request head SHA.
 
-Initial hosted preview proof target:
-
-- The first reviewer-usable proof milestone is not a rich browser UI.
-- The first milestone is manual `LOGIN -> PLAY -> LOOK` over the hosted TCP/Telnet path using a terminal client or Mudlet-style client.
-- Browser-first preview UX is a later step and should not block making the hosted preview environment real.
+The initial Telnet-first hosted milestone is complete. Continuing preview acceptance follows [ADR 0178](decisions/adr-0178-disposable-transport-complete-pr-preview-proof.md): one shared semantic authenticated, admitted, `LOOK` assertion set is exercised through both the public Telnet path and the deployed first-party browser path. Telnet proves TCP Proxy and bridge/framing behavior. The bounded browser journey proves frontend delivery, HTTPS bootstrap and discovery, connect-token cookie and `/ws/game/**` admission, one reconnect, logout, and non-reuse. Direct backend WebSocket smoke remains CI or diagnostic evidence rather than a substitute or third required hosted path. Dedicated frontend delivery and the browser journey remain implementation gaps, so current TCP/Telnet preview proof is not yet transport-complete.
 
 ---
 
@@ -229,10 +225,11 @@ Initial hosted preview proof target:
 
 FireMUD uses a simple promotion flow from pull requests through staging to production:
 
+- Pull requests validate candidates, `develop` supplies staging candidates, and reviewed `main` releases target production. A merge or mutable branch reference never substitutes for explicit human authorization of the exact production plan.
 - Feature branches are merged into `develop` after passing CI.
 - Staging promotion is performed by updating the staging Kustomize overlay (for example `k8s/overlays/stage`) to the desired image digests (`image@sha256:...`) via a Git change, merging it, and applying it from a secure operator environment using `kubectl apply -k k8s/overlays/stage`. This keeps “what was deployed” traceable in Git history and removes mutable-tag drift.
 - When a release is ready, `release-please` opens a release PR against `main`; after that PR is merged, the release tag (for example `v1.2.3`) is created. Release-tag workflows may publish metadata and additional tags for the already-validated digest set, but must not rebuild or choose the promotable production artifacts.
-- Production promotion is performed by updating the production Kustomize overlay (for example `k8s/overlays/prod`) to image digests that have already passed staging validation, via a Git change, merging it, and applying it from a secure operator environment using `kubectl apply -k k8s/overlays/prod` following the deployment runbook.
+- Production promotion updates the production Kustomize overlay (for example `k8s/overlays/prod`) to exact image digests that have already passed staging validation. In the accepted target, a human authorizes the immutable generated plan and a protected executor applies and observes that exact plan; the current implementation still uses a secure operator environment and `kubectl apply -k k8s/overlays/prod` as tracked deployment debt.
 - Production release PRs must include a release digest manifest at the stable production deployment-ref path; its `releaseTag` field (when a tag exists) and deployment reference bind the production attestation and exact staged digest set.
 - Overlay PRs are validated by [`.github/workflows/validate-kustomize-overlays.yml`](../../.github/workflows/validate-kustomize-overlays.yml), which checks that referenced images exist in GHCR, enforces digest pinning for staging/production overlays, and blocks staging backup schedules unless the explicit marker `k8s/overlays/stage/STAGING_BACKUPS_ENABLED` is present.
 - Overlay PRs run the canonical preflight entrypoint (`dev-tools/deploy/preflight.py`) in `ci-static` context so policy IDs and report shape match operator pre-apply validation. CI-static mode may mark production attestation policy as `not_applicable` when no production promotion is being executed.
@@ -381,7 +378,8 @@ CI workflows and operators use distinct credentials for each Kubernetes environm
   - Uses credentials limited to operator `kubectl` access and, if introduced later, dedicated staging deployment workflows.
   - Credentials are not exposed to pull request workflows; only merges to `develop` and explicit operator actions (or approved staging workflows) can update the staging cluster.
 - **Production cluster**
-  - Uses credentials restricted to production deployment paths and operator `kubectl` access from approved workstations or bastion hosts.
-  - No GitHub Actions workflow currently applies production manifests directly; any future workflow that does so must use GitHub Environments and require manual approvals.
+  - Uses credentials restricted to production deployment paths and operator break-glass `kubectl` access from approved workstations or bastion hosts.
+  - The accepted target is a protected executor activated only after human approval of an exact immutable plan. It uses short-lived environment-specific credentials where supported, strict concurrency and live-state preconditions, reviewed immutable workflow code, and least-privilege deployment/observation RBAC unavailable to pull-request jobs.
+  - No workflow currently proves this target; production apply remains manual implementation debt. A generic GitHub Environment approval of a mutable branch or free-form inputs is insufficient.
 
 Registry credentials (for GHCR) are shared across environments but access to pull images into each cluster is controlled by Kubernetes secrets and RBAC within that environment.

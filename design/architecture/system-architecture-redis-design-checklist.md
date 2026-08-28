@@ -215,7 +215,8 @@ Use this when changing Redis profiles, topologies, or reset behavior.
   - [ ] Coordination scripts and key patterns remain valid on the chosen topology (single‑node vs cluster).
   - [ ] `{tenantRegionTag}` and shard‑local rules are enforced for coordination in cluster mode.
 - [ ] Ensure that:
-  - [ ] Coordination and Cache/Rate‑Limit Redis remain separate deployments, even when co‑located on a host.
+  - [ ] Coordination and Cache/Rate‑Limit Redis remain separate processes and endpoints in every non-ephemeral or player-facing environment, even when co-located on a host or cluster node; separate hardware is not required.
+  - [ ] Only an explicitly labelled one-shot test/CI stack that is not hosted `pr-preview` may collapse both roles into one process and endpoint; that stack must surface the shared endpoint, remain reset-tolerant, and must not provide coordination-isolation, replay, or SLO evidence.
   - [ ] Configuration helpers and dashboards detect when roles accidentally point to the same endpoint.
 
 ### Reset Model
