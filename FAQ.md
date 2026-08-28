@@ -16,7 +16,7 @@ This document collects common questions and answers about the FireMUD Game Platf
   Not for an ordinary community operator. Public and private community instances follow the project's recognized and supported ordinary-community lane: the strict noncommercial, no-money rule in [LICENSING.md](LICENSING.md). [LICENSE.md](LICENSE.md) alone determines legal rights, including its separately stated institutional permissions; this plain-language guide does not narrow them. Benjamin James Hook may separately receive development sponsorship; that does not authorize a community operator to receive money or another commercial benefit connected to operating an instance.
 
 - **What terms govern creator content on the official hosted service?**
-  [HOSTED_CONTENT_TERMS.md](HOSTED_CONTENT_TERMS.md) is the pre-launch policy baseline, not an operative creator contract. The actual hosted operator must be identified and applicable terms accepted through the hosted creator flow; future marketplace and commercial terms remain deferred.
+  [HOSTED_CONTENT_TERMS.md](HOSTED_CONTENT_TERMS.md) is the pre-launch policy baseline, not an operative creator contract. The actual hosted operator must be identified and applicable terms accepted through the hosted creator flow. Future creator-marketplace, player-purchase, and settlement terms remain deferred; hosting-plan and platform-subscription billing is a separate planned lane.
 
 - **May I name my community server or fork FireMUD?**
   Use your own primary name and make clear that an ordinary community server or fork is independent and unofficial. Any descriptive reference is conditional on the [TRADEMARKS.md](TRADEMARKS.md) policy; that policy does not grant official status or endorsement.

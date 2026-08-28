@@ -12,7 +12,7 @@ Commercial use not otherwise permitted by this repository license or applicable 
 
 The FireMUD and FireDevOps names are used as trademarks by Benjamin James Hook. This software license does not grant trademark permission; [TRADEMARKS.md](TRADEMARKS.md) separately governs permitted brand uses, and uses neither allowed by that policy nor otherwise permitted by applicable law require separate written permission.
 
-See [LICENSING.md](LICENSING.md) for plain-language lane guidance. LICENSE.md or a separate written agreement with Benjamin James Hook controls any conflict.
+See [LICENSING.md](LICENSING.md) for plain-language lane guidance. LICENSE.md controls repository rights otherwise; a separate written agreement with Benjamin James Hook controls only within its scope for its identified parties.
 
 The full license text follows.
 
