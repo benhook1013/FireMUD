@@ -24,6 +24,7 @@ require_workflow_contains() {
 require_contains 'POSTGRES_READY_ATTEMPTS=60'
 require_contains 'POSTGRES_STABLE_PROBES=2'
 require_contains 'POSTGRES_PROBE_TIMEOUT_SECONDS=5'
+require_contains "for attempt in \$(seq 1 \"\$POSTGRES_READY_ATTEMPTS\"); do"
 require_contains "-Atqc 'SELECT 1'"
 require_contains 'PostgreSQL did not pass stable SQL readiness probes'
 require_contains "docker logs --tail 100 \"\$POSTGRES_CONTAINER\""

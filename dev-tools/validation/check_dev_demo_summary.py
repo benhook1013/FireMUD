@@ -88,6 +88,21 @@ BOOTSTRAP_MANIFEST_REQUIRED_MARKERS = (
     "trap 'exit 130' INT",
     "trap 'exit 143' TERM",
 )
+BOOTSTRAP_ACCOUNT_TRANSPORT_REQUIRED_MARKERS = (
+    "cleanup_bootstrap_port_forward() {",
+    "BOOTSTRAP_PORT_FORWARD_PID=$!",
+    "kubectl -n \"${PREVIEW_NAMESPACE}\" port-forward",
+    "--address 127.0.0.1",
+    "service/spring-cloud-gateway",
+    '"${BOOTSTRAP_GATEWAY_PORT}:80"',
+    "BOOTSTRAP_MODE=account",
+    'BOOTSTRAP_GATEWAY_BASE_URL="http://127.0.0.1:${BOOTSTRAP_GATEWAY_PORT}"',
+    'gateway_base_url = os.environ["BOOTSTRAP_GATEWAY_BASE_URL"]',
+    'return f"{gateway_base_url}/api/account{path}"',
+    'cleanup_bootstrap_port_forward\n          if [[ ! -s "${BOOTSTRAP_ACCOUNT_ID_FILE}" ]]; then',
+    '--from-file=account-id="${BOOTSTRAP_ACCOUNT_ID_FILE}"',
+    'value: session',
+)
 BOOTSTRAP_CREDENTIAL_VALIDATION = """for credential in DEMO_SMOKE_EMAIL DEMO_SMOKE_PASSWORD DEMO_SMOKE_USERNAME; do
   if [[ -z "${!credential:-}" ]]; then
     echo "::error::${credential} is empty; refusing to create dev-demo bootstrap credentials" >&2
@@ -662,6 +677,12 @@ def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
         if normalize_script(expected) not in normalized:
             raise AssertionError(
                 f"dev-demo bootstrap step contract missing: {expected}"
+            )
+    for expected in BOOTSTRAP_ACCOUNT_TRANSPORT_REQUIRED_MARKERS:
+        if normalize_script(expected) not in normalized:
+            raise AssertionError(
+                "dev-demo player bootstrap must use the authenticated Kubernetes "
+                f"port-forward transport; missing: {expected}"
             )
 
     normalized_lines = normalize_nonempty_lines(bootstrap_manifest)
