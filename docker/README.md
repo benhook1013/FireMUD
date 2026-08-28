@@ -35,12 +35,12 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.override.ym
 Canonical smoke/bootstrap proof:
 
 ```bash
-export FIREMUD_SMOKE_RUN_ID="local-$(date +%s%N)-$$"
+export FIREMUD_SMOKE_RUN_ID="local-$(date +%s)-$$"
 export COMPOSE_PROJECT_NAME="firemud-smoke-${FIREMUD_SMOKE_RUN_ID}"
 dev-tools/verify-fresh-bootstrap.sh
 dev-tools/verify-restart-state.sh
 
-export FIREMUD_SMOKE_RUN_ID="local-image-$(date +%s%N)-$$"
+export FIREMUD_SMOKE_RUN_ID="local-image-$(date +%s)-$$"
 export COMPOSE_PROJECT_NAME="firemud-smoke-${FIREMUD_SMOKE_RUN_ID}"
 # Placeholder only: replace with the published full commit SHA before running.
 SMOKE_IMAGE_TAG=0123456789abcdef0123456789abcdef01234567 dev-tools/verify-smoke-images.sh

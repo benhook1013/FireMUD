@@ -5,7 +5,7 @@ These steps exercise the same `WORLDS` + `LOGIN` + `PLAY` + `LOOK` flow emitted 
 The default smoke is the read-only `LOGIN` -> `PLAY` -> `LOOK` baseline. The item/container/equipment sequence is a mutating extension and is not part of the default two-transport wrappers. A standalone transport client may run that extension only inside an explicitly validated run-owned Compose project:
 
 ```bash
-export FIREMUD_SMOKE_RUN_ID="local-$(date +%s%N)-$$"
+export FIREMUD_SMOKE_RUN_ID="local-$(date +%s)-$$"
 export COMPOSE_PROJECT_NAME="firemud-smoke-${FIREMUD_SMOKE_RUN_ID}"
 SMOKE_MUTATION_EXTENSION=true \
 SMOKE_MUTATION_BOUNDARY=run-owned-compose \
