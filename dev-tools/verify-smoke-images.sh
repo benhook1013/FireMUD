@@ -19,6 +19,8 @@ ENSURE_CERTS_SCRIPT="$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh"
 COMPOSE_UP_ARGS=(up -d --remove-orphans)
 SMOKE_COMPOSE_UP_ATTEMPTS="${SMOKE_COMPOSE_UP_ATTEMPTS:-3}"
 SMOKE_COMPOSE_UP_RETRY_DELAY_SECONDS="${SMOKE_COMPOSE_UP_RETRY_DELAY_SECONDS:-5}"
+# shellcheck disable=SC1091 # The repository root is resolved at runtime.
+source "$ROOT_DIR/dev-tools/smoke/run-owned-compose.sh"
 
 export TERM="${TERM:-dumb}"
 export COMPOSE_PROGRESS="${COMPOSE_PROGRESS:-plain}"
@@ -37,14 +39,6 @@ case "$SMOKE_MUTATION_EXTENSION" in
     exit 1
     ;;
 esac
-
-require_run_owned_compose_project() {
-  local project_name="${COMPOSE_PROJECT_NAME:-}"
-  if [[ ! "$project_name" =~ ^(firemud-smoke-[a-z0-9][a-z0-9-]*|smoke-full-[0-9]+-[0-9]+)$ ]]; then
-    echo "Refusing destructive smoke teardown: set COMPOSE_PROJECT_NAME to an explicit run-owned name matching firemud-smoke-<unique-run-id> or smoke-full-<run-id>-<attempt> (not blank, default, or shared)." >&2
-    exit 1
-  fi
-}
 
 if [[ -z "${SMOKE_IMAGE_TAG:-}" ]]; then
   echo "SMOKE_IMAGE_TAG is required" >&2

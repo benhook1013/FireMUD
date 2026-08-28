@@ -9,6 +9,8 @@ HEALTH_SCRIPT="$ROOT_DIR/dev-tools/verify-compose-health.sh"
 BUILD_JARS_SCRIPT="$ROOT_DIR/dev-tools/build-compose-service-jars.sh"
 ENSURE_CERTS_SCRIPT="$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh"
 ENSURE_ENV_SCRIPT="$ROOT_DIR/dev-tools/ensure-local-compose-env.sh"
+# shellcheck disable=SC1091 # The repository root is resolved at runtime.
+source "$ROOT_DIR/dev-tools/smoke/run-owned-compose.sh"
 
 # Prefer noninteractive compose output for AI/automation callers. PTY-backed runs
 # under Docker Desktop/WSL can hang in compose teardown even when the same command
@@ -33,14 +35,6 @@ case "$SMOKE_MUTATION_EXTENSION" in
     exit 1
     ;;
 esac
-
-require_run_owned_compose_project() {
-  local project_name="${COMPOSE_PROJECT_NAME:-}"
-  if [[ ! "$project_name" =~ ^(firemud-smoke-[a-z0-9][a-z0-9-]*|smoke-full-[0-9]+-[0-9]+)$ ]]; then
-    echo "Refusing destructive smoke teardown: set COMPOSE_PROJECT_NAME to an explicit run-owned name matching firemud-smoke-<unique-run-id> or smoke-full-<run-id>-<attempt> (not blank, default, or shared)." >&2
-    exit 1
-  fi
-}
 
 bash "$ENSURE_ENV_SCRIPT"
 COMPOSE_SERVICES=()

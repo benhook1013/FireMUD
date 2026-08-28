@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+RUN_OWNED_COMPOSE_HELPER="$ROOT_DIR/dev-tools/smoke/run-owned-compose.sh"
 
 python3 - <<'PY' "$ROOT_DIR"
 import sys
@@ -306,28 +307,36 @@ for script in \
     env SMOKE_MUTATION_EXTENSION=true bash "$script"
   for project_name in docker smoke-full firemud-smoke- smoke-full--1 smoke-full-1- smoke-full-1-1-extra; do
     assert_command_rejects \
-      "Mutation extension requires COMPOSE_PROJECT_NAME matching" \
+      "COMPOSE_PROJECT_NAME must exactly match firemud-smoke-contract-local" \
       env SMOKE_MUTATION_EXTENSION=true \
       SMOKE_MUTATION_BOUNDARY=run-owned-compose \
+      GITHUB_ACTIONS=false \
+      FIREMUD_SMOKE_RUN_ID=contract-local \
       COMPOSE_PROJECT_NAME="$project_name" bash "$script"
   done
   assert_command_rejects \
     "SMOKE_MUTATION_BOUNDARY=restricted-synthetic is unavailable" \
     env SMOKE_MUTATION_EXTENSION=true \
     SMOKE_MUTATION_BOUNDARY=restricted-synthetic \
+    GITHUB_ACTIONS=false \
     COMPOSE_PROJECT_NAME=firemud-smoke-contract bash "$script"
   grep -q 'SMOKE_MUTATION_EXTENSION=.*false' "$script"
   grep -q 'SMOKE_MUTATION_BOUNDARY=.*' "$script"
   grep -q 'run-owned-compose' "$script"
-  grep -q 'smoke-full-' "$script"
   grep -q 'login_play_look_steps' "$script"
   grep -q 'gameplay_item_container_equipment_steps' "$script"
-  # shellcheck disable=SC2016 # Match the literal shell variable in the target script.
-  compose_project_guard_line="$(grep -n '^[[:space:]]*if \[\[ ! "\${COMPOSE_PROJECT_NAME:-}" =~' "$script" | head -1 | cut -d: -f1)"
+  if grep -q 'COMPOSE_PROJECT_NAME:-.*=~' "$script"; then
+    echo "inline COMPOSE_PROJECT_NAME validator remains in $script" >&2
+    exit 1
+  fi
+  helper_source_line="$(grep -n 'run-owned-compose.sh' "$script" | head -1 | cut -d: -f1)"
+  mutation_guard_line="$(grep -n '^[[:space:]]*require_run_owned_compose_project$' "$script" | head -1 | cut -d: -f1)"
   # shellcheck disable=SC2016 # Match the literal shell variable in the target script.
   python_line="$(grep -n '\$PYTHON.*<<' "$script" | head -1 | cut -d: -f1)"
-  if [[ -z "$compose_project_guard_line" || -z "$python_line" || "$compose_project_guard_line" -ge "$python_line" ]]; then
-    echo "mutation COMPOSE_PROJECT_NAME guard is not before service access in $script" >&2
+  if [[ -z "$helper_source_line" || -z "$mutation_guard_line" || -z "$python_line" \
+    || "$helper_source_line" -ge "$mutation_guard_line" \
+    || "$mutation_guard_line" -ge "$python_line" ]]; then
+    echo "executable run-owned helper is not sourced and called before Python in $script" >&2
     exit 1
   fi
 done
@@ -345,7 +354,7 @@ done
 
 for script in "$ROOT_DIR/dev-tools/verify-fresh-bootstrap.sh" "$ROOT_DIR/dev-tools/verify-smoke-images.sh"; do
   grep -q 'require_run_owned_compose_project' "$script"
-  grep -q 'firemud-smoke-' "$script"
+  grep -q 'run-owned-compose.sh' "$script"
   mapfile -t down_lines < <(grep -nE '^[[:space:]]*docker compose .*down -v --remove-orphans([[:space:]]|$)' "$script" || true)
   if ((${#down_lines[@]} == 0)); then
     echo "no destructive compose teardown found in $script" >&2
@@ -360,5 +369,29 @@ for script in "$ROOT_DIR/dev-tools/verify-fresh-bootstrap.sh" "$ROOT_DIR/dev-too
     fi
   done
 done
+
+assert_command_rejects \
+  "FIREMUD_SMOKE_RUN_ID must match" \
+  env GITHUB_ACTIONS=false COMPOSE_PROJECT_NAME=firemud-smoke-shared bash "$RUN_OWNED_COMPOSE_HELPER"
+assert_command_rejects \
+  "FIREMUD_SMOKE_RUN_ID must match" \
+  env GITHUB_ACTIONS=false FIREMUD_SMOKE_RUN_ID=Invalid_ID \
+  COMPOSE_PROJECT_NAME=firemud-smoke-Invalid_ID bash "$RUN_OWNED_COMPOSE_HELPER"
+assert_command_rejects \
+  "COMPOSE_PROJECT_NAME must exactly match firemud-smoke-contract-local" \
+  env GITHUB_ACTIONS=false FIREMUD_SMOKE_RUN_ID=contract-local \
+  COMPOSE_PROJECT_NAME=firemud-smoke-other bash "$RUN_OWNED_COMPOSE_HELPER"
+assert_command_rejects \
+  "GitHub Actions mode requires nonempty GITHUB_RUN_ID and GITHUB_RUN_ATTEMPT" \
+  env GITHUB_ACTIONS=true GITHUB_RUN_ID=123 GITHUB_RUN_ATTEMPT= \
+  COMPOSE_PROJECT_NAME=smoke-full-123-2 bash "$RUN_OWNED_COMPOSE_HELPER"
+assert_command_rejects \
+  "COMPOSE_PROJECT_NAME must exactly match smoke-full-123-2" \
+  env GITHUB_ACTIONS=true GITHUB_RUN_ID=123 GITHUB_RUN_ATTEMPT=2 \
+  COMPOSE_PROJECT_NAME=smoke-full-123-1 bash "$RUN_OWNED_COMPOSE_HELPER"
+env GITHUB_ACTIONS=false FIREMUD_SMOKE_RUN_ID=contract-local \
+  COMPOSE_PROJECT_NAME=firemud-smoke-contract-local bash "$RUN_OWNED_COMPOSE_HELPER"
+env GITHUB_ACTIONS=true GITHUB_RUN_ID=123 GITHUB_RUN_ATTEMPT=2 \
+  COMPOSE_PROJECT_NAME=smoke-full-123-2 bash "$RUN_OWNED_COMPOSE_HELPER"
 
 echo "smoke script boundary contract checks passed"

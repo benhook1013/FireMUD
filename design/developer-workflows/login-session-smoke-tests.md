@@ -5,13 +5,14 @@ These steps exercise the same `WORLDS` + `LOGIN` + `PLAY` + `LOOK` flow emitted 
 The default smoke is the read-only `LOGIN` -> `PLAY` -> `LOOK` baseline. The item/container/equipment sequence is a mutating extension and is not part of the default two-transport wrappers. A standalone transport client may run that extension only inside an explicitly validated run-owned Compose project:
 
 ```bash
+export FIREMUD_SMOKE_RUN_ID="local-$(date +%s%N)-$$"
+export COMPOSE_PROJECT_NAME="firemud-smoke-${FIREMUD_SMOKE_RUN_ID}"
 SMOKE_MUTATION_EXTENSION=true \
 SMOKE_MUTATION_BOUNDARY=run-owned-compose \
-COMPOSE_PROJECT_NAME=firemud-smoke-local-20260829-1 \
 bash services/game-session-service/websocket-login-look-smoke.sh
 ```
 
-The accepted project-name forms are `firemud-smoke-<unique-run-id>` and the existing CI form `smoke-full-<run-id>-<attempt>`. Persistent/shared mutation remains unavailable until the restricted-synthetic identity, playable-state namespace, and fence verifier exists. Do not use the fresh-bootstrap or image-tag two-transport wrappers for mutating parity: they run baseline-only and reject the mutation extension until independent transport identities/state are proven.
+The explicit ID-to-project binding is defined by [Testing: player-flow smoke and reset boundaries](../architecture/system-architecture-testing.md#player-flow-smoke-and-reset-boundaries). Persistent/shared mutation remains unavailable until the restricted-synthetic identity, playable-state namespace, and fence verifier exists. Do not use the fresh-bootstrap or image-tag two-transport wrappers for mutating parity: they run baseline-only and reject the mutation extension until independent transport identities/state are proven.
 
 ## Requirements
 

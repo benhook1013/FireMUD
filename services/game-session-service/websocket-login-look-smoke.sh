@@ -5,6 +5,8 @@ set -euo pipefail
 FIREMUD_REPO_ROOT=${FIREMUD_REPO_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}
 # shellcheck disable=SC1091 # The repository root is resolved at runtime.
 source "$FIREMUD_REPO_ROOT/dev-tools/smoke/demo-smoke-defaults.sh"
+# shellcheck disable=SC1091 # The repository root is resolved at runtime.
+source "$FIREMUD_REPO_ROOT/dev-tools/smoke/run-owned-compose.sh"
 
 SMOKE_GAME_SESSION_WS_URL=${SMOKE_GAME_SESSION_WS_URL:-ws://localhost:8086/ws/game}
 SMOKE_LOGIN_EMAIL=${SMOKE_LOGIN_EMAIL:-$DEMO_SMOKE_EMAIL}
@@ -30,10 +32,7 @@ case "$SMOKE_MUTATION_EXTENSION" in
     SMOKE_MUTATION_EXTENSION=true
     case "$SMOKE_MUTATION_BOUNDARY" in
       run-owned-compose)
-        if [[ ! "${COMPOSE_PROJECT_NAME:-}" =~ ^(firemud-smoke-[a-z0-9][a-z0-9-]*|smoke-full-[0-9]+-[0-9]+)$ ]]; then
-          echo "Mutation extension requires COMPOSE_PROJECT_NAME matching firemud-smoke-<unique-run-id> or smoke-full-<run-id>-<attempt>; refusing shared/default state." >&2
-          exit 1
-        fi
+        require_run_owned_compose_project
         ;;
       restricted-synthetic|synthetic-identity)
         echo "SMOKE_MUTATION_BOUNDARY=$SMOKE_MUTATION_BOUNDARY is unavailable: no authoritative synthetic identity/isolation verifier exists." >&2
