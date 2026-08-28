@@ -8,7 +8,7 @@ This is a non-normative implementation tracker for shared runtime, service contr
 
 The implementation record below summarizes the shared runtime, service-contract, orchestration, persistence, and workflow boundaries represented by this tracker. It distinguishes live implementation from bounded follow-up work; it does not claim that every future service, runtime consumer, or workflow family has already adopted these conventions.
 
-Smoke/reset consequence: the shared runtime and persistence layer must not treat a smoke caller's tenant, account, fixture, or `gameInstanceId` as a playable-state isolation boundary. This remains an implementation/proof gap; current fixtures and reset helpers do not prove the [canonical testing owner](../../architecture/system-architecture-testing.md#smoke-and-reset-isolation-boundary) or authorize persistent/shared mutation or whole-stack reset.
+Smoke/reset evidence remains incomplete: current fixtures and reset helpers do not prove a playable-state isolation boundary for caller-derived tenant, account, fixture, or `gameInstanceId` values. See the [canonical testing owner](../../architecture/system-architecture-testing.md#smoke-and-reset-isolation-boundary) for the authoritative boundary and remaining gap.
 
 ### Script-transition cross-service handoff
 
