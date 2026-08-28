@@ -688,6 +688,8 @@ When debugging cross-region issues, operators should rely on PostgreSQL follow-u
 
 Because crash recovery relies on idempotent handlers, each service with tick-driven logic should include integration tests that simulate Redis-style replays:
 
+Select validation commands and assign evidence ownership according to [Validation and Runtime Proof](../developer-workflows/validation-and-runtime-proof.md); this checklist does not add validation results or a validation ledger.
+
 - Invoke the same handler multiple times with the same mutation `EffectId` (root or persisted child), typed operation, target, immutable request digest, enclosing root lineage where applicable, concrete ledger/guard projection `(effectId, rootEffectId, typedOperation, tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId)`, and payload, and assert that:
   - The first call mutates state as expected.
   - Subsequent calls are treated as replays and do not apply additional logical effects (HP changes, inventory moves, etc.).
