@@ -307,6 +307,7 @@ for script in \
   grep -q 'login_play_look_steps' "$script"
   grep -q 'gameplay_item_container_equipment_steps' "$script"
   boundary_line="$(grep -n 'Mutation extension requires SMOKE_MUTATION_BOUNDARY=run-owned-compose' "$script" | head -1 | cut -d: -f1)"
+  # shellcheck disable=SC2016 # Match the literal shell variable in the target script.
   python_line="$(grep -n '\$PYTHON.*<<' "$script" | head -1 | cut -d: -f1)"
   if [[ -z "$boundary_line" || -z "$python_line" || "$boundary_line" -ge "$python_line" ]]; then
     echo "mutation isolation preflight is not before service access in $script" >&2
