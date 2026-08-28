@@ -478,13 +478,13 @@ The target coordination maintenance client/CLI, once implemented, is treated as 
 
 - It lives in the same repository and modules as:
   - The aggregated Redis-contract registry/schema and each owning service's descriptor, key-builder, and Lua Script Registry contributions.
-  - Owner-local invocation adapters and executable Lua implementations supplied by the owning service.
-  - Integration tests that exercise script behavior and key shapes at the owner boundary.
+  - For owner-exclusive mutations, the owning service's invocation adapters, executable Lua implementations, and focused semantic/integration tests at the owner boundary; the maintenance CLI normally calls that service's typed maintenance API rather than reusing its executable implementation directly.
+  - For a mutation genuinely executed by multiple independently deployed callers, the shared foundation's executable helper/Lua contract and semantic tests, with the owner descriptors and callers' integration coverage aggregated through the registry.
 - It is **versioned alongside the main services**; there is no separate, free-floating versioning scheme for tooling.
 - Any change to coordination key formats or Lua script contracts must:
   - Update the owning service's descriptor contribution and owner-local key-builder/Lua implementation, plus the shared schema/aggregation when the declared contract changes.
   - Update the maintenance CLI code that uses those helpers.
-  - Extend or adjust the shared integration tests so both services and tooling are validated against the same expectations.
+  - Extend or adjust the owning service's focused semantic/integration tests for an owner-exclusive mutation, or the shared foundation's semantic tests for a genuinely shared mutation; validate maintenance tooling through the typed API (or the shared contract when it is an independent executor) against the same registry expectations.
 
 This ensures that operators use the same abstractions as application code and reduces the risk that maintenance tools silently drift away from the main coordination design.
 
