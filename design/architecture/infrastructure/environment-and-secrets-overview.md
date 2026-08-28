@@ -442,7 +442,7 @@ The catalog document groups these variables by subsystem (PostgreSQL, Redis, TLS
 
 ## Certificate Management and Watchers
 
-Mutual TLS protects internal service-to-service traffic in shared and player-facing Kubernetes environments. Explicit local-development and throwaway-test profiles may use the documented plaintext internal transports and do not provide player-facing or promotion evidence. Certificates are normally provisioned by **cert-manager** and mounted from per-workload Kubernetes Secrets so each service has a concrete private identity. These certificates secure:
+Mutual TLS protects internal service-to-service traffic in shared and player-facing Kubernetes environments. Explicit local-development and throwaway-test profiles may use the documented plaintext internal transports and do not provide player-facing or promotion evidence. Hosted `pr-preview` is a separate, non-player-facing exception: it may temporarily use plaintext internal gRPC only during the Spring gRPC `1.0.x` SSL-bundle migration and preview re-proof, with the bounded exception documented in [gRPC TLS requirements](../system-architecture-grpc.md#tls-requirements). It is not player-facing or promotion evidence; the canonical non-local target remains mTLS. Certificates are normally provisioned by **cert-manager** and mounted from per-workload Kubernetes Secrets so each service has a concrete private identity. These certificates secure:
 
 - All gRPC calls between services
 - Any internal WebSocket bridges that require mTLS (for example, the TCP Proxy Service connecting to Spring Cloud Gateway over `wss://`)
