@@ -499,10 +499,10 @@ Cross-region commands follow these canonical rules:
 
 Minimal canonical cross-region sequence:
 
-1. The front-end assigns `commandId` if needed and the next connection-local `sessionSequence`, then forwards to the directory-selected owner with the expected fence.
+1. The front-end preserves or assigns a stable `commandId` for every mutating request, and assigns the next connection-local `sessionSequence`, then forwards to the directory-selected owner with the expected fence. An explicitly read-only request may omit `commandId`.
 2. The receiving executor validates current ownership and either admits that identity or returns stale authority.
 3. The owning gameplay/spatial contract durably records the outcome. If location changed, the front-end then refreshes its derived region pointer.
-4. Asynchronous output is delivered only to the active `{sessionId, frontEndGeneration}`; ambiguous command delivery uses command status rather than a new execution attempt.
+4. Asynchronous output is delivered only to the active `{sessionId, frontEndGeneration}`; an ambiguous mutation is reconciled through authoritative command status using the same `commandId`, never a new execution attempt or identity.
 
 This preserves a stable edge contract while allowing in-cluster lease rebalancing without requiring client-visible shard routing.
 
