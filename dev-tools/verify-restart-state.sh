@@ -36,11 +36,11 @@ echo "Local volumes are left intact."
 require_run_owned_compose_project
 bash "$ENSURE_ENV_SCRIPT"
 bash "$ENSURE_CERTS_SCRIPT"
-"$BUILD_JARS_SCRIPT"
+bash "$BUILD_JARS_SCRIPT"
 docker compose "${COMPOSE_FILES[@]}" up -d --build --remove-orphans
 docker compose "${COMPOSE_FILES[@]}" restart
 
-"$HEALTH_SCRIPT"
+bash "$HEALTH_SCRIPT"
 # Both transport legs are baseline-only; mutation parity requires independent
 # transport identities/state and is rejected by this wrapper above.
 bash "$WS_SMOKE_SCRIPT"

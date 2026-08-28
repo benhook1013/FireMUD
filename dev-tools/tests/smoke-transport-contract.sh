@@ -404,6 +404,7 @@ assert_command_rejects \
 
 
 TEST_ROOT="$(mktemp -d)"
+trap 'rm -rf "$TEST_ROOT"' EXIT
 FAKE_DOCKER_BIN="$TEST_ROOT/bin"
 FAKE_DOCKER_STATE="$TEST_ROOT/state"
 OWNERSHIP_TEST_DIR="$TEST_ROOT/ownership"
@@ -515,7 +516,6 @@ chmod 700 "$FAKE_DOCKER_BIN/docker"
 export PATH="$FAKE_DOCKER_BIN:$PATH"
 export FAKE_DOCKER_STATE
 
-trap 'rm -rf "$TEST_ROOT"' EXIT
 OWNERSHIP_TOKEN=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 export GITHUB_ACTIONS=false FIREMUD_SMOKE_RUN_ID=contract-local
 export COMPOSE_PROJECT_NAME=firemud-smoke-contract-local
@@ -583,7 +583,7 @@ lock_ready="$TEST_ROOT/lock-ready"
 bash -c "$RUN_OWNED_HOLD_LOCK_CHILD_BASH" _ \
   "$RUN_OWNED_COMPOSE_HELPER" "$lock_ready" &
 lock_holder_pid=$!
-for _ in $(seq 1 50); do
+for _ in $(seq 1 200); do
   [[ -e "$lock_ready" ]] && break
   sleep 0.02
 done
