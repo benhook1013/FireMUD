@@ -70,6 +70,8 @@ On an official hosted deployment, the acceptance gate applies before the first p
 
 The authoritative Game Design service boundary calls or consumes Account authority immediately before accepting the operation. Each committed covered creator-intent operation records the tenant ID, exact creator-party ID, acceptance evidence ID, and material-acceptance generation used for that operation. The acting account must still have the applicable current tenant role, but that operational role neither substitutes for party acceptance nor makes the actor a legal signer. A missing, stale, mismatched, ambiguous, or unavailable party, acceptance, or tenant-authority result fails closed before the new side effect. The evidence is a compliance binding, not a second terms or party catalog in Game Design.
 
+Account authority and the Game Design commit are one fail-closed boundary: for each covered mutation, the exact Account party, acceptance-evidence, and material-acceptance-generation authorization must remain valid through the Game Design commit linearization point. A preflight read alone is insufficient. The implementation must use a commit-bound Account authorization/fence or equivalent compare-and-set validation, without this ADR selecting a transaction, lease, fence, or other mechanism. If authority is stale, mismatched, unavailable, or uncertain at that boundary, Game Design aborts its local transaction; no creator mutation or staged artifact becomes authoritative or externally reachable. Any staged bytes are cleanup/quarantine state, not success.
+
 Gateway and UI checks are convenience checks only. They may improve feedback but cannot authorize a mutation or replace the Game Design-to-Account boundary. Self-hosted community operation remains outside this official-hosted gate.
 
 ### Collaborators act for the creator party without becoming signers
@@ -86,9 +88,9 @@ The transfer changes FireMUD's contracting/content-control binding only after it
 
 ### Replay is not a new grant
 
-A previously committed exact request may replay its durably stored result under the acceptance evidence captured for that committed operation. Replay is not a new acceptance grant and does not require the current evidence to be treated as though it authorized the old side effect. If the original outcome is not durably known to be committed, the current acceptance gate applies before any new side effect.
+A previously committed exact request may replay its durably stored result under the acceptance evidence captured for that committed operation. Replay is not a new acceptance grant and does not require the current evidence to be treated as though it authorized the old side effect. If the original attempt is uncertain or not durably known to be committed, the service must first reconcile the original stable operation identity and obtain durable proof of no commit; it must not blindly redispatch or create a second mutation while the outcome is indeterminate. Only a permitted fresh attempt after that proof performs a fresh commit-bound currentness check before any side effect.
 
-The same request identity with a changed normalized payload conflicts. Implementations must preserve the operation identity, normalized-payload equality, committed result, and captured acceptance evidence needed to distinguish a safe exact replay from an uncertain new attempt.
+The same request identity with a changed normalized payload returns the target application outcome `IDEMPOTENCY_CONFLICT` before mutation. Implementations must preserve the operation identity, normalized-payload equality, committed result, and captured acceptance evidence needed to distinguish a safe exact replay from an uncertain new attempt.
 
 ### Existing lifecycle and legal boundaries remain separate
 

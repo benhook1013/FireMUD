@@ -18,11 +18,11 @@ This is a legally binding agreement. Read it carefully and seek independent lega
 
 “Creator Content” means original game content authored for a game or world, including narrative, characters, maps, dialogue, artwork, music, sound, scripts, and similar content, that is merely created or hosted through FireMUD. Creator Content is not a Contribution unless it is intentionally submitted to this repository for inclusion as repository material.
 
-“Contribution” means any work of authorship that You own or control and intentionally Submit to Us for inclusion in the Repository Material, including code, tests, documentation, configuration, examples, and assets. A submission is not a Contribution to the extent it is Creator Content that was not intentionally submitted for repository inclusion, or to the extent its rights are owned or controlled by a third party and have not been documented and approved as described in Section 3.
+“Contribution” means any work of authorship that You own or control and intentionally Submit to Us for inclusion in the Repository Material, including code, tests, documentation, configuration, examples, and assets. In a mixed submission, a contributor-authored portion remains a Contribution when You own or control the rights required to grant the applicable Section 2 rights; a third-party portion is a Contribution only if You actually have authority to grant those rights, and does not become a Contribution merely because its provenance, licence, or permission has been documented or approved. Creator Content that was not intentionally submitted for repository inclusion is not a Contribution.
 
 “Repository Material” means the work of authorship made available by Benjamin or a Permitted Successor to third parties through the FireMUD repository or a distribution of the Project. After You Submit a Contribution, it may be included in the Repository Material.
 
-“Submit” means any electronic, verbal, or written communication sent to Us or our representatives, including through source-control systems, pull requests, issue trackers, or other project systems managed by or on behalf of Us for the purpose of discussing or improving the Repository Material. A communication conspicuously marked or otherwise designated in writing by You as “Not a Contribution” is excluded.
+“Submit” means any electronic, verbal, or written communication sent to Us or our representatives, including through source-control systems, pull requests, issue trackers, or other project systems managed by or on behalf of Us for the purpose of discussing or improving the Repository Material. A communication conspicuously marked or otherwise designated in writing by You as “Not a Contribution” is excluded. Material proposed for repository inclusion under that designation must not be merged unless You withdraw the designation in writing and it otherwise qualifies as a Contribution, or documented separate rights permit its inclusion; the designation must not be silently overridden.
 
 “Submission Date” means the date on which You Submit a Contribution.
 
@@ -74,7 +74,7 @@ You confirm that:
 
 (d) For a Legal Entity, the grants under Section 2 do not violate rights that You or Your Affiliates have granted to third parties.
 
-(e) If a Submission contains third-party or mixed material, You must identify that material and its applicable licence or documented permission in writing. The material may be reviewed in the pull request or through the licensing contact, but it must not be merged or accepted as a Contribution until documented permission and written approval from Benjamin or a Permitted Successor are on file. This Agreement covers only rights that You own or control; it does not replace, expand, or override third-party terms.
+(e) If a Submission contains third-party or mixed material, You must identify that material, its provenance, and its applicable licence or documented permission in writing. The material may be reviewed in the pull request or through the licensing contact, but approval does not make a third-party portion a Contribution or expand any rights. It may be included in Repository Material only after the documented provenance, applicable licence or permission, and written approval from Benjamin or a Permitted Successor are on file, under the preserved third-party terms or a separate direct grant from the relevant rights holder. This Agreement covers only rights that You own or control; it does not replace, expand, or override third-party terms.
 
 ## 4. Disclaimer
 
