@@ -530,6 +530,8 @@ run_owned_helper() {
 # shellcheck disable=SC2016
 RUN_OWNED_CHILD_BASH='source "$1"; shift; "$@"'
 # shellcheck disable=SC2016
+RUN_OWNED_NO_PIPEFAIL_CHILD_BASH='set +o pipefail; source "$1"; shift; "$@"'
+# shellcheck disable=SC2016
 RUN_OWNED_UNSET_TOKEN_CHILD_BASH='unset FIREMUD_SMOKE_OWNERSHIP_TOKEN; source "$1"; shift; "$@"'
 # shellcheck disable=SC2016
 RUN_OWNED_HOLD_LOCK_CHILD_BASH='source "$1"; claim_run_owned_compose_project; : >"$2"; sleep 5'
@@ -547,6 +549,25 @@ assert_command_rejects \
   env PATH="$NO_FLOCK_BIN" \
   "$BASH_EXECUTABLE" -c "$RUN_OWNED_CHILD_BASH" _ \
   "$RUN_OWNED_COMPOSE_HELPER" claim_run_owned_compose_project
+
+FAILING_SHA256SUM_BIN="$TEST_ROOT/failing-sha256sum-bin"
+FAILING_OWNERSHIP_DIR="$TEST_ROOT/failing-ownership"
+mkdir -p "$FAILING_SHA256SUM_BIN"
+for dependency in uname stat readlink id mktemp awk flock; do
+  ln -s "$(command -v "$dependency")" "$FAILING_SHA256SUM_BIN/$dependency"
+done
+cat >"$FAILING_SHA256SUM_BIN/sha256sum" <<'FAILING_SHA256SUM'
+#!/usr/bin/env bash
+exit 42
+FAILING_SHA256SUM
+chmod 700 "$FAILING_SHA256SUM_BIN/sha256sum"
+assert_command_rejects \
+  "sha256sum command failed" \
+  env PATH="$FAILING_SHA256SUM_BIN:$PATH" \
+  FIREMUD_SMOKE_OWNERSHIP_DIR="$FAILING_OWNERSHIP_DIR" \
+  "$BASH_EXECUTABLE" -c "$RUN_OWNED_NO_PIPEFAIL_CHILD_BASH" _ \
+  "$RUN_OWNED_COMPOSE_HELPER" claim_run_owned_compose_project
+[[ -z "$(find "$FAILING_OWNERSHIP_DIR" -maxdepth 1 -type f -name '*.marker' -print -quit)" ]]
 
 bash -c "$RUN_OWNED_UMASK_CHILD_BASH" _ \
   "$RUN_OWNED_COMPOSE_HELPER" claim_run_owned_compose_project

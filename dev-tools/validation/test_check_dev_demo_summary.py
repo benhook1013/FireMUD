@@ -293,6 +293,38 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             ):
                 self.validator.validate_workflow(root)
 
+    def test_validate_workflow_rejects_literal_bootstrap_port_assignment(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        dynamic_assignment = "BOOTSTRAP_GATEWAY_PORT="
+        dynamic_forward = "service/spring-cloud-gateway \\\n  :80 \\\n"
+        self.assertIn(dynamic_assignment, bootstrap_manifest)
+        self.assertIn(dynamic_forward, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            dynamic_assignment, "BOOTSTRAP_GATEWAY_PORT=12345", 1
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "dynamically selected local port"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_missing_pre_python_liveness_check(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        liveness_check = (
+            'if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then'
+        )
+        self.assertEqual(2, bootstrap_manifest.count(liveness_check))
+        invalid_manifest = bootstrap_manifest.replace(liveness_check, "", 1)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "recheck port-forward liveness before invoking Python"
+            ):
+                self.validator.validate_workflow(root)
+
     def test_validate_workflow_rejects_unbounded_port_forward_readiness(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
         self.assertIn("for attempt in {1..30}; do", bootstrap_manifest)

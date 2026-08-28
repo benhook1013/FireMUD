@@ -41,10 +41,19 @@ _firemud_smoke_require_platform() {
 }
 
 _firemud_smoke_sha256() {
+  local digest_output
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum | awk '{print $1}'
+    if ! digest_output="$(sha256sum)"; then
+      _firemud_smoke_fail "sha256sum command failed."
+      return 1
+    fi
+    printf '%s\n' "$digest_output" | awk '{print $1}'
   elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 | awk '{print $1}'
+    if ! digest_output="$(shasum -a 256)"; then
+      _firemud_smoke_fail "shasum command failed."
+      return 1
+    fi
+    printf '%s\n' "$digest_output" | awk '{print $1}'
   else
     _firemud_smoke_fail "sha256sum or shasum is required for ownership markers."
   fi

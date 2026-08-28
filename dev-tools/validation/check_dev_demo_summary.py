@@ -807,6 +807,10 @@ def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
         'if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then'
     )
     python_index = normalized.find(python_invocation)
+    if python_index == -1:
+        raise AssertionError(
+            'dev-demo player bootstrap must invoke Python as python3 "${BOOTSTRAP_SCRIPT}"'
+        )
     if normalized.find(readiness_loop) > python_index:
         raise AssertionError(
             "dev-demo player bootstrap must prove the port-forward before invoking Python"
