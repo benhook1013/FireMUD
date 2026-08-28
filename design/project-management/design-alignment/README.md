@@ -80,7 +80,7 @@ Consolidation names one canonical owner for a target contract and reduces compet
 
 The completed decision-family imports consolidated related normative duplication in each affected design area, including non-ADR contracts. Now perform one broad design-area authority review across the complete product and architecture corpus to identify residual owner conflicts and non-ADR duplication that family-local imports did not expose.
 
-The selective ADR-family imports are complete. The next alignment phase is the planned whole-corpus authority pass: preserve one canonical owner for each contract, retain useful local consequences and explanatory context, and remove only competing normative authority. During PR review, follow the linked [PR lifecycle](../../developer-workflows/pr-lifecycle.md); stop additional review cycles when new findings have tapered to duplicates, stylistic polish, or immaterial restatement rather than requiring zero conceivable suggestions.
+The selective ADR-family imports are complete. The next alignment phase is the planned whole-corpus authority pass: preserve one canonical owner for each contract, retain useful local consequences and explanatory context, and remove only competing normative authority. During PR review, follow the linked [PR lifecycle](../../developer-workflows/pr-lifecycle.md); its canonical taper rule governs when additional review cycles may stop, subject to any explicit faster boundary chosen by the human.
 
 ## Authority Boundaries
 
