@@ -193,6 +193,23 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             ):
                 self.validator.validate_workflow(root)
 
+    def test_validate_workflow_rejects_non_text_account_id_write(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        self.assertIn("account_file.write(str(account_id))", bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            "account_file.write(str(account_id))",
+            "account_file.write(account_id)",
+            1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                "dev-demo bootstrap must write the account id as text",
+            ):
+                self.validator.validate_workflow(root)
+
     def test_validate_workflow_rejects_multiple_player_bootstrap_requests(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
         canonical_payload = (

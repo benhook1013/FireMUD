@@ -471,7 +471,7 @@ jobs:
             if not account_id:
               raise SystemExit("Dev-demo bootstrap response did not include account id")
             with open(os.environ["BOOTSTRAP_ACCOUNT_ID_FILE"], "w", encoding="utf-8") as account_file:
-              account_file.write(account_id)
+              account_file.write(str(account_id))
             raise SystemExit(0)
 
           if bootstrap_mode != "session":

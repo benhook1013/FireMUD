@@ -9,6 +9,8 @@ HEALTH_SCRIPT="$ROOT_DIR/dev-tools/verify-compose-health.sh"
 BUILD_JARS_SCRIPT="$ROOT_DIR/dev-tools/build-compose-service-jars.sh"
 ENSURE_CERTS_SCRIPT="$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh"
 ENSURE_ENV_SCRIPT="$ROOT_DIR/dev-tools/ensure-local-compose-env.sh"
+# shellcheck disable=SC1091 # The repository root is resolved at runtime.
+source "$ROOT_DIR/dev-tools/smoke/run-owned-compose.sh"
 
 export TERM="${TERM:-dumb}"
 export COMPOSE_PROGRESS="${COMPOSE_PROGRESS:-plain}"
@@ -31,6 +33,7 @@ esac
 echo "Restart-state proof: preserve local compose volumes, restart the stack, then run WebSocket/Telnet LOGIN -> PLAY -> LOOK baseline proofs."
 echo "Local volumes are left intact."
 
+require_run_owned_compose_project
 bash "$ENSURE_ENV_SCRIPT"
 bash "$ENSURE_CERTS_SCRIPT"
 "$BUILD_JARS_SCRIPT"

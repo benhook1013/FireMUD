@@ -370,6 +370,18 @@ for script in "$ROOT_DIR/dev-tools/verify-fresh-bootstrap.sh" "$ROOT_DIR/dev-too
   done
 done
 
+restart_script="$ROOT_DIR/dev-tools/verify-restart-state.sh"
+grep -q 'run-owned-compose.sh' "$restart_script"
+restart_helper_source_line="$(grep -n 'run-owned-compose.sh' "$restart_script" | head -1 | cut -d: -f1)"
+restart_guard_line="$(grep -n '^[[:space:]]*require_run_owned_compose_project$' "$restart_script" | head -1 | cut -d: -f1)"
+restart_compose_line="$(grep -n '^[[:space:]]*docker compose' "$restart_script" | head -1 | cut -d: -f1)"
+if [[ -z "$restart_helper_source_line" || -z "$restart_guard_line" || -z "$restart_compose_line" \
+  || "$restart_helper_source_line" -ge "$restart_guard_line" \
+  || "$restart_guard_line" -ge "$restart_compose_line" ]]; then
+  echo "restart-state must source and call the run-owned helper before Compose" >&2
+  exit 1
+fi
+
 assert_command_rejects \
   "FIREMUD_SMOKE_RUN_ID must match" \
   env GITHUB_ACTIONS=false COMPOSE_PROJECT_NAME=firemud-smoke-shared bash "$RUN_OWNED_COMPOSE_HELPER"
