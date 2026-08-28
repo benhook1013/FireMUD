@@ -327,7 +327,9 @@ Spring Cloud Gateway provides centralized management of client traffic, offering
 > **Redis topology guidance:** Coordination Redis and Cache/Rate‑Limit Redis are
 > always deployed as **separate Redis instances** (for example, two containers
 > on a single dev machine or distinct pods/clusters in Kubernetes). Sharing a
-> single Redis instance for both roles is allowed only for explicitly documented, truly ephemeral CI/preview topologies and must not be used for non-ephemeral or player-facing environments.
+> single Redis instance for both roles is allowed only for explicitly documented,
+> truly ephemeral one-shot test/CI topologies; hosted `pr-preview` is excluded.
+> It must not be used for non-ephemeral or player-facing environments.
 > For any player-facing environment, configure the Gateway to use the dedicated
 > **Cache/Rate‑Limit Redis deployment** so rate limiting and cache activity cannot
 > interfere with tick/session coordination. See
@@ -558,7 +560,8 @@ The following table summarizes the main network surfaces exposed or used by Spri
 | Surface | Direction | Protocol(s) | Typical Port(s) | Auth / TLS Expectations |
 | --- | --- | --- | --- | --- |
 | Public player/admin ingress → Spring Cloud Gateway | Inbound | `HTTP(S)`, `WS(S)` | Load balancer ports (for example, `80`/`443`) | TLS terminates at the Internet-facing load balancer; gateway receives `http://` / `ws://` as described in [TLS Termination for Gateway](./system-architecture-security.md#tls-termination-for-gateway). |
-| TCP Proxy Service → Spring Cloud Gateway gameplay route | Inbound (internal only) | `WS(S)` | Gateway internal mTLS port (for example, `8443`) | The internal-only listener applies the selected exclusive trust profile after certificate chain/client-auth checks: exact URI SAN, exact DNS SAN, one leaf SHA-256 fingerprint, or development-only source CIDR. The gateway promotes `X-Proxy-*` inputs only after that profile succeeds. The host in `GATEWAY_WS_URL` must match the gateway certificate’s SANs. |
+| TCP Proxy Service → Spring Cloud Gateway gameplay route (certificate-bound profiles) | Inbound (internal only) | `WS(S)` | Gateway internal mTLS port (for example, `8443`) | The internal-only listener applies the selected exclusive certificate-bound trust profile after certificate chain/client-auth checks: exact URI SAN, exact DNS SAN, or one leaf SHA-256 fingerprint. The gateway promotes `X-Proxy-*` inputs only after that profile succeeds. The host in `GATEWAY_WS_URL` must match the gateway certificate’s SANs. |
+| TCP Proxy Service → Spring Cloud Gateway gameplay route (`development_cidr` only) | Inbound (development/test only) | `WSS` | Gateway internal TLS port (for example, `8443`) | The development-only listener uses TLS without client authentication and applies only the exact configured source-CIDR predicate; it does not claim certificate identity, is prohibited in player-facing environments, and never authorizes a plain-transport bridge. The host in `GATEWAY_WS_URL` must match the gateway certificate’s SANs. |
 | Spring Cloud Gateway → backend services | Outbound | `HTTP`, `WS` | `8080` (typical) | In-cluster hop; protected by NetworkPolicies and namespace boundaries. Backend services handle JWT validation/authorization as applicable; gameplay traffic remains on the `/ws/game/**` WebSocket route to the Game Session Service. |
 | Spring Cloud Gateway management plane (REST/gRPC) | Inbound (internal only) | `HTTP(S)`, gRPC | `8080` (REST), `6565` (gRPC) | Exposed only on internal surfaces (`ClusterIP` / private ingress); management operations require mTLS client certificates and are authorized at the gateway boundary (not delegated to downstream services). |
 
