@@ -203,7 +203,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             "      },"
         )
         legacy_payload = (
-            'public_account_url("/auth/player-bootstrap"),\n'
+            "public_account_url ( '/auth/player-bootstrap' ),\n"
             "      {\n"
             '        "tenantId": tenant_id,\n'
             '        "username": email,\n'

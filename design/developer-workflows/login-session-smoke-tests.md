@@ -126,7 +126,7 @@ Run the optional item/container/equipment extension from the WebSocket section o
 
 ## 3. Verifying the Same Experience
 
-Compare the WebSocket `PLAY` + `LOOK` response and the Telnet `PLAY` + `LOOK` response; they should match semantically because both commands traverse `/ws/game/**` and are handled by the same Game Session admission and gameplay pipeline. Recording the output blocks above and diffing them is enough to prove parity. Document any differences (for example, missing blank lines) as regressions in [Player Experience, Commands, and Communication](../project-management/implementation-tracking/player-experience-commands-and-communication.md).
+Compare the WebSocket `PLAY` + `LOOK` response and the Telnet `PLAY` + `LOOK` response after normalizing each command response: remove transport framing, prompts, and other explicitly allowed presentation differences, then compare the semantic response fields and command outcomes. Raw transcript diffing alone is not sufficient to prove parity. Document substantive differences (for example, a different room payload, state outcome, or error) as regressions in [Player Experience, Commands, and Communication](../project-management/implementation-tracking/player-experience-commands-and-communication.md); harmless whitespace or framing differences remain allowed only when they are normalized explicitly.
 
 When separately running the optional item/container/equipment extension with independent identities and isolated state, compare the `INV HERE`, `GET`, `INVENTORY`, `CONTAINER`, `PUT`, `TAKE`, `DROP`, `EQUIPMENT`, `WEAR`, and `REMOVE` results across WebSocket and Telnet. Until that isolation exists, this is an open parity proof rather than a current two-transport smoke claim. Differences in transport prompts are acceptable; differences in item state, container state, equipment state, or error codes are regressions in [Gameplay Rules, Entities, and Effects](../project-management/implementation-tracking/gameplay-rules-entities-and-effects.md).
 
@@ -140,5 +140,5 @@ For the Telnet path specifically, the smoke should verify both sides of the cont
 For the direct WebSocket path in this slice, the smoke verifies post-readiness parity only:
 
 - after readiness: first-attempt `LOGIN`, `PLAY`, and `LOOK` succeed without retries
-- the returned `PLAY` + `LOOK` transcript stays aligned with the Telnet path for the same game instance
+- normalized `PLAY` + `LOOK` response fields and outcomes stay aligned with the Telnet path for the same game instance after allowed framing/presentation differences are removed
 - the blackbox target is the direct Game Session WebSocket surface rather than Spring Cloud Gateway, so this smoke verifies backend gameplay-path parity rather than edge admission behavior
