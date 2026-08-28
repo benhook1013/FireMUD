@@ -98,7 +98,7 @@ One accepted Agreement covers each Contribution that You Submit within its scope
 
 ### 6.3 Assignment and Future Recipient
 
-You or We may assign the rights or obligations received through this Agreement to a third party only if, as a condition of the assignment, that third party agrees in writing to abide by all applicable rights and obligations in this Agreement. Upon a valid assignment by Us, the assignee becomes a Permitted Successor and is treated as “Us” or “We” to the extent of the assigned rights and obligations. This permits Benjamin to transfer the Project rights to a future company or other successor without changing the rights You retain or requiring a new grant for Contributions already covered by this Agreement.
+We may assign the rights or obligations received through this Agreement to a third party only if, as a condition of the assignment, that third party agrees in writing to abide by all applicable rights and obligations in this Agreement. Upon a valid assignment by Us, the assignee becomes a Permitted Successor and is treated as “Us” or “We” to the extent of the assigned rights and obligations. This permits Benjamin to transfer the Project rights to a future company or other successor without changing the rights You retain or requiring a new grant for Contributions already covered by this Agreement.
 
 ### 6.4 No Implied Waiver
 
