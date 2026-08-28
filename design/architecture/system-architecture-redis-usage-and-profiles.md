@@ -169,7 +169,7 @@ The following table summarizes how core services interact with Coordination Redi
 | **Spring Cloud Gateway** | Uses **Cache/Rate‑Limit Redis** for token‑bucket rate limiting and best‑effort caches, while its only **Coordination Redis** ownership/connection is the one-use connect-token replay marker `gateway:connect-token:jti:<jti>` and the associated `replayAdmissionFence`; it never touches tick, session, or other gameplay-coordination prefixes. The cache path connects via `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`. |
 | **Other microservices (Game Logic, Entity Management, World Management, Social & Groups, etc.)** | Do not define or own coordination prefixes; they participate in Coordination Redis **only** through shared helpers and Lua descriptors owned by Game Session (for example, `tick:{tenantRegionTag}:lock:<entityId>` for tick locks). Where they cache read‑heavy aggregates, they use **Cache/Rate‑Limit Redis** and the key patterns from the Redis Cache & Rate Limiting design. |
 
-These boundaries are part of the **Redis Coordination Invariants** described in `system-architecture-redis.md` and are enforced via shared key helpers, the Lua script registry, and CI tooling.
+These boundaries are part of the **Redis Coordination Invariants** described in `system-architecture-redis.md`. In the target state, they will be enforced via shared key helpers, the Lua script registry, and CI tooling; current role-specific clients, ACLs, key/script registration, and ownership proof remain incomplete as noted above.
 
 ---
 
