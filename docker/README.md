@@ -36,7 +36,7 @@ Canonical smoke/bootstrap proof:
 
 ```bash
 COMPOSE_PROJECT_NAME=firemud-smoke-local-20260829-1 dev-tools/verify-fresh-bootstrap.sh
-dev-tools/verify-restart-state.sh
+COMPOSE_PROJECT_NAME=firemud-smoke-local-20260829-1 dev-tools/verify-restart-state.sh
 COMPOSE_PROJECT_NAME=firemud-smoke-local-image-20260829-1 SMOKE_IMAGE_TAG=sha-0123456789abcdef dev-tools/verify-smoke-images.sh
 ```
 

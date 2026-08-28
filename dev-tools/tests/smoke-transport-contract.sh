@@ -260,27 +260,46 @@ with patch(
 print("smoke transport contract checks passed")
 PY
 
+assert_command_rejects() {
+  local expected_substring="$1"
+  shift
+  local output status
+  set +e
+  output="$("$@" 2>&1)"
+  status=$?
+  set -e
+  if [[ "$status" -eq 0 ]]; then
+    echo "expected command to fail, but it succeeded: $*" >&2
+    exit 1
+  fi
+  if [[ "$output" != *"$expected_substring"* ]]; then
+    echo "expected failed command output to contain '$expected_substring': $*" >&2
+    echo "$output" >&2
+    exit 1
+  fi
+}
+
 for script in \
   "$ROOT_DIR/services/game-session-service/websocket-login-look-smoke.sh" \
   "$ROOT_DIR/services/tcp-proxy-service/telnet-login-look-smoke.sh"; do
-  if SMOKE_MUTATION_EXTENSION=invalid bash "$script" >/dev/null 2>&1; then
-    echo "invalid mutation-extension value was accepted by $script" >&2
-    exit 1
-  fi
-  if SMOKE_MUTATION_EXTENSION=true bash "$script" >/dev/null 2>&1; then
-    echo "mutation extension ran without an isolation boundary: $script" >&2
-    exit 1
-  fi
+  assert_command_rejects \
+    "SMOKE_MUTATION_EXTENSION must be boolean" \
+    env SMOKE_MUTATION_EXTENSION=invalid bash "$script"
+  assert_command_rejects \
+    "Mutation extension requires SMOKE_MUTATION_BOUNDARY=run-owned-compose" \
+    env SMOKE_MUTATION_EXTENSION=true bash "$script"
   for project_name in docker smoke-full firemud-smoke- smoke-full--1 smoke-full-1- smoke-full-1-1-extra; do
-    if SMOKE_MUTATION_EXTENSION=true SMOKE_MUTATION_BOUNDARY=run-owned-compose COMPOSE_PROJECT_NAME="$project_name" bash "$script" >/dev/null 2>&1; then
-      echo "mutation extension accepted an invalid Compose project ($project_name): $script" >&2
-      exit 1
-    fi
+    assert_command_rejects \
+      "Mutation extension requires COMPOSE_PROJECT_NAME matching" \
+      env SMOKE_MUTATION_EXTENSION=true \
+      SMOKE_MUTATION_BOUNDARY=run-owned-compose \
+      COMPOSE_PROJECT_NAME="$project_name" bash "$script"
   done
-  if SMOKE_MUTATION_EXTENSION=true SMOKE_MUTATION_BOUNDARY=restricted-synthetic COMPOSE_PROJECT_NAME=firemud-smoke-contract bash "$script" >/dev/null 2>&1; then
-    echo "mutation extension accepted unavailable synthetic isolation: $script" >&2
-    exit 1
-  fi
+  assert_command_rejects \
+    "SMOKE_MUTATION_BOUNDARY=restricted-synthetic is unavailable" \
+    env SMOKE_MUTATION_EXTENSION=true \
+    SMOKE_MUTATION_BOUNDARY=restricted-synthetic \
+    COMPOSE_PROJECT_NAME=firemud-smoke-contract bash "$script"
   grep -q 'SMOKE_MUTATION_EXTENSION=.*false' "$script"
   grep -q 'SMOKE_MUTATION_BOUNDARY=.*' "$script"
   grep -q 'run-owned-compose' "$script"
@@ -299,10 +318,9 @@ for script in \
   "$ROOT_DIR/dev-tools/verify-fresh-bootstrap.sh" \
   "$ROOT_DIR/dev-tools/verify-restart-state.sh" \
   "$ROOT_DIR/dev-tools/verify-smoke-images.sh"; do
-  if SMOKE_MUTATION_EXTENSION=true bash "$script" >/dev/null 2>&1; then
-    echo "two-transport wrapper accepted unsupported mutation parity: $script" >&2
-    exit 1
-  fi
+  assert_command_rejects \
+    "independent transport identities/state are not proven" \
+    env SMOKE_MUTATION_EXTENSION=true bash "$script"
   grep -q 'independent transport identities/state are not proven' "$script"
   grep -q 'LOOK baseline proofs' "$script"
 done
