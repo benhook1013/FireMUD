@@ -570,13 +570,40 @@ jobs:
             fi
           done
           BOOTSTRAP_SECRET_DIR="$(mktemp -d)"
-          BOOTSTRAP_GATEWAY_PORT=18080
+          BOOTSTRAP_GATEWAY_PORT=
           kubectl -n "${PREVIEW_NAMESPACE}" port-forward \
             --address 127.0.0.1 \
             service/spring-cloud-gateway \
-            "${BOOTSTRAP_GATEWAY_PORT}:80" \
+            :80 \
             >"${BOOTSTRAP_PORT_FORWARD_LOG}" 2>&1 &
           BOOTSTRAP_PORT_FORWARD_PID=$!
+          for attempt in {1..30}; do
+            if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then
+              echo "::error::Dev-demo Gateway port-forward exited before binding" >&2
+              cat "${BOOTSTRAP_PORT_FORWARD_LOG}" || true
+              exit 1
+            fi
+            BOOTSTRAP_GATEWAY_PORT="$({
+              sed -nE 's/^Forwarding from 127[.]0[.]0[.]1:([0-9]+) -> 80$/\1/p' \
+                "${BOOTSTRAP_PORT_FORWARD_LOG}" || true
+            } | head -n1)"
+            if [[ "${BOOTSTRAP_GATEWAY_PORT}" =~ ^[0-9]+$ ]] \
+              && (( BOOTSTRAP_GATEWAY_PORT > 0 && BOOTSTRAP_GATEWAY_PORT <= 65535 )); then
+              break
+            fi
+            sleep 1
+          done
+          if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then
+            echo "::error::Dev-demo Gateway port-forward exited before account bootstrap" >&2
+            cat "${BOOTSTRAP_PORT_FORWARD_LOG}" || true
+            exit 1
+          fi
+          if [[ ! "${BOOTSTRAP_GATEWAY_PORT}" =~ ^[0-9]+$ ]] \
+            || (( BOOTSTRAP_GATEWAY_PORT < 1 || BOOTSTRAP_GATEWAY_PORT > 65535 )); then
+            echo "::error::Dev-demo Gateway port-forward did not report a valid local port" >&2
+            cat "${BOOTSTRAP_PORT_FORWARD_LOG}" || true
+            exit 1
+          fi
           if ! BOOTSTRAP_MODE=account \
             BOOTSTRAP_GATEWAY_BASE_URL="http://127.0.0.1:${BOOTSTRAP_GATEWAY_PORT}" \
             BOOTSTRAP_ACCOUNT_ID_FILE="${BOOTSTRAP_ACCOUNT_ID_FILE}" \

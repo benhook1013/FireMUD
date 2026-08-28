@@ -89,7 +89,7 @@ BOOTSTRAP_ACCOUNT_TRANSPORT_REQUIRED_MARKERS = (
     "kubectl -n \"${PREVIEW_NAMESPACE}\" port-forward",
     "--address 127.0.0.1",
     "service/spring-cloud-gateway",
-    '"${BOOTSTRAP_GATEWAY_PORT}:80"',
+    ":80",
     "BOOTSTRAP_MODE=account",
     'BOOTSTRAP_GATEWAY_BASE_URL="http://127.0.0.1:${BOOTSTRAP_GATEWAY_PORT}"',
     'gateway_base_url = os.environ["BOOTSTRAP_GATEWAY_BASE_URL"]',
@@ -97,6 +97,21 @@ BOOTSTRAP_ACCOUNT_TRANSPORT_REQUIRED_MARKERS = (
     'cleanup_bootstrap_port_forward\n          if [[ ! -s "${BOOTSTRAP_ACCOUNT_ID_FILE}" ]]; then',
     '--from-file=account-id="${BOOTSTRAP_ACCOUNT_ID_FILE}"',
     'value: session',
+)
+BOOTSTRAP_PORT_FORWARD_READINESS_REQUIRED_MARKERS = (
+    'BOOTSTRAP_PORT_FORWARD_LOG=/tmp/dev-demo-gateway-port-forward.log',
+    'if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then',
+    "Forwarding from 127[.]0[.]0[.]1:([0-9]+) -> 80",
+    'BOOTSTRAP_GATEWAY_PORT="$({ sed -nE',
+    '[[ "${BOOTSTRAP_GATEWAY_PORT}" =~ ^[0-9]+$ ]]',
+    "BOOTSTRAP_GATEWAY_PORT <= 65535",
+    'cat "${BOOTSTRAP_PORT_FORWARD_LOG}" || true',
+)
+BOOTSTRAP_DYNAMIC_PORT_FORWARD_PATTERN = re.compile(
+    r"service/spring-cloud-gateway(?:\s+\\)?\s+:80"
+)
+BOOTSTRAP_PORT_FORWARD_LOOP_PATTERN = re.compile(
+    r"for attempt in \{1\.\.(?P<attempts>[0-9]+)\}; do"
 )
 BOOTSTRAP_ACCOUNT_ID_REQUIRED_MARKER = "account_file.write(str(account_id))"
 BOOTSTRAP_CREDENTIAL_VALIDATION = """for credential in DEMO_SMOKE_EMAIL DEMO_SMOKE_PASSWORD DEMO_SMOKE_USERNAME; do
@@ -765,6 +780,44 @@ def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
                 "dev-demo player bootstrap must use the authenticated Kubernetes "
                 f"port-forward transport; missing: {expected}"
             )
+    if re.search(r"\bBOOTSTRAP_GATEWAY_PORT\s*=\s*[0-9]+\b", normalized):
+        raise AssertionError(
+            "dev-demo player bootstrap must use kubectl's dynamically selected local port"
+        )
+    if BOOTSTRAP_DYNAMIC_PORT_FORWARD_PATTERN.search(normalized) is None:
+        raise AssertionError(
+            "dev-demo player bootstrap must use kubectl's dynamic :80 local-port syntax"
+        )
+    for expected in BOOTSTRAP_PORT_FORWARD_READINESS_REQUIRED_MARKERS:
+        if normalize_script(expected) not in normalized:
+            raise AssertionError(
+                "dev-demo player bootstrap must prove the dynamic port-forward binding; "
+                f"missing: {expected}"
+            )
+    readiness_loop_match = BOOTSTRAP_PORT_FORWARD_LOOP_PATTERN.search(normalized)
+    if readiness_loop_match is None or not 1 <= int(
+        readiness_loop_match["attempts"]
+    ) <= 60:
+        raise AssertionError(
+            "dev-demo player bootstrap must use a short bounded port-forward readiness loop"
+        )
+    readiness_loop = readiness_loop_match.group(0)
+    python_invocation = normalize_script('python3 "${BOOTSTRAP_SCRIPT}"')
+    liveness_check = normalize_script(
+        'if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then'
+    )
+    python_index = normalized.find(python_invocation)
+    if normalized.find(readiness_loop) > python_index:
+        raise AssertionError(
+            "dev-demo player bootstrap must prove the port-forward before invoking Python"
+        )
+    if (
+        normalized.count(liveness_check) < 2
+        or normalized.rfind(liveness_check) > python_index
+    ):
+        raise AssertionError(
+            "dev-demo player bootstrap must recheck port-forward liveness before invoking Python"
+        )
     if normalize_script(BOOTSTRAP_ACCOUNT_ID_REQUIRED_MARKER) not in normalized:
         raise AssertionError(
             "dev-demo bootstrap must write the account id as text to preserve the "

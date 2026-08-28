@@ -538,13 +538,14 @@ RUN_OWNED_UMASK_CHILD_BASH='source "$1"; shift; umask 027; "$@"; [[ "$(umask)" =
 
 NO_FLOCK_BIN="$TEST_ROOT/no-flock-bin"
 mkdir -p "$NO_FLOCK_BIN"
+BASH_EXECUTABLE="$(command -v bash)"
 for dependency in uname stat readlink id mktemp awk sha256sum; do
   ln -s "$(command -v "$dependency")" "$NO_FLOCK_BIN/$dependency"
 done
 assert_command_rejects \
   "flock dependency" \
   env PATH="$NO_FLOCK_BIN" \
-  /usr/bin/bash -c "$RUN_OWNED_CHILD_BASH" _ \
+  "$BASH_EXECUTABLE" -c "$RUN_OWNED_CHILD_BASH" _ \
   "$RUN_OWNED_COMPOSE_HELPER" claim_run_owned_compose_project
 
 bash -c "$RUN_OWNED_UMASK_CHILD_BASH" _ \
