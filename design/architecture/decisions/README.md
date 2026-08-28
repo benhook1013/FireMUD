@@ -273,6 +273,9 @@ Validation precedence is fixed: first parse every checked queue row and validate
 | [ADR 0176](./adr-0176-owner-local-redis-execution-with-aggregated-contracts.md) | Accepted | `SF-1.5` | `SF-2.2`, `PO-4.4`, `AS-1.5` | Owner-local Redis execution with aggregated contracts |
 | [ADR 0177](./adr-0177-exact-plan-authorized-automated-production-deployment.md) | Accepted | `PO-3.1` | `PO-3.2`, `PO-4.4`, `PO-1.3`, `SF-1.3` | Exact-plan-authorized automated production deployment |
 | [ADR 0178](./adr-0178-disposable-transport-complete-pr-preview-proof.md) | Accepted | `PO-4.4` | `PO-3.1`, `PO-3.4`, `AA-2.1`, `EA-3.1` | Disposable transport-complete PR preview proof |
+| [ADR 0179](./adr-0179-firemud-managed-creator-commerce-boundary.md) | Accepted | `AA-1.4` | `AA-1.5`, `PO-1.3`, `EA-3.3` | Future FireMUD-managed creator-commerce boundary without marketplace enablement |
+| [ADR 0180](./adr-0180-account-owned-hosted-terms-acceptance-gate.md) | Accepted | `AA-1.3` | `AA-1.5`, `AR-1.1`, `AR-1.4`, `AR-1.5`, `EA-3.2`, `PO-1.3`, `SF-2.3` | Account-owned hosted-terms catalog, acceptance evidence, and official-hosted creator mutation gate |
+| [ADR 0181](./adr-0181-changed-hosted-terms-decline-and-existing-content-continuity.md) | Accepted | `PO-1.3` | `AA-1.3`, `AA-1.4`, `AA-1.5`, `AR-1.1`, `AR-1.4`, `AR-1.5`, `EA-3.2`, `SF-2.3` | Changed hosted-terms decline, prior-terms continuity, lifecycle-reducing access, and finite transition |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../../product/capability-taxonomy.md).
 

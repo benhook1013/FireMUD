@@ -310,6 +310,12 @@ See [Redis Architecture](./system-architecture-redis.md) and [Redis Usage & Prof
 
 ---
 
+## Hosted Creator Contract Ownership
+
+The target hosted-creator boundary is split across two owners: Account owns the operator, hosted-terms, Creator Party, acceptance, and currentness evidence; Game Design owns the fail-closed gate for official-hosted creator-intent mutations and preserves prior-terms continuity for permitted reads and lifecycle-reducing operations. See [ADR 0180](./decisions/adr-0180-account-owned-hosted-terms-acceptance-gate.md) and [ADR 0181](./decisions/adr-0181-changed-hosted-terms-decline-and-existing-content-continuity.md). This target-only summary adds no route, schema, generation, or legal-policy mechanics.
+
+---
+
 ## Major Components and Their Roles
 
 | Component | Purpose |
@@ -319,14 +325,14 @@ See [Redis Architecture](./system-architecture-redis.md) and [Redis Usage & Prof
 | **[TCP Proxy Service](./microservices/tcp-proxy-service/README.md)** | Accepts Telnet connections, buffers input, forwards over WebSocket; proxy-to-gateway mTLS secures the link |
 | **[Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md)** | Handles WebSocket termination, routing, and observability; enforces coarse-grained admin access controls but does not own gameplay authentication or authorization decisions |
 | **[Game Session Service](./microservices/game-session-service/README.md)** | Fronts gameplay login commands and session binding, manages player sessions, tick orchestration, runtime flags, input validation, and durable game-instance/runtime control metadata |
-| **[Account Service](./microservices/account-service/README.md)** | Manages player accounts, credentials, authentication, issues and signs exact JWT profiles and publishes JWKS; consuming services perform receiver-side signature/JWKS, profile, and audience validation; owns separate protective security-lock and punitive platform-access-ban state, Stripe v1 hosting billing, and canonical tenant entitlement/quota outcomes consumed by enforcement points |
+| **[Account Service](./microservices/account-service/README.md)** | Manages player accounts, credentials, authentication, issues and signs exact JWT profiles and publishes JWKS; consuming services perform receiver-side signature/JWKS, profile, and audience validation; owns separate protective security-lock and punitive platform-access-ban state, Stripe v1 hosting billing, canonical tenant entitlement/quota outcomes consumed by enforcement points, and the target hosted-terms/operator/Creator Party acceptance and currentness authority |
 | **[Entity Management Service](./microservices/entity-management-service/README.md)** | Handles all runtime entity data: players, NPCs, items, stats, and all inventories/containment (player inventory/equipment, containers, and items on the ground held in room-ground container entities keyed by room/instance ID) |
 | **[World Management Service](./microservices/world-management-service/README.md)** | Owns maps, rooms, and tick region structure; provides room/region geometry and snapshots, plus authoritative runtime location/occupancy and mutable room-environment state (doors, hazards, and persistent ambient flags) |
 | **[Game Logic Service](./microservices/game-logic-service/README.md)** | Executes gameplay mechanics; resolves actions deterministically, including movement/travel cost computation |
 | **[Automation & Scripting Service](./microservices/automation-scripting-service/README.md)** | Triggers AI and scripted behaviors |
 | **[Social & Groups Service](./microservices/social-groups-service/README.md)** | Owns relationships, groups, audiences, social-channel communication, mail envelopes, applicable history, and social delivery state; enforces owner-local `chat_mute` at message-send (`CHAT_SEND`) only and `chat_ban` at participation, message-send (`CHAT_SEND`), and history-access boundaries. It does not own Account identity/presence, Game Session transports, or Entity items, currency, containers, or attachments. |
 | **[Logging & Admin Service](./microservices/logging-admin-service/README.md)** | Provides admin tools, metrics dashboards, and audit logs; owns policy intent, moderation cases, bounded appeal cases/evidence, and audit for `platform_access_ban`, `gameplay_ban`, `chat_mute`, and `chat_ban`, while existing owner services enforce restrictions. Account owns `account_security_lock` policy/recovery. It provides operator UX and auditing for hypothetical Account entitlement overlays without owning entitlement state. |
-| **[Game Design Service](./microservices/game-design-service/README.md)** | Authoring tool for designing and publishing game data; defines feature flags; publishing workflow copies data to runtime services |
+| **[Game Design Service](./microservices/game-design-service/README.md)** | Authoring tool for designing and publishing game data; defines feature flags; owns the target fail-closed official-hosted creator mutation gate; publishing workflow copies data to runtime services |
 
 > 🔗 See [Microservices Documentation](./microservices/README.md) for the full list of responsibilities and APIs.
 

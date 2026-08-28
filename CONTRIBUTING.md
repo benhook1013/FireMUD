@@ -22,6 +22,16 @@ If you're setting up the project for the first time, follow these steps:
 
 Once your environment is running you can create a feature branch and submit a PR as described below.
 
+## Contributor Licence Agreement
+
+Before a pull request containing a contribution from an external individual or legal entity can be merged, an accepted [FireMUD Contributor Licence Agreement](CONTRIBUTOR_LICENSE_AGREEMENT.md) must be on file. Complete the applicable signature fields and send a signed electronic copy privately to [licensing@firedevops.net](mailto:licensing@firedevops.net). Benjamin James Hook will countersign or provide written acceptance or confirmation. Do not commit a completed agreement or personal details to the repository.
+
+An individual contributor, or the human signing for a legal entity, must be at least 18 years old and have legal capacity to enter the agreement; an entity signer must also have authority to bind that entity. Contributions by minors are deferred pending New Zealand legal review.
+
+The agreement preserves contributor ownership while granting the rights needed to use accepted contributions in FireMUD. Its detailed grant terms govern inbound contributions; the repository's outbound terms remain governed by [LICENSE.md](LICENSE.md). Contributions must contain only material the contributor owns or is authorized to submit, with third-party permissions identified before submission.
+
+Work authored by Benjamin James Hook in his current rights-holder capacity and configured dependency or workflow automation do not require a new CLA. The automation exception does not create an inbound-rights grant, and the applicable third-party licence terms still apply. The PR template records these exceptions; checking that box alone does not execute a CLA.
+
 ## Code Style Summary
 
 - Follow the repository guidance in [AGENTS.md](./AGENTS.md), with conditional procedures indexed in [developer workflows](./design/developer-workflows/README.md).

@@ -40,7 +40,7 @@ Additional variables configure outbound email delivery and payment behavior:
 | `FIREMUD_MAIL_VERIFICATION_URL` | Public URL for email verification links | `http://localhost:8080/auth/verify-email?token=%s` |
 | `FIREMUD_MAIL_RESET_URL` | Public URL for password reset links | `http://localhost:8080/reset-password?token=%s` |
 | `FIREMUD_PAYMENT_STRIPE_API_KEY` | Stripe API key used for payments | *(none)* |
-| `FIREMUD_PAYMENT_PLATFORM_FEE_PERCENT` | Platform fee percentage applied to transactions | `0` |
+| `FIREMUD_PAYMENT_PLATFORM_FEE_PERCENT` | Unsupported creator-share substrate; `0` is not an approved fee policy. Any future FireMUD-managed creator-player fee remains target-only under [ADR 0179](../../decisions/adr-0179-firemud-managed-creator-commerce-boundary.md). | `0` |
 | `FIREMUD_AUTH_JWT_SECRET` | Inline JWT signing key material for local/dev or explicitly ephemeral stacks only (legacy compatibility; not for player-facing environments) | *(none)* |
 | `FIREMUD_AUTH_JWT_SECRET_PATH` | Account-only path to the interim versioned asymmetric signing bundle (fallback while delegated non-exportable signer custody is unavailable; mounted read-only from `jwt-signing-keys`) | *(none)* |
 | `FIREMUD_AUTH_JWKS_PATH` | Path to the Account-published public `jwks.json` file used by Account and JWT validators (required for player-facing environments; mounted read-only from `jwt-jwks`, normally `/var/run/secrets/firemud/jwks/jwks.json`) | *(none)* |

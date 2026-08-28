@@ -6,6 +6,8 @@ This document defines the minimum release hygiene for FireMUD versions published
 
 FireMUD uses the PolyForm Noncommercial License 1.0.0.
 
+Benjamin James Hook is the current legal rights holder and operator. FireDevOps is the project brand, and firedevops.net is its website; neither is a separate legal entity.
+
 - The repository and official releases remain under the same noncommercial license unless FireMUD explicitly publishes different terms for a future version.
 - Each official release records its publication date in the NOTICE file distributed with that release.
 - The repository copy of [`NOTICE.md`](../../NOTICE.md) is a stable repository notice, not the generated release-specific NOTICE artifact.
@@ -38,9 +40,9 @@ Before publishing a release:
    - `COPYRIGHT_YEAR` set to the release year
    - `RELEASE_DATE` set to the publication date
 3. Generate or assemble the `/licenses` directory for the release artifact if dependency notices are required for included third-party software.
-4. Verify that [`LICENSE.md`](../../LICENSE.md), [`README.md`](../../README.md), and [`FAQ.md`](../../FAQ.md) still describe the current release licensing model accurately.
+4. Verify that [`LICENSE.md`](../../LICENSE.md), [`LICENSING.md`](../../LICENSING.md), [`NOTICE.md`](../../NOTICE.md), [`NOTICE.template.md`](../../NOTICE.template.md), [`README.md`](../../README.md), [`FAQ.md`](../../FAQ.md), and [`TRADEMARKS.md`](../../TRADEMARKS.md) collectively identify Benjamin James Hook as the current legal rights holder and FireDevOps/firedevops.net as the project brand and website, while keeping the PolyForm, community no-money, and future hosted/commercial wording aligned.
 5. Verify that `NOTICE` in the release artifact matches the release metadata actually being published.
-6. Verify that trademark wording remains current.
+6. Verify that the FireMUD and FireDevOps names and trademark wording remain consistent with [`TRADEMARKS.md`](../../TRADEMARKS.md) and do not imply that either mark is registered.
 
 ## Release Automation
 

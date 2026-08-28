@@ -11,11 +11,11 @@
 [![Containerization: Docker](https://img.shields.io/badge/Containerization-Docker-blue)](https://www.docker.com/)
 [![Orchestration: Kubernetes](https://img.shields.io/badge/Orchestration-Kubernetes-blue)](https://kubernetes.io/)
 
-Welcome to the **FireMUD Game Platform**, a modular and scalable system under the [FireDevOps.net](https://firedevops.net) umbrella for creating and running [Multi-User Dungeon (MUD) games](https://en.wikipedia.org/wiki/Multi-user_dungeon).
+Welcome to the **FireMUD Game Platform**, a modular and scalable system developed and maintained by Benjamin James Hook under the [FireDevOps.net](https://firedevops.net) project brand for creating and running [Multi-User Dungeon (MUD) games](https://en.wikipedia.org/wiki/Multi-user_dungeon). FireDevOps is the project brand and firedevops.net is its website, not a separate legal entity. An official hosted service is a planned target, not a currently operating service.
 
 FireMUD is a modern engine for classic text-based online RPGs: creators use it to build persistent shared worlds with rooms, items, NPCs, and quests, and players connect over the web or Telnet to explore, chat, and adventure together in real time.
 
-*This project uses the [PolyForm Noncommercial License 1.0.0](LICENSE.md). Commercial use is not permitted without a separate written agreement. See our [FAQ](FAQ.md) and [release process](design/operations/release-process.md) for details.*
+*This project uses the [PolyForm Noncommercial License 1.0.0](LICENSE.md). Commercial use is not permitted without a separate written agreement with Benjamin James Hook. See [LICENSING.md](LICENSING.md) for plain-language licensing lanes, [HOSTED_CONTENT_TERMS.md](HOSTED_CONTENT_TERMS.md) for the explicitly nonoperative hosted-content baseline, [TRADEMARKS.md](TRADEMARKS.md) for brand use, our [FAQ](FAQ.md), and the [release process](design/operations/release-process.md) for details.*
 
 ## Table of Contents
 
@@ -93,6 +93,9 @@ Canonical architecture references:
 - [User Journeys](design/product/user-journeys/overview.md) – player, creator, and operator flows.
 - [Infrastructure Overview](design/architecture/infrastructure/README.md) – deployment environments and shared systems.
 - [FAQ](FAQ.md) – quick context on licensing and common questions.
+- [LICENSING.md](LICENSING.md) – plain-language licensing lane guidance.
+- [HOSTED_CONTENT_TERMS.md](HOSTED_CONTENT_TERMS.md) – pre-launch policy baseline for official hosted creator-content terms.
+- [TRADEMARKS.md](TRADEMARKS.md) – FireMUD and FireDevOps brand-use policy.
 
 ---
 
@@ -107,6 +110,7 @@ Canonical architecture references:
 ## Contributing
 
 - Code contributions, workflow expectations, and PR guidance live in [CONTRIBUTING.md](CONTRIBUTING.md).
+- Repository contributions from an external individual or legal entity require an accepted [Contributor Licence Agreement](CONTRIBUTOR_LICENSE_AGREEMENT.md) before merge; current-rights-holder and configured-automation work follow the exceptions in the contribution guide.
 - AI-specific repository conventions live in [AGENTS.md](AGENTS.md).
 - Community expectations live in [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 - Security issues should be reported privately to [security@firedevops.net](mailto:security@firedevops.net), not filed as public issues.
@@ -119,7 +123,7 @@ Your support can make a significant difference in the development and success of
 - **Spread the Word**: Share the project with friends, colleagues, and on social media platforms to help us reach a wider audience.
 - **Financial Contributions**: Help fund ongoing development via [GitHub Sponsors](https://github.com/sponsors/benhook1013).
 
-  *Note: Financial contributions will be used to cover development costs, hosting, and other expenses related to the project.*
+  *Note: These contributions are paid directly to Benjamin James Hook for FireMUD development and do not authorize a community operator to receive money or other commercial benefit connected to operating an instance.*
 
 ---
 

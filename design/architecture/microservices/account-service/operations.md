@@ -13,7 +13,7 @@ This document collects the Account Service operational behavior, readiness model
 
 Account creation uses the shared `SagaBuilder` from `firemud-common` to persist the account record, create the profile, and log creation in the Logging & Admin Service. If any step fails, compensation actions roll back the database writes so the workflow remains consistent across services. See [Transaction Strategies](../../system-architecture-transactions.md) for details on the saga pattern.
 
-Purchase workflows (one-time payments or donations) reuse this same runner. The `PurchaseWorkflowService` creates the payment intent and then records the transaction with the Logging & Admin Service. Should the log step fail, the saga automatically refunds the Stripe payment via a compensation action.
+The current `PurchaseWorkflowService` implementation for one-time payments and donations is deferred substrate, not a supported V1 product path or entitlement authority. It reuses the same runner to create a payment intent, record the transaction with the Logging & Admin Service, and refund through compensation if the log step fails. It must not be exposed as creator-player commerce: current V1 remains the hosting-billing boundary in [ADR 0143](../../decisions/adr-0143-stripe-v1-hosting-billing-and-deferred-creator-monetization.md), while the future marketplace direction in [ADR 0179](../../decisions/adr-0179-firemud-managed-creator-commerce-boundary.md) remains separately implemented and proved. Current provider-mutating drift remains subject to the existing Account containment boundary.
 
 ## Metrics and Tracing
 

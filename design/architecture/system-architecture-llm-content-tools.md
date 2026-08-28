@@ -48,7 +48,7 @@ Tenant-authored content, retrieved context, tool output, and model output are un
 - arbitrary database, object-store, filesystem, shell, internal-API, and network access is unavailable; and
 - execution has bounded time, tokens, output, concurrency, temporary storage, and cost.
 
-Provider retention, training use, data residency, tenant-content policy, and any future retrieval source must be approved before that provider or source is enabled. These choices do not move enforcement into provider prompts or policies.
+Provider retention, training use, data residency, tenant-content policy, and any future retrieval source must be approved before that provider or source is enabled. The [Hosted Content Terms](../../HOSTED_CONTENT_TERMS.md) hosting permission gives no model-training or model-improvement rights; any future training use requires separate explicit creator permission and approval. Processing an inference request does not itself grant training rights. These choices do not move enforcement into provider prompts or policies.
 
 ## Provenance
 

@@ -135,6 +135,9 @@ The matrix below is the target participation and ownership contract. `Authoritat
 | Scoped per-instance tick pause/resume (implementation-participating but externally gated through Logging & Admin) | | | ✔ | ✔ | | | | | ✔ | | ✔ |
 | Guarded tick remediation (target-only/non-routable enumeration, regional mutation, and reset/remediate orchestration until owner contracts, minimum schema/authorization gate, and [ADR 0048](./decisions/adr-0048-durable-idempotent-operator-write-execution.md)'s complete durable, idempotent, fenced owner-execution contract exist) | | | ✔ | ✔ | | | | | ✔ | | |
 | Game asset publication, release descriptors, and lifecycle/CAS authority | ✔ | | | | | | | | | | |
+| Official-hosted terms catalog, operator identity, current acceptance evidence, and party authority | | | ✔ | | | | | | | | |
+| Official-hosted creator-intent mutation gate and tenant/party/evidence binding across authoring, assets, templates, plugins, revisions, and publication (ADR 0180; changed-term write consequence in ADR 0181) | ✔ | | | | | | | | | | |
+| Official-hosted prior-terms continuity and lifecycle-reducing operations after changed-term decline (ADR 0181; no new content payload or rights) | ✔ | | ✔ | | | | | | | | |
 | Asset deletion eligibility oracle (`CanDeleteVersionAssets`) | ✔ | | | | | | | | ✔ | | |
 | Asset purge control-plane workflow (`BeginPurgeVersionAssets` / `FinalizePurgeVersionAssets`) | ✔ | | | | | | | | ✔ | | |
 | Bypass-safe Game Design creator writes for tenant-scoped assets and templates | ✔ | | | | | | | | | | ✔ |
