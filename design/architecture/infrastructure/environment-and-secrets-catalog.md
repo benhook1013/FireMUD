@@ -58,7 +58,7 @@ In production, these variables are normally sourced from a Secret such as `postg
 
 ## Redis Coordination & Cache
 
-Redis stores transient queues and caches. All environments, including local development, use **separate Redis deployments** for:
+Redis stores transient queues and caches. Every non-ephemeral or player-facing environment, including local development and hosted `pr-preview`, uses **separate Redis deployments** for:
 
 - **Coordination Redis** – tick locks, timers, sessions, and other gameplay‑critical coordination keys.
 - **Cache/Rate‑Limit Redis** – gateway rate limiting and best‑effort read‑side caches.
@@ -85,7 +85,7 @@ Precedence rule:
 
 Precedence and safety rules:
 
-- All Spring profiles (dev and non‑dev) **must** configure explicit, **distinct** endpoints for coordination and cache/rate-limit traffic:
+- All Spring profiles (dev and non‑dev), except the explicitly labelled one-shot ephemeral test/CI exception below, **must** configure explicit, **distinct** endpoints for coordination and cache/rate-limit traffic:
   - Coordination clients resolve their connection from `FIREMUD_REDIS_COORD_URL` (if set) or `FIREMUD_REDIS_COORD_HOST` / `FIREMUD_REDIS_COORD_PORT`.
   - Cache/rate‑limit clients resolve their connection from `FIREMUD_REDIS_CACHE_URL` (if set) or `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`.
 - Services **fail fast at startup** if:
@@ -93,9 +93,9 @@ Precedence and safety rules:
   - They require Cache/Rate‑Limit Redis but lack either `FIREMUD_REDIS_CACHE_URL` or `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`.
 - It is **not supported** to point Coordination and Cache/Rate‑Limit roles at the same resolved endpoint in any **non-ephemeral or player-facing** environment, including local development, staging, production, and hosted `pr-preview`. This prohibition applies regardless of whether configuration uses `*_URL` or `*_HOST`/`*_PORT`. Coordination and cache/rate‑limit roles run on separate Redis deployments (for example, two containers on the same developer machine).
 
-Player-facing environments (`hobby-self-hosted`, staging, production, and any environment used to validate performance or correctness) **must** configure Coordination Redis and Cache/Rate‑Limit Redis as **distinct Redis processes and endpoints**. Reusing the same host/port for both is considered non‑compliant with the Redis architecture because it reintroduces eviction and latency coupling between coordination keys and cache/rate-limit traffic. Any ad-hoc “single Redis for all roles” topology is treated as an unsupported experiment and must not be used for shared or player-facing environments or for any cluster that runs coordination reset tooling.
+Player-facing and production-like environments (`hobby-self-hosted`, staging, production, hosted `pr-preview`, and any environment whose results claim coordination-isolation, replay, or SLO evidence) **must** configure Coordination Redis and Cache/Rate‑Limit Redis as **distinct Redis processes and endpoints**. Reusing the same host/port for both is considered non‑compliant with the Redis architecture because it reintroduces eviction and latency coupling between coordination keys and cache/rate-limit traffic. Any ad-hoc “single Redis for all roles” topology is treated as an unsupported experiment and must not be used for shared or player-facing environments or for any cluster that runs coordination reset tooling.
 
-Only an explicitly labelled one-shot test/CI stack may collapse roles into a single Redis instance, and only as a guarded **ephemeral topology**. Hosted `pr-preview` environments are not part of that exception; they preserve the normal role split because they are intended to exercise reviewer-facing full-stack behavior. Any stack using the ephemeral exception must visibly surface the shared endpoint and forfeits role-isolation, replay, and SLO evidence, so it cannot be mistaken for a production-like configuration. See `../system-architecture-redis-usage-and-profiles.md#environment-mappings` for the allowed exception and guardrails.
+Only an explicitly labelled one-shot test/CI stack may collapse roles into a single Redis instance, and only as a guarded **ephemeral topology** whose tests do not claim coordination-isolation, replay, or SLO evidence. Hosted `pr-preview` environments are not part of that exception; they preserve the normal role split because they are intended to exercise reviewer-facing full-stack behavior. Any stack using the ephemeral exception must visibly surface the shared endpoint and forfeits role-isolation, replay, and SLO evidence, so it cannot be mistaken for a production-like configuration. See `../system-architecture-redis-usage-and-profiles.md#environment-mappings` for the allowed exception and guardrails.
 
 ---
 

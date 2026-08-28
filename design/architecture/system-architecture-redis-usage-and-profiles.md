@@ -291,12 +291,12 @@ All services and tools select Redis roles via configuration, not hard‑coded UR
   - `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`  
     or `FIREMUD_REDIS_CACHE_URL`.
 
-Shared configuration helpers (for example in `firemud-common`) expose:
+Target-state shared configuration helpers (for example in `firemud-common`) will expose:
 
 - `RedisCoordConfig` + `createCoordinationRedisClient(...)`
 - `RedisCacheConfig` + `createCacheRedisClient(...)`
 
-Requirements:
+Target-state requirements once those helpers exist:
 
 - **Role explicitness**
   - Every service and ops script must accept a specific role config (`RedisCoordConfig` or `RedisCacheConfig`), not arbitrary host/port strings.
