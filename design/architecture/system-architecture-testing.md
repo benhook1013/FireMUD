@@ -163,6 +163,12 @@ Each microservice has its own unit and integration tests. Cross‑service scenar
 
 Test data seeding strategies use the `dev-tools/seed/seed-test-data.sh` script to populate a minimal world for local testing, and an automated approach seeds data for integration tests.
 
+### Player-flow smoke and reset boundaries
+
+The canonical player-flow baseline is `LOGIN` -> `PLAY` -> `LOOK`. It is read-only with respect to ordinary playable state, although login, session, presence, and transport effects still follow their normal contracts. The optional item/container/equipment extension is mutating. The current standalone WebSocket and Telnet clients default to the baseline; mutation requires `SMOKE_MUTATION_EXTENSION=true`, `SMOKE_MUTATION_BOUNDARY=run-owned-compose`, and an explicit `COMPOSE_PROJECT_NAME` matching either `firemud-smoke-<unique-run-id>` or the existing CI form `smoke-full-<run-id>-<attempt>`.
+
+The fresh-bootstrap and image-tag wrappers execute both transports in baseline-only mode and reject mutation requests until independent transport identities and playable state exist. A persistent/shared environment may use the target restricted-synthetic identity, namespace, and fence verifier only after that verifier is implemented; it is not a current mutation path. A run-owned Compose project is the only currently supported mutation boundary. Its whole-stack teardown disposes that test deployment and is not authority to reset Coordination Redis; Coordination Redis reset remains governed by the canonical Redis operations owner and its quarantine/fence contract.
+
 ### Redis in Tests
 
 Redis participates in several layers of the test strategy:

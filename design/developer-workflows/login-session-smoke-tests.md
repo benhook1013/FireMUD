@@ -1,6 +1,17 @@
 # Smoke Tests for Login + PLAY + LOOK
 
-These steps exercise the same `WORLDS` (optional) + `LOGIN` + `PLAY` + `LOOK` flow that users take over both WebSocket (direct Game Session) and Telnet (via TCP Proxy + Gateway) transports. The optional item/container/equipment extension then proves the first player-visible inventory loop over the same command surface. These examples deliberately use the `demo@example.com` / `swordfish` credentials that the Compose-backed smoke stack seeds explicitly for local verification.
+These steps exercise the same `WORLDS` (optional) + `LOGIN` + `PLAY` + `LOOK` flow that users take over both WebSocket (direct Game Session) and Telnet (via TCP Proxy + Gateway) transports. The optional item/container/equipment extension can exercise the first player-visible inventory loop over the same command surface when the validated mutation boundary is available. These examples deliberately use the `demo@example.com` / `swordfish` credentials that the Compose-backed smoke stack seeds explicitly for local verification.
+
+The default smoke is the read-only `LOGIN` -> `PLAY` -> `LOOK` baseline. The item/container/equipment sequence is a mutating extension and is not part of the default two-transport wrappers. A standalone transport client may run that extension only inside an explicitly validated run-owned Compose project:
+
+```bash
+SMOKE_MUTATION_EXTENSION=true \
+SMOKE_MUTATION_BOUNDARY=run-owned-compose \
+COMPOSE_PROJECT_NAME=firemud-smoke-local-20260829-1 \
+bash services/game-session-service/websocket-login-look-smoke.sh
+```
+
+The accepted project-name forms are `firemud-smoke-<unique-run-id>` and the existing CI form `smoke-full-<run-id>-<attempt>`. Persistent/shared mutation remains unavailable until the restricted-synthetic identity, playable-state namespace, and fence verifier exists. Do not use the fresh-bootstrap or image-tag two-transport wrappers for mutating parity: they run baseline-only and reject the mutation extension until independent transport identities/state are proven.
 
 ## Requirements
 
@@ -111,13 +122,13 @@ You are in a candle-lit antechamber carved into basalt.
 
 ```
 
-Run the same optional item/container/equipment extension from the WebSocket section if the environment has the demo item fixtures loaded. The Telnet transcript should be semantically identical to the WebSocket transcript apart from framing/prompt differences.
+Run the optional item/container/equipment extension from the WebSocket section only as a separately isolated Telnet leg with the same validated run-owned boundary. The Telnet transcript should be semantically identical to the WebSocket transcript apart from framing/prompt differences; the two-transport wrappers do not currently prove mutating parity because they intentionally reject shared-state mutation.
 
 ## 3. Verifying the Same Experience
 
 Compare the WebSocket `PLAY` + `LOOK` response and the Telnet `PLAY` + `LOOK` response; they should match semantically because both commands traverse `/ws/game/**` and are handled by the same Game Session admission and gameplay pipeline. Recording the output blocks above and diffing them is enough to prove parity. Document any differences (for example, missing blank lines) as regressions in [Player Experience, Commands, and Communication](../project-management/implementation-tracking/player-experience-commands-and-communication.md).
 
-When running the optional item/container/equipment extension, compare the `INV HERE`, `GET`, `INVENTORY`, `CONTAINER`, `PUT`, `TAKE`, `DROP`, `EQUIPMENT`, `WEAR`, and `REMOVE` results across WebSocket and Telnet as the same parity proof. Differences in transport prompts are acceptable; differences in item state, container state, equipment state, or error codes are regressions in [Gameplay Rules, Entities, and Effects](../project-management/implementation-tracking/gameplay-rules-entities-and-effects.md).
+When separately running the optional item/container/equipment extension with independent identities and isolated state, compare the `INV HERE`, `GET`, `INVENTORY`, `CONTAINER`, `PUT`, `TAKE`, `DROP`, `EQUIPMENT`, `WEAR`, and `REMOVE` results across WebSocket and Telnet. Until that isolation exists, this is an open parity proof rather than a current two-transport smoke claim. Differences in transport prompts are acceptable; differences in item state, container state, equipment state, or error codes are regressions in [Gameplay Rules, Entities, and Effects](../project-management/implementation-tracking/gameplay-rules-entities-and-effects.md).
 
 If any readiness endpoint for the target path is still not `UP`, do not treat retries or waiting inside the client flow as a valid substitute. The stack is not yet ready for player traffic.
 

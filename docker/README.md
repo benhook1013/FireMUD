@@ -35,12 +35,12 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.override.ym
 Canonical smoke/bootstrap proof:
 
 ```bash
-dev-tools/verify-fresh-bootstrap.sh
+COMPOSE_PROJECT_NAME=firemud-smoke-local-20260829-1 dev-tools/verify-fresh-bootstrap.sh
 dev-tools/verify-restart-state.sh
-SMOKE_IMAGE_TAG=<tag> dev-tools/verify-smoke-images.sh
+COMPOSE_PROJECT_NAME=firemud-smoke-local-image-20260829-1 SMOKE_IMAGE_TAG=sha-0123456789abcdef dev-tools/verify-smoke-images.sh
 ```
 
-Do not treat `docker/docker-compose.smoke-images.override.yml` as a standalone ad hoc compose file. Its contract is to be driven through `SMOKE_IMAGE_TAG=<tag> dev-tools/verify-smoke-images.sh`, which validates the tag, writes the required local env override, and runs the full smoke flow.
+These entrypoints run the read-only `LOGIN` -> `PLAY` -> `LOOK` baseline over both transports. Do not request mutating parity through them; the wrappers reject `SMOKE_MUTATION_EXTENSION=true` until independent transport state exists. Do not treat `docker/docker-compose.smoke-images.override.yml` as a standalone ad hoc compose file. Its contract is to be driven through `COMPOSE_PROJECT_NAME=<run-owned-name> SMOKE_IMAGE_TAG=<tag> dev-tools/verify-smoke-images.sh`, which validates the tag, writes the required local env override, and runs the baseline smoke flow. Whole-stack teardown is test-deployment disposal, not a Coordination Redis reset.
 
 Gradle-managed local prebuilt-image stack:
 

@@ -259,3 +259,70 @@ with patch(
 
 print("smoke transport contract checks passed")
 PY
+
+for script in \
+  "$ROOT_DIR/services/game-session-service/websocket-login-look-smoke.sh" \
+  "$ROOT_DIR/services/tcp-proxy-service/telnet-login-look-smoke.sh"; do
+  if SMOKE_MUTATION_EXTENSION=invalid bash "$script" >/dev/null 2>&1; then
+    echo "invalid mutation-extension value was accepted by $script" >&2
+    exit 1
+  fi
+  if SMOKE_MUTATION_EXTENSION=true bash "$script" >/dev/null 2>&1; then
+    echo "mutation extension ran without an isolation boundary: $script" >&2
+    exit 1
+  fi
+  for project_name in docker smoke-full firemud-smoke- smoke-full--1 smoke-full-1- smoke-full-1-1-extra; do
+    if SMOKE_MUTATION_EXTENSION=true SMOKE_MUTATION_BOUNDARY=run-owned-compose COMPOSE_PROJECT_NAME="$project_name" bash "$script" >/dev/null 2>&1; then
+      echo "mutation extension accepted an invalid Compose project ($project_name): $script" >&2
+      exit 1
+    fi
+  done
+  if SMOKE_MUTATION_EXTENSION=true SMOKE_MUTATION_BOUNDARY=restricted-synthetic COMPOSE_PROJECT_NAME=firemud-smoke-contract bash "$script" >/dev/null 2>&1; then
+    echo "mutation extension accepted unavailable synthetic isolation: $script" >&2
+    exit 1
+  fi
+  grep -q 'SMOKE_MUTATION_EXTENSION=.*false' "$script"
+  grep -q 'SMOKE_MUTATION_BOUNDARY=.*' "$script"
+  grep -q 'run-owned-compose' "$script"
+  grep -q 'smoke-full-' "$script"
+  grep -q 'login_play_look_steps' "$script"
+  grep -q 'gameplay_item_container_equipment_steps' "$script"
+  boundary_line="$(grep -n 'Mutation extension requires SMOKE_MUTATION_BOUNDARY=run-owned-compose' "$script" | head -1 | cut -d: -f1)"
+  python_line="$(grep -n '\$PYTHON.*<<' "$script" | head -1 | cut -d: -f1)"
+  if [[ -z "$boundary_line" || -z "$python_line" || "$boundary_line" -ge "$python_line" ]]; then
+    echo "mutation isolation preflight is not before service access in $script" >&2
+    exit 1
+  fi
+done
+
+for script in \
+  "$ROOT_DIR/dev-tools/verify-fresh-bootstrap.sh" \
+  "$ROOT_DIR/dev-tools/verify-restart-state.sh" \
+  "$ROOT_DIR/dev-tools/verify-smoke-images.sh"; do
+  if SMOKE_MUTATION_EXTENSION=true bash "$script" >/dev/null 2>&1; then
+    echo "two-transport wrapper accepted unsupported mutation parity: $script" >&2
+    exit 1
+  fi
+  grep -q 'independent transport identities/state are not proven' "$script"
+  grep -q 'LOOK baseline proofs' "$script"
+done
+
+for script in "$ROOT_DIR/dev-tools/verify-fresh-bootstrap.sh" "$ROOT_DIR/dev-tools/verify-smoke-images.sh"; do
+  grep -q 'require_run_owned_compose_project' "$script"
+  grep -q 'firemud-smoke-' "$script"
+  down_line="$(grep -n '^docker compose .*down -v --remove-orphans' "$script" | head -1 | cut -d: -f1)"
+  guard_line="$(grep -n 'require_run_owned_compose_project$' "$script" | tail -1 | cut -d: -f1)"
+  if [[ -z "$down_line" || -z "$guard_line" || "$guard_line" -ge "$down_line" ]]; then
+    echo "destructive compose teardown is not guarded in $script" >&2
+    exit 1
+  fi
+  if grep -q 'compose_up_with_retry' "$script"; then
+    retry_call_line="$(grep -n '^compose_up_with_retry$' "$script" | tail -1 | cut -d: -f1)"
+    if [[ -z "$retry_call_line" || "$guard_line" -ge "$retry_call_line" ]]; then
+      echo "retry teardown is not guarded in $script" >&2
+      exit 1
+    fi
+  fi
+done
+
+echo "smoke script boundary contract checks passed"
