@@ -367,13 +367,14 @@ jobs:
       - name: Stop smoke stack
         if: always()
         run: |
-          docker compose \
+          source ./dev-tools/smoke/run-owned-compose.sh
+          if ! stop_run_owned_compose_project \
             -f docker/docker-compose.yml \
             -f docker/docker-compose.override.yml \
-            -f docker/docker-compose.smoke-images.override.yml \
-            down \
-            -v \
-            --remove-orphans
+            -f docker/docker-compose.smoke-images.override.yml; then
+            echo "Unable to prove or release the smoke Compose project; refusing unowned teardown." >&2
+            exit 1
+          fi
 
   smoke-full:
     name: Published Runtime Full-Stack Smoke

@@ -7,12 +7,13 @@ The default smoke is the read-only `LOGIN` -> `PLAY` -> `LOOK` baseline. The ite
 ```bash
 export FIREMUD_SMOKE_RUN_ID="local-$(date +%s)-$$"
 export COMPOSE_PROJECT_NAME="firemud-smoke-${FIREMUD_SMOKE_RUN_ID}"
+export FIREMUD_SMOKE_OWNERSHIP_TOKEN="$(openssl rand -hex 32)"
 SMOKE_MUTATION_EXTENSION=true \
 SMOKE_MUTATION_BOUNDARY=run-owned-compose \
 bash services/game-session-service/websocket-login-look-smoke.sh
 ```
 
-The explicit ID-to-project binding is defined by [Testing: player-flow smoke and reset boundaries](../architecture/system-architecture-testing.md#player-flow-smoke-and-reset-boundaries). Persistent/shared mutation remains unavailable until the restricted-synthetic identity, playable-state namespace, and fence verifier exists. Do not use the fresh-bootstrap or image-tag two-transport wrappers for mutating parity: they run baseline-only and reject the mutation extension until independent transport identities/state are proven.
+The explicit ID-to-project binding and capability are defined by [Testing: player-flow smoke and reset boundaries](../architecture/system-architecture-testing.md#player-flow-smoke-and-reset-boundaries). The token must be the same capability that claimed the running project; this standalone client does not create a project. Persistent/shared mutation remains unavailable until the restricted-synthetic identity, playable-state namespace, and fence verifier exists. Do not use the fresh-bootstrap or image-tag two-transport wrappers for mutating parity: they run baseline-only and reject the mutation extension until independent transport identities/state are proven.
 
 ## Requirements
 

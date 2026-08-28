@@ -89,7 +89,7 @@ if [[ "$FIREMUD_SMOKE_VALIDATE_ONLY" == "1" ]]; then
   exit 0
 fi
 
-require_run_owned_compose_project
+claim_run_owned_compose_project
 docker compose "${COMPOSE_FILES[@]}" down -v --remove-orphans
 bash "$ENSURE_CERTS_SCRIPT"
 bash "$BUILD_JARS_SCRIPT"

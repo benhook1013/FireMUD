@@ -33,6 +33,11 @@ case "$SMOKE_MUTATION_EXTENSION" in
     case "$SMOKE_MUTATION_BOUNDARY" in
       run-owned-compose)
         require_run_owned_compose_project
+        if [[ "$SMOKE_GAME_SESSION_WS_URL" != "ws://localhost:8086/ws/game" ]]; then
+          echo "Mutation mode requires SMOKE_GAME_SESSION_WS_URL=ws://localhost:8086/ws/game; refusing endpoint override." >&2
+          exit 1
+        fi
+        require_run_owned_compose_service game-session-service 8080 8086
         ;;
       restricted-synthetic|synthetic-identity)
         echo "SMOKE_MUTATION_BOUNDARY=$SMOKE_MUTATION_BOUNDARY is unavailable: no authoritative synthetic identity/isolation verifier exists." >&2

@@ -36,6 +36,11 @@ case "$SMOKE_MUTATION_EXTENSION" in
     case "$SMOKE_MUTATION_BOUNDARY" in
       run-owned-compose)
         require_run_owned_compose_project
+        if [[ "$SMOKE_HOST" != "localhost" || "$TCP_PORT" != "2323" || "${TCP_PROXY_PORT:-2323}" != "2323" ]]; then
+          echo "Mutation mode requires the canonical Telnet endpoint localhost:2323; refusing endpoint override." >&2
+          exit 1
+        fi
+        require_run_owned_compose_service tcp-proxy-service 2323 2323
         ;;
       restricted-synthetic|synthetic-identity)
         echo "SMOKE_MUTATION_BOUNDARY=$SMOKE_MUTATION_BOUNDARY is unavailable: no authoritative synthetic identity/isolation verifier exists." >&2

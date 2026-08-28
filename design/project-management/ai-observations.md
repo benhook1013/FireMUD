@@ -124,3 +124,8 @@ Entry format:
   - Context: a hosted full-review request remained unfinished with no findings while the checker reported `latest_review_request_rate_limited=false`; the direct CodeRabbit command reply was already terminal `Action not completed — Review rate limited`.
   - Observation: a derived checker flag can miss terminal rate-limit evidence and leave a watcher treating a completed request as active.
   - Expected pattern: when a hosted request appears stuck, inspect the direct reply. Treat an explicit rate-limit response as terminal, stop its watcher, and request again only when authorized on the next meaningful head or after the stated availability window.
+
+- `2026-08-29`: Caller-selected names are selectors, not destructive ownership proof
+  - Context: tightening local Compose smoke project binding and lifecycle checks.
+  - Observation: a project name supplied by the caller does not prove ownership of destructive access.
+  - Expected pattern: require a claim/capability, verify project resources and the canonical endpoint, and fail closed on stale, colliding, or mismatched state.
