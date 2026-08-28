@@ -57,7 +57,7 @@ You are in a candle-lit antechamber carved into basalt.
 
 Capture both responses so you can compare them to the Telnet flow.
 
-Optional item/container/equipment extension, when the target environment has the demo item fixtures loaded:
+Optional mutating item/container/equipment extension, only when the isolation boundary below is satisfied and the target environment has the required fixtures:
 
 ```text
 INV HERE
@@ -86,7 +86,9 @@ Expected semantic checks:
 - `WEAR Leather Cap` reports success, `EQUIPMENT` shows `HEAD: Leather Cap`, and `REMOVE HEAD` reports success.
 - `WEAR Iron Boots` returns a clear `SLOT_INCOMPATIBLE` error in environments that carry the demo incompatible-item fixture.
 
-For Compose-backed blackbox verification, the canonical script is:
+The current script also runs the mutating item/container/equipment extension. Before invoking it, verify that the target is a run-owned disposable Compose boundary or exact-head preview under the isolation rules in section 4; do not invoke it against shared or stable state.
+
+For Compose-backed blackbox verification, the current canonical script is:
 
 ```bash
 cd services/game-session-service
