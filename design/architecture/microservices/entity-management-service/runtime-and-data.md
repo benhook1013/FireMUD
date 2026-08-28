@@ -60,7 +60,7 @@ Entity Management must classify its runtime persistence surface for cutover and 
 - `S3` entity-owned ephemeral state:
   - synthetic room-ground containers and their contents keyed by `(tenantId, gameInstanceId, roomInstanceId)`;
   - transient containment, encounter-specific entities, corpses, summons, or equivalent rows whose lifecycle is tied to the source `gameInstanceId`;
-  - `entity_tick_state` watermark rows keyed by `(tenantId, gameInstanceId, playableStateScope, regionId, targetAggregateType, entityId)` for the concrete instance/region timeline;
+  - `entity_tick_state` watermark rows keyed by `(tenantId, gameInstanceId, regionId, targetAggregateType, entityId)` for the concrete instance/region timeline; immutable `playableStateScope` is separately validated as routing/authorization evidence against that concrete instance/region timeline;
   - any row family explicitly documented as instance-scoped only.
 
 ### Conservative Current Implementation Inventory
