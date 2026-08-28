@@ -18,7 +18,7 @@ Ordinary community self-hosted instances have no FireMUD-managed commerce. An in
 
 ## Planned Official Hosted V1 Lane
 
-An official paid multi-tenant FireMUD service is a planned V1 target under the FireDevOps project brand; it is not currently operating. If and when that service launches, FireMUD would charge the tenant billing owner for hosting plans or platform subscriptions through the accepted hosting-billing flow. Official hosted creator content would be subject to the [Hosted Content Terms](HOSTED_CONTENT_TERMS.md) policy baseline only when the identified operator incorporates it into an accepted creator flow. Creator-to-player purchases, paid game subscriptions, tips or donations, platform fees on creator transactions, revenue sharing, payouts, and settlement remain deferred until a separate marketplace and settlement decision.
+An official paid multi-tenant FireMUD service is a planned V1 target under the FireDevOps project brand; it is not currently operating. If and when that service launches, Benjamin James Hook, as the identified planned hosted-service operator, would charge the tenant billing owner for hosting plans or platform subscriptions through the accepted hosting-billing flow. Official hosted creator content would be subject to the [Hosted Content Terms](HOSTED_CONTENT_TERMS.md) policy baseline only when the identified operator incorporates it into an accepted creator flow. Creator-to-player purchases, paid game subscriptions, tips or donations, platform fees on creator transactions, revenue sharing, payouts, and settlement remain deferred until a separate marketplace and settlement decision.
 
 ## Future Creator Marketplace
 
@@ -26,7 +26,7 @@ The future managed-commerce direction is not marketplace enablement. The tenant'
 
 ## Commercial Operator Lane
 
-Unless LICENSE.md expressly permits the use, an operator other than Benjamin James Hook that wants to offer paid hosting, advertising, business integration, monetized self-hosting, or another financial or commercial benefit connected to operating FireMUD must first obtain a separate written license with Benjamin James Hook. The separate agreement controls its scope and terms.
+Unless LICENSE.md or applicable law expressly permits the use, an operator other than Benjamin James Hook that wants to offer paid hosting, advertising, business integration, monetized self-hosting, or another financial or commercial benefit connected to operating FireMUD must first obtain a separate written license with Benjamin James Hook. The separate agreement controls its scope and terms.
 
 ## Branding and Trademarks
 
