@@ -8,6 +8,8 @@ Manages user accounts and authentication for the platform. It stores profile dat
 
 - Provider-specific external identity linking is target-state only; no provider is advertised until its server-verified authorization, global subject uniqueness, recovery, unlink, and end-to-end login proof are complete.
 - The current caller-asserted external-link scaffold is unsupported implementation drift, not an advertised provider integration.
+- Account is the target authority for the hosted Creator Party, identified operator and hosted-terms catalog, and acceptance/currentness evidence under [ADR 0180](../../decisions/adr-0180-account-owned-hosted-terms-acceptance-gate.md); changed-term notice, decline, continuity, and lifecycle consequences are separately governed by [ADR 0181](../../decisions/adr-0181-changed-hosted-terms-decline-and-existing-content-continuity.md). These hosted-terms contracts are target-only: no current party/signer registry, terms catalog, acceptance or transfer API/storage, creator UI, or downstream write-gate proof exists, and organization support is not enabled.
+- Future managed-creator-commerce financial/provider reconciliation and entitlement authority are a separate target-only boundary under [ADR 0179](../../decisions/adr-0179-firemud-managed-creator-commerce-boundary.md); it does not expand hosted-terms acceptance/currentness authority or enable marketplace commerce, and no marketplace route or payout workflow is enabled.
 
 ### Responsibilities
 
@@ -22,6 +24,7 @@ Manages user accounts and authentication for the platform. It stores profile dat
 - Managing subscription status and ban enforcement.
 - Self-service account recovery for compromised or lost credentials.
 - Account-selected `PASSWORD` and verified-email `EMAIL_OTP` login modes.
+- Hosted Creator Party, operator/terms currentness, and acceptance evidence authority for official hosted creator content; Game Design consumes this authority and owns the content mutation gate. Signer and changed-term behavior remain target-only under [ADR 0180](../../decisions/adr-0180-account-owned-hosted-terms-acceptance-gate.md) and [ADR 0181](../../decisions/adr-0181-changed-hosted-terms-decline-and-existing-content-continuity.md).
 
 ## Key Features
 
@@ -30,7 +33,7 @@ Manages user accounts and authentication for the platform. It stores profile dat
 - Profiles store a display name, bio, game history, and achievements.
 - Password reset and verification flows.
 - Subscription tracking with ban management.
-- Owns the target **Stripe** hosting-plan billing and recurring hosting-subscription boundary; current provider lifecycle and entitlement proof remain partial. Generic PaymentIntent, refund, donation, and creator-share surfaces are unsupported implementation drift and must reject before any provider mutation rather than becoming advertised product paths.
+- Owns the target **Stripe** hosting-plan billing and recurring hosting-subscription boundary; current provider lifecycle and entitlement proof remain partial. The target containment contract requires generic PaymentIntent, refund, donation, and creator-share surfaces to reject before any provider mutation, but the current implementation retains provider-mutating drift; see [Operations](./operations.md#saga-participation) and [Configuration](./configuration.md#implementation-status) for the current status. These surfaces are not advertised product paths. One-time and creator/player commerce remain future-gated under [ADR 0179](../../decisions/adr-0179-firemud-managed-creator-commerce-boundary.md).
 - Expose Account relationship/projection data for actor discovery and access checks; do not create or own persisted gameplay actors.
 - gRPC APIs cover authentication, account lifecycle, export/delete, runtime/admission, membership, realm-grant, entitlement, profile, and hosting-billing operations; generic payment scaffolds do not widen that capability boundary. The canonical API inventory is [API Contracts](./api-contracts.md).
 

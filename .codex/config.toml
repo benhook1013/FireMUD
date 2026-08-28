@@ -1,0 +1,6 @@
+[features]
+memories = false
+
+[memories]
+generate_memories = false
+use_memories = false

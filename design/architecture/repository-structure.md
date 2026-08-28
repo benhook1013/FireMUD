@@ -9,6 +9,7 @@ The tree and summary below follow a Windows Explorer style sort: directories app
 
 ```text
 root
+├── .codex/
 ├── .github/
 ├── buildSrc/
 ├── charts/
@@ -49,20 +50,25 @@ root
 ├── build.gradle.kts
 ├── CODE_OF_CONDUCT.md
 ├── CONTRIBUTING.md
+├── CONTRIBUTOR_LICENSE_AGREEMENT.md
 ├── DEVELOPER_SETUP.md
 ├── FAQ.md
 ├── gradle.properties
 ├── gradlew
 ├── gradlew.bat
+├── HOSTED_CONTENT_TERMS.md
 ├── LICENSE.md
+├── LICENSING.md
 ├── NOTICE.md
 ├── NOTICE.template.md
 ├── README.md
-└── SECURITY.md
+├── SECURITY.md
+└── TRADEMARKS.md
 ```
 
 ## Directory summary
 
+- `.codex/` – Project-scoped Codex settings.
 - `.github/` – GitHub Actions workflows and issue templates.
 - `buildSrc/` – Shared Gradle convention plugins and build logic applied across modules.
 - `charts/` – Umbrella Helm chart for deploying all services together.
@@ -85,15 +91,19 @@ root
 - `build.gradle.kts` – Root Gradle build file that aggregates all modules.
 - `CODE_OF_CONDUCT.md` – Community conduct expectations.
 - `CONTRIBUTING.md` – Developer onboarding and contribution workflow.
+- `CONTRIBUTOR_LICENSE_AGREEMENT.md` – Contributor licence agreement for repository contributions.
 - `DEVELOPER_SETUP.md` – Step-by-step project setup instructions.
 - `FAQ.md` – Frequently asked questions for contributors.
 - `gradle.properties` – Shared Gradle settings.
 - `gradlew` & `gradlew.bat` – Wrapper scripts for invoking Gradle.
+- `HOSTED_CONTENT_TERMS.md` – Pre-launch policy baseline for official hosted creator-content terms.
 - `LICENSE.md` – Licensing terms for the project.
+- `LICENSING.md` – Nonbinding plain-language licensing guidance controlled by `LICENSE.md` and any separate written agreements.
 - `NOTICE.md` – Repository notice describing the current project license and release notice artifacts.
 - `NOTICE.template.md` – Template used to generate the release-specific NOTICE file distributed with official releases.
 - `README.md` – High-level project overview and quick-start.
 - `SECURITY.md` – Responsible disclosure and security reporting guidance.
+- `TRADEMARKS.md` – Canonical FireMUD and FireDevOps brand-use policy.
 
 ## Related Documentation
 

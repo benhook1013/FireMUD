@@ -672,6 +672,15 @@ ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/adr-0178-disposable-transport-complete-pr-preview-proof.md": adr_allocation(
         "PO-4", "Accepted", "AA-2", "EA-3", "PO-3"
     ),
+    "design/architecture/decisions/adr-0179-firemud-managed-creator-commerce-boundary.md": adr_allocation(
+        "AA-1", "Accepted", "PO-1", "EA-3"
+    ),
+    "design/architecture/decisions/adr-0180-account-owned-hosted-terms-acceptance-gate.md": adr_allocation(
+        "AA-1", "Accepted", "AR-1", "EA-3", "PO-1", "SF-2"
+    ),
+    "design/architecture/decisions/adr-0181-changed-hosted-terms-decline-and-existing-content-continuity.md": adr_allocation(
+        "PO-1", "Accepted", "AA-1", "AR-1", "EA-3", "SF-2"
+    ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
     "README.md": "Service overview",

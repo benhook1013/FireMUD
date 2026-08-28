@@ -6,9 +6,9 @@ This inventory contains 54 decision rows: 48 retained rows and 6 distinct eviden
 
 ## Implementation Status
 
-`Complete` means the assigned corpus scan, independent coverage/fidelity audit, human-led review, and selective reviewed-outcome import are complete. Owning canonical architecture documents remain authoritative for technical target contracts; merged ADRs record accepted consequential choices and rationale within those boundaries. All `182` distinct decision keys now have checked applied provenance, while implementation and proof remain incomplete.
+`Complete` means the assigned corpus scan, independent coverage/fidelity audit, human-led review, and selective reviewed-outcome import are complete. Owning canonical architecture documents remain authoritative for technical target contracts; merged ADRs record accepted consequential choices and rationale within those boundaries. All `182` historical decision keys plus the three direct post-archive decisions have checked applied provenance, while implementation and proof remain incomplete.
 
-- **Current validation:** The recorded `./gradlew linkCheck lintMarkdown` result covers the complete changed Markdown set for this parcel, including the [cross-cutting inventory](./decision-inventory-cross-cutting.md); `bash dev-tools/tests/architecture-doc-contracts.sh` also passed with 184 tests and is the focused validation record for the changed allocation inventories and validator coverage. Runtime proof is not applicable because no runtime service behavior changed. Validation of subsequent branch edits remains deferred.
+- **Current validation:** Final local documentation and structural validation for the licensing integration is recorded in [Automated Gates](./README.md#automated-gates). Earlier parcel-local link, Markdown, and 184-test architecture-contract results remain historical evidence only. Runtime proof is not applicable because no runtime service behavior changed.
 
 The required baseline documents were read before the assigned corpus: [product capability taxonomy](../../product/capability-taxonomy.md), [system allocation](./design-capability-allocation-system.md), [main consequential decision inventory](./consequential-decision-inventory.md), and [cross-cutting decision inventory](./decision-inventory-cross-cutting.md).
 

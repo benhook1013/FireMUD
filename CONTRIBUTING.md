@@ -22,6 +22,16 @@ If you're setting up the project for the first time, follow these steps:
 
 Once your environment is running you can create a feature branch and submit a PR as described below.
 
+## Contributor Licence Agreement
+
+Before a pull request containing a contribution from an external individual or legal entity can be merged, an accepted [FireMUD Contributor Licence Agreement](CONTRIBUTOR_LICENSE_AGREEMENT.md) must be on file. Complete the applicable signature fields and send a signed electronic copy privately to [licensing@firedevops.net](mailto:licensing@firedevops.net). Benjamin James Hook will countersign or provide written acceptance or confirmation. Do not commit a completed agreement or personal details to the repository.
+
+An individual contributor, or the human signing for a legal entity, must be at least 18 years old and have legal capacity to enter the agreement; an entity signer must also have authority to bind that entity. Contributions by minors are deferred pending New Zealand legal review.
+
+The agreement preserves contributor ownership while granting the rights needed to use accepted contributions in FireMUD. Its detailed grant terms govern inbound contributions; the repository's outbound terms remain governed by [LICENSE.md](LICENSE.md). Contributions must contain only material the contributor owns or is authorized to submit. Third-party or mixed material must be identified and reviewed in the pull request or through the licensing contact. Contributor-authored portions remain subject to the CLA when the contributor owns or controls the rights needed for its grant; third-party portions remain under their own terms or a separate direct grant from the relevant rights holder and are not made Contributions by approval. Documented permission and written approval from Benjamin James Hook or a Permitted Successor must be on file before third-party portions are merged or accepted into Repository Material.
+
+Work authored by Benjamin James Hook in his current rights-holder capacity does not require a new CLA. Rights-cleared repository metadata or mechanical output produced by configured dependency or workflow automation is also exempt from the CLA signature workflow. This automation exception does not create an inbound-rights grant: automation-produced source, documentation, assets, or other copyright-bearing or external material requires documented provenance and a compatible licence or written approval before merge. A bot cannot sign a CLA. The PR template records these exceptions; checking that box alone does not execute a CLA.
+
 ## Code Style Summary
 
 - Follow the repository guidance in [AGENTS.md](./AGENTS.md), with conditional procedures indexed in [developer workflows](./design/developer-workflows/README.md).

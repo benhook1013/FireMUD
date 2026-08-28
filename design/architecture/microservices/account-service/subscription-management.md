@@ -4,7 +4,7 @@ This document describes how the Account Service models and manages subscriptions
 
 The goals of the subscription system include:
 
-- Support recurring billing for hosting plans and optional in-game features.
+- Support recurring billing for FireMUD hosting plans in the current V1 scope; optional in-game features remain separately gated future commerce.
 - Handle upgrades, downgrades, and cancellations without data loss.
 - Respect tenant isolation while still enabling platform-wide reporting.
 - Coordinate with Stripe while keeping billing state consistent in FireMUD’s own database.
@@ -16,6 +16,8 @@ Payment-instrument ownership, explicit per-subscription binding, and billing-own
 The plan-change timing, over-quota behavior, pending-plan metadata, and full quota-bearing runtime entitlement response described below are canonical target-state behavior. Current implementation has the first runtime availability surface, but quota fields, pending plan metadata, downgrade/cancellation enforcement, strict capacity admission, and the target separation between create and existing-subscription update APIs still need implementation follow-through. The current `CreateSubscriptionRequest` carries only tenant/account/plan fields: it does not carry the target caller-stable `requestId`/`requestDigest` retry boundary or immutable creation-operation identities and must not be treated as proof of that contract. Expected row-version/CAS is not a creation precondition and is required for every supported existing-subscription mutation through `UpdateSubscription`. The durable authority/usage ledger and reservation lifecycle for strict capacity admission are also not implemented.
 
 The target `CreateSubscription` caller boundary uses a high-entropy stable `requestId` as the sole logical create-operation key. Account computes a versioned `requestDigest` from the normalized create tuple, including the resolved billing owner, immutable `tenantId`, initial `plan_code`, and exact instrument-selection input; clients do not supply that digest. Account captures the resolved owner's authority version/generation and validates that exact fence in the same local intent/outbox transaction before persisting the pair or creating provider work; an owner change or generation/version mismatch fails closed. A retry with the same `requestId` and normalized create fields recomputes the same digest and replays the same `subscriptionId`, durable operation, and outcome; changed fields that produce a different digest return `IDEMPOTENCY_CONFLICT`. The provider `subscription_provisioning_request_id` and cleanup identity remain separate provider-operation keys and must not replace the caller identity.
+
+Hosted-terms acceptance and the tenant's Creator Party are separate from subscription and billing ownership. Current V1 subscription behavior remains the hosting-billing boundary in [ADR 0143](../../decisions/adr-0143-stripe-v1-hosting-billing-and-deferred-creator-monetization.md). [ADR 0181](../../decisions/adr-0181-changed-hosted-terms-decline-and-existing-content-continuity.md) is accepted and defines the target changed-terms boundary: decline or missing reacceptance blocks new covered creator-content mutations but does not itself cancel a subscription, delete content, or decide a refund; those mutations still require the Account-owned currentness outcome. Only the detailed renewal, paid-through continuity, exit, refund, and service-credit choreography across a material terms change remains candidate pre-launch policy pending complete terms and New Zealand legal review. No current route or implementation proves these changed-term behaviors.
 
 ## Plan and Entitlement Model
 
@@ -33,7 +35,7 @@ Subscriptions are modeled as **plans** that define resource limits and entitleme
 
 Entitlements exposed to other services are derived from the active subscription’s plan and status and are always scoped to a single tenant (`tenantId`).
 
-Plan entitlements are the source of truth for hosting/runtime quotas only. One-time account, character, or virtual-currency purchases use the purchase-entitlement model in [Account Service Runtime and Data](./runtime-and-data.md#monetization-design) and must not be folded into the tenant hosting subscription row.
+Plan entitlements are the source of truth for hosting/runtime quotas only. One-time account, character, or virtual-currency purchases use the purchase-entitlement model in [Account Service Runtime and Data](./runtime-and-data.md#monetization-design) only as separately gated future commerce under [ADR 0179](../../decisions/adr-0179-firemud-managed-creator-commerce-boundary.md); they remain outside current V1 hosting subscriptions and must not be folded into the tenant hosting subscription row.
 
 ### Authorization Roles for Billing and Subscriptions
 

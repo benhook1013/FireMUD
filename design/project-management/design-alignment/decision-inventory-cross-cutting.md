@@ -4,11 +4,11 @@ Status: Complete and independently coverage/fidelity-audited. This artifact is n
 
 ## Implementation Status
 
-`Complete` means the assigned corpus scan, independent coverage/fidelity audit, human-led review, and selective reviewed-outcome import are complete. Row text describes canonical target state after all `182` decision keys received checked applied provenance; implementation and proof remain separate and retain the gaps recorded below.
+`Complete` means the assigned corpus scan, independent coverage/fidelity audit, human-led review, and selective reviewed-outcome import are complete. Row text describes canonical target state after all `182` historical decision keys and the three direct post-archive decisions received checked applied provenance; implementation and proof remain separate and retain the gaps recorded below.
 
 This ledger preserves the completed read-only decision scan, including the pre-review statuses, alternatives, ADR recommendations, flags, and review questions that informed the human review archive. Those fields are historical input rather than the current application state; [Applied Review Provenance](./consequential-decision-inventory.md#applied-review-provenance) records merged outcomes. This ledger does not create, accept, supersede, or amend canonical design.
 
-Validation scope for this inventory is recorded in the [specialized runtime inventory](./decision-inventory-specialized-runtime.md#implementation-status), whose documentation check covers the complete changed Markdown set and separately identifies runtime-proof and validator-tooling status.
+Final local documentation and structural validation for this inventory is recorded in [Automated Gates](./README.md#automated-gates), which separately identifies the runtime-proof boundary. Earlier parcel-local results remain historical evidence only.
 
 The ledger contains 68 decision rows: 59 retained rows and 9 distinct evidence-backed additions. The counted source partition is exactly 22 paths. The [main consequential-decision inventory](./consequential-decision-inventory.md) remains the compact control crosswalk; reviewed dispositions and ADR references are synchronized across both inventories.
 
