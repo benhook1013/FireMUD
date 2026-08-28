@@ -30,7 +30,7 @@ Script rollout compatibility applies to Coordination Redis. Cache/Rate-Limit Red
 
 ## Target-State Lua Compatibility Registry and Script Upgrades (Not Implemented)
 
-The registry and compatibility-test surface in this section are target state and are not currently available. Once implemented, the Lua Compatibility Registry is part of the aggregated Redis-contract registry. A narrow shared foundation owns its descriptor schema and aggregation, while each owning service contributes compatibility metadata and retains exclusive key builders, invocation adapters, executable Lua, and semantic tests. The registry is owned by platform/coordination maintainers and declares per script:
+The registry and compatibility-test surface in this section are target state and are not currently available. Once implemented, the Lua Compatibility Registry is part of the aggregated Redis-contract registry. A narrow shared foundation owns its descriptor schema and aggregation and, only for a mutation genuinely executed by multiple independently deployed callers, the shared executable helper/Lua contract and semantic tests. For owner-exclusive mutations, each owning service contributes compatibility metadata and retains its exclusive key builders, invocation adapters, executable Lua, and semantic tests. The registry is owned by platform/coordination maintainers and declares per script:
 
 - `callerVersionsSupported`, identifying the application/caller versions that may invoke the script
 - `schemaVersionsSupported`, identifying the stored payload schema versions the script can interpret, with the evidence and retention window that makes each version possible

@@ -30,7 +30,7 @@ Defining additional Redis users, ACL variations, or ad-hoc tools is considered *
   - May use `redis-cli`, RedisInsight, or similar tools with **read-only ops users** to inspect coordination state.
   - Must not issue raw `EVAL`/`EVALSHA`, `SET`, `DEL`, or TTL-changing commands against coordination prefixes in normal operation.
 
-In target state, these rules keep the script registry's invariants and hash-tag discipline meaningful by ensuring that every coordination mutation uses its one supported owner-local path. Current unreconciled direct usages remain implementation drift and do not establish that guarantee.
+In target state, these rules keep the script registry's invariants and hash-tag discipline meaningful by ensuring that every coordination mutation follows exactly one supported path: the owning service's owner-local path for an owner-exclusive mutation, or the shared-foundation path only for a mutation genuinely executed by multiple independently deployed callers. Current unreconciled direct usages remain implementation drift and do not establish that guarantee.
 
 ## Ops User vs Application User
 

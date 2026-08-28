@@ -4,7 +4,7 @@ This document defines FireMUD's canonical player-command model. It is the archit
 
 ## Implementation Status
 
-The current `RevisionServiceImpl` validation requires `historyRecordable` to be present and boolean on every `COMMAND_DEFINITION` revision, so an omitted field is rejected before persistence. `RevisionServiceImplTest.saveRevisionRejectsCommandDefinitionWithoutExplicitHistoryPolicy` covers this behavior. The authored/plugin omission normalization to non-recordable described below remains target-state behavior; current authored/plugin revisions must explicitly provide `historyRecordable: false`.
+The current `RevisionServiceImpl` validation requires `historyRecordable` to be present and boolean on every `COMMAND_DEFINITION` revision, so an omitted field is rejected before persistence. `RevisionServiceImplTest.saveRevisionRejectsCommandDefinitionWithoutExplicitHistoryPolicy` covers this behavior. The authored/plugin omission normalization to non-recordable described below remains target-state behavior; current authored/plugin revisions must explicitly provide `historyRecordable: false`. The current `PlayerCommandHistoryRecorder` persists the trimmed `TextCommand.rawLine` for accepted recordable commands. It excludes credential-bearing login and email-challenge payloads (and `LOGIN`/`HISTORY` by command type), but it does not generally inspect or redact secret-like arguments in other commands; arbitrary secret-bearing authored/plugin input therefore remains a target-state gap rather than evidence that a redactor is implemented.
 
 ## Implementation Notes
 
