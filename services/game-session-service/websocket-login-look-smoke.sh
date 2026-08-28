@@ -117,7 +117,7 @@ wait_for_http_readiness("account-service", account_api_base, startup_wait_second
 wait_for_http_readiness("game-logic-service", game_logic_api_base, startup_wait_seconds, timeout_seconds)
 wait_for_http_readiness("game-session-service", game_session_api_base, startup_wait_seconds, timeout_seconds)
 verify_smoke_account(account_api_base, login_email, password, timeout_seconds)
-world = os.environ.get("SMOKE_WORLD", os.environ["DEMO_SMOKE_WORLD"])
+world = os.environ.get("SMOKE_WORLD") or os.environ["DEMO_SMOKE_WORLD"]
 if os.environ["SMOKE_MUTATION_EXTENSION"] == "true":
     steps = gameplay_item_container_equipment_steps(
         login_email,

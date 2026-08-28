@@ -1,6 +1,6 @@
 # Smoke Tests for Login + PLAY + LOOK
 
-These steps exercise the same `WORLDS` (optional) + `LOGIN` + `PLAY` + `LOOK` flow that users take over both WebSocket (direct Game Session) and Telnet (via TCP Proxy + Gateway) transports. The optional item/container/equipment extension can exercise the first player-visible inventory loop over the same command surface when the validated mutation boundary is available. These examples deliberately use the `demo@example.com` / `swordfish` credentials that the Compose-backed smoke stack seeds explicitly for local verification.
+These steps exercise the same `WORLDS` + `LOGIN` + `PLAY` + `LOOK` flow emitted by the canonical scripts over both WebSocket (direct Game Session) and Telnet (via TCP Proxy + Gateway) transports. The optional item/container/equipment extension can exercise the first player-visible inventory loop over the same command surface when the validated mutation boundary is available. These examples deliberately use the `demo@example.com` / `swordfish` credentials that the Compose-backed smoke stack seeds explicitly for local verification.
 
 The default smoke is the read-only `LOGIN` -> `PLAY` -> `LOOK` baseline. The item/container/equipment sequence is a mutating extension and is not part of the default two-transport wrappers. A standalone transport client may run that extension only inside an explicitly validated run-owned Compose project:
 

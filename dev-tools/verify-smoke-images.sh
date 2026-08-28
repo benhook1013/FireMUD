@@ -100,6 +100,7 @@ compose_up_with_retry() {
       return 1
     fi
     echo "docker compose up failed on attempt ${attempt}/${max_attempts}; retrying after ${SMOKE_COMPOSE_UP_RETRY_DELAY_SECONDS}s" >&2
+    require_run_owned_compose_project
     docker compose "${COMPOSE_FILES[@]}" down -v --remove-orphans || true
     sleep "$SMOKE_COMPOSE_UP_RETRY_DELAY_SECONDS"
     attempt=$((attempt + 1))

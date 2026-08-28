@@ -257,6 +257,22 @@ with patch(
     else:
         raise AssertionError("unrelated HTTP exception was incorrectly classified")
 
+
+item_steps = smoke_common.gameplay_item_container_equipment_steps(
+    "demo@example.com",
+    "swordfish",
+    "OK WORLDS",
+    "OK LOGIN",
+    "OK PLAY",
+    "OK LOOK",
+)
+get_index = next(index for index, step in enumerate(item_steps) if step[0] == "GET Torch")
+assert item_steps[get_index + 1] == (
+    "INVENTORY",
+    ["Inventory:", "- Torch"],
+    "INVENTORY after GET",
+)
+
 print("smoke transport contract checks passed")
 PY
 
@@ -306,11 +322,12 @@ for script in \
   grep -q 'smoke-full-' "$script"
   grep -q 'login_play_look_steps' "$script"
   grep -q 'gameplay_item_container_equipment_steps' "$script"
-  boundary_line="$(grep -n 'Mutation extension requires SMOKE_MUTATION_BOUNDARY=run-owned-compose' "$script" | head -1 | cut -d: -f1)"
+  # shellcheck disable=SC2016 # Match the literal shell variable in the target script.
+  compose_project_guard_line="$(grep -n '^[[:space:]]*if \[\[ ! "\${COMPOSE_PROJECT_NAME:-}" =~' "$script" | head -1 | cut -d: -f1)"
   # shellcheck disable=SC2016 # Match the literal shell variable in the target script.
   python_line="$(grep -n '\$PYTHON.*<<' "$script" | head -1 | cut -d: -f1)"
-  if [[ -z "$boundary_line" || -z "$python_line" || "$boundary_line" -ge "$python_line" ]]; then
-    echo "mutation isolation preflight is not before service access in $script" >&2
+  if [[ -z "$compose_project_guard_line" || -z "$python_line" || "$compose_project_guard_line" -ge "$python_line" ]]; then
+    echo "mutation COMPOSE_PROJECT_NAME guard is not before service access in $script" >&2
     exit 1
   fi
 done
@@ -329,19 +346,19 @@ done
 for script in "$ROOT_DIR/dev-tools/verify-fresh-bootstrap.sh" "$ROOT_DIR/dev-tools/verify-smoke-images.sh"; do
   grep -q 'require_run_owned_compose_project' "$script"
   grep -q 'firemud-smoke-' "$script"
-  down_line="$(grep -n '^docker compose .*down -v --remove-orphans' "$script" | head -1 | cut -d: -f1)"
-  guard_line="$(grep -n 'require_run_owned_compose_project$' "$script" | tail -1 | cut -d: -f1)"
-  if [[ -z "$down_line" || -z "$guard_line" || "$guard_line" -ge "$down_line" ]]; then
-    echo "destructive compose teardown is not guarded in $script" >&2
+  mapfile -t down_lines < <(grep -nE '^[[:space:]]*docker compose .*down -v --remove-orphans([[:space:]]|$)' "$script" || true)
+  if ((${#down_lines[@]} == 0)); then
+    echo "no destructive compose teardown found in $script" >&2
     exit 1
   fi
-  if grep -q 'compose_up_with_retry' "$script"; then
-    retry_call_line="$(grep -n '^compose_up_with_retry$' "$script" | tail -1 | cut -d: -f1)"
-    if [[ -z "$retry_call_line" || "$guard_line" -ge "$retry_call_line" ]]; then
-      echo "retry teardown is not guarded in $script" >&2
+  for down_entry in "${down_lines[@]}"; do
+    down_line="${down_entry%%:*}"
+    guard_line="$(grep -n '^[[:space:]]*require_run_owned_compose_project$' "$script" | awk -F: -v down="$down_line" '$1 < down {line=$1} END {print line}')"
+    if [[ -z "$guard_line" || "$guard_line" -ge "$down_line" ]]; then
+      echo "destructive compose teardown at line $down_line is not guarded in $script" >&2
       exit 1
     fi
-  fi
+  done
 done
 
 echo "smoke script boundary contract checks passed"
