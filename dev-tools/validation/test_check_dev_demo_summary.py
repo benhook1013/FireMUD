@@ -219,18 +219,10 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             '        "secret": password,\n'
             "      },"
         )
-        legacy_payload = (
-            "public_account_url ( '/auth/player-bootstrap' ),\n"
-            "      {\n"
-            '        "tenantId": tenant_id,\n'
-            '        "username": email,\n'
-            '        "password": password,\n'
-            "      },"
-        )
         self.assertIn(canonical_payload, bootstrap_manifest)
         invalid_manifest = bootstrap_manifest.replace(
             canonical_payload,
-            f"{canonical_payload}\n{legacy_payload}",
+            f"{canonical_payload}\n{canonical_payload}",
             1,
         )
         with tempfile.TemporaryDirectory() as directory:
@@ -239,6 +231,47 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             with self.assertRaisesRegex(
                 AssertionError,
                 r"dev-demo bootstrap must contain exactly one /auth/player-bootstrap request \(found 2\)",
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_accepts_reformatted_player_bootstrap_payload(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        canonical_payload = (
+            'public_account_url("/auth/player-bootstrap"),\n'
+            "      {\n"
+            '        "accountIdentifier": email,\n'
+            '        "secret": password,\n'
+            "      },"
+        )
+        reformatted_payload = (
+            "public_account_url ( '/auth/player-bootstrap' ),\n"
+            "      {\n"
+            "        'secret': password\n"
+            "        , 'accountIdentifier': email\n"
+            "      },"
+        )
+        self.assertIn(canonical_payload, bootstrap_manifest)
+        reformatted_manifest = bootstrap_manifest.replace(
+            canonical_payload, reformatted_payload, 1
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, reformatted_manifest)
+            self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_misbinding_player_bootstrap_fields(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        invalid_manifest = bootstrap_manifest.replace(
+            '"accountIdentifier": email,',
+            '"accountIdentifier": password,',
+            1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                "dev-demo bootstrap must send exactly accountIdentifier and secret",
             ):
                 self.validator.validate_workflow(root)
 

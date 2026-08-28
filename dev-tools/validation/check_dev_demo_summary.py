@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 import shlex
 import sys
@@ -58,12 +59,6 @@ PLAYER_BOOTSTRAP_REQUEST_CALL = re.compile(
     r"(?P=quote)\s*\)",
     re.DOTALL,
 )
-PLAYER_BOOTSTRAP_REQUEST = re.compile(
-    r'public_account_url\("/auth/player-bootstrap"\),\s*'
-    r'\{\s*"accountIdentifier":\s*email,\s*"secret":\s*password,\s*\},',
-    re.DOTALL,
-)
-
 BOOTSTRAP_SECRET_COMMAND_PREFIX = (
     "kubectl",
     "-n",
@@ -672,6 +667,91 @@ def _validate_bootstrap_pod_spec(bootstrap_manifest: str) -> None:
         )
 
 
+def _player_bootstrap_payload_end(source: str, start: int) -> int | None:
+    """Return the end of the first balanced mapping after a request call."""
+
+    if start >= len(source) or source[start] != "{":
+        return None
+
+    depth = 0
+    quote: str | None = None
+    triple_quoted = False
+    escaped = False
+    index = start
+    while index < len(source):
+        character = source[index]
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif triple_quoted:
+                if source.startswith(quote * 3, index):
+                    quote = None
+                    triple_quoted = False
+                    index += 2
+            elif character == quote:
+                quote = None
+            index += 1
+            continue
+        if character in "'\"":
+            if source.startswith(character * 3, index):
+                quote = character
+                triple_quoted = True
+                index += 3
+            else:
+                quote = character
+                index += 1
+            continue
+        if character == "#":
+            newline = source.find("\n", index)
+            index = len(source) if newline == -1 else newline + 1
+            continue
+        if character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+        index += 1
+    return None
+
+
+def _player_bootstrap_payload(source: str, request: re.Match[str]) -> ast.Dict | None:
+    """Parse the mapping passed to one /auth/player-bootstrap request."""
+
+    payload_start = request.end()
+    while payload_start < len(source) and source[payload_start].isspace():
+        payload_start += 1
+    if payload_start >= len(source) or source[payload_start] != ",":
+        return None
+    payload_start += 1
+    while payload_start < len(source) and source[payload_start].isspace():
+        payload_start += 1
+    payload_end = _player_bootstrap_payload_end(source, payload_start)
+    if payload_end is None:
+        return None
+    try:
+        expression = ast.parse(source[payload_start:payload_end], mode="eval")
+    except SyntaxError:
+        return None
+    return expression.body if isinstance(expression.body, ast.Dict) else None
+
+
+def _validate_player_bootstrap_payload(source: str, request: re.Match[str]) -> bool:
+    payload = _player_bootstrap_payload(source, request)
+    if payload is None or len(payload.keys) != 2:
+        return False
+    fields = {
+        key.value: value.id
+        for key, value in zip(payload.keys, payload.values, strict=True)
+        if isinstance(key, ast.Constant)
+        and isinstance(key.value, str)
+        and isinstance(value, ast.Name)
+    }
+    return fields == {"accountIdentifier": "email", "secret": "password"}
+
+
 def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
     normalized = normalize_script(bootstrap_manifest)
     for expected in BOOTSTRAP_MANIFEST_REQUIRED_MARKERS:
@@ -747,15 +827,18 @@ def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
             "dev-demo bootstrap must remove its credential secret after successful pod logging"
         )
 
-    player_bootstrap_request_count = len(
-        PLAYER_BOOTSTRAP_REQUEST_CALL.findall(bootstrap_manifest)
+    player_bootstrap_requests = list(
+        PLAYER_BOOTSTRAP_REQUEST_CALL.finditer(bootstrap_manifest)
     )
+    player_bootstrap_request_count = len(player_bootstrap_requests)
     if player_bootstrap_request_count != 1:
         raise AssertionError(
             "dev-demo bootstrap must contain exactly one /auth/player-bootstrap request "
             f"(found {player_bootstrap_request_count})"
         )
-    if PLAYER_BOOTSTRAP_REQUEST.search(bootstrap_manifest) is None:
+    if not _validate_player_bootstrap_payload(
+        bootstrap_manifest, player_bootstrap_requests[0]
+    ):
         raise AssertionError(
             "dev-demo bootstrap must send exactly accountIdentifier and secret "
             "to /auth/player-bootstrap"

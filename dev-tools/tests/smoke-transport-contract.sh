@@ -533,6 +533,22 @@ RUN_OWNED_CHILD_BASH='source "$1"; shift; "$@"'
 RUN_OWNED_UNSET_TOKEN_CHILD_BASH='unset FIREMUD_SMOKE_OWNERSHIP_TOKEN; source "$1"; shift; "$@"'
 # shellcheck disable=SC2016
 RUN_OWNED_HOLD_LOCK_CHILD_BASH='source "$1"; claim_run_owned_compose_project; : >"$2"; sleep 5'
+# shellcheck disable=SC2016
+RUN_OWNED_UMASK_CHILD_BASH='source "$1"; shift; umask 027; "$@"; [[ "$(umask)" == 0027 ]]'
+
+NO_FLOCK_BIN="$TEST_ROOT/no-flock-bin"
+mkdir -p "$NO_FLOCK_BIN"
+for dependency in uname stat readlink id mktemp awk sha256sum; do
+  ln -s "$(command -v "$dependency")" "$NO_FLOCK_BIN/$dependency"
+done
+assert_command_rejects \
+  "flock dependency" \
+  env PATH="$NO_FLOCK_BIN" \
+  /usr/bin/bash -c "$RUN_OWNED_CHILD_BASH" _ \
+  "$RUN_OWNED_COMPOSE_HELPER" claim_run_owned_compose_project
+
+bash -c "$RUN_OWNED_UMASK_CHILD_BASH" _ \
+  "$RUN_OWNED_COMPOSE_HELPER" claim_run_owned_compose_project
 
 run_owned_helper claim_run_owned_compose_project
 marker_path="$(find "$OWNERSHIP_TEST_DIR" -maxdepth 1 -type f -name '*.marker' -print -quit)"

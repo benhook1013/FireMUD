@@ -8,6 +8,38 @@ _firemud_smoke_fail() {
   return 1
 }
 
+_firemud_smoke_require_platform() {
+  local platform
+  platform="$(uname -s 2>/dev/null || true)"
+  if [[ "$platform" != Linux ]]; then
+    _firemud_smoke_fail "run-owned smoke ownership requires Linux/WSL or GitHub-hosted Ubuntu (Linux kernel)."
+    return 1
+  fi
+  if [[ ! -d /proc/self/fd ]]; then
+    _firemud_smoke_fail "run-owned smoke ownership requires procfs at /proc/self/fd."
+    return 1
+  fi
+  if ! command -v flock >/dev/null 2>&1; then
+    _firemud_smoke_fail "run-owned smoke ownership requires the flock dependency."
+    return 1
+  fi
+  if ! command -v stat >/dev/null 2>&1 || ! stat -Lc '%F' /proc >/dev/null 2>&1; then
+    _firemud_smoke_fail "run-owned smoke ownership requires GNU stat with -L and -c support."
+    return 1
+  fi
+  local dependency
+  for dependency in readlink id mktemp awk; do
+    if ! command -v "$dependency" >/dev/null 2>&1; then
+      _firemud_smoke_fail "run-owned smoke ownership requires the $dependency dependency."
+      return 1
+    fi
+  done
+  if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
+    _firemud_smoke_fail "run-owned smoke ownership requires sha256sum or shasum."
+    return 1
+  fi
+}
+
 _firemud_smoke_sha256() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum | awk '{print $1}'
@@ -49,6 +81,7 @@ _firemud_smoke_context() {
 }
 
 _firemud_smoke_prepare() {
+  _firemud_smoke_require_platform || return 1
   _firemud_smoke_context || return 1
   if [[ "${COMPOSE_PROJECT_NAME:-}" != "$FIREMUD_SMOKE_EXPECTED_PROJECT" ]]; then
     _firemud_smoke_fail "COMPOSE_PROJECT_NAME must exactly match $FIREMUD_SMOKE_EXPECTED_PROJECT."
@@ -75,11 +108,19 @@ _firemud_smoke_prepare() {
     return 1
   fi
   if [[ ! -d "$dir" ]]; then
+    local previous_umask mkdir_status
+    previous_umask="$(umask)"
     umask 077
-    mkdir -p "$dir" || {
+    if mkdir -p "$dir"; then
+      mkdir_status=0
+    else
+      mkdir_status=$?
+    fi
+    umask "$previous_umask"
+    if ((mkdir_status != 0)); then
       _firemud_smoke_fail "could not create ownership directory."
       return 1
-    }
+    fi
   fi
   if [[ "$(stat -Lc '%u %a %F' "$dir" 2>/dev/null || true)" != "$(id -u) 700 directory" ]]; then
     _firemud_smoke_fail "ownership directory must be an owner-only directory (mode 700)."
@@ -128,12 +169,25 @@ _firemud_smoke_lock() {
     return 1
   fi
 
+  local previous_umask lock_status
+  previous_umask="$(umask)"
   umask 077
-  exec {fd}>"$FIREMUD_SMOKE_LOCK_PATH" || {
+  if exec {fd}>"$FIREMUD_SMOKE_LOCK_PATH"; then
+    lock_status=0
+  else
+    lock_status=$?
+  fi
+  umask "$previous_umask"
+  if ((lock_status != 0)); then
     _firemud_smoke_fail "could not open ownership lock."
     return 1
-  }
-  if ! chmod 600 "$FIREMUD_SMOKE_LOCK_PATH" || ! flock -n "$fd"; then
+  fi
+  if ! chmod 600 "$FIREMUD_SMOKE_LOCK_PATH"; then
+    eval "exec ${fd}>&-"
+    _firemud_smoke_fail "could not restrict ownership lock permissions."
+    return 1
+  fi
+  if ! flock -n "$fd"; then
     eval "exec ${fd}>&-"
     _firemud_smoke_fail "another smoke invocation holds the project lock."
     return 1
