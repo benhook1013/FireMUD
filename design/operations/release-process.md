@@ -40,11 +40,9 @@ Before publishing a release:
    - `COPYRIGHT_YEAR` set to the release year
    - `RELEASE_DATE` set to the publication date
 3. Generate or assemble the `/licenses` directory for the release artifact if dependency notices are required for included third-party software.
-4. Verify that [`LICENSE.md`](../../LICENSE.md), [`LICENSING.md`](../../LICENSING.md), [`NOTICE.md`](../../NOTICE.md), [`NOTICE.template.md`](../../NOTICE.template.md), [`README.md`](../../README.md), [`FAQ.md`](../../FAQ.md), and [`TRADEMARKS.md`](../../TRADEMARKS.md) collectively identify Benjamin James Hook as the current rights holder for project material he owns or controls and current project/repository operator, and as the identified planned operator of the official hosted service until any later operator is expressly identified in applicable terms, while keeping the PolyForm, community no-money, and future hosted/commercial wording aligned.
+4. Verify that [`LICENSE.md`](../../LICENSE.md), [`LICENSING.md`](../../LICENSING.md), [`NOTICE.md`](../../NOTICE.md), [`NOTICE.template.md`](../../NOTICE.template.md), [`README.md`](../../README.md), [`FAQ.md`](../../FAQ.md), [`TRADEMARKS.md`](../../TRADEMARKS.md), and [`HOSTED_CONTENT_TERMS.md`](../../HOSTED_CONTENT_TERMS.md) collectively identify Benjamin James Hook as the current rights holder for project material he owns or controls and current project/repository operator, and as the identified planned operator of the official hosted service until any later operator is expressly identified in applicable terms, while keeping the PolyForm, community no-money, and future hosted/commercial wording aligned.
 5. Verify that `NOTICE` in the release artifact matches the release metadata actually being published.
 6. Verify that the FireMUD and FireDevOps names and trademark wording remain consistent with [`TRADEMARKS.md`](../../TRADEMARKS.md) and do not imply that either mark is registered.
-
-The collective legal/hosted wording alignment check also includes [`HOSTED_CONTENT_TERMS.md`](../../HOSTED_CONTENT_TERMS.md); the separate `NOTICE` and trademark checks remain unchanged.
 
 ## Release Automation
 
