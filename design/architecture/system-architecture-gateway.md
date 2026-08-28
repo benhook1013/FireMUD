@@ -324,12 +324,14 @@ Spring Cloud Gateway provides centralized management of client traffic, offering
 - Ordinary REST/admin JWTs are forwarded for downstream validation by the consuming service; the `gameplay-connect` JWT is excluded from that path and is validated by Gateway only during the `/ws/game/**` handshake, using the connect-token handshake classifications below, including `CONNECT_TOKEN_REJECTED` for unsupported or rejected carrier/token content. Gameplay protocol clients do not otherwise provide JWTs; all non-proxy `/ws/game/**` WebSocket clients must provide this short-lived connect token for handshake-time edge policy as described below.
 - Cross-cutting filters (e.g., rate limiting, logging, CORS)
 
-> **Redis topology guidance:** Coordination Redis and Cache/Rate‑Limit Redis are
-> always deployed as **separate Redis instances** (for example, two containers
-> on a single dev machine or distinct pods/clusters in Kubernetes). Sharing a
-> single Redis instance for both roles is allowed only for explicitly documented,
-> truly ephemeral one-shot test/CI topologies; hosted `pr-preview` is excluded.
-> It must not be used for non-ephemeral or player-facing environments.
+> **Redis topology guidance:** Coordination Redis and Cache/Rate‑Limit Redis must
+> use **separate processes and endpoints** in every non-ephemeral or player-facing
+> environment, including `local-dev` and hosted `pr-preview` (for example, two
+> containers on a single dev machine or distinct pods/clusters in Kubernetes).
+> Sharing a single Redis process and endpoint for both roles is allowed only for
+> an explicitly labelled one-shot ephemeral test/CI topology; hosted `pr-preview`
+> is excluded. That exception must be reset-tolerant, visibly surface the shared
+> endpoint, and provides no role-isolation, replay, tail-loss, or SLO evidence.
 > For any player-facing environment, configure the Gateway to use the dedicated
 > **Cache/Rate‑Limit Redis deployment** so rate limiting and cache activity cannot
 > interfere with tick/session coordination. See
