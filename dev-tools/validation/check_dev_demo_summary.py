@@ -53,6 +53,7 @@ HEREDOC_OPEN = re.compile(
     r"(?P=quote)"
 )
 SHELL_IF_START = re.compile(r"^if\b.*;[ \t]*then$")
+PLAYER_BOOTSTRAP_REQUEST_MARKER = 'public_account_url("/auth/player-bootstrap")'
 PLAYER_BOOTSTRAP_REQUEST = re.compile(
     r'public_account_url\("/auth/player-bootstrap"\),\s*'
     r'\{\s*"accountIdentifier":\s*email,\s*"secret":\s*password,\s*\},',
@@ -715,6 +716,14 @@ def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
             "dev-demo bootstrap must remove its credential secret after successful pod logging"
         )
 
+    player_bootstrap_request_count = bootstrap_manifest.count(
+        PLAYER_BOOTSTRAP_REQUEST_MARKER
+    )
+    if player_bootstrap_request_count != 1:
+        raise AssertionError(
+            "dev-demo bootstrap must contain exactly one /auth/player-bootstrap request "
+            f"(found {player_bootstrap_request_count})"
+        )
     if PLAYER_BOOTSTRAP_REQUEST.search(bootstrap_manifest) is None:
         raise AssertionError(
             "dev-demo bootstrap must send exactly accountIdentifier and secret "

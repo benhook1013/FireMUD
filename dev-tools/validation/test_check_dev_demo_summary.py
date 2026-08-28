@@ -193,6 +193,38 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             ):
                 self.validator.validate_workflow(root)
 
+    def test_validate_workflow_rejects_multiple_player_bootstrap_requests(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        canonical_payload = (
+            'public_account_url("/auth/player-bootstrap"),\n'
+            "      {\n"
+            '        "accountIdentifier": email,\n'
+            '        "secret": password,\n'
+            "      },"
+        )
+        legacy_payload = (
+            'public_account_url("/auth/player-bootstrap"),\n'
+            "      {\n"
+            '        "tenantId": tenant_id,\n'
+            '        "username": email,\n'
+            '        "password": password,\n'
+            "      },"
+        )
+        self.assertIn(canonical_payload, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            canonical_payload,
+            f"{canonical_payload}\n{legacy_payload}",
+            1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                r"dev-demo bootstrap must contain exactly one /auth/player-bootstrap request \(found 2\)",
+            ):
+                self.validator.validate_workflow(root)
+
     def test_validate_workflow_rejects_bootstrap_manifest_without_env_from(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
         self.assertIn("envFrom:", bootstrap_manifest)
