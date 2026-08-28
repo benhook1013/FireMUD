@@ -201,7 +201,7 @@ docs_node_step = find_step(ci, "docs-check", "Set Up Node", "ci workflow")
 require_equal(
     docs_node_step,
     ("with", "node-version"),
-    "24.19.0",
+    "24.20.0",
     "ci workflow",
 )
 require_equal(
