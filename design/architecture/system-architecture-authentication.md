@@ -114,7 +114,7 @@ FireMUD standardizes a small, explicit role set so tenant authorization and cros
 - **Tenant roles (`scopedRoles[tenantId]`)**
   - `player` – Can join gameplay for the tenant subject to entitlements and quotas; no design, admin, or billing capabilities.
   - `designer` – Can edit design-time content for the tenant via Game Design tools; cannot control runtime instances or billing.
-  - `tenantAdmin` – Owns the tenant in day-to-day operations: can manage game instances, configure runtime settings, and manage subscriptions and billing for that tenant.
+  - `tenantAdmin` – Owns the tenant in day-to-day operations: can manage game instances, configure runtime settings, and view the tenant's high-level subscription state. Subscription and billing mutation is separately subject-bound to the authenticated billing owner recorded as `subscription.accountId`, or to the explicit audited cross-tenant billing-owner handoff; the tenant role alone cannot mutate subscriptions or payment instruments.
   - `moderator` – Performs tenant-scoped moderation actions (for example, muting or banning players) but cannot alter billing or platform-wide configuration.
 
 Services must not introduce ad-hoc roles without updating this model and the Tenant Authorization Contract. Where finer-grained behavior is required, services should prefer additional capabilities/flags derived from these core roles rather than inventing new top-level roles.
