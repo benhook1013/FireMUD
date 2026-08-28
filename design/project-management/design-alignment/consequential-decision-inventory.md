@@ -379,9 +379,9 @@ Packet 2 historical-alias rule: `MS-AA-TOKEN-REVOCATION` is a superseded service
 
 ### Post-Archive Direct Human Decisions
 
-- [x] `COMMERCE-02` — `accepted` on 2026-08-25; [ADR 0179](../../architecture/decisions/adr-0179-firemud-managed-creator-commerce-boundary.md)
-- [x] `HOSTED-TERMS-01` — `accepted` on 2026-08-25; [ADR 0180](../../architecture/decisions/adr-0180-account-owned-hosted-terms-acceptance-gate.md)
-- [x] `HOSTED-TERMS-02` — `accepted` on 2026-08-25; [ADR 0181](../../architecture/decisions/adr-0181-changed-hosted-terms-decline-and-existing-content-continuity.md)
+- [x] `COMMERCE-02` — human-approved on 2026-08-23; refined/applied on 2026-08-25; [ADR 0179](../../architecture/decisions/adr-0179-firemud-managed-creator-commerce-boundary.md)
+- [x] `HOSTED-TERMS-01` — human-approved on 2026-08-24; refined/applied on 2026-08-25; [ADR 0180](../../architecture/decisions/adr-0180-account-owned-hosted-terms-acceptance-gate.md)
+- [x] `HOSTED-TERMS-02` — human-approved on 2026-08-24; refined/applied on 2026-08-25; [ADR 0181](../../architecture/decisions/adr-0181-changed-hosted-terms-decline-and-existing-content-continuity.md)
 
 ### Allocation Notes
 
