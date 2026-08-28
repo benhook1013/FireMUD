@@ -39,6 +39,15 @@ test("documentation-only changes use the lightweight path", () => {
   assert.deepEqual(result.affectedServices, []);
 });
 
+test("ERD generation remains docs-affecting but never uses the lightweight path", () => {
+  const result = classifyChangeScope(["dev-tools/docs/generate-erd.sh"]);
+
+  assert.equal(result.docsChanged, true);
+  assert.equal(result.lightweightOnly, false);
+  assert.equal(result.runAll, false);
+  assert.deepEqual(result.affectedServices, []);
+});
+
 test("validation Python remains lightweight but requests Python proof", () => {
   const result = classifyChangeScope([
     "dev-tools/validation/check-example.py",
