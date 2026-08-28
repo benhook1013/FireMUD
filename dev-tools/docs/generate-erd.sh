@@ -33,12 +33,13 @@ trap 'docker rm -f "$POSTGRES_CONTAINER" >/dev/null' EXIT
 
 POSTGRES_READY_ATTEMPTS=60
 POSTGRES_STABLE_PROBES=2
+POSTGRES_PROBE_TIMEOUT_SECONDS=5
 postgres_ready=false
 for attempt in $(seq 1 "$POSTGRES_READY_ATTEMPTS"); do
-  if docker exec "$POSTGRES_CONTAINER" psql -U firemud -d firemud \
+  if timeout "$POSTGRES_PROBE_TIMEOUT_SECONDS" docker exec "$POSTGRES_CONTAINER" psql -U firemud -d firemud \
       -v ON_ERROR_STOP=1 -Atqc 'SELECT 1' >/dev/null 2>&1; then
     sleep 1
-    if docker exec "$POSTGRES_CONTAINER" psql -U firemud -d firemud \
+    if timeout "$POSTGRES_PROBE_TIMEOUT_SECONDS" docker exec "$POSTGRES_CONTAINER" psql -U firemud -d firemud \
         -v ON_ERROR_STOP=1 -Atqc 'SELECT 1' >/dev/null 2>&1; then
       postgres_ready=true
       echo "PostgreSQL passed $POSTGRES_STABLE_PROBES stable SQL readiness probes on attempt $attempt."
