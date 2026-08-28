@@ -108,14 +108,14 @@ The current first-party public gameplay carrier is the protected `Firemud-Connec
 
 ### TCP Proxy → Gateway Authentication
 
-The TCP Proxy → Gateway hop uses **mutual TLS (mTLS)** by connecting to a dedicated **internal-only** Gateway WebSocket mTLS listener (for example a `spring-cloud-gateway-mtls` `ClusterIP` Service on a separate TLS port). For the mTLS profiles, Spring Cloud Gateway first requires the presented client certificate to chain to the trust bundle or issuer assigned to this deployment environment and to have client-auth usage. It then applies exactly one predicate selected by the configured trust profile:
+The TCP Proxy → Gateway hop uses **mutual TLS (mTLS)** for the certificate-bound profiles by connecting to a dedicated **internal-only** Gateway WebSocket mTLS listener (for example a `spring-cloud-gateway-mtls` `ClusterIP` Service on a separate TLS port). For `production_uri`, `migration_dns`, and `breakglass_fingerprint`, Spring Cloud Gateway first requires the presented client certificate to chain to the trust bundle or issuer assigned to this deployment environment and to have client-auth usage. It then applies exactly one predicate selected by the configured trust profile:
 
 - **`production_uri`:** the certificate contains the exact environment-specific URI SAN/SPIFFE identity allowlisted for the TCP Proxy Service.
 - **`migration_dns`:** the certificate contains the exact allowlisted DNS SAN.
 - **`breakglass_fingerprint`:** the leaf certificate's SHA-256 fingerprint is the one explicitly pinned for the named, expiring incident.
-- **`development_cidr`:** local development or isolated automated tests use only the exact configured source CIDR predicate; this is an explicitly insecure exception and does not claim certificate identity.
+- **`development_cidr`:** local development or isolated automated tests use a TLS (`wss://`) listener without client authentication and only the exact configured source CIDR predicate; this is an explicitly insecure exception, does not claim certificate identity, and never authorizes a plain-transport bridge.
 
-For mTLS profiles, missing peer-certificate data or a failed chain/client-auth check rejects the handshake; for every profile, a failed selected predicate rejects it, strips/discards the raw `X-Proxy-*` inputs, and does not promote them. The profiles are mutually exclusive: configured identities from another profile are not fallback matchers. Hosted, staging, hobby/self-hosted player-facing, and production profiles must not select `development_cidr`.
+For the three certificate-bound profiles, missing peer-certificate data or a failed chain/client-auth check rejects the handshake; for every profile, a failed selected predicate rejects it, strips/discards the raw `X-Proxy-*` inputs, and does not promote them. The profiles are mutually exclusive: configured identities from another profile are not fallback matchers. Hosted, staging, hobby/self-hosted player-facing, and production profiles must not select `development_cidr`.
 
 Gateway config selects exactly one trust profile; settings from another profile make startup or admission fail closed:
 
@@ -126,7 +126,7 @@ Gateway config selects exactly one trust profile; settings from another profile 
 
 The profiles are alternatives, not an ordered any-of matcher. Public ingress strips all proxy-provided and gateway-owned identity/admission headers before any consumer; only this authenticated internal listener rebuilds canonical values. This policy is normative per [ADR 0169](./decisions/adr-0169-exclusive-environment-bound-tcp-proxy-trust.md).
 
-Non-mTLS acceptance of `X-Proxy-*` headers is a development/test-only mechanism. Network isolation is defense in depth and never substitutes for authenticated workload identity in a player-facing environment.
+Non-mTLS acceptance of `X-Proxy-*` headers is a separately selected development/test-only mechanism, not a `development_cidr` transport and not a player-facing fallback. Network isolation is defense in depth and never substitutes for authenticated workload identity in a player-facing environment.
 
 ### Gateway Output Rules (Downstream-Trusted)
 

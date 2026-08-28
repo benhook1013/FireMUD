@@ -58,7 +58,7 @@ In production, these variables are normally sourced from a Secret such as `postg
 
 ## Redis Coordination & Cache
 
-Redis stores transient queues and caches. Every non-ephemeral or player-facing environment, including local development and hosted `pr-preview`, uses **separate Redis deployments** for:
+Redis stores transient coordination state (including gameplay locks, timers, sessions, bindings, and Account-owned token-registry/revocation records), queues, and caches. Every non-ephemeral or player-facing environment, including local development and hosted `pr-preview`, uses **separate Redis deployments** for:
 
 - **Coordination Redis** – tick locks, timers, sessions, and other gameplay‑critical coordination keys.
 - **Cache/Rate‑Limit Redis** – gateway rate limiting and best‑effort read‑side caches.
