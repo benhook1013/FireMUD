@@ -30,7 +30,7 @@ The fresh-bootstrap step establishes the claim and running stack; the standalone
 Use `websocat` (or your favorite WebSocket client) to connect directly to Game Session:
 
 ```bash
-websocat -H "X-Game-Instance-Id: 00000000-0000-0000-0000-000000000001" -H "X-Tenant-Id: 00000000-0000-0000-0000-000000000001" ws://localhost:8080/ws/game
+websocat -H "X-Game-Instance-Id: 00000000-0000-0000-0000-000000000001" -H "X-Tenant-Id: 00000000-0000-0000-0000-000000000001" ws://localhost:8086/ws/game
 WORLDS
 LOGIN demo@example.com swordfish
 PLAY demo
