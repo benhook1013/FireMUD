@@ -23,7 +23,7 @@ This decision is target state only. FireMUD currently has no hosted-creator-part
 
 ## Context
 
-Official hosted creator content needs a reliable boundary between a policy baseline and an accepted, versioned hosted-service agreement. A repository document cannot identify the contracting operator or creator party, prove which text an authorized person accepted, or establish that a later creator-intent write is still covered by the current terms. A login account, tenant role, payer, and technical owner field answer different questions and cannot be treated as the legal party or proof of authority. The Account and Game Design services therefore need one authority direction: Account owns creator-party identity, signer authority, and legal/compliance evidence, while Game Design owns creator content, the tenant's current creator-party binding, and its persistence and publication workflows.
+Official hosted creator content needs a reliable boundary between a policy baseline and an accepted, versioned hosted-service agreement. A repository document cannot identify the contracting operator or creator party, prove which text an authorized person accepted, or establish that a later creator-intent write is still covered by the current terms. A login account, tenant role, payer, and technical owner field answer different questions and cannot be treated as the legal party or proof of authority. The Account and Game Design services therefore need one authority direction: Account owns creator-party identity, signer authority, the tenant's current creator-party association and transfer authority, and legal/compliance evidence, while Game Design owns creator content, its persistence and publication workflows, and only a local binding to Account's exact party/evidence/generation for each covered operation.
 
 The gate applies only to FireMUD's official hosted deployments. A community self-hosted operation does not use this official-hosted gate. Hosting does not turn creator content into repository material and does not grant marketplace, promotion, resale, AI/model-training, or ownership-transfer rights. FireDevOps is a project brand, not a legal entity; Benjamin James Hook remains the current operator unless and until another operator is expressly identified in applicable terms. A future FireDevOps company is a separate operator and requires the existing material-change and affirmative-reacceptance process; formation or branding alone transfers no agreement, content right, billing, membership, or marketplace right.
 
@@ -33,9 +33,9 @@ The gate applies only to FireMUD's official hosted deployments. A community self
 
 Account is the sole authority for the immutable published catalog of hosted-terms document versions, the exact identified operator legal party for each version, and append-only creator-party acceptance evidence. Game Design does not maintain a second catalog or infer acceptance from a local flag, tenant row, UI state, or copied terms text.
 
-Each published terms version has an immutable version identifier and a SHA-256 digest of the exact document bytes. Account also maintains a monotonic material-acceptance generation. Activating a version with a different operator legal identity or materially changed creator-rights terms must advance that generation. The operator may conservatively advance it for other changes. Materiality is an audited operator/legal classification; Game Design does not infer it from a text diff or from content mutations.
+Each published terms version has an immutable version identifier and a SHA-256 digest of the exact document bytes. Account also maintains a monotonic material-acceptance generation. Any material change classified under [ADR 0181](adr-0181-changed-hosted-terms-decline-and-existing-content-continuity.md), including operator identity, creator rights, hosting grant, price/payment, renewal, suspension/termination, deletion/retention, dispute rights, governing law, or remedies, must advance that generation. Only a nonmaterial change may leave the generation unchanged. Materiality is an audited operator/legal classification; Game Design does not infer it from a text diff or from content mutations.
 
-The current terms version and generation are evaluated by Account for the exact hosted-terms scope and operator legal party. A future operator is not an automatic transferee of an old operator's acceptance. Operator cutover must not rely on acceptance of the old operator's terms and remains subject to the applicable legal and lifecycle decision.
+For the exact hosted-terms scope, Account evaluates the scope identity, current terms version and digest, material-acceptance generation, and operator legal party together. A future operator is not an automatic transferee of an old operator's acceptance. Operator cutover must not rely on acceptance of the old operator's terms and remains subject to the applicable legal and lifecycle decision.
 
 ### Acceptance is a creator-party-wide affirmative act
 
@@ -52,6 +52,7 @@ Acceptance is party-wide for one exact creator party, operator legal party, and 
 - the accepting signer account ID, derived from authenticated Account context;
 - for an organization, the signer's stated capacity and the current Account-owned signer-authority evidence ID and generation;
 - the immutable terms version identifier and SHA-256 document digest;
+- the immutable hosted-terms scope identifier;
 - the exact operator legal identity;
 - the material-acceptance generation;
 - the server-recorded acceptance timestamp; and

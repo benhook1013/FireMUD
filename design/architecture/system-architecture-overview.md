@@ -102,7 +102,7 @@ These names are normative and should be used consistently in service docs and di
 - **Published asset delivery plane:** Published game assets are read through the canonical `/assets/**` surface. This surface is edge-routable for release artifact delivery and caching, but it is not an admin/creator ingress path and does not authorize design-time mutation.
 - **Target selected-profile observability dependencies:** When implemented, Logging & Admin calls only the internal observability backends advertised by the selected profile. The default indexed profile may use Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, and Alertmanager; a compatible profile uses its documented mappings, and a reduced profile exposes only its declared console/journal capability or explicit omission. These backends are not exposed directly to clients. The current service has none of those observability clients, embedded endpoints, or a separate admin UI; its log query reads only the service-owned PostgreSQL `log_events` table. The canonical profile and evidence contract is [Logging & Monitoring](./system-architecture-logging-monitoring.md#log-pipeline-queryability-contract).
 
-`Bypass-safe workflow` has a specific meaning in this architecture: it is an externally callable domain-owned admin operation whose correctness does not depend on Logging & Admin-owned policy definition, cross-domain audit orchestration, or operator availability-split guarantees. Bypass-safe workflows must still emit domain audit records and must be explicitly named in the owning service contract before they are exposed directly through an edge-routable domain API.
+`Bypass-safe workflow` has a specific meaning in this architecture: it is an externally callable domain-owned admin operation allowed to bypass Logging & Admin ingress because its correctness does not depend on Logging & Admin-owned policy definition, cross-domain audit orchestration, or operator availability-split guarantees. Bypass-safe never bypasses the owning service's authentication or authorization, including Account's mandatory hosted-terms/currentness gate for official-hosted creator writes. Bypass-safe workflows must still emit domain audit records and must be explicitly named in the owning service contract before they are exposed directly through an edge-routable domain API.
 
 Minimum service-doc requirements for a bypass-safe workflow designation:
 
@@ -116,7 +116,7 @@ Examples:
 
 - `GET /api/session/game-sessions/{id}` and `GET /api/account/accounts/{id}` are bypass-safe reads.
 - `POST /api/design/validation-runs/{runId}:cancel` is bypass-safe only if the owning service explicitly documents it as a domain-local operation that does not depend on Logging & Admin-owned policy or cross-domain write orchestration.
-- `POST /api/design/assets` and `POST /api/design/templates` are bypass-safe creator writes when implemented by Game Design as tenant-scoped domain-local asset/template workflows with Game Design-owned validation and audit behavior.
+- `POST /api/design/assets` and `POST /api/design/templates` are bypass-safe creator writes when implemented by Game Design as tenant-scoped domain-local asset/template workflows with Game Design-owned validation and audit behavior. They bypass Logging & Admin only: for covered official-hosted operations, before any side effect, Game Design must obtain current Account hosted-terms authority and record the local tenant/creator-party/evidence/generation binding.
 - Quota override is a hypothetical target family and, when an owner-backed route exists, must enter through Logging & Admin rather than becoming a direct bypass.
 - `POST /api/session/tick-remediation/pause` is not bypass-safe and must enter through Logging & Admin.
 - `POST /api/session/game-sessions/{id}/feature-flags/{flagKey}:toggle` is not bypass-safe because runtime feature-flag overrides are operator writes governed by the canonical operator action contract.
@@ -127,7 +127,7 @@ Canonical bypass-safe workflow allowlist at the architecture layer:
 | Workflow class | Direct external bypass-safe write allowed? | Authority |
 | --- | --- | --- |
 | External admin reads on allowlisted routes | Yes | Owning service read contract |
-| Game Design tenant-scoped creator writes for assets and templates | Yes | Game Design service contract |
+| Game Design tenant-scoped creator writes for assets and templates | Yes, with the mandatory Account hosted-terms/currentness gate | Game Design service contract plus Account hosted-terms authority |
 | Domain-local cancellation or similar write on an allowlisted route | Only when the overview/matrix/service contract explicitly marks that workflow class as bypass-safe | Owning service contract plus architecture allowlist |
 | Moderation writes | No | Logging & Admin ingress only |
 | Runtime feature-flag overrides | No | Logging & Admin ingress only |
@@ -142,7 +142,7 @@ Canonical route-review examples:
 | Proposed route | Classification | Canonical decision | Why |
 | --- | --- | --- | --- |
 | `GET /api/account/accounts/{id}` | External admin read | Allowed when Account documents the read contract | Edge-routable read on an allowlisted service |
-| `POST /api/design/templates` | Game Design creator write | Allowed when Game Design documents tenant-scoped validation and audit | Domain-local creator workflow owned by Game Design |
+| `POST /api/design/templates` | Game Design creator write | Allowed when Game Design documents tenant-scoped validation and audit and obtains Account hosted-terms authority before side effects | Domain-local creator workflow owned by Game Design; bypasses Logging & Admin only |
 | `POST /api/design/validation-runs/{runId}:cancel` | Domain-local write | Allowed only when Game Design explicitly documents it as bypass-safe | Can qualify only if it is domain-local and does not depend on Logging & Admin-owned policy or cross-domain orchestration |
 | `POST /api/session/game-sessions/{id}/feature-flags/{flagKey}:toggle` | External operator write | Not allowed as a direct external route | Runtime feature-flag overrides must enter through Logging & Admin |
 | Quota override family (no current route) | Coverage drift | No executable route is accepted | The future owner contract must remain canonical at Account and enter through Logging & Admin |
@@ -154,7 +154,7 @@ Canonical route-review examples:
 | Traffic category | Edge entry point | Allowed direct domain route behavior |
 | --- | --- | --- |
 | External admin reads | Gateway allowlisted domain/admin APIs | Allowed when the route is edge-routable and the owning service documents the read contract |
-| Game Design creator writes for assets and templates | Gateway allowlisted Game Design APIs | Allowed when the owning Game Design contract documents tenant access, validation, and audit behavior |
+| Game Design creator writes for assets and templates | Gateway allowlisted Game Design APIs | Allowed when the owning Game Design contract documents tenant access, validation, audit, and the pre-side-effect Account hosted-terms/currentness check with local evidence binding |
 | External operator writes for moderation, quota overrides, runtime feature flags, admission control, and tick remediation | Logging & Admin APIs via Gateway | Direct domain bypass not allowed unless a future design update explicitly amends the operator write ingress policy |
 | Internal service-to-service control APIs | Internal-only service contracts | Not an edge contract; does not traverse Gateway unless the contract is explicitly defined as Gateway-managed infrastructure control traffic |
 
@@ -191,7 +191,7 @@ The public edge contract is defined at the route-family level before any service
 | `/api/admin/**` | Logging & Admin external operator ingress | Yes, but only as Logging & Admin-owned operator workflows | Protected by `Authorization` header presence at Gateway and consuming-service JWT validation; operator intent and audit must be captured by Logging & Admin. |
 | `/api/session/**` | Game Session HTTP admin/control family | External reads and explicitly documented bypass-safe workflows only; operator/control writes otherwise route through Logging & Admin or remain internal-only | Distinct HTTP family from `/ws/game/**`; mutable runtime/tick-region actions must still execute through fenced internal ownership and must not treat the edge prefix as blanket permission for undocumented writes. |
 | `/api/account/**` | Account external admin/bootstrap family | Reads plus explicitly documented bypass-safe account/bootstrap workflows only | Consuming service owns JWT/bootstrap token validation and subject binding; quota/entitlement override writes still require Logging & Admin ingress. |
-| `/api/design/**` | Game Design external creator/admin family | Reads plus the explicitly allowlisted bypass-safe creator-write classes for assets/templates and other architecture-approved domain-local workflows | Game Design owns tenant checks, validation, and audit for these creator workflows. |
+| `/api/design/**` | Game Design external creator/admin family | Reads plus the explicitly allowlisted bypass-safe creator-write classes for assets/templates and other architecture-approved domain-local workflows | Game Design owns tenant checks, validation, and audit; bypass-safe means bypassing Logging & Admin only, and covered official-hosted writes still require Account hosted-terms/currentness authority and local evidence binding before side effects. |
 | `/api/social/**` | Social & Groups external admin/read family | Reads and explicitly documented bypass-safe workflows only | Moderation/operator writes remain Logging & Admin ingress unless a future architecture update explicitly allows more. |
 | `/assets/**` | Published game-asset delivery family | No | Read-only published artifact delivery surface. URLs are stable release artifacts, gateway- or CDN-fronted, and are not design-time mutation or tenant-admin ingress paths. Frontend compiled assets use the separate static-host `/frontend-assets/**` family. |
 
@@ -561,7 +561,7 @@ For gameplay/chat moderation specifically, the operator policy plane and enforce
 - **Lease owner** – The Game Session execution owner currently holding the `<tenantId, gameInstanceId, regionId>` lease required to mutate region-scoped coordination state.
 - **Canonical room state** – A room view assembled only when World Management and Entity Management return same-region/scope/epoch served-through proofs at or beyond the requested causal floor; opaque component versions appear in the composite identity and are not directly compared.
 - **Control-plane API** – An infrastructure or domain admin API that is not part of player gameplay traffic.
-- **Bypass-safe workflow** – An explicitly documented external admin workflow allowed to bypass Logging & Admin ingress because it does not rely on Logging & Admin-owned policy, cross-domain write orchestration, or control-plane availability guarantees.
+- **Bypass-safe workflow** – An explicitly documented external admin workflow allowed to bypass Logging & Admin ingress because it does not rely on Logging & Admin-owned policy, cross-domain write orchestration, or control-plane availability guarantees; it never bypasses owning-service authorization or Account's mandatory hosted-terms/currentness gate for official-hosted creator writes.
 - **Infrastructure management plane** – Internal Gateway management and health-control traffic used for infrastructure operations such as route configuration and liveness checks; this is not an external product API surface.
 - **External admin/creator API plane** – The HTTP(S) API surface exposed through Gateway for operator and creator tools on explicitly allowlisted domain routes.
 - **Player traffic plane** – Player-facing HTTP, WebSocket, and Telnet traffic used for gameplay admission and live play.

@@ -2,13 +2,13 @@
 
 Required Notice: Copyright Benjamin James Hook (<https://firedevops.net>)
 
-Benjamin James Hook is the current legal rights holder for FireMUD. FireDevOps is the project brand, and firedevops.net is its website; neither is a separate legal entity.
+Benjamin James Hook is the current rights holder for FireMUD project material he owns or controls. Accepted contributors retain ownership of their contributions subject to the [Contributor Licence Agreement](CONTRIBUTOR_LICENSE_AGREEMENT.md) and applicable notices and licences. FireDevOps is the project brand, and firedevops.net is its website; neither is a separate legal entity.
 
 FireMUD is licensed under the PolyForm Noncommercial License 1.0.0.
 
 Unless a file states otherwise, this license applies to all source files and repository content for the FireMUD project.
 
-Commercial use is not permitted under this repository license. For commercial licensing inquiries, contact <licensing@firedevops.net>; commercial use requires a separate written agreement with Benjamin James Hook.
+Commercial use not otherwise permitted by this repository license or applicable law requires a separate written agreement with Benjamin James Hook. For commercial licensing inquiries, contact <licensing@firedevops.net>.
 
 The FireMUD and FireDevOps names are used as trademarks by Benjamin James Hook. This software license does not grant trademark permission; [TRADEMARKS.md](TRADEMARKS.md) separately governs permitted brand uses, and uses neither allowed by that policy nor otherwise permitted by applicable law require separate written permission.
 

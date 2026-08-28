@@ -27,6 +27,6 @@
 - [ ] I have read the contribution guidelines
 - [ ] I have listed the validation I actually ran
 - [ ] I have referenced related issues, domain implementation trackers, and canonical design docs where relevant
-- [ ] An accepted [Contributor Licence Agreement](../CONTRIBUTOR_LICENSE_AGREEMENT.md) is on file for every external contribution, with each individual contributor or entity signer at least 18 and legally capable, or the documented owner/automation exception applies; checking this box alone does not execute the CLA
+- [ ] An accepted [Contributor Licence Agreement](../CONTRIBUTOR_LICENSE_AGREEMENT.md) is on file for every external contribution, with each individual contributor or entity signer at least 18 and legally capable, or the documented owner/automation exception applies; a bot cannot sign, and checking this box alone does not execute the CLA
 - [ ] For architecture or capability/tracker completion changes, I checked the relevant domain implementation tracker, canonical design, proto/API contracts, service implementation, and focused tests before marking work complete or filing blockers
 - [ ] For auth/session, scripting, or observability contract changes, I applied the relevant checklist in `design/project-management/review-checklists.md`

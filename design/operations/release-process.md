@@ -44,6 +44,8 @@ Before publishing a release:
 5. Verify that `NOTICE` in the release artifact matches the release metadata actually being published.
 6. Verify that the FireMUD and FireDevOps names and trademark wording remain consistent with [`TRADEMARKS.md`](../../TRADEMARKS.md) and do not imply that either mark is registered.
 
+The collective legal/hosted wording alignment check also includes [`HOSTED_CONTENT_TERMS.md`](../../HOSTED_CONTENT_TERMS.md); the separate `NOTICE` and trademark checks remain unchanged.
+
 ## Release Automation
 
 The tag workflow in [`.github/workflows/release-notes.yml`](../../.github/workflows/release-notes.yml) generates the release-specific `NOTICE` asset automatically and assembles the release `/licenses` bundle from ORT output.

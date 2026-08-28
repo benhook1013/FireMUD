@@ -4,7 +4,7 @@ Thank you for contributing to the FireMUD Game Platform repository (the “Proje
 
 FireDevOps is a project brand only. It is not a legal entity and is not a party to this Agreement.
 
-This is a legally binding agreement. Read it carefully and seek independent legal advice if you are uncertain about its effect. To make it effective, complete the applicable signature fields and send a signed electronic copy to [licensing@firedevops.net](mailto:licensing@firedevops.net). Benjamin will countersign or send written acceptance or confirmation. A current accepted copy must be on file before a contribution is merged, subject to the owner and configured-automation exceptions described in the repository contribution guidance. Completed copies are kept privately and are not committed to the repository.
+This is a legally binding agreement. Read it carefully and seek independent legal advice if you are uncertain about its effect. To make it effective, complete the applicable signature fields and send a signed electronic copy to [licensing@firedevops.net](mailto:licensing@firedevops.net). Benjamin will countersign or send written acceptance or confirmation. A current accepted copy must be on file before a contribution is merged, subject to the owner and limited automation exceptions described in the repository contribution guidance. Automation cannot execute or sign this Agreement. Completed copies are kept privately and are not committed to the repository.
 
 ## 1. Definitions
 
@@ -74,7 +74,7 @@ You confirm that:
 
 (d) For a Legal Entity, the grants under Section 2 do not violate rights that You or Your Affiliates have granted to third parties.
 
-(e) If a Submission contains third-party or mixed material, You have identified that material and its applicable licence or documented permission in writing. You must not submit it as a Contribution without documented permission and prior written approval from Benjamin or a Permitted Successor. The approval may be recorded in the pull request or through the licensing contact. This Agreement covers only rights that You own or control; it does not replace, expand, or override third-party terms.
+(e) If a Submission contains third-party or mixed material, You must identify that material and its applicable licence or documented permission in writing. The material may be reviewed in the pull request or through the licensing contact, but it must not be merged or accepted as a Contribution until documented permission and written approval from Benjamin or a Permitted Successor are on file. This Agreement covers only rights that You own or control; it does not replace, expand, or override third-party terms.
 
 ## 4. Disclaimer
 

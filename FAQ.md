@@ -10,7 +10,7 @@ This document collects common questions and answers about the FireMUD Game Platf
   FireMUD is a modular platform for hosting and creating text-based MUD games. It provides real-time multiplayer services and integrated tools for game creators.
 
 - **Is FireMUD open source?**
-  FireMUD is source-available under the PolyForm Noncommercial License 1.0.0. Personal use, private self-hosting, and modification are allowed for noncommercial purposes as described in [LICENSE.md](LICENSE.md). See [LICENSING.md](LICENSING.md) for plain-language guidance; commercial use requires a separate written agreement with Benjamin James Hook.
+  FireMUD is source-available under the PolyForm Noncommercial License 1.0.0. Personal use, private self-hosting, and modification are allowed for noncommercial purposes as described in [LICENSE.md](LICENSE.md). See [LICENSING.md](LICENSING.md) for plain-language guidance; commercial use not otherwise permitted by LICENSE.md or applicable law requires a separate written agreement with Benjamin James Hook.
 
 - **May a community-hosted server receive money?**
   Not for an ordinary community operator. Public and private community instances follow the project's recognized and supported ordinary-community lane: the strict noncommercial, no-money rule in [LICENSING.md](LICENSING.md). [LICENSE.md](LICENSE.md) alone determines legal rights, including its separately stated institutional permissions; this plain-language guide does not narrow them. Benjamin James Hook may separately receive development sponsorship; that does not authorize a community operator to receive money or another commercial benefit connected to operating an instance.

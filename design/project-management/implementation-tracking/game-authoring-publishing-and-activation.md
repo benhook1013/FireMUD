@@ -8,7 +8,7 @@ This is a non-normative implementation tracker for game authoring, publishing, a
 
 This tracker consolidates Game Design authoring, settings, publication, release admission, and activation by capability. The live implementation is strongest in control-plane publication, release attestation, launch preflight, and the first typed World authoring handoff; broader creator/editor UX and downstream ownership synchronization remain incomplete.
 
-Official-hosted creator content adds a target-only Account-to-Game Design acceptance gate under [ADR 0180](../../architecture/decisions/adr-0180-account-owned-hosted-terms-acceptance-gate.md): no first persisted Draft or later content-bearing authoring, revision, asset, template, plugin, or publication mutation may proceed without current party acceptance for the identified operator. [ADR 0181](../../architecture/decisions/adr-0181-changed-hosted-terms-decline-and-existing-content-continuity.md) adds the target changed-terms write freeze and limited continuity behavior. The party/terms authority, mutation gate, evidence binding, and focused proof are absent; these links do not change current capability ratings or imply an operative hosted service.
+Official-hosted creator-content acceptance remains an unimplemented target gap; see [ADR 0180](../../architecture/decisions/adr-0180-account-owned-hosted-terms-acceptance-gate.md) and [ADR 0181](../../architecture/decisions/adr-0181-changed-hosted-terms-decline-and-existing-content-continuity.md). These links do not change current capability ratings or imply an operative hosted service.
 
 ### Script and plugin transition reconciliation
 
