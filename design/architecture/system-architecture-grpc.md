@@ -84,7 +84,8 @@ Every gRPC service registers the `LoggingInterceptor`, `MetricsInterceptor`, and
 These rules apply throughout a declared compatibility window. A window exists when external consumers upgrade independently, old and new binaries overlap, binary rollback is supported, or retained messages/data require an older reader:
 
 - Add fields with new field numbers; use explicit presence when absence and the default value have different meanings.
-- Reserve both the field number and name when removing a field after its compatibility window.
+- Do not remove an existing field while its compatibility window is active.
+- After that window closes, an approved removal must reserve both the field number and name in the same change, before either can be reused.
 - Add enum values only when every protected consumer safely handles unknown values.
 - Do not change an existing field's type or meaning inside the protected window.
 

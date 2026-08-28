@@ -31,7 +31,7 @@ flowchart LR
     DESIGN_ALLOC --> SOURCE_INV[Source decision inventories]:::alignment
     SOURCE_INV --> HUMAN_QUEUE[Completed human-review queue]:::alignment
     HUMAN_QUEUE --> APPLY[Point-in-time application status]:::alignment
-    APPLY -->|merged to develop| APPLIED_DECISIONS[182 applied decision keys, including complete Packets 3-7 through ADR 0178, plus owning design changes]:::status
+    APPLY -->|target state after this parcel merges| APPLIED_DECISIONS[182 applied decision keys in the selective-import target, including complete Packets 3-7 through ADR 0178, plus owning design changes]:::status
     APPLIED_DECISIONS -. explains; does not replace .-> ARCH
 
     TAXONOMY --> TRACKER_ALLOC[Implementation-tracker allocation]:::alignment
