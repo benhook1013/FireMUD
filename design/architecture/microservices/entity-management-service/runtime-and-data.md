@@ -9,6 +9,7 @@ This document defines Entity Management’s runtime model, persistence ownership
 - This current `{tenantId,effectId}` identity is not the target ADR 0054 participant guard; changed operation, target, or request reuse is not yet proven fail-closed.
 - Current `jOOQ + Flyway` adoption and focused persistence proof remain implementation work.
 - Realm-authored actor entry remains partial: legacy creation and actor rows still expose fixed RPG-oriented fields, policy/descriptor/template resolution and auto-provision idempotency are incomplete, and synthetic-ID/fork-copy proof gaps remain. These target rules do not claim runtime convergence.
+- The live runtime-instance cleanup path currently deletes room-ground inventory, item stacks, item instances, and container instances by `(tenantId, gameInstanceId)` alone. It does not apply namespace, scope, and holder/container closure or prove S3 classification, so its cleanup acknowledgement is unsafe for replacement until owner-local classification, fencing, and focused proof are complete.
 
 ## Architecture and Design Notes
 
@@ -107,7 +108,7 @@ Cutover fence contract:
 
 Illustrative responses for the current live first slice:
 
-- The current request carries `tenant_id`, `source_game_instance_id`, and `target_version_id` as positive decimal strings (for example, `"7"`, `"42"`, and `"43"`), which the service parses to numeric internal IDs; `remap_set_id` is optional text. The response below is only the live `ValidateEntityUpgradeMappingsResponse`: it does not echo tenant/source/target identifiers and exposes no target-only namespace, scope, fence, or classification fields. It is an incomplete, non-authoritative table-level enumeration. The `item_instances` and `item_stacks` entries below mean only rows held by synthetic room-ground containers; they do not classify every row in either table as `S3`.
+- The current request carries `tenant_id`, `source_game_instance_id`, and `target_version_id` as positive decimal strings (for example, `"7"`, `"42"`, and `"43"`), which the service parses to numeric internal IDs; `remap_set_id` is optional text. The response below is only the live `ValidateEntityUpgradeMappingsResponse`: it does not echo tenant/source/target identifiers and exposes no target-only namespace, scope, fence, or classification fields. Its `stateClassesChecked` and `checkedFamilies` fields are aggregate current-response fields: `checkedFamilies` contains emitted family names, including the live spelling `characters`, and carries no per-family outcome. It is an incomplete, non-authoritative table-level enumeration. The `item_instances` and `item_stacks` entries below mean only rows held by synthetic room-ground containers; they do not classify every row in either table as `S3`.
 
 ```json
 {
@@ -144,7 +145,7 @@ Target-state illustrative responses:
   "sourceVersionId": "1f6e7a82-3c4d-4b91-8a25-6d0e9f3b7c14",
   "targetVersionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
   "durableFenceToken": "8b7e1c4a-2d6f-4c91-a5b8-7e3d9f0a6c12",
-  "checkedFamilies": [
+  "familyClassifications": [
     {
       "family": "equipment_bindings",
       "referencedTemplateIds": ["itemTemplateId:iron-sword"],
@@ -170,7 +171,7 @@ Target-state illustrative responses:
   "sourceVersionId": "1f6e7a82-3c4d-4b91-8a25-6d0e9f3b7c14",
   "targetVersionId": "8e65e4a1-5b49-4c31-9f27-3d0b8c6a1e74",
   "durableFenceToken": "c4a9e6f1-7b2d-4d83-9c15-6e0f2a8b4d77",
-  "checkedFamilies": [
+  "familyClassifications": [
     {
       "family": "class_assignment",
       "referencedTemplateIds": ["classTemplateId:ranger-v1"],

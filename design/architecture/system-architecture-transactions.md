@@ -6,7 +6,7 @@ Script evaluation and pin transitions are not a new transaction substrate. The s
 
 ## Implementation Status
 
-The structured participant-guard request, deterministic command-plan root identity, shared `IdempotentEffectExecutor`, standardized tick-effect outcome metric, and replay-verification helper described below are target-state contracts. The current replay tables and helpers remain narrower and domain-local; complete propagation and validation of the plan's persisted `planOrdinal`/root `EffectId`, typed operation, target aggregate, immutable request digest, complete participant set, and shared helper/metric behavior are not yet fully implemented or proven. The current scripting handoff also does not carry, persist, or enforce `scriptPinEpoch` end to end, so it cannot yet reject same-version work from an older epoch; this is an implementation gap rather than a weakened target invariant. The target contract remains authoritative: matching requests may replay safely, while an operation, target, or digest mismatch fails closed.
+The structured participant-guard request, deterministic command-plan root identity, shared `IdempotentEffectExecutor`, standardized tick-effect outcome metric, and replay-verification helper described below are target-state contracts. The current replay tables and helpers remain narrower and domain-local; complete propagation and validation of the plan's persisted `planOrdinal`/root `EffectId`, typed operation, target aggregate, immutable request digest, complete participant set, and shared helper/metric behavior are not yet fully implemented or proven. The current scripting handoff also does not carry, persist, or enforce `scriptPinEpoch` end-to-end, so it cannot yet reject same-version work from an older epoch; this is an implementation gap rather than a weakened target invariant. The target contract remains authoritative: matching requests may replay safely, while an operation, target, or digest mismatch fails closed.
 
 Lifecycle and authoring workflows follow the same local-transaction boundary. World Management commits its lifecycle row/epoch with database compare-and-set; Temporal coordinates retries and waits but is not a transaction or authority. Replacement cutover follows the canonical [PREPARING-to-ACTIVE proof sequence](./system-architecture-versioning-runtime.md#realm-routing-contract-for-player-addressable-realms) and [Game Session cutover boundary](./microservices/game-session-service/api-contracts.md#world-lifecycle-and-admission-boundary): World owns the lifecycle CAS and one-shot cutover hold, while the Game Session owner-local cutover transaction validates the hold id/fence, expected pointer version, and exact source and target `ACTIVE` proofs before its pointer CAS. World finalizes the hold only after authoritative Game Session readback proves the local pointer/audit/prepared-execution/source-cleanup/drain-fence transaction; no global transaction spans the services. A multi-owner Draft commit carries the complete [ADR 0129](./decisions/adr-0129-durable-fenced-multi-owner-draft-commits.md) binding, including target `tenantId`/`versionId`, request or proposal identity, exact `baseCommitId`, canonical revision order, proposed input/digest, and the complete affected `(owner, aggregateId, scopeId, epoch)` set. It performs compare-and-set in each owner database, records durable per-owner outcomes, and publishes through a synchronized read fence; it never uses a global epoch, silent merge, or distributed transaction. These are control-plane workflows and do not add a global ACID path to ordinary gameplay.
 
@@ -163,15 +163,14 @@ Durable backlog contract:
 Retry and dead-letter policy:
 
 - Default retry strategy is bounded exponential backoff with jitter and no mutation of `EffectId`.
-- Effects remain `PENDING` until all required participants acknowledge applied/no-op for the same `EffectId`.
-- Effects move to `DEAD_LETTER` only after retry exhaustion or explicit operator action; no destructive compensation is issued from this path.
-- Dead-letter rows remain replayable via explicit operator/API actions; replay must preserve original `EffectId`.
+- Backlog rows remain `PENDING` until all required participants acknowledge applied/no-op for the same `EffectId`.
+- Backlog rows receive a `DEAD_LETTER` retry disposition only after retry exhaustion or explicit audited operator action; no destructive compensation is issued from this path. The underlying effect ledger remains governed by the `APPLIED`/evidence-qualified `ABANDONED` contract and remains nonterminal when execution is inconclusive.
+- Dead-letter backlog rows remain replayable via explicit operator/API actions; replay must preserve the original `EffectId`.
 
 Retention and lifecycle policy:
 
-- `CONVERGED` rows are retained for 24 hours, then deleted by background GC.
-- `DEAD_LETTER` rows are retained for 30 days minimum (or longer by policy) for incident analysis.
-- GC jobs must be idempotent and rate-limited per tenant to avoid write spikes.
+- The owning Game Session family must declare its ADR 0163 retention class, terminal/reference/blocker predicate, minimum configured horizon, safe watermark, hold behavior, and bounded GC cadence/batch. Cleanup is eligible only after that predicate and watermark prove that no producer retry, replay, restore, or downstream compatibility path can reference or resurrect the logical effect; nonterminal, inconclusive, and held rows remain blockers.
+- Exact retention values are configuration-backed operational policy owned by the [Scaling Runbook](./system-architecture-scaling-runbook.md#data-retention-and-high-churn-tables), not universal durations in this transaction contract. GC remains owner-local, idempotent, and rate-limited per tenant to avoid write spikes.
 
 Required control-plane interfaces:
 
@@ -314,7 +313,7 @@ FireMUD uses a **shared short synchronous saga orchestration library**, not a se
   - Supports compensation.
   - Flyway migrations bundled with the library create these tables automatically when consuming services start.
   - `SagaRunner` emits a `sagas.active` metric and attaches a `correlationId` to logs for each orchestration using MDC.
-  - Operators monitor progress via the Saga Dashboard (`/sagas` and `/sagas/{id}/steps` endpoints) provided by the [Logging & Admin Service](./microservices/logging-admin-service/README.md), which queries saga status via service APIs rather than directly reading every database.
+  - Operators monitor progress via the Saga Dashboard (`/sagas` and `/sagas/{id}/steps` endpoints) provided by the [Logging & Admin Service](./microservices/logging-admin-service/README.md). Current endpoints are local-schema-only; any target cross-service view must use read-only per-service status APIs or fan-out and must not read foreign databases or acquire execution authority.
 
 This library is intentionally not FireMUD's durable workflow engine. World lifecycle, publish, and script-patch readiness now use Temporal because they need restart-safe continuation, stable workflow identity, and operator-visible runtime state independent of one service process.
   
@@ -403,8 +402,9 @@ The `common-saga` module provides a `SagaBuilder` class implementing this patter
 Services include the library and the accompanying Flyway migrations exposed via
 `classpath:db/migration/saga` to persist saga state in the owning service schema's
 `saga_instance` and `saga_step` tables.
-Example saga flows are documented in [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md)
-and in the Logging & Admin Service README.
+Short-saga examples and consequences are documented in the [Game Session Service runtime and data](./microservices/game-session-service/runtime-and-data.md)
+and in the Logging & Admin Service README. The [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md)
+is the Temporal `world-lifecycle` adopter, not a Saga.
 
 ### Saga vs Temporal Boundary
 

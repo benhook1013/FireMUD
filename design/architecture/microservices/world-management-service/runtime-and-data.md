@@ -3,6 +3,8 @@
 ## Implementation Status
 
 - The current room-cache implementation remains an unversioned TTL-only payload and must use authoritative reads until the target opaque component-version and invalidation proof exists.
+- Historical migration status is incomplete: `V16__runtime_world_event_scope.sql` dropped and recreated `world_event` while changing its legacy template-region reference to a runtime-instance reference, without recorded retained-row mapping or backfill evidence. The current repository cannot reconstruct rows already dropped; any retained-data deployment requires an explicit owner disposition/mapping or verified no-data boundary, and future remediation must add migration and focused proof before contraction is claimed.
+- Legacy topology scope/version introduction is also not mapped: `V2__add_tenant_and_expiration.sql` assigns `tenant_id = 0` to existing zone, room, and instance rows, while `V18__version_scoped_world_templates.sql` assigns `version_id = 1` across existing template tables without hierarchy/version-graph backfill evidence. Positive tenant/version reads can orphan or misattribute those rows; this remains migration/proof drift rather than a new identity authority.
 
 ## Template and Runtime Ownership
 

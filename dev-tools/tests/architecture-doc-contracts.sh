@@ -1666,6 +1666,7 @@ require_contains(
 for resume_identity_path in (
     "design/architecture/system-architecture-scripting-scheduler-and-timers.md",
     "design/architecture/decisions/adr-0072-class-specific-timer-durability-and-recovery.md",
+    "design/architecture/decisions/adr-0091-class-specific-script-timer-clocks-and-recovery.md",
     "design/architecture/system-architecture-scripting-normative-contract-tables.md",
     "design/architecture/system-architecture-scripting-dsl-for-designers.md",
 ):
