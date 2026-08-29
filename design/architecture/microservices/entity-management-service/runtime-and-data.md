@@ -196,7 +196,7 @@ Target-state illustrative responses:
   "sourceVersionId": "1f6e7a82-3c4d-4b91-8a25-6d0e9f3b7c14",
   "targetVersionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
   "durableFenceToken": "f1d6a3c8-9e24-4b70-b5f2-8c1a6d9e3f04",
-  "checkedFamilies": [
+  "familyClassifications": [
     {
       "family": "character",
       "referencedTemplateIds": [],

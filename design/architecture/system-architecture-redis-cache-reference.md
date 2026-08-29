@@ -126,7 +126,7 @@ CI and code review checks are expected to:
 - `world-dynamic:*` / `room:*` - hit/miss counters plus key-count gauges where available.
 - `view:room-look:*` - hit/miss, recompute, write-skip reason, oversize, active-key/variant-budget, and Redis-failure metrics as specified by the [canonical Class-B contract](./system-architecture-redis-cache.md#canonical-viewroom-look-class-b-contract).
 - `chat:*` - hit/miss counters plus chat-type gauges where helpful.
-- `automation:queue:*` / `automation:quota:*` / `automation:tenant-budget:*` / `automation:test:capacity:*` - queue and quota counters or equivalent service metrics that make best-effort loss and rebuild visible.
+- `automation:queue:*` / `automation:quota:*` / `automation:tenant-budget:*` / `automation:test:quota:*` / `automation:test:capacity:*` / `automation:readiness:capacity:*` - queue, quota, and capacity counters or equivalent service metrics that make best-effort loss and rebuild visible across their tenant and cluster variants.
 - Prefix tags should stay consistent across services so dashboards can reason about cache behavior by aggregate family rather than by one-off metric names.
 
 ### Future Work / TODO
