@@ -119,7 +119,7 @@ This enables stage-aware outcomes in `script_event_audit`: the system can distin
 ## Redis Cluster Slotting Rules
 
 - Every Automation-owned multi-key operation must use keys carrying one canonical scope hash tag and therefore resolve to one Redis Cluster slot. Key families without a canonical shared tag are unsupported for atomic multi-key operations.
-- The current `automation:test:quota:*` and `automation:readiness:capacity:*` capacity families are unsupported until their central ownership/reset/ACL registration is complete and their keys use one canonical scope hash tag/Redis Cluster slot, or the cross-key reservation is replaced with a single-key design.
+- The current `automation:test:quota:*`, `automation:test:capacity:*`, and `automation:readiness:capacity:*` capacity families are unsupported until their central ownership/reset/ACL registration is complete and their keys use one canonical scope hash tag/Redis Cluster slot, or the cross-key reservation is replaced with a single-key design.
 - Automation Redis usage must never perform multi-key operations that span both `automation:*` and `tick:*` keys in a single invocation.
 - Allowed examples:
   - A Redis operation that touches only `automation:queue:{tenantInstanceTag}:*` keys for one runtime scope.
