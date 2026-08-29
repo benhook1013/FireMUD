@@ -32,8 +32,8 @@ Target normalization occurs before close-metric emission: validate the complete 
 
 ## Dynamic Route Operational Guardrails
 
-- Dynamic route mutation is an explicitly enabled local/dev/test capability, not an initial production control plane. The current implementation enforces default-off startup and an exclusive active `dev`/`test` profile allowlist; the remaining route-input and ingress restrictions below are target-state acceptance criteria.
-- Current startup acceptance: enabled mutation under a player-facing, custom, mixed, or absent profile fails startup, regardless of persistence or convergence claims.
+- Dynamic route mutation is an explicitly enabled local/dev/test capability, not an initial production control plane. `DynamicRouteMutationPolicy` defaults mutation to disabled and, when enabled, requires at least one active `dev` or `test` profile and rejects any other active profile; its unit tests cover disabled mutation, supported profiles, and rejection of unsupported, mixed, or absent profiles.
+- Startup/deployment proof remains separate from policy behavior: the current tests construct `DynamicRouteMutationPolicy` directly and invoke its lifecycle/guard methods, while `GatewayControllerConditionTest` covers only the controller's conditional bean presence. No full Gateway application-context startup or deployment test currently proves that an enabled player-facing, custom, mixed, or absent profile fails startup, regardless of persistence or convergence claims.
 - Target-state acceptance: mutation endpoints remain internal-only and use the gateway-boundary authentication/authorization safeguards described in [Gateway Architecture](../../system-architecture-gateway.md#management-plane-security).
 - Production emergency changes use an expedited baseline rollout or a predeclared bounded failover switch. Any generic production runtime control plane requires a separate future decision.
 
