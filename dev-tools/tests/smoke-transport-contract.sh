@@ -534,7 +534,7 @@ RUN_OWNED_NO_PIPEFAIL_CHILD_BASH='set +o pipefail; source "$1"; shift; "$@"'
 # shellcheck disable=SC2016
 RUN_OWNED_UNSET_TOKEN_CHILD_BASH='unset FIREMUD_SMOKE_OWNERSHIP_TOKEN; source "$1"; shift; "$@"'
 # shellcheck disable=SC2016
-RUN_OWNED_HOLD_LOCK_CHILD_BASH='source "$1"; claim_run_owned_compose_project; : >"$2"; sleep 5'
+RUN_OWNED_HOLD_LOCK_CHILD_BASH='source "$1"; claim_run_owned_compose_project; : >"$2"; sleep 10'
 # shellcheck disable=SC2016
 RUN_OWNED_UMASK_CHILD_BASH='source "$1"; shift; umask 027; "$@"; [[ "$(umask)" == 0027 ]]'
 
