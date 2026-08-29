@@ -8,9 +8,14 @@ import re
 
 root = pathlib.Path(".")
 obsolete_public_resume_signature = "`resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)`"
-obsolete_scope_resume_window_identity = (
-    "<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, "
-    "isDryRun, resumeGeneration>"
+obsolete_scope_resume_window_identity = re.compile(
+    r"<(?=[^>\r\n]*\btenantId\b)"
+    r"(?=[^>\r\n]*\bgameInstanceId\b)"
+    r"(?=[^>\r\n]*\bregionId\b)"
+    r"(?=[^>\r\n]*\bregionEpoch\b)"
+    r"(?=[^>\r\n]*\bisDryRun\b)"
+    r"(?=[^>\r\n]*\bresumeGeneration\b)"
+    r"(?=[^>\r\n]*\bplayableStateScope\b)[^>\r\n]*>"
 )
 obsolete_gameplay_session_selector = "session:game:{tenantInstanceTag}"
 obsolete_gameplay_character_index = "session:game:index:character:{tenantGameplayTag}:<gameInstanceId>:<characterId>"
@@ -1658,22 +1663,23 @@ require_contains(
         "missing or mismatched evidence fails closed without changing any canonical identity tuple",
     ],
 )
-require_absent(
+for resume_identity_path in (
     "design/architecture/system-architecture-scripting-scheduler-and-timers.md",
-    [obsolete_scope_resume_window_identity],
-)
+    "design/architecture/decisions/adr-0072-class-specific-timer-durability-and-recovery.md",
+    "design/architecture/system-architecture-scripting-normative-contract-tables.md",
+    "design/architecture/system-architecture-scripting-dsl-for-designers.md",
+):
+    resume_identity_text = (root / resume_identity_path).read_text(encoding="utf-8")
+    if obsolete_scope_resume_window_identity.search(resume_identity_text):
+        raise SystemExit(
+            f"{resume_identity_path}: contains a scope-based resume-window identity tuple"
+        )
 require_contains(
     "design/architecture/system-architecture-scripting-dsl-for-designers.md",
     [
         "`resumeWindowId` identified by `<tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch, isDryRun, resumeGeneration>`",
         "one-tenant, one-mode ID",
         "the server-derived `playableStateScope` is retained as immutable policy/routing/authorization/fence evidence and is exact-validated alongside that identity",
-    ],
-)
-require_absent(
-    "design/architecture/system-architecture-scripting-dsl-for-designers.md",
-    [
-        obsolete_scope_resume_window_identity,
     ],
 )
 require_contains(
@@ -1685,10 +1691,6 @@ require_contains(
         "each prior epoch's `OPEN` resume window, independently for each `isDryRun` mode",
     ],
 )
-require_absent(
-    "design/architecture/decisions/adr-0072-class-specific-timer-durability-and-recovery.md",
-    [obsolete_scope_resume_window_identity],
-)
 require_contains(
     "design/architecture/system-architecture-scripting-normative-contract-tables.md",
     [
@@ -1697,10 +1699,21 @@ require_contains(
         "the server-derived `playableStateScope` is retained as immutable exact-validated policy/routing/authorization/migration-fence evidence for that window and is excluded from its identity, with missing or mismatched evidence fencing admission",
     ],
 )
-require_absent(
-    "design/architecture/system-architecture-scripting-normative-contract-tables.md",
-    [obsolete_scope_resume_window_identity],
+for obsolete_resume_identity_fixture in (
+    "<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>",
+    "<tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>",
+):
+    if obsolete_scope_resume_window_identity.fullmatch(obsolete_resume_identity_fixture) is None:
+        raise SystemExit(
+            "scope-based resume-window identity fixture was not rejected: "
+            f"{obsolete_resume_identity_fixture}"
+        )
+canonical_resume_identity_fixture = (
+    "<tenantId, gameInstanceId, playableStateNamespaceId, regionId, "
+    "regionEpoch, isDryRun, resumeGeneration>"
 )
+if obsolete_scope_resume_window_identity.fullmatch(canonical_resume_identity_fixture):
+    raise SystemExit("canonical namespace-owned resume-window identity was rejected")
 require_contains(
     "design/architecture/decisions/adr-0001-scripting-event-ingress-idempotency-identity.md",
     [

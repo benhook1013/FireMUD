@@ -258,9 +258,10 @@ Coordination and Cache/Rate‑Limit Redis are sized and configured differently.
 
 - **Goal:** predictable restart behavior and bounded memory usage for coordination keys.
 - **Recommendations:**
+  - `maxmemory-policy=noeviction` is mandatory for every non-ephemeral Coordination Redis profile. The only permitted deviation is an explicitly labelled ephemeral one-shot test/CI stack; any non-ephemeral deviation or observed eviction is fail-closed incident evidence.
   - Keep peak memory for coordination prefixes (`tick:*`, `timer:*`, `retry:*`, `session:game:*`, `session:auth:token:*`, `session:auth:generation:*`, `tick-executor-lease:*`, etc.) within the canonical Coordination Redis budget from `system-architecture-redis-operations.md` (normally **≤ 30–40% of `maxmemory`**).
   - Use AOF preamble and rewrite settings that keep AOF size within the budgets described in **Redis Operations & Migrations**.
-  - Avoid eviction for coordination keys whenever possible; if `maxmemory` is configured with eviction, treat eviction events as incidents rather than normal operation.
+  - Any observed eviction remains a fail-closed incident and requires operator reconciliation before the profile is treated as healthy.
 
 ### Cache/Rate‑Limit Redis
 

@@ -344,7 +344,7 @@ Bulk key-walking is reserved for **offline maintenance tooling**, not tick execu
 
 - **Pattern 4 – Queue insertion with uniqueness**
   - When scripts enqueue work (for example timers or retryable actions), they use data structures that naturally deduplicate:
-    - ZSET-based queues use `ZADD` with a unique member identifier (effect key or command ID); scripts check `ZSCORE` first and only call `ZADD` when the member is not already present.
+    - ZSET-based queues use `ZADD` with a unique member identifier (effect key or command ID) only when the owning queue contract declares that value to be the complete member identity; this excludes `tick:pending`, which follows Pattern 3's full immutable envelope. Scripts check `ZSCORE` first and only call `ZADD` when the member is not already present.
     - For simple sets of flags or participants, scripts use `SADD` and ignore the return value except for observability; repeated `SADD` calls with the same member are safe no-ops.
   - This ensures that retries or replays do not create duplicate queue entries even when callers re-invoke the script.
 

@@ -15,10 +15,10 @@ The architecture already distinguishes ownership from participation, but the bou
 Coordination Redis ownership is explicit and narrow:
 
 - Game Session Service owns gameplay coordination keyspace and schema (for example `tick:*`, `timer:*`, `retry:*`, `session:game:*`, and lease-related prefixes).
-- Account Service owns authentication allowlist/session-auth prefixes (`session:auth:*`) and their lifecycle semantics.
-- Automation & Scripting Service owns automation coordination and cache families with an explicit split:
-  - Coordination Redis: `automation:tick:*` keyspace and scripts for automation scheduling/execution that participate in tick timelines.
-  - Cache/Rate-Limit Redis: `automation:queue:*`, `automation:quota:*`, `automation:tenant-budget:*`, and `automation:test:capacity:*` best-effort buffers/counters.
+- Account Service owns the exact authentication/session-auth families recorded by the Redis hub: `session:auth:account:*`, `session:auth:tenant:*`, `session:auth:token:*`, and `session:auth:generation:*`, together with their lifecycle semantics; no wildcard `session:auth:*` ACL or authority grant is implied.
+- Automation & Scripting Service owns automation families with an explicit split:
+  - Coordination Redis: `automation:timer:*` and `script-scheduler:*` for timer/scheduler coordination and derived discovery hints.
+  - Cache/Rate-Limit Redis: `automation:queue:*` discovery pointers, `automation:quota:*`, `automation:tenant-budget:*`, and `automation:test:capacity:*` best-effort buffers/counters; queue pointers are disposable indexes, not work truth.
 - Non-owner services may participate only through approved shared helpers and documented prefixes/contracts.
 
 Owner-managed bridge contracts are the only approved exception to “write only your own keys”:
