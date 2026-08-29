@@ -14,7 +14,6 @@ obsolete_scope_resume_window_identity = re.compile(
     r"(?=[^<>]*\bregionId\b)"
     r"(?=[^<>]*\bregionEpoch\b)"
     r"(?=[^<>]*\bisDryRun\b)"
-    r"(?=[^<>]*\bresumeGeneration\b)"
     r"(?=[^<>]*\bplayableStateScope\b)[^<>]*>"
 )
 obsolete_gameplay_session_selector = "session:game:{tenantInstanceTag}"
@@ -1710,6 +1709,8 @@ require_contains(
     ],
 )
 for obsolete_resume_identity_fixture in (
+    "<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun>",
+    "<tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch, isDryRun>",
     "<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>",
     "<tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>",
     (

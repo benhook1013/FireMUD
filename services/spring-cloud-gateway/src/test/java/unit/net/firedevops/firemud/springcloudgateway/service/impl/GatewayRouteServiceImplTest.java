@@ -2,9 +2,11 @@ package net.firedevops.firemud.springcloudgateway.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.springcloudgateway.service.GatewayRoute;
 import org.junit.jupiter.api.Test;
 import org.springframework.cloud.gateway.route.InMemoryRouteDefinitionRepository;
@@ -62,10 +64,26 @@ class GatewayRouteServiceImplTest {
 
   @Test
   void disabledMutationDoesNotWriteRoute() {
-    InMemoryRouteDefinitionRepository repo = new InMemoryRouteDefinitionRepository();
+    AtomicBoolean saveInvoked = new AtomicBoolean();
+    AtomicBoolean deleteInvoked = new AtomicBoolean();
+    RouteDefinitionWriter writer =
+        new RouteDefinitionWriter() {
+          @Override
+          public Mono<Void> save(
+              Mono<org.springframework.cloud.gateway.route.RouteDefinition> route) {
+            saveInvoked.set(true);
+            return Mono.empty();
+          }
+
+          @Override
+          public Mono<Void> delete(Mono<String> routeId) {
+            deleteInvoked.set(true);
+            return Mono.empty();
+          }
+        };
     GatewayRouteServiceImpl service =
         new GatewayRouteServiceImpl(
-            repo, e -> {}, new DynamicRouteMutationPolicy(false, new MockEnvironment()));
+            writer, e -> {}, new DynamicRouteMutationPolicy(false, new MockEnvironment()));
     GatewayRoute route =
         new GatewayRoute("test", "http://example.com", List.of("Path=/foo"), List.of());
 
@@ -74,7 +92,7 @@ class GatewayRouteServiceImplTest {
             error ->
                 error instanceof IllegalStateException && error.getMessage().contains("disabled"))
         .verify();
-    assertEquals(0, Flux.from(repo.getRouteDefinitions()).collectList().block().size());
+    assertFalse(saveInvoked.get());
 
     StepVerifier.create(service.remove("test"))
         .expectErrorMatches(
@@ -82,6 +100,8 @@ class GatewayRouteServiceImplTest {
                 error instanceof IllegalStateException
                     && error.getMessage().contains("disabled"))
         .verify();
+    assertFalse(saveInvoked.get());
+    assertFalse(deleteInvoked.get());
   }
 
   @Test

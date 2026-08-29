@@ -77,8 +77,8 @@ Both issuance paths use the same bounded typed-mutation admission contract befor
   "issuanceOperationIdentity": {
     "issuanceOperationId": "...",
     "actionFamilyRequestIdentity": {
-      "requestIdentityKind": "controlPlaneRequestId | policyIntentRequestId | ownerEnforcementRequestId",
-      "requestId": "..."
+      "requestIdentityKind": "controlPlaneRequestId",
+      "requestId": "control-plane-request-123"
     },
     "mutationDigest": "..."
   },

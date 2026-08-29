@@ -72,7 +72,7 @@ The matrix below is the target participation and ownership contract. `Authoritat
 | Authoritative owner: Coordination Redis gameplay sessions (`session:game:*`) | | | | ✔ | | | | | | | |
 | Authoritative owner: Coordination Redis gameplay coordination keys (`tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`) | | | | ✔ | | | | | | | |
 | Authoritative owner: Coordination Redis auth sessions (`session:auth:account:*`, `session:auth:tenant:*`, `session:auth:token:*`, `session:auth:generation:*`) | | | ✔ | | | | | | | | |
-| Authoritative owner: Coordination Redis connect-token replay (`gateway:connect-token:jti:*` and replay-readiness fence) | | | | | | | | | | | ✔ |
+| Authoritative owner: Coordination Redis connect-token replay and browser-revocation denial (`gateway:connect-token:jti:*`, `gateway:connect-token:deny:jti:*`, and replay-readiness fence) | | | | | | | | | | | ✔ |
 | Authoritative owner: Coordination Redis automation timer/scheduler families (`automation:timer:*`, `script-scheduler:*`) | | | | | | | ✔ | | | | |
 | Tick-region lease ownership and executor coordination (`<tenantId, gameInstanceId, regionId>`) | | | | ✔ | | | | | | | |
 | Authoritative owner: logical-effect reconciliation and player-outcome derivation | | | | ✔ | | | | | | | |
