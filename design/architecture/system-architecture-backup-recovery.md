@@ -199,11 +199,11 @@ Hosted production adopts PostgreSQL physical backup with WAL archiving and point
 ## Kubernetes Production
 
 - Velero backs up Deployments, StatefulSets, ConfigMaps, and Secrets but not volume snapshots.
-- `restore-cluster.sh` is a restore-bootstrap step only unless it explicitly documents the full restore-safe-mode, coordination-recovery, and post-restore-hardening flow for the target environment.
+- `restore-cluster.sh` is a manifest/resource restore-bootstrap step only. Its fixed `firemud` -> `restore-test` Velero namespace mapping and pre-provisioned isolated-target label do not implement restore-safe mode, coordination recovery, post-restore hardening, or a durable recovery controller.
 - Manual restore still requires restore-safe mode, environment-wide cold-start recovery, post-restore hardening, external credential validation, and smoke verification before traffic may reopen.
 - A restore into a new cluster, namespace boundary, control-plane boundary, or replacement host must first run the fresh-boundary restore bootstrap defined in `system-architecture-deployment-runbook.md`. Restored snapshot-era Secrets are not authoritative trust material for the new boundary; they must be replaced, rotated, reissued, or explicitly re-bound before traffic reopen.
 - Post-restore hardening must refresh the environment secret-compliance record and immutable evidence payload before quarantine is lifted, so later promotion and DR-readiness checks do not rely on pre-restore credential evidence.
-- `FIREMUD_K8S_NAMESPACE` remains the explicit override for throwaway restore drills and non-default restore targets.
+- The manual workflow requires an explicit `velero_namespace` dispatch input because checked-in Terraform and Velero manifests do not prove one canonical control-plane namespace. It passes that same value to backup verification through `verify-backups.sh`'s legacy `FIREMUD_K8S_NAMESPACE` variable, to backup selection, and to `restore-cluster.sh` through `FIREMUD_VELERO_NAMESPACE`; the helper's `FIREMUD_K8S_NAMESPACE` remains only the fixed `restore-test` destination and rejects other targets. No safe checked-in kubeconfig/context credential is bound to this isolated cluster, so the workflow currently fails closed before cluster operations until that external protected binding exists.
 - Manual restore guidance still includes the concrete bootstrap sequence, but application workloads must remain stopped or restore-safe-fenced until recovery-mode gating completes. Restoring manifests is allowed; starting normal Game Session, Gateway, TCP Proxy, automation, and outbound processors before the chosen recovery mode is proven is not allowed.
 - If dumps live in `PG_DUMP_BUCKET`, download them first with `aws s3 cp ...`, adding `--endpoint-url` for MinIO-backed buckets as needed.
 
@@ -244,7 +244,7 @@ The target-state Docker Compose restore is not a reduced recovery mode. It must 
   - smoke success
   - required post-restore hardening and validation results
   - immutable evidence references
-- Throwaway Kubernetes drills normally use `restore-cluster.sh <backup-name> <namespace>` or `FIREMUD_K8S_NAMESPACE` to target a non-default namespace.
+- When its external protected cluster binding is provisioned, the throwaway Kubernetes workflow uses `restore-cluster.sh <backup-name>` with `FIREMUD_K8S_NAMESPACE=restore-test`, the required Velero control-plane input, and the fixed `firemud:restore-test` namespace mapping. The helper refuses arbitrary source/target namespaces, refuses to create the target namespace, requires the pre-provisioned `firemud.io/recovery-drill=isolated` label, excludes Pods and built-in workload controllers, and does not restart workloads. This proves only that selected namespaced resources can be restored into the isolated drill target; it is not PostgreSQL or full-environment recovery proof.
 
 Run a full production-equivalent drill at least every 30 days. Ordinary rollback-compatible production releases reuse that baseline through the compact recovery-compatibility result when restore semantics and contracts remain compatible. Changes that alter restore compatibility or recovery semantics require a new drill; `roll-forward-only` releases always require an exact release-candidate drill from current production database lineage, and first-live/reopen events require evidence for the boundary being opened.
 

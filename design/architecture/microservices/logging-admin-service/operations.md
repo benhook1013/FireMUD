@@ -18,5 +18,5 @@ This document collects Logging & Admin operational behavior, readiness expectati
 
 ## Operator Workflows
 
-- Tick and coordination remediation actions must be issued through Game Session-owned control-plane APIs and documented runbooks; Logging & Admin records the operator action and resulting audit trail but does not mutate runtime coordination state itself.
+- Tick and coordination remediation actions must be issued through Game Session-owned control-plane APIs and documented runbooks; Logging & Admin does not mutate runtime coordination state itself. In the current implementation, the Logging & Admin owner-directed remediation endpoint is unavailable and returns `503 TICK_REMEDIATION_UNAVAILABLE`; it has no callable forwarding path. Game Session's coarse instance-scoped pause/resume surface also lacks complete durable operator-result readback, so it does not prove a completed audit, recovery, or convergence outcome. The target flow may record intent, forward the request, and report success only after the owner contract and durable result/readback are implemented and proven.
 - Saga inspection is supported through `/sagas` and `/sagas/{id}/steps`, backed by the shared saga tables.

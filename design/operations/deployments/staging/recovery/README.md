@@ -1,10 +1,10 @@
 # Staging Recovery Sanitization Evidence
 
-Store one record per staging restore that originates from production data:
+Store one canonical recovery record per staging restore:
 
 - `<recovery-ref>.json`
 
-Before release, store the immutable sanitization result separately as `<recovery-ref>.sanitization.json`. This pre-release artifact uses `schemaVersion=recovery-sanitization-evidence/v1` and includes `environment=staging`, `recoveryRef`, `operationId`, `deploymentEventId`, `backupArtifactDigest`, `sanitizedAt`, `sanitizedBy`, `controlsApplied`, and `validationEvidence`. Its operation, event, and artifact identifiers must equal the durable recovery controller and restored artifact for the current restore; evidence from another restore cannot be reused.
+For a restore independently proven to originate from production data, store the immutable sanitization result separately as `<recovery-ref>.sanitization.json`. This pre-release artifact uses `schemaVersion=recovery-sanitization-evidence/v1` and includes `environment=staging`, `recoveryRef`, `operationId`, `deploymentEventId`, `backupArtifactDigest`, `sanitizedAt`, `sanitizedBy`, `controlsApplied`, and `validationEvidence`. Its operation, event, and artifact identifiers must equal the durable recovery controller and restored artifact for the current restore; evidence from another restore cannot be reused. Same-environment staging and other independently proven non-production-origin restores do not require this artifact.
 
 Every player-facing staging recovery record must follow the [canonical recovery record](../../../../architecture/system-architecture-backup-recovery-evidence-and-compliance.md#canonical-recovery-record), including snapshot-bound `artifactErasureHighWater`, immutable `initialCatchupHighWater`, immutable final-cutover `restoreHighWater`, and gap-free erasure replay before reopen. A restore sourced from production also adds the sanitization requirements below.
 
@@ -22,11 +22,12 @@ For a current staging Redis outage, cold start, or incomplete recovery:
 - Use only the shipped `PauseTicksForScope` pause and `GetRuntimeOwnershipStatus` status surface for the supported `{tenantId, gameInstanceId}` boundary, plus read-only `coord_ops_ro` Redis inspection. Follow the current failover/AOF procedures and escalation path in the [Redis incident runbook](../../../../architecture/system-architecture-redis-incident-runbook.md) and [Redis Operations](../../../../architecture/system-architecture-redis-operations.md); do not use target-state reset or reopen commands.
 - If the durable recovery controller, Account projection repair/replacement, replay quarantine/fence, or immutable evidence path is unavailable, stale, or ambiguous, abort any destructive wipe, recovery continuation, `resume`, or reopen attempt. Preserve the AOF and incident evidence, leave the fence in place, and escalate. There is no supported current full-wipe or unlock substitute.
 
-Staging production-origin requirements:
+Staging production-origin requirements (selected only when the immutable recovery record proves production origin through `sourceEnvironmentBinding`):
 
 - `environment` (`staging`)
 - `recoveryRef`
 - `sourceBackup`
+- `sourceEnvironmentBinding` with exact `environment` and `bindingRef` fields
 - `sanitizedAt`
 - `sanitizedBy`
 - `controlsApplied` (list of redaction/anonymization controls)
@@ -42,9 +43,11 @@ Staging production-origin requirements:
   - `outbound-comms`
   - `operator-credentials`
 
+The four `externalCredentialValidation.records` entries form a closed universe. Enabled classes use the exact applicable shape (`status`, `evidenceRef`, `isolationAssertion`, `validationMethod`, `validatedAt`, `validatedBy`, `observedValue`); disabled classes retain the exact `status=not_applicable`, `reason=credential-class-not-present`, and non-empty `evidenceRef` shape with no validation fields.
+
 `SANITIZATION_EVIDENCE_REF` and external-credential evidence are separate inputs. `SANITIZATION_EVIDENCE_REF` must resolve to the current restore's `<recovery-ref>.sanitization.json` pre-release artifact; it must not resolve to the post-success-finalization recovery projection, an `externalCredentialValidation` child record, or one of that record's evidence references. External credential validation remains a separate control group.
 
-Restore validation must fail closed unless `SANITIZATION_EVIDENCE_REF` is present, points under this staging recovery namespace, contains non-empty validation fields, and its `recoveryRef`, `operationId`, `deploymentEventId`, and `backupArtifactDigest` match the controller state submitted for release. Passing external credential validation alone is not sufficient to release quarantine or reopen traffic.
+For production-origin staging restores, restore validation must fail closed unless `SANITIZATION_EVIDENCE_REF` is present, points under this staging recovery namespace, contains non-empty validation fields, and its `recoveryRef`, `operationId`, `deploymentEventId`, and `backupArtifactDigest` match the controller state submitted for release. For same-environment or independently proven non-production-origin staging restores, sanitization evidence is not required and supplying it is rejected. The immutable recovery record's `sourceEnvironmentBinding` is authoritative; `RESTORE_SOURCE_ENVIRONMENT` may be passed as an expected value but cannot override, conceal, or select provenance. Missing, unknown, or contradictory provenance fails closed. Passing external credential validation alone is not sufficient to release quarantine or reopen traffic.
 
 `dev-tools/restores/validate-external-credentials.sh staging` validates the canonical hardening control-group names and the separate `SANITIZATION_EVIDENCE_REF` path. A pass from this helper is only one recovery control group and is not complete recovery proof.
 

@@ -6,9 +6,9 @@ Accepted
 
 ## Implementation Status
 
-This decision is partially implemented. The checked-in executable provides a bounded static/operator slice: it emits versioned policy-catalogue and report metadata and validates expected-binding shape, rendered bindings, typed sharing, conditional integrations, and report policy IDs/categories. These checks are static, non-authorizing evidence; they do not establish live target identity or protected readiness.
+This decision is partially implemented. The checked-in executable provides a bounded static/operator slice: it emits versioned policy-catalogue and report metadata, emits the exact `expectedBindingsDigest` for the manifest bytes consumed by current reports, and validates or compares caller-supplied staging deployment records that carry the expected-binding reference and digest. No checked-in producer currently creates those staging records. It validates expected-binding shape, rendered bindings, typed sharing, conditional integrations, and report policy IDs/categories. These checks are static, non-authorizing evidence; they do not establish live target identity or protected readiness. Digest coverage is also incomplete: the target applies immutable identity to every rendered staging/production workload image, but the current executable enumerates only selected application images, leaving supporting examples such as `postgres:16`, `velero/velero:v1.12.3`, and `fluent/fluent-bit:2.2.2` outside current proof.
 
-The complete phase-aware contract remains incomplete: content-digest binding, live pre-apply and post-apply observation, complete rendered/live binding comparison, phase and waiver enforcement, and end-to-end one-operator evidence are not implemented. Player-facing apply, promotion, first-live, reopen, and fresh-boundary restore remain fail-closed pending those operator/runtime gates.
+The complete phase-aware contract remains incomplete: live pre-apply and post-apply observation, complete rendered/live binding comparison, phase and waiver enforcement, and end-to-end one-operator evidence are not implemented. The current expected-bindings digest emission/binding does not establish the missing live phase identity or comparison and does not make the incomplete image enumeration authoritative. Player-facing apply, promotion, first-live, reopen, and fresh-boundary restore remain fail-closed pending those operator/runtime gates.
 
 ## Decision Record
 
@@ -45,7 +45,7 @@ One canonical CLI facade selects the applicable catalogue and orchestrates modul
 
 Preflight is evaluated in three distinct phases:
 
-1. **Static CI** validates repository inputs, policy and manifest schemas, digest pinning, declared applicability, permitted sharing, deterministic rendered configuration where available, and other checks that do not require target-environment access.
+1. **Static CI** validates repository inputs, policy and manifest schemas, immutable digest pinning for every rendered staging/production workload image, declared applicability, permitted sharing, deterministic rendered configuration where available, and other checks that do not require target-environment access. Supporting images are part of this obligation; only a later accepted owner-bound exemption can exclude one.
 2. **Live cluster pre-apply** binds the run to the selected environment and cluster identity, resolves the exact candidate manifests, and compares the declared expected bindings with rendered and live observed resources before apply. Its digest-bound candidate-resource inventory distinguishes resources expected to exist from resources expected to be absent and created by this apply; expected absence is a valid first-deployment observation, not missing evidence.
 3. **Post-apply promotion or traffic-open** verifies every resource in that candidate inventory, including each resource created by the apply, plus the event-specific evidence required before a deployment becomes promotable or player-facing.
 
@@ -65,7 +65,7 @@ Waivers are never implied by a report, prior incident, environment, or operator 
 
 ### Expected Bindings Declare Intent; Observation Establishes Proof
 
-`design/operations/environments/<environment>/expected-bindings.yaml` remains the portable canonical declaration of intended environment bindings for deployment and recovery. Each preflight report records a content digest of the exact manifest bytes it consumed, not only the path.
+`design/operations/environments/<environment>/expected-bindings.yaml` remains the portable canonical declaration of intended environment bindings for deployment and recovery. Current preflight reports record a content digest of the exact manifest bytes they consume, and the current validator validates and compares that pair when a caller supplies a staging deployment record. Producing the staging record remains unimplemented. This current validation does not yet extend to complete live phase identity, comparison, or waiver enforcement.
 
 Static validation checks the declaration and candidate render. Live pre-apply validation additionally proves the selected environment and cluster identity and compares the declaration with rendered and observed bindings. The comparison covers applicable internal state and trust resources, certificates and issuers, registry identities, external storage and communications, operator credentials, and exceptional service-discovery overrides. Post-apply validation records what was actually deployed and verifies the applicable promotion or traffic-open contract against that observed state.
 
@@ -145,7 +145,7 @@ Define and validate the binding-type shareability matrix, including unconditiona
 
 Automated playbooks must generate evidence for ordinary staging, production, and hobby/self-hosted operation without requiring manual transcription. Proof must cover a static pass followed by live failure; wrong cluster or environment identity; manifest changes after static validation; rendered, observed, and declared binding mismatches; repeated cluster-local names in separate valid boundaries; prohibited production sharing; permitted sharing with missing, mismatched, and valid rationales; disabled and newly enabled optional integrations; malformed, expired, cross-event, unauthorized, and prohibited waivers; post-apply drift; promotion or traffic-open attempted with only earlier-phase evidence; and successful single-operator generation and review of the complete evidence chain.
 
-Current static and operator tooling is partial. Existing reports and expected-binding checks do not yet prove every live binding or target-boundary identity, do not content-digest-bind the expected manifest throughout all phases, and do not implement the complete shareability matrix, phase taxonomy, or waiver validation described here. Existing static success must not be treated as proof that these obligations are complete.
+Current static and operator tooling is partial. Existing reports and expected-binding checks do not yet prove every live binding or target-boundary identity, do not carry the expected-manifest digest through complete live phase comparison, and do not implement the complete shareability matrix, phase taxonomy, or waiver validation described here. Image enumeration also remains limited to selected application images, so current success does not prove immutable lineage for every rendered workload image. Existing static success must not be treated as proof that these obligations are complete.
 
 Select validation and runtime evidence according to [`validation and runtime proof`](../../developer-workflows/validation-and-runtime-proof.md); record actual execution results in PR/CI evidence or implementation-tracking documents, not in this ADR.
 

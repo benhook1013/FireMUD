@@ -272,20 +272,23 @@ Operational scripts and CronJobs rely on the following variables when uploading 
 | `PG_DUMP_BUCKET` | Object storage bucket for pg_dump files | *(none)* |
 | `PG_DUMP_ENDPOINT` | Optional S3-compatible endpoint URL | *(none)* |
 | `PG_DUMP_ENDPOINT_IF_NONE_MATCH_CONFIRMED` | Required value `true` when a custom `PG_DUMP_ENDPOINT` has provider-specific operator/preflight evidence enforcing conditional immutable publication | `false` |
-| `FIREMUD_K8S_NAMESPACE` | Namespace override used by restore/verification scripts for drills or non-default restores | `firemud` |
+| `FIREMUD_K8S_NAMESPACE` | Fixed isolated restore target (`restore-test`) for `restore-cluster.sh`; standalone `verify-backups.sh` interprets this variable as its Velero control-plane namespace when explicitly set | `restore-test` for the helper; `firemud` for standalone verifier default |
+| `FIREMUD_VELERO_NAMESPACE` | Required Velero control-plane namespace for `restore-cluster.sh`; the manual workflow supplies the validated `velero_namespace` dispatch input | *(none; explicit binding required)* |
 | `EXTERNAL_CREDENTIAL_EVIDENCE_REF` | In-repo recovery record with external credential validation results (`design/operations/deployments/<environment>/recovery/<recovery-ref>.json`) | *(none)* |
 | `SANITIZATION_EVIDENCE_REF` | Immutable pre-release evidence path proving staging data sanitization after production-origin restore (`design/operations/deployments/staging/recovery/<recovery-ref>.sanitization.json`) | *(none)* |
 | `EXPECTED_BINDINGS_REF` | Canonical expected-binding manifest consumed by deploy preflight and restore validation (`design/operations/environments/<environment>/expected-bindings.yaml`) | *(none)* |
 
 In Kubernetes environments, object-store credentials should be stored in per-environment Secrets and must not be shared between staging and production. `PG_DUMP_ENDPOINT` is required only for S3-compatible endpoints such as MinIO; when unset, tooling uses the AWS default endpoint behavior. A custom endpoint is not trusted to honor conditional writes from its URL or protocol label alone: scheduled publication fails closed unless `PG_DUMP_ENDPOINT_IF_NONE_MATCH_CONFIRMED=true` is supplied under an operator/preflight contract backed by provider-specific evidence. This marker does not itself create evidence, and the uploader intentionally does not run a per-backup capability probe or overwrite a real artifact to test it.
-Each environment boundary uses the standard `firemud` namespace by default (same namespace name, separate environment credentials/secrets). `FIREMUD_K8S_NAMESPACE` is primarily an explicit override for throwaway-namespace restore tests and rehearsals.
+Each environment boundary uses the standard `firemud` workload namespace by default (same namespace name, separate environment credentials/secrets). The isolated restore helper always targets the pre-provisioned `restore-test` namespace; its Velero control-plane namespace is supplied separately through `FIREMUD_VELERO_NAMESPACE`. The standalone verifier's legacy `FIREMUD_K8S_NAMESPACE` variable names the Velero control-plane namespace when explicitly set, so callers must not infer that it selects a restore target.
 For player-facing environments, these bindings are part of both bootstrap validation and normal deployment preflight, not just restore validation. Operators must be able to prove that backup/object-store, asset-store, outbound-communications, and operator credential bindings resolve to the intended environment before traffic is opened. The canonical enforcement point for those checks is `../system-architecture-deploy-preflight-policy.md`.
 For backup and asset storage specifically, that proof must include the binding identity used for the per-environment Secret or workload identity, not only the bucket/endpoint pair.
 These variables cover the external-binding side of that contract. Internal state/trust bindings such as PostgreSQL, Redis, JWT/JWKS, certificate issuer, and registry pull credentials are validated through the same `design/operations/environments/<environment>/expected-bindings.yaml` manifest, but they are checked as environment-owned cluster-local bindings rather than as globally unique external targets.
 
 See `../system-architecture-backup-recovery.md` for schedules and retention policies.
-`dev-tools/restores/validate-external-credentials.sh` supports `hobby-self-hosted`, `staging`, and `production`; all player-facing restore validations require `EXTERNAL_CREDENTIAL_EVIDENCE_REF`, and staging validations additionally require `SANITIZATION_EVIDENCE_REF` so restore hardening cannot pass without explicit sanitization evidence.
+`dev-tools/restores/validate-external-credentials.sh` supports `hobby-self-hosted`, `staging`, and `production`; all player-facing restore validations require `EXTERNAL_CREDENTIAL_EVIDENCE_REF`. Staging validations additionally require `SANITIZATION_EVIDENCE_REF` only when the immutable recovery record independently proves production origin through `sourceEnvironmentBinding`; same-environment and other independently proven non-production-origin sources do not require sanitization evidence, while missing, unknown, or contradictory provenance fails closed.
 `EXPECTED_BINDINGS_REF` should point at the same environment-specific manifest that deploy preflight uses, so deployment and recovery validate against one expected-binding source of truth.
+
+The `externalCredentialValidation.records` projection always contains the closed four-record universe (`backup-storage`, `asset-storage`, `outbound-comms`, and `operator-credentials`). Enabled classes use the exact applicable validation shape; disabled classes retain an exact `status=not_applicable`, `reason=credential-class-not-present`, and non-empty `evidenceRef` record with no validation fields. Manifest `enabled` selectors are booleans and malformed selectors fail closed.
 
 ---
 
@@ -298,7 +301,7 @@ Service-specific settings such as SMTP credentials for the Account Service or `G
 
 This catalog covers only shared configuration keys.
 
-Operational scripts like `dev-tools/restores/restore-cluster.sh` use an optional `FIREMUD_K8S_NAMESPACE` override to target non-default namespaces during restore drills. In normal shared-environment operations, namespace selection should stay aligned with the standard overlay namespace (`firemud`).
+`dev-tools/restores/restore-cluster.sh` accepts `FIREMUD_K8S_NAMESPACE` only for its fixed `restore-test` target and requires `FIREMUD_VELERO_NAMESPACE` for the selected cluster's control-plane namespace. `dev-tools/backups/verify-backups.sh` reuses the legacy `FIREMUD_K8S_NAMESPACE` name for that control-plane namespace. These variables must not be treated as generic arbitrary-target overrides; normal shared-environment workload selection remains aligned with the standard overlay namespace (`firemud`).
 
 ---
 

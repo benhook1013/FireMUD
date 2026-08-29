@@ -1,4 +1,4 @@
-name: Manual Backup Verification
+name: Manual Backup Verification (Isolated Manifest Drill)
 
 on:
   workflow_dispatch:
@@ -8,9 +8,16 @@ on:
         required: false
         default: 'false'
       namespace:
-        description: 'Namespace for restore test'
+        description: 'Fixed isolated drill target namespace (must be restore-test)'
         required: false
         default: 'restore-test'
+      velero_namespace:
+        description: 'Required Velero control-plane namespace for this cluster (namespace wiring is not canonical)'
+        required: true
+      source_environment:
+        description: 'Environment represented by the backup'
+        required: false
+        default: 'staging'
       backup_name:
         description: 'Backup name to restore (defaults to latest)'
         required: false
@@ -19,10 +26,6 @@ on:
         description: 'Environment identity for external credential validation'
         required: false
         default: 'staging'
-      expected_pg_dump_bucket:
-        description: 'Expected backup bucket for validation'
-        required: false
-        default: ''
       pg_dump_bucket:
         description: 'Observed backup bucket bound in the restored environment'
         required: false
@@ -31,24 +34,12 @@ on:
         description: 'Observed backup endpoint bound in the restored environment'
         required: false
         default: ''
-      expected_asset_store_bucket:
-        description: 'Expected asset bucket for validation'
-        required: false
-        default: ''
       asset_store_bucket:
         description: 'Observed asset bucket bound in the restored environment'
         required: false
         default: ''
-      expected_asset_store_endpoint:
-        description: 'Expected asset endpoint for validation'
-        required: false
-        default: ''
       asset_store_endpoint:
         description: 'Observed asset endpoint bound in the restored environment'
-        required: false
-        default: ''
-      expected_smtp_host:
-        description: 'Expected SMTP host for validation'
         required: false
         default: ''
       smtp_host:
@@ -59,12 +50,20 @@ on:
         description: 'Observed SMTP port bound in the restored environment'
         required: false
         default: ''
-      expected_operator_cert_fingerprint:
-        description: 'Expected operator certificate fingerprint for validation'
-        required: false
-        default: ''
       operator_cert_fingerprint:
         description: 'Observed operator certificate fingerprint for validation'
+        required: false
+        default: ''
+      pg_dump_binding_ref:
+        description: 'Observed backup object-store credential binding reference'
+        required: false
+        default: ''
+      asset_store_binding_ref:
+        description: 'Observed asset object-store credential binding reference'
+        required: false
+        default: ''
+      operator_credential_binding_ref:
+        description: 'Observed operator credential binding reference'
         required: false
         default: ''
       external_credential_evidence_ref:
@@ -76,9 +75,15 @@ on:
         required: false
         default: ''
 
+concurrency:
+  group: manual-backup-restore-restore-test
+  cancel-in-progress: false
+
 jobs:
   verify:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
@@ -88,34 +93,74 @@ jobs:
       - name: ⬇️ Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Require isolated restore cluster authentication
+        run: |
+          echo "Isolated restore drill unavailable: no checked-in protected kubeconfig/context credential is bound to the restore-test cluster." >&2
+          echo "Configure the external protected cluster binding before enabling this workflow." >&2
+          exit 1
+
       - name: Set up kubectl
         uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
 
       - name: Install Velero CLI
         run: |
           VELERO_VERSION=v1.12.3
-          curl -L https://github.com/vmware-tanzu/velero/releases/download/$VELERO_VERSION/velero-$VELERO_VERSION-linux-amd64.tar.gz -o velero.tar.gz
-          tar -xzf velero.tar.gz
-          sudo mv velero-$VELERO_VERSION-linux-amd64/velero /usr/local/bin/velero
+          curl --fail --location "https://github.com/vmware-tanzu/velero/releases/download/$VELERO_VERSION/velero-$VELERO_VERSION-linux-amd64.tar.gz" --output velero.tar.gz
+          tar --extract --gzip --file velero.tar.gz
+          sudo mv "velero-$VELERO_VERSION-linux-amd64/velero" /usr/local/bin/velero
+
+      - name: Install validator dependencies
+        run: python3 -m pip install --disable-pip-version-check pyyaml
+
+      - name: Validate isolated drill inputs
+        env:
+          RESTORE_INPUT: ${{ inputs.restore }}
+          TARGET_NAMESPACE_INPUT: ${{ inputs.namespace }}
+          BACKUP_NAME_INPUT: ${{ inputs.backup_name }}
+          VELERO_NAMESPACE_INPUT: ${{ inputs.velero_namespace }}
+          RESTORE_ENVIRONMENT_INPUT: ${{ inputs.restore_environment }}
+          SOURCE_ENVIRONMENT_INPUT: ${{ inputs.source_environment }}
+        run: |
+          case "$RESTORE_INPUT" in true|false) ;; *) echo "restore must be true or false" >&2; exit 1 ;; esac
+          [[ "$TARGET_NAMESPACE_INPUT" == "restore-test" ]] || { echo "namespace must be the fixed isolated target restore-test" >&2; exit 1; }
+          if [[ ! "$VELERO_NAMESPACE_INPUT" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] || ((${#VELERO_NAMESPACE_INPUT} > 63)); then
+            echo "velero_namespace must be a non-empty lowercase DNS label of at most 63 characters" >&2
+            exit 1
+          fi
+          case "$RESTORE_ENVIRONMENT_INPUT" in hobby-self-hosted|staging|production) ;; *) echo "restore_environment is invalid" >&2; exit 1 ;; esac
+          case "$SOURCE_ENVIRONMENT_INPUT" in hobby-self-hosted|staging|production) ;; *) echo "source_environment is invalid" >&2; exit 1 ;; esac
+          if [[ -n "$BACKUP_NAME_INPUT" ]] && { [[ ! "$BACKUP_NAME_INPUT" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] || ((${#BACKUP_NAME_INPUT} > 63)); }; then
+            echo "backup_name must be a lowercase DNS label of at most 63 characters" >&2
+            exit 1
+          fi
+          if [[ "$RESTORE_ENVIRONMENT_INPUT" == "staging" ]]; then
+            [[ "$SOURCE_ENVIRONMENT_INPUT" == "staging" || "$SOURCE_ENVIRONMENT_INPUT" == "production" ]] || { echo "staging source must be staging or production" >&2; exit 1; }
+          elif [[ "$RESTORE_ENVIRONMENT_INPUT" != "$SOURCE_ENVIRONMENT_INPUT" ]]; then
+            echo "source_environment must match restore_environment outside staging" >&2
+            exit 1
+          fi
 
       - name: Verify backups
+        env:
+          # verify-backups.sh uses FIREMUD_K8S_NAMESPACE as its Velero
+          # control-plane namespace; it is not the restore target here.
+          FIREMUD_K8S_NAMESPACE: ${{ inputs.velero_namespace }}
         run: dev-tools/backups/verify-backups.sh
 
-      - name: Create restore namespace
-        if: ${{ inputs.restore == 'true' }}
-        run: |
-          kubectl create namespace "${{ inputs.namespace }}" --dry-run=client -o yaml | kubectl apply -f -
-
-      - name: Run restore test
+      - name: Run isolated manifest restore drill
         if: ${{ inputs.restore == 'true' }}
         env:
           FIREMUD_K8S_NAMESPACE: ${{ inputs.namespace }}
+          FIREMUD_RESTORE_SOURCE_NAMESPACE: firemud
+          FIREMUD_VELERO_NAMESPACE: ${{ inputs.velero_namespace }}
+          BACKUP_NAME_INPUT: ${{ inputs.backup_name }}
         run: |
-          BACKUP="${{ inputs.backup_name }}"
-          if [ -z "$BACKUP" ]; then
-            BACKUP=$(velero backup get -n ${{ inputs.namespace }} --no-headers | awk 'END{print $1}')
+          BACKUP_NAME="$BACKUP_NAME_INPUT"
+          if [[ -z "$BACKUP_NAME" ]]; then
+            BACKUP_NAME="$(velero backup get --namespace "$FIREMUD_VELERO_NAMESPACE" --no-headers | awk 'NF { name=$1 } END { print name }')"
           fi
-          dev-tools/restores/restore-cluster.sh "$BACKUP"
+          [[ -n "$BACKUP_NAME" ]] || { echo "No Velero backup is available in namespace $FIREMUD_VELERO_NAMESPACE" >&2; exit 1; }
+          dev-tools/restores/restore-cluster.sh "$BACKUP_NAME"
 
       - name: Validate external credential bindings
         if: ${{ inputs.restore == 'true' }}
@@ -127,12 +172,14 @@ jobs:
           SMTP_HOST: ${{ inputs.smtp_host }}
           SMTP_PORT: ${{ inputs.smtp_port }}
           OPERATOR_CERT_FINGERPRINT: ${{ inputs.operator_cert_fingerprint }}
-          EXPECTED_PG_DUMP_BUCKET: ${{ inputs.expected_pg_dump_bucket }}
-          EXPECTED_ASSET_STORE_BUCKET: ${{ inputs.expected_asset_store_bucket }}
-          EXPECTED_ASSET_STORE_ENDPOINT: ${{ inputs.expected_asset_store_endpoint }}
-          EXPECTED_SMTP_HOST: ${{ inputs.expected_smtp_host }}
-          EXPECTED_OPERATOR_CERT_FINGERPRINT: ${{ inputs.expected_operator_cert_fingerprint }}
+          PG_DUMP_BINDING_REF: ${{ inputs.pg_dump_binding_ref }}
+          ASSET_STORE_BINDING_REF: ${{ inputs.asset_store_binding_ref }}
+          OPERATOR_CREDENTIAL_BINDING_REF: ${{ inputs.operator_credential_binding_ref }}
+          RESTORE_SOURCE_ENVIRONMENT: ${{ inputs.source_environment }}
+          RESTORE_ENVIRONMENT: ${{ inputs.restore_environment }}
           EXTERNAL_CREDENTIAL_EVIDENCE_REF: ${{ inputs.external_credential_evidence_ref }}
           SANITIZATION_EVIDENCE_REF: ${{ inputs.sanitization_evidence_ref }}
         run: |
-          dev-tools/restores/validate-external-credentials.sh "${{ inputs.restore_environment }}"
+          EXPECTED_BINDINGS_REF="design/operations/environments/$RESTORE_ENVIRONMENT/expected-bindings.yaml"
+          export EXPECTED_BINDINGS_REF
+          dev-tools/restores/validate-external-credentials.sh "$RESTORE_ENVIRONMENT"

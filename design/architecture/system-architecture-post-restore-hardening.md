@@ -9,6 +9,7 @@ The owner contract is [ADR 0155: automated event-classified post-restore trust r
 This document is target-state architecture, not evidence that the full restore workflow is live.
 
 - **Live behavior:** the repository has restore-safe guidance, preflight validation, and evidence contracts, but does not yet provide a proven end-to-end player-facing restore-hardening controller or automation path.
+- **Current drill boundary:** the checked-in workflow and `restore-cluster.sh` perform only an isolated namespaced Kubernetes manifest/resource restore. They do not prove PostgreSQL/full-environment recovery, enforce controller-owned quarantine, restart ordinary workloads as recovery authority, or authorize traffic reopen.
 - **Target-only behavior:** the durable recovery controller, delegated hardening Jobs, `continueRecovery(... expectedPhase=ready_to_reopen ...)`, public `resume(... expectedPhase=awaiting_resume ...)`, and the internal guarded release through `finalized` remain required target-state behavior. They must not be inferred from the documentation or from partial tooling.
 - **Current database-rotation gap:** no implemented `db-credential-rotation` workload or target-bound rotation controller/proxy currently enforces the workload-identity and operation-binding checks below; the target contract therefore remains unproved and cannot authorize a restore.
 
@@ -22,7 +23,7 @@ Required quarantine actions:
 - prevent DNS or traffic-manager cutover to the restored environment
 - disable or scale down normal background processors, automation workers, schedulers, notification senders, webhooks, asset publishing workers, and any other workload that can create external or player-visible side effects
 - keep Game Session tick executors and command intake stopped or under an enforced restore-safe startup gate until the coordination recovery mode is proven
-- keep quarantine in place until post-restore hardening, external credential validation, required sanitization evidence, smoke checks, and the durable recovery-controller `ready_to_reopen` gate all succeed
+- keep quarantine in place until post-restore hardening, external credential validation, any independently required sanitization evidence, smoke checks, and the durable recovery-controller `ready_to_reopen` gate all succeed
 
 It is not sufficient to rely on “operators will not send traffic yet” as a procedural control. The restored environment must be technically unable to accept player-facing traffic until the hardening sequence is complete.
 
@@ -104,14 +105,16 @@ The durable rotation phases are monotonic, with explicit branch paths. A `verifi
 
 Restoring a namespace also restores third-party credentials stored as Secrets. Post-restore hardening must rotate or re-issue those restored credentials; a `rebound` disposition is allowed only when the provider trust boundary is safely re-established without reusing unsafe restored material and the binding and material lineage are proved before any external traffic is allowed.
 
-Canonical external validation matrix, limited to integrations enabled for the target environment:
+Canonical external validation matrix for every target environment:
 
 - `backup-storage`
 - `asset-storage`
 - `outbound-comms`
 - `operator-credentials`
 
-Each class must produce:
+Every class must produce exactly one record in the closed four-record universe. An enabled class produces an applicable `pass` record; a disabled class retains a `not_applicable` record so omission cannot hide a malformed selector or an unreviewed integration.
+
+Each applicable class must produce:
 
 - one machine-checkable validation result
 - one explicit environment-isolation assertion
@@ -126,6 +129,8 @@ The durable recovery-controller state must also include:
 
 `observedValue` must be redacted by design. Never store secret values, passwords, private keys, bearer tokens, or full connection strings containing credentials.
 
+Applicable records have exactly `status`, `evidenceRef`, `isolationAssertion`, `validationMethod`, `validatedAt`, `validatedBy`, and `observedValue`; all evidence fields are non-empty and `status` is `pass`. A disabled record has exactly `status=not_applicable`, `reason=credential-class-not-present`, and a non-empty `evidenceRef`; it has no validation fields. Unknown, missing, or extra records fail closed.
+
 Minimum execution contract:
 
 - backup-storage validation must confirm bucket and endpoint binding plus non-production isolation constraints
@@ -139,14 +144,17 @@ Before enabling external traffic, run:
 
 Expected inputs include environment-specific values such as:
 
-- `EXPECTED_PG_DUMP_BUCKET`
-- `EXPECTED_ASSET_STORE_BUCKET`
-- `EXPECTED_ASSET_STORE_ENDPOINT`
-- `EXPECTED_SMTP_HOST`
+- `PG_DUMP_BUCKET`, `PG_DUMP_ENDPOINT`, and `PG_DUMP_BINDING_REF`
+- `ASSET_STORE_BUCKET`, `ASSET_STORE_ENDPOINT`, and `ASSET_STORE_BINDING_REF` when asset storage is enabled
+- `SMTP_HOST` and `SMTP_PORT` when outbound communications is enabled
+- `OPERATOR_CREDENTIAL_BINDING_REF`
+- `RESTORE_SOURCE_ENVIRONMENT` (optional expected value; the immutable recovery record's `sourceEnvironmentBinding` remains authoritative)
+- `EXPECTED_BINDINGS_REF` (the canonical environment manifest)
 - `EXTERNAL_CREDENTIAL_EVIDENCE_REF`
-- optionally `PRODUCTION_PG_DUMP_BUCKET` and `PRODUCTION_ASSET_STORE_BUCKET` when validating staging isolation
 
-For staging restores sourced from production-origin snapshots, `SANITIZATION_EVIDENCE_REF` must point at an immutable `<recovery-ref>.sanitization.json` pre-release artifact whose operation, deployment event, and backup-artifact digest match the durable controller. The finalized recovery projection references that same artifact after the controller reaches `finalized`; it is not used circularly as the pre-release input.
+The executable consumes the canonical expected-binding manifest rather than caller-supplied `EXPECTED_*` values. Enabled backup and asset storage require the observed bucket, endpoint, and credential-binding references to match that manifest; enabled SMTP requires the observed host and a real connectivity probe; and the operator binding reference must match its canonical binding. Disabled classes retain canonical `not_applicable` records, and malformed or non-boolean manifest selectors fail closed. The immutable recovery record is authoritative for `sourceEnvironmentBinding`; a caller-supplied `RESTORE_SOURCE_ENVIRONMENT` is checked only as an exact expectation and cannot select the sanitization branch. Missing, unknown, or contradictory provenance fails closed. A missing required probe tool or unsupported enabled integration fails closed.
+
+For staging restores independently proven to originate from production snapshots by the immutable recovery record's `sourceEnvironmentBinding`, `SANITIZATION_EVIDENCE_REF` must point at an immutable `<recovery-ref>.sanitization.json` pre-release artifact whose operation, deployment event, and backup-artifact digest match the durable controller. Sanitization evidence is not required for same-environment staging drills or other independently proven non-production-origin restores, and supplying it for those restores is rejected. Missing, unknown, or contradictory source provenance fails closed rather than selecting the non-sanitization path. The finalized recovery projection references that same artifact after the controller reaches `finalized`; it is not used circularly as the pre-release input.
 
 ### 5. Secret-compliance evidence refresh
 

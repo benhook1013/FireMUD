@@ -24,8 +24,9 @@ The scripts here cover three related lanes:
   - Replaces the local Coordination Redis persisted data with a provided AOF file and restarts the local Redis service.
 
 - `restore-cluster.sh`
-  - Starts a Velero restore and restarts cluster workloads afterward.
-  - This is restore bootstrap tooling, not a full traffic-open or post-restore-hardening workflow by itself.
+  - Restores only selected namespaced resources from an explicitly selected Velero backup into the pre-provisioned `restore-test` namespace, while excluding Pods and built-in workload controllers, cluster-scoped resources, and volume restoration.
+  - Requires `FIREMUD_VELERO_NAMESPACE` to identify the cluster's Velero control-plane namespace; it never creates the target namespace or restarts workloads.
+  - This is manifest/resource restore bootstrap tooling, not a full traffic-open or post-restore-hardening workflow by itself.
 
 - `validate-external-credentials.sh`
   - Validates environment external-credential evidence after restore before traffic can reopen.

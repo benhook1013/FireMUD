@@ -17,8 +17,14 @@ mkdir -p "$EVIDENCE_DIR" "$STAGING_EVIDENCE_DIR" "$FAKE_BIN"
 
 cat >"$VALID_EVIDENCE" <<'JSON'
 {
+  "schemaVersion": "recovery-record/v1",
   "environment": "production",
   "recoveryRef": "contract-recovery",
+  "operationId": "contract-operation",
+  "deploymentEventId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "sourceEnvironmentBinding": {"environment": "production", "bindingRef": "production"},
+  "restoreSource": "contract-backup",
+  "backupArtifactLineage": {"artifactDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
   "certificateReissuance": {"status": "pass"},
   "jwtHardening": {"status": "pass"},
   "databaseCredentialRotation": {"status": "pass"},
@@ -31,7 +37,7 @@ cat >"$VALID_EVIDENCE" <<'JSON'
         "validationMethod": "aws-s3-head-bucket",
         "validatedAt": "2026-07-23T00:00:00Z",
         "validatedBy": "contract-test",
-        "observedValue": "production-backups"
+        "observedValue": "firemud-production-backups"
       },
       "asset-storage": {
         "status": "pass",
@@ -40,7 +46,7 @@ cat >"$VALID_EVIDENCE" <<'JSON'
         "validationMethod": "aws-s3-head-bucket",
         "validatedAt": "2026-07-23T00:00:00Z",
         "validatedBy": "contract-test",
-        "observedValue": "production-assets"
+        "observedValue": "firemud-production-assets"
       },
       "outbound-comms": {
         "status": "pass",
@@ -49,7 +55,7 @@ cat >"$VALID_EVIDENCE" <<'JSON'
         "validationMethod": "smtp-connectivity-check",
         "validatedAt": "2026-07-23T00:00:00Z",
         "validatedBy": "contract-test",
-        "observedValue": "smtp.production.example"
+        "observedValue": "smtp.production.internal:25"
       },
       "operator-credentials": {
         "status": "pass",
@@ -71,10 +77,10 @@ cat >"$FAKE_BIN/aws" <<'SH'
 set -euo pipefail
 
 case "$#:$*" in
-  "4:s3api head-bucket --bucket production-backups"|\
-  "4:s3api head-bucket --bucket production-assets"|\
-  "4:s3api head-bucket --bucket staging-backups"|\
-  "4:s3api head-bucket --bucket staging-assets")
+  "4:s3api head-bucket --bucket firemud-production-backups"|\
+  "6:s3api head-bucket --bucket firemud-production-assets --endpoint-url https://minio.production.internal"|\
+  "6:s3api head-bucket --bucket firemud-staging-backups --endpoint-url https://minio.staging.internal"|\
+  "6:s3api head-bucket --bucket firemud-staging-assets --endpoint-url https://minio.staging.internal")
     exit 0
     ;;
   *)
@@ -86,19 +92,32 @@ esac
 SH
 chmod +x "$FAKE_BIN/aws"
 
+cat >"$FAKE_BIN/timeout" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+# The contract checks field and invocation wiring; network reachability is
+# intentionally represented by a deterministic successful probe here.
+exit 0
+SH
+chmod +x "$FAKE_BIN/timeout"
+
 run_validator() {
   local evidence_ref="$1"
   (
     cd "$TMP_DIR"
     PATH="$FAKE_BIN:/usr/bin:/bin" \
-      PG_DUMP_BUCKET="production-backups" \
+      PG_DUMP_BUCKET="firemud-production-backups" \
       PG_DUMP_ENDPOINT="" \
-      ASSET_STORE_BUCKET="production-assets" \
-      ASSET_STORE_ENDPOINT="" \
-      EXPECTED_PG_DUMP_BUCKET="production-backups" \
-      EXPECTED_PG_DUMP_ENDPOINT="" \
-      EXPECTED_ASSET_STORE_BUCKET="production-assets" \
-      EXPECTED_ASSET_STORE_ENDPOINT="" \
+      PG_DUMP_BINDING_REF="secret://firemud/production-backup-object-store" \
+      ASSET_STORE_BUCKET="firemud-production-assets" \
+      ASSET_STORE_ENDPOINT="https://minio.production.internal" \
+      ASSET_STORE_BINDING_REF="secret://firemud/production-asset-object-store" \
+      SMTP_HOST="smtp.production.internal" \
+      SMTP_PORT="25" \
+      OPERATOR_CREDENTIAL_BINDING_REF="cert-manager://firemud/production-operator-client" \
+      OPERATOR_CERT_FINGERPRINT="sha256:operator" \
+      RESTORE_SOURCE_ENVIRONMENT="production" \
       EXTERNAL_CREDENTIAL_EVIDENCE_REF="$evidence_ref" \
       "$SCRIPT" production
   )
@@ -115,11 +134,13 @@ data = json.loads(source.read_text(encoding="utf-8"))
 data["environment"] = "staging"
 data["operationId"] = "contract-operation"
 data["deploymentEventId"] = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+data["sourceEnvironmentBinding"] = {"environment": "production", "bindingRef": "production"}
 data["backupArtifactLineage"] = {
     "artifactDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 }
-data["externalCredentialValidation"]["records"]["backup-storage"]["observedValue"] = "staging-backups"
-data["externalCredentialValidation"]["records"]["asset-storage"]["observedValue"] = "staging-assets"
+data["externalCredentialValidation"]["records"]["backup-storage"]["observedValue"] = "firemud-staging-backups"
+data["externalCredentialValidation"]["records"]["asset-storage"]["observedValue"] = "firemud-staging-assets"
+data["externalCredentialValidation"]["records"]["outbound-comms"]["observedValue"] = "smtp.staging.internal:25"
 destination.write_text(json.dumps(data), encoding="utf-8")
 PY
 
@@ -143,28 +164,116 @@ run_staging_validator() {
   (
     cd "$TMP_DIR"
     PATH="$FAKE_BIN:/usr/bin:/bin" \
-      PG_DUMP_BUCKET="staging-backups" \
-      PG_DUMP_ENDPOINT="" \
-      ASSET_STORE_BUCKET="staging-assets" \
-      ASSET_STORE_ENDPOINT="" \
-      EXPECTED_PG_DUMP_BUCKET="staging-backups" \
-      EXPECTED_PG_DUMP_ENDPOINT="" \
-      EXPECTED_ASSET_STORE_BUCKET="staging-assets" \
-      EXPECTED_ASSET_STORE_ENDPOINT="" \
+      PG_DUMP_BUCKET="firemud-staging-backups" \
+      PG_DUMP_ENDPOINT="https://minio.staging.internal" \
+      PG_DUMP_BINDING_REF="secret://firemud/staging-backup-object-store" \
+      ASSET_STORE_BUCKET="firemud-staging-assets" \
+      ASSET_STORE_ENDPOINT="https://minio.staging.internal" \
+      ASSET_STORE_BINDING_REF="secret://firemud/staging-asset-object-store" \
+      SMTP_HOST="smtp.staging.internal" \
+      SMTP_PORT="25" \
+      OPERATOR_CREDENTIAL_BINDING_REF="cert-manager://firemud/staging-operator-client" \
+      OPERATOR_CERT_FINGERPRINT="sha256:operator" \
+      RESTORE_SOURCE_ENVIRONMENT="production" \
       EXTERNAL_CREDENTIAL_EVIDENCE_REF="design/operations/deployments/staging/recovery/valid.json" \
       SANITIZATION_EVIDENCE_REF="$sanitization_ref" \
-      "$SCRIPT" staging
+      "$SCRIPT" staging 2>&1
   )
 }
 
 valid_output="$(run_validator "design/operations/deployments/production/recovery/valid.json" 2>&1)"
 grep -q "External credential validation passed for production." <<<"$valid_output"
 
+MISSING_PROVENANCE_EVIDENCE="$EVIDENCE_DIR/missing-provenance.json"
+python3 - "$VALID_EVIDENCE" "$MISSING_PROVENANCE_EVIDENCE" <<'PY'
+import json
+import pathlib
+import sys
+
+data = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+del data["sourceEnvironmentBinding"]
+pathlib.Path(sys.argv[2]).write_text(json.dumps(data), encoding="utf-8")
+PY
+if output="$(run_validator "design/operations/deployments/production/recovery/missing-provenance.json" 2>&1)"; then
+  echo "validator accepted recovery evidence without sourceEnvironmentBinding" >&2
+  exit 1
+fi
+grep -q "sourceEnvironmentBinding must contain exactly" <<<"$output"
+
+for restore_source_case in missing empty; do
+  invalid_restore_source="$EVIDENCE_DIR/restore-source-${restore_source_case}.json"
+  python3 - "$VALID_EVIDENCE" "$invalid_restore_source" "$restore_source_case" <<'PY'
+import json
+import pathlib
+import sys
+
+data = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+case = sys.argv[3]
+if case == "missing":
+    del data["restoreSource"]
+elif case == "empty":
+    data["restoreSource"] = {}
+pathlib.Path(sys.argv[2]).write_text(json.dumps(data), encoding="utf-8")
+PY
+  if output="$(run_validator "design/operations/deployments/production/recovery/restore-source-${restore_source_case}.json" 2>&1)"; then
+    echo "validator accepted empty restoreSource: $restore_source_case" >&2
+    exit 1
+  fi
+  grep -q "restoreSource must be present and non-empty" <<<"$output"
+done
+
+for restore_source_case in opaque-string opaque-object; do
+  opaque_restore_source="$EVIDENCE_DIR/restore-source-${restore_source_case}.json"
+  python3 - "$VALID_EVIDENCE" "$opaque_restore_source" "$restore_source_case" <<'PY'
+import json
+import pathlib
+import sys
+
+data = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+case = sys.argv[3]
+if case == "opaque-string":
+    data["restoreSource"] = "current-production-lineage"
+elif case == "opaque-object":
+    data["restoreSource"] = {"type": "unknown-lineage", "unexpected": "opaque"}
+pathlib.Path(sys.argv[2]).write_text(json.dumps(data), encoding="utf-8")
+PY
+  if ! output="$(run_validator "design/operations/deployments/production/recovery/restore-source-${restore_source_case}.json" 2>&1)"; then
+    echo "validator rejected opaque restoreSource: $restore_source_case" >&2
+    exit 1
+  fi
+  grep -q "External credential validation passed for production." <<<"$output"
+done
+
 staging_output="$(
   run_staging_validator \
     "design/operations/deployments/staging/recovery/contract-recovery.sanitization.json" 2>&1
 )"
 grep -q "External credential validation passed for staging." <<<"$staging_output"
+
+if output="$(
+  (
+    cd "$TMP_DIR"
+    PATH="$FAKE_BIN:/usr/bin:/bin" \
+      PG_DUMP_BUCKET="firemud-staging-backups" \
+      PG_DUMP_ENDPOINT="https://minio.staging.internal" \
+      PG_DUMP_BINDING_REF="secret://firemud/staging-backup-object-store" \
+      ASSET_STORE_BUCKET="firemud-staging-assets" \
+      ASSET_STORE_ENDPOINT="https://minio.staging.internal" \
+      ASSET_STORE_BINDING_REF="secret://firemud/staging-asset-object-store" \
+      SMTP_HOST="smtp.staging.internal" \
+      SMTP_PORT="25" \
+      OPERATOR_CREDENTIAL_BINDING_REF="cert-manager://firemud/staging-operator-client" \
+      OPERATOR_CERT_FINGERPRINT="sha256:operator" \
+      RESTORE_SOURCE_ENVIRONMENT="staging" \
+      EXTERNAL_CREDENTIAL_EVIDENCE_REF="design/operations/deployments/staging/recovery/valid.json" \
+      SANITIZATION_EVIDENCE_REF="design/operations/deployments/staging/recovery/contract-recovery.sanitization.json" \
+      "$SCRIPT" staging 2>&1
+  )
+)"; then
+  echo "validator accepted caller-supplied staging provenance over production sourceEnvironmentBinding" >&2
+  exit 1
+fi
+grep -q "contradicts sourceEnvironmentBinding" <<<"$output"
 
 INVALID_SANITIZATION_EVIDENCE="$STAGING_EVIDENCE_DIR/missing-operation.sanitization.json"
 python3 - "$VALID_SANITIZATION_EVIDENCE" "$INVALID_SANITIZATION_EVIDENCE" <<'PY'
@@ -219,5 +328,23 @@ PY
   fi
   grep -q "External credential evidence missing $canonical_field." <<<"$output"
 done
+
+MALFORMED_RECORD="$EVIDENCE_DIR/malformed-not-applicable.json"
+python3 - "$VALID_EVIDENCE" "$MALFORMED_RECORD" <<'PY'
+import json
+import pathlib
+import sys
+
+data = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+record = data["externalCredentialValidation"]["records"]["asset-storage"]
+record["status"] = "not_applicable"
+record["reason"] = "incorrectly marked disabled"
+pathlib.Path(sys.argv[2]).write_text(json.dumps(data), encoding="utf-8")
+PY
+if output="$(run_validator "design/operations/deployments/production/recovery/malformed-not-applicable.json" 2>&1)"; then
+  echo "validator accepted malformed not_applicable record" >&2
+  exit 1
+fi
+grep -q "External credential evidence record must be pass: asset-storage" <<<"$output"
 
 echo "validate-external-credentials contract checks passed"
