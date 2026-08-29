@@ -1648,38 +1648,38 @@ require_absent(
 require_contains(
     "design/architecture/system-architecture-scripting-scheduler-and-timers.md",
     [
-        "resume-window record per `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun>`",
-        "its `resumeWindowId` is `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>`",
-        "retains the authoritative `playableStateNamespaceId` as immutable non-identity scope evidence",
+        "resume-window record per `<tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch, isDryRun>`",
+        "its `resumeWindowId` is `<tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch, isDryRun, resumeGeneration>`",
+        "The server-derived `playableStateScope` is persisted separately as immutable policy/routing/authorization/migration-fence evidence and is exact-validated; it is not part of the window identity.",
         "missing or mismatched evidence fails closed without changing any canonical identity tuple",
     ],
 )
 require_contains(
     "design/architecture/system-architecture-scripting-dsl-for-designers.md",
     [
-        "`resumeWindowId` identified by `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>`",
+        "`resumeWindowId` identified by `<tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch, isDryRun, resumeGeneration>`",
         "one-tenant, one-mode ID",
     ],
 )
 require_absent(
     "design/architecture/system-architecture-scripting-dsl-for-designers.md",
     [
-        "`resumeWindowId` identified by `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, resumeGeneration>`",
+        "`resumeWindowId` identified by `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>`",
     ],
 )
 require_contains(
     "design/architecture/decisions/adr-0072-class-specific-timer-durability-and-recovery.md",
     [
-        "resume-window record per runtime scope, epoch, and `isDryRun` mode",
-        "`resumeWindowId` is the exact tuple `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>`",
+        "resume-window record per playable-state namespace/runtime scope, epoch, and `isDryRun` mode",
+        "`resumeWindowId` is the exact tuple `<tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch, isDryRun, resumeGeneration>`",
         "each prior epoch's `OPEN` resume window, independently for each `isDryRun` mode",
     ],
 )
 require_contains(
     "design/architecture/system-architecture-scripting-normative-contract-tables.md",
     [
-        "resume window identified by `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>`",
-        "Durable compare-and-set creates or reuses one `OPEN` window per runtime scope, epoch, and `isDryRun` mode",
+        "resume window identified by `<tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch, isDryRun, resumeGeneration>`",
+        "Durable compare-and-set creates or reuses one `OPEN` window per namespace/runtime identity, epoch, and `isDryRun` mode",
     ],
 )
 require_contains(
@@ -1705,7 +1705,7 @@ if len(preimage_matches) != 1:
 expected_scheduler_preimage = [
     "tenantId",
     "gameInstanceId",
-    "playableStateScope",
+    "playableStateNamespaceId",
     "stableOwnerKind",
     "stableOwnerId",
     "regionId",
