@@ -8,6 +8,10 @@ import re
 
 root = pathlib.Path(".")
 obsolete_public_resume_signature = "`resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)`"
+obsolete_scope_resume_window_identity = (
+    "<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, "
+    "isDryRun, resumeGeneration>"
+)
 obsolete_gameplay_session_selector = "session:game:{tenantInstanceTag}"
 obsolete_gameplay_character_index = "session:game:index:character:{tenantGameplayTag}:<gameInstanceId>:<characterId>"
 obsolete_gameplay_character_index_with_scope = "session:game:index:character:{tenantGameplayTag}:<playableStateNamespaceId>:<playableStateScope>:<characterId>"
@@ -1654,17 +1658,22 @@ require_contains(
         "missing or mismatched evidence fails closed without changing any canonical identity tuple",
     ],
 )
+require_absent(
+    "design/architecture/system-architecture-scripting-scheduler-and-timers.md",
+    [obsolete_scope_resume_window_identity],
+)
 require_contains(
     "design/architecture/system-architecture-scripting-dsl-for-designers.md",
     [
         "`resumeWindowId` identified by `<tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch, isDryRun, resumeGeneration>`",
         "one-tenant, one-mode ID",
+        "the server-derived `playableStateScope` is retained as immutable policy/routing/authorization/fence evidence and is exact-validated alongside that identity",
     ],
 )
 require_absent(
     "design/architecture/system-architecture-scripting-dsl-for-designers.md",
     [
-        "`resumeWindowId` identified by `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>`",
+        obsolete_scope_resume_window_identity,
     ],
 )
 require_contains(
@@ -1672,15 +1681,25 @@ require_contains(
     [
         "resume-window record per playable-state namespace/runtime scope, epoch, and `isDryRun` mode",
         "`resumeWindowId` is the exact tuple `<tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch, isDryRun, resumeGeneration>`",
+        "the server-derived `playableStateScope` is retained and exact-validated as immutable policy/routing/authorization/fence evidence, not as a uniqueness input",
         "each prior epoch's `OPEN` resume window, independently for each `isDryRun` mode",
     ],
+)
+require_absent(
+    "design/architecture/decisions/adr-0072-class-specific-timer-durability-and-recovery.md",
+    [obsolete_scope_resume_window_identity],
 )
 require_contains(
     "design/architecture/system-architecture-scripting-normative-contract-tables.md",
     [
         "resume window identified by `<tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch, isDryRun, resumeGeneration>`",
         "Durable compare-and-set creates or reuses one `OPEN` window per namespace/runtime identity, epoch, and `isDryRun` mode",
+        "the server-derived `playableStateScope` is retained as immutable exact-validated policy/routing/authorization/migration-fence evidence for that window and is excluded from its identity, with missing or mismatched evidence fencing admission",
     ],
+)
+require_absent(
+    "design/architecture/system-architecture-scripting-normative-contract-tables.md",
+    [obsolete_scope_resume_window_identity],
 )
 require_contains(
     "design/architecture/decisions/adr-0001-scripting-event-ingress-idempotency-identity.md",
