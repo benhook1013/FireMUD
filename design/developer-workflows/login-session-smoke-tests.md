@@ -57,7 +57,7 @@ You are in a candle-lit antechamber carved into basalt.
 
 Capture both responses so you can compare them to the Telnet flow.
 
-Optional mutating item/container/equipment extension, only when the isolation boundary below is satisfied and the target environment has the required fixtures:
+Optional mutating item/container/equipment extension, only when the run-owned isolation boundary above is satisfied and the target environment has the required fixtures:
 
 ```text
 INV HERE

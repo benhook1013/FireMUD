@@ -97,7 +97,8 @@ FireMUD uses two explicit tick boundaries for `<tenantId, gameInstanceId, region
 
 - **`durable_committed`** (authoritative commit boundary):
   - The Game Session tick effect ledger has reconciled each effect for that tick under authoritative evidence: `APPLIED` only when proven applied, `ABANDONED` only when proven unapplied, and inconclusive work remains nonterminal/reconciliation-required. There are no remaining `SCHEDULED` ledger rows for that tick.
-  - Target-state `RegionStatus.lastCommittedTickId` has been advanced to that `(regionEpoch, tickId)` as part of the same durable visibility boundary. In the current-live deployment, the committed tick fields on `RuntimeOwnershipStatus` advance under the same opaque fence; `ObserveRuntimeTickProgress` is the progress feed and does not replace that durable authority.
+  - For a non-empty batch, `tick_batch.status` is `COMMITTED` in this same fenced durable visibility boundary; a `CREATED`, `REDIS_STAGED`, or otherwise non-committed batch cannot advertise committed progress.
+  - Target-state `RegionStatus.lastCommittedTickId` has been advanced to the complete `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)` scope as part of that same durable visibility boundary. In the current-live deployment, the committed tick fields on `RuntimeOwnershipStatus` advance under the same opaque fence; `ObserveRuntimeTickProgress` is the progress feed and does not replace that durable authority.
 - **`coordination_cleared`** (in-flight clearance boundary):
   - Redis staging/lock state for that tick is no longer in flight (for example, `tick:{tenantRegionTag}:pending` is cleared/abandoned and lock cleanup has completed).
 
@@ -318,14 +319,15 @@ For most deployments, region topology changes (splits, merges, or reassignments 
 
 World Management owns region topology (layout and `<regionId>` assignments scoped by `{tenantId, gameInstanceId}`) and may, over time, support “drain and split” or “merge” flows:
 
-- Split flows mark a region for split, freeze scheduling and new command intake, reconcile each in-flight and durable effect under authoritative evidence, bump `regionEpoch` when the ownership mapping changes, move entities to new `<tenantId, gameInstanceId, regionId>` assignments, and reset/rebuild coordination state from durable state before ticks resume. They do not move live Redis queues by renaming them under new prefixes.
+- Split flows establish an admission barrier covering player front ends, supported Logging & Admin operator effect admission/forwarding, automation, timers, and remote-follow-up producers before freezing scheduling and new command intake; they then reconcile each in-flight and durable effect under authoritative evidence, bump `regionEpoch` when the ownership mapping changes, move entities to new `<tenantId, gameInstanceId, regionId>` assignments, and reset/rebuild coordination state from durable state before ticks resume. They do not move live Redis queues by renaming them under new prefixes.
 - Merge flows consolidate lightly used regions into a single region to reduce overhead.
 
 ### Topology Changes (Split/Merge) Protocol (Required Invariants)
 
 Region split/merge operations interact directly with tick idempotency, Redis key ownership, and cross-region follow-ups. To keep these operations safe and deterministic, topology changes must follow a single, explicit protocol:
 
-1. **Freeze and fence**
+1. **Admission barrier, freeze, and fence**
+   - Establish an admission barrier covering player front ends, supported Logging & Admin operator effect admission/forwarding, automation, timers, and remote-follow-up producers. Effects admitted before the barrier drain or reconcile under their owning lifecycle; no post-barrier effect is admitted until the cutover reopens.
    - Pause tick scheduling and new command intake for the affected region(s).
    - Wait for any in-flight `tick:{tenantRegionTag}:pending` work to commit or be recovered effect-by-effect to an evidence-qualified terminal state; inconclusive effects remain nonterminal/reconciliation-required.
 2. **Converge durable outcomes**

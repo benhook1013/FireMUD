@@ -9,13 +9,13 @@ import re
 root = pathlib.Path(".")
 obsolete_public_resume_signature = "`resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)`"
 obsolete_scope_resume_window_identity = re.compile(
-    r"<(?=[^>\r\n]*\btenantId\b)"
-    r"(?=[^>\r\n]*\bgameInstanceId\b)"
-    r"(?=[^>\r\n]*\bregionId\b)"
-    r"(?=[^>\r\n]*\bregionEpoch\b)"
-    r"(?=[^>\r\n]*\bisDryRun\b)"
-    r"(?=[^>\r\n]*\bresumeGeneration\b)"
-    r"(?=[^>\r\n]*\bplayableStateScope\b)[^>\r\n]*>"
+    r"<(?=[^<>]*\btenantId\b)"
+    r"(?=[^<>]*\bgameInstanceId\b)"
+    r"(?=[^<>]*\bregionId\b)"
+    r"(?=[^<>]*\bregionEpoch\b)"
+    r"(?=[^<>]*\bisDryRun\b)"
+    r"(?=[^<>]*\bresumeGeneration\b)"
+    r"(?=[^<>]*\bplayableStateScope\b)[^<>]*>"
 )
 obsolete_gameplay_session_selector = "session:game:{tenantInstanceTag}"
 obsolete_gameplay_character_index = "session:game:index:character:{tenantGameplayTag}:<gameInstanceId>:<characterId>"
@@ -1703,6 +1703,10 @@ require_contains(
 for obsolete_resume_identity_fixture in (
     "<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>",
     "<tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>",
+    (
+        "<tenantId, gameInstanceId, playableStateNamespaceId,\n"
+        "playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>"
+    ),
 ):
     if obsolete_scope_resume_window_identity.fullmatch(obsolete_resume_identity_fixture) is None:
         raise SystemExit(

@@ -43,13 +43,13 @@ For a work-bearing tick, `durable_committed` is one durable visibility boundary 
 
 - every effect ledger row belonging to the batch is terminal as `APPLIED` or `ABANDONED`;
 - the tick batch is `COMMITTED`; and
-- `RegionStatus.lastCommittedTickId` advances for the same tenant, region, epoch, and tick under the same current `executorFence`.
+- `RegionStatus.lastCommittedTickId` advances for the same complete tenant, game instance, region, epoch, and tick scope under the same current `executorFence`.
 
 Redis absence or cleanup never proves that a domain effect committed or that `durable_committed` was reached.
 
-Heartbeat publication follows `durable_committed` and may precede coordination cleanup. Recovery provides the heartbeat through either a transactional heartbeat outbox written with the durable commit or deterministic successor synthesis from authoritative `RegionStatus`. Consumers deduplicate heartbeat delivery by tenant, region, epoch, and tick.
+Heartbeat publication follows `durable_committed` and may precede coordination cleanup. Recovery provides the heartbeat through either a transactional heartbeat outbox written with the durable commit or deterministic successor synthesis from authoritative `RegionStatus`. Consumers deduplicate heartbeat delivery by the complete tenant, game instance, region, epoch, and tick scope.
 
-`coordination_cleared` is a separate live boundary. Cleanup uses an atomic exact compare-and-delete of Redis pending and lock state matching the expected epoch, tick, `tick_batch_id`, digest or expected effect count, ownership tokens, and required fence relationship. A stale owner cannot delete successor coordination. A successor uses a dedicated fenced recovery-cleanup path for old-owner state; it does not impersonate the prior owner or advance commit state through cleanup.
+`coordination_cleared` is a separate live boundary. Cleanup uses an atomic exact compare-and-delete of Redis pending and lock state matching the complete immutable pending-envelope set for the expected epoch, tick, and `tick_batch_id`, together with ownership tokens and the required fence relationship. A count or digest may be retained as a diagnostic consistency hint, but neither authorizes cleanup without exact set equality. A stale owner cannot delete successor coordination. A successor uses a dedicated fenced recovery-cleanup path for old-owner state; it does not impersonate the prior owner or advance commit state through cleanup.
 
 For a work-bearing tick, tick `N+1` remains gated while tick `N` has an unresolved durable batch or matching coordination state that has not reached `coordination_cleared`. Admission checks both durable batch state and Redis coordination; the absence of one cannot override unresolved evidence in the other. A truly empty tick instead uses ADR 0077's fenced watermark commit as its durable progress and admission boundary and does not wait for a nonexistent batch.
 

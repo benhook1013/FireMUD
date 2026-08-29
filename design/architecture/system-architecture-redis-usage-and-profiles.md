@@ -10,6 +10,8 @@ The target automation handoff also requires the complete Trigger Identity, inclu
 
 Separate Coordination and Cache/Rate-Limit Redis processes exist in current manifests, but role-specific application clients, ACLs, key/script registration, and ownership proof under [ADR 0171](./decisions/adr-0171-separated-redis-role-processes-and-owned-keyspaces.md) remain incomplete.
 
+The current hosted application wiring still exposes one generic `firemud.redis` client, with the shared hosted profile setting `FIREMUD_REDIS_HOST=redis-cache`; the role-specific Redis variables are present in the profile but are not consumed by the shared client configuration. Consequently, Game Session and Account coordination/auth paths cannot claim Coordination endpoint isolation in the hosted profile and may currently land on Cache/Rate-Limit Redis. This is implementation drift against ADR 0171, not a new role contract: convergence requires named role clients, endpoint-collision startup failure, and focused ACL/key-family/eviction/reset proof.
+
 ---
 
 ## Table of Contents

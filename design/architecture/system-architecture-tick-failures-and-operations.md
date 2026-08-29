@@ -99,7 +99,7 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
   - optional `pending_digest` or equivalent Redis-pending integrity field; it is not a substitute for the required immutable exact pending envelope or the sealed execution-context binding above
   - `created_at`, `updated_at`
 - The selected-work manifest is required for deterministic replay and source cleanup. At minimum it records, per selected source item:
-  - the batch scope `(tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch)`; its `enqueue_seq` is allocated from the complete `<tenantId, gameInstanceId, regionId>` scope and is not reset or reused when a reset bumps `regionEpoch` and restarts `tickId` at `0`
+  - the batch scope `(tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch)`; its entity-local `entity_enqueue_seq` is allocated monotonically within that complete region-epoch scope. A reset that bumps `regionEpoch` and restarts `tickId` at `0` starts a new entity-local sequence domain, while old-epoch ordering identities remain immutable and are never rebound even if a numeric sequence value is reused.
   - `source_kind`
   - declared `phase`, `lane`, and `cost_class`
   - source item identity
