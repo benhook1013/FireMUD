@@ -43,7 +43,8 @@ Within a region’s tick, root actor commands and their effects proceed through 
 
 1. **Enqueue**
    - Game Session accepts commands from Telnet and WebSocket clients, AI, or automation.
-   - Commands are enqueued into per-entity (or occasionally per-region) queues such as `tick:{tenantRegionTag}:queue:<entityId>`.
+   - Work-bearing commands are enqueued into per-entity (or occasionally per-region) queues such as `tick:{tenantRegionTag}:queue:<entityId>`.
+   - If admission resolves a zero-effect plan, the same durable command-status transaction records the canonical terminal outcome (`ingressStatus=TERMINAL`, `executionOutcome=APPLIED`, and `gameplayResult=SUCCESS` under [ADR 0053](./decisions/adr-0053-command-atomicity-by-invariant-class.md) and [ADR 0016](./decisions/adr-0016-canonical-gameplay-command-status-lifecycle.md)). This status-only write allocates or persists no `planOrdinal` or root `EffectId`, creates no effect ledger row or `tick_batch`, advances no tick-domain state, and does not enqueue the command; an accepted zero-effect command therefore cannot remain `ENQUEUED`, and retries return its stored terminal outcome.
 2. **Target Resolution (read-only)**
    - During the tick, the executor resolves targets from the pinned snapshot for that `<tenantId, gameInstanceId, regionId>`:
      - Single-target actions select a specific entity or room.

@@ -53,8 +53,8 @@ Tick recovery is driven by durable PostgreSQL tick state plus domain-level idemp
 Failure handling assumes the same two-boundary model defined in the main tick design:
 
 - `durable_committed`:
-  - Ledger rows for `(tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch, tickId)` are terminal (`APPLIED` or `ABANDONED`) where the existing evidence policy permits terminalization; any inconclusive row remains non-terminal reconciliation work under its original mutation `EffectId`, with its enclosing root retained as lineage, and
-  - The current-live `GetRuntimeOwnershipStatus` reports the same opaque `executorFence` recorded by the batch, the live `regionEpoch` matches, and the live commit boundary has advanced under that same fenced write. `RegionStatus` is a target-state durable projection in examples where the live ownership/status surface is not available.
+  - For a work-bearing (non-empty) tick, the complete [canonical tick commit definition](./system-architecture-ticks.md#tick-commit-definition-heartbeat-watermark) requires every eligible ledger row for `(tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch, tickId)` to be terminal (`APPLIED` or `ABANDONED`) under the evidence policy, `tick_batch.status = COMMITTED`, and the durable watermark to advance in that same fenced visibility boundary. Any inconclusive row remains non-terminal reconciliation work under its original mutation `EffectId`, with its enclosing root retained as lineage, and blocks this boundary.
+  - In the current-live deployment, `GetRuntimeOwnershipStatus` reports the same opaque `executorFence` recorded by the batch, the live `regionEpoch` matches, and the committed tick fields advance under that same fenced write. Target-state `RegionStatus.lastCommittedTickId` is the corresponding durable projection; `ObserveRuntimeTickProgress` is only the current-live progress feed and does not replace either durable authority.
 - `coordination_cleared`:
   - Redis `pending`/lock coordination for that tick is no longer in flight.
 
