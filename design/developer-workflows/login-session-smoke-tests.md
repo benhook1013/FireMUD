@@ -86,7 +86,7 @@ Expected semantic checks:
 - `WEAR Leather Cap` reports success, `EQUIPMENT` shows `HEAD: Leather Cap`, and `REMOVE HEAD` reports success.
 - `WEAR Iron Boots` returns a clear `SLOT_INCOMPATIBLE` error in environments that carry the demo incompatible-item fixture.
 
-The plain `bash ./websocket-login-look-smoke.sh` invocation is baseline-only. The sole supported mutation invocation is the top-of-page run-owned Compose command block, which reuses the previously established exact claim with `SMOKE_MUTATION_EXTENSION=true` and `SMOKE_MUTATION_BOUNDARY=run-owned-compose`; do not invoke it against shared or stable state.
+The plain `bash ./websocket-login-look-smoke.sh` invocation is baseline-only. The supported scripted WebSocket mutation invocation documented here is the top-of-page run-owned Compose command block, which reuses the previously established exact claim with `SMOKE_MUTATION_EXTENSION=true` and `SMOKE_MUTATION_BOUNDARY=run-owned-compose`; do not invoke it against shared or stable state.
 
 For Compose-backed blackbox verification, the current canonical script is:
 
