@@ -84,7 +84,7 @@ These projections do not grant Automation ownership of Game Session's `tick:{ten
 
 - **Cache/Rate-Limit Redis usage**
   - Uses Automation-owned cache/rate-limit prefixes such as `automation:queue:{tenantInstanceTag}:*`, `automation:quota:<tenantId>:<scriptId>`, `automation:tenant-budget:<tenantId>:tier:<tier>`, `automation:test:capacity:<tenantId>:*`, `automation:test:capacity:cluster*`, and dry-run capacity keys to store script quota counters and similar best-effort aggregates in Cache/Rate-Limit Redis. Game Session remains the only owner of `tick:{tenantRegionTag}:*` gameplay coordination prefixes.
-  - The current `automation:test:quota:*` and `automation:readiness:capacity:*` capacity families are unsupported for atomic multi-key reservation until each family is registered in the central ownership/reset/ACL inventory and its keys share one canonical scope hash tag/Redis Cluster slot, or a single-key replacement is adopted.
+  - The current `automation:test:quota:*`, `automation:test:capacity:*`, and `automation:readiness:capacity:*` capacity families are unsupported for atomic multi-key reservation until each family is registered in the central ownership/reset/ACL inventory and its keys share one canonical scope hash tag/Redis Cluster slot, or a single-key replacement is adopted.
   - Treats these keys as transient operational data; PostgreSQL remains authoritative for script definitions and long-lived automation state.
   - Quota and queue-oriented prefixes are best-effort TTL-only caches unless explicitly documented as strongly validated caches with versioned payloads and stricter invalidation semantics.
 

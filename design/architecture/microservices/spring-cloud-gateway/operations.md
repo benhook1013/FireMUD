@@ -32,8 +32,8 @@ Target normalization occurs before close-metric emission: validate the complete 
 
 ## Dynamic Route Operational Guardrails
 
-- Dynamic route mutation is an explicitly enabled local/dev/test capability, not an initial production control plane. These are target-state acceptance criteria; the current implementation does not enforce all of them.
-- Target-state acceptance: player-facing environments fail startup if mutation components or endpoints are enabled, regardless of persistence or convergence claims.
+- Dynamic route mutation is an explicitly enabled local/dev/test capability, not an initial production control plane. The current implementation enforces default-off startup and an exclusive active `dev`/`test` profile allowlist; the remaining route-input and ingress restrictions below are target-state acceptance criteria.
+- Current startup acceptance: enabled mutation under a player-facing, custom, mixed, or absent profile fails startup, regardless of persistence or convergence claims.
 - Target-state acceptance: mutation endpoints remain internal-only and use the gateway-boundary authentication/authorization safeguards described in [Gateway Architecture](../../system-architecture-gateway.md#management-plane-security).
 - Production emergency changes use an expedited baseline rollout or a predeclared bounded failover switch. Any generic production runtime control plane requires a separate future decision.
 

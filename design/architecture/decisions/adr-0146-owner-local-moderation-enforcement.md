@@ -69,7 +69,7 @@ If the owner cannot read required local enforcement state, the protected action 
 - Each enforcement owner requires a durable indexed restriction table and atomic idempotent command-result handling.
 - Enforcement can continue through control-plane and observability outages after the owner has committed the restriction.
 - Operator-visible success is slightly slower because it waits for owner durability, which is appropriate for a low-volume consequential control-plane action.
-- Policy intent and enforcement state can temporarily disagree after a failed delivery or acknowledgement. Each mutation reconciles under its own exact canonical complete `postAuthorizationExecutionTuple`, including its request identity, digest, and authorization evidence, without weakening runtime checks or reusing the other mutation's identity.
+- Policy intent and enforcement state can temporarily disagree after a failed delivery or acknowledgement. The Logging & Admin policy-input/audit mutation reconciles under its exact `preAuthorizationReservationTuple` plus the bound intent-reference redemption result and fingerprint; only the later owner-enforcement mutation reconciles under its exact canonical complete `postAuthorizationExecutionTuple`. Each stage preserves its own request identity, digest, and authorization evidence without weakening runtime checks or reusing the other mutation's identity.
 - Applying a gameplay ban does not cancel or partially unwind work that was already durably admitted; it fences new admission and closes the binding.
 - Muted players may still receive communication, while chat-banned players retain only essential system and moderation notice delivery.
 

@@ -1,6 +1,7 @@
 package net.firedevops.firemud.springcloudgateway.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.List;
@@ -88,13 +89,56 @@ class GatewayRouteServiceImplTest {
     MockEnvironment environment = new MockEnvironment();
     environment.setActiveProfiles("prod");
 
-    IllegalStateException error =
-        assertThrows(
-            IllegalStateException.class, () -> new DynamicRouteMutationPolicy(true, environment));
+    IllegalStateException error = assertEnabledPolicyRejected(environment);
 
     assertEquals(
-        "Dynamic gateway route mutation must not be enabled with the prod profile",
+        "Dynamic gateway route mutation requires an explicitly active dev or test profile",
         error.getMessage());
+  }
+
+  @Test
+  void stagingProfileRejectsEnabledMutationAtStartup() {
+    MockEnvironment environment = new MockEnvironment();
+    environment.setActiveProfiles("staging");
+
+    assertEnabledPolicyRejected(environment);
+  }
+
+  @Test
+  void customProfileRejectsEnabledMutationAtStartup() {
+    MockEnvironment environment = new MockEnvironment();
+    environment.setActiveProfiles("custom");
+
+    assertEnabledPolicyRejected(environment);
+  }
+
+  @Test
+  void mixedSupportedAndUnsupportedProfilesRejectEnabledMutationAtStartup() {
+    MockEnvironment environment = new MockEnvironment();
+    environment.setActiveProfiles("dev", "staging");
+
+    assertEnabledPolicyRejected(environment);
+  }
+
+  @Test
+  void noActiveProfileRejectsEnabledMutationAtStartup() {
+    assertEnabledPolicyRejected(new MockEnvironment());
+  }
+
+  @Test
+  void testProfileAllowsEnabledMutation() {
+    MockEnvironment environment = new MockEnvironment();
+    environment.setActiveProfiles("test");
+
+    assertDoesNotThrow(() -> new DynamicRouteMutationPolicy(true, environment));
+  }
+
+  @Test
+  void devProfileAllowsEnabledMutation() {
+    MockEnvironment environment = new MockEnvironment();
+    environment.setActiveProfiles("dev");
+
+    assertDoesNotThrow(() -> new DynamicRouteMutationPolicy(true, environment));
   }
 
   private static GatewayRouteServiceImpl enabledService(RouteDefinitionWriter writer) {
@@ -102,5 +146,10 @@ class GatewayRouteServiceImplTest {
     environment.setActiveProfiles("test");
     return new GatewayRouteServiceImpl(
         writer, e -> {}, new DynamicRouteMutationPolicy(true, environment));
+  }
+
+  private static IllegalStateException assertEnabledPolicyRejected(MockEnvironment environment) {
+    return assertThrows(
+        IllegalStateException.class, () -> new DynamicRouteMutationPolicy(true, environment));
   }
 }

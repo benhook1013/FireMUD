@@ -180,7 +180,7 @@ Canonical minimum fields:
 Resolution invariants:
 
 - **Target-state resolution invariant:** `resolved versionId` is derived from the template’s single canonical `game_template_version_ref`; it is never inferred by choosing one of several referenced versions at launch time.
-- **Current implementation gap:** `ResolveLaunchDescriptor` accepts a caller `targetVersionId` even when `sourceVersionId` is absent and only checks same-tenant Published/Active state; it does not prove canonical reference or replacement remap requirements. Fresh-launch resolution therefore remains unproven until replacement-mode validation is enforced.
+- **Current implementation gap:** when a distinct `sourceVersionId` is supplied, `ResolveLaunchDescriptor` requires exactly one approved replacement remap and freezes its `remapSetId`. However, it also accepts a caller `targetVersionId` with no `sourceVersionId`, checks only same-tenant Published/Active state, and therefore permits the caller to bypass replacement classification while proving neither the template's canonical normalized reference nor complete fresh-launch validation.
 - `resolved scriptPatchVersion`, when present, must be validated against that same base `versionId`.
 - Runtime services must treat any mixed-version template as invalid configuration and fail before any instance rows are created.
 
