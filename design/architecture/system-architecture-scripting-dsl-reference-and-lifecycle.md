@@ -98,10 +98,10 @@ The required Trigger Identity fields and target-scope exceptions are defined in 
 | --- | --- | --- | --- |
 | 1 | **Trigger** | A concrete event such as `onEnterRegion`, `onCommand`, or a custom event emitted by a service. | gRPC `TriggerScriptEvent` call, tick heartbeat, or internal scheduler event. |
 | 2 | **DSL run** | Execution of a script handler in the sandboxed DSL for a single trigger. Produces domain commands, not direct state changes. | In-memory execution in the Automation & Scripting Service; results summarized as script work items. |
-| 3 | **Script work item** | The target-state post-DSL, per-trigger evaluated command descriptor/outbox contains one immutable descriptor per emitted command, the applicable Trigger Identity defined in the [normative contract tables](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields), and version metadata. The pre-DSL trigger state is a separate durable role; current implementation boundaries are recorded by the runtime owner. | Indexed via `automation:queue:{tenantInstanceTag}:<entityId>` when the evaluated work targets an entity, and later claimed by Automation's durable executor for Game Session handoff. |
+| 3 | **Script work item** | The target-state post-DSL, per-trigger evaluated command descriptor/outbox contains one immutable descriptor per emitted command, the applicable Trigger Identity defined in the [normative contract tables](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields), and version metadata. The pre-DSL trigger state is a separate durable role; current implementation boundaries are recorded by the runtime owner. | Persisted in Automation's durable executor/outbox storage and later claimed for Game Session handoff. The Redis `automation:queue:*` projection points only to the durable pre-DSL trigger record; it does not store post-DSL descriptors or script work items. |
 | 4 | **Tick command** | A concrete command that the Game Session Service executes during game ticks under its normal locking and idempotency rules. | Enqueued into `tick:{tenantRegionTag}:queue:<entityId>` for consumption by the tick loop. |
 
-Triggers lead to DSL runs, which produce durable script work items plus queue-pointer projection entries, and Automation's execution loop turns those work items into tick commands for the Game Session Service.
+Triggers lead to DSL runs, which produce durable script work items; the Redis queue is only a derived pointer to eligible pre-DSL trigger records. Automation's durable executor turns the committed work items into tick commands for the Game Session Service.
 
 ---
 
@@ -236,7 +236,7 @@ Governance requirements for ordering overrides and exclusivity:
 Domain services can define **custom events** that feed into the scripting pipeline:
 
 - The visual DSL exposes event source nodes for any event types enabled for the current game. Under the hood, bindings are stored as `<tenantId, eventTypeKey, eventSchemaVersion, scriptId>`.
-- Service-specific events follow the same trigger → DSL run → automation queue → tick command flow as built-in events.
+- Service-specific events follow the same pre-DSL trigger/outbox → DSL run → durable descriptor/outbox → tick command flow as built-in events; the Redis automation queue remains only a derived pointer to the pre-DSL trigger record.
 - Event schemas are versioned so scripts can be migrated when payloads change.
 
 Custom events must follow the same determinism and idempotency rules as built-in events; the applicable identity and ingress requirements are defined in the [normative contract tables](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields).
