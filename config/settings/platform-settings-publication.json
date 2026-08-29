@@ -7,6 +7,7 @@
       "keyPrefix": "firemud.communication",
       "service": "game-logic-service",
       "owner": "game-logic-service communication behavior defaults",
+      "persistedOverrideAuthority": "game-design-service",
       "description": "Built-in communication behavior defaults surfaced by Game Logic; player availability is controlled by standard command capabilities.",
       "referenceDoc": "design/architecture/microservices/game-logic-service/configuration.md",
       "runtimeSurface": "/actuator/settings/effective/communication",
@@ -20,6 +21,7 @@
       "keyPrefix": "firemud.presentation",
       "service": "game-session-service",
       "owner": "game-session-service operator defaults",
+      "persistedOverrideAuthority": "game-design-service",
       "description": "Player-facing text presentation defaults surfaced by Game Session.",
       "referenceDoc": "design/architecture/microservices/game-session-service/configuration.md",
       "runtimeSurface": "/actuator/settings/effective",
@@ -37,6 +39,7 @@
       "keyPrefix": "firemud.reconnection",
       "service": "game-session-service",
       "owner": "game-session-service operator defaults",
+      "persistedOverrideAuthority": "game-design-service",
       "description": "Reconnect resume policy and bounded semantic reconnect-context retention/resource defaults surfaced by Game Session; retention never grants resume or replay authority.",
       "referenceDoc": "design/architecture/microservices/game-session-service/configuration.md",
       "runtimeSurface": "/actuator/settings/effective",
@@ -56,6 +59,7 @@
       "keyPrefix": "firemud.command-history",
       "service": "game-session-service",
       "owner": "game-session-service operator defaults",
+      "persistedOverrideAuthority": "game-design-service",
       "description": "Bounded accepted player-command history defaults surfaced by Game Session.",
       "referenceDoc": "design/architecture/microservices/game-session-service/configuration.md",
       "runtimeSurface": "/actuator/settings/effective",
@@ -68,6 +72,7 @@
       "keyPrefix": "firemud.command-capabilities",
       "service": "common-platform-core",
       "owner": "common-platform-core shared player-command policy",
+      "persistedOverrideAuthority": "game-design-service",
       "description": "Tenant/game-controlled availability for standard player command families.",
       "referenceDoc": "design/architecture/system-architecture-player-command-model.md",
       "runtimeSurface": "/actuator/settings/effective",
@@ -83,6 +88,7 @@
       "keyPrefix": "firemud.movement",
       "service": "game-session-service",
       "owner": "game-session-service operator defaults",
+      "persistedOverrideAuthority": "game-design-service",
       "description": "Movement presentation defaults surfaced by Game Session.",
       "referenceDoc": "design/architecture/microservices/game-session-service/configuration.md",
       "runtimeSurface": "/actuator/settings/effective",
@@ -95,6 +101,7 @@
       "keyPrefix": "firemud.world-topology",
       "service": "game-session-service",
       "owner": "game-session-service operator defaults",
+      "persistedOverrideAuthority": "game-design-service",
       "description": "Topology behavior defaults surfaced by Game Session for later scope-sensitive world behavior.",
       "referenceDoc": "design/architecture/microservices/game-session-service/configuration.md",
       "runtimeSurface": "/actuator/settings/effective",
@@ -124,7 +131,7 @@
     },
     "firemud.presentation.default-locale-tag": {
       "group": "transcript.rendering",
-      "scope": "operator-only",
+      "scope": "tenant/game-configurable",
       "futureScope": "tenant/game-configurable",
       "hotReloadable": false,
       "advanced": false,
@@ -133,7 +140,7 @@
     },
     "firemud.presentation.default-color-mode": {
       "group": "transcript.rendering",
-      "scope": "operator-only",
+      "scope": "tenant/game-configurable",
       "futureScope": "tenant/game-configurable",
       "hotReloadable": false,
       "advanced": false,
@@ -141,7 +148,7 @@
     },
     "firemud.presentation.brief-enabled-by-default": {
       "group": "transcript.rendering",
-      "scope": "operator-only",
+      "scope": "tenant/game-configurable",
       "futureScope": "tenant/game-configurable",
       "hotReloadable": false,
       "advanced": false,
@@ -149,7 +156,7 @@
     },
     "firemud.presentation.prompt.enabled": {
       "group": "prompts.transportPresentation",
-      "scope": "operator-only",
+      "scope": "tenant/game-configurable",
       "futureScope": "tenant/game-configurable",
       "hotReloadable": false,
       "advanced": false,
@@ -157,7 +164,7 @@
     },
     "firemud.presentation.prompt.emit-after-reconnect-restore": {
       "group": "prompts.transportPresentation",
-      "scope": "operator-only",
+      "scope": "tenant/game-configurable",
       "futureScope": "tenant/game-configurable",
       "hotReloadable": false,
       "advanced": false,
@@ -165,12 +172,12 @@
     },
     "firemud.presentation.prompt.coalesce-window-ms": {
       "group": "prompts.coalescing",
-      "scope": "operator-only",
+      "scope": "tenant/game-configurable",
       "futureScope": "tenant/game-configurable",
       "hotReloadable": false,
       "advanced": true,
       "exampleValue": 150,
-      "constraints": "integer >= 1 ms"
+      "constraints": "integer from 1 to 1000 ms; platform hard bound applies to operator defaults and tenant/game overrides"
     },
     "firemud.reconnection.policy.resume-window-ms": {
       "group": "reconnection.policy",
@@ -286,7 +293,7 @@
     },
     "firemud.movement.post-move-look-enabled": {
       "group": "movement.postMoveView",
-      "scope": "operator-only",
+      "scope": "tenant/game-configurable",
       "futureScope": "tenant/game-configurable within operator-enforced caps",
       "hotReloadable": false,
       "advanced": false,
@@ -294,7 +301,7 @@
     },
     "firemud.world-topology.scope-model": {
       "group": "worldTopology.scopeModel",
-      "scope": "operator-only",
+      "scope": "tenant/game-configurable",
       "futureScope": "tenant/game-configurable",
       "hotReloadable": false,
       "advanced": false,
@@ -302,7 +309,7 @@
     },
     "firemud.world-topology.regions-enabled": {
       "group": "worldTopology.regionBehavior",
-      "scope": "operator-only",
+      "scope": "tenant/game-configurable",
       "futureScope": "tenant/game-configurable",
       "hotReloadable": false,
       "advanced": true,

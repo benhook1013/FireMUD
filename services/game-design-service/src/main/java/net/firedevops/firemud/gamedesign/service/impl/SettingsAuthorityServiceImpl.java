@@ -207,6 +207,8 @@ public class SettingsAuthorityServiceImpl implements SettingsAuthorityService {
     switch (domain) {
       case RECONNECTION ->
           validateReconnectionShape((ScopedSettingsOverrides.ReconnectionOverride) payload);
+      case PRESENTATION ->
+          validatePresentation((ScopedSettingsOverrides.PresentationOverride) payload);
       case COMMAND_HISTORY ->
           validateCommandHistory((ScopedSettingsOverrides.CommandHistoryOverride) payload);
       case COMMAND_CAPABILITIES ->
@@ -215,6 +217,23 @@ public class SettingsAuthorityServiceImpl implements SettingsAuthorityService {
       default -> {
         return;
       }
+    }
+  }
+
+  private void validatePresentation(ScopedSettingsOverrides.PresentationOverride presentation) {
+    if (presentation.isEmpty()) {
+      throw new IllegalArgumentException("Presentation override must set at least one value");
+    }
+    ScopedSettingsOverrides.PresentationOverride.PromptOverride prompt = presentation.prompt();
+    if (prompt == null || prompt.coalesceWindowMs() == null) {
+      return;
+    }
+    long coalesceWindowMs = prompt.coalesceWindowMs();
+    if (coalesceWindowMs < 1L
+        || coalesceWindowMs > ScopedSettingsOverrides.MAX_PROMPT_COALESCE_WINDOW_MS) {
+      throw new IllegalArgumentException(
+          "Prompt coalesceWindowMs must be between 1 and "
+              + ScopedSettingsOverrides.MAX_PROMPT_COALESCE_WINDOW_MS);
     }
   }
 

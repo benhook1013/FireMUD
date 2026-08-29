@@ -63,6 +63,8 @@ Initial split/merge support is an operator-controlled maintenance cutover:
 7. for a topology rollover that needs a replacement target leg, atomically create and link the new follow-up under the new mapping before marking the old identity `ABANDONED`, and do so only when the existing evidence policy permits that terminalization. If one transaction cannot cover both records, persist a fenced durable rollover intent containing both identities, the desired mapping, and sealed follow-up context; recovery completes the new record and link before terminalizing the old identity. Old rows that do not require rollover retain their owner-specific reconciled outcome, while inconclusive old rows remain fenced and reconciliation-required; and
 8. validate health and reopen.
 
+The producer-wide admission barrier in step 1 is the minimum cutover boundary. The operational topology procedure in [system-architecture-ticks.md](../system-architecture-ticks.md#topology-changes-splitmerge-protocol-required-invariants) must preserve this same producer set and reopen rule; pausing only the tick loop or player-command intake is not an equivalent barrier.
+
 The maintenance record exposes downtime, evidence-qualified terminalization counts, old/new mapping generations, and affected player outcomes. Accepted-but-unstaged work and old-epoch work receive explicit outcomes; inconclusive old-epoch work remains fenced and reconciliation-required rather than receiving a fabricated not-applied or maintenance-canceled outcome.
 
 Automatic live split/merge is not an initial capability. It requires a new acceptance decision after stale-router rejection, complete producer barriers, queue/timer/effect migration, follow-up lineage, rollback, and fault-injected recovery are proven.

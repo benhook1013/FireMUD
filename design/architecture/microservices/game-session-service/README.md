@@ -4,7 +4,7 @@ The canonical owner contracts for this service's connection/session lane are [Se
 
 ## Overview
 
-Orchestrates live game sessions, including tick execution, player input validation, and runtime feature toggles. It is the gameplay session front door for both Telnet and `/ws/game/**` clients and the lease-owning tick executor for each active `<tenantId, gameInstanceId, regionId>` region scope.
+Orchestrates live game sessions, including tick execution, player input validation, and runtime feature toggles. In the target state, it is the gameplay session front door for both Telnet and `/ws/game/**` clients and the lease-owning tick executor for each active `<tenantId, gameInstanceId, regionId>` region scope. The current-live ownership boundary remains instance-scoped at `{tenantId, gameInstanceId}`; true independently partitioned region ownership and lease-owner forwarding remain implementation and proof gaps tracked in the [Game Session runtime and tick coordination tracker](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md).
 
 Meaningful gameplay-session and tick-coordination state is externalized into Redis and PostgreSQL rather than kept as authoritative process-local memory. The target state therefore treats Game Session instances as replaceable workers: a new instance of the same service type should be able to resume session-front-end or lease-owner responsibility from shared state. Hidden same-type recovery is not a current availability guarantee; its implementation and proof remain a gap, and any user-visible reconnect caused solely by a non-edge Game Session restart remains implementation/proof debt rather than target behavior.
 
@@ -43,7 +43,7 @@ Current seams are narrower: patch/request convergence reads, instance-scoped pau
 
 ## Responsibilities
 
-- Maintain gameplay session state, reconnection bindings, and tick timing in Redis.
+- Coordinate gameplay session state, reconnection bindings, and Redis tick cadence. PostgreSQL runtime status remains the durable authority for current tick-control progress and commit under the Game Session fence.
 - Persist Game Session control-plane metadata in PostgreSQL, including game-instance rows, pinned runtime-version/script-patch selections, active runtime feature-flag overrides, and operator/audit-relevant disconnect/remediation metadata.
 - Queue player commands, validate front-door session state, and dispatch gameplay work to Game Logic Service.
 - Own the canonical live gameplay-presence and recent-presence substrate for active sessions, first `WHO`, AFK/activity resolution, and disconnect disposition handoff into later social surfaces.

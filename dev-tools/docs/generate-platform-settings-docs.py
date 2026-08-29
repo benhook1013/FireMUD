@@ -27,6 +27,13 @@ def render_value(value) -> str:
     return f"`{value}`"
 
 
+def require_non_empty_string(node: dict, field: str, context: str) -> str:
+    value = node.get(field)
+    if not isinstance(value, str) or not value.strip():
+        raise SystemExit(f"{context} field '{field}' must be a non-empty string")
+    return value
+
+
 def build_outputs() -> tuple[dict, str]:
     publication_spec = load_json(PUBLICATION_SPEC_PATH)
     property_specs = publication_spec["properties"]
@@ -64,11 +71,17 @@ def build_outputs() -> tuple[dict, str]:
 
     seen_property_names = set()
     for domain_spec in publication_spec["domains"]:
+        persisted_override_authority = require_non_empty_string(
+            domain_spec,
+            "persistedOverrideAuthority",
+            f"Publication domain '{domain_spec.get('name', '<unnamed>')}'",
+        )
         domain_output = {
             "name": domain_spec["name"],
             "keyPrefix": domain_spec["keyPrefix"],
             "service": domain_spec["service"],
             "owner": domain_spec["owner"],
+            "persistedOverrideAuthority": persisted_override_authority,
             "description": domain_spec["description"],
             "referenceDoc": domain_spec.get("referenceDoc"),
             "runtimeSurface": domain_spec.get("runtimeSurface"),
@@ -85,6 +98,7 @@ def build_outputs() -> tuple[dict, str]:
                 "",
                 f"- Service owner: `{domain_spec['service']}`",
                 f"- Current operator-default owner: `{domain_spec['owner']}`",
+                f"- Persisted tenant/game override authority: `{persisted_override_authority}`",
             ]
         )
         if domain_spec.get("referenceDoc"):

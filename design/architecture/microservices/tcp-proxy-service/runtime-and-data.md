@@ -38,7 +38,7 @@ The TCP Proxy Service participates in three distinct trust boundaries:
 - WebSocket mTLS bridge: TCP Proxy Service <-> Spring Cloud Gateway
 - Internal gRPC mTLS: internal clients <-> TCP Proxy Service
 
-These trust surfaces are related but not interchangeable. In very small local or hobby deployments, certificate reuse across surfaces may be acceptable, but in shared and player-facing environments operators should provision separate identities per surface so a compromise in one boundary does not automatically extend to the others.
+These trust surfaces are related but not interchangeable. Certificate reuse across surfaces may be acceptable only in local development, automated tests, or throwaway non-player-facing environments. Every shared or player-facing deployment, including hobby/self-hosted deployments, must provision dedicated separately managed identities per surface; see [Protocol Bridging](../../system-architecture-protocol-bridging.md#protocol-handling-and-security). This separation prevents a compromise in one boundary from automatically extending to the others.
 
 ## Bridge Lifecycle Ownership
 

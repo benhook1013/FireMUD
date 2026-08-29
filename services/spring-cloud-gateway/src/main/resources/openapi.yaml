@@ -1,15 +1,30 @@
 openapi: 3.0.3
 info:
   title: Spring Cloud Gateway API
-  description: API for dynamic route management
+  description: |
+    API for gateway health and dev/test-only dynamic route management.
+
+    The `/routes` operations are exposed only when
+    `firemud.gateway.dynamic-routes.enabled=true` with exclusively active
+    `dev` or `test` Spring profiles. Disabled configuration exposes no
+    mutation routes. If mutation is explicitly enabled while any unsupported
+    profile is active, startup fails rather than exposing those routes. This
+    static document lists the conditional operations for enabled instances;
+    `/ping` remains publicly accessible.
   version: 1.0.0
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT
 servers:
   - url: https://api.firemud.com
-security: []
+security:
+  - bearerAuth: []
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
   schemas:
     GatewayRoute:
       type: object
@@ -31,6 +46,7 @@ paths:
     get:
       summary: Health check
       operationId: ping
+      security: []
       responses:
         '200':
           description: Pong response
@@ -47,6 +63,7 @@ paths:
   /routes:
     post:
       summary: Add or update a gateway route
+      description: Available only in an enabled `dev` or `test` instance.
       operationId: upsertRoute
       requestBody:
         required: true
@@ -69,6 +86,7 @@ paths:
   /routes/{routeId}:
     delete:
       summary: Remove a gateway route
+      description: Available only in an enabled `dev` or `test` instance.
       operationId: removeRoute
       parameters:
         - name: routeId

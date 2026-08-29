@@ -412,7 +412,7 @@ The protocol should not frame these cases primarily as backend or world-state fa
 - `ERROR LOOK_UNAVAILABLE`
 - `ERROR UNEXPECTED`
 
-Metrics `gamesession.command.look.invocations` and `gamesession.command.look.failures` are tagged with `tenantId` and, when applicable, `error` so operators can correlate client-visible failures with the underlying cause quickly.
+Metrics `gamesession.command.look.invocations` and `gamesession.command.look.failures` use bounded `scope`, `scope_bucket`, `region_class`, or equivalent operational labels and, when applicable, a bounded `error` taxonomy so operators can correlate client-visible failures with the underlying cause quickly. Exact `tenantId` remains in structured logs, traces, and control-plane diagnostics rather than Prometheus label values.
 
 ### Communication request flow
 

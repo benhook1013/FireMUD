@@ -87,6 +87,8 @@ A command may be valid in more than one stage only when its contract explicitly 
 
 ## Standard Command Catalog
 
+`PING` is a protocol/service-health operation owned by Game Session, not a player command. It may complete synchronously at the service boundary and is therefore outside the pinned player-command registry, player stages, and gameplay capability policy.
+
 The standard catalog is grouped by command family. Detailed domain behavior remains in its owning architecture documentation; this table defines availability, stage, aliases, and ownership. `Any` means every player stage. Gameplay-only commands require an admitted gameplay context.
 
 | Family | Canonical commands | Stage | Availability | Semantic owner |
@@ -124,6 +126,8 @@ Games may extend standard behavior only through explicitly documented extension 
 `HISTORY [count]` is a command-input history feature, not a screen transcript reader. It returns the caller's safe, accepted prior commands for the current tenant/game and character binding. Malformed, unknown, and failed input is not retained. The current recorder excludes credential-bearing login and email-challenge payloads (and `LOGIN`/`HISTORY` by command type), but persists trimmed raw input and does not generally detect or redact secret-like arguments in other commands; arbitrary secret-bearing authored/plugin input is therefore not currently safe to record. **Target-state privacy contract:** Authentication secrets, OTPs, tokens, and other sensitive input are excluded or redacted before persistence and display. Every platform command explicitly declares `historyRecordable`; at target state, an omitted authored/plugin value normalizes to non-recordable. Current authored/plugin revisions must instead provide an explicit boolean because `RevisionServiceImpl` rejects omission. A command whose arguments can contain secrets needs a bounded safe projection/redaction contract before it may be recordable. `HISTORY` itself is not recordable, so reading history never creates another history row.
 
 The platform default is `10` entries and the platform maximum is `20`. A tenant/game may configure its own effective default and maximum within those platform limits. A supplied `count` returns the newest requested subset, bounded by the effective maximum.
+
+Current implementation status: only `firemud.command-history.max-entries` is surfaced, and an omitted `count` uses that effective maximum. Independent `default-entries` support, including the invariant `1 <= default <= max <= 20`, remains an implementation and proof gap.
 
 **Target-state retention and lifecycle safeguards:** Retention also has a non-zero maximum age under a platform hard limit so low activity cannot preserve raw input indefinitely. Disabling command history stops capture and display immediately, advances the affected scope's history policy generation, and schedules asynchronous deletion of older entries. Re-enabling begins empty in the new generation and cannot resurrect pre-disable rows while cleanup finishes. Account/privacy erasure can purge history independently. The current implementation enforces the bounded entry count and asynchronous count-trimming sweep only; maximum-age expiry, generation fencing, disable/re-enable purge, and independent erasure purge remain implementation gaps.
 

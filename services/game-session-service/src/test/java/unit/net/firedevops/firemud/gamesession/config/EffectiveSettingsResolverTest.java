@@ -12,6 +12,18 @@ import org.mockito.Mockito;
 
 class EffectiveSettingsResolverTest {
   @Test
+  void promptCoalesceWindowAppliesThePlatformHardBound() {
+    PresentationProperties properties =
+        new PresentationProperties(
+            "en-NZ",
+            PresentationProperties.ColorMode.NONE,
+            false,
+            new PresentationProperties.Prompt(true, true, 5_000L));
+
+    assertThat(properties.prompt().coalesceWindowMs()).isEqualTo(1_000L);
+  }
+
+  @Test
   void presentationOverridesMergeTenantThenGameInstance() {
     SharedSettingsAuthorityReader authorityReader =
         Mockito.mock(SharedSettingsAuthorityReader.class);

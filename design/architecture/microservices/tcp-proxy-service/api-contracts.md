@@ -62,7 +62,7 @@ Game Session must treat `NotifyDisconnect` as strictly advisory and idempotent:
 
 - Loss or delay of `NotifyDisconnect` events must never leave players stuck logged in or unable to resume; Game Session is responsible for independently detecting liveness via WebSocket/TCP close and Redis-backed timeouts.
 - Retries and at-least-once delivery should only increase duplication of advisory events, not change observable gameplay behavior.
-- In practice, losing events at this layer should only slow down session cleanup or metrics accuracy slightly, not introduce new correctness states.
+- Target-state expectation: losing events at this layer should only slow down session cleanup or metrics accuracy slightly, not introduce new correctness states. Current implementation has a Redis sequence-dedupe path that fails open on Redis errors and is reset-loss-vulnerable, with no current connection/generation binding guard before `NotifyDisconnect` presence, region-exit, or `GameInstance` suspension effects; see [Game Session runtime and data](../game-session-service/runtime-and-data.md#reconnection-and-disconnect-handling) and [Player Access and Session](../../../project-management/implementation-tracking/player-access-and-session.md). The live path therefore does not yet satisfy the target advisory safety contract.
 
 ## Logging and Correlation
 

@@ -10,6 +10,8 @@ public record ScopedSettingsOverrides(
     CommandHistoryOverride commandHistory,
     CommandCapabilitiesOverride commandCapabilities) {
 
+  public static final long MAX_PROMPT_COALESCE_WINDOW_MS = 1_000L;
+
   public ScopedSettingsOverrides(
       ReconnectionOverride reconnection,
       CommunicationOverride communication,

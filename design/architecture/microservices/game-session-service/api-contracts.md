@@ -189,7 +189,7 @@ grpcurl -plaintext -d '{"tenantId":42,"gameTemplateId":7,"controlPlaneRequestId"
 
 Game Session owns the gameplay session front door and the split between protocol-level system commands and queued gameplay work:
 
-- System commands such as `LOGIN`, `LOGON`, `PING`, and lightweight state queries are fully owned by Game Session and may complete synchronously without enqueuing gameplay work.
+- System commands such as `LOGIN`, `LOGON`, and lightweight state queries are fully owned by Game Session and may complete synchronously without enqueuing gameplay work. `PING` is specifically a protocol/service-health operation, outside the pinned player-command registry, player stages, and gameplay capability policy.
 - Gameplay commands such as `LOOK`, `SAY`, movement, and combat are validated and normalized by Game Session, then forwarded to the tick/gameplay path. Game Session does not re-implement gameplay rules or resolve domain-owned facts for these commands.
 - At target state, line input and future structured-client input are adapters onto the same pinned registry, stage, capability, history, idempotency, and durable-admission boundary. A structured client may submit typed intention directly and need not round-trip through text.
 - At target state, a verified empty authored registry is distinct from a required registry that is unavailable, corrupt, mismatched, colliding, or unsupported. The latter fails closed; it never activates a process-local built-in fallback.

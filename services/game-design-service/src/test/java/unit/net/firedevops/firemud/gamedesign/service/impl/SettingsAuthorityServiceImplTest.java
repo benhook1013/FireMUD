@@ -21,6 +21,32 @@ class SettingsAuthorityServiceImplTest {
       new SettingsAuthorityServiceImpl(repository, Mockito.mock(ObjectMapper.class));
 
   @ParameterizedTest
+  @ValueSource(longs = {0L, 1001L})
+  void rejectsOutOfRangePromptCoalesceWindowBeforePersistence(long coalesceWindowMs) {
+    ScopedSettingsOverrides overrides =
+        new ScopedSettingsOverrides(
+            null,
+            null,
+            new ScopedSettingsOverrides.PresentationOverride(
+                null,
+                null,
+                null,
+                new ScopedSettingsOverrides.PresentationOverride.PromptOverride(
+                    null, null, coalesceWindowMs)),
+            null,
+            null);
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                service.putDomainOverride(
+                    "demo", 7L, ScopedSettingsOverrides.SettingsDomain.PRESENTATION, overrides))
+        .withMessage("Prompt coalesceWindowMs must be between 1 and 1000");
+
+    verifyNoInteractions(repository);
+  }
+
+  @ParameterizedTest
   @ValueSource(ints = {-1, 0, 21})
   void rejectsOutOfRangeCommandHistoryRetentionBeforePersistence(int maxEntries) {
     ScopedSettingsOverrides overrides =

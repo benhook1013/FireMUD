@@ -16,10 +16,13 @@ creators can quickly spin up new projects without starting from scratch.
 ## Implementation Status
 
 - The launch plugin-selection presence modes remain target-only and unimplemented: a presence-capable selection wrapper/mode, fresh omission or explicit empty resolving to the same immutable empty selection, rollback omission reusing a named target, rollback explicit empty, and explicit non-empty selection are not yet represented in proto/generated clients, launch-descriptor persistence/response, the request digest, service logic, or focused proof. Launch-resolution APIs are live, but the current implementation does not yet persist, expose, or prove the complete `enabledPluginVersions[]` set for deterministic retry and rollback. The detailed target contract remains below.
+- The tenant-scoped normalized-reference phase and `GetTemplateReferencePhase(tenantId)` read remain target-only. Current code stores only a per-template `template_reference_phase` field defaulting to `ENFORCED` with `ENFORCED`/`LEGACY` values, so it cannot represent or prove the target `BACKFILLING -> VALIDATED -> ENFORCED` tenant phase; launch phase proof remains incomplete.
 
-## Starter Experience Profiles
+## Starter Experience Profiles (Target State)
 
 Game Design provides curated starter experience profiles so a creator can begin with a coherent playable ruleset without hand-authoring every stat, condition, action, floor-disposition, observation/targeting/target-selection-policy/default-path binding, feedback declaration, and ordinary script. Examples may include a classic text-MUD baseline, a solo-RPG baseline, and a minimal sandbox baseline.
+
+The profile-materialization and conservative-upgrade behavior below are target-state only. The [Game Authoring, Publishing, and Activation tracker](../../../project-management/implementation-tracking/game-authoring-publishing-and-activation.md#capability-status) records no profile-materialization implementation or focused proof; profiles must not be presented as current creator functionality.
 
 A game selects one optional base profile and zero or more optional extension packs while building a Draft version. Game Design materializes their content into that Draft version as ordinary versioned DML and scripts; profiles never remain as live runtime inheritance.
 
@@ -102,7 +105,7 @@ Normalized reference invariants:
 - If derivation yields more than one base `versionId`, the template write must fail with a clear validation error explaining that launchable templates must resolve to one version bundle.
 - Introducing normalized reference tables requires a one-time backfill migration/job for existing templates. Backfill must validate consistency and mark templates `INVALID` if dependencies cannot be derived or resolved.
 
-### Backfill, Validation, and Runtime Usage
+### Backfill, Validation, and Runtime Usage (Target State)
 
 Normalized reference storage is only safe if it is operationally enforced:
 
@@ -121,7 +124,7 @@ Normalized reference storage is only safe if it is operationally enforced:
   - Validates that every referenced `(tenantId, versionId, templateId)` exists in the owning domain service and that the referenced `versionId` is not Retired.
   - Marks the template as `INVALID` (and blocks instance creation) if references cannot be derived, cannot be resolved, or violate lifecycle constraints.
 - **Strict create/update enforcement** – create/update of a template must be rejected if normalized references cannot be derived and written in the same transaction as the JSON config.
-- **Single-version launch enforcement** – instance creation and `ResolveLaunchDescriptor` must reject any template not marked `VALID` with exactly one canonical base `versionId`.
+- **Single-version launch enforcement** – instance creation and `ResolveLaunchDescriptor` must reject any tenant whose `GetTemplateReferencePhase(tenantId)` is not `ENFORCED`, or whose normalized references do not resolve the template to exactly one canonical base `versionId`.
 - **Instance creation enforcement** – the Game Session Service (or the instance-creation orchestrator) must validate template dependencies using normalized tables before creating any `gameInstanceId` rows:
   - Fail fast if any referenced version is Retired, missing, or out of sync with its domain templates.
   - If the template pins a `scriptPatchVersion`, fail fast unless Automation & Scripting reports that patch is `READY` for the tenant.
@@ -176,7 +179,8 @@ Canonical minimum fields:
 
 Resolution invariants:
 
-- `resolved versionId` is derived from the template’s single canonical `game_template_version_ref`; it is never inferred by choosing one of several referenced versions at launch time.
+- **Target-state resolution invariant:** `resolved versionId` is derived from the template’s single canonical `game_template_version_ref`; it is never inferred by choosing one of several referenced versions at launch time.
+- **Current implementation gap:** when a distinct `sourceVersionId` is supplied, `ResolveLaunchDescriptor` requires exactly one approved replacement remap and freezes its `remapSetId`. However, it also accepts a caller `targetVersionId` with no `sourceVersionId`, checks only same-tenant Published/Active state, and therefore permits the caller to bypass replacement classification while proving neither the template's canonical normalized reference nor complete fresh-launch validation.
 - `resolved scriptPatchVersion`, when present, must be validated against that same base `versionId`.
 - Runtime services must treat any mixed-version template as invalid configuration and fail before any instance rows are created.
 

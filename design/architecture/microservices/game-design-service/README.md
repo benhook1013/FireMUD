@@ -4,9 +4,7 @@
 
 Offers tools for building worlds, items, actions, and events that make up each game. Used by creators to design content without touching the underlying code. It maintains version metadata, configuration manifests, and templates so new game instances can be created with predefined rules. Default administrator setup is available.
 
-This service is used only at design time. Runtime clients never request logos,
-favicons, or themes from it; published assets are served from object storage via
-manifest files.
+This service is used only at design time. Runtime clients never request logos, favicons, or themes from it. In the target state, published assets are served from approved object storage via attested manifest files; in the current first slice, bytes remain in `game_assets.data`, generated URLs use private storage endpoints, and public `/assets/**` delivery is not live. See [Asset Storage Setup](asset-storage.md#implementation-status) for the current boundary.
 
 Authoritative read surfaces worth wiring into creator/operator tooling:
 
@@ -24,12 +22,12 @@ Current capability and proof gaps remain: Game Session's exact pin/epoch persist
 - Manage version metadata and publish immutable game configurations
 - Track revision history for rollback
 - Orchestrate cross-service publish workflows and notify downstream services when new versions are available.
-- Upload branding assets to version-scoped object storage and generate a
+- **Target state:** Upload branding assets to version-scoped object storage and generate a
   `manifest.json` so runtime clients can load themes and logos without calling
   this service.
-- Act as the sole owner of game asset publishing to the S3-compatible object store; downstream services and clients read published assets via configured URLs and do not write directly to the asset store. Logical world and entity templates remain in PostgreSQL schemas owned by World Management, Entity Management, and related domain services and are not stored as blobs in the asset store.
-- When publish workflows need to expose derived domain artifacts outside their owning service storage (for example world navmesh/path graph bundles), Game Design remains the sole object-store writer. Owning domain services hand those artifacts to the publish workflow as explicit inputs; they do not bypass the publish workflow with direct object-store writes.
-- In the initial slice, runtime discovery of those derived artifacts must use the version `manifest.json` attested by `published_release_bundle`. The canonical attestation shape for that bundle includes `artifactDigests[]`, `requiredManifestAssetKeys[]`, and `manifestHash`; consumers must not depend on undocumented bucket key conventions or on any separate ad hoc artifact-path field outside that bundle.
+- **Target state:** Act as the sole owner of game asset publishing to the S3-compatible object store; downstream services and clients read published assets via configured URLs and do not write directly to the asset store. Logical world and entity templates remain in PostgreSQL schemas owned by World Management, Entity Management, and related domain services and are not stored as blobs in the asset store.
+- **Target state:** When publish workflows need to expose derived domain artifacts outside their owning service storage (for example world navmesh/path graph bundles), Game Design remains the sole object-store writer. Owning domain services hand those artifacts to the publish workflow as explicit inputs; they do not bypass the publish workflow with direct object-store writes.
+- **Target first object-storage slice:** Runtime discovery of those derived artifacts must use the version `manifest.json` attested by `published_release_bundle`. The canonical attestation shape for that bundle includes `artifactDigests[]`, `requiredManifestAssetKeys[]`, and `manifestHash`; consumers must not depend on undocumented bucket key conventions or on any separate ad hoc artifact-path field outside that bundle.
 - Own version lifecycle state and CAS epoch metadata (`versionState`, `versionStateEpoch`) and expose control-plane APIs for activation/retirement-safe transitions.
 - Expose control-plane integrity APIs such as `GetDesignControlPlaneDigest` and `CanDeleteVersionAssets` used by publish gating and asset-retention workflows.
 - Expose CAS-guarded asset purge APIs (`BeginPurgeVersionAssets`, `FinalizePurgeVersionAssets`) so purge eligibility re-check and artifact-state transitions are race-safe.
@@ -141,7 +139,7 @@ Changed-term stale acceptance, continuity, reads/downloads, and narrowly bounded
 - `game_templates` table stores predefined configuration templates for new games.
 - [`runtime_flag` table](feature-flags.md) manages feature flag definitions and
   corresponding APIs expose these records.
-- `game_assets` table stores asset metadata for uploaded binary files such as icons or sound effects; canonical bytes live in object storage referenced by this metadata.
+- In the target state, `game_assets` stores metadata for uploaded binary files such as icons or sound effects while canonical published bytes live in object storage referenced by attested manifests. In the current first slice, `game_assets.data` remains the uploaded-byte and repair source, and public delivery is not implemented; see [Asset Storage Setup](asset-storage.md#implementation-status).
 - **Target state:** Plugin bundle metadata must be persisted as indexed design-time records keyed by `(tenantId, pluginId, pluginVersionId)` and include manifest fields, complete verified signature-set metadata as defined by [Signing and Key Lifecycle](modding-framework.md#signing-and-key-lifecycle-required), publication status, validation outcomes, `bundleDigest`, and plugin asset distribution manifest fields when `assetRefs[]` are present. The bundle bytes remain in object storage, but plugin activation metadata must be queryable without unpacking archives on routine reads.
 
 Design-time tables (such as `revision`, `version`, `game_templates`,

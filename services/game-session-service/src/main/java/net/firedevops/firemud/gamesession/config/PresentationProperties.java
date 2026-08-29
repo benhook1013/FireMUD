@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.config;
 
+import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /** Player-facing presentation defaults for the first renderer/model proof. */
@@ -35,8 +36,14 @@ public record PresentationProperties(
   public record Prompt(boolean enabled, boolean emitAfterReconnectRestore, long coalesceWindowMs) {
 
     Prompt normalize() {
+      long boundedCoalesceWindowMs =
+          coalesceWindowMs > 0 ? coalesceWindowMs : 150L;
       return new Prompt(
-          enabled, emitAfterReconnectRestore, coalesceWindowMs > 0 ? coalesceWindowMs : 150L);
+          enabled,
+          emitAfterReconnectRestore,
+          Math.min(
+              boundedCoalesceWindowMs,
+              ScopedSettingsOverrides.MAX_PROMPT_COALESCE_WINDOW_MS));
     }
   }
 }
