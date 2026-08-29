@@ -1663,6 +1663,15 @@ require_contains(
         "missing or mismatched evidence fails closed without changing any canonical identity tuple",
     ],
 )
+require_contains(
+    "design/architecture/decisions/adr-0091-class-specific-script-timer-clocks-and-recovery.md",
+    [
+        "The authoritative `playableStateNamespaceId` is part of the due and resume-window identity",
+        "server-derived `playableStateScope` remains immutable policy/routing/authorization/migration-fence evidence",
+        "is exact-validated alongside that identity, and is not a uniqueness discriminator",
+        "`resumeWindowId` identity",
+    ],
+)
 for resume_identity_path in (
     "design/architecture/system-architecture-scripting-scheduler-and-timers.md",
     "design/architecture/decisions/adr-0072-class-specific-timer-durability-and-recovery.md",

@@ -67,7 +67,7 @@ The current investigation surface is backend-only and includes read/investigatio
 **Target moderation journey (public player reporting is target behavior):**
 
 1. **Player Report Arrives (target behavior)** – Once public player ingress exists, a player submits an in-game report, which the Logging & Admin Service records with tenant, realm, subject, and supporting evidence.
-2. **Operator Reviews Evidence** – Moderators inspect the report, associated chat logs, and related account/gameplay context.
+2. **Operator Reviews Evidence** – Moderators inspect authorized per-type history or finite protected safety-evidence projections, together with related account/gameplay context. This does not imply an unbounded chat archive.
 3. **Operator Chooses Enforcement Type** – The moderator selects exactly one punitive fixed category and explicit scope: `platform_access_ban`, `gameplay_ban`, `chat_mute`, or `chat_ban`. A suspected compromise is not a moderator choice: the operator hands the security evidence to Account's security-policy/recovery workflow, which owns any `account_security_lock`. Unqualified legacy values such as `ban` are rejected.
 4. **Owning Service Enforces** – Account (for `platform_access_ban`), Game Session, or Social & Groups commits its own monotonic revision and enforces locally; Logging & Admin records policy intent, cases, appeal evidence, and audit and does not mutate foreign state. Account separately owns `account_security_lock` policy/recovery.
 5. **Player Sees Specific Outcome** – The affected user sees the category-specific safe notice. Eligible severe or long-lived restrictions expose an opaque browser handoff for appeal/status; filing does not suspend enforcement.

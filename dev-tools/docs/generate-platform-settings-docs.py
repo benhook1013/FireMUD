@@ -69,6 +69,7 @@ def build_outputs() -> tuple[dict, str]:
             "keyPrefix": domain_spec["keyPrefix"],
             "service": domain_spec["service"],
             "owner": domain_spec["owner"],
+            "persistedOverrideAuthority": domain_spec["persistedOverrideAuthority"],
             "description": domain_spec["description"],
             "referenceDoc": domain_spec.get("referenceDoc"),
             "runtimeSurface": domain_spec.get("runtimeSurface"),
@@ -85,6 +86,7 @@ def build_outputs() -> tuple[dict, str]:
                 "",
                 f"- Service owner: `{domain_spec['service']}`",
                 f"- Current operator-default owner: `{domain_spec['owner']}`",
+                f"- Persisted tenant/game override authority: `{domain_spec['persistedOverrideAuthority']}`",
             ]
         )
         if domain_spec.get("referenceDoc"):

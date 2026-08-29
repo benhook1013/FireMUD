@@ -18,7 +18,7 @@ Coordination Redis ownership is explicit and narrow:
 - Account Service owns the exact authentication/session-auth families recorded by the Redis hub: `session:auth:account:*`, `session:auth:tenant:*`, `session:auth:token:*`, and `session:auth:generation:*`, together with their lifecycle semantics; no wildcard `session:auth:*` ACL or authority grant is implied.
 - Automation & Scripting Service owns automation families with an explicit split:
   - Coordination Redis: `automation:timer:*` and `script-scheduler:*` for timer/scheduler coordination and derived discovery hints.
-  - Cache/Rate-Limit Redis: `automation:queue:*` discovery pointers, `automation:quota:*`, `automation:tenant-budget:*`, and `automation:test:capacity:*` best-effort buffers/counters; queue pointers are disposable indexes, not work truth.
+  - Cache/Rate-Limit Redis: `automation:queue:*` discovery pointers, `automation:quota:*`, `automation:tenant-budget:*`, `automation:test:quota:*`, `automation:test:capacity:*`, and `automation:readiness:capacity:*` best-effort buffers/counters; queue pointers are disposable indexes, not work truth. The test-quota and readiness-capacity families remain unsupported for target adoption until their central ownership registration and slot-safe keying are complete.
 - Non-owner services may participate only through approved shared helpers and documented prefixes/contracts.
 
 Owner-managed bridge contracts are the only approved exception to “write only your own keys”:

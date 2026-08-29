@@ -4,6 +4,8 @@ This document defines the Social & Groups Service REST and gRPC surfaces, chat-d
 
 An OpenAPI specification for the REST endpoints is available at `src/main/resources/openapi.yaml` in the service repository.
 
+The checked-in OpenAPI is currently drifted from this contract: it declares a public server with root `security: []`, does not apply route-specific bearer security to authenticated operations, and still publishes `/chat` even though the Gateway `/api/social/chat` route is unavailable. It is not proof of player availability. Target alignment requires route-specific bearer security for authenticated routes and truthful exposure classification for every published path; the OpenAPI file is not changed by this documentation correction.
+
 ## Chat and Moderation Contract
 
 **Target state:** Social & Groups is the enforcement owner for `chat_mute` and `chat_ban`. Its local indexed restriction state is evaluated before chat persistence/publication and at participation/history reads; the complete category, revision, command, notice, and appeal-outcome contract is [Moderation Policies](../logging-admin-service/moderation-policies.md) and active [ADR 0146](../../decisions/adr-0146-owner-local-moderation-enforcement.md), mapped from reviewed archive record `archive-ADR-0133`. Every REST and gRPC chat write must traverse that same owner-local restriction boundary before persistence or publication. `chat_mute` rejects sending but permits ordinary receipt, while `chat_ban` rejects ordinary participation, send, and history but permits essential moderation/system notices.
@@ -18,9 +20,15 @@ The friend-presence slice currently implements non-pageable friend-roster and pr
 
 The current chat writer paths remain internal/non-player-safe: the Gateway `/api/social/chat` edge route is removed/unavailable, while service-local `/chat` and gRPC `SendMessage` still use the request-body `senderAccountId` with the Social access guard. The synchronous `EvaluateModerationPolicy` read at `CHAT_SEND` remains the current Logging & Admin hot-path compatibility seam and is consumed only after a cache/replay miss. Replay storage and lookup remain tenant/effect-only and occur before that policy check, with no authenticated-caller or full request-digest binding. Owner-local restriction state, essential notices, independent stacking, expiry/reordering, appeal handling, and the target gate are not yet implemented or proved; these writers therefore remain nonconformant to the target contract above.
 
+Current service-local REST DTOs use positive numeric `Long` tenant IDs. Public `tenantSlug`/`worldSlug` selectors resolve to opaque tenant identity, and the target scoped-UUID identifier migration in [ADR 0020](../../decisions/adr-0020-scoped-domain-and-operational-identifiers.md) is a separate canonical transition; string slugs are not current internal REST tenant IDs.
+
+The bounded service-local `/mail` backend and configured Gateway `/api/social/mail/**` forwarding route are live, but complete player-facing mail UX/runtime and type-specific delivery, history, and acknowledgement proof remain deferred. Route reachability is therefore not proof that the complete player-facing mail feature is available.
+
+Voice-token issuance is target-bound to the authenticated caller and requires applicable channel and voice entitlement; the token subject must be derived from or authenticated to that caller. The current body-supplied `accountId` plus broad tenant authorization is an unsafe implementation gap. Current code issues tokens only and does not provide the finite per-type voice activity/moderation-evidence lifecycle or proof required by [ADR 0149](../../decisions/adr-0149-communication-type-specific-history-and-retention.md). No operator-impersonation issuance contract is authorized.
+
 ### Mail request identity
 
-The player-facing `/mail` route requires `senderAccountId` to match authenticated account context before Social authorization or service dispatch. Tenant roles cannot use the edge route to impersonate another sender; operator/system mail requires a separate owner-authorized contract.
+The target player-facing `/mail` route requires `senderAccountId` to match authenticated account context before Social authorization or service dispatch. Tenant roles cannot use the edge route to impersonate another sender; operator/system mail requires a separate owner-authorized contract. The bounded backend and Gateway forwarding route are live, while complete player-facing mail UX/runtime remains deferred as recorded above.
 
 ## REST APIs
 
@@ -29,7 +37,7 @@ The player-facing `/mail` route requires `senderAccountId` to match authenticate
 | `GET` | `/ping` | Basic health check returning `"pong"` |
 | `POST` | `/friends` | Create a friend link |
 | `GET` | `/friends/presence` | List bounded cross-game friend presence for one account |
-| `POST` | `/mail` | Send Social-owned account or gameplay-adapted mail; durable history/acknowledgement follows the declared mail type contract |
+| `POST` | `/mail` | Send Social-owned account or gameplay-adapted mail through the bounded backend; complete player-facing UX and type-specific delivery/history/acknowledgement remain deferred |
 | `POST` | `/guilds` | Create a guild |
 | `POST` | `/guilds/storage` | Authorize a guild ACL operation against an Entity-owned container; Social does not mint or persist item/value rows |
 | `POST` | `/guilds/alliances` | Create a guild alliance |
@@ -51,15 +59,16 @@ Current internal/non-player-safe chat request (the Gateway `/api/social/chat` ed
 curl -X POST http://localhost:8080/chat \
   -H 'Authorization: Bearer <access-token>' \
   -H 'Content-Type: application/json' \
-  -d '{"tenantId":"tenant-abc","senderAccountId":100,"content":"hello"}'
+  -d '{"tenantId":1,"senderAccountId":100,"content":"hello"}'
 ```
 
-Example voice-token request:
+Current implementation-gap voice-token request (target behavior derives the subject from the authenticated caller and checks channel/voice entitlement):
 
 ```bash
 curl -X POST http://localhost:8080/voice/token \
+  -H 'Authorization: Bearer <access-token>' \
   -H 'Content-Type: application/json' \
-  -d '{"tenantId":"tenant-abc","accountId":100,"channelId":"guild-10"}'
+  -d '{"tenantId":1,"accountId":100,"channelId":"guild-10"}'
 ```
 
 ## gRPC APIs
@@ -69,7 +78,7 @@ curl -X POST http://localhost:8080/voice/token \
 - `CreateGuild` – establishes a new guild with an owner account
 - `AddFriend` – adds a friend relationship at the game or account level
 - `ListFriendPresence` – returns the bounded account-scoped projection defined by the [Friend Presence Privacy Contract](#friend-presence-privacy-contract). Social & Groups retains the local transport consequence: raw presence is obtained from Game Session and profile policy through bounded internal bulk reads; the current endpoint remains non-pageable as noted in implementation status.
-- `SendMail` – stores a Social-owned mail envelope and delivery/history state; item or currency attachments use Entity-owned transfer/escrow references and are not Social value
+- `SendMail` – stores a Social-owned mail envelope and delivery/history state; target behavior requires method-specific caller/workload authorization, verified sender/origin, and stable request identity plus canonical request digest before durable acceptance. The current caller-supplied sender/broad-scope path inserts non-idempotently; item or currency attachments use Entity-owned transfer/escrow references and are not Social value.
 
 ### Relationship, Group, and Value Authority
 
@@ -123,5 +132,5 @@ grpcurl -plaintext localhost:6565 social_groups.v1.SocialGroupsService/Ping
 - Social & Groups applies social audience/membership, moderation, history, retention, and delivery-state rules to that plan. Game Session owns final delivery to connected gameplay transports and reports transport outcome separately; Social cannot infer spatial observers, broaden views, or claim end-user delivery from a history commit.
 - Account messaging, ordinary guild/group channels, browser social interactions, and ordinary account/social mail enter Social directly after authentication and applicable membership, privacy, and moderation checks. An in-game adapter does not turn them into Game Logic actions or make private platform content visible to tenant-authored scripts. Operator/system communication enters through the originating owner's typed request.
 - Observer views are a closed type-declared vocabulary; unknown fields are excluded, gameplay `TELL` is non-observable by default, and a partial view requires a named published mechanic. `SHOUT` remains deferred until a profile publishes a named bounded topology and fanout cap; Social never invents area/region/map semantics. Active [ADR 0150](../../decisions/adr-0150-closed-observer-views-and-profile-scoped-shout.md) records this boundary, mapped from reviewed archive record `archive-ADR-0137`.
-- Voice chat is an optional feature layered on a lightweight WebRTC gateway; the service issues temporary tokens via `/voice/token` and records voice activity for moderation under its own declared evidence lifecycle.
+- Voice chat is an optional feature layered on a lightweight WebRTC gateway. Target `/voice/token` issuance derives the subject from the authenticated caller and checks channel/voice entitlement; current implementation issues tokens only, and voice activity/moderation evidence plus its finite per-type lifecycle remain target-only and unproved.
 - Current gameplay-connected proof covers `SAY`, `WHISPER`, and `TELL`, including canonical actor and live-recipient views. It proves those cross-service paths, not complete durable plan recovery, full recipient-specific projection, cross-pod delivery, or type-specific history. Active [ADR 0147](../../decisions/adr-0147-explicit-communication-classes-and-owner-delivery.md) records the class/owner split, mapped from reviewed archive record `archive-ADR-0134`.

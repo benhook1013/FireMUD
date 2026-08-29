@@ -127,7 +127,7 @@ This section centralizes the normative targets for Redis behavior that other doc
 - **Script runtime**
   - tick- and session-related Lua scripts are expected to complete within roughly 10–20 ms per invocation under normal load
 - **Coordination memory share**
-  - coordination prefixes should normally occupy no more than about 30–40% of `maxmemory` on Coordination Redis with mandatory `maxmemory-policy=noeviction` for every non-ephemeral profile; the only permitted deviation is an explicitly labelled ephemeral one-shot test stack, and any non-ephemeral deviation or observed eviction is fail-closed incident evidence
+  - coordination prefixes should normally occupy no more than about 30–40% of `maxmemory` on Coordination Redis with mandatory `maxmemory-policy=noeviction` for every non-ephemeral profile; the only permitted deviation is an explicitly labeled ephemeral one-shot test stack, and any non-ephemeral deviation or observed eviction is fail-closed incident evidence
 
 ### Cache/Rate-Limit Redis Core Targets
 

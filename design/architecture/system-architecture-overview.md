@@ -86,7 +86,7 @@ The documents linked from this overview describe the target-state design, but th
 
 All external admin and creator tools access the platform through the **Spring Cloud Gateway**; Logging & Admin Service is never exposed directly at the network edge.
 
-The architecture uses four canonical traffic surfaces:
+The architecture uses five canonical traffic surfaces:
 
 - **Player traffic plane** – player-facing Telnet, HTTP, and WebSocket traffic, including `/ws/game/**`.
 - **External admin/creator API plane** – Gateway-routed HTTP(S) APIs used by operator and creator tools on explicitly allowlisted `/api/{service}/**` routes.

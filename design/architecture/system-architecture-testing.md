@@ -199,7 +199,7 @@ The production-like harness is required before an environment claims a measured 
 
 When adding new Redis-dependent tests:
 
-- Prefer existing helper builders and key helpers from `firemud-common` so prefixes and hash-tag rules stay consistent with production.
+- Prefer the applicable split `common-*` Gradle module and the owning service's typed key helpers so shared contracts, owner-exclusive builders, prefixes, and hash-tag rules stay consistent with production; do not introduce a monolithic `firemud-common` dependency.
 - Avoid hard-coding `localhost`/ports; instead, wire tests through the same `FIREMUD_REDIS_COORD_*` and `FIREMUD_REDIS_CACHE_*` style configs that production uses, with values supplied by Testcontainers.
 - Do not introduce ad-hoc `FLUSHDB`/`FLUSHALL` calls against shared development Redis instances; test setups should isolate data in per-test containers or use tenant-specific prefixes and explicit cleanup.
 

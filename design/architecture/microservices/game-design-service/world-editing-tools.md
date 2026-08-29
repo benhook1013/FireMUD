@@ -40,13 +40,15 @@ Example consequence:
 - `SEED_APPEND_ONLY` may add scaffold content but must fail as `OUT_OF_SYNC` if replay would require deleting or rewriting later manual edits.
 - `REPLACE_SCOPE` may overwrite prior authored topology inside its declared scope, so creators must treat it as an explicit destructive regeneration boundary rather than a passive refresh.
 
-## Workflow
+## Workflow (Target State)
+
+The workflow below describes the target coordinated commit boundary. The current `SaveRevision` path still applies the optional owner mutation and saves Game Design revision history in separate transactions, so a successful owner write can remain after a later Game Design save failure; see [Game Design API implementation status](api-contracts.md#implementation-status).
 
 1. Use the web UI to modify rooms, items or NPC definitions.
 2. Each change is stored as a **revision** linked to the author's account and
    associated with concrete domain objects (rooms, regions, NPCs, items) via
    stable identifiers defined by the owning domain services.
-3. As revisions are committed, Game Design durably records the exact base commit, canonical request or proposal digest, complete affected aggregates/scopes and expected epochs, revision order, and per-owner apply status before coordinating idempotent owner writes. World Management and Entity Management remain authoritative for their Draft template graphs, while Game Design owns the fully synchronized commit fence.
+3. **Target state:** As revisions are committed, Game Design durably records the exact base commit, canonical request or proposal digest, complete affected aggregates/scopes and expected epochs, revision order, and per-owner apply status before coordinating idempotent owner writes. World Management and Entity Management remain authoritative for their Draft template graphs, while Game Design owns the fully synchronized commit fence. The current separate-transaction/partial-application boundary is recorded in [Game Design API implementation status](api-contracts.md#implementation-status).
 4. Revisions are grouped into a **version** and published via the durable workflow
    described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
    At publish time, the workflow validates the Draft templates already stored in

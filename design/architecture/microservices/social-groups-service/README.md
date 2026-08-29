@@ -10,6 +10,8 @@ Basic service-local REST and gRPC APIs are implemented for guilds, friends, chat
 
 Target player-safe outcomes remain distinct: `CHAT_MUTE_SEND_DENIED` denies sending while ordinary receipt remains available; `CHAT_BAN_PARTICIPATION_DENIED` denies ordinary participation, sending, and history while essential system and moderation notices remain deliverable. These target codes do not claim that the current read seam has converged on durable owner-local enforcement.
 
+The bounded mail backend and configured Gateway `/api/social/mail/**` forwarding route are live, but complete player-facing mail UX/runtime and type-specific delivery, history, and acknowledgement proof remain deferred. Voice is likewise limited to current token issuance: target issuance must bind the token subject to the authenticated caller and applicable channel/voice entitlement, while current body-supplied `accountId` plus broad tenant authorization is an unsafe gap; voice activity/moderation evidence and its finite lifecycle remain target-only. No operator-impersonation voice issuance contract is authorized. The checked-in OpenAPI is also drifted: its public server and root `security: []` plus published `/chat` do not reflect the authenticated contract or unavailable Gateway chat route; route-specific bearer security and truthful exposure remain target alignment work.
+
 ## Gameplay Proof Status
 
 Current gameplay-connected proof covers `SAY`, `WHISPER`, and `TELL` delivery from Game Session through Game Logic into the Social & Groups stub, including canonical actor and live-recipient views. Target typed memberships, Entity-owned value/attachments, and communication-type-specific storage/history/acknowledgement are not complete runtime proof.

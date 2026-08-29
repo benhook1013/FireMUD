@@ -10,6 +10,7 @@ Built-in communication behavior defaults surfaced by Game Logic; player availabi
 
 - Service owner: `game-logic-service`
 - Current operator-default owner: `game-logic-service communication behavior defaults`
+- Persisted tenant/game override authority: `game-design-service`
 - Service configuration notes: [`design/architecture/microservices/game-logic-service/configuration.md`](../microservices/game-logic-service/configuration.md)
 - Runtime/effective inspection surface: `/actuator/settings/effective/communication`
 
@@ -24,17 +25,18 @@ Player-facing text presentation defaults surfaced by Game Session.
 
 - Service owner: `game-session-service`
 - Current operator-default owner: `game-session-service operator defaults`
+- Persisted tenant/game override authority: `game-design-service`
 - Service configuration notes: [`design/architecture/microservices/game-session-service/configuration.md`](../microservices/game-session-service/configuration.md)
 - Runtime/effective inspection surface: `/actuator/settings/effective`
 
 | Key | Group | Description | Default | Valid values or range | Current scope | Future scope | Hot reloadable | Advanced | Example |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `firemud.presentation.default-locale-tag` | `transcript.rendering` | Default renderer locale tag used for built-in localized notice, error, and other platform text when no per-player preference overrides it. | `en-NZ` | Non-blank IETF BCP 47 locale tag | `operator-only` | `tenant/game-configurable` | `no` | `no` | `en-NZ` |
-| `firemud.presentation.default-color-mode` | `transcript.rendering` | Default color/emphasis mode for the text renderer when no per-player presentation preference overrides it. | `NONE` | `NONE`, `BASIC`, `RICH` | `operator-only` | `tenant/game-configurable` | `no` | `no` | `NONE` |
-| `firemud.presentation.brief-enabled-by-default` | `transcript.rendering` | Whether room-view rendering defaults to BRIEF-style suppression for movement-triggered and other suppressible output segments. | `false` | `true`, `false` | `operator-only` | `tenant/game-configurable` | `no` | `no` | `false` |
-| `firemud.presentation.prompt.enabled` | `prompts.transportPresentation` | Whether prompt output is enabled by default for classic text-session rendering. Current limitation: the first-party structured projector still emits prompt envelopes when this is false; the target conjunction with firemud.presentation.prompt.emit-after-reconnect-restore remains unimplemented there. | `true` | `true`, `false` | `operator-only` | `tenant/game-configurable` | `no` | `no` | `true` |
-| `firemud.presentation.prompt.emit-after-reconnect-restore` | `prompts.transportPresentation` | Whether reconnect restore permits a fresh prompt after rendering bounded semantic reconnect context and a fresh LOOK. Target behavior also requires firemud.presentation.prompt.enabled to be true; current classic text rendering applies that conjunction, but the first-party structured projector still emits the prompt envelope when enabled is false. | `true` | `true`, `false` | `operator-only` | `tenant/game-configurable` | `no` | `no` | `true` |
-| `firemud.presentation.prompt.coalesce-window-ms` | `prompts.coalescing` | Maximum prompt burst window, in milliseconds, used to suppress prompt spam while still retaining prompts for explicit boundary commands such as LOOK. | `150` | integer >= 1 ms | `operator-only` | `tenant/game-configurable` | `no` | `yes` | `150` |
+| `firemud.presentation.default-locale-tag` | `transcript.rendering` | Default renderer locale tag used for built-in localized notice, error, and other platform text when no per-player preference overrides it. | `en-NZ` | Non-blank IETF BCP 47 locale tag | `tenant/game-configurable` | `tenant/game-configurable` | `no` | `no` | `en-NZ` |
+| `firemud.presentation.default-color-mode` | `transcript.rendering` | Default color/emphasis mode for the text renderer when no per-player presentation preference overrides it. | `NONE` | `NONE`, `BASIC`, `RICH` | `tenant/game-configurable` | `tenant/game-configurable` | `no` | `no` | `NONE` |
+| `firemud.presentation.brief-enabled-by-default` | `transcript.rendering` | Whether room-view rendering defaults to BRIEF-style suppression for movement-triggered and other suppressible output segments. | `false` | `true`, `false` | `tenant/game-configurable` | `tenant/game-configurable` | `no` | `no` | `false` |
+| `firemud.presentation.prompt.enabled` | `prompts.transportPresentation` | Whether prompt output is enabled by default for classic text-session rendering. Current limitation: the first-party structured projector still emits prompt envelopes when this is false; the target conjunction with firemud.presentation.prompt.emit-after-reconnect-restore remains unimplemented there. | `true` | `true`, `false` | `tenant/game-configurable` | `tenant/game-configurable` | `no` | `no` | `true` |
+| `firemud.presentation.prompt.emit-after-reconnect-restore` | `prompts.transportPresentation` | Whether reconnect restore permits a fresh prompt after rendering bounded semantic reconnect context and a fresh LOOK. Target behavior also requires firemud.presentation.prompt.enabled to be true; current classic text rendering applies that conjunction, but the first-party structured projector still emits the prompt envelope when enabled is false. | `true` | `true`, `false` | `tenant/game-configurable` | `tenant/game-configurable` | `no` | `no` | `true` |
+| `firemud.presentation.prompt.coalesce-window-ms` | `prompts.coalescing` | Maximum prompt burst window, in milliseconds, used to suppress prompt spam while still retaining prompts for explicit boundary commands such as LOOK. | `150` | integer >= 1 ms | `tenant/game-configurable` | `tenant/game-configurable` | `no` | `yes` | `150` |
 
 ## `firemud.reconnection`
 
@@ -42,6 +44,7 @@ Reconnect resume policy and bounded semantic reconnect-context retention/resourc
 
 - Service owner: `game-session-service`
 - Current operator-default owner: `game-session-service operator defaults`
+- Persisted tenant/game override authority: `game-design-service`
 - Service configuration notes: [`design/architecture/microservices/game-session-service/configuration.md`](../microservices/game-session-service/configuration.md)
 - Runtime/effective inspection surface: `/actuator/settings/effective`
 
@@ -62,6 +65,7 @@ Bounded accepted player-command history defaults surfaced by Game Session.
 
 - Service owner: `game-session-service`
 - Current operator-default owner: `game-session-service operator defaults`
+- Persisted tenant/game override authority: `game-design-service`
 - Service configuration notes: [`design/architecture/microservices/game-session-service/configuration.md`](../microservices/game-session-service/configuration.md)
 - Runtime/effective inspection surface: `/actuator/settings/effective`
 
@@ -75,6 +79,7 @@ Tenant/game-controlled availability for standard player command families.
 
 - Service owner: `common-platform-core`
 - Current operator-default owner: `common-platform-core shared player-command policy`
+- Persisted tenant/game override authority: `game-design-service`
 - Service configuration notes: [`design/architecture/system-architecture-player-command-model.md`](../system-architecture-player-command-model.md)
 - Runtime/effective inspection surface: `/actuator/settings/effective`
 
@@ -91,12 +96,13 @@ Movement presentation defaults surfaced by Game Session.
 
 - Service owner: `game-session-service`
 - Current operator-default owner: `game-session-service operator defaults`
+- Persisted tenant/game override authority: `game-design-service`
 - Service configuration notes: [`design/architecture/microservices/game-session-service/configuration.md`](../microservices/game-session-service/configuration.md)
 - Runtime/effective inspection surface: `/actuator/settings/effective`
 
 | Key | Group | Description | Default | Valid values or range | Current scope | Future scope | Hot reloadable | Advanced | Example |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `firemud.movement.post-move-look-enabled` | `movement.postMoveView` | Whether a successful MOVE automatically renders the destination room view instead of returning only command acknowledgement. | `true` | `true`, `false` | `operator-only` | `tenant/game-configurable within operator-enforced caps` | `no` | `no` | `true` |
+| `firemud.movement.post-move-look-enabled` | `movement.postMoveView` | Whether a successful MOVE automatically renders the destination room view instead of returning only command acknowledgement. | `true` | `true`, `false` | `tenant/game-configurable` | `tenant/game-configurable within operator-enforced caps` | `no` | `no` | `true` |
 
 ## `firemud.world-topology`
 
@@ -104,10 +110,11 @@ Topology behavior defaults surfaced by Game Session for later scope-sensitive wo
 
 - Service owner: `game-session-service`
 - Current operator-default owner: `game-session-service operator defaults`
+- Persisted tenant/game override authority: `game-design-service`
 - Service configuration notes: [`design/architecture/microservices/game-session-service/configuration.md`](../microservices/game-session-service/configuration.md)
 - Runtime/effective inspection surface: `/actuator/settings/effective`
 
 | Key | Group | Description | Default | Valid values or range | Current scope | Future scope | Hot reloadable | Advanced | Example |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `firemud.world-topology.scope-model` | `worldTopology.scopeModel` | The highest topology model the current game/runtime expresses for future scope-sensitive communication and world behaviors. | `MAP_ONLY` | `MAP_ONLY`, `AREA_AND_MAP`, `REGION_AREA_AND_MAP` | `operator-only` | `tenant/game-configurable` | `no` | `no` | `MAP_ONLY` |
-| `firemud.world-topology.regions-enabled` | `worldTopology.regionBehavior` | Whether explicit world regions are enabled in the current topology model. | `false` | `true`, `false` | `operator-only` | `tenant/game-configurable` | `no` | `yes` | `false` |
+| `firemud.world-topology.scope-model` | `worldTopology.scopeModel` | The highest topology model the current game/runtime expresses for future scope-sensitive communication and world behaviors. | `MAP_ONLY` | `MAP_ONLY`, `AREA_AND_MAP`, `REGION_AREA_AND_MAP` | `tenant/game-configurable` | `tenant/game-configurable` | `no` | `no` | `MAP_ONLY` |
+| `firemud.world-topology.regions-enabled` | `worldTopology.regionBehavior` | Whether explicit world regions are enabled in the current topology model. | `false` | `true`, `false` | `tenant/game-configurable` | `tenant/game-configurable` | `no` | `yes` | `false` |
