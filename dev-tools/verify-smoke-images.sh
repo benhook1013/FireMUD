@@ -19,9 +19,26 @@ ENSURE_CERTS_SCRIPT="$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh"
 COMPOSE_UP_ARGS=(up -d --remove-orphans)
 SMOKE_COMPOSE_UP_ATTEMPTS="${SMOKE_COMPOSE_UP_ATTEMPTS:-3}"
 SMOKE_COMPOSE_UP_RETRY_DELAY_SECONDS="${SMOKE_COMPOSE_UP_RETRY_DELAY_SECONDS:-5}"
+# shellcheck disable=SC1091 # The repository root is resolved at runtime.
+source "$ROOT_DIR/dev-tools/smoke/run-owned-compose.sh"
 
 export TERM="${TERM:-dumb}"
 export COMPOSE_PROGRESS="${COMPOSE_PROGRESS:-plain}"
+
+SMOKE_MUTATION_EXTENSION="${SMOKE_MUTATION_EXTENSION:-false}"
+case "$SMOKE_MUTATION_EXTENSION" in
+  false|0)
+    export SMOKE_MUTATION_EXTENSION=false
+    ;;
+  true|1)
+    echo "SMOKE_MUTATION_EXTENSION is not supported by the two-transport wrapper: independent transport identities/state are not proven; run each transport smoke separately." >&2
+    exit 1
+    ;;
+  *)
+    echo "SMOKE_MUTATION_EXTENSION must be boolean true/false (or 1/0); refusing to run." >&2
+    exit 1
+    ;;
+esac
 
 if [[ -z "${SMOKE_IMAGE_TAG:-}" ]]; then
   echo "SMOKE_IMAGE_TAG is required" >&2
@@ -77,13 +94,14 @@ compose_up_with_retry() {
       return 1
     fi
     echo "docker compose up failed on attempt ${attempt}/${max_attempts}; retrying after ${SMOKE_COMPOSE_UP_RETRY_DELAY_SECONDS}s" >&2
+    claim_run_owned_compose_project
     docker compose "${COMPOSE_FILES[@]}" down -v --remove-orphans || true
     sleep "$SMOKE_COMPOSE_UP_RETRY_DELAY_SECONDS"
     attempt=$((attempt + 1))
   done
 }
 
-echo "Smoke image proof: destroy local compose state, resolve smoke-image tags via docker/.env, start the stack, then run WebSocket and Telnet LOGIN -> PLAY -> item/container/equipment proofs."
+echo "Smoke image proof: destroy this run-owned compose project's state, resolve smoke-image tags via docker/.env, start the stack, then run WebSocket and Telnet LOGIN -> PLAY -> LOOK baseline proofs."
 if [[ "${SMOKE_IMAGE_LOCAL_ONLY:-false}" == "true" ]]; then
   echo "Local-only mode enabled: compose will reuse matching local FireMUD images while pulling missing dependencies."
 fi
@@ -119,12 +137,13 @@ docker compose "${COMPOSE_FILES[@]}" config >/dev/null
 if [[ "${SMOKE_COMPOSE_CONFIG_ONLY:-false}" == "true" ]]; then
   exit 0
 fi
+claim_run_owned_compose_project
 docker compose "${COMPOSE_FILES[@]}" down -v --remove-orphans
 bash "$ENSURE_CERTS_SCRIPT"
 compose_up_with_retry
 bash "$HEALTH_CHECK_SCRIPT" "${COMPOSE_FILES[@]}"
 
-# These smoke clients intentionally reuse the same seeded demo account/runtime
-# state and must stay sequential unless the caller isolates accounts/session ids.
+# Both transport legs are baseline-only; mutation parity requires independent
+# transport identities/state and is rejected by this wrapper above.
 bash "$WS_SMOKE_SCRIPT"
 bash "$TCP_SMOKE_SCRIPT"

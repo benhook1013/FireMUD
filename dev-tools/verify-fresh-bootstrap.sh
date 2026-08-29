@@ -9,6 +9,8 @@ HEALTH_SCRIPT="$ROOT_DIR/dev-tools/verify-compose-health.sh"
 BUILD_JARS_SCRIPT="$ROOT_DIR/dev-tools/build-compose-service-jars.sh"
 ENSURE_CERTS_SCRIPT="$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh"
 ENSURE_ENV_SCRIPT="$ROOT_DIR/dev-tools/ensure-local-compose-env.sh"
+# shellcheck disable=SC1091 # The repository root is resolved at runtime.
+source "$ROOT_DIR/dev-tools/smoke/run-owned-compose.sh"
 
 # Prefer noninteractive compose output for AI/automation callers. PTY-backed runs
 # under Docker Desktop/WSL can hang in compose teardown even when the same command
@@ -19,6 +21,20 @@ FIREMUD_SMOKE_SERIAL_BUILD="${FIREMUD_SMOKE_SERIAL_BUILD:-1}"
 FIREMUD_SMOKE_NO_CACHE_SERVICES="${FIREMUD_SMOKE_NO_CACHE_SERVICES:-}"
 FIREMUD_SMOKE_COMPOSE_SERVICES="${FIREMUD_SMOKE_COMPOSE_SERVICES:-}"
 FIREMUD_SMOKE_VALIDATE_ONLY="${FIREMUD_SMOKE_VALIDATE_ONLY:-0}"
+SMOKE_MUTATION_EXTENSION="${SMOKE_MUTATION_EXTENSION:-false}"
+case "$SMOKE_MUTATION_EXTENSION" in
+  false|0)
+    export SMOKE_MUTATION_EXTENSION=false
+    ;;
+  true|1)
+    echo "SMOKE_MUTATION_EXTENSION is not supported by the two-transport wrapper: independent transport identities/state are not proven; run each transport smoke separately." >&2
+    exit 1
+    ;;
+  *)
+    echo "SMOKE_MUTATION_EXTENSION must be boolean true/false (or 1/0); refusing to run." >&2
+    exit 1
+    ;;
+esac
 
 bash "$ENSURE_ENV_SCRIPT"
 COMPOSE_SERVICES=()
@@ -62,7 +78,7 @@ if [[ -n "$FIREMUD_SMOKE_NO_CACHE_SERVICES" ]]; then
   done
 fi
 
-echo "Fresh bootstrap proof: destroy local compose containers, networks, and named volumes, then rebuild and run WebSocket/Telnet LOGIN -> PLAY -> item/container/equipment proofs."
+echo "Fresh bootstrap proof: destroy this run-owned compose project's containers, networks, and named volumes, then rebuild and run WebSocket/Telnet LOGIN -> PLAY -> LOOK baseline proofs."
 echo "Destroyed named volumes: postgres-data, redis-coord-data, minio-data"
 if [[ -n "$FIREMUD_SMOKE_NO_CACHE_SERVICES" ]]; then
   echo "Forcing no-cache compose rebuild for: ${FIREMUD_SMOKE_NO_CACHE_SERVICES//,/ }"
@@ -73,6 +89,7 @@ if [[ "$FIREMUD_SMOKE_VALIDATE_ONLY" == "1" ]]; then
   exit 0
 fi
 
+claim_run_owned_compose_project
 docker compose "${COMPOSE_FILES[@]}" down -v --remove-orphans
 bash "$ENSURE_CERTS_SCRIPT"
 bash "$BUILD_JARS_SCRIPT"
@@ -101,7 +118,7 @@ fi
 docker compose "${COMPOSE_FILES[@]}" up -d --remove-orphans
 
 bash "$HEALTH_SCRIPT"
-# These smoke clients intentionally reuse the same seeded demo account/runtime
-# state and must stay sequential unless the caller isolates accounts/session ids.
+# Both transport legs are baseline-only; mutation parity requires independent
+# transport identities/state and is rejected by this wrapper above.
 bash "$WS_SMOKE_SCRIPT"
 bash "$TCP_SMOKE_SCRIPT"

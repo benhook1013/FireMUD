@@ -58,6 +58,13 @@ function isValidationTooling(file) {
   return /^\.github\/scripts\/[^/]+\.test\.cjs$/.test(file);
 }
 
+function isLightweightEligible(file) {
+  return (
+    (isDocumentation(file) || isValidationPython(file)) &&
+    file !== "dev-tools/docs/generate-erd.sh"
+  );
+}
+
 function isFrontend(file) {
   return file.startsWith("web-client/") || file.startsWith("config/openapi/");
 }
@@ -108,7 +115,7 @@ function classifyChangeScope(inputFiles, options = {}) {
     lightweightOnly:
       !forceAll &&
       files.length > 0 &&
-      files.every((file) => isDocumentation(file) || isValidationPython(file)),
+      files.every(isLightweightEligible),
   };
 }
 
@@ -138,6 +145,7 @@ module.exports = {
   classifyChangeScope,
   classifyGithubChangeScope,
   isDocumentation,
+  isLightweightEligible,
   isValidationPython,
   isValidationTooling,
 };

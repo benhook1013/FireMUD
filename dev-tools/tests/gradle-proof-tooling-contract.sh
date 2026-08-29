@@ -14,31 +14,31 @@ sleep "${FIREMUD_FAKE_GRADLE_SLEEP:-2}"
 EOF
 chmod +x "$TMP_DIR/fake-gradlew.sh"
 
-single_service="$("$LOCKED_RUNNER" --print-lock-targets :game-session-service:check -PfullCheck)"
+single_service="$(bash "$LOCKED_RUNNER" --print-lock-targets :game-session-service:check -PfullCheck)"
 [[ "$single_service" == "service:game-session-service" ]]
 
-single_service_with_tests="$("$LOCKED_RUNNER" --print-lock-targets :game-session-service:test --tests net.firedevops.ExampleTest)"
+single_service_with_tests="$(bash "$LOCKED_RUNNER" --print-lock-targets :game-session-service:test --tests net.firedevops.ExampleTest)"
 [[ "$single_service_with_tests" == "service:game-session-service" ]]
 
-single_service_with_exclusion="$("$LOCKED_RUNNER" --print-lock-targets :game-session-service:check -x test)"
+single_service_with_exclusion="$(bash "$LOCKED_RUNNER" --print-lock-targets :game-session-service:check -x test)"
 [[ "$single_service_with_exclusion" == "service:game-session-service" ]]
 
-multi_service="$("$LOCKED_RUNNER" --print-lock-targets :tcp-proxy-service:check :game-session-service:check)"
+multi_service="$(bash "$LOCKED_RUNNER" --print-lock-targets :tcp-proxy-service:check :game-session-service:check)"
 expected_multi=$'service:game-session-service\nservice:tcp-proxy-service'
 [[ "$multi_service" == "$expected_multi" ]]
 
-repo_wide="$("$LOCKED_RUNNER" --print-lock-targets check)"
+repo_wide="$(bash "$LOCKED_RUNNER" --print-lock-targets check)"
 [[ "$repo_wide" == "repo" ]]
 
-mixed_scope="$("$LOCKED_RUNNER" --print-lock-targets :game-session-service:check check)"
+mixed_scope="$(bash "$LOCKED_RUNNER" --print-lock-targets :game-session-service:check check)"
 [[ "$mixed_scope" == "repo" ]]
 
 env FIREMUD_LOCK_GRADLE_EXEC="$TMP_DIR/fake-gradlew.sh" FIREMUD_FAKE_GRADLE_SLEEP=3 \
-  "$LOCKED_RUNNER" :game-session-service:check >/dev/null 2>"$TMP_DIR/service-lock.err" &
+  bash "$LOCKED_RUNNER" :game-session-service:check >/dev/null 2>"$TMP_DIR/service-lock.err" &
 service_holder_pid=$!
 sleep 0.3
 set +e
-service_conflict_output="$(env FIREMUD_LOCK_GRADLE_EXEC="$TMP_DIR/fake-gradlew.sh" "$LOCKED_RUNNER" check 2>&1)"
+service_conflict_output="$(env FIREMUD_LOCK_GRADLE_EXEC="$TMP_DIR/fake-gradlew.sh" bash "$LOCKED_RUNNER" check 2>&1)"
 service_conflict_status=$?
 set -e
 [[ $service_conflict_status -ne 0 ]]
@@ -46,11 +46,11 @@ grep -q "Verification lock unavailable for repo." <<<"$service_conflict_output"
 wait "$service_holder_pid"
 
 env FIREMUD_LOCK_GRADLE_EXEC="$TMP_DIR/fake-gradlew.sh" FIREMUD_FAKE_GRADLE_SLEEP=3 \
-  "$LOCKED_RUNNER" check >/dev/null 2>"$TMP_DIR/repo-lock.err" &
+  bash "$LOCKED_RUNNER" check >/dev/null 2>"$TMP_DIR/repo-lock.err" &
 repo_holder_pid=$!
 sleep 0.3
 set +e
-repo_conflict_output="$(env FIREMUD_LOCK_GRADLE_EXEC="$TMP_DIR/fake-gradlew.sh" "$LOCKED_RUNNER" :game-session-service:check 2>&1)"
+repo_conflict_output="$(env FIREMUD_LOCK_GRADLE_EXEC="$TMP_DIR/fake-gradlew.sh" bash "$LOCKED_RUNNER" :game-session-service:check 2>&1)"
 repo_conflict_status=$?
 set -e
 [[ $repo_conflict_status -ne 0 ]]
@@ -68,7 +68,7 @@ cat >"$TMP_DIR/services/demo-service/build/test-results/integrationTest/TEST-dem
 <testsuite name="demo-integration" tests="2" failures="1" errors="0" skipped="0"/>
 XML
 
-inspection_output="$("$INSPECTOR" --root "$TMP_DIR" demo-service)"
+inspection_output="$(bash "$INSPECTOR" --root "$TMP_DIR" demo-service)"
 grep -q "Service: demo-service" <<<"$inspection_output"
 grep -q "Per-suite summary from XML currently on disk:" <<<"$inspection_output"
 grep -q "test: 1 file(s), 3 test(s), 0 failure(s), 0 error(s), 1 skipped" <<<"$inspection_output"

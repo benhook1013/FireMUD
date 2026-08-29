@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Direct WebSocket -> Game Session smoke test: WORLDS + LOGIN + PLAY + item/container/equipment loop after readiness.
+# Direct WebSocket -> Game Session smoke test: WORLDS + LOGIN + PLAY + LOOK after readiness.
 set -euo pipefail
 
 FIREMUD_REPO_ROOT=${FIREMUD_REPO_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}
+# shellcheck disable=SC1091 # The repository root is resolved at runtime.
 source "$FIREMUD_REPO_ROOT/dev-tools/smoke/demo-smoke-defaults.sh"
+# shellcheck disable=SC1091 # The repository root is resolved at runtime.
+source "$FIREMUD_REPO_ROOT/dev-tools/smoke/run-owned-compose.sh"
 
 SMOKE_GAME_SESSION_WS_URL=${SMOKE_GAME_SESSION_WS_URL:-ws://localhost:8086/ws/game}
 SMOKE_LOGIN_EMAIL=${SMOKE_LOGIN_EMAIL:-$DEMO_SMOKE_EMAIL}
@@ -19,6 +22,16 @@ SMOKE_PLAY_EXPECT=${SMOKE_PLAY_EXPECT:-"OK PLAY"}
 SMOKE_LOOK_EXPECT=${SMOKE_LOOK_EXPECT:-"OK LOOK"}
 SMOKE_TIMEOUT_SECONDS=${SMOKE_TIMEOUT_SECONDS:-10}
 SMOKE_LOOK_TIMEOUT_SECONDS=${SMOKE_LOOK_TIMEOUT_SECONDS:-60}
+SMOKE_MUTATION_EXTENSION=${SMOKE_MUTATION_EXTENSION:-false}
+SMOKE_MUTATION_BOUNDARY=${SMOKE_MUTATION_BOUNDARY:-}
+require_smoke_mutation_boundary
+if [[ "$SMOKE_MUTATION_EXTENSION" == "true" ]]; then
+  if [[ "$SMOKE_GAME_SESSION_WS_URL" != "ws://localhost:8086/ws/game" ]]; then
+    echo "Mutation mode requires SMOKE_GAME_SESSION_WS_URL=ws://localhost:8086/ws/game; refusing endpoint override." >&2
+    exit 1
+  fi
+  require_run_owned_compose_service game-session-service 8080 8086
+fi
 export FIREMUD_REPO_ROOT
 
 if command -v python3 >/dev/null 2>&1; then
@@ -30,7 +43,11 @@ else
   exit 1
 fi
 
-echo "Running direct WebSocket WORLDS + LOGIN + PLAY + item/container/equipment smoke test against ${SMOKE_GAME_SESSION_WS_URL}"
+if [[ "$SMOKE_MUTATION_EXTENSION" == "true" ]]; then
+  echo "Running direct WebSocket baseline plus explicit item/container/equipment mutation extension against ${SMOKE_GAME_SESSION_WS_URL}"
+else
+  echo "Running direct WebSocket WORLDS + LOGIN + PLAY + LOOK baseline against ${SMOKE_GAME_SESSION_WS_URL}"
+fi
 echo "Using login credentials (email and password redacted)"
 echo "Using session='${SMOKE_SESSION_ID}' tenant='${SMOKE_TENANT_ID}'"
 
@@ -44,6 +61,7 @@ sys.path.insert(0, str(repo_root / "dev-tools" / "smoke"))
 
 from smoke_common import (
     gameplay_item_container_equipment_steps,
+    login_play_look_steps,
     run_websocket_smoke_session,
     verify_smoke_account,
     wait_for_account_schema,
@@ -79,16 +97,30 @@ wait_for_http_readiness("account-service", account_api_base, startup_wait_second
 wait_for_http_readiness("game-logic-service", game_logic_api_base, startup_wait_seconds, timeout_seconds)
 wait_for_http_readiness("game-session-service", game_session_api_base, startup_wait_seconds, timeout_seconds)
 verify_smoke_account(account_api_base, login_email, password, timeout_seconds)
-steps = gameplay_item_container_equipment_steps(
-    login_email,
-    password,
-    worlds_expect,
-    login_expect,
-    play_expect,
-    look_expect,
-    os.environ.get("SMOKE_WORLD", os.environ["DEMO_SMOKE_WORLD"]),
-    look_timeout_seconds,
-) + [("LOGOUT", ["OK LOGOUT", "Logged out."], "LOGOUT")]
+world = os.environ.get("SMOKE_WORLD") or os.environ["DEMO_SMOKE_WORLD"]
+if os.environ["SMOKE_MUTATION_EXTENSION"] == "true":
+    steps = gameplay_item_container_equipment_steps(
+        login_email,
+        password,
+        worlds_expect,
+        login_expect,
+        play_expect,
+        look_expect,
+        world,
+        look_timeout_seconds,
+    )
+else:
+    steps = login_play_look_steps(
+        login_email,
+        password,
+        world,
+        worlds_expect,
+        login_expect,
+        play_expect,
+        look_expect,
+        look_timeout=look_timeout_seconds,
+    )
+steps += [("LOGOUT", ["OK LOGOUT", "Logged out."], "LOGOUT")]
 run_websocket_smoke_session(
     lambda: websocket.create_connection(
         websocket_url,

@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Telnet -> Gateway -> Game Session smoke test: WORLDS + LOGIN + PLAY + item/container/equipment loop over TCP Proxy.
+# Telnet -> Gateway -> Game Session smoke test: WORLDS + LOGIN + PLAY + LOOK over TCP Proxy.
 set -euo pipefail
 
 FIREMUD_REPO_ROOT=${FIREMUD_REPO_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}
+# shellcheck disable=SC1091 # The repository root is resolved at runtime.
 source "$FIREMUD_REPO_ROOT/dev-tools/smoke/demo-smoke-defaults.sh"
+# shellcheck disable=SC1091 # The repository root is resolved at runtime.
+source "$FIREMUD_REPO_ROOT/dev-tools/smoke/run-owned-compose.sh"
 
 TCP_PORT=${TCP_PROXY_PORT:-2323}
 SMOKE_HOST=${SMOKE_TELNET_HOST:-localhost}
@@ -22,6 +25,16 @@ SMOKE_PLAY_EXPECT=${SMOKE_PLAY_EXPECT:-"OK PLAY"}
 SMOKE_LOOK_EXPECT=${SMOKE_LOOK_EXPECT:-"OK LOOK"}
 SMOKE_STARTUP_EXPECT=${SMOKE_STARTUP_EXPECT:-"DISCONNECT startup_unavailable"}
 SMOKE_TIMEOUT_SECONDS=${SMOKE_TIMEOUT_SECONDS:-10}
+SMOKE_MUTATION_EXTENSION=${SMOKE_MUTATION_EXTENSION:-false}
+SMOKE_MUTATION_BOUNDARY=${SMOKE_MUTATION_BOUNDARY:-}
+require_smoke_mutation_boundary
+if [[ "$SMOKE_MUTATION_EXTENSION" == "true" ]]; then
+  if [[ "$SMOKE_HOST" != "localhost" || "$TCP_PORT" != "2323" || "${TCP_PROXY_PORT:-2323}" != "2323" ]]; then
+    echo "Mutation mode requires the canonical Telnet endpoint localhost:2323; refusing endpoint override." >&2
+    exit 1
+  fi
+  require_run_owned_compose_service tcp-proxy-service 2323 2323
+fi
 export FIREMUD_REPO_ROOT
 
 if command -v python3 >/dev/null 2>&1; then
@@ -33,7 +46,11 @@ else
   exit 1
 fi
 
-echo "Running Telnet WORLDS + LOGIN + PLAY + item/container/equipment smoke test against ${SMOKE_HOST}:${TCP_PORT}"
+if [[ "$SMOKE_MUTATION_EXTENSION" == "true" ]]; then
+  echo "Running Telnet baseline plus explicit item/container/equipment mutation extension against ${SMOKE_HOST}:${TCP_PORT}"
+else
+  echo "Running Telnet WORLDS + LOGIN + PLAY + LOOK baseline against ${SMOKE_HOST}:${TCP_PORT}"
+fi
 echo "Using login credentials (email and password redacted)"
 echo "Using session='${SMOKE_SESSION_ID}' tenant='${SMOKE_TENANT_ID}'"
 echo "Using account API base '${SMOKE_ACCOUNT_API_BASE}' for smoke validation"
@@ -51,6 +68,7 @@ sys.path.insert(0, str(repo_root / "dev-tools" / "smoke"))
 from smoke_common import (
     gameplay_item_container_equipment_steps,
     http_readiness_up,
+    login_play_look_steps,
     recv_until_socket,
     run_telnet_smoke_session,
     verify_smoke_account,
@@ -131,10 +149,31 @@ wait_for_http_readiness(
     "tcp-proxy-service", tcp_proxy_api_base, startup_wait_seconds, timeout_seconds
 )
 verify_smoke_account(account_api_base, login_email, password, timeout_seconds)
-steps = gameplay_item_container_equipment_steps(
-    login_email, password, worlds_expect, login_expect, play_expect, look_expect
-)
+world = os.environ.get("SMOKE_WORLD") or os.environ["DEMO_SMOKE_WORLD"]
+if os.environ["SMOKE_MUTATION_EXTENSION"] == "true":
+    steps = gameplay_item_container_equipment_steps(
+        login_email,
+        password,
+        worlds_expect,
+        login_expect,
+        play_expect,
+        look_expect,
+        world,
+    )
+else:
+    steps = login_play_look_steps(
+        login_email,
+        password,
+        world,
+        worlds_expect,
+        login_expect,
+        play_expect,
+        look_expect,
+    )
 run_telnet_smoke_session(host, port, steps, timeout_seconds)
 
-print("Telnet WORLDS + LOGIN + PLAY + item/container/equipment smoke test passed.")
+if os.environ["SMOKE_MUTATION_EXTENSION"] == "true":
+    print("Telnet WORLDS + LOGIN + PLAY + item/container/equipment mutation extension passed.")
+else:
+    print("Telnet WORLDS + LOGIN + PLAY + LOOK baseline smoke test passed.")
 PYTHON

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 import shlex
 import sys
@@ -53,7 +54,11 @@ HEREDOC_OPEN = re.compile(
     r"(?P=quote)"
 )
 SHELL_IF_START = re.compile(r"^if\b.*;[ \t]*then$")
-
+PLAYER_BOOTSTRAP_REQUEST_CALL = re.compile(
+    r"public_account_url\s*\(\s*(?P<quote>['\"])/auth/player-bootstrap"
+    r"(?P=quote)\s*\)",
+    re.DOTALL,
+)
 BOOTSTRAP_SECRET_COMMAND_PREFIX = (
     "kubectl",
     "-n",
@@ -78,6 +83,37 @@ BOOTSTRAP_MANIFEST_REQUIRED_MARKERS = (
     "trap 'exit 130' INT",
     "trap 'exit 143' TERM",
 )
+BOOTSTRAP_ACCOUNT_TRANSPORT_REQUIRED_MARKERS = (
+    "cleanup_bootstrap_port_forward() {",
+    "BOOTSTRAP_PORT_FORWARD_PID=$!",
+    "kubectl -n \"${PREVIEW_NAMESPACE}\" port-forward",
+    "--address 127.0.0.1",
+    "service/spring-cloud-gateway",
+    ":80",
+    "BOOTSTRAP_MODE=account",
+    'BOOTSTRAP_GATEWAY_BASE_URL="http://127.0.0.1:${BOOTSTRAP_GATEWAY_PORT}"',
+    'gateway_base_url = os.environ["BOOTSTRAP_GATEWAY_BASE_URL"]',
+    'return f"{gateway_base_url}/api/account{path}"',
+    'cleanup_bootstrap_port_forward\n          if [[ ! -s "${BOOTSTRAP_ACCOUNT_ID_FILE}" ]]; then',
+    '--from-file=account-id="${BOOTSTRAP_ACCOUNT_ID_FILE}"',
+    'value: session',
+)
+BOOTSTRAP_PORT_FORWARD_READINESS_REQUIRED_MARKERS = (
+    'BOOTSTRAP_PORT_FORWARD_LOG=/tmp/dev-demo-gateway-port-forward.log',
+    'if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then',
+    "Forwarding from 127[.]0[.]0[.]1:([0-9]+) -> 80",
+    'BOOTSTRAP_GATEWAY_PORT="$({ sed -nE',
+    '[[ "${BOOTSTRAP_GATEWAY_PORT}" =~ ^[0-9]+$ ]]',
+    "BOOTSTRAP_GATEWAY_PORT <= 65535",
+    'cat "${BOOTSTRAP_PORT_FORWARD_LOG}" || true',
+)
+BOOTSTRAP_DYNAMIC_PORT_FORWARD_PATTERN = re.compile(
+    r"service/spring-cloud-gateway(?:\s+\\)?\s+:80"
+)
+BOOTSTRAP_PORT_FORWARD_LOOP_PATTERN = re.compile(
+    r"for attempt in \{1\.\.(?P<attempts>[0-9]+)\}; do"
+)
+BOOTSTRAP_ACCOUNT_ID_REQUIRED_MARKER = "account_file.write(str(account_id))"
 BOOTSTRAP_CREDENTIAL_VALIDATION = """for credential in DEMO_SMOKE_EMAIL DEMO_SMOKE_PASSWORD DEMO_SMOKE_USERNAME; do
   if [[ -z "${!credential:-}" ]]; then
     echo "::error::${credential} is empty; refusing to create dev-demo bootstrap credentials" >&2
@@ -646,6 +682,91 @@ def _validate_bootstrap_pod_spec(bootstrap_manifest: str) -> None:
         )
 
 
+def _player_bootstrap_payload_end(source: str, start: int) -> int | None:
+    """Return the end of the first balanced mapping after a request call."""
+
+    if start >= len(source) or source[start] != "{":
+        return None
+
+    depth = 0
+    quote: str | None = None
+    triple_quoted = False
+    escaped = False
+    index = start
+    while index < len(source):
+        character = source[index]
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif triple_quoted:
+                if source.startswith(quote * 3, index):
+                    quote = None
+                    triple_quoted = False
+                    index += 2
+            elif character == quote:
+                quote = None
+            index += 1
+            continue
+        if character in "'\"":
+            if source.startswith(character * 3, index):
+                quote = character
+                triple_quoted = True
+                index += 3
+            else:
+                quote = character
+                index += 1
+            continue
+        if character == "#":
+            newline = source.find("\n", index)
+            index = len(source) if newline == -1 else newline + 1
+            continue
+        if character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+        index += 1
+    return None
+
+
+def _player_bootstrap_payload(source: str, request: re.Match[str]) -> ast.Dict | None:
+    """Parse the mapping passed to one /auth/player-bootstrap request."""
+
+    payload_start = request.end()
+    while payload_start < len(source) and source[payload_start].isspace():
+        payload_start += 1
+    if payload_start >= len(source) or source[payload_start] != ",":
+        return None
+    payload_start += 1
+    while payload_start < len(source) and source[payload_start].isspace():
+        payload_start += 1
+    payload_end = _player_bootstrap_payload_end(source, payload_start)
+    if payload_end is None:
+        return None
+    try:
+        expression = ast.parse(source[payload_start:payload_end], mode="eval")
+    except SyntaxError:
+        return None
+    return expression.body if isinstance(expression.body, ast.Dict) else None
+
+
+def _validate_player_bootstrap_payload(source: str, request: re.Match[str]) -> bool:
+    payload = _player_bootstrap_payload(source, request)
+    if payload is None or len(payload.keys) != 2:
+        return False
+    fields = {
+        key.value: value.id
+        for key, value in zip(payload.keys, payload.values, strict=True)
+        if isinstance(key, ast.Constant)
+        and isinstance(key.value, str)
+        and isinstance(value, ast.Name)
+    }
+    return fields == {"accountIdentifier": "email", "secret": "password"}
+
+
 def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
     normalized = normalize_script(bootstrap_manifest)
     for expected in BOOTSTRAP_MANIFEST_REQUIRED_MARKERS:
@@ -653,6 +774,59 @@ def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
             raise AssertionError(
                 f"dev-demo bootstrap step contract missing: {expected}"
             )
+    for expected in BOOTSTRAP_ACCOUNT_TRANSPORT_REQUIRED_MARKERS:
+        if normalize_script(expected) not in normalized:
+            raise AssertionError(
+                "dev-demo player bootstrap must use the authenticated Kubernetes "
+                f"port-forward transport; missing: {expected}"
+            )
+    if re.search(r"\bBOOTSTRAP_GATEWAY_PORT\s*=\s*[0-9]+\b", normalized):
+        raise AssertionError(
+            "dev-demo player bootstrap must use kubectl's dynamically selected local port"
+        )
+    if BOOTSTRAP_DYNAMIC_PORT_FORWARD_PATTERN.search(normalized) is None:
+        raise AssertionError(
+            "dev-demo player bootstrap must use kubectl's dynamic :80 local-port syntax"
+        )
+    for expected in BOOTSTRAP_PORT_FORWARD_READINESS_REQUIRED_MARKERS:
+        if normalize_script(expected) not in normalized:
+            raise AssertionError(
+                "dev-demo player bootstrap must prove the dynamic port-forward binding; "
+                f"missing: {expected}"
+            )
+    readiness_loop_match = BOOTSTRAP_PORT_FORWARD_LOOP_PATTERN.search(normalized)
+    if readiness_loop_match is None or not 1 <= int(
+        readiness_loop_match["attempts"]
+    ) <= 60:
+        raise AssertionError(
+            "dev-demo player bootstrap must use a short bounded port-forward readiness loop"
+        )
+    readiness_loop = readiness_loop_match.group(0)
+    python_invocation = normalize_script('python3 "${BOOTSTRAP_SCRIPT}"')
+    liveness_check = normalize_script(
+        'if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then'
+    )
+    python_index = normalized.find(python_invocation)
+    if python_index == -1:
+        raise AssertionError(
+            'dev-demo player bootstrap must invoke Python as python3 "${BOOTSTRAP_SCRIPT}"'
+        )
+    if normalized.find(readiness_loop) > python_index:
+        raise AssertionError(
+            "dev-demo player bootstrap must prove the port-forward before invoking Python"
+        )
+    if (
+        normalized.count(liveness_check) < 2
+        or normalized.rfind(liveness_check) > python_index
+    ):
+        raise AssertionError(
+            "dev-demo player bootstrap must recheck port-forward liveness before invoking Python"
+        )
+    if normalize_script(BOOTSTRAP_ACCOUNT_ID_REQUIRED_MARKER) not in normalized:
+        raise AssertionError(
+            "dev-demo bootstrap must write the account id as text to preserve the "
+            "account-id file flow"
+        )
 
     normalized_lines = normalize_nonempty_lines(bootstrap_manifest)
     credential_validation = normalize_nonempty_lines(BOOTSTRAP_CREDENTIAL_VALIDATION)
@@ -708,6 +882,23 @@ def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
     if post_log_cleanup not in normalized_lines:
         raise AssertionError(
             "dev-demo bootstrap must remove its credential secret after successful pod logging"
+        )
+
+    player_bootstrap_requests = list(
+        PLAYER_BOOTSTRAP_REQUEST_CALL.finditer(bootstrap_manifest)
+    )
+    player_bootstrap_request_count = len(player_bootstrap_requests)
+    if player_bootstrap_request_count != 1:
+        raise AssertionError(
+            "dev-demo bootstrap must contain exactly one /auth/player-bootstrap request "
+            f"(found {player_bootstrap_request_count})"
+        )
+    if not _validate_player_bootstrap_payload(
+        bootstrap_manifest, player_bootstrap_requests[0]
+    ):
+        raise AssertionError(
+            "dev-demo bootstrap must send exactly accountIdentifier and secret "
+            "to /auth/player-bootstrap"
         )
 
     bootstrap_lines = [line.strip() for line in bootstrap_manifest.splitlines()]

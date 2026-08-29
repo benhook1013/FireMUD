@@ -163,6 +163,182 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             ):
                 self.validator.validate_workflow(root)
 
+    def test_validate_workflow_rejects_legacy_player_bootstrap_payload(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        canonical_payload = (
+            'public_account_url("/auth/player-bootstrap"),\n'
+            "      {\n"
+            '        "accountIdentifier": email,\n'
+            '        "secret": password,\n'
+            "      },"
+        )
+        legacy_payload = (
+            'public_account_url("/auth/player-bootstrap"),\n'
+            "      {\n"
+            '        "tenantId": tenant_id,\n'
+            '        "username": email,\n'
+            '        "password": password,\n'
+            "      },"
+        )
+        self.assertIn(canonical_payload, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            canonical_payload, legacy_payload, 1
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                "dev-demo bootstrap must send exactly accountIdentifier and secret",
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_non_text_account_id_write(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        self.assertIn("account_file.write(str(account_id))", bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            "account_file.write(str(account_id))",
+            "account_file.write(account_id)",
+            1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                "dev-demo bootstrap must write the account id as text",
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_multiple_player_bootstrap_requests(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        canonical_payload = (
+            'public_account_url("/auth/player-bootstrap"),\n'
+            "      {\n"
+            '        "accountIdentifier": email,\n'
+            '        "secret": password,\n'
+            "      },"
+        )
+        self.assertIn(canonical_payload, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            canonical_payload,
+            f"{canonical_payload}\n{canonical_payload}",
+            1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                r"dev-demo bootstrap must contain exactly one /auth/player-bootstrap request \(found 2\)",
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_accepts_reformatted_player_bootstrap_payload(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        canonical_payload = (
+            'public_account_url("/auth/player-bootstrap"),\n'
+            "      {\n"
+            '        "accountIdentifier": email,\n'
+            '        "secret": password,\n'
+            "      },"
+        )
+        reformatted_payload = (
+            "public_account_url ( '/auth/player-bootstrap' ),\n"
+            "      {\n"
+            "        'secret': password\n"
+            "        , 'accountIdentifier': email\n"
+            "      },"
+        )
+        self.assertIn(canonical_payload, bootstrap_manifest)
+        reformatted_manifest = bootstrap_manifest.replace(
+            canonical_payload, reformatted_payload, 1
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, reformatted_manifest)
+            self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_misbinding_player_bootstrap_fields(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        self.assertIn('"accountIdentifier": email,', bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            '"accountIdentifier": email,',
+            '"accountIdentifier": password,',
+            1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                "dev-demo bootstrap must send exactly accountIdentifier and secret",
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_fixed_player_bootstrap_port(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        dynamic_forward = "service/spring-cloud-gateway \\\n  :80 \\\n"
+        self.assertIn(dynamic_forward, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            dynamic_forward,
+            'service/spring-cloud-gateway \\\n  "${BOOTSTRAP_GATEWAY_PORT}:80" \\\n',
+            1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "dynamic :80 local-port syntax"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_literal_bootstrap_port_assignment(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        dynamic_assignment = "BOOTSTRAP_GATEWAY_PORT="
+        dynamic_forward = "service/spring-cloud-gateway \\\n  :80 \\\n"
+        self.assertIn(dynamic_assignment, bootstrap_manifest)
+        self.assertIn(dynamic_forward, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            dynamic_assignment, "BOOTSTRAP_GATEWAY_PORT=12345", 1
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "dynamically selected local port"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_missing_pre_python_liveness_check(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        liveness_check = (
+            'if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then'
+        )
+        self.assertEqual(2, bootstrap_manifest.count(liveness_check))
+        invalid_manifest = bootstrap_manifest.replace(liveness_check, "", 1)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "recheck port-forward liveness before invoking Python"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_unbounded_port_forward_readiness(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        self.assertIn("for attempt in {1..30}; do", bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            "for attempt in {1..30}; do", "while true; do", 1
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "short bounded port-forward readiness loop"
+            ):
+                self.validator.validate_workflow(root)
+
     def test_validate_workflow_rejects_bootstrap_manifest_without_env_from(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
         self.assertIn("envFrom:", bootstrap_manifest)

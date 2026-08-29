@@ -35,12 +35,20 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.override.ym
 Canonical smoke/bootstrap proof:
 
 ```bash
+export FIREMUD_SMOKE_RUN_ID="local-$(date +%s)-$$"
+export COMPOSE_PROJECT_NAME="firemud-smoke-${FIREMUD_SMOKE_RUN_ID}"
+export FIREMUD_SMOKE_OWNERSHIP_TOKEN="$(openssl rand -hex 32)"
 dev-tools/verify-fresh-bootstrap.sh
 dev-tools/verify-restart-state.sh
-SMOKE_IMAGE_TAG=<tag> dev-tools/verify-smoke-images.sh
+
+export FIREMUD_SMOKE_RUN_ID="local-image-$(date +%s)-$$"
+export COMPOSE_PROJECT_NAME="firemud-smoke-${FIREMUD_SMOKE_RUN_ID}"
+export FIREMUD_SMOKE_OWNERSHIP_TOKEN="$(openssl rand -hex 32)"
+# Placeholder only: replace with the published full commit SHA before running.
+SMOKE_IMAGE_TAG=0123456789abcdef0123456789abcdef01234567 dev-tools/verify-smoke-images.sh
 ```
 
-Do not treat `docker/docker-compose.smoke-images.override.yml` as a standalone ad hoc compose file. Its contract is to be driven through `SMOKE_IMAGE_TAG=<tag> dev-tools/verify-smoke-images.sh`, which validates the tag, writes the required local env override, and runs the full smoke flow.
+These entrypoints run the read-only `LOGIN` -> `PLAY` -> `LOOK` baseline over both transports. The fresh-bootstrap and restart-state commands above intentionally reuse the same explicit run ID/project and ownership token; image smoke uses a separate run ID/project and a fresh token. The helper retains only the token digest in its private marker and releases that marker after project resources are gone. The 40-hex value shown above is a placeholder, not a usable image tag. Obtain the published full commit SHA from a successful [Build and Publish Docker Images](../.github/workflows/docker-images.yml) or [Build Runtime Images](../.github/workflows/runtime-images.yml) run/artifact, or an equivalent repository-owned publication source, then pass it as `SMOKE_IMAGE_TAG`. Do not request mutating parity through these entrypoints; the wrappers reject `SMOKE_MUTATION_EXTENSION=true` until independent transport state exists. Do not treat `docker/docker-compose.smoke-images.override.yml` as a standalone ad hoc compose file. Its contract is to be driven through the explicit ID/project binding defined in [Testing: player-flow smoke and reset boundaries](../design/architecture/system-architecture-testing.md#player-flow-smoke-and-reset-boundaries), with `SMOKE_IMAGE_TAG=<tag>` passed to `dev-tools/verify-smoke-images.sh`; the script validates the tag, writes the required local env override, and runs the baseline smoke flow. Whole-stack teardown is test-deployment disposal, not a Coordination Redis reset.
 
 Gradle-managed local prebuilt-image stack:
 
