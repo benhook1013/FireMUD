@@ -358,6 +358,38 @@ require_run_owned_compose_service() {
   _firemud_smoke_fail "Compose service $service does not publish ${container_port}/tcp on host port $host_port."
 }
 
+require_smoke_mutation_boundary() {
+  SMOKE_MUTATION_EXTENSION=${SMOKE_MUTATION_EXTENSION:-false}
+  SMOKE_MUTATION_BOUNDARY=${SMOKE_MUTATION_BOUNDARY:-}
+  case "$SMOKE_MUTATION_EXTENSION" in
+    false|0)
+      SMOKE_MUTATION_EXTENSION=false
+      ;;
+    true|1)
+      SMOKE_MUTATION_EXTENSION=true
+      case "$SMOKE_MUTATION_BOUNDARY" in
+        run-owned-compose)
+          require_run_owned_compose_project || return 1
+          ;;
+        restricted-synthetic|synthetic-identity)
+          echo "SMOKE_MUTATION_BOUNDARY=$SMOKE_MUTATION_BOUNDARY is unavailable: no authoritative synthetic identity/isolation verifier exists." >&2
+          return 1
+          ;;
+        *)
+          echo "Mutation extension requires SMOKE_MUTATION_BOUNDARY=run-owned-compose; refusing unverified state." >&2
+          return 1
+          ;;
+      esac
+      ;;
+    *)
+      echo "SMOKE_MUTATION_EXTENSION must be boolean true/false (or 1/0); refusing to run." >&2
+      return 1
+      ;;
+  esac
+  export SMOKE_MUTATION_EXTENSION
+  export SMOKE_MUTATION_BOUNDARY
+}
+
 release_run_owned_compose_project() {
   _firemud_smoke_prepare || return 1
   _firemud_smoke_lock || return 1

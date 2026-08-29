@@ -27,38 +27,14 @@ SMOKE_STARTUP_EXPECT=${SMOKE_STARTUP_EXPECT:-"DISCONNECT startup_unavailable"}
 SMOKE_TIMEOUT_SECONDS=${SMOKE_TIMEOUT_SECONDS:-10}
 SMOKE_MUTATION_EXTENSION=${SMOKE_MUTATION_EXTENSION:-false}
 SMOKE_MUTATION_BOUNDARY=${SMOKE_MUTATION_BOUNDARY:-}
-case "$SMOKE_MUTATION_EXTENSION" in
-  false|0)
-    SMOKE_MUTATION_EXTENSION=false
-    ;;
-  true|1)
-    SMOKE_MUTATION_EXTENSION=true
-    case "$SMOKE_MUTATION_BOUNDARY" in
-      run-owned-compose)
-        require_run_owned_compose_project
-        if [[ "$SMOKE_HOST" != "localhost" || "$TCP_PORT" != "2323" || "${TCP_PROXY_PORT:-2323}" != "2323" ]]; then
-          echo "Mutation mode requires the canonical Telnet endpoint localhost:2323; refusing endpoint override." >&2
-          exit 1
-        fi
-        require_run_owned_compose_service tcp-proxy-service 2323 2323
-        ;;
-      restricted-synthetic|synthetic-identity)
-        echo "SMOKE_MUTATION_BOUNDARY=$SMOKE_MUTATION_BOUNDARY is unavailable: no authoritative synthetic identity/isolation verifier exists." >&2
-        exit 1
-        ;;
-      *)
-        echo "Mutation extension requires SMOKE_MUTATION_BOUNDARY=run-owned-compose; refusing unverified state." >&2
-        exit 1
-        ;;
-    esac
-    ;;
-  *)
-    echo "SMOKE_MUTATION_EXTENSION must be boolean true/false (or 1/0); refusing to run." >&2
+require_smoke_mutation_boundary
+if [[ "$SMOKE_MUTATION_EXTENSION" == "true" ]]; then
+  if [[ "$SMOKE_HOST" != "localhost" || "$TCP_PORT" != "2323" || "${TCP_PROXY_PORT:-2323}" != "2323" ]]; then
+    echo "Mutation mode requires the canonical Telnet endpoint localhost:2323; refusing endpoint override." >&2
     exit 1
-    ;;
-esac
-export SMOKE_MUTATION_EXTENSION
-export SMOKE_MUTATION_BOUNDARY
+  fi
+  require_run_owned_compose_service tcp-proxy-service 2323 2323
+fi
 export FIREMUD_REPO_ROOT
 
 if command -v python3 >/dev/null 2>&1; then

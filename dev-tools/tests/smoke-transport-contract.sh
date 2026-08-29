@@ -322,6 +322,7 @@ for script in \
     COMPOSE_PROJECT_NAME=firemud-smoke-contract bash "$script"
   grep -q 'SMOKE_MUTATION_EXTENSION=.*false' "$script"
   grep -q 'SMOKE_MUTATION_BOUNDARY=.*' "$script"
+  grep -q 'require_smoke_mutation_boundary' "$script"
   grep -q 'run-owned-compose' "$script"
   grep -q 'login_play_look_steps' "$script"
   grep -q 'gameplay_item_container_equipment_steps' "$script"
@@ -330,13 +331,22 @@ for script in \
     exit 1
   fi
   helper_source_line="$(grep -n 'run-owned-compose.sh' "$script" | head -1 | cut -d: -f1)"
-  mutation_guard_line="$(grep -n '^[[:space:]]*require_run_owned_compose_project$' "$script" | head -1 | cut -d: -f1)"
+  mutation_gate_line="$(grep -n '^[[:space:]]*require_smoke_mutation_boundary$' "$script" | head -1 | cut -d: -f1)"
+  endpoint_guard_line="$(grep -n 'Mutation mode requires' "$script" | head -1 | cut -d: -f1)"
+  service_guard_line="$(grep -n '^[[:space:]]*require_run_owned_compose_service' "$script" | head -1 | cut -d: -f1)"
   # shellcheck disable=SC2016 # Match the literal shell variable in the target script.
   python_line="$(grep -n '\$PYTHON.*<<' "$script" | head -1 | cut -d: -f1)"
-  if [[ -z "$helper_source_line" || -z "$mutation_guard_line" || -z "$python_line" \
-    || "$helper_source_line" -ge "$mutation_guard_line" \
-    || "$mutation_guard_line" -ge "$python_line" ]]; then
-    echo "executable run-owned helper is not sourced and called before Python in $script" >&2
+  if [[ -z "$helper_source_line" || -z "$mutation_gate_line" || -z "$endpoint_guard_line" \
+    || -z "$service_guard_line" || -z "$python_line" \
+    || "$helper_source_line" -ge "$mutation_gate_line" \
+    || "$mutation_gate_line" -ge "$endpoint_guard_line" \
+    || "$endpoint_guard_line" -ge "$service_guard_line" \
+    || "$service_guard_line" -ge "$python_line" ]]; then
+    echo "executable shared mutation gate and transport consequences are not ordered before Python in $script" >&2
+    exit 1
+  fi
+  if grep -q '^[[:space:]]*require_run_owned_compose_project$' "$script"; then
+    echo "transport-local mutation guard still calls the shared project gate directly in $script" >&2
     exit 1
   fi
 done
@@ -527,6 +537,21 @@ run_owned_helper() {
   shift
   bash -c 'source "$1"; shift; "$@"' _ "$RUN_OWNED_COMPOSE_HELPER" "$action" "$@"
 }
+
+normalized_mutation_false="$(
+  # shellcheck disable=SC2016 # Match the literal shell variables in the child shell.
+  env SMOKE_MUTATION_EXTENSION=0 SMOKE_MUTATION_BOUNDARY= \
+    bash -c 'source "$1"; require_smoke_mutation_boundary; printf "%s|%s\n" "$SMOKE_MUTATION_EXTENSION" "$SMOKE_MUTATION_BOUNDARY"' \
+    _ "$RUN_OWNED_COMPOSE_HELPER"
+)"
+[[ "$normalized_mutation_false" == "false|" ]]
+normalized_mutation_true="$(
+  # shellcheck disable=SC2016 # Match the literal shell variables in the child shell.
+  env SMOKE_MUTATION_EXTENSION=1 SMOKE_MUTATION_BOUNDARY=restricted-synthetic \
+    bash -c 'source "$1"; require_smoke_mutation_boundary || :; printf "%s|%s\n" "$SMOKE_MUTATION_EXTENSION" "$SMOKE_MUTATION_BOUNDARY"' \
+    _ "$RUN_OWNED_COMPOSE_HELPER" 2>/dev/null
+)"
+[[ "$normalized_mutation_true" == "true|restricted-synthetic" ]]
 # shellcheck disable=SC2016
 RUN_OWNED_CHILD_BASH='source "$1"; shift; "$@"'
 # shellcheck disable=SC2016
