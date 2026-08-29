@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.springcloudgateway.service.GatewayRoute;
 import net.firedevops.firemud.springcloudgateway.service.GatewayRouteService;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -16,6 +17,10 @@ import reactor.core.publisher.Mono;
 /** REST API for dynamic route management. */
 @RestController
 @RequestMapping("/routes")
+@ConditionalOnProperty(
+    prefix = "firemud.gateway.dynamic-routes",
+    name = "enabled",
+    havingValue = "true")
 public class GatewayController {
   private final GatewayRouteService routeService;
 

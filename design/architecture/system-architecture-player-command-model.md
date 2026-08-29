@@ -87,6 +87,8 @@ A command may be valid in more than one stage only when its contract explicitly 
 
 ## Standard Command Catalog
 
+`PING` is a protocol/service-health operation owned by Game Session, not a player command. It may complete synchronously at the service boundary and is therefore outside the pinned player-command registry, player stages, and gameplay capability policy.
+
 The standard catalog is grouped by command family. Detailed domain behavior remains in its owning architecture documentation; this table defines availability, stage, aliases, and ownership. `Any` means every player stage. Gameplay-only commands require an admitted gameplay context.
 
 | Family | Canonical commands | Stage | Availability | Semantic owner |

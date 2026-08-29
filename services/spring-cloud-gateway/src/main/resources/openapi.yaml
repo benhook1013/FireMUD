@@ -8,8 +8,14 @@ info:
     url: https://opensource.org/licenses/MIT
 servers:
   - url: https://api.firemud.com
-security: []
+security:
+  - bearerAuth: []
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
   schemas:
     GatewayRoute:
       type: object
@@ -31,6 +37,7 @@ paths:
     get:
       summary: Health check
       operationId: ping
+      security: []
       responses:
         '200':
           description: Pong response

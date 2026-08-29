@@ -193,7 +193,7 @@ Current live binding-scope consumers on `onCommand` still support the baseline b
 - `ACTION_CATEGORY`
 - `ACTION_TAG`
 
-When a resolved handler is plugin-owned, Automation ingress must only admit that handler when the same plugin version is currently active for the runtime scope identified by the event trigger (`gameInstanceId`, `regionId`, `regionEpoch`). Plugin ownership on resolved handler audit and durable execution records must come from that script owner truth rather than from optional producer-supplied plugin identity on the ingress request.
+When a resolved handler is plugin-owned, Automation ingress must only admit that handler when the same plugin version is currently active for the explicit lifecycle-owner scope `{tenantId, gameInstanceId, pluginId}`. The trigger's `playableStateNamespaceId`, `playableStateScope`, `regionId`, and `regionEpoch` remain separate event-scope and fence evidence and are validated for the applicable runtime event, but they do not replace or widen the plugin lifecycle-owner lookup. Plugin ownership on resolved-handler audit and durable-execution records must come from the resolved owner truth rather than from optional producer-supplied plugin identity on the ingress request; the resolved owner, not producer ingress, determines audit and durable ownership.
 
 Required Trigger Identity fields remain defined by the registry entry and the [normative identity tables](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields). Handler input-manifest requirements (owner versions, bounded values, causal floor, and any owner-specific `readSnapshotToken`) are separate from Trigger Identity. Payload contents are intentionally narrower than both contracts.
 

@@ -124,7 +124,7 @@ Normalized reference storage is only safe if it is operationally enforced:
   - Validates that every referenced `(tenantId, versionId, templateId)` exists in the owning domain service and that the referenced `versionId` is not Retired.
   - Marks the template as `INVALID` (and blocks instance creation) if references cannot be derived, cannot be resolved, or violate lifecycle constraints.
 - **Strict create/update enforcement** – create/update of a template must be rejected if normalized references cannot be derived and written in the same transaction as the JSON config.
-- **Single-version launch enforcement** – instance creation and `ResolveLaunchDescriptor` must reject any template not marked `VALIDATED` with exactly one canonical base `versionId`.
+- **Single-version launch enforcement** – instance creation and `ResolveLaunchDescriptor` must reject any tenant whose `GetTemplateReferencePhase(tenantId)` is not `ENFORCED`, or whose normalized references do not resolve the template to exactly one canonical base `versionId`.
 - **Instance creation enforcement** – the Game Session Service (or the instance-creation orchestrator) must validate template dependencies using normalized tables before creating any `gameInstanceId` rows:
   - Fail fast if any referenced version is Retired, missing, or out of sync with its domain templates.
   - If the template pins a `scriptPatchVersion`, fail fast unless Automation & Scripting reports that patch is `READY` for the tenant.

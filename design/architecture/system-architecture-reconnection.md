@@ -58,7 +58,7 @@ For the **concrete `NotifyDisconnect` message shape and transport behaviour** â€
 - On reconnect, rebinds:
   - Socket connection
   - Tick region context
-  - Timers and in-flight actions
+  - Timers and durably recorded action identities/continuation state; ambiguous delivery may be lost and is never blindly replayed
 
 > ðŸ”— Full structure of Redis session keys is documented in [Session Keys and Gameplay Binding](./system-architecture-redis.md#session-keys-and-gameplay-binding).
 > See also the [Game Session Service design](./microservices/game-session-service/README.md#redis-keys) for how session state is stored for reconnect recovery.

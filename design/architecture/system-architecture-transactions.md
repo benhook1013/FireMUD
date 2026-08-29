@@ -163,7 +163,7 @@ Durable backlog contract:
 Retry and dead-letter policy:
 
 - Default retry strategy is bounded exponential backoff with jitter and no mutation of `EffectId`.
-- Backlog rows remain `PENDING` until all required participants acknowledge applied/no-op for the same `EffectId`.
+- Backlog rows remain `PENDING` until all required participants acknowledge applied/no-op for the same `EffectId`; only then may reconciliation transition the row to `CONVERGED`.
 - Backlog rows receive a `DEAD_LETTER` retry disposition only after retry exhaustion or explicit audited operator action; no destructive compensation is issued from this path. The underlying effect ledger remains governed by the `APPLIED`/evidence-qualified `ABANDONED` contract and remains nonterminal when execution is inconclusive.
 - Dead-letter backlog rows remain replayable via explicit operator/API actions; replay must preserve the original `EffectId`.
 

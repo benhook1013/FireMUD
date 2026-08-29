@@ -42,11 +42,11 @@ Every game instance pins one explicit legal runtime release tuple containing:
 - the selected script patch, if any; and
 - the enabled plugin versions.
 
-Each patch and plugin proves compatibility and readiness against the selected base version before the tuple becomes launchable. The launch descriptor records the complete resolved tuple before instance identity is allocated or runtime admission succeeds. Changing any member creates a new recorded tuple and follows the applicable rollout process; a running instance never follows `latest` or silently substitutes another compatible-looking member.
+The selected script patch proves compatibility against the selected base version and, where required for launch, tenant runtime readiness before the tuple becomes launchable. Each plugin proves immutable publication and compatibility against that base version for descriptor selection; plugin runtime readiness, binding resolution, and activation fencing remain post-launch Automation activation/resume gates rather than launch-descriptor predicates. The launch descriptor records the complete resolved tuple before instance identity is allocated or runtime admission succeeds. Changing any member creates a new recorded tuple and follows the applicable rollout process; a running instance never follows `latest` or silently substitutes another compatible-looking member.
 
 Friendly aliases such as `production` and `preview` may select a release at the start of a new launch or rollout. Alias resolution produces a concrete immutable version, after which the launch or rollout pins that result. Later alias movement does not mutate existing descriptors, running instances, restart behavior, or rollback targets.
 
-Readiness and publication are explicit state transitions. A tuple is legal only when the base release, bundle, manifest, patch, plugins, required attestations, remap proof, and tenant readiness satisfy their declared gates. Retry of tuple creation under the same idempotency identity returns the same resolved tuple rather than resolving a mutable alias again.
+Readiness and publication are explicit state transitions. A tuple is legal only when the base release, bundle, manifest, patch, plugins, required attestations, remap proof, and applicable tenant readiness satisfy their declared launch gates; plugin runtime readiness is evaluated by Automation at activation/resume under its own lifecycle and fence contract. Retry of tuple creation under the same idempotency identity returns the same resolved tuple rather than resolving a mutable alias again.
 
 Rollback selects a previously recorded concrete tuple. It does not reconstruct a former release by consulting current aliases or independently selecting component versions.
 

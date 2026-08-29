@@ -246,8 +246,8 @@ Game Session control-plane APIs exposed behind the Gateway terminate on the stab
 FireMUD uses two complementary authentication modes that share a common identity model but differ in how they are presented by clients:
 
 - **Gameplay sessions (players)**  
-  - Players authenticate using the `LOGIN` command handled by the **Game Session Service**.  
-  - Game Session delegates credential verification (including 2FA, external identity providers, and lockout rules) to the **Account Service**, which owns all credential and account-security decisions.  
+  - Credential-bearing text clients authenticate using the `LOGIN` command handled by the **Game Session Service**; first-party browser clients authenticate through Account's player-bootstrap flow and then use bare `LOGIN` for the WebSocket session.
+  - Game Session delegates verification of the account's configured `PASSWORD` or verified `EMAIL_OTP` mode, together with account-security policy, to the **Account Service**, which owns all credential and account-security decisions.
   - On success, Game Session creates and maintains a Redis-backed gameplay session binding (tenant, character, tick-region context). The current implementation enforces one active binding per `{tenantId, gameInstanceId, characterId}`; the target owner rule uses the exact controller key `{tenantId, playableStateNamespaceId, characterId}` with `bindingGeneration`, while server-derived `playableStateScope` remains separately validated binding evidence, as defined in [Session Behavior](./system-architecture-session-behavior.md#session-and-identity-management). Gameplay traffic is authenticated by this Redis session context rather than by browser-style JWTs sent on each message.
 
 - **Admin and creator sessions (external admin/creator API plane)**  

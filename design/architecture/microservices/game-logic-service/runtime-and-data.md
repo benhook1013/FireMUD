@@ -21,7 +21,7 @@ The sections below define the target-state runtime contract. Current implementat
 - Fetches contextual world and entity data on demand via gRPC.
 - Gameplay rules are read from this service's own versioned data when a version is activated; the runtime service does not query design or admin databases.
 - Integrates with the tick system described in [Tick System and Runtime Design](../../system-architecture-ticks.md) to preserve deterministic command ordering.
-- Cross-service combat or trade operations run within ticks and rely on Redis-based rollback, not sagas. See [Transaction Strategies](../../system-architecture-transactions.md).
+- Ordinary combat and independent gameplay effects run within ticks using tick-local Redis rollback. Trade, conserved-value, and mutually conditional operations follow the invariant-sensitive routing in [Transaction Strategies](../../system-architecture-transactions.md): a co-located authoritative transaction where possible, otherwise a durable reservation/escrow workflow with idempotent steps and transactional outbox delivery.
 - The target runtime contract is that every player-delegated gameplay RPC carries the complete validated typed `PlayerExecutionContext`, including `tenantId`, `playableStateNamespaceId`, server-derived `playableStateScope`, active `gameInstanceId`, and applicable region/epoch or executor fences. The live per-RPC schemas, including `SendCommunication` and its legacy `session_attestation`, remain an implementation gap; see the [PlayerExecutionContext contract](../../system-architecture-authentication.md#gameplay-player-execution-context-contract-normative).
 - Gameplay gRPC requests do not include JWTs. Game Session provides player identity from Redis via `SessionContext`, may refresh a JWT from Account Service if roles change, and does not validate tokens for gameplay. Service-to-service traffic still uses mutual TLS as described in the [Security Architecture](../../system-architecture-security.md).
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
@@ -30,7 +30,7 @@ The sections below define the target-state runtime contract. Current implementat
 
 ## Workflow Participation
 
-The Game Logic Service does not orchestrate or own synchronous saga or Temporal workflows. All gameplay commands execute inside ticks using Redis-based rollback and the transaction model described in [Transaction Strategies](../../system-architecture-transactions.md).
+The Game Logic Service does not orchestrate or own synchronous saga or Temporal workflows. Ordinary gameplay commands execute inside ticks using tick-local Redis rollback; invariant-sensitive commands use the transaction model described in [Transaction Strategies](../../system-architecture-transactions.md), including any owner-coordinated reservation/escrow workflow without making Game Logic its workflow owner.
 
 When a game version is published, its rule data is prepared and finalized by the Game Design and Game Session services; this service reads the already-published, versioned rule data for the active `runtime_version` and does not participate directly in the durable `publish` workflow.
 

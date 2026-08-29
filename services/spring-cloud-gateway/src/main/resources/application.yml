@@ -74,6 +74,8 @@ firemud:
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
     ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
   gateway:
+    dynamic-routes:
+      enabled: ${FIREMUD_GATEWAY_DYNAMIC_ROUTES_ENABLED:false}
     gameplay:
       bridge:
         upstream-url: ${FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_UPSTREAM_URL:ws://game-session-service:8080/ws/game}

@@ -29,59 +29,72 @@ public class GatewayRouteServiceImpl implements GatewayRouteService {
 
   private final RouteDefinitionWriter writer;
   private final ApplicationEventPublisher publisher;
+  private final DynamicRouteMutationPolicy mutationPolicy;
   private final ConcurrentMap<String, GatewayRoute> routes = new ConcurrentHashMap<>();
 
   public GatewayRouteServiceImpl(
-      RouteDefinitionWriter writer, ApplicationEventPublisher publisher) {
+      RouteDefinitionWriter writer,
+      ApplicationEventPublisher publisher,
+      DynamicRouteMutationPolicy mutationPolicy) {
     this.writer = writer;
     this.publisher = publisher;
+    this.mutationPolicy = mutationPolicy;
   }
 
   @Override
   @Timed(value = "gateway.route.upsert")
   public Mono<GatewayRoute> upsert(GatewayRoute route) {
-    RouteDefinition definition = new RouteDefinition();
-    definition.setId(route.routeId());
-    definition.setUri(URI.create(route.uri()));
-    if (route.predicates() != null) {
-      definition.setPredicates(route.predicates().stream().map(PredicateDefinition::new).toList());
-    }
-    if (route.filters() != null) {
-      definition.setFilters(route.filters().stream().map(FilterDefinition::new).toList());
-    }
+    return Mono.defer(
+        () -> {
+          mutationPolicy.requireEnabled();
+          RouteDefinition definition = new RouteDefinition();
+          definition.setId(route.routeId());
+          definition.setUri(URI.create(route.uri()));
+          if (route.predicates() != null) {
+            definition.setPredicates(
+                route.predicates().stream().map(PredicateDefinition::new).toList());
+          }
+          if (route.filters() != null) {
+            definition.setFilters(route.filters().stream().map(FilterDefinition::new).toList());
+          }
 
-    return writer
-        .save(Mono.just(definition))
-        .doOnSuccess(ignored -> publisher.publishEvent(new RefreshRoutesEvent(this)))
-        .then(
-            Mono.fromSupplier(
-                () -> {
-                  routes.put(route.routeId(), route);
-                  logger.info("Upserted route {} -> {}", route.routeId(), route.uri());
-                  return route;
-                }));
+          return writer
+              .save(Mono.just(definition))
+              .doOnSuccess(ignored -> publisher.publishEvent(new RefreshRoutesEvent(this)))
+              .then(
+                  Mono.fromSupplier(
+                      () -> {
+                        routes.put(route.routeId(), route);
+                        logger.info("Upserted route {} -> {}", route.routeId(), route.uri());
+                        return route;
+                      }));
+        });
   }
 
   @Override
   @Timed(value = "gateway.route.remove")
   public Mono<Boolean> remove(String routeId) {
-    return writer
-        .delete(Mono.just(routeId))
-        .doOnSuccess(ignored -> publisher.publishEvent(new RefreshRoutesEvent(this)))
-        .thenReturn(true)
-        .doOnNext(
-            removed -> {
-              routes.remove(routeId);
-              logger.info("Removed route {}", routeId);
-            })
-        .onErrorResume(
-            NotFoundException.class,
-            ex ->
-                Mono.fromSupplier(
-                    () -> {
-                      routes.remove(routeId);
-                      logger.info("Route {} not found", routeId);
-                      return false;
-                    }));
+    return Mono.defer(
+        () -> {
+          mutationPolicy.requireEnabled();
+          return writer
+              .delete(Mono.just(routeId))
+              .doOnSuccess(ignored -> publisher.publishEvent(new RefreshRoutesEvent(this)))
+              .thenReturn(true)
+              .doOnNext(
+                  removed -> {
+                    routes.remove(routeId);
+                    logger.info("Removed route {}", routeId);
+                  })
+              .onErrorResume(
+                  NotFoundException.class,
+                  ex ->
+                      Mono.fromSupplier(
+                          () -> {
+                            routes.remove(routeId);
+                            logger.info("Route {} not found", routeId);
+                            return false;
+                          }));
+        });
   }
 }
