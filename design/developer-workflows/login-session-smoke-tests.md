@@ -30,7 +30,7 @@ The fresh-bootstrap step establishes the claim and running stack; the standalone
 Use `websocat` (or your favorite WebSocket client) to connect directly to Game Session:
 
 ```bash
-websocat -H "X-Game-Instance-Id: 00000000-0000-0000-0000-000000000001" -H "X-Tenant-Id: 00000000-0000-0000-0000-000000000001" ws://localhost:8080/ws/game
+websocat -H "X-Game-Instance-Id: 00000000-0000-0000-0000-000000000001" -H "X-Tenant-Id: 00000000-0000-0000-0000-000000000001" ws://localhost:8086/ws/game
 WORLDS
 LOGIN demo@example.com swordfish
 PLAY demo
@@ -57,7 +57,7 @@ You are in a candle-lit antechamber carved into basalt.
 
 Capture both responses so you can compare them to the Telnet flow.
 
-Optional item/container/equipment extension, when the target environment has the demo item fixtures loaded:
+Optional mutating item/container/equipment extension, only when the run-owned isolation boundary above is satisfied and the target environment has the required fixtures:
 
 ```text
 INV HERE
@@ -86,7 +86,9 @@ Expected semantic checks:
 - `WEAR Leather Cap` reports success, `EQUIPMENT` shows `HEAD: Leather Cap`, and `REMOVE HEAD` reports success.
 - `WEAR Iron Boots` returns a clear `SLOT_INCOMPATIBLE` error in environments that carry the demo incompatible-item fixture.
 
-For Compose-backed blackbox verification, the canonical script is:
+The plain `bash ./websocket-login-look-smoke.sh` invocation is baseline-only. The supported scripted WebSocket mutation invocation documented here is the top-of-page run-owned Compose command block, which reuses the previously established exact claim with `SMOKE_MUTATION_EXTENSION=true` and `SMOKE_MUTATION_BOUNDARY=run-owned-compose`; do not invoke it against shared or stable state.
+
+For Compose-backed blackbox verification, the current canonical script is:
 
 ```bash
 cd services/game-session-service

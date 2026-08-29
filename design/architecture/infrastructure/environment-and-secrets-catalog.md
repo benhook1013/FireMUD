@@ -101,9 +101,9 @@ Only an explicitly labelled one-shot test/CI stack may collapse roles into a sin
 
 ## TLS & Certificates
 
-Mutual TLS protects internal service-to-service traffic in shared and player-facing Kubernetes environments. Certificates are normally provisioned by **cert-manager** and mounted from distinct per-workload Kubernetes Secrets so every service has a concrete private identity. Explicit local-development and throwaway-test profiles may use plaintext internal transport, including the documented `ws://` Proxy-to-Gateway bridge, and do not provide player-facing or promotion evidence. These certificates secure:
+Mutual TLS protects internal service-to-service traffic in shared and player-facing Kubernetes environments. The canonical target provisions certificates through **cert-manager** and mounts distinct per-workload leaf certificate/private-key Secrets so every service has a concrete private identity. Current hosted Helm manifests for `pr-preview` and `dev-demo-cluster` use the shared `firemud-grpc-tls` Secret across gRPC workloads; that is evidence of encrypted mTLS transport only, not distinct workload leaf identity or player-facing equivalence. Explicit local-development and throwaway-test profiles may use plaintext internal transport, including the documented `ws://` Proxy-to-Gateway bridge, and do not provide player-facing or promotion evidence. The bounded Spring gRPC `1.0.x` plaintext `pr-preview` migration exception documented in [gRPC TLS requirements](../system-architecture-grpc.md#tls-requirements) is reserved policy, not the current hosted configuration. Hosted `pr-preview` currently uses the shared-secret mTLS boundary and remains non-player-facing/non-promotion evidence; the canonical non-local target remains distinct per-workload mTLS. These certificates secure:
 
-- All gRPC calls between services
+- All mTLS-protected gRPC calls between services
 - Any internal WebSocket bridges that require mTLS (for example, the TCP Proxy Service connecting to Spring Cloud Gateway over `wss://`)
 
 A sample `Certificate` manifest is provided at `k8s/base/firemud-grpc-certificate.yaml`.

@@ -127,7 +127,7 @@ This section centralizes the normative targets for Redis behavior that other doc
 - **Script runtime**
   - tick- and session-related Lua scripts are expected to complete within roughly 10–20 ms per invocation under normal load
 - **Coordination memory share**
-  - coordination prefixes should normally occupy no more than about 30–40% of `maxmemory` on Coordination Redis with `noeviction`
+  - coordination prefixes should normally occupy no more than about 30–40% of `maxmemory` on Coordination Redis with mandatory `maxmemory-policy=noeviction` for every non-ephemeral profile; the only permitted deviation is an explicitly labeled ephemeral one-shot test stack, and any non-ephemeral deviation or observed eviction is fail-closed incident evidence
 
 ### Cache/Rate-Limit Redis Core Targets
 
@@ -168,7 +168,7 @@ Goal: provide a simple, explicit runbook for resetting Cache/Rate-Limit Redis wi
 
 Cache/Rate-Limit Redis is fully reset-tolerant for the prefixes listed in [`system-architecture-redis-cache.md`](./system-architecture-redis-cache.md) and the reset policy matrix in [`system-architecture-redis-reset-and-recovery.md`](./system-architecture-redis-reset-and-recovery.md). A reset:
 
-- drops cache and rate-limit keys such as `inventory:*`, `character-cache:*`, `world-dynamic:*`, `room:*`, `view:room-look:*`, `chat:*`, `automation:*`, and `ratelimit:*`
+- drops cache and rate-limit keys such as `inventory:*`, `character-cache:*`, `world-dynamic:*`, `room:*`, `view:room-look:*`, `chat:*`, `automation:queue:*`, `automation:quota:*`, `automation:tenant-budget:*`, `automation:test:quota:*`, `automation:test:capacity:*`, `automation:readiness:capacity:*`, and `ratelimit:*`; it must not drop Coordination Redis's `automation:timer:*`, `script-scheduler:*`, or any other registered Coordination automation family
 - does not affect Coordination Redis keys such as `tick:*`, `timer:*`, `retry:*`, `session:*`, or `tick-executor-lease:*`
 - increases load on backing services temporarily but must not lose authoritative game data
 

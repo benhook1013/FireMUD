@@ -126,6 +126,6 @@ When enabled, policy intent, case, appeal, owner-result, and audit records are r
 
 ## Saga Dashboard
 
-The service exposes `/sagas` and `/sagas/{id}/steps` endpoints for operators to inspect short synchronous orchestration coordinated via the shared Saga library. Durable long-running workflow inspection belongs on the corresponding Temporal adopter read surfaces, not on the shared saga dashboard. The dashboard reads from the `saga_instance` and `saga_step` tables and publishes a `sagas.active` Prometheus gauge.
+The current `/sagas` and `/sagas/{id}/steps` endpoints are local-schema-only read surfaces for short synchronous orchestration coordinated via the shared Saga library: they read only this service's `${serviceSchema}.saga_instance` and `${serviceSchema}.saga_step` tables, expose no foreign-service state, and acquire no execution authority. If a target cross-service dashboard is introduced, it must fan out through read-only per-service Saga status APIs rather than read foreign databases or execute Saga actions. Durable long-running workflow inspection belongs on the corresponding Temporal adopter read surfaces, not on the shared Saga dashboard; the current local dashboard publishes the local `sagas.active` Prometheus gauge.
 
 See [Transaction Strategies](../../system-architecture-transactions.md) for an overview of Saga usage across FireMUD.

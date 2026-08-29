@@ -10,6 +10,8 @@ The target automation handoff also requires the complete Trigger Identity, inclu
 
 Separate Coordination and Cache/Rate-Limit Redis processes exist in current manifests, but role-specific application clients, ACLs, key/script registration, and ownership proof under [ADR 0171](./decisions/adr-0171-separated-redis-role-processes-and-owned-keyspaces.md) remain incomplete.
 
+The current hosted application wiring still exposes one generic `firemud.redis` client, with the shared hosted profile setting `FIREMUD_REDIS_HOST=redis-cache`; the role-specific Redis variables are present in the profile but are not consumed by the shared client configuration. Consequently, Game Session and Account coordination/auth paths cannot claim Coordination endpoint isolation in the hosted profile and may currently land on Cache/Rate-Limit Redis. This is implementation drift against ADR 0171, not a new role contract: convergence requires named role clients, endpoint-collision startup failure, and focused ACL/key-family/eviction/reset proof.
+
 ---
 
 ## Table of Contents
@@ -258,9 +260,10 @@ Coordination and Cache/Rate‑Limit Redis are sized and configured differently.
 
 - **Goal:** predictable restart behavior and bounded memory usage for coordination keys.
 - **Recommendations:**
+  - `maxmemory-policy=noeviction` is mandatory for every non-ephemeral Coordination Redis profile. The only permitted deviation is an explicitly labelled ephemeral one-shot test/CI stack; any non-ephemeral deviation or observed eviction is fail-closed incident evidence.
   - Keep peak memory for coordination prefixes (`tick:*`, `timer:*`, `retry:*`, `session:game:*`, `session:auth:token:*`, `session:auth:generation:*`, `tick-executor-lease:*`, etc.) within the canonical Coordination Redis budget from `system-architecture-redis-operations.md` (normally **≤ 30–40% of `maxmemory`**).
   - Use AOF preamble and rewrite settings that keep AOF size within the budgets described in **Redis Operations & Migrations**.
-  - Avoid eviction for coordination keys whenever possible; if `maxmemory` is configured with eviction, treat eviction events as incidents rather than normal operation.
+  - Any observed eviction remains a fail-closed incident and requires operator reconciliation before the profile is treated as healthy.
 
 ### Cache/Rate‑Limit Redis
 

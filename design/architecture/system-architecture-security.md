@@ -199,13 +199,15 @@ TCP Proxy Service and Spring Cloud Gateway forward canonical source context so e
 
 ---
 
-## Audit Logging and Abuse Visibility
+## Audit Logging and Abuse Visibility (Target State)
 
-- All failed logins, suspicious activity, and abuse attempts are captured in:
+The following indexed and dashboard visibility is a target-state requirement. Current evidence is limited to structured service logs and the PostgreSQL `log_events` table; Logging & Admin does not yet have observability-backend clients or a dashboard. See [System Architecture Diagram](./system-architecture-diagram.md#observability-components) for the canonical current/target observability status.
+
+- **Target-state requirement:** all failed logins, suspicious activity, and abuse attempts are captured in:
   - **Elasticsearch-backed logs**
   - The **Logging & Admin Service dashboard** ([design](./microservices/logging-admin-service/README.md))
-  - Admin actions such as bans are recorded by the Logging & Admin Service for auditability.
-  - Role changes are tracked for audit purposes.
+- Admin actions such as bans are recorded by the Logging & Admin Service for auditability.
+- Role changes are tracked for audit purposes.
 
 ---
 
