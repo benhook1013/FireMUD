@@ -74,6 +74,12 @@ This behavior ensures that a script patch either becomes the new active version 
 
 ## Redis Roles and Prefixes
 
+### Coordination Redis participation
+
+Automation & Scripting Service owns only two Coordination Redis projections: `automation:timer:{tenantRegionTag}` and `script-scheduler:{tenantRegionTag}:lastTickId`. Both are reset-tolerant derived timer/scheduler projections; PostgreSQL remains authoritative for durable schedules, due state, firing claims, and admission state. After reset or loss, rebuild them from PostgreSQL and the authoritative tick heartbeat, and validate `regionEpoch` before reusing scheduler progress.
+
+These projections do not grant Automation ownership of Game Session's `tick:{tenantRegionTag}:*` gameplay coordination prefixes. Automation declares due work through the Game Session enqueue contract. See [ADR 0009](../../decisions/adr-0009-coordination-redis-ownership-boundary.md) and [Redis Usage & Profiles](../../system-architecture-redis-usage-and-profiles.md) for the canonical Redis family roles, reset semantics, and contracts.
+
 - **Cache/Rate-Limit Redis usage**
   - Uses Automation-owned cache/rate-limit prefixes such as `automation:queue:{tenantInstanceTag}:*`, `automation:quota:<tenantId>:<scriptId>`, `automation:tenant-budget:<tenantId>:tier:<tier>`, `automation:test:capacity:<tenantId>:*`, `automation:test:capacity:cluster*`, and dry-run capacity keys to store script quota counters and similar best-effort aggregates in Cache/Rate-Limit Redis. Game Session remains the only owner of `tick:{tenantRegionTag}:*` gameplay coordination prefixes.
   - Treats these keys as transient operational data; PostgreSQL remains authoritative for script definitions and long-lived automation state.
