@@ -456,9 +456,9 @@ See `system-architecture-tick-failures-and-operations.md` for the full crash-rec
 
 ---
 
-## Domain Idempotency Rules (Region Epoch + TickId in PostgreSQL)
+## Domain Idempotency Rules (Timeline Context + Owner Guards)
 
-Domain services must ensure that tick-driven effects are **idempotent** with respect to the region-scoped tick timeline `(regionEpoch, tickId)`:
+Domain services use the region-scoped tick timeline `(regionEpoch, tickId)` for ordering and fencing, not as the canonical idempotency token for a logical effect:
 
 - Single-aggregate updates use a “last applied tick” pattern that is epoch-aware (for example storing and comparing `(last_region_epoch, last_tick_id)` for the aggregate).
 - Multi-aggregate operations use explicit `tick_effect_guard` storage projections that retain the namespace-complete fields (for example `(tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch, tickId, effectKey, targetAggregateType, targetAggregateId)`) and link each row to the stable root `EffectId` plus its derived typed operation/target guard identity. `playableStateScope` is separately exact-validated evidence, and `regionEpoch`/`tickId` are ordering metadata; neither replaces the namespace nor creates guard uniqueness.

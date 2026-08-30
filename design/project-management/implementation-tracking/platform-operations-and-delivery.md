@@ -10,7 +10,7 @@ The implementation record is consolidated by live capability. Runtime identity a
 
 Packet 6 P0 consequences are recorded below as implementation/proof gaps and owner links only; they do not upgrade implementation or verification state.
 
-Smoke/reset implementation status is bounded: the read-only player-flow baseline and run-owned disposable test lifecycle are implemented, while persistent/shared mutation and its proof remain unavailable. See the [canonical testing owner](../../architecture/system-architecture-testing.md#player-flow-smoke-and-reset-boundaries) for the operational boundary.
+Smoke/reset implementation status is bounded: the read-only player-flow baseline and isolated, run-owned disposable test lifecycle are implemented and are the only currently allowed mutation/reset proof boundary; persistent/shared mutation and persistent/shared reset-state operations, including their proof, remain unavailable. The run-owned proof does not authorize resetting shared or persistent state. See the [canonical testing owner](../../architecture/system-architecture-testing.md#player-flow-smoke-and-reset-boundaries) for the operational boundary.
 
 ### Script-transition operator evidence
 

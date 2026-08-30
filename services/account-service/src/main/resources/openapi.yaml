@@ -492,6 +492,14 @@ paths:
     post:
       summary: Verify email token
       operationId: verifyEmail
+      description: >-
+        Target state is a public token-verification endpoint. In the current
+        deployment the POST route is not in the public-route allowlist and
+        therefore requires bearer authentication; the allowlisted GET route
+        has no controller mapping. Do not treat this operation as publicly
+        reachable until the HTTP configuration and link handoff converge.
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:

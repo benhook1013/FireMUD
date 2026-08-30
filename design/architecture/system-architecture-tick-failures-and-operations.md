@@ -31,7 +31,7 @@ Naming convention: API, workflow, and EffectId prose uses `regionEpoch`. Snake-c
 The following sections in `system-architecture-ticks.md` contain the main failure-handling and operational rules:
 
 - **Crash Recovery and Replay** – how executors recover from failure and resume processing safely.
-- **Domain Idempotency Rules (Region Epoch + TickId in PostgreSQL)** – how `(regionEpoch, tickId)` enforce idempotent domain mutations.
+- **Domain Idempotency Rules (Timeline Context + Owner Guards)** – how `(regionEpoch, tickId)` provide ordering/fence context while owner guards enforce logical effect idempotency.
 - **Design Checklist for New Tick-Driven Commands** – review checklist for new commands to ensure they follow tick invariants.
 - **Tick Execution and Redis Integration** – failure scenarios and invariants around the canonical commit pattern.
 - **Cross-Region Command Execution and Result Relay** – constraints for cross-region retries and replay.
@@ -436,9 +436,9 @@ Retry and timer queues are protected against unbounded growth:
 
 Entity Management provides the reference example for per-aggregate tick idempotency; see [Entity Management Operations](./microservices/entity-management-service/operations.md#tick-idempotency).
 
-## Domain Idempotency Rules (Region Epoch + TickId in PostgreSQL)
+## Domain Idempotency Rules (Timeline Context + Owner Guards)
 
-Domain services must treat the **region-scoped tick timeline** `(regionEpoch, tickId)` as the canonical idempotency token for tick-driven effects.
+Domain services use the **region-scoped tick timeline** `(regionEpoch, tickId)` as ordering and fence context, not as the canonical idempotency token for tick-driven effects. The canonical participant guard identity is `(rootEffectId, typedOperation, exact target aggregate)`; the immutable request digest is bound to that identity and any owner-local partition needed for collision safety. A guard must not substitute the timeline tuple for that root/operation/aggregate identity.
 
 `tickId` is monotonic only **within a given `regionEpoch`** and may restart at `0` after a region-scoped or tenant-scoped reset that bumps `regionEpoch`. Any idempotency scheme that keys only on `tickId` (without `regionEpoch`) is therefore unsafe across resets.
 
