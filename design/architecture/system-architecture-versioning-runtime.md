@@ -293,7 +293,7 @@ Tooling in the Game Design and Logging & Admin services should surface these rel
 - World Management and Game Session may cache launch-descriptor values only as execution inputs for the current `controlPlaneRequestId`; they must not persist or reuse a descriptor as a rolling "latest launch defaults" record for later requests.
 - `GetPublishedReleaseBundle(tenantId, versionId)` is the canonical release-attestation surface for launch, cutover, and repair. **Target contract:** it must expose:
   - `commitId`
-  - `participantDigests[]`
+  - `participantDigests[] { serviceName, appliedCommitId, contentDigest, digestSchemaVersion }`; every required participant must report the schema version used to canonicalize its digest
   - `abilitySchemaDigest` from the immutable Game Logic-owned ability-schema snapshot for this release; no aggregate participant `contentDigest` substitutes for it
   - `artifactDigests[] { usageKey, immutableObjectKey, contentDigest, ... }` for every exported binary or derived artifact
   - `manifestHash`
@@ -329,7 +329,7 @@ Game Design accepts this tuple at publication only when the canonical manifest b
 Launch and cutover preflight use one fail-closed predicate for a full-version release:
 
 - `GetVersionState(tenantId, versionId)` must return `Published` or `Active`, and its `versionStateEpoch` must match the epoch frozen into the resolved launch descriptor or prepared cutover proof.
-- `GetPublishedReleaseBundle(tenantId, versionId)` must return a supported attestation for the same release identity, generation config revision, participant digests, `manifestHash`, and authoritative `artifactDigests[]` used by the launch/cutover proof.
+- `GetPublishedReleaseBundle(tenantId, versionId)` must return a supported attestation for the same release identity, generation config revision, and complete per-participant digests `{serviceName, appliedCommitId, contentDigest, digestSchemaVersion}`, together with the `manifestHash` and authoritative `artifactDigests[]` used by the launch/cutover proof. The resolved launch descriptor and prepared cutover proof preserve those participant commit/digest/schema-version tuples; missing or unsupported participant schema evidence fails closed rather than being compared as an untyped hash.
 - The release attestation must carry the dedicated Game Logic-owned `abilitySchemaDigest` and its participant `digestSchemaVersion`. Resolved launch descriptors and prepared cutover proofs must carry that same value; preflight and activation must compare it exactly with the Game Logic ability-schema evidence for the target commit. Missing, unsupported, stale, or mismatched ability-schema evidence fails closed; a participant `contentDigest` is never a substitute.
 - `GetVersionAssetArtifactState(tenantId, versionId)` must return `artifactState=PUBLISHED`, the same `manifestHash` attested by the release bundle, and exported manifest asset keys containing every `requiredManifestAssetKeys[]` entry. Current first-slice `exportedVersionNumber` or version-prefix fields may remain available as diagnostic/audit metadata, but they are not release or launch authority.
 - Preflight must verify the fetched canonical manifest bytes against `manifestHash`; for every required usage key, it must find exactly one bundle artifact digest and one manifest entry with equal `usageKey`, `immutableObjectKey`, and `contentDigest`, then hash the delivered object's actual bytes and require equality with that `contentDigest`.
