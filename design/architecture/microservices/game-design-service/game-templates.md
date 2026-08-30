@@ -18,6 +18,7 @@ creators can quickly spin up new projects without starting from scratch.
 - The launch plugin-selection presence modes remain target-only and unimplemented: a presence-capable selection wrapper/mode, fresh omission or explicit empty resolving to the same immutable empty selection, rollback omission reusing a named target, rollback explicit empty, and explicit non-empty selection are not yet represented in proto/generated clients, launch-descriptor persistence/response, the request digest, service logic, or focused proof. Launch-resolution APIs are live, but the current implementation does not yet persist, expose, or prove the complete `enabledPluginVersions[]` set for deterministic retry and rollback. The detailed target contract remains below.
 - Current script-patch resolution is not yet the target launch predicate: a full-version template/request can persist an arbitrary patch ID without proving a same-base `PUBLISHED` Game Design publication or Automation `READY` status. These are implementation gaps; the target validation and fail-before-instance-row rules remain below.
 - The target tenant-scoped `GetTemplateReferencePhase` cutover read is not implemented in the current proto or service. Current launch resolution checks only the per-template `templateReferencePhase` field (`ENFORCED`/`LEGACY`); it does not expose or consume the target durable tenant phase (`BACKFILLING`/`VALIDATED`/`ENFORCED`) required by launch and retirement tooling.
+- Normalized `game_template_*_ref` storage and its lifecycle/query authority are target-only. The current implementation persists `game_templates` and revision rows, but has no normalized reference tables, create/update derivation and atomic synchronization, one-time backfill/validation marker, or retirement/reference-query tooling; current lifecycle checks cannot rely on those rows and remain unimplemented or unproven.
 
 ## Starter Experience Profiles
 
@@ -53,8 +54,8 @@ After a successful upgrade, the exact profile baseline advances to `N`, while re
 `GameTemplateDto` includes `id`, `tenantId`, `name`, an optional `description`,
 the raw `config` JSON and a `createdAt` timestamp. The `id` is assigned by the
 database when the template is saved. The `config` field uses a structured
-schema describing world layout, starter items, default rulesets, and admin
-accounts.
+schema describing world layout, starter items, default rulesets, template
+references, and non-authoritative settings.
 
 The `config` payload does not embed authoritative copies of world, entity, or script definitions. Instead it carries:
 
@@ -70,11 +71,11 @@ Creator-facing launch-default note:
 
 Canonical schemas, identifiers, and versioned template rows remain in the owning domain services; `GameTemplateDto.config` is a configuration and wiring layer that composes these existing templates for bootstrapping new games.
 
-### Normalized Reference Storage
+### Normalized Reference Storage (Target State)
 
-Game templates participate in version retirement, auditing, and bulk migration workflows. Because `GameTemplateDto.config` is JSON, the system must not rely on ad hoc JSON parsing to enforce invariants like “do not retire a version that is still referenced” or to perform controlled rewrites of references.
+The target design includes game templates in version retirement, auditing, and bulk migration workflows. Because `GameTemplateDto.config` is JSON, the implemented target must not rely on ad hoc JSON parsing to enforce invariants like “do not retire a version that is still referenced” or to perform controlled rewrites of references.
 
-The Game Design Service therefore stores normalized reference rows alongside the JSON config, derived and validated on every create/update:
+The target Game Design implementation stores normalized reference rows alongside the JSON config, derived and validated on every create/update:
 
 - `game_template_version_ref` keyed by `(tenantId, gameTemplateId, versionId)` for the base design bundle referenced by the template.
 - `game_template_world_ref` keyed by `(tenantId, gameTemplateId, versionId, regionTemplateId/roomTemplateId/...)` for any explicit world references present in the config.
@@ -82,7 +83,7 @@ The Game Design Service therefore stores normalized reference rows alongside the
 - `game_template_script_ref` keyed by `(tenantId, gameTemplateId, versionId, scriptId/...)` for script bindings where templates need to pin or validate script identifiers.
 - `game_template_script_patch_ref` keyed by `(tenantId, gameTemplateId, baseVersionId, scriptPatchVersion)` when a template pins a default `scriptPatchVersion` for a base version.
 
-Administrative tooling and lifecycle checks (retirement eligibility, “list templates referencing version”, bulk migrations) operate on these normalized tables. The JSON config remains the user-facing payload and can be reconstructed or validated against normalized rows, but it is not the only queryable representation of dependencies.
+In the target state, administrative tooling and lifecycle checks (retirement eligibility, “list templates referencing version”, bulk migrations) operate on these normalized tables. The JSON config remains the user-facing payload and can be reconstructed or validated against normalized rows, but it is not the only queryable representation of dependencies.
 
 ### Single Base-Version Invariant
 
@@ -130,7 +131,7 @@ Normalized reference storage is only safe if it is operationally enforced:
   - Fail fast if `GetTemplateReferencePhase` is not `ENFORCED` for the target scope.
   - Defer release-attestation semantics to [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md#launch-descriptor-version-resolution-rules); locally, Game Design must reject a template launch when the resolved version has no supported attestation identity or the descriptor cannot bind to that version.
   - If the launch path depends on cross-version durable-state remaps, fail fast unless an approved `remapSetId` exists for the source/target version pair and all required owning domains attest it as usable.
-  - Game Design now persists this control-plane state explicitly and returns the frozen `remapSetId` on the resolved launch descriptor rather than requiring downstream services to infer or rediscover remap identity.
+  - The target Game Design implementation persists this control-plane state explicitly and returns the frozen `remapSetId` on the resolved launch descriptor rather than requiring downstream services to infer or rediscover remap identity.
 
 > **Note**
 
@@ -371,7 +372,7 @@ Illustrative startup sequence:
 4. World creation starts using only the resolved descriptor fields and persists instance rows under `(tenantId, gameInstanceId)` without re-reading mutable template defaults.
 5. Game Session opens admission only after World reports successful activation for that same resolved descriptor.
 
-### Interaction with Version Lifecycle
+### Interaction with Version Lifecycle (Target State)
 
 Game templates participate in the same version lifecycle as the domain templates they reference:
 
