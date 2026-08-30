@@ -168,7 +168,7 @@ This formula is a conservative first-pass input, not a complete capacity predict
   - p95/p99 write latency for the primary tick-path tables
   - retention horizon, partitioning scheme, and vacuum/GC cadence for high-churn tables
 
-Scaling decisions must not rely only on Redis unreplicated-write exposure and pod density signals. If ledger age, replay scan lag, follow-up claim latency, or backlog-table bloat is rising, treat PostgreSQL as the bottleneck and scale or redesign there before increasing tick concurrency.
+Scaling decisions must not rely only on Redis unreplicated-write exposure and pod density signals. For implemented durable paths, if ledger age, replay scan lag, or follow-up claim latency is rising, treat PostgreSQL as the bottleneck and scale or redesign there before increasing tick concurrency. Effect-reconciliation-backlog bloat is a conditional target-state signal only after a separate backlog table/API is implemented; its absence in the current deployment is not a zero-valued measurement or evidence that the backlog is healthy.
 
 Scaling plans should include this calibration so “add replicas” and “increase regions per pod” decisions are tied to measured tick and coordination cost, not only static guardrail numbers.
 

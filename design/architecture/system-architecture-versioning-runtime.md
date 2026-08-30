@@ -80,6 +80,12 @@ Game Design owns publication coordination, release descriptors, final release at
       "appliedCommitId": "c-9001",
       "contentDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
       "digestSchemaVersion": 2
+    },
+    {
+      "serviceName": "GAME_LOGIC",
+      "appliedCommitId": "c-9001",
+      "contentDigest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+      "digestSchemaVersion": 1
     }
   ],
   "artifactDigests": [
@@ -126,6 +132,12 @@ Illustrative attestation payload for a release with no derived world artifacts:
       "appliedCommitId": "c-9002",
       "contentDigest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
       "digestSchemaVersion": 3
+    },
+    {
+      "serviceName": "GAME_LOGIC",
+      "appliedCommitId": "c-9002",
+      "contentDigest": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+      "digestSchemaVersion": 1
     }
   ],
   "artifactDigests": [],
@@ -467,9 +479,11 @@ The serving operation is classified before the read:
 
 The target `CommitTenantCapacityAdmission` protobuf request declares `capacity_delta` as `optional int64`; its canonical JSON/proto-JSON spelling is `capacityDelta`, represented as a base-10 decimal string. Explicit protobuf presence is mandatory: generated `hasCapacityDelta()`/presence checks must be used, and a missing field, JSON `null`, wrapper message, or implicit scalar default is not the value zero. There is no accepted alternate field or numeric type. The signed wire type is intentional: negative values are representable for diagnostic rejection but are never valid capacity mutations. This is a target-state contract because the current Account proto does not expose this RPC.
 
-The logical range is the non-negative signed-`int64` range `0 <= capacityDelta <= 9223372036854775807`. A present zero is valid only for an entitlement-preserving non-expanding recovery or one-for-one replacement; it reserves and changes no usage. A present positive value is valid only for a capacity-creating activation/cutover and must also be no greater than the operation's net requested capacity, available Account quota, and remaining plan entitlement. Negative values, values outside the signed `int64` wire range, malformed decimal JSON spellings, and any parse or checked-arithmetic overflow are rejected before an Account commitment, reservation, usage mutation, or owner activation CAS. Account must perform checked addition and comparison for usage and quota; it must reject rather than wrap, saturate, narrow, or coerce through a floating-point type. Game Session and World Management each apply the same range, presence, canonicalization, and overflow rules before sending the RPC, and Account repeats them on receipt; neither caller may rely on the other caller's validation or on a generated getter that loses presence.
+The logical range is the non-negative signed-`int64` range `0 <= capacityDelta <= 9223372036854775807`, but presence and operation class are separate mandatory checks. An absent `capacityDelta` is always invalid; it must be rejected by Game Session and World Management before calling Account and again by Account before any commitment, reservation, usage mutation, or owner activation CAS. A present zero is valid only after the operation has been classified as eligible entitlement-preserving non-expanding recovery or one-for-one replacement and the complete Account evidence proves that classification; it reserves and changes no usage. A present positive value is valid only for a capacity-creating activation/cutover and must also be no greater than the operation's net requested capacity, available Account quota, and remaining plan entitlement. Account, Game Session, and World Management must apply these same absent/zero/positive rules, rather than relying on a generated getter, a local re-read, or the other caller's validation. Negative values, values outside the signed `int64` wire range, malformed decimal JSON spellings, and any parse or checked-arithmetic overflow are rejected before an Account commitment, reservation, usage mutation, or owner activation CAS. Account must perform checked addition and comparison for usage and quota; it must reject rather than wrap, saturate, narrow, or coerce through a floating-point type.
 
 For the capacity action-family schema, `capacityDelta` is a declared member of the fixed-order `mutation` object in `capacity-admission/v1`. The protobuf varint is not hashed directly. Account, Game Session, and World Management decode the same `int64` value and feed the ADR 0047 `mutationDigest/v1` grammar the canonical ASCII decimal payload: `0` or `[1-9][0-9]*`, with no sign, leading zero, whitespace, decimal point, exponent, or alternate numeric type. In that grammar, an absent member is exactly `segment(utf8("capacityDelta")) + segment(utf8("absent")) + ascii("0") + segment(empty)`, while a present zero is `segment(utf8("capacityDelta")) + segment(utf8("number")) + ascii("1") + segment(utf8("0"))`; present positive values use the same `number`/`1` form with their canonical decimal payload. The field remains in its declared object position in every preimage; it is never omitted, reordered, defaulted, or represented as `null`.
+
+The absent encoding exists only to produce a deterministic rejected digest vector; an absent request can never commit.
 
 The capacity vector fixture is normative proof work for Account, Game Session, and World Management. It fixes every non-`capacityDelta` field in the published `capacity-admission/v1` schema, including the complete capacity shape used for non-expanding comparison, and publishes canonical preimage bytes plus the expected lowercase SHA-256 digest for `absent`, `present(0)`, a representative valid positive value such as `17`, and the boundary `present(9223372036854775807)`. It also publishes request candidates for `9223372036854775808`, signed negatives, malformed decimal spellings, signed-`int64`/JSON overflow, changed capacity-shape fields, and checked usage/quota addition overflow, with the expected rejection before commitment and no accepted mutation digest. Every implementation in Account and both callers must consume the same vectors and produce the same accepted/rejected result; until that schema/vector corpus and focused proof exist, capacity admission remains unsupported target state. Use the shared [validation and runtime-proof workflow](../developer-workflows/validation-and-runtime-proof.md) to select the focused proof and record fixture execution results in PR/CI or implementation-tracking evidence; it supplements these owner-local requirements and does not create an execution ledger.
 

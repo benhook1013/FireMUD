@@ -37,7 +37,7 @@ content even though domain services own the runtime templates:
 - Domain services do not maintain their own commit histories; they expose only
   the current and historical versioned templates keyed by `(tenantId, versionId)`.
 
-To audit current history for a room, NPC, or item, contributors query the Game Design Service’s revision/version rows and correlate those revisions with the versioned templates stored in domain services. **Target state:** once the durable branch/commit model and read APIs exist, those surfaces will provide the canonical branch/commit audit view.
+To audit current history for a room, NPC, or item, contributors make a best-effort audit by querying the Game Design Service’s revision/version rows and correlating those revisions with the owning domain’s versioned templates and, where available, its applied-revision ledger (currently World Management’s ledger; Entity Management’s ledger remains future work). This cross-service view is not a canonical branch/commit audit because synchronized branch/commit read APIs do not exist yet. **Target state:** once the durable branch/commit model and synchronized read APIs exist, those surfaces will provide the canonical branch/commit audit view.
 
 ### Design-Time Synchronization
 
