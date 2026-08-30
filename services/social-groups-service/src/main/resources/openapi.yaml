@@ -4,11 +4,12 @@ info:
   description: API for friend lists and guild chat
   version: 1.0.0
   license:
-    name: MIT
-    url: https://opensource.org/licenses/MIT
+    name: PolyForm Noncommercial License 1.0.0
+    url: https://polyformproject.org/licenses/noncommercial/1.0.0
 servers:
   - url: https://api.firemud.com
-security: []
+security:
+  - bearerAuth: []
 components:
   securitySchemes:
     bearerAuth:
@@ -21,10 +22,13 @@ components:
       properties:
         tenantId:
           type: integer
+          format: int64
         accountId:
           type: integer
+          format: int64
         friendAccountId:
           type: integer
+          format: int64
       required:
         - tenantId
         - accountId
@@ -34,12 +38,16 @@ components:
       properties:
         id:
           type: integer
+          format: int64
         tenantId:
           type: integer
+          format: int64
         accountId:
           type: integer
+          format: int64
         friendAccountId:
           type: integer
+          format: int64
         status:
           type: string
         createdAt:
@@ -50,10 +58,12 @@ components:
       properties:
         friendAccountId:
           type: integer
+          format: int64
         online:
           type: boolean
         gameInstanceId:
           type: integer
+          format: int64
         playableStateScope:
           type: string
           enum: [SHARED, ISOLATED, UNSPECIFIED_SCOPE]
@@ -67,8 +77,10 @@ components:
           type: string
         pointerVersion:
           type: integer
+          format: int64
         characterId:
           type: integer
+          format: int64
         characterName:
           type: string
         visibilityPolicy:
@@ -122,8 +134,10 @@ components:
       properties:
         tenantId:
           type: integer
+          format: int64
         accountId:
           type: integer
+          format: int64
         visibilityPolicy:
           type: string
           enum: [PUBLIC, FRIENDS_ONLY, PRIVATE, HIDDEN_STAFF]
@@ -138,12 +152,16 @@ components:
           type: integer
         friendLinkId:
           type: integer
+          format: int64
         tenantId:
           type: integer
+          format: int64
         accountId:
           type: integer
+          format: int64
         friendAccountId:
           type: integer
+          format: int64
         status:
           type: string
         createdAt:
@@ -211,10 +229,13 @@ components:
       properties:
         tenantId:
           type: integer
+          format: int64
         senderAccountId:
           type: integer
+          format: int64
         recipientAccountId:
           type: integer
+          format: int64
         subject:
           type: string
         content:
@@ -230,12 +251,16 @@ components:
       properties:
         id:
           type: integer
+          format: int64
         tenantId:
           type: integer
+          format: int64
         senderAccountId:
           type: integer
+          format: int64
         recipientAccountId:
           type: integer
+          format: int64
         subject:
           type: string
         content:
@@ -251,8 +276,10 @@ components:
       properties:
         tenantId:
           type: integer
+          format: int64
         senderAccountId:
           type: integer
+          format: int64
         type:
           type: string
           enum: [SAY, WHISPER, TELL, GUILD, CITY, ACCOUNT]
@@ -260,12 +287,24 @@ components:
           type: string
         recipientAccountId:
           type: integer
+          format: int64
         guildId:
           type: integer
+          format: int64
         cityId:
           type: integer
+          format: int64
         content:
           type: string
+        effectId:
+          type: string
+          maxLength: 64
+          nullable: true
+          description: >-
+            Optional trimmed replay identity. Blank or absent values are stored
+            as null and bypass the current chat replay lookup; a nonblank value
+            is unique within the tenant and duplicate delivery returns the
+            stored message.
       required:
         - tenantId
         - senderAccountId
@@ -276,10 +315,13 @@ components:
       properties:
         id:
           type: integer
+          format: int64
         tenantId:
           type: integer
+          format: int64
         senderAccountId:
           type: integer
+          format: int64
         content:
           type: string
         timestamp:
@@ -287,19 +329,31 @@ components:
           format: date-time
         guildId:
           type: integer
+          format: int64
         cityId:
           type: integer
+          format: int64
         recipientAccountId:
           type: integer
+          format: int64
         type:
           type: string
+        effectId:
+          type: string
+          maxLength: 64
+          nullable: true
+          description: >-
+            Normalized nonblank replay identity when supplied; null when the
+            request omitted or supplied only blank text.
     AddGuildStorageItemRequest:
       type: object
       properties:
         tenantId:
           type: integer
+          format: int64
         guildId:
           type: integer
+          format: int64
         itemName:
           type: string
         quantity:
@@ -313,10 +367,13 @@ components:
       properties:
         id:
           type: integer
+          format: int64
         tenantId:
           type: integer
+          format: int64
         guildId:
           type: integer
+          format: int64
         itemName:
           type: string
         quantity:
@@ -326,10 +383,13 @@ components:
       properties:
         tenantId:
           type: integer
+          format: int64
         guildId:
           type: integer
+          format: int64
         allyGuildId:
           type: integer
+          format: int64
       required:
         - tenantId
         - guildId
@@ -339,12 +399,16 @@ components:
       properties:
         id:
           type: integer
+          format: int64
         tenantId:
           type: integer
+          format: int64
         guildId:
           type: integer
+          format: int64
         allyGuildId:
           type: integer
+          format: int64
         createdAt:
           type: string
           format: date-time
@@ -353,8 +417,10 @@ components:
       properties:
         tenantId:
           type: integer
+          format: int64
         ownerAccountId:
           type: integer
+          format: int64
         name:
           type: string
       required:
@@ -366,12 +432,15 @@ components:
       properties:
         id:
           type: integer
+          format: int64
         tenantId:
           type: integer
+          format: int64
         name:
           type: string
         ownerAccountId:
           type: integer
+          format: int64
         createdAt:
           type: string
           format: date-time
@@ -380,8 +449,10 @@ components:
       properties:
         tenantId:
           type: integer
+          format: int64
         accountId:
           type: integer
+          format: int64
         channelId:
           type: string
       required:
@@ -401,10 +472,13 @@ components:
       properties:
         tenantId:
           type: integer
+          format: int64
         guildId:
           type: integer
+          format: int64
         accountId:
           type: integer
+          format: int64
         role:
           type: string
       required:
@@ -417,10 +491,13 @@ components:
       properties:
         tenantId:
           type: integer
+          format: int64
         guildId:
           type: integer
+          format: int64
         accountId:
           type: integer
+          format: int64
         role:
           type: string
       required:
@@ -433,12 +510,16 @@ components:
       properties:
         id:
           type: integer
+          format: int64
         tenantId:
           type: integer
+          format: int64
         guildId:
           type: integer
+          format: int64
         accountId:
           type: integer
+          format: int64
         role:
           type: string
 paths:
@@ -446,6 +527,7 @@ paths:
     get:
       summary: Health check endpoint
       operationId: ping
+      security: []
       responses:
         '200':
           description: Pong response
@@ -469,11 +551,13 @@ paths:
           required: true
           schema:
             type: integer
+            format: int64
         - in: query
           name: accountId
           required: true
           schema:
             type: integer
+            format: int64
         - in: query
           name: filter
           required: false
@@ -537,16 +621,19 @@ paths:
           required: true
           schema:
             type: integer
+            format: int64
         - in: query
           name: tenantId
           required: true
           schema:
             type: integer
+            format: int64
         - in: query
           name: accountId
           required: true
           schema:
             type: integer
+            format: int64
       responses:
         '200':
           description: Friend roster entry
@@ -568,16 +655,19 @@ paths:
           required: true
           schema:
             type: integer
+            format: int64
         - in: query
           name: tenantId
           required: true
           schema:
             type: integer
+            format: int64
         - in: query
           name: accountId
           required: true
           schema:
             type: integer
+            format: int64
       responses:
         '200':
           description: Friend link removed
@@ -598,11 +688,13 @@ paths:
           required: true
           schema:
             type: integer
+            format: int64
         - in: query
           name: accountId
           required: true
           schema:
             type: integer
+            format: int64
       responses:
         '200':
           description: Friend roster entry
@@ -629,11 +721,13 @@ paths:
           required: true
           schema:
             type: integer
+            format: int64
         - in: query
           name: accountId
           required: true
           schema:
             type: integer
+            format: int64
       responses:
         '200':
           description: Removed friend roster entry
@@ -656,11 +750,13 @@ paths:
           required: true
           schema:
             type: integer
+            format: int64
         - in: query
           name: accountId
           required: true
           schema:
             type: integer
+            format: int64
       responses:
         '200':
           description: Friend roster summary
@@ -681,11 +777,13 @@ paths:
           required: true
           schema:
             type: integer
+            format: int64
         - in: query
           name: accountId
           required: true
           schema:
             type: integer
+            format: int64
         - in: query
           name: filter
           required: false
@@ -728,11 +826,13 @@ paths:
           required: true
           schema:
             type: integer
+            format: int64
         - in: query
           name: accountId
           required: true
           schema:
             type: integer
+            format: int64
       responses:
         '200':
           description: Friend presence visibility policy
