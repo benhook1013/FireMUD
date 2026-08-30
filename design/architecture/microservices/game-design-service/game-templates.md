@@ -193,7 +193,7 @@ Ownership and usage rules:
 
 ### Launch Orchestration Ownership
 
-The following launch-orchestration sequence is target-state behavior, not a current implementation contract. `GetTemplateReferencePhase` is absent from the current proto/service; current launch resolution uses each template's `templateReferencePhase` field instead, as recorded in [Implementation Status](#implementation-status).
+The following launch-orchestration sequence is target-state behavior, not a current implementation contract. The target preflight reads tenant-scoped `GetTemplateReferencePhase` and fails with `TEMPLATE_REFERENCE_PHASE_NOT_ENFORCED` unless that phase is `ENFORCED`. That RPC is absent from the current proto/service, so the narrower current preflight checks only each template's `templateReferencePhase` field (`ENFORCED` or legacy `LEGACY`); it does not enforce the target tenant phase or provide the target failure guarantee. This distinction is recorded in [Implementation Status](#implementation-status).
 
 The first implementation slice must use one control-plane launch orchestrator. The canonical owner is the Game Session instance-creation workflow consuming Game Design control-plane APIs.
 
