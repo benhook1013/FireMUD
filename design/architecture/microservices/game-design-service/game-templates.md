@@ -11,7 +11,7 @@ creators can quickly spin up new projects without starting from scratch.
 - **Starter Items and NPCs** – basic entity definitions for a new game.
 - **Default Rulesets** – gameplay rules and runtime flags stored with the
   template.
-- **Admin Accounts** – initial administrators configured at template creation.
+- **Administrator provisioning** – not stored in templates. Any future bootstrap flow must use Account-owned account, membership, and grant operations; Game Design does not create administrator authority.
 
 ## Implementation Status
 

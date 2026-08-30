@@ -2,7 +2,7 @@
 
 ## Overview
 
-Offers tools for building worlds, items, actions, and events that make up each game. Used by creators to design content without touching the underlying code. It maintains version metadata, configuration manifests, and templates so new game instances can be created with predefined rules. Default administrator setup is available.
+Offers tools for building worlds, items, actions, and events that make up each game. Used by creators to design content without touching the underlying code. It maintains version metadata, configuration manifests, and templates so new game instances can be created with predefined rules. Template creation does not provision administrator accounts; any future bootstrap flow must use Account-owned account, membership, and grant operations.
 
 This service is used only at design time. Runtime clients never request logos,
 favicons, or themes from it. **Target state:** published assets are served from
@@ -126,7 +126,7 @@ Changed-term stale acceptance, continuity, reads/downloads, and narrowly bounded
 - Scripting and event workflow creation.
 - Visual editor for building scripts in the same component-based DSL used by the
   Automation & Scripting Service.
-- [Game templates](game-templates.md) with predefined rulesets. Admin account configuration is available.
+- [Game templates](game-templates.md) with predefined rulesets. Administrator provisioning is not a Game Design template capability; any future bootstrap flow must use Account-owned account, membership, and grant operations.
 - Patch note management for published games.
 - Supports script-only patch versions that reference a `baseVersionId` and
   generate a new `scriptPatchVersion` without requiring a full publish.
@@ -189,7 +189,7 @@ The Game Design Service must also persist an immutable `published_release_bundle
 - **Internal:**
   - World Management Service for map data.
   - Automation & Scripting Service for scripts.
-  - Logging & Admin Service records publishing audits.
+  - Logging & Admin Service may receive a non-authoritative operator-audit projection for actions entering its ingress; Game Design retains the authoritative publishing and domain-audit records.
 - **External:** PostgreSQL for design metadata and object storage for asset bytes.
 
 > See [**Gateway Architecture**](../../system-architecture-gateway.md),

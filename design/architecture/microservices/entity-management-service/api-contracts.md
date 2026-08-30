@@ -28,6 +28,7 @@ The current response includes:
 ## REST
 
 - `GET /ping` – basic health check returning `"pong"`.
+- `POST /crafting/recipes` and `GET /crafting/recipes/{id}` – **current legacy routes** documented in the implementation status above. They are not a supported tenant-scoped design-time boundary: until the stated SessionContext tenant binding, tenant-qualified lookup/update, and same-tenant item-reference checks are implemented and proved, callers must treat them as unavailable/nonconformant.
 
 ```bash
 curl http://localhost:8080/ping

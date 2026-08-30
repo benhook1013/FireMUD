@@ -47,8 +47,8 @@ Expected response:
 
 - `GET /ping` – basic health check returning `"pong"`.
 - `GET /regions?tenantId=...` – list regions for a tenant.
-- `POST /generation/runtime-defaults` – create or update runtime-only generation defaults for a tenant.
-- `GET /generation/runtime-defaults?tenantId=...` – list runtime-only generation defaults for a tenant.
+- `POST /generation/rules` and `GET /generation/rules?tenantId=...` – **current legacy routes**. These routes are not the supported design-time boundary: the POST path accepts only tenant access, defaults `versionId` to `1`, and does not enforce Game Design Draft/version authority. They must be removed or hard-fail closed before procedural-generation readiness is claimed.
+- `POST /generation/runtime-defaults` and `GET /generation/runtime-defaults?tenantId=...` – **target-only, not implemented**. These operational WMS-owned routes must remain unavailable until their authenticated tenant binding, request identity/replay, durable persistence, and failure semantics are defined and proved.
 
 The service exposes an OpenAPI specification under `/v3/api-docs` with a Swagger UI at `/swagger-ui.html` when running locally.
 
