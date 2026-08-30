@@ -21,7 +21,7 @@ Coordination Redis ownership is explicit and narrow:
 - Game Session Service owns gameplay coordination keyspace and schema (for example `tick:*`, `timer:*`, `retry:*`, `session:game:*`, and lease-related prefixes).
 - Account Service owns authentication allowlist/session-auth prefixes (`session:auth:*`) and their lifecycle semantics.
 - Automation & Scripting Service owns automation coordination and cache families with an explicit split:
-  - Coordination Redis: active `automation:timer:*` and `script-scheduler:*` keyspaces for automation scheduling/execution. The former `automation:tick:*` staging path is retired, not live, and is not an active owned prefix.
+  - Coordination Redis: Automation & Scripting owns the active `automation:timer:*` and `script-scheduler:*` keyspaces for scheduling/execution. `automation:timer:*` is a reset-tolerant region timer index rebuilt from durable schedules and trigger-instance rows; `script-scheduler:*` is a reset-tolerant heartbeat-discovery checkpoint rebuilt from the next heartbeat. Durable schedules and trigger-instance de-duplication remain PostgreSQL authority. The former `automation:tick:*` staging path is retired, not live, and is not an active owned prefix.
   - Cache/Rate-Limit Redis: `automation:queue:*`, `automation:quota:*`, `automation:tenant-budget:*`, and `automation:test:capacity:*` best-effort buffers/counters.
 - Non-owner services may participate only through approved shared helpers and documented prefixes/contracts.
 
