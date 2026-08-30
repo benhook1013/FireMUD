@@ -18,6 +18,10 @@ The friend-presence slice currently implements non-pageable friend-roster and pr
 
 The current chat writer paths remain internal/non-player-safe: the Gateway `/api/social/chat` edge route is removed/unavailable, while service-local `/chat` and gRPC `SendMessage` still use the request-body `senderAccountId` with the Social access guard. The synchronous `EvaluateModerationPolicy` read at `CHAT_SEND` remains the current Logging & Admin hot-path compatibility seam and is consumed only after a cache/replay miss. Replay storage and lookup remain tenant/effect-only and occur before that policy check, with no authenticated-caller or full request-digest binding. The duplicate-effect catch also queries after a unique violation in the same outer transaction, so PostgreSQL transaction-abort/rollback-only behavior is not a reliable replay result; conflict-safe insert or isolated transaction handling and real concurrent proof remain required. Owner-local restriction state, essential notices, independent stacking, expiry/reordering, appeal handling, and the target gate are not yet implemented or proved; these writers therefore remain nonconformant to the target contract above.
 
+Guild membership is account-only in the current implementation: the live `guild_members` schema, DTOs, and controllers persist and authorize `accountId` and have no character subject or declared subject-type field. The `ACCOUNT`/`CHARACTER` choice below is target behavior and remains unimplemented for `CHARACTER`; the current account route must not be read as proof of the richer target model.
+
+The current `/guilds/storage` route is a legacy, nonconformant implementation: it writes Social-owned `guild_storage_items` rows containing `itemName` and `quantity`. The target cutover retires or migrates those direct value writes to Entity-owned container/item operations, leaving Social with ACL and typed owner/escrow references only.
+
 ### Mail request identity
 
 The player-facing `/mail` route requires `senderAccountId` to match authenticated account context before Social authorization or service dispatch. Tenant roles cannot use the edge route to impersonate another sender; operator/system mail requires a separate owner-authorized contract.
@@ -31,7 +35,7 @@ The player-facing `/mail` route requires `senderAccountId` to match authenticate
 | `GET` | `/friends/presence` | List bounded cross-game friend presence for one account |
 | `POST` | `/mail` | Send Social-owned account or gameplay-adapted mail; durable history/acknowledgement follows the declared mail type contract |
 | `POST` | `/guilds` | Create a guild |
-| `POST` | `/guilds/storage` | Authorize a guild ACL operation against an Entity-owned container; Social does not mint or persist item/value rows |
+| `POST` | `/guilds/storage` | Current legacy/nonconformant route writes Social `guild_storage_items` item/value rows; target cutover uses Entity-owned container/item operations and leaves Social with ACL/reference state |
 | `POST` | `/guilds/alliances` | Create a guild alliance |
 | `POST` | `/guilds/members` | Add a guild member |
 | `POST` | `/guilds/members/role` | Update a guild member's role |
@@ -51,7 +55,7 @@ Current internal/non-player-safe chat request (the Gateway `/api/social/chat` ed
 curl -X POST http://localhost:8080/chat \
   -H 'Authorization: Bearer <access-token>' \
   -H 'Content-Type: application/json' \
-  -d '{"tenantId":"tenant-abc","senderAccountId":100,"content":"hello"}'
+  -d '{"tenantId":7,"senderAccountId":100,"content":"hello"}'
 ```
 
 Example voice-token request:
@@ -75,7 +79,7 @@ curl -X POST http://localhost:8080/voice/token \
 ### Relationship, Group, and Value Authority
 
 - Social & Groups owns friend/block relationships, guild/group definitions, membership subject type, membership and role policy, alliances, social audience resolution, and message/mail envelopes. An account-global relationship is a genuinely tenant-free account pair with an explicit request/accept/reject/remove lifecycle; a tenant-local relationship is a separate tenant-qualified record. A global relationship is never copied into a tenant using a synthetic `tenantId`.
-- Every guild/group declares exactly one membership subject type: `ACCOUNT` identified by `accountId`, or `CHARACTER` identified by `{tenantId, playableStateNamespaceId, characterId}`. Membership, uniqueness, roles, ownership transfer, audience resolution, and ACL evaluation use that type consistently; `gameInstanceId` is not durable membership identity.
+- **Target state:** Every guild/group declares exactly one membership subject type: `ACCOUNT` identified by `accountId`, or `CHARACTER` identified by `{tenantId, playableStateNamespaceId, characterId}`. Membership, uniqueness, roles, ownership transfer, audience resolution, and ACL evaluation use that type consistently; `gameInstanceId` is not durable membership identity. The current implementation is account-only as noted in [Implementation Status](#implementation-status).
 - Account owns account identity, status, and profile-visibility policy; Game Session owns raw presence and connected gameplay transports. Social consumes bounded reads from those owners to produce social projections and does not rewrite their facts or treat a cached projection as authority.
 - Entity Management owns guild containers, items, inventory containment, currency, and mail attachments. Social may authorize a guild ACL and retain a typed Entity-container binding, but it must not persist independent `itemName + quantity`, currency, or attachment value. Attachment send/claim/return/expiry/deletion uses owner-controlled transfer or escrow with stable references and idempotent retries.
 - Ordinary account or social mail enters Social directly. A game-specific mail type may enter Game Logic for explicit gameplay semantics, then returns an authorized result to Social and value owners; tenant-authored gameplay rules cannot inspect ordinary private mail. Active [ADR 0148](../../decisions/adr-0148-social-relationship-authority-and-entity-owned-value.md) records this boundary, mapped from reviewed archive record `archive-ADR-0135`.

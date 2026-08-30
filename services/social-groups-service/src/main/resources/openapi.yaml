@@ -210,7 +210,7 @@ components:
       type: object
       properties:
         tenantId:
-          type: string
+          type: integer
         senderAccountId:
           type: integer
         recipientAccountId:
@@ -231,7 +231,7 @@ components:
         id:
           type: integer
         tenantId:
-          type: string
+          type: integer
         senderAccountId:
           type: integer
         recipientAccountId:
@@ -250,7 +250,7 @@ components:
       type: object
       properties:
         tenantId:
-          type: string
+          type: integer
         senderAccountId:
           type: integer
         type:
@@ -277,7 +277,7 @@ components:
         id:
           type: integer
         tenantId:
-          type: string
+          type: integer
         senderAccountId:
           type: integer
         content:
@@ -297,7 +297,7 @@ components:
       type: object
       properties:
         tenantId:
-          type: string
+          type: integer
         guildId:
           type: integer
         itemName:
@@ -314,7 +314,7 @@ components:
         id:
           type: integer
         tenantId:
-          type: string
+          type: integer
         guildId:
           type: integer
         itemName:
@@ -325,7 +325,7 @@ components:
       type: object
       properties:
         tenantId:
-          type: string
+          type: integer
         guildId:
           type: integer
         allyGuildId:
@@ -340,7 +340,7 @@ components:
         id:
           type: integer
         tenantId:
-          type: string
+          type: integer
         guildId:
           type: integer
         allyGuildId:
@@ -352,7 +352,7 @@ components:
       type: object
       properties:
         tenantId:
-          type: string
+          type: integer
         ownerAccountId:
           type: integer
         name:
@@ -367,7 +367,7 @@ components:
         id:
           type: integer
         tenantId:
-          type: string
+          type: integer
         name:
           type: string
         ownerAccountId:
@@ -379,7 +379,7 @@ components:
       type: object
       properties:
         tenantId:
-          type: string
+          type: integer
         accountId:
           type: integer
         channelId:
@@ -400,7 +400,7 @@ components:
       type: object
       properties:
         tenantId:
-          type: string
+          type: integer
         guildId:
           type: integer
         accountId:
@@ -416,7 +416,7 @@ components:
       type: object
       properties:
         tenantId:
-          type: string
+          type: integer
         guildId:
           type: integer
         accountId:
@@ -434,7 +434,7 @@ components:
         id:
           type: integer
         tenantId:
-          type: string
+          type: integer
         guildId:
           type: integer
         accountId:
@@ -946,8 +946,15 @@ paths:
           description: Invalid request
   /voice/token:
     post:
-      summary: Issue voice chat token
+      summary: Issue temporary voice-integration token (media delivery unavailable/unproved)
       operationId: createVoiceToken
+      description: >-
+        This endpoint is temporary voice-integration scaffolding. The service
+        currently issues a token after bearer-authenticated account access
+        validation, but the repository does not implement or prove a WebRTC or
+        media gateway, end-to-end voice delivery, or voice-activity moderation.
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
