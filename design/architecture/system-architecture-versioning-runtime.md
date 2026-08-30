@@ -65,6 +65,7 @@ Game Design owns publication coordination, release descriptors, final release at
   "tenantId": "11111111-1111-4111-8111-111111111111",
   "versionId": 42,
   "commitId": "c-9001",
+  "abilitySchemaDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "publishWorkflowId": "pub-42",
   "publishedAt": "2026-03-13T10:00:00Z",
   "participantDigests": [
@@ -116,6 +117,7 @@ Illustrative attestation payload for a release with no derived world artifacts:
   "tenantId": "11111111-1111-4111-8111-111111111111",
   "versionId": 43,
   "commitId": "c-9002",
+  "abilitySchemaDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "publishWorkflowId": "pub-43",
   "publishedAt": "2026-03-13T11:00:00Z",
   "participantDigests": [
