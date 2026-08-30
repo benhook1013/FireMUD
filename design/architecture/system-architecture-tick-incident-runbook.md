@@ -51,7 +51,7 @@ Normal incident escalation groups by `<tenantId, gameInstanceId, playableStateNa
 - Use `tick_execute` / `tick_apply_effect` traces only when the environment advertises and proves the named workflow-tracing capability. The approximately 1% value is only a calibration seed for high-volume entry paths, not a universal sampling rule or correctness boundary; use that seed only when the named capability is advertised and proven. Otherwise do not use tracing or the calibration seed; no explicit disable action is required.
 - Apply temporary service-scoped sampling escalation only when that control is advertised and proved, with a positive TTL/lease, durable rollback/reconciliation that survives operator loss, safe policy reload/rollback, the exact affected service/workflow scope, incident identity, start time, volume budget, automatic expiry, recorded completion, and verified reversion. Remove the elevated policy automatically at the declared deadline. If removal, reload, or rollback fails, the expired elevated configuration is not terminal “last valid” state: continue durable reconciliation, use an emergency disable-to-baseline path when available (with safe reload/rollback and verification), and keep completion pending until measured baseline sampling is restored and proven.
 - Use collector tail-sampling by the exact `tenantId`/`gameInstanceId`/`playableStateNamespaceId`/`playableStateScope`/`regionId`/`regionEpoch` tuple only when the environment advertises and proves scoped escalation; require a positive TTL/lease, durable rollback/reconciliation that survives operator loss, safe policy reload/rollback, and record the exact scope, incident identity, start time, volume budget, automatic expiry, completion, and verified reversion. Remove the policy automatically at the declared deadline. If removal, reload, or rollback fails, the expired elevated policy is not terminal “last valid” state: continue durable reconciliation, use an emergency disable-to-baseline path when available (with safe reload/rollback and verification), and keep completion pending until measured baseline sampling is restored and proven.
-- If the relevant capability is absent or traces remain unavailable, continue with metrics and logs and proceed with region/tenant reset decisions using authoritative runtime-health evidence plus runbook thresholds.
+- If the relevant capability is absent or traces remain unavailable, continue with metrics and logs. In target deployments, use authoritative runtime-health evidence plus runbook thresholds for the target-only region/tenant reset decision; in current deployments, thresholds are diagnostic only and do not authorize a reset. Preserve evidence, keep the affected scope fenced or stopped, use read-only inspection, and escalate through the fail-closed [Current Operator Fallback](./system-architecture-redis-reset-and-recovery.md#current-operator-fallback).
 - Missing sampled traces are not evidence that a tick/effect did not execute.
 
 ## Stalled Tick Region
@@ -71,23 +71,29 @@ Normal incident escalation groups by `<tenantId, gameInstanceId, playableStateNa
 ### Decide (Stalled tick region)
 
 - If the stall is brief and authoritative runtime-health evidence shows recovery to `RUNNING` (with queues draining and class-level execution-time ratios returning to healthy ranges), continue to monitor without intervention.
-- If the authoritative runtime-health/control-plane record reports the exact region as `STALLED` or `DEGRADED` long enough to require action, use the class-level tick-health paging conditions as supporting detection/escalation evidence and plan a **region-scoped** coordination reset for the affected `<tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch>` as described in `system-architecture-redis-reset-and-recovery.md`.
+- **Target state only, once implemented and proven:** If the authoritative runtime-health/control-plane record reports the exact region as `STALLED` or `DEGRADED` long enough to require action, use the class-level tick-health paging conditions as supporting detection/escalation evidence and plan a **region-scoped** coordination reset for the affected `<tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch>` as described in `system-architecture-redis-reset-and-recovery.md`.
+   - **Current deployments:** These thresholds classify the incident and escalation severity only; they do not authorize a reset. Use read-only inspection, preserve AOF and incident evidence, keep the affected scope fenced or stopped, and escalate through the fail-closed [Current Operator Fallback](./system-architecture-redis-reset-and-recovery.md#current-operator-fallback).
   - In shared rulesets, sustained `tick_status{scope_class,status="STALLED"} == 1`, a prolonged `DEGRADED` rollup, or continued queue/ratio pressure starts exact-scope enumeration and authoritative status lookup; none of these class-level signals alone identifies a region, sets its status, or authorizes intervention.
   - Treat the control-plane/runtime-health status and its forward-progress evidence as the intervention threshold. The current live authority is `GetRuntimeOwnershipStatus` with `ObserveRuntimeTickProgress`; target state is `RegionStatus` through `GetRegionTickStatus`.
-- Only escalate to a **tenant-scoped** or **cluster-wide** reset if multiple regions for the same `<tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope>` group show similar symptoms or if Redis incident runbooks indicate broader coordination corruption, and only after enumerating every affected game instance, namespace/scope pair, and region and passing the explicit blast-radius approval/gate required above.
+  - Treat `tick_status{scope_class,status="STALLED"} == 1` sustained through the environment’s alert hold time as an intervention threshold by itself, and treat sustained `DEGRADED` plus continued over-threshold execution-time ratios or queue growth as sufficient target-state evidence to intervene before the region flips fully to `STALLED`.
+- **Target state only, once implemented and proven:** Only escalate to a **tenant-scoped** or **cluster-wide** reset if multiple regions for the same `<tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope>` group show similar symptoms or if Redis incident runbooks indicate broader coordination corruption, and only after enumerating every affected game instance, namespace/scope pair, and region and passing the explicit blast-radius approval/gate required above.
+- **Current deployments:** A broader tenant/cluster blast-radius determination is evidence and escalation only; it does not authorize a reset or broader pause. Enumerate the affected scope from authoritative mapping evidence, preserve evidence, keep affected scopes fenced, and use the fail-closed [Current Operator Fallback](./system-architecture-redis-reset-and-recovery.md#current-operator-fallback).
 
 ### Act (Stalled tick region)
 
 1. **Quiesce tick work for the region**
-   - Pause tick scheduling for the affected `<tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch>` using the Game Session controls described in the tick architecture and Redis reset docs; missing or mismatched namespace/scope/epoch evidence fails closed.
-   - Ensure no new executor instances are attempting to acquire the region lease while you inspect metrics.
+   - **Target state only, once implemented and proven:** Pause tick scheduling for the affected `<tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch>` through the canonical region-scoped control and coordination authority; missing or mismatched namespace/scope/epoch evidence fails closed.
+   - **Current deployments:** If quiescing is required, use only the shipped `PauseTicksForScope` at its current `{tenantId, gameInstanceId}` boundary; it is an instance-scoped pause, not a region-scoped pause. Do not infer or substitute a region, tenant, or cluster pause; any broader target action requires the documented authoritative mapping, coordination evidence, and blast-radius approval/gate.
+   - **Target state only, once implemented and proven:** Ensure no new executor instances are attempting to acquire the region lease while you inspect metrics.
+   - **Current deployments:** Confirm any instance-scoped pause through `GetRuntimeOwnershipStatus` before inspection, and keep affected coordination writers fenced or stopped.
 2. **Inspect metrics and optional workflow traces**
    - Use the Tick Health dashboard to confirm:
      - The authoritative runtime-health/control-plane record identifies the exact region as stalled or degraded.
      - `tick_status` rollups, `tick_execution_time_ms_*` ratios, and queue depths support the diagnosis.
    - When the Trace Preconditions are satisfied, use Jaeger to inspect `tick_execute` spans for this region to verify whether the stall is due to downstream services, coordination, or domain logic. Otherwise, use the correlated metrics and Game Session logs.
 3. **Apply a region-scoped coordination reset**
-   - Follow the **Per-region reset** flow in `system-architecture-redis-reset-and-recovery.md`, scoping the Job to:
+   - **Current deployments:** Do not execute this reset or mutate any listed prefix/raw coordination key. Preserve AOF, operation records, and incident evidence; keep the affected scope fenced or stopped; use only the shipped pause/status boundary and read-only inspection; escalate through the fail-closed [Current Operator Fallback](./system-architecture-redis-reset-and-recovery.md#current-operator-fallback).
+   - **Target state only, once implemented and proven:** Follow the **Per-region reset** flow in `system-architecture-redis-reset-and-recovery.md`, scoping the Job to:
      - `tick:{tenantRegionTag}:meta`
      - `tick:{tenantRegionTag}:pending`
      - `tick:{tenantRegionTag}:queue:<entityId>`
@@ -96,17 +102,17 @@ Normal incident escalation groups by `<tenantId, gameInstanceId, playableStateNa
      - `timer:{tenantRegionTag}`
      - `retry:{tenantRegionTag}`
      - `tick-executor-lease:{tenantRegionTag}`
-     - **Target state, once implemented:** after Game Session cleanup, invoke an Automation & Scripting-scoped cleanup/rebuild for `automation:timer:{tenantRegionTag}` and `script-scheduler:{tenantRegionTag}:lastTickId`; Automation & Scripting owns those prefixes and rebuilds them from durable schedules, trigger-instance rows, and the active status/progress adapter. These are currently unimplemented target projections with no current reset operation, so the current operator fallback must not attempt this step.
+     - **Target state only, once implemented and proven:** after Game Session cleanup, invoke an Automation & Scripting-scoped cleanup/rebuild for `automation:timer:{tenantRegionTag}` and `script-scheduler:{tenantRegionTag}:lastTickId`; Automation & Scripting will own those prefixes and rebuild them from durable schedules, trigger-instance rows, and the active status/progress adapter. These target projections are not implemented in the current runtime, so current deployments must not attempt this cleanup/rebuild; keep the affected scope fenced and use the fail-closed [Current Operator Fallback](./system-architecture-redis-reset-and-recovery.md#current-operator-fallback) instead.
      - `tick-events-lease:{tenantRegionTag}`, `tick-events:{tenantRegionTag}`, and all per-consumer `tick-events-offset:{tenantRegionTag}:<consumerId>` keys as reset-tolerant observer hints; consumers reacquire leases and re-establish baselines from the active status/progress adapter and durable domain state.
-   - Do not delete domain data or non-coordination prefixes.
+   - **Target state only, once implemented and proven:** Do not delete domain data or non-coordination prefixes.
 4. **Resume ticks and verify recovery**
-   - Resume tick scheduling for the region only after Game Session coordination cleanup and, **once the target Automation projections exist**, the Automation & Scripting cleanup/rebuild have completed, followed by the canonical post-reset smoke gate. The current operator fallback has no executable Automation cleanup/rebuild and must not claim this target gate is complete.
+   - **Target state only, once implemented and proven:** Resume tick scheduling for the region only after Game Session coordination cleanup and, **once the target Automation projections exist**, the Automation & Scripting cleanup/rebuild have completed, followed by the canonical post-reset smoke gate and all applicable recovery release gates. The current operator fallback has no executable Automation cleanup/rebuild and must not claim this target gate is complete.
    - Confirm via dashboards that:
      - The authoritative runtime-health/control-plane record reports the exact region as `RUNNING`.
      - `tick_status{scope_class,status="RUNNING"}` and `tick_execution_time_ms_*` ratios fall back into healthy class-level envelopes.
      - Command and retry queue depths stabilize.
-
    - Review `tick_effects_pending_total{scope_class}` for the approved bounded scope bucket to ensure the ledger is draining and not accumulating new stuck rows.
+   - **Current deployments:** Do not resume or reopen the affected scope after this reset path. Use the fail-closed [Current Operator Fallback](./system-architecture-redis-reset-and-recovery.md#current-operator-fallback): keep the scope fenced or stopped, use only the shipped pause/status surface and read-only inspection, preserve evidence, and escalate.
 
 ## Tick Scheduler Pressure
 
@@ -221,7 +227,7 @@ Normal incident escalation groups by `<tenantId, gameInstanceId, playableStateNa
 - If lag persists:
   - Treat as a coordination cleanup incident first (not a domain correctness incident) unless ledger/backlog signals also indicate stuck effects.
   - Prefer region-scoped remediation before tenant- or cluster-scoped actions.
-- If cleanup lag is coupled with growing ledger backlog (`tick_effects_pending_total{scope_class}`) and stale `SCHEDULED` age, run replay-controller and ledger remediation flow in parallel.
+- **Target state only, once implemented and proven:** If cleanup lag is coupled with growing ledger backlog (`tick_effects_pending_total{scope_class}`) and stale `SCHEDULED` age, the recovery controller may run replay-controller and ledger remediation flows in parallel. Current operators must use the fail-closed [Current Operator Fallback](./system-architecture-redis-reset-and-recovery.md#current-operator-fallback) instead.
 
 ### Act (durable commit/coordination cleanup divergence)
 
@@ -232,9 +238,10 @@ Normal incident escalation groups by `<tenantId, gameInstanceId, playableStateNa
    - Check Game Session logs for cleanup-token mismatches, Redis write failures, or retry exhaustion in cleanup phases. When the Trace Preconditions are satisfied, correlate those findings with workflow traces.
    - Validate Redis health (latency, memory pressure, and unreplicated-write exposure) using Redis coordination dashboards.
 3. **Apply scoped remediation**
-   - For isolated regions, pause and resume tick scheduling to force a clean cleanup cycle.
-   - If a region remains stuck, execute the region-scoped coordination reset flow in `system-architecture-redis-reset-and-recovery.md`.
-   - If ledger backlog also accumulates, trigger ledger replay-controller remediation for the same scope.
+   - **Target state only, once implemented and proven:** For isolated regions, pause and resume tick scheduling to force a clean cleanup cycle.
+   - **Target state only, once implemented and proven:** If a region remains stuck, execute the region-scoped coordination reset flow in `system-architecture-redis-reset-and-recovery.md`.
+   - **Target state only, once implemented and proven:** If ledger backlog also accumulates, trigger ledger replay-controller remediation for the same scope.
+   - **Current deployments:** Do not pause/resume to force cleanup, execute a scoped reset, or trigger replay-controller remediation. Use the fail-closed [Current Operator Fallback](./system-architecture-redis-reset-and-recovery.md#current-operator-fallback): read status, preserve AOF and incident evidence, keep the affected scope fenced, and escalate.
 4. **Verify convergence**
    - Confirm `tick_cleanup_lag_ms{scope_class}` returns to normal envelope.
    - Confirm `tick_coordination_cleared_total{scope_class}` catches up with durable commits for affected approved bounded scope buckets.
@@ -298,7 +305,7 @@ Normal replay and re-enqueue in this section apply only to effects from the curr
    - For old-epoch rows, first enumerate every durable old-epoch effect and follow-up independently of Redis hints. Use the authority-fenced attestation under the original `EffectId` described in [Inconclusive Old-Epoch Reconciliation Policy](./system-architecture-tick-failures-and-operations.md#inconclusive-old-epoch-reconciliation-policy); the affected scope cannot reopen while any row remains unresolved. A new epoch lineage may be created only after both the original effect and its source claim are authority-fenced terminal `ABANDONED`; an explicitly approved maintenance or saga/outbox flow may then create a fresh current-epoch identity with durable lineage and revalidated scope. No normal replay may create or drive that new lineage, and the original effect identity must not be re-driven across the epoch boundary.
    - For replay-controller starvation:
      - Reduce per-region replay batch monopolization or other hot-region pressure first.
-     - If the region remains starved, run scoped replay-controller remediation for the affected complete `(tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch)` after authoritative enumeration and exact validation; incomplete or caller-supplied namespace/scope evidence must fail closed before any replay or maintenance mutation. Escalate to broader reset actions only after that exact scope evidence is qualified.
+     - **Target state only, once implemented and proven:** If the region remains starved, run scoped replay-controller remediation for the affected complete `(tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch)` after authoritative enumeration and exact validation; incomplete or caller-supplied namespace/scope evidence must fail closed before any replay or maintenance mutation. Escalate to broader reset actions only after that exact scope evidence is qualified. Current operators must use the fail-closed [Current Operator Fallback](./system-architecture-redis-reset-and-recovery.md#current-operator-fallback) instead.
 4. **Prevent recurrence**
    - Review Game Session and domain handlers to ensure:
      - Ledger status transitions happen atomically with domain commits where required.
