@@ -73,14 +73,14 @@ Procedural-generation control surfaces are split by authorization and persistenc
 - Runtime generation requests are accepted only through approved world-lifecycle or gameplay command paths with a typed instance target. World Management validates instance lifecycle and identity and persists only instance topology; Published template rows remain immutable.
 - The typed target and authorized endpoint determine namespace and persistence behavior. Automation & Scripting may populate runtime entities or bindings only after World Management has persisted topology, and only through canonical bindings or runtime commands. World Management remains the sole topology writer; Automation & Scripting cannot invoke World generation or persist or mutate topology.
 - Target contract: design-time generation-input APIs mutate version-scoped generation design rows in World Management only for Draft versions. The live legacy endpoint described above does not enforce this Draft/version boundary and remains migration drift until it is removed or fails closed.
-- Operational runtime-default APIs are owned by World Management and mutate only tenant-scoped `generation_runtime_default` rows that are explicitly excluded from publish inputs and draft digests.
+- Operational runtime-default APIs are target-only and not implemented or available. If and when this contract is accepted and implemented, World Management will own the APIs and mutate only tenant-scoped `generation_runtime_default` rows that are explicitly excluded from publish inputs and draft digests; no current caller may treat these routes as an available mutation or read surface.
 
-Operational runtime-default API:
+Operational runtime-default API (target-only; not implemented/unavailable):
 
-- `POST /generation/runtime-defaults` – create or update runtime-only defaults for a tenant.
-- `GET /generation/runtime-defaults?tenantId=...` – list runtime-only defaults for a tenant.
+- `POST /generation/runtime-defaults` – target-only create/update route; unavailable until its authenticated tenant binding, request identity/replay, durable persistence, and failure semantics are defined and proved.
+- `GET /generation/runtime-defaults?tenantId=...` – target-only read route; unavailable until its authenticated tenant binding and read consistency/failure semantics are defined and proved.
 
-These endpoints are limited to live operational tuning for future runtime-only generation runs. They must not mutate `generation_rule_template`, any other version-scoped design rows, or any input that contributes to `generationConfigRevision`.
+If implemented, these endpoints are limited to live operational tuning for future runtime-only generation runs. They must not mutate `generation_rule_template`, any other version-scoped design rows, or any input that contributes to `generationConfigRevision`. This matches [World Management API Contracts](./api-contracts.md), which requires both routes to remain unavailable until their owner and safety contract is proved.
 
 ## Destructive Regeneration Plans
 
