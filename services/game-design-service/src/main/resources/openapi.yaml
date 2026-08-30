@@ -30,6 +30,7 @@ components:
           format: int64
         tenantId:
           type: string
+          pattern: '^[1-9][0-9]*$'
         name:
           type: string
         description:
@@ -63,6 +64,7 @@ components:
           format: int64
         tenantId:
           type: string
+          pattern: '^[1-9][0-9]*$'
         fileName:
           type: string
         contentType:
@@ -185,6 +187,7 @@ paths:
           required: true
           schema:
             type: string
+            pattern: '^[1-9][0-9]*$'
       responses:
         '200':
           description: Template list
@@ -213,6 +216,7 @@ paths:
               properties:
                 tenantId:
                   type: string
+                  pattern: '^[1-9][0-9]*$'
                 file:
                   type: string
                   format: binary
