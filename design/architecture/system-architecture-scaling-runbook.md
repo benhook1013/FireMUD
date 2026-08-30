@@ -158,17 +158,17 @@ This formula is a conservative first-pass input, not a complete capacity predict
 - Calibrate each term from load tests in the target profile (`dev_local`, `hobby_self_hosted`, `production_clustered`) and record:
   - `p99_region_tick_ms` from `tick_execution_time_ms_p99`.
   - `p99_remote_drain_ms` from remote follow-up lag/drain metrics.
-  - `p99_replay_overhead_ms` from replay-controller and tick replay metrics.
+  - `p99_replay_overhead_ms` from replay-controller and tick replay metrics when the replay controller and those metrics are implemented and emitted.
 - PostgreSQL capacity inputs are required alongside the pod cost model. Load tests and environment docs should record at minimum:
   - tick-batch and effect-ledger inserts/updates per second
   - remote follow-up claim/update QPS
-  - replay-controller scan/update QPS
+  - replay-controller scan/update QPS when the replay controller and its metrics are implemented and emitted
   - target-state conditional effect-reconciliation backlog retry QPS, once a separate effect-reconciliation backlog surface is implemented
   - command-ingress and command-status update QPS
   - p95/p99 write latency for the primary tick-path tables
   - retention horizon, partitioning scheme, and vacuum/GC cadence for high-churn tables
 
-Scaling decisions must not rely only on Redis unreplicated-write exposure and pod density signals. For implemented durable paths, if ledger age, replay scan lag, or follow-up claim latency is rising, treat PostgreSQL as the bottleneck and scale or redesign there before increasing tick concurrency. Effect-reconciliation-backlog bloat is a conditional target-state signal only after a separate backlog table/API is implemented; its absence in the current deployment is not a zero-valued measurement or evidence that the backlog is healthy.
+Scaling decisions must not rely only on Redis unreplicated-write exposure and pod density signals. For implemented durable paths, rising ledger age or follow-up claim latency should be treated as a PostgreSQL bottleneck and should prompt scaling or redesign there before increasing tick concurrency. Rising replay scan lag is a comparable signal only when the replay controller is implemented and the corresponding metric is emitted. Effect-reconciliation-backlog bloat is a conditional target-state signal only after a separate backlog table/API is implemented; its absence in the current deployment is not a zero-valued measurement or evidence that the backlog is healthy.
 
 Scaling plans should include this calibration so “add replicas” and “increase regions per pod” decisions are tied to measured tick and coordination cost, not only static guardrail numbers.
 

@@ -34,21 +34,21 @@ For measured exposure, replication-lag, replication-offset, and dashboard-compar
 
 ## Coordination and Tick Metrics
 
-- `tick_interval_ms{scope}`
-- `tick_execution_time_ms_bucket{scope,le}`
-- `tick_execution_time_ms_p95{scope}`
-- `tick_execution_time_ms_p99{scope}`
-- `tick_lock_ttl_ms{scope}`
-- `tick_status{scope,status}`
-- `current_tick_state{scope,state}`
-- `current_tick_terminal_at_ms{scope}`
-- `tick_retry_queue_depth{scope}`
-- `tick_command_queue_depth{scope}`
-- `tick_current_id{scope}`
-- `tick_pending_oldest_id{scope}`
-- `tick_durable_commit_total{scope}`
-- `tick_coordination_cleared_total{scope}`
-- `tick_cleanup_lag_ms{scope}`
+- `tick_interval_ms{scope_class}`
+- `tick_execution_time_ms_bucket{scope_class,le}`
+- `tick_execution_time_ms_p95{scope_class}`
+- `tick_execution_time_ms_p99{scope_class}`
+- `tick_lock_ttl_ms{scope_class}`
+- `tick_status{scope_class,status}`
+- `current_tick_state{scope_class,state}`
+- `current_tick_terminal_at_ms{scope_class}`
+- `tick_retry_queue_depth{scope_class}`
+- `tick_command_queue_depth{scope_class}`
+- `tick_current_id{scope_class}`
+- `tick_pending_oldest_id{scope_class}`
+- `tick_durable_commit_total{scope_class}`
+- `tick_coordination_cleared_total{scope_class}`
+- `tick_cleanup_lag_ms{scope_class}`
 
 ### Remote Follow-Up Drainage
 
@@ -58,21 +58,21 @@ For measured exposure, replication-lag, replication-offset, and dashboard-compar
 
 ### Tick Effect Ledger
 
-- `tick_effects_pending_total{scope}`
-- `tick_effects_applied_total{scope}`
-- `tick_effects_abandoned_total{scope,reason}`
-- `tick_effects_pending_oldest_scheduled_timestamp_seconds{scope}`
-- `tick_effects_pending_oldest_age_seconds{scope}`
-- `tick_effects_replay_convergence_budget_seconds{scope}`
-- `tick_effects_replay_slo_breached{scope}`
-- `tick_effects_replay_scan_lag_ms{scope}`
-- `tick_effects_replay_batches_total{scope}`
-- `tick_effects_replay_starved{scope}`
+- `tick_effects_pending_total{scope_class}`
+- `tick_effects_applied_total{scope_class}`
+- `tick_effects_abandoned_total{scope_class,reason}`
+- `tick_effects_pending_oldest_scheduled_timestamp_seconds{scope_class}`
+- `tick_effects_pending_oldest_age_seconds{scope_class}`
+- `tick_effects_replay_convergence_budget_seconds{scope_class}`
+- `tick_effects_replay_slo_breached{scope_class}`
+- `tick_effects_replay_scan_lag_ms{scope_class}`
+- `tick_effects_replay_batches_total{scope_class}`
+- `tick_effects_replay_starved{scope_class}`
 
 ### Service-Level Replay Metrics
 
-- `gamesession_tick_replayed_total{scope}`
-- `gamesession_tick_executed_total{scope}`
+- `gamesession_tick_replayed_total{scope_class}`
+- `gamesession_tick_executed_total{scope_class}`
 
 ### Dual-Leader and Reset Metrics
 

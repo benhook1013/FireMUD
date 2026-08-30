@@ -8,7 +8,7 @@ Example alert for tick execution time approaching unsafe ratios relative to lock
 
 ```yaml
 - alert: TickExecutionUnsafeRatio
-  expr: (tick_execution_time_ms_p99 / tick_lock_ttl_ms) > 0.75
+  expr: (tick_execution_time_ms_p99{scope_class=~".+"} / tick_lock_ttl_ms{scope_class=~".+"}) > 0.75
   for: 10m
   labels:
     service: game-session-service
@@ -27,8 +27,8 @@ This rule assumes the **canonical metric contract** from:
 
 Concretely:
 
-- `tick_execution_time_ms_p99` is a recording rule derived from `tick_execution_time_ms_bucket{scope,le}`.
-- `tick_lock_ttl_ms` is emitted (or recorded) per approved bounded gameplay `scope` and represents the lock/lease TTL budget used by tick executors.
+- `tick_execution_time_ms_p99` is a recording rule derived from `tick_execution_time_ms_bucket{scope_class,le}`.
+- `tick_lock_ttl_ms` is emitted (or recorded) per approved bounded gameplay `scope_class` and represents the lock/lease TTL budget used by tick executors.
 
 Do not use “Timer-in-seconds” histograms under `_ms` names; producers must either emit millisecond-valued histograms/summaries or publish explicit `_seconds` metrics and define separate `_ms` recording rules with unambiguous unit conversions.
 
@@ -38,7 +38,7 @@ Example alert for stuck `SCHEDULED` rows in the tick effect ledger:
 
 ```yaml
 - alert: TickEffectLedgerBacklog
-  expr: tick_effects_pending_total > 0 and (time() - tick_effects_pending_oldest_scheduled_timestamp_seconds) > 300
+  expr: tick_effects_pending_total{scope_class=~".+"} > 0 and (time() - tick_effects_pending_oldest_scheduled_timestamp_seconds{scope_class=~".+"}) > 300
   for: 10m
   labels:
     service: game-session-service
@@ -50,7 +50,7 @@ Example alert for stuck `SCHEDULED` rows in the tick effect ledger:
     description: One or more regions have SCHEDULED tick effects that have not converged to APPLIED or ABANDONED within the expected grace window.
 
 - alert: TickCleanupLagHigh
-  expr: tick_cleanup_lag_ms > 15000
+  expr: tick_cleanup_lag_ms{scope_class=~".+"} > 15000
   for: 10m
   labels:
     service: game-session-service
@@ -62,7 +62,7 @@ Example alert for stuck `SCHEDULED` rows in the tick effect ledger:
     description: Cleanup lag from durable commit to coordination-cleared is elevated for one or more regions; investigate replay pressure and coordination cleanup behavior.
 
 - alert: TickReplayFairnessStarved
-  expr: tick_effects_pending_total > 0 and increase(tick_effects_replay_batches_total[15m]) == 0
+  expr: tick_effects_pending_total{scope_class=~".+"} > 0 and increase(tick_effects_replay_batches_total{scope_class=~".+"}[15m]) == 0
   for: 15m
   labels:
     service: game-session-service
@@ -74,7 +74,7 @@ Example alert for stuck `SCHEDULED` rows in the tick effect ledger:
     description: One or more regions still have pending ledger work, but replay batches are not being executed for those regions. Investigate replay-controller fairness and starvation.
 
 - alert: TickReplayScanLagHigh
-  expr: tick_effects_replay_scan_lag_ms > 300000
+  expr: tick_effects_replay_scan_lag_ms{scope_class=~".+"} > 300000
   for: 15m
   labels:
     service: game-session-service
@@ -86,7 +86,7 @@ Example alert for stuck `SCHEDULED` rows in the tick effect ledger:
     description: Replay scan lag is growing for one or more regions even though the replay controller remains active elsewhere.
 ```
 
-This assumes a helper metric such as `tick_effects_pending_oldest_scheduled_timestamp_seconds` that tracks the oldest `SCHEDULED` entry per region.
+This assumes a helper metric such as `tick_effects_pending_oldest_scheduled_timestamp_seconds{scope_class}` that tracks the oldest `SCHEDULED` entry per approved bounded gameplay scope.
 
 ## Tick Scheduler Pressure
 

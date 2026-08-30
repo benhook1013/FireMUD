@@ -10,7 +10,7 @@
       "targets": [
         {
           "expr": "tick_status == 1",
-          "legendFormat": "{{scope}} = {{status}}",
+          "legendFormat": "{{scope_class}} = {{status}}",
           "refId": "A"
         }
       ],
@@ -22,7 +22,7 @@
       "targets": [
         {
           "expr": "tick_execution_time_ms_p99 / tick_lock_ttl_ms",
-          "legendFormat": "{{scope}}",
+          "legendFormat": "{{scope_class}}",
           "refId": "A"
         }
       ],
@@ -34,12 +34,12 @@
       "targets": [
         {
           "expr": "tick_retry_queue_depth",
-          "legendFormat": "retry {{scope}}",
+          "legendFormat": "retry {{scope_class}}",
           "refId": "A"
         },
         {
           "expr": "tick_command_queue_depth",
-          "legendFormat": "command {{scope}}",
+          "legendFormat": "command {{scope_class}}",
           "refId": "B"
         }
       ],
@@ -51,17 +51,17 @@
       "targets": [
         {
           "expr": "tick_effects_pending_total",
-          "legendFormat": "pending {{scope}}",
+          "legendFormat": "pending {{scope_class}}",
           "refId": "A"
         },
         {
           "expr": "tick_effects_applied_total",
-          "legendFormat": "applied {{scope}}",
+          "legendFormat": "applied {{scope_class}}",
           "refId": "B"
         },
         {
-          "expr": "sum by (scope) (tick_effects_abandoned_total)",
-          "legendFormat": "abandoned {{scope}}",
+          "expr": "sum by (scope_class) (tick_effects_abandoned_total)",
+          "legendFormat": "abandoned {{scope_class}}",
           "refId": "C"
         }
       ],
@@ -72,8 +72,8 @@
       "title": "Non-RUNNING Regions (count)",
       "targets": [
         {
-          "expr": "sum by (status) (tick_status{status!=\"RUNNING\"} == 1)",
-          "legendFormat": "{{status}}",
+          "expr": "sum by (scope_class, status) (tick_status{status!=\"RUNNING\"} == 1)",
+          "legendFormat": "{{scope_class}} = {{status}}",
           "refId": "A"
         }
       ],
@@ -85,12 +85,12 @@
       "targets": [
         {
           "expr": "rate(tick_durable_commit_total[5m])",
-          "legendFormat": "durable {{scope}}",
+          "legendFormat": "durable {{scope_class}}",
           "refId": "A"
         },
         {
           "expr": "rate(tick_coordination_cleared_total[5m])",
-          "legendFormat": "cleared {{scope}}",
+          "legendFormat": "cleared {{scope_class}}",
           "refId": "B"
         }
       ],
@@ -102,7 +102,7 @@
       "targets": [
         {
           "expr": "tick_cleanup_lag_ms",
-          "legendFormat": "{{scope}}",
+          "legendFormat": "{{scope_class}}",
           "refId": "A"
         }
       ],

@@ -86,9 +86,7 @@ Keep the cheat sheet and the owning service Redis sections aligned with the cano
 
 ### Automation & Scheduler Coordination Prefixes
 
-A small set of automation/scheduler-specific prefixes is target-only and will
-be **reset-tolerant once implemented**; no current reset operation is defined
-for these unimplemented target projections:
+A small set of automation/scheduler-specific prefixes is target-only and will be **reset-tolerant once implemented**; no current reset operation is defined for these unimplemented target projections:
 
 - `script-scheduler:{tenantRegionTag}:lastTickId` (target-only, once implemented)
   - Role: Coordination Redis.
@@ -150,7 +148,7 @@ Automation workloads split into two broad classes, with different expectations a
 - **Best-effort, non-critical automation**
   - Examples: analytics-style background work, non-critical notifications, opportunistic refreshes that can be dropped or reordered without visible gameplay impact.
   - Redis role: **Cache/Rate-Limit Redis**.
-  - Prefixes: `automation:queue:{tenantInstanceTag}:*`, `automation:quota:<tenantId>:*`, `automation:tenant-budget:<tenantId>:tier:<tier>`, `automation:test:quota:<tenantId>:script:<scriptId>:*`, `automation:test:capacity:<tenantId>:*`, `automation:test:capacity:cluster*`, `automation:readiness:capacity:<tenantId>:*`, `automation:readiness:capacity:cluster*`, and similar TTL-only queues, counters, and leases documented in the Redis Cache & Rate Limiting design.
+  - Prefixes: `automation:queue:{tenantInstanceTag}:*`, `automation:quota:<tenantId>:*`, `automation:tenant-budget:<tenantId>:tier:<tier>`, `automation:test:quota:<tenantId>:script:<scriptId>:*`, `automation:test:capacity:<tenantId>:*`, `automation:test:capacity:cluster*`, `automation:readiness:capacity:<tenantId>:*`, `automation:readiness:capacity:cluster*`, and similar TTL-only queues, counters, and leases documented in the Redis Cache & Rate Limiting design. The `automation:test:capacity:cluster*` and `automation:readiness:capacity:cluster*` variants are deliberate deployment-wide bounded capacity counters and leases rather than tenant selectors; they remain TTL-only and reset-tolerant, and never become durable Coordination Redis state or hard correctness authority.
   - Guarantees:
     - Treated as **TTL-only, reset-tolerant** hints: items may be dropped, duplicated, or processed late.
     - Correctness (for example, “was this workflow triggered at least once?”) must come from durable trigger tables and idempotent domain logic, not from the queue contents.
