@@ -10,6 +10,8 @@ The live implementation is strongest in item containment and transfer, durable e
 
 Current residual: the crafting handlers remain runtime-reachable legacy implementation drift, but their paths and schemas are omitted from the authoritative Entity OpenAPI; the REST adapter is therefore unsupported/nonconformant rather than a public contract. The deployed Entity HTTP layer still requires only an `AUTHENTICATED` bearer and does not authorize that caller to the supplied tenant. It trusts caller-supplied tenant, recipe, and item identifiers. The existing crafting proof is happy-path only; tenant-qualified recipe lookup/update, same-tenant result/ingredient ownership, and cross-tenant negative proof remain open.
 
+The capability-table CRUD entry below refers only to this legacy persistence/service-controller seam; it is not a supported public REST API or gameplay crafting flow.
+
 PLAYER-01 remains a target ownership contract, not a capability completion. Detailed persisted actor, policy, descriptor/template, and fork-copy rules are owned by [Entity Management](../../architecture/microservices/entity-management-service/runtime-and-data.md). Gameplay tracking retains only the consequence that actor-state/effect work must use Entity's persisted realm-valid identity; current synthetic-ID, fixed-schema, policy-resolution, provisioning, and fork-copy proof gaps remain.
 
 ## Packet 4 Status and Proof Gaps

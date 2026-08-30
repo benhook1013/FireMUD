@@ -305,15 +305,18 @@ components:
             as null and bypass chat replay. Target state: a nonblank value is
             scoped to the authenticated sender and this chat operation;
             senderAccountId is checked against that caller and is not sender
-            authority. An exact retry must match the stable request fields
-            (tenant, type, channel, recipient, guild, city, content, and effect
-            identity); it returns the stored outcome. Reuse by another sender
-            or with any changed field is an IDEMPOTENCY_CONFLICT and does not
-            disclose the stored outcome. Current implementation instead
-            deduplicates only by (tenantId,effectId), trusts the request-body
-            senderAccountId for exact sender identity, and returns the existing
-            row after route-level SocialAccessGuard access but before
-            authenticated-sender binding or stable-field validation; see
+            authority. Before any replay lookup or result disclosure, the
+            service derives the sender from the authenticated principal and
+            validates sender binding plus every stable request field (tenant,
+            type, channel, recipient, guild, city, content, and effect
+            identity). An exact retry returns the stored outcome only after
+            those checks. Reuse by another sender or with any changed field is
+            an IDEMPOTENCY_CONFLICT and does not disclose the stored outcome.
+            Current implementation instead deduplicates only by
+            (tenantId,effectId), trusts the request-body senderAccountId for
+            exact sender identity, and returns the existing row after
+            route-level SocialAccessGuard access but before authenticated-sender
+            binding or stable-field validation; see
             design/architecture/microservices/social-groups-service/api-contracts.md#implementation-status.
       required:
         - tenantId

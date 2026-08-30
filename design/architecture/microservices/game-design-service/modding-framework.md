@@ -219,7 +219,9 @@ Required lifecycle semantics:
 
 Rollback proof uses immutable publication identities `v1a -> v2 -> v1b`: `v1b` is a newly published `pluginVersionId` that reintroduces the desired logic, and a `SUPERSEDED` or `REVOKED_DESIGN` publication ID is never reactivated. A separate same-version runtime-reactivation proof is allowed only when the artifact remains `PUBLISHED` and is reactivated after runtime disable; that runtime transition does not alter design-time publication status or identity.
 
-Required write path:
+### Target-state required write path
+
+The following plugin write-path guarantees are target-state requirements, not claims about the current implementation. Current signed-only intake/publication behavior and its gaps are recorded in the [Game Design API implementation status](api-contracts.md#implementation-status); in particular, live plugin publication lacks the target stable request identity, normalized digest, and serialized owner decision.
 
 - `UploadPluginBundle` accepts the bundle bytes, performs archive safety checks, canonicalization, provenance-specific intake checks, manifest extraction, and indexed metadata persistence. In the current signed-only flow, provenance checks include signature verification and success moves the version to `SIGNATURE_VERIFIED`; the target unsigned path uses the existing statuses and its exact-digest, approval, and attestation evidence without adding an unsigned-specific status.
   - Deterministic ingestion or signed-intake signature failures for an identifiable plugin version move that version to `UPLOAD_REJECTED`; unidentifiable input uses only the tenant/request-scoped durable intake rejection.
