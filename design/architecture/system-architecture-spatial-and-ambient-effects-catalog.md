@@ -10,13 +10,13 @@ The target `DROP`/`PICKUP` contracts below are not yet fully implemented or prov
 
 ## Common Requirements (All Effects)
 
-- [Transaction Strategies](./system-architecture-transactions.md) owns split spatial authority and operation-bound effect behavior. [Identifier Glossary](./system-architecture-identifier-glossary.md#cross-service-effect-identity) owns root `EffectId` and participant guard identity, while its [causal-read fence contract](./system-architecture-identifier-glossary.md#cross-service-causal-read-fence-identity) owns the causal floor and composite component-version identity. This catalog retains only effect-local writes, guards, and reconciliation consequences.
+- [Transaction Strategies](./system-architecture-transactions.md) owns split spatial authority and operation-bound effect behavior. [Identifier Glossary](./system-architecture-identifier-glossary.md#cross-service-effect-identity) owns root `EffectId` and participant guard identity, while its [causal-read fence contract](./system-architecture-identifier-glossary.md#cross-service-causal-read-fence-identity) owns the causal floor and composite component-version identity. This catalog retains only effect-local writes, guards, and reconciliation consequences. The pending [ADR 0182 proposal](./decisions/adr-0182-deterministic-effect-id-allocation-and-replay-binding.md) is non-authoritative.
 - Every effect must be scoped by instance identifiers. For room-scoped effects, this is `RoomInstanceRef = (tenantId, gameInstanceId, roomInstanceId)`. See `design/architecture/system-architecture-identifier-glossary.md`.
-- Game Session assigns one stable root `EffectId` to each logical effect. Each participating owner derives a deterministic participant-guard identity from that root, the typed operation, and the target aggregate, and binds it to the immutable request digest and stored outcome. Matching retries return the prior result; a changed operation, target, or digest fails closed under the owner contract in [Transaction Strategies](./system-architecture-transactions.md).
-- The default reconciliation policy is **retry until convergence using the same root `EffectId`**. Do not generate compensating deletes inside the tick loop.
+- Game Session assigns one stable root `EffectId` to each command-root logical effect. Each participating owner derives a deterministic participant-guard identity from that root, the typed operation, and the target aggregate, and binds it to the immutable request digest and stored outcome. Matching retries return the prior result, while a changed operation, target, or digest fails closed under the owner contract in [Transaction Strategies](./system-architecture-transactions.md).
+- The default reconciliation policy is **retry until convergence using the same persisted mutation `EffectId`**, retaining the enclosing root lineage where applicable. Do not generate compensating deletes inside the tick loop.
 - Presentation reads follow the causal-floor and component-proof contract in [Identifier Glossary](./system-architecture-identifier-glossary.md). Current `worldSnapshotId`/`entitySnapshotId` values are scope markers only. Effect entries below record only local invalidation consequences; floor allocation, propagation, response acceptance, and composite-identity rules remain in the canonical contract.
 - For World-owned door, weather, and hazard effects, the participant guard, typed ambient-state mutation, and World component-version advance commit in one World-local transaction. A matching replay returns the stored outcome without applying the mutation or incrementing the component version twice. The canonical transaction rule belongs in [Transaction Strategies](./system-architecture-transactions.md); this catalog records only the effect-local consequence and proof obligation.
-- Set-state reconciliation must resolve the participant guard by the current root `EffectId`, typed operation, exact target aggregate, and immutable `requestDigest`. A matching guard returns its stored outcome; mutable state already matching the requested value is not replay evidence by itself. When a new request has no matching guard but the state is already satisfied, the owner records a new guarded no-op under that request's current `EffectId` and immutable digest. A missing, conflicting, or ambiguous guard remains reconciliation-required rather than being inferred as replay.
+- Set-state reconciliation must resolve the participant guard by the current persisted mutation `EffectId`, typed operation, exact target aggregate, and immutable `requestDigest`. A matching guard returns its stored outcome; mutable state already matching the requested value is not replay evidence by itself. When a new request has no matching guard but the state is already satisfied, the owner records a new guarded no-op under that request's current `EffectId` and immutable digest. A missing, conflicting, or ambiguous guard remains reconciliation-required rather than being inferred as replay.
 
 ## Cross-Region Effects and Reconciliation
 
@@ -49,10 +49,10 @@ Required writes:
 
 Reconciliation:
 
-- Retry World Management using the same root `EffectId` and participant guard until the World location/occupancy mutation converges under the current epoch/fence.
+- Retry World Management using the same command-root `EffectId` and participant guard until the World location/occupancy mutation converges under the current epoch/fence.
 - There is no Entity success/failure or retry branch for pure `MOVE`. An Entity leg exists only for a future MOVE variant that explicitly writes containment; that variant must declare Entity as a participant with its own write, guard, and reconciliation contract.
 
-`MOVE` commits World location/occupancy before destination presentation. `DROP` and `PICKUP` commit entirely in Entity against the admitted room scope, using the shared actor-lock/executor-fence and durable-barrier contract defined in [Transaction Strategies](./system-architecture-transactions.md#drop-pickup-targeting-and-actor-fence-critical-section). Lock expiry or handoff cannot admit a conflicting `MOVE` while the barrier lacks terminal evidence; Game Session owns retry orchestration and invokes Game Logic to re-resolve stale evidence under the same root `EffectId`, preserving the `requestDigest`. This catalog records only the effect-local writes and reconciliation consequences. An item never has two holders and an actor never has two authoritative locations.
+`MOVE` commits World location/occupancy before destination presentation. `DROP` and `PICKUP` commit entirely in Entity against the admitted room scope, using the shared actor-lock/executor-fence and durable-barrier contract defined in [Transaction Strategies](./system-architecture-transactions.md#drop-pickup-targeting-and-actor-fence-critical-section). Lock expiry or handoff cannot admit a conflicting `MOVE` while the barrier lacks terminal evidence; Game Session owns retry orchestration and invokes Game Logic to re-resolve stale evidence under the same command-root `EffectId`, preserving the `requestDigest`. This catalog records only the effect-local writes and reconciliation consequences. An item never has two holders and an actor never has two authoritative locations.
 
 ### Drop (Inventory → Ground)
 
@@ -96,7 +96,7 @@ Required writes:
 
 Reconciliation:
 
-- Retry the EMS move using the same root `EffectId` until applied. Treat an already-moved item as replay only when the stored participant guard matches the same root `EffectId`, immutable request digest, and exact actor-inventory destination. If the item is held by another actor/container or the destination differs, return a conflict/stale/reconciliation outcome rather than replay/no-op.
+- Retry the EMS move using the same command-root `EffectId` until applied. Treat an already-moved item as replay only when the stored participant guard matches the same command-root `EffectId`, immutable request digest, and exact actor-inventory destination. If the item is held by another actor/container or the destination differs, return a conflict/stale/reconciliation outcome rather than replay/no-op.
 
 ## Ambient Effects (World Management Authoritative)
 
@@ -116,12 +116,12 @@ Required inputs:
 Required writes:
 
 - **World Management**
-  - Apply the door state mutation under the owner participant guard derived from the root `EffectId`, typed `DOOR_TOGGLE` operation, and target room/door aggregate, bound to the request digest and stored outcome.
+  - Apply the door state mutation under the owner participant guard for the persisted mutation `EffectId`, typed `DOOR_TOGGLE` operation, and target room/door aggregate, bound to the request digest and stored outcome.
   - **Target-state only:** advance the World-owned ambient component version used in the composite `LOOK` identity in that same local transaction so the Game Session presentation cache can invalidate. A matching guard replay returns the prior result without a second version increment. The current `worldSnapshotId` scope marker provides no freshness proof and is not a cache-invalidation authority.
 
 Reconciliation:
 
-- Retry WMS with the same root `EffectId` until the participant guard and door mutation converge. The replay/no-op path is valid only when the stored guard matches `DOOR_TOGGLE`, the exact room/door target aggregate, and the immutable request digest. If no matching guard exists but the door is already in `targetState`, issue the current request under a new guard and record a guarded no-op; mutable door state alone never proves replay. A conflicting or ambiguous guard remains reconciliation-required.
+- Retry WMS with the same persisted mutation `EffectId` until the participant guard and door mutation converge. The replay/no-op path is valid only when the stored guard matches `DOOR_TOGGLE`, the exact room/door target aggregate, and the immutable request digest. If no matching guard exists but the door is already in `targetState`, issue the current request under a new guard and record a guarded no-op; mutable door state alone never proves replay. A conflicting or ambiguous guard remains reconciliation-required.
 
 ### Weather Update
 
@@ -139,7 +139,7 @@ Required writes:
 
 Reconciliation:
 
-- After the selector is accepted, retry WMS with the same root `EffectId` until the participant guard and weather mutation converge. The replay/no-op path is valid only when the stored guard matches the typed weather operation, the exact World-selected target aggregate, and the immutable request digest. If no matching guard exists but weather is already at the requested value, issue the current request under a new guard and record a guarded no-op; mutable weather state alone never proves replay. Until the World weather contract defines the exact aggregate selector, every Weather request remains fenced/reconciliation-required and a same-state observation is not replay evidence.
+- After the selector is accepted, retry WMS with the same persisted mutation `EffectId` until the participant guard and weather mutation converge. The replay/no-op path is valid only when the stored guard matches the typed weather operation, the exact World-selected target aggregate, and the immutable request digest. If no matching guard exists but weather is already at the requested value, issue the current request under a new guard and record a guarded no-op; mutable weather state alone never proves replay. Until the World weather contract defines the exact aggregate selector, every Weather request remains fenced/reconciliation-required and a same-state observation is not replay evidence.
 
 ### Hazard State Update (Gameplay-Authoritative)
 
@@ -153,7 +153,7 @@ Required inputs:
 Required writes:
 
 - **World Management**
-  - Persist hazard state as typed ambient room state under the owner participant guard derived from the root `EffectId`, typed `HAZARD_STATE_UPDATE` operation, and target room/hazard aggregate, bound to the request digest and stored outcome.
+  - Persist hazard state as typed ambient room state under the owner participant guard for the persisted mutation `EffectId`, typed `HAZARD_STATE_UPDATE` operation, and target room/hazard aggregate, bound to the request digest and stored outcome.
   - **Target-state only:** advance the World-owned ambient component version used in the composite `LOOK` identity in that same local transaction so downstream LOOK/gameplay caches invalidate deterministically. A matching guard replay returns the prior result without a second version increment. The current `worldSnapshotId` scope marker provides no freshness proof and is not a cache-invalidation authority.
 
 Read/API contract:
@@ -164,4 +164,4 @@ Read/API contract:
 
 Reconciliation:
 
-- Retry WMS with the same root `EffectId` until the participant guard and hazard mutation converge. The replay/no-op path is valid only when the stored guard matches `HAZARD_STATE_UPDATE`, the exact room/hazard target aggregate, and the immutable request digest. If no matching guard exists but hazard state is already `targetState`, issue the current request under a new guard and record a guarded no-op; mutable hazard state alone never proves replay. A conflicting or ambiguous guard remains reconciliation-required.
+- Retry WMS with the same persisted mutation `EffectId` until the participant guard and hazard mutation converge. The replay/no-op path is valid only when the stored guard matches `HAZARD_STATE_UPDATE`, the exact room/hazard target aggregate, and the immutable request digest. If no matching guard exists but hazard state is already `targetState`, issue the current request under a new guard and record a guarded no-op; mutable hazard state alone never proves replay. A conflicting or ambiguous guard remains reconciliation-required.

@@ -46,11 +46,11 @@ The existing split is sound, but two contracts are too weak. Reusing an `EffectI
 
 ### Effect Identity and Participant Guards
 
-Game Session assigns one stable root `EffectId` to the logical effect and persists intended pre/post state and required participants. Each participant derives a deterministic guard identity from the root effect, typed operation, and target aggregate. Its durable guard binds that identity to an immutable request digest and stored outcome.
+For a root mutation, Game Session assigns one stable root `EffectId` to the logical effect and persists intended pre/post state and required participants. Each participant derives a deterministic guard identity from the root effect, typed operation, and target aggregate. Its durable guard binds that identity to an immutable request digest and stored outcome. The separate [ADR 0182 proposal](./adr-0182-deterministic-effect-id-allocation-and-replay-binding.md) is not accepted target state and may not be used as an implementation requirement.
 
 - Same identity plus the same request returns the prior durable result.
 - Same identity with a different operation, target, or request digest fails closed.
-- Derived reactions use deterministic child effect identities rather than accidental reuse.
+- Derived reactions use deterministic child effect identities rather than accidental reuse. Any future allocator or replay binding remains subject to the non-authoritative [ADR 0182 proposal](./adr-0182-deterministic-effect-id-allocation-and-replay-binding.md).
 - Participant acknowledgement means the guard and effect-visible domain rows committed together.
 - Player success waits for all declared required participants under ADR 0053.
 

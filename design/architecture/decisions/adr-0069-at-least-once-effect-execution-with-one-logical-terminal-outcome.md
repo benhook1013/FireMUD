@@ -47,6 +47,8 @@ Before any participant verification, the canonical Game Session context binds ea
 
 The owning domain's durable idempotency guard permits at most one logical authoritative state mutation for that identity and digest. Reuse of the identity with a conflicting digest fails closed.
 
+The accepted decision does not select a generated-child allocator or exact scalar format. Those unresolved target-state questions are recorded, without authority, in the pending [ADR 0182 proposal](./adr-0182-deterministic-effect-id-allocation-and-replay-binding.md).
+
 ### Deterministic command plans and root identity
 
 An admitted command has one deterministic effect plan: the ordered set of logical root effects admitted for that command. The order is supplied by the frozen typed command or `ResolvedEffectPlan` semantic order owned by the command/action contract; Game Session does not infer it from scheduler selection. Built-in commands declare an equivalent stable semantic order. An ambiguous or duplicate root order fails before admission, and Game Session persists the ordered plan manifest and its digest before tick staging. Each logical operation in the plan has exactly one root `EffectId`, with any affected participants represented by guards beneath that root. A conserved multi-participant operation normally shares one root across its participants, but still follows [ADR 0053](./adr-0053-command-atomicity-by-invariant-class.md)'s required/optional classification and its co-location or reservation/escrow rules; one root does not claim global atomicity.

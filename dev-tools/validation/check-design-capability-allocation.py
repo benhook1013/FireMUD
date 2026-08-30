@@ -681,6 +681,15 @@ ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/adr-0181-changed-hosted-terms-decline-and-existing-content-continuity.md": adr_allocation(
         "PO-1", "Accepted", "AA-1", "AR-1", "EA-3", "SF-2"
     ),
+    "design/architecture/decisions/adr-0182-deterministic-effect-id-allocation-and-replay-binding.md": adr_allocation(
+        "GR-1",
+        "Proposed - Pending Human Review",
+        "GR-4",
+        "AS-1",
+        "SF-1",
+        "SF-2",
+        "PO-4",
+    ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
     "README.md": "Service overview",
