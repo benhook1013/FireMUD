@@ -60,7 +60,7 @@ Required bundle contents:
 - `pluginId` – stable logical plugin identity reused across versions.
 - `pluginVersionId` – immutable version identity for this bundle only.
 - `baseVersionId` – the exact published game version this plugin version targets.
-- `abilitySchemaDigest` – the immutable ability schema digest for that same `baseVersionId`.
+- `abilitySchemaDigest` – a required signed, nonblank field for that same `baseVersionId`. **Current signed intake treats it as an opaque value** and does not yet prove dedicated Game Logic ownership or enforce the canonical digest shape. **Target-state intake/publication validation** requires the immutable Game Logic-owned ability-schema digest represented as `sha256:<64 lowercase hexadecimal characters>`; target publication/distribution metadata carries the positive Game Logic participant `digestSchemaVersion` and canonicalization evidence alongside this value. Those fields are not plugin-defined schema metadata or a substitute for the participant evidence.
 - `displayName` and optional human-facing description/version notes.
 - `entrypoints[]` – the DSL graphs included in the bundle, with stable graph identifiers and file references.
 - `bindings[]` – the event subscriptions and target scopes declared by the bundle, using the canonical binding model defined below.
@@ -81,7 +81,7 @@ Contract rules:
 - `pluginVersionId` is immutable content identity. Republishing after any manifest, graph, binding, or asset change requires a new `pluginVersionId`.
 - Signature-only approval changes do not require a new `pluginVersionId` when the signed payload bytes are identical. The same immutable plugin version may therefore carry multiple accepted signatures or environment approvals over time, but any manifest/graph/binding/asset-byte change still requires a new `pluginVersionId`.
 - `baseVersionId` compatibility is exact, not fuzzy. A plugin version targets one published game version only.
-- `abilitySchemaDigest` must match the immutable digest attested for that `baseVersionId`; it is recorded in Game Design metadata and re-checked at activation time.
+- **Target state:** `abilitySchemaDigest` must match the immutable digest attested for that `baseVersionId`; it is recorded in Game Design metadata and re-checked at activation time. Current signed intake records the required nonblank opaque value while the dedicated Game Logic proof and canonical format validation remain unavailable.
 - **Target state:** Game Design must persist indexed metadata from the signed manifest (`pluginId`, `pluginVersionId`, `baseVersionId`, `abilitySchemaDigest`, the complete canonically ordered verified signature set, validation status) so UIs and control-plane APIs do not need to unpack bundles for routine reads.
 - When `assetRefs[]` is non-empty, Game Design must also persist `distributionManifestHash` and `distributionManifestPath` for the plugin-version distribution manifest it writes during `PublishPluginVersion`.
 - Automation & Scripting must treat the signed manifest as the source of truth for runtime activation metadata. It may cache extracted fields, but it must not trust mutable side-channel metadata over the signed manifest.
@@ -96,8 +96,9 @@ When `assetRefs[]` is empty, no plugin distribution manifest is required. When `
 The distribution manifest must include:
 
 - `tenantId`, `pluginId`, `pluginVersionId`, `baseVersionId`, and `abilitySchemaDigest`.
-- `manifestHash` and `manifestSchemaVersion`.
-- **Target state:** `bundleDigest` and the immutable publication-time/base verified-signature evidence set bound to that digest. Post-publication signature-only approvals do not version or rewrite this manifest; target complete signature reads compose the base set with the append-only Game Design evidence ledger.
+- **Target state:** The manifest also carries the Game Logic participant `digestSchemaVersion` and canonicalization evidence for that digest. The current `PluginBundleStorageServiceImpl` export omits both participant metadata, so current distribution-manifest output does not prove the Game Logic digest contract.
+- `manifestSchemaVersion`; the current `manifestHash` is the bare lowercase 64-hex SHA-256 digest of the exact serialized manifest bytes, persisted in indexed plugin metadata as `distributionManifestHash` rather than included in the JSON payload (which avoids a self-referential hash).
+- The current manifest carries `bundleDigest` and the selected `signerKeyId`. **Target state:** it also carries the immutable publication-time/base verified-signature evidence set bound to that digest. Post-publication signature-only approvals do not version or rewrite this manifest; target complete signature reads compose the base set with the append-only Game Design evidence ledger.
 - `assets[]` entries keyed by signed `assetId`, with canonical object-store URL or opaque storage key, content hash, media type, byte size, and optional localization or usage metadata.
 
 `PublishPluginVersion` must fail before `PUBLISHED` if any signed `assetRefs[]` entry is missing from the bundle, cannot be exported, has a digest mismatch, or cannot be represented in the distribution manifest. Exact-byte repair rules mirror version asset repair: a published plugin distribution manifest is immutable, and repair may only reproduce bytes that match the persisted manifest hash.
@@ -138,7 +139,7 @@ Minimum requirements:
   - **Target state:** Runtime signer-policy visibility must be queryable via control-plane read APIs (for example `GetSignerPolicyConvergence`) so operators can verify policy propagation before and after revocation. Before resuming normal admission after a revocation or policy repair, operators should use those read surfaces together with the scripting control-plane convergence/drain reads for the affected scope to confirm that policy propagation, plugin disablement, and any required draining have all converged.
   - **Target state:** If signer policy or its bundle evidence cannot be refreshed/verified for a scope beyond max-age, plugin admission must fail closed with `signer_policy_unavailable` until policy converges; the stage-specific response/audit field remains owned by the [scripting outcome contracts](../../system-architecture-scripting-normative-contract-tables.md#table-2-script_event_audit-stages-and-outcomes).
 
-Target intake must establish a durable operation identity before untrusted bundle parsing can determine whether plugin metadata is available. The normalized upload request binds the tenant, stable request identity, and bundle-byte digest. Only input from which both `(pluginId, pluginVersionId)` are identifiable may create a durable plugin-version `UPLOAD_REJECTED` row and append-only status event for deterministic parse, archive, manifest, or signature rejection. Malformed or otherwise unidentifiable input must instead retain only a tenant/request-scoped durable intake-rejection record, without fabricating plugin identity, a version, or a publication/status event. Exact retries with the same digest return the recorded rejection; reuse of the request identity with a changed digest conflicts. Neither rejection path creates raw bundle storage or runtime registry state, and the rejection reason remains bounded and operator-visible.
+Target intake must establish a durable operation identity before untrusted bundle parsing can determine whether plugin metadata is available. Before archive parsing, it computes `rawUploadDigest` as `sha256:<64 lowercase hexadecimal characters>`: SHA-256 over the exact received upload bytes, with no archive normalization, decompression, or transport-wrapper metadata, under positive `rawUploadDigestSchemaVersion=1`. The normalized upload request binds the tenant, stable request identity, raw-upload digest, and raw-upload digest schema version. This raw-upload digest is distinct from the post-parse signed-intake-v1 `bundleDigest`: `rawUploadDigest` uses the explicit `sha256:` prefix, while `bundleDigest` is the bare 64-character lowercase hexadecimal digest defined above for canonical extracted entries and signature verification. Only input from which both `(pluginId, pluginVersionId)` are identifiable may create a durable plugin-version `UPLOAD_REJECTED` row and append-only status event for deterministic parse, archive, manifest, or signature rejection. Malformed or otherwise unidentifiable input must instead retain only a tenant/request-scoped durable intake-rejection record, without fabricating plugin identity, a version, or a publication/status event. Exact retries with the same complete binding return the recorded rejection; reuse of the request identity with a changed raw-upload digest or schema version conflicts. Neither rejection path creates raw bundle storage or runtime registry state, and the rejection reason remains bounded and operator-visible.
 
 **Target state:** Logging & Admin must surface the complete canonically ordered verified signature set and verification status (including `bundleDigest` and each `signerKeyId`) so operators can explain why a plugin version was accepted or rejected. The current signed-intake v1 surface exposes only the selected `signerKeyId`.
 
@@ -251,12 +252,14 @@ Runtime/operator-facing activation outcomes must remain deterministic:
 
 This example shows the minimum signed authoring shape expected by the publication pipeline:
 
+The `abilitySchemaDigest` below uses the exact `sha256:` plus 64 lowercase hexadecimal representation. Publication also binds the positive Game Logic participant `digestSchemaVersion` and that participant's documented canonicalization evidence from the release attestation; those participant metadata are not plugin-defined schema fields.
+
 ```json
 {
   "pluginId": "town-crier",
   "pluginVersionId": "town-crier-v3",
   "baseVersionId": "game-v12",
-  "abilitySchemaDigest": "sha256:9dd1b7c2...",
+  "abilitySchemaDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "displayName": "Town Crier",
   "entrypoints": [
     {
@@ -289,7 +292,7 @@ This example shows the minimum signed authoring shape expected by the publicatio
 Expected publication behavior for this example:
 
 - `UploadPluginBundle` verifies the archive, signatures, and manifest shape, then persists indexed metadata for `town-crier-v3`.
-- `PublishPluginVersion` validates that `regionTemplateId:market-square` exists in `game-v12`, that `announce-arrival` is present and safe, and that the plugin remains compatible with `sha256:9dd1b7c2...`.
+- `PublishPluginVersion` validates that `regionTemplateId:market-square` exists in `game-v12`, that `announce-arrival` is present and safe, and that the plugin remains compatible with `sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`.
 - `SetPluginActiveVersion` may later activate `town-crier-v3` only for instances whose `runtimeVersionId` is `game-v12` and whose bound ability schema digest matches the same value.
 - If `assetRefs[]` included an entry such as `"assetRefs": [{"assetId": "bell-sfx", "path": "assets/bell.ogg"}]`, Game Design would export that asset into the plugin-version distribution manifest, persist the manifest hash with the plugin metadata, and expose the runtime-discoverable asset only through that manifest. Runtime consumers would resolve `bell-sfx` through the published plugin metadata, not by constructing object-store paths directly.
 

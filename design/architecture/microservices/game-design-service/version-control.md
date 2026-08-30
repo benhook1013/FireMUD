@@ -27,25 +27,9 @@ content even though domain services own the runtime templates:
 
 - Each revision and commit references concrete domain objects (rooms, regions,
   NPCs, items, templates) via stable identifiers maintained by the owning domain services.
-- **Target state:** During authoring, design tools apply revisions incrementally
-  to domain services’ **Draft** template rows via idempotent design APIs bound to
-  the complete commit/revision identity and affected-epoch set. Draft template
-  graphs in World Management, Entity Management, and related services are then
-  the authoritative snapshots of world and entity data for each version.
-- **Current first slice:** `SaveRevision` optionally calls World Management to
-  apply a mutation and only afterward unconditionally inserts the Game Design
-  revision; Game Design has no matching deduplication lookup or uniqueness
-  constraint. This ordering is therefore not idempotent shared-Draft proof; the
-  current partial-application and retry gap is recorded in Implementation Status.
-- **Target state:** When a version is published, the service coordinates the
-  durable Temporal `publish` workflow that validates and finalizes the existing
-  Draft data in each domain service and transitions the version to Published as
-  described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
-  No separate design database is copied into domain services at publish time.
-  **Current implementation:** the Temporal-disabled synchronous fallback remains
-  active and does not establish that durability contract; the Temporal-enabled
-  path is currently blocked by the Automation & Scripting digest participant's
-  `PERMISSION_DENIED` response.
+- **Target state:** During authoring, design tools apply revisions incrementally to domain services’ **Draft** template rows via idempotent design APIs bound to the complete commit/revision identity and affected-epoch set. Draft template graphs in World Management, Entity Management, and related services are then the authoritative snapshots of world and entity data for each version.
+- **Current first slice:** `SaveRevision` optionally calls World Management to apply a mutation and only afterward unconditionally inserts the Game Design revision; Game Design has no matching deduplication lookup or uniqueness constraint. This ordering is therefore not idempotent shared-Draft proof; the current partial-application and retry gap is recorded in Implementation Status.
+- **Target state:** When a version is published, the service coordinates the durable Temporal `publish` workflow that validates and finalizes the existing Draft data in each domain service and transitions the version to Published as described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md). No separate design database is copied into domain services at publish time. **Current implementation:** the Temporal-disabled synchronous fallback remains active and does not establish that durability contract; the Temporal-enabled path is currently blocked by the Automation & Scripting digest participant's `PERMISSION_DENIED` response.
 - These design APIs accept writes only for Draft versions. Once a version is
   marked Published, the corresponding template rows in domain services are
   treated as immutable for that `(tenantId, versionId)`; further edits require
@@ -53,11 +37,7 @@ content even though domain services own the runtime templates:
 - Domain services do not maintain their own commit histories; they expose only
   the current and historical versioned templates keyed by `(tenantId, versionId)`.
 
-To audit current history for a room, NPC, or item, contributors query the Game
-Design Service’s revision/version rows and correlate those revisions with the
-versioned templates stored in domain services. **Target state:** once the
-durable branch/commit model and read APIs exist, those surfaces will provide the
-canonical branch/commit audit view.
+To audit current history for a room, NPC, or item, contributors query the Game Design Service’s revision/version rows and correlate those revisions with the versioned templates stored in domain services. **Target state:** once the durable branch/commit model and read APIs exist, those surfaces will provide the canonical branch/commit audit view.
 
 ### Design-Time Synchronization
 

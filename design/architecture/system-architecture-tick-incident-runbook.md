@@ -95,11 +95,11 @@ Normal incident escalation groups by `<tenantId, gameInstanceId>`; `regionId` re
      - `timer:{tenantRegionTag}`
      - `retry:{tenantRegionTag}`
      - `tick-executor-lease:{tenantRegionTag}`
-     - After Game Session cleanup, invoke an Automation & Scripting-scoped cleanup/rebuild for `automation:timer:{tenantRegionTag}` and `script-scheduler:{tenantRegionTag}:lastTickId`; Automation & Scripting owns those prefixes and rebuilds them from durable schedules, trigger-instance rows, and the active status/progress adapter.
+     - **Target state, once implemented:** after Game Session cleanup, invoke an Automation & Scripting-scoped cleanup/rebuild for `automation:timer:{tenantRegionTag}` and `script-scheduler:{tenantRegionTag}:lastTickId`; Automation & Scripting owns those prefixes and rebuilds them from durable schedules, trigger-instance rows, and the active status/progress adapter. These are currently unimplemented target projections with no current reset operation, so the current operator fallback must not attempt this step.
      - `tick-events-lease:{tenantRegionTag}`, `tick-events:{tenantRegionTag}`, and all per-consumer `tick-events-offset:{tenantRegionTag}:<consumerId>` keys as reset-tolerant observer hints; consumers reacquire leases and re-establish baselines from the active status/progress adapter and durable domain state.
    - Do not delete domain data or non-coordination prefixes.
 4. **Resume ticks and verify recovery**
-   - Resume tick scheduling for the region only after both Game Session coordination cleanup and the Automation & Scripting cleanup/rebuild have completed, followed by the canonical post-reset smoke gate.
+   - Resume tick scheduling for the region only after Game Session coordination cleanup and, **once the target Automation projections exist**, the Automation & Scripting cleanup/rebuild have completed, followed by the canonical post-reset smoke gate. The current operator fallback has no executable Automation cleanup/rebuild and must not claim this target gate is complete.
    - Confirm via dashboards that:
      - `tick_status{scope_class,status="RUNNING"}` is `1`.
      - `tick_execution_time_ms_*` ratios fall back into healthy envelopes.

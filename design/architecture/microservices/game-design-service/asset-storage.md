@@ -269,12 +269,7 @@ The same asset can be referenced by multiple versions without duplicating the bi
 row. Once the target authoring path exists and a mapping belongs to a version in the
 Published or Active state described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md), the referenced asset must be treated as immutable; replacing the binary requires creating a new `game_assets` row and a new `version_asset` mapping.
 
-Failed versions may retain their normalized `version_asset` mappings while they remain
-retryable; those mappings continue to make the referenced bytes reachable and exempt
-from draft-quota accounting. Explicit abandonment must remove those failed-version
-mappings through the owner-controlled reachability workflow before purge eligibility
-is established. A failed version is not treated as launchable merely because its
-mappings remain during retry.
+Failed versions may retain their normalized `version_asset` mappings while they remain retryable; those mappings continue to make the referenced bytes reachable and exempt from draft-quota accounting. Explicit abandonment must remove those failed-version mappings through the owner-controlled reachability workflow before purge eligibility is established. A failed version is not treated as launchable merely because its mappings remain during retry.
 
 Tenant-scoped uniqueness is not sufficient referential integrity for this boundary. The target schema must tie the tenant, version, and asset identities together: expose tenant-qualified parent keys and use composite foreign keys (or an equivalent owner-transaction plus database guard) for `(tenant_id, version_id)` to `version` and `(tenant_id, asset_id)` to `game_assets`. The release-bundle binding must apply the same tenant/version integrity rule; a scalar `version_id` foreign key alongside an unrelated `tenant_id` can represent a cross-tenant release. Mapping, bundle, migration, and readback proof must include negative cross-tenant insert and lookup cases before version-scoped asset publication is considered isolated.
 

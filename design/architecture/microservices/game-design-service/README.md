@@ -4,10 +4,7 @@
 
 Offers tools for building worlds, items, actions, and events that make up each game. Used by creators to design content without touching the underlying code. It maintains version metadata, configuration manifests, and templates so new game instances can be created with predefined rules. Template creation does not provision administrator accounts; any future bootstrap flow must use Account-owned account, membership, and grant operations.
 
-This service is used only at design time. Runtime clients never request logos,
-favicons, or themes from it. **Target state:** published assets are served from
-object storage via manifest files; the current private object-store URLs are not
-public client delivery, so approved public delivery remains deferred.
+This service is used only at design time. Runtime clients never request logos, favicons, or themes from it. **Target state:** published assets are served from object storage via manifest files; the current private object-store URLs are not public client delivery, so approved public delivery remains deferred.
 
 Authoritative read surfaces worth wiring into creator/operator tooling:
 
@@ -41,17 +38,7 @@ Current capability and proof gaps remain: Game Session's exact pin/epoch persist
 - Coordinates with World Management, Entity Management, Game Logic, and Automation & Scripting Service to apply changes.
 - Stores version descriptors and manifests so new game instances can be generated from templates.
 - Maintains history of revisions so designers can roll back to prior versions.
-- **Target state:** Every full-version publish starts the durable Temporal `publish`
-  workflow described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md)
-  and [Transaction Strategies](../../system-architecture-transactions.md).
-  The durable orchestration persists version metadata, coordinates participant
-  finalization/attestation, and exposes workflow runtime metadata through the
-  canonical Game Design control-plane read surfaces. **Current implementation:**
-  when Temporal is disabled, the synchronous fallback remains the active publish
-  path and does not establish the required durability contract; when Temporal is
-  enabled, the Automation & Scripting digest participant currently returns
-  `PERMISSION_DENIED`, so that path is blocked and is not proof of a successful
-  publish or runtime readiness.
+- **Target state:** Every full-version publish starts the durable Temporal `publish` workflow described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md) and [Transaction Strategies](../../system-architecture-transactions.md). The durable orchestration persists version metadata, coordinates participant finalization/attestation, and exposes workflow runtime metadata through the canonical Game Design control-plane read surfaces. **Current implementation:** when Temporal is disabled, the synchronous fallback remains the active publish path and does not establish the required durability contract; when Temporal is enabled, the Automation & Scripting digest participant currently returns `PERMISSION_DENIED`, so that path is blocked and is not proof of a successful publish or runtime readiness.
 - Plugin publication is narrower than a full game-version publish workflow. `UploadPluginBundle` and `PublishPluginVersion` are design-time Game Design workflows that validate and persist immutable plugin-version metadata; they do not repin running games and do not require the cross-service runtime cutover/orchestration used by `PublishVersion`. Cross-service runtime effects begin later, when Logging & Admin invokes instance-scoped activation against Automation & Scripting.
 - Design assets are stored per `tenantId` so multiple games can coexist in the
   same database schema. Queries and version publishing workflows enforce this
