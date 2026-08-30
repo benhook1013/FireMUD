@@ -250,9 +250,9 @@ Runtime/operator-facing activation outcomes must remain deterministic:
 | Required component/capability policy blocks the plugin | Reject activation with deterministic policy error |
 | Activation reconciliation/writeback fails after intent is recorded | Leave runtime state unchanged or mark reconciliation failure explicitly; do not pretend activation succeeded |
 
-### Minimal Bundle Example
+### Minimal Bundle Example (Target State)
 
-This example shows the minimum signed authoring shape expected by the publication pipeline:
+This example shows the minimum signed authoring shape expected by the target publication pipeline. It is not a claim that the current implementation provides the complete target write-path guarantees; the current signed-only intake/publication behavior and its gaps are recorded in [Implementation Status](#implementation-status).
 
 The `abilitySchemaDigest` below uses the exact `sha256:` plus 64 lowercase hexadecimal representation. Publication also binds the positive Game Logic participant `digestSchemaVersion` and that participant's documented canonicalization evidence from the release attestation; those participant metadata are not plugin-defined schema fields.
 
@@ -291,14 +291,16 @@ The `abilitySchemaDigest` below uses the exact `sha256:` plus 64 lowercase hexad
 }
 ```
 
-Expected publication behavior for this example:
+Expected target-state publication behavior for this example:
 
-- `UploadPluginBundle` verifies the archive, signatures, and manifest shape, then persists indexed metadata for `town-crier-v3`.
+- `UploadPluginBundle` verifies the archive, signatures, and manifest shape, then persists indexed metadata for `town-crier-v3`. A local CLI or equivalent caller may expose these operation names, but that surface does not by itself prove the target request-identity, digest, complete-signature, or owner-decision guarantees.
 - `PublishPluginVersion` validates that `regionTemplateId:market-square` exists in `game-v12`, that `announce-arrival` is present and safe, and that the plugin remains compatible with `sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`.
 - `SetPluginActiveVersion` may later activate `town-crier-v3` only for instances whose `runtimeVersionId` is `game-v12` and whose bound ability schema digest matches the same value.
 - If `assetRefs[]` included an entry such as `"assetRefs": [{"assetId": "bell-sfx", "path": "assets/bell.ogg"}]`, Game Design would export that asset into the plugin-version distribution manifest, persist the manifest hash with the plugin metadata, and expose the runtime-discoverable asset only through that manifest. Runtime consumers would resolve `bell-sfx` through the published plugin metadata, not by constructing object-store paths directly.
 
-### End-to-End Publication Sequence
+### End-to-End Publication Sequence (Target State)
+
+The following is the target-state publication sequence; it is illustrative and does not claim that the current implementation or any local CLI exposes the complete guarantees described here.
 
 One canonical happy path plus failure path:
 

@@ -1,7 +1,12 @@
 openapi: 3.0.3
 info:
   title: Entity Management Service API
-  description: Health check endpoint
+  description: >-
+    Health check endpoint. The authoritative contract intentionally excludes
+    the legacy character, inventory, equipment, friend, and crafting REST
+    handlers: they remain runtime-reachable implementation drift and are not
+    supported API routes until their target authorization and scope proofs
+    converge. This document therefore advertises only /ping.
   version: 1.0.0
   license:
     name: MIT

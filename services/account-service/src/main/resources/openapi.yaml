@@ -1,7 +1,11 @@
 openapi: 3.0.3
 info:
   title: Account Service API
-  description: API for user accounts and authentication
+  description: >-
+    API for user accounts and authentication. The caller-asserted
+    POST /accounts/{accountId}/external handler remains legacy implementation
+    drift and is intentionally omitted from the authoritative contract until
+    the server-verified provider-linking flow and its proof converge.
   version: 1.0.0
   license:
     name: MIT

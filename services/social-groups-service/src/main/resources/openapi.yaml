@@ -1,7 +1,12 @@
 openapi: 3.0.3
 info:
   title: Social Groups Service API
-  description: API for friend lists and guild chat
+  description: >-
+    API for friend lists and guild chat. Current REST DTOs use Java Long
+    tenantId values, serialized as JSON integer/int64 values in this contract.
+    This is an explicit migration gap from the canonical UUID tenant identity;
+    the wire type must not change here without converging the DTO, controller,
+    persistence, and authorization boundaries together.
   version: 1.0.0
   license:
     name: PolyForm Noncommercial License 1.0.0

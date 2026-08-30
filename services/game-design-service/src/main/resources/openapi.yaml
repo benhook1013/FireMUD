@@ -2,7 +2,14 @@
 openapi: 3.0.3
 info:
   title: Game Design Service API
-  description: Tools for editing game assets and publishing versions
+  description: >-
+    Tools for editing game assets and publishing versions. Current REST DTOs
+    carry tenantId as a String, while the request reader validates positive
+    decimal Long values; the string pattern in this contract is therefore the
+    exact current wire representation. This is an explicit migration gap from
+    the canonical UUID tenant identity and must not be changed without
+    converging the DTO, controller, persistence, and authorization boundaries
+    together.
   version: 1.0.0
   license:
     name: PolyForm Noncommercial License 1.0.0

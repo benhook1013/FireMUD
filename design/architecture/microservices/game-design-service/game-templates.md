@@ -52,11 +52,7 @@ This guarded planning and application is target-state behavior. The current `Sav
 
 After a successful upgrade, the exact profile baseline advances to `N`, while retained local differences, explicit deletions, detachments, mappings, and resolution outcomes remain recorded for the next upgrade. This makes repeated upgrades deterministic without turning the profile into an authoring or runtime inheritance layer.
 
-`GameTemplateDto` includes `id`, `tenantId`, `name`, an optional `description`,
-the raw `config` JSON and a `createdAt` timestamp. The `id` is assigned by the
-database when the template is saved. The `config` field uses a structured
-schema describing world layout, starter items, default rulesets, template
-references, and non-authoritative settings.
+`GameTemplateDto` includes `id`, `tenantId`, `name`, an optional `description`, the raw `config` JSON and a `createdAt` timestamp. On a normal create with `id` omitted, the database assigns the ID when the template is saved. The current DTO/service path also accepts a caller-supplied `id` and can update a row by that global ID while changing its claimed tenant; this is the cross-tenant overwrite/reassignment gap recorded in [Implementation Status](#implementation-status), not supported create behavior. The target create contract rejects `id`, and future updates/readbacks must use exact tenant-qualified identity while keeping the stored tenant binding immutable. The `config` field uses a structured schema describing world layout, starter items, default rulesets, template references, and non-authoritative settings.
 
 The `config` payload does not embed authoritative copies of world, entity, or script definitions. Instead it carries:
 
