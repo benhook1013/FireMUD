@@ -91,7 +91,7 @@ Implementation Notes:
   - serialize included relations in stable table order, then primary-key order;
   - include only semantic fields plus stable identifiers referenced cross-service;
   - normalize encoded structured fields before hashing.
-- `digestSchemaVersion` must increment whenever included objects, semantic field selection, or serialization semantics change.
+- `digestSchemaVersion` must increment whenever included objects, semantic field selection, or serialization semantics change. For this manifest, once `v2` is deployed, `v1` is unsupported. The schema bump invalidates previously recorded participant evidence for the affected scope: publish/reconciliation must not compare a new-schema digest with a recorded `v1` digest, and Entity must reject a requested or reported unsupported version until the compatible canonicalization is deployed. The migration must explicitly replay or recompute each affected `(tenantId, versionId)` digest, re-record its `appliedCommitId`, digest, and schema version, and provide readback proof before the publish gate accepts the new version; it must not silently reinterpret or migrate old hashes in place.
 
 Publish gating must fail closed if Entity Management cannot attest a digest consistent with this manifest.
 

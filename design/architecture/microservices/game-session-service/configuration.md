@@ -47,7 +47,7 @@ The generated reference carries the current defaults, descriptions, valid values
 - Environment variables configure PostgreSQL and Redis connections via `DatabaseAutoConfiguration` and `RedisProperties`.
 - `.env.sample` contains example values for local development.
 - [Deployment Environments](../../infrastructure/deployment-environments.md) remains the canonical source for concrete environment examples and deployment-specific binding expectations.
-- The service enforces multi-tenant isolation. All tables include a `tenant_id` column and Redis keys are prefixed with this value as outlined in [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
+- The service enforces multi-tenant isolation for protected service-owned tables and Redis keys that carry tenant scope; those Redis keys are prefixed with the tenant value as outlined in [Multi-Tenancy](../../system-architecture-multi-tenancy.md). The current `/actuator/settings/effective` diagnostic read is an explicit authorization exception documented below, not proof of complete cross-tenant isolation.
 - Service discovery for downstream gRPC calls uses `ServiceEndpointsProperties` and mTLS identities issued through cert-manager.
 - `firemud.presentation`, `firemud.reconnection`, `firemud.command-history`, `firemud.command-capabilities`, `firemud.movement`, and `firemud.world-topology` remain file/env-backed operator defaults.
 

@@ -170,7 +170,7 @@ Digest comparison rules:
 - The Automation full-version participant must select only the script definitions and event bindings mapped to the requested `(tenantId, versionId)`. Including `versionId` only as a field in a digest over tenant-wide rows is not version-scoped attestation. If the live data model cannot map the requested version to an exact script/binding set, the participant must fail closed rather than return a tenant-wide digest. Proof must show two versions with disjoint script/binding inputs produce isolated digests and that a cross-version row cannot satisfy either publish gate.
 - The dedicated `abilitySchemaDigest` is compared exactly with the Game Logic-owned digest for the same target commit and its existing participant `digestSchemaVersion`/canonicalization contract; missing, unsupported, stale, or mismatched evidence fails closed.
 - Digest request/response payloads are canonical across participants:
-  - `GetDraftDesignDigestRequest { tenantId, scope: oneof {versionId, scriptPatchVersion} }`
+  - `GetDraftDesignDigestRequest { tenantId, scope: oneof {versionId, scriptPatchVersion}, publishRequestId, derivedWorkflowIdentity, requestDigest }`; the binding fields may instead be carried in authenticated owner metadata only when the receiver validates them as part of the same typed request contract.
   - `GetDraftDesignDigestResponse { tenantId, scope, appliedCommitId, contentDigest, digestSchemaVersion }`
   - Unsupported scopes must fail with `UNSUPPORTED_SCOPE`; publish orchestration must treat this as a hard mismatch for required participants.
 

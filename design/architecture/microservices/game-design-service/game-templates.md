@@ -192,6 +192,8 @@ Ownership and usage rules:
 
 ### Launch Orchestration Ownership
 
+The following launch-orchestration sequence is target-state behavior, not a current implementation contract. `GetTemplateReferencePhase` is absent from the current proto/service; current launch resolution uses each template's `templateReferencePhase` field instead, as recorded in [Implementation Status](#implementation-status).
+
 The first implementation slice must use one control-plane launch orchestrator. The canonical owner is the Game Session instance-creation workflow consuming Game Design control-plane APIs.
 
 Required ordering:
@@ -390,6 +392,8 @@ curl -X POST http://localhost:8080/templates \
 The service validates the payload and stores it in the `game_templates` table.
 Templates can then be listed per `tenantId` to help bootstrap new games.
 Template names must be unique for each tenant to avoid collisions.
+
+These examples use `tenantId=1` because the current REST request reader accepts positive decimal `Long` tenant identifiers. That is current transport behavior, not the target identity shape: the target architecture uses UUID tenant identifiers, and the examples must migrate together with the REST/OpenAPI and persistence contract when that transport change is implemented.
 
 To list templates:
 
