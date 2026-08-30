@@ -15,7 +15,7 @@ This API contract is target-state canonical; implementation coverage is partial 
 
 - `GetRoom` – retrieves room data including exits and environmental effects through `RoomInstanceRef`.
 - `GetRoomSnapshot` – returns a minimal, LOOK-focused view scoped by `RoomInstanceRef`.
-- `ListRoomOccupants` – returns the authoritative typed occupant list for actors in a room, scoped by `RoomInstanceRef`.
+- `ListRoomOccupants` – **target state:** returns the authoritative typed occupant list for actors in a room, scoped by `RoomInstanceRef`. The current LOOK path is fixture-backed and has no World-owned location/occupancy persistence or authoritative read/write surface; it must not be treated as gameplay occupancy truth.
 - `ApplyRoomAmbientStatePatch` – applies a typed ambient fact patch to the target runtime scope under expected epoch/version preconditions and an operation/aggregate/request-digest-bound guard derived from the root `EffectId`; matching replay returns the durable prior result and a conflicting identity or payload fails closed.
 - `GetDraftDesignDigest` – returns the publish-gating digest for Draft world templates using the typed scope request `GetDraftDesignDigestRequest { tenantId, scope: oneof { versionId, scriptPatchVersion } }`. World Management supports `versionId` scope only and must return `UNSUPPORTED_SCOPE` for `scriptPatchVersion`.
 - `BeginVersionPublicationFreeze` – **Target state:** starts or exactly replays the durable WMS owner freeze for one `(tenantId, versionId)` publication request and returns the request/fence/epoch/digest checkpoint acknowledgement defined below. It is not present in the current proto or implementation.
