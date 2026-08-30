@@ -34,7 +34,7 @@ Inventory and equipment mutations are also intended to be auditable through a ca
 - Target responsibility: persist characters, NPCs, and items with optimistic locking. The current character update path does not yet provide tenant- and namespace-bound version CAS or stale-write proof; see [Runtime and Data](./runtime-and-data.md#implementation-status).
 - Own the persisted runtime actor core that unifies player and NPC gameplay identity; target location and occupancy authority belongs to World Management, but its tables and read/write path are not implemented
 - Provide CRUD and query APIs for other services
-- Own and manage all inventories and item containment; character location and instance metadata live in the World Management Service
+- Own and manage all inventories and item containment; at target, character location and instance metadata live in the World Management Service, but the current authoritative path is absent
 - Own room-attached ground containers, hidden inventory containers, equipment bindings, and the audit trail for item/container movement
 - Coordinate deferred writes through Game Session Service
 
