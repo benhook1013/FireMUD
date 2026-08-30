@@ -81,6 +81,14 @@ token_profiles:
     type: private_player_delegation
     issuer: firemud-account-service
     audience: account-service
+issued_token_state_vocabulary:
+  - none
+  - none_bounded_single_use_replay_exception
+  - current_exact_active_registry_record
+  - current_exact_active_control_ui_registry_record
+  - current_exact_active_player_bootstrap_registry_record
+  - current_exact_private_delegation
+  - current_exact_private_delegation_when_player_scoped
 auth_path_vocabulary:
   - control_ui
   - control_ui_plus_current_role_and_role_appropriate_assurance
@@ -148,7 +156,7 @@ route_authentication_rules:
     audience_source: token_profiles
   gameplay_websocket_entrypoint:
     canonical_route: /ws/game/**
-    supported_variants: [first_party_cookie, trusted_tcp_proxy]
+    supported_variants: [first_party_web, trusted_tcp_proxy]
     future_variants:
       non_first_party_public_header:
         route: /ws/game/**
@@ -342,12 +350,15 @@ required_live_check_vocabulary:
   - exact_binding_admission_lease
   - binding_fence
   - binding_ownership
+  - playable_state_namespace
   - grant_version
   - idempotency
   - independent_totp
   - issuer_generation
   - membership
   - membership_generation
+  # Selected caller-bound tenant authority generation for player-bootstrap issuance and gameplay admission.
+  - tenant_authority_generation
   - membership_when_tenant_role
   - moderation_report_policy
   - billing_deletion_clearance
@@ -358,6 +369,8 @@ required_live_check_vocabulary:
   - prepared_version_upgrade_when_target_changes
   - public_production_admission
   - public_production_visibility
+  - world_instance_lifecycle
+  - world_instance_lifecycle_epoch
   - realm_visibility
   - recent_account_authentication
   - recovery_resume_gate
@@ -380,7 +393,7 @@ required_live_check_vocabulary:
   - security_lock_export_action_family
 implementation_status:
   known_drift:
-    - explicit_public_production_JOIN_is_not_implemented; current_PLAY_returns_JOIN_REQUIRED_for_missing_public_production_membership_and_WORLD_ACCESS_DENIED_for_missing_non_public_membership; connect_token_issuance_requires_existing_membership_and_never_creates_it; connect_token_membership_authority_generation_reread_remains_unimplemented
+    - explicit_public_production_JOIN_is_not_implemented; current_PLAY_returns_JOIN_REQUIRED_for_missing_or_existing_non_admitting_public_production_membership; the_live_adapter_uses_membershipExists_false_for_missing_and_gameplayAdmissionAllowed_false_for_existing_non_admitting_membership_without_classifying_the_latter_as_INACTIVE; current_PLAY_returns_WORLD_ACCESS_DENIED_for_missing_non_public_membership; connect_token_issuance_requires_existing_membership_and_never_creates_it; connect_token_membership_authority_generation_reread_remains_unimplemented
     - protected_cookie_ws_game_and_bootstrap_bare_LOGIN_are_implemented_but_non_promotable_until_Gateway_carrier_requirements_replay_marker_durability_replay_quarantine_continuity_and_Account_planned_rotation_compromise_cutover_evidence_are_complete
     - privileged_control_is_target_only_and_unavailable_in_current_runtime; platformAdmin_and_cross_tenant_billingAdmin_branches_requiring_it_fail_closed_while_the_support_branch_does_not_require_it
     - operator_mutation_rows_are_normative_target_contracts_not_current_availability; action_schema_mutationDigest_v1_vectors_and_account_issued_authorization_reference_flow_are_required_before_external_support
@@ -832,6 +845,195 @@ coverage_drift:
         mutation_contract: audited_cross_tenant_billing_owner_transfer_with_verified_provider_replacement_before_cutover
     note: Payment/subscription foundations exist, but the unreviewed MS-AA-PAYMENT-INSTRUMENT wallet and payment-instrument contract is not currently routable and has no accepted ADR.
 routes:
+  # These live REST adapters are intentionally recorded as target-only until
+  # their current public reachability and caller-supplied tenant selectors are
+  # replaced by the owner-bound contracts in the service documents.
+  - service: entity-management-service
+    route: POST /crafting/recipes
+    scope: tenant
+    classification: tenant_regular
+    route_status: target_not_currently_routable
+    auth_path: control_ui_plus_current_tenant_role
+    method_policy: exact_declared_route
+    subject_binding: authenticated_operator
+    target_binding: exact_context_tenant_and_draft_version
+    platform_admin_override: forbidden
+    accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: true
+    required_live_checks: [issuer_generation, account_generation, membership, membership_generation, tenant_generation]
+    owner_checks: [recipe_tenant_ownership, result_item_tenant_ownership, ingredient_item_tenant_ownership]
+    required_fields: [tenant_id, name, result_item_id, result_quantity, ingredients]
+    roles:
+      any_of: [designer, tenantAdmin]
+    implementation_status:
+      known_drift:
+        - current_openapi_security_is_empty_and_controller_accepts_caller_tenant_id
+        - recipe_lookup_and_update_are_not_tenant_qualified
+        - cross_tenant_result_and_ingredient_item_ownership_is_not_proved
+  - service: entity-management-service
+    route: GET /crafting/recipes/{id}
+    scope: tenant
+    classification: tenant_regular
+    route_status: target_not_currently_routable
+    auth_path: control_ui_plus_current_tenant_role
+    method_policy: exact_declared_route
+    subject_binding: authenticated_operator
+    target_binding: exact_context_tenant_and_recipe_id
+    platform_admin_override: forbidden
+    accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: true
+    required_live_checks: [issuer_generation, account_generation, membership, membership_generation, tenant_generation]
+    owner_checks: [recipe_tenant_ownership, result_item_tenant_ownership, ingredient_item_tenant_ownership]
+    required_fields: [tenant_id, id]
+    roles:
+      any_of: [designer, tenantAdmin]
+    implementation_status:
+      known_drift:
+        - current_openapi_security_is_empty_and_recipe_id_lookup_is_global_shaped
+        - cross_tenant_recipe_and_item_read_is_not_proved_denied
+  - service: automation-scripting-service
+    route: POST /formations
+    scope: tenant
+    classification: tenant_regular
+    route_status: target_not_currently_routable
+    auth_path: control_ui_plus_current_tenant_role
+    method_policy: exact_declared_route
+    subject_binding: authenticated_operator
+    target_binding: exact_context_tenant_and_npc_namespace
+    platform_admin_override: forbidden
+    accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: true
+    required_live_checks: [issuer_generation, account_generation, membership, membership_generation, tenant_generation, binding_ownership]
+    owner_checks: [formation_tenant_ownership, leader_npc_tenant_ownership]
+    required_fields: [tenant_id, name, leader_npc_id, formation_type]
+    roles:
+      any_of: [tenantAdmin]
+    implementation_status:
+      known_drift:
+        - current_openapi_security_is_empty_and_controller_accepts_caller_tenant_id
+        - leader_npc_tenant_ownership_is_not_checked
+  - service: automation-scripting-service
+    route: POST /formations/{id}/members
+    scope: tenant
+    classification: tenant_regular
+    route_status: target_not_currently_routable
+    auth_path: control_ui_plus_current_tenant_role
+    method_policy: exact_declared_route
+    subject_binding: authenticated_operator
+    target_binding: exact_context_tenant_formation_and_npc
+    platform_admin_override: forbidden
+    accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: true
+    required_live_checks: [issuer_generation, account_generation, membership, membership_generation, tenant_generation, binding_ownership]
+    owner_checks: [formation_tenant_ownership, member_npc_tenant_ownership]
+    required_fields: [tenant_id, id, npc_id]
+    roles:
+      any_of: [tenantAdmin]
+    implementation_status:
+      known_drift:
+        - current_openapi_security_is_empty_and_tenant_selector_is_caller_supplied
+        - member_npc_tenant_ownership_is_not_checked
+  - service: automation-scripting-service
+    route: GET /formations/{id}/members
+    scope: tenant
+    classification: tenant_regular
+    route_status: target_not_currently_routable
+    auth_path: control_ui_plus_current_tenant_role
+    method_policy: exact_declared_route
+    subject_binding: authenticated_operator
+    target_binding: exact_context_tenant_and_formation
+    platform_admin_override: forbidden
+    accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: true
+    required_live_checks: [issuer_generation, account_generation, membership, membership_generation, tenant_generation, binding_ownership]
+    owner_checks: [formation_tenant_ownership, member_npc_tenant_ownership]
+    required_fields: [tenant_id, id]
+    roles:
+      any_of: [tenantAdmin]
+    implementation_status:
+      known_drift:
+        - current_openapi_security_is_empty_and_tenant_selector_is_caller_supplied
+        - cross_tenant_formation_and_member_read_is_not_proved_denied
+  - service: game-session-service
+    route: GET /actuator/settings/effective
+    applicability:
+      operator_branch: tenant_role
+    scope: tenant
+    classification: tenant_regular
+    route_status: target_not_currently_routable
+    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
+    method_policy: exact_declared_route
+    subject_binding: authenticated_operator
+    target_binding: exact_scoped_role_tenant_and_session_tenant
+    platform_admin_override: forbidden
+    accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: true
+    required_live_checks: [current_operator_authorization, membership, membership_generation, tenant_generation, current_session]
+    required_fields: [tenant_id, session_id]
+    roles:
+      any_of: [tenantAdmin, moderator]
+    implementation_status:
+      known_drift:
+        - current_privileged_classifier_accepts_any_scoped_tenant_role
+        - requested_tenant_and_persisted_session_tenant_are_not_bound_to_caller
+  - service: game-session-service
+    route: GET /actuator/settings/effective
+    applicability:
+      operator_branch: platformAdmin_global
+    scope: tenant
+    classification: tenant_regular
+    route_status: target_not_currently_routable
+    auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
+    method_policy: exact_declared_route
+    subject_binding: authenticated_operator
+    target_binding: exact_global_operator_target_tenant_and_session_tenant
+    platform_admin_override: platformAdmin_only
+    accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    tenant_billing_authority_generation_applies: true
+    membership_authority_generation_applies: false
+    required_live_checks: [current_operator_authorization, current_operator_roles, current_global_role, role_appropriate_assurance, target_tenant_generation, current_session]
+    privileged_control: required
+    required_fields: [tenant_id, session_id]
+    roles:
+      any_of: [platformAdmin]
+    implementation_status:
+      known_drift:
+        - current_privileged_classifier_accepts_scoped_roles_without_global_branch_selection
+        - requested_tenant_and_persisted_session_tenant_are_not_bound_to_caller
   - service: game-session-service
     route: LOGIN
     scope: public
@@ -1009,7 +1211,7 @@ routes:
     # Membership existence and conditional realm-grant checks belong to the
     # selected branch. Membership generation is common to every selected mode;
     # target/generation and binding checks remain route-level authority checks.
-    required_live_checks: [target_tenant_generation, membership_generation, membership_version, runtime_entitlements, admission_pointer, account_authority_tuple, account_outbox_checkpoint, exact_binding_admission_lease, binding_fence, binding_ownership]
+    required_live_checks: [tenant_authority_generation, membership_generation, membership_version, runtime_entitlements, admission_pointer, account_authority_tuple, account_outbox_checkpoint, exact_binding_admission_lease, binding_fence, binding_ownership]
     canonical_errors:
       any_of: [JOIN_REQUIRED, PUBLIC_PRODUCTION_ADMISSION_DENIED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE, AUTH_SESSION_REVOKED, OWNERSHIP_UNAVAILABLE, STALE_TIMELINE]
     account_checkpoint_tuple_evidence:
@@ -1142,6 +1344,7 @@ routes:
     classification: pre_tenant_discovery
     auth_path: player_bootstrap
     accepted_token_profiles: [player-bootstrap]
+    issued_token_state: current_exact_active_player_bootstrap_registry_record
     token_type: gameplay_bootstrap_user
     token_issuer: firemud-account-service
     token_audience: player-bootstrap
@@ -1154,6 +1357,7 @@ routes:
     classification: public_production_onboarding
     auth_path: player_bootstrap
     accepted_token_profiles: [player-bootstrap]
+    issued_token_state: current_exact_active_player_bootstrap_registry_record
     token_type: gameplay_bootstrap_user
     token_issuer: firemud-account-service
     token_audience: player-bootstrap
@@ -1172,11 +1376,13 @@ routes:
         selector: realm_mode=public_production
         classification: public_production_onboarding
         membership: pre_membership_discovery_allowed
+        issued_token_state: current_exact_active_player_bootstrap_registry_record
         required_live_checks: [realm_visibility, runtime_entitlements]
       private_or_playtest:
         selector: realm_mode=private_or_playtest
         classification: player_bootstrap_tenant
         membership: active_caller_bound_membership_required
+        issued_token_state: current_exact_active_player_bootstrap_registry_record
         membership_authority_generation_applies: true
         membership_version_applies: true
         realm_grant_authority: account_owned
@@ -1188,6 +1394,7 @@ routes:
     classification: public_production_onboarding
     auth_path: player_bootstrap
     accepted_token_profiles: [player-bootstrap]
+    issued_token_state: current_exact_active_player_bootstrap_registry_record
     token_type: gameplay_bootstrap_user
     token_issuer: firemud-account-service
     token_audience: player-bootstrap
@@ -1211,11 +1418,13 @@ routes:
         selector: realm_mode=public_production
         classification: public_production_onboarding
         membership: active_caller_bound_membership_required
+        issued_token_state: current_exact_active_player_bootstrap_registry_record
         required_live_checks: [membership, membership_generation, public_production_visibility, public_production_admission, runtime_entitlements, admission_pointer, connect_scope_match]
       private_or_playtest:
         selector: realm_mode=private_or_playtest
         classification: player_bootstrap_tenant
         membership: active_caller_bound_membership_required
+        issued_token_state: current_exact_active_player_bootstrap_registry_record
         membership_authority_generation_applies: true
         membership_version_applies: true
         realm_grant_authority: account_owned
@@ -1229,6 +1438,8 @@ routes:
     classification: public_production_onboarding
     auth_path: player_bootstrap
     accepted_token_profiles: [player-bootstrap]
+    issued_token_state: current_exact_active_player_bootstrap_registry_record
+    route_status: target_not_currently_routable
     token_type: gameplay_bootstrap_user
     token_issuer: firemud-account-service
     token_audience: player-bootstrap
@@ -1252,11 +1463,13 @@ routes:
         selector: realm_mode=public_production
         classification: public_production_onboarding
         membership: active_caller_bound_membership_required
+        issued_token_state: current_exact_active_player_bootstrap_registry_record
         required_live_checks: [membership, membership_generation, public_production_visibility, public_production_admission, runtime_entitlements, admission_pointer, connect_scope_match]
       private_or_playtest:
         selector: realm_mode=private_or_playtest
         classification: player_bootstrap_tenant
         membership: active_caller_bound_membership_required
+        issued_token_state: current_exact_active_player_bootstrap_registry_record
         membership_authority_generation_applies: true
         membership_version_applies: true
         realm_grant_authority: account_owned
@@ -1380,6 +1593,7 @@ routes:
       tenant_role: true
       platformAdmin_global: false
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -1419,6 +1633,7 @@ routes:
       platformAdmin_global: false
     # Stops the targeted game instance after current runtime ownership validation.
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -1457,6 +1672,7 @@ routes:
       tenant_role: true
       platformAdmin_global: false
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -1512,6 +1728,7 @@ routes:
         - the current owner-local handler does not enforce the declared control_plane_request_id, mutation_digest, and owner_atomic_idempotent_role_refresh_with_durable_result mutation contract
   - service: account-service
     route: AuthLogin
+    http_route: POST /auth/login
     scope: public
     classification: public
     accepted_token_profiles: []
@@ -1547,6 +1764,7 @@ routes:
     auth_path: control_ui_plus_recent_reauthentication_and_independent_totp
     subject_binding: caller_account_id
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -1598,6 +1816,7 @@ routes:
       non_moderation:
         selector: action_category=absent
         scope: tenant
+        issued_token_state: current_exact_active_control_ui_registry_record
         membership_authority_generation_applies: conditional_by_operator_role
         membership_authority_generation_condition:
           tenant_role: true
@@ -1613,6 +1832,7 @@ routes:
       tenant_restriction:
         selector: action_category=tenant_restriction
         scope: tenant
+        issued_token_state: current_exact_active_control_ui_registry_record
         membership_authority_generation_applies: conditional_by_operator_role
         membership_authority_generation_condition:
           tenant_role: true
@@ -1628,6 +1848,7 @@ routes:
       platform_access_ban:
         selector: action_category=platform_access_ban
         scope: account
+        issued_token_state: current_exact_active_control_ui_registry_record
         classification: account_scoped
         target_subject_binding: explicit_target_account_id
         role_assurance: privileged_control_when_global_role
@@ -1692,6 +1913,7 @@ routes:
     classification: public_production_onboarding
     auth_path: player_bootstrap
     accepted_token_profiles: [player-bootstrap]
+    issued_token_state: current_exact_active_player_bootstrap_registry_record
     token_type: gameplay_bootstrap_user
     token_issuer: firemud-account-service
     token_audience: player-bootstrap
@@ -1750,6 +1972,7 @@ routes:
     classification: caller_membership_scoped
     subject_binding: caller_account_id
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -1763,6 +1986,7 @@ routes:
     classification: account_scoped
     subject_binding: caller_account_id
     accepted_token_profiles: [control-ui, player-bootstrap]
+    issued_token_state: current_exact_active_registry_record
     accepted_token_profile_audiences:
       control-ui: control-ui
       player-bootstrap: player-bootstrap
@@ -1782,6 +2006,7 @@ routes:
     classification: account_scoped
     subject_binding: caller_account_id
     accepted_token_profiles: [control-ui, player-bootstrap]
+    issued_token_state: current_exact_active_registry_record
     accepted_token_profile_audiences:
       control-ui: control-ui
       player-bootstrap: player-bootstrap
@@ -1805,6 +2030,7 @@ routes:
     target_subject_binding: exact_caller_account_id_for_every_role
     platform_admin_override: forbidden
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -1828,6 +2054,7 @@ routes:
     target_subject_binding: exact_caller_account_id_for_every_role
     platform_admin_override: forbidden
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -1850,6 +2077,7 @@ routes:
     subject_binding: caller_account_id
     platform_admin_override: platformAdmin_only
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -1877,6 +2105,7 @@ routes:
     subject_binding: caller_account_id
     platform_admin_override: platformAdmin_only
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -1907,6 +2136,7 @@ routes:
     subject_binding: caller_account_id
     platform_admin_override: forbidden
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -1974,6 +2204,7 @@ routes:
     route_status: target_not_currently_routable
     auth_path: control_ui
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -2089,6 +2320,7 @@ routes:
     route_status: target_not_currently_routable
     auth_path: control_ui
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -2176,6 +2408,7 @@ routes:
     route_status: target_not_currently_routable
     auth_path: control_ui
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -2318,6 +2551,7 @@ routes:
     classification: player_bootstrap_tenant
     auth_path: player_bootstrap
     accepted_token_profiles: [player-bootstrap]
+    issued_token_state: current_exact_active_player_bootstrap_registry_record
     token_type: gameplay_bootstrap_user
     token_issuer: firemud-account-service
     token_audience: player-bootstrap
@@ -2330,9 +2564,9 @@ routes:
     target_binding: opaque_server_issued_connect_scope_id_matches_route
     realm_grant_authority: account_owned_when_non_public
     realm_grant_version: required_when_grant_gated
-    required_live_checks: [membership, target_tenant_generation, membership_generation, membership_version, account_authority_tuple, account_outbox_checkpoint, conditional_realm_access_grant, grant_version, runtime_entitlements, admission_pointer, connect_scope_match, replay_protection_available, replay_admission_fence_match]
+    required_live_checks: [membership, tenant_authority_generation, membership_generation, membership_version, account_authority_tuple, account_outbox_checkpoint, conditional_realm_access_grant, grant_version, runtime_entitlements, admission_pointer, connect_scope_match, replay_protection_available, replay_admission_fence_match]
     canonical_errors:
-      any_of: [JOIN_REQUIRED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, PUBLIC_PRODUCTION_ADMISSION_DENIED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, CONNECT_REPLAY_PROTECTION_UNAVAILABLE, AUTH_UNAVAILABLE, AUTH_SESSION_REVOKED]
+      any_of: [JOIN_REQUIRED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, PUBLIC_PRODUCTION_ADMISSION_DENIED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, ADMISSION_POINTER_UNAVAILABLE, REALM_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, CONNECT_REPLAY_PROTECTION_UNAVAILABLE, AUTH_UNAVAILABLE, AUTH_SESSION_REVOKED, IDEMPOTENCY_CONFLICT, RESPONSE_RECOVERY_EXPIRED]
     subject_binding: caller_account_id
     canonical_target:
       membership: existing_caller_bound_membership_required
@@ -2374,6 +2608,7 @@ routes:
         - issue_connect_token_does_not_reread_membership_authority_generation
         - issue_connect_token_private_playtest_grant_enforcement_is_missing
         - issue_connect_token_private_playtest_entitlement_enforcement_is_missing
+        - issue_connect_token_current_response_exposes_internal_jti; target_metadata_only_response_drift_is_tracked_in_ADR_0021_and_account_service_api_runtime_status
   - service: account-service
     route: Authenticate
     scope: account
@@ -2449,6 +2684,7 @@ routes:
     platform_admin_override: forbidden
     privileged_control: not_required
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -2505,6 +2741,7 @@ routes:
     platform_admin_override: forbidden
     privileged_control: not_required
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -2553,6 +2790,7 @@ routes:
     platform_admin_override: forbidden
     privileged_control: not_required
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -2721,21 +2959,36 @@ routes:
     scope: tenant
     classification: internal_workload
     route_status: target_not_currently_routable
-    auth_path: exact_mtls_workload
-    issued_token_state: none
-    accepted_token_profiles: []
-    token_type: none
-    token_issuer: none
-    token_audience: none
-    method_policy: exact_declared_route
-    allowed_callers:
-      any_of: [game-session-service, world-management-service]
-    mtls_callers:
-      any_of:
-        - "spiffe://firemud/ns/{namespace}/sa/game-session-service"
-        - "spiffe://firemud/ns/{namespace}/sa/world-management-service"
-    caller_context: tenant_and_capacity_admission_bound_context
-    delegated_subject: instance_lifecycle_context
+    caller_policies:
+      - caller: game-session-service
+        auth_path: exact_mtls_workload_plus_caller_specific_context
+        issued_token_state: none
+        accepted_token_profiles: []
+        token_type: none
+        token_issuer: none
+        token_audience: none
+        method_policy: exact_declared_route
+        tenant_billing_authority_generation_applies: true
+        membership_authority_generation_applies: true
+        mtls_identity: "spiffe://firemud/ns/{namespace}/sa/game-session-service"
+        delegated_subject: typed_player_execution_context
+        required_live_checks: [tenant_generation, membership_generation, membership, runtime_entitlements, conditional_realm_access_grant, grant_version, playable_state_namespace, exact_binding_admission_lease, binding_fence, binding_ownership, account_authority_tuple, account_outbox_checkpoint, capacity_admission_fence, idempotency]
+        realm_grant_authority: conditional_account_owned
+        realm_grant_version: required_when_grant_gated
+      - caller: world-management-service
+        auth_path: exact_mtls_workload
+        issued_token_state: none
+        accepted_token_profiles: []
+        token_type: none
+        token_issuer: none
+        token_audience: none
+        method_policy: exact_declared_route
+        tenant_billing_authority_generation_applies: true
+        membership_authority_generation_applies: false
+        mtls_identity: "spiffe://firemud/ns/{namespace}/sa/world-management-service"
+        caller_context: tenant_and_operation_bound_instance_lifecycle_context
+        delegated_subject: instance_lifecycle_context
+        required_live_checks: [tenant_generation, runtime_entitlements, world_instance_lifecycle, world_instance_lifecycle_epoch, account_authority_tuple, account_outbox_checkpoint, capacity_admission_fence, idempotency]
     end_user_token_required: false
     required_fields:
       [
@@ -2752,22 +3005,82 @@ routes:
         expected_evaluation_identity,
         expected_entitlement_version,
         expected_billing_evidence,
+        capacity_delta,
         mutation_digest,
       ]
     capacity_delta_wire_contract:
       field: capacityDelta
+      protobuf_field: capacity_delta
+      protobuf_type: optional_int64
+      protobuf_wire_encoding: varint
+      canonical_json_field: capacityDelta
+      canonical_json_encoding: base10_decimal_string
       presence: explicit
+      presence_requirement: required
+      protobuf_absent_encoding: field_absent
+      canonical_json_absent_encoding: member_omitted
       absent_encoding: omitted
+      absent_request: rejected_before_commit
+      null_request: rejected_before_commit
       present_zero_encoding: explicit_zero
       boolean_zero_encoding: rejected
+      accepted_value_range:
+        integer_type: signed_int64
+        minimum: 0
+        maximum: 9223372036854775807
+        positive_required_for: net_capacity_creation
+        zero_allowed_only_for: non_expanding_recovery
+        negative_or_overflow: rejected_before_commit
+      operation_modes:
+        capacity_creation:
+          delta: positive
+          usage_effect: reserve_or_increment_after_account_fence
+        non_expanding_recovery:
+          delta: exactly_zero
+          shape_proof: exact_prior_shape_or_account_validated_non_expanding_shape
+          standalone_zero_proof: forbidden
+          account_commitment: required_after_shape_validation
+          attempt_fence: same_as_capacity_creation
+          replay: same_as_capacity_creation
+          reconciliation: same_as_capacity_creation
+          owner_execution: same_as_capacity_creation
+          accepted_outcome_after_account_validation: accepted_pending_owner_execution
+          usage_effect: no_usage_mutation
+        release:
+          operation: separate_account_owned_reconciliation
+          this_route: not_used
+      idempotency:
+        stable_outer_identity: [tenant_id, request_id, admission_id]
+        attempt_identity: admission_attempt_id
+        exact_retry: replay_stored_result
+        changed_payload: IDEMPOTENCY_CONFLICT
       golden_vectors:
         absent:
           presence: absent
-          wire_value: omitted
+          protobuf_wire_value: omitted
+          canonical_json_wire_value: omitted
+          expected_outcome: rejected_before_commit
         present_zero:
           presence: present
-          wire_value_type: integer
-          wire_value: 0
+          protobuf_wire_value_type: int64_varint
+          protobuf_wire_value: 0
+          canonical_json_wire_value_type: decimal_string
+          canonical_json_wire_value: "0"
+          expected_outcome: accepted_pending_owner_execution
+        positive_representative:
+          presence: present
+          protobuf_wire_value_type: int64_varint
+          protobuf_wire_value: 17
+          canonical_json_wire_value_type: decimal_string
+          canonical_json_wire_value: "17"
+          expected_outcome: accepted_pending_owner_execution
+        positive_int64_max:
+          presence: present
+          protobuf_wire_value_type: int64_varint
+          protobuf_wire_value: 9223372036854775807
+          canonical_json_wire_value_type: decimal_string
+          canonical_json_wire_value: "9223372036854775807"
+          expected_outcome: accepted_pending_owner_execution
     attempt_fence_contract:
       capacity_rearm_fence: caller_supplied_attempt_bound_fence
       capacity_admission_fence: account_live_check_compared_at_commit
@@ -2777,15 +3090,16 @@ routes:
       rearm_effect: advances_fence_and_binds_fresh_attempt_id_exact_payload_and_digest
       changed_attempt_without_rearm: IDEMPOTENCY_CONFLICT
       changed_attempt_without_rearm_ordering: rejected_before_any_mutation
-    required_live_checks: [tenant_generation, runtime_entitlements, capacity_admission_fence, idempotency]
     mutation_contract: account_owned_fenced_capacity_reservation_create_or_replay
     canonical_errors:
-      any_of: [CAPACITY_ADMISSION_STALE, CAPACITY_QUOTA_EXCEEDED, IDEMPOTENCY_CONFLICT, AUTH_UNAVAILABLE]
+      any_of: [CAPACITY_ADMISSION_STALE, CAPACITY_QUOTA_EXCEEDED, FENCE_REJECTED, IDEMPOTENCY_CONFLICT, AUTH_UNAVAILABLE]
+      fence_rejection_requirements: no_accept_no_runtime_mutation_proof
   - service: account-service
     route: GetTenantEntitlementsTenant
     scope: tenant
     classification: billing_safe_tenant
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -2804,6 +3118,7 @@ routes:
     membership_authority_generation_applies: false
     response_profile: high_level_only
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -2816,6 +3131,7 @@ routes:
     scope: tenant
     classification: billing_safe_tenant
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -2834,6 +3150,7 @@ routes:
     route_status: target_not_currently_routable
     subject_binding: tenant_path_only_no_account_subject
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -2856,6 +3173,7 @@ routes:
     membership_authority_generation_applies: false
     response_profile: high_level_only
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -2868,6 +3186,7 @@ routes:
     scope: tenant
     classification: billing_safe_tenant
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -2886,6 +3205,7 @@ routes:
     membership_authority_generation_applies: false
     response_profile: high_level_only
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -2901,6 +3221,7 @@ routes:
     membership_authority_generation_applies: false
     response_profile: billing_reporting
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -2913,6 +3234,7 @@ routes:
     scope: tenant
     classification: billing_safe_tenant
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -2931,6 +3253,7 @@ routes:
     membership_authority_generation_applies: false
     response_profile: membership_reporting
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -2944,6 +3267,7 @@ routes:
     classification: billing_safe_tenant
     route_status: target_not_currently_routable
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -2964,6 +3288,7 @@ routes:
     membership_authority_generation_applies: false
     route_status: target_not_currently_routable
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -2980,6 +3305,7 @@ routes:
     route_status: target_not_currently_routable
     auth_path: player_bootstrap
     accepted_token_profiles: [player-bootstrap]
+    issued_token_state: current_exact_active_player_bootstrap_registry_record
     token_type: gameplay_bootstrap_user
     token_issuer: firemud-account-service
     token_audience: player-bootstrap
@@ -3003,6 +3329,7 @@ routes:
       platformAdmin_global: false
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -3041,6 +3368,7 @@ routes:
       platformAdmin_global: false
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -3088,6 +3416,7 @@ routes:
     membership_authority_generation_applies: false
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -3134,6 +3463,7 @@ routes:
       platformAdmin_global: false
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -3167,6 +3497,7 @@ routes:
       platformAdmin_global: false
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -3200,6 +3531,7 @@ routes:
       platformAdmin_global: false
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -3233,6 +3565,7 @@ routes:
       platformAdmin_global: false
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui
@@ -3266,6 +3599,7 @@ routes:
       platformAdmin_global: false
     auth_path: control_ui_plus_current_role_and_role_appropriate_assurance
     accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
     token_type: control_plane_user
     token_issuer: firemud-account-service
     token_audience: control-ui

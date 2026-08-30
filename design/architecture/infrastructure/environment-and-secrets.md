@@ -83,7 +83,7 @@ Environment variables that configure gRPC TLS certificate paths and the TCP Prox
 
 ### Authentication
 
-JWT and session-related environment variables, including `FIREMUD_AUTH_JWT_SECRET`, `FIREMUD_AUTH_JWT_SECRET_PATH`, `FIREMUD_AUTH_JWKS_PATH`, `FIREMUD_AUTH_JWT_EXPIRATION_MS`, `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`, and `FIREMUD_AUTH_SESSION_EXPIRATION_MS`, are documented in the [authentication and JWT catalog](./environment-and-secrets-catalog.md#authentication--jwt). The authentication architecture and Telnet transport guidance are described in:
+JWT, Account token, and session-related environment variables, including `FIREMUD_AUTH_JWT_SECRET`, `FIREMUD_AUTH_JWT_SECRET_PATH`, `FIREMUD_AUTH_JWKS_PATH`, `FIREMUD_AUTH_JWT_EXPIRATION_MS`, `FIREMUD_ACCOUNT_TOKENS_SESSION_EXPIRATION_MS`, `FIREMUD_ACCOUNT_TOKENS_PLAYER_BOOTSTRAP_EXPIRATION_MS`, `FIREMUD_ACCOUNT_TOKENS_CONNECT_SCOPE_EXPIRATION_MS`, `FIREMUD_ACCOUNT_TOKENS_CONNECT_TOKEN_EXPIRATION_MS`, `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`, and `FIREMUD_AUTH_SESSION_EXPIRATION_MS`, are documented in the [authentication and JWT catalog](./environment-and-secrets-catalog.md#authentication--jwt). The authentication architecture and Telnet transport guidance are described in:
 
 - [Authentication architecture](../system-architecture-authentication.md)
 - [Security architecture](../system-architecture-security.md)

@@ -1997,12 +1997,34 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 set(route["required_live_checks"])
             )
         )
-        route["required_live_checks"].remove("target_tenant_generation")
+        route["required_live_checks"].remove("tenant_authority_generation")
         errors = validate_document(self.validator, document)
         self.assertTrue(
             any(
                 "game-session-service PLAY is missing exact selected-tenant generation checks"
                 in error
+                for error in errors
+            )
+        )
+
+        route["required_live_checks"].append("target_tenant_generation")
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "game-session-service PLAY must use tenant_authority_generation "
+                "rather than target_tenant_generation" in error
+                for error in errors
+            )
+        )
+
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "game-session-service", "PLAY")
+        route["required_live_checks"].append("tenant_generation")
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "game-session-service PLAY must use tenant_authority_generation "
+                "rather than tenant_generation" in error
                 for error in errors
             )
         )
@@ -2058,7 +2080,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             },
         )
         self.assertTrue(common.issubset(set(route["required_live_checks"])))
-        self.assertIn("target_tenant_generation", route["required_live_checks"])
+        self.assertIn("tenant_authority_generation", route["required_live_checks"])
 
     def test_play_rejects_legacy_conditional_membership_generation(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -2541,6 +2563,31 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         errors = validate_document(self.validator, document)
         self.assertEqual([], errors)
 
+        route["issued_token_state"] = "none"
+        errors = validate_document(self.validator, document)
+        self.assertEqual([], errors)
+
+        route["issued_token_state"] = None
+        route_position = route_index(document, route)
+        errors = validate_document(self.validator, document)
+        self.assertEqual(
+            [
+                (
+                    f"matrix.routes[{route_position}] issued_token_state must be omitted or "
+                    "'none' when accepted token profiles are empty"
+                )
+            ],
+            errors,
+        )
+
+        route["issued_token_state"] = "current_exact_active_registry_record"
+        errors = validate_document(self.validator, document)
+        self.assertIn(
+            f"matrix.routes[{route_position}] issued_token_state must be omitted or "
+            "'none' when accepted token profiles are empty",
+            errors,
+        )
+
         route["token_audience"] = "gameplay"
         errors = validate_document(self.validator, document)
         self.assertTrue(
@@ -2657,11 +2704,16 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             errors,
         )
 
-    def test_multi_profile_route_with_audience_map_is_accepted(self):
+    def test_multi_profile_route_without_issued_token_state_mapping_is_rejected(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         configure_multi_profile_route(document)
         errors = validate_document(self.validator, document)
-        self.assertEqual([], errors)
+        self.assertTrue(
+            any(
+                "have no explicit issued_token_state mapping" in error
+                for error in errors
+            )
+        )
 
     def test_multi_profile_route_reports_audience_map_error(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -5160,13 +5212,75 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             route["capacity_delta_wire_contract"]["boolean_zero_encoding"],
         )
         self.assertEqual(
-            "integer",
+            "int64_varint",
             route["capacity_delta_wire_contract"]["golden_vectors"]["present_zero"][
-                "wire_value_type"
+                "protobuf_wire_value_type"
             ],
         )
-        self.assertNotIn("capacity_delta", route["required_fields"])
+        self.assertEqual(
+            "decimal_string",
+            route["capacity_delta_wire_contract"]["golden_vectors"]["present_zero"][
+                "canonical_json_wire_value_type"
+            ],
+        )
+        self.assertEqual(
+            "0",
+            route["capacity_delta_wire_contract"]["golden_vectors"]["present_zero"][
+                "canonical_json_wire_value"
+            ],
+        )
+        self.assertEqual(
+            "accepted_pending_owner_execution",
+            route["capacity_delta_wire_contract"]["golden_vectors"]["present_zero"][
+                "expected_outcome"
+            ],
+        )
+        self.assertEqual(
+            {
+                "delta": "exactly_zero",
+                "shape_proof": "exact_prior_shape_or_account_validated_non_expanding_shape",
+                "standalone_zero_proof": "forbidden",
+                "account_commitment": "required_after_shape_validation",
+                "attempt_fence": "same_as_capacity_creation",
+                "replay": "same_as_capacity_creation",
+                "reconciliation": "same_as_capacity_creation",
+                "owner_execution": "same_as_capacity_creation",
+                "accepted_outcome_after_account_validation": "accepted_pending_owner_execution",
+                "usage_effect": "no_usage_mutation",
+            },
+            route["capacity_delta_wire_contract"]["operation_modes"][
+                "non_expanding_recovery"
+            ],
+        )
+        self.assertEqual(
+            self.validator.CAPACITY_ADMISSION_REQUIRED_FIELDS,
+            route["required_fields"],
+        )
         self.assertEqual([], validate_document(self.validator, baseline))
+
+        for field in self.validator.CAPACITY_ADMISSION_REQUIRED_FIELDS:
+            with self.subTest(mutation=f"missing {field}"):
+                missing_field = copy.deepcopy(baseline)
+                route_for(
+                    missing_field, "account-service", "CommitTenantCapacityAdmission"
+                )["required_fields"].remove(field)
+                self.assertTrue(
+                    any(
+                        "must require capacity_delta with explicit presence" in error
+                        for error in validate_document(self.validator, missing_field)
+                    )
+                )
+
+        extra_field = copy.deepcopy(baseline)
+        route_for(
+            extra_field, "account-service", "CommitTenantCapacityAdmission"
+        )["required_fields"].append("unexpected_field")
+        self.assertTrue(
+            any(
+                "must require capacity_delta with explicit presence" in error
+                for error in validate_document(self.validator, extra_field)
+            )
+        )
 
         expected_error = (
             f"{self.validator.route_label(route)} must declare explicit "
@@ -5195,13 +5309,13 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             (
                 "absent vector encoded as zero",
                 lambda contract: contract["golden_vectors"]["absent"].__setitem__(
-                    "wire_value", 0
+                    "protobuf_wire_value", 0
                 ),
             ),
             (
                 "present zero vector encoded as boolean",
                 lambda contract: contract["golden_vectors"]["present_zero"].__setitem__(
-                    "wire_value", False
+                    "protobuf_wire_value", False
                 ),
             ),
             (
@@ -5211,16 +5325,52 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 ),
             ),
             (
-                "present zero vector missing integer type",
+                "present zero vector missing protobuf type",
                 lambda contract: contract["golden_vectors"]["present_zero"].pop(
-                    "wire_value_type"
+                    "protobuf_wire_value_type"
+                ),
+            ),
+            (
+                "present zero vector missing expected outcome",
+                lambda contract: contract["golden_vectors"]["present_zero"].pop(
+                    "expected_outcome"
                 ),
             ),
             (
                 "present zero vector encoded as non-integer",
                 lambda contract: contract["golden_vectors"]["present_zero"].__setitem__(
-                    "wire_value", 0.0
+                    "protobuf_wire_value", 0.0
                 ),
+            ),
+            (
+                "present zero vector missing canonical JSON type",
+                lambda contract: contract["golden_vectors"]["present_zero"].pop(
+                    "canonical_json_wire_value_type"
+                ),
+            ),
+            (
+                "present zero vector encoded as JSON integer",
+                lambda contract: contract["golden_vectors"]["present_zero"].__setitem__(
+                    "canonical_json_wire_value", 0
+                ),
+            ),
+            (
+                "present zero permits standalone proof",
+                lambda contract: contract["operation_modes"][
+                    "non_expanding_recovery"
+                ].__setitem__("standalone_zero_proof", "accepted"),
+            ),
+            (
+                "present zero omits Account shape validation",
+                lambda contract: contract["operation_modes"][
+                    "non_expanding_recovery"
+                ].__setitem__("shape_proof", "capacity_delta_only"),
+            ),
+            (
+                "present zero mutates usage",
+                lambda contract: contract["operation_modes"][
+                    "non_expanding_recovery"
+                ].__setitem__("usage_effect", "reserve_or_increment"),
             ),
         ):
             with self.subTest(mutation=mutation_name):
@@ -5231,6 +5381,411 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 mutate(mutated_route["capacity_delta_wire_contract"])
                 errors = validate_document(self.validator, document)
                 self.assertIn(expected_error, errors)
+
+    def test_capacity_admission_requires_attempt_fence_and_rejection_contract(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(
+            baseline, "account-service", "CommitTenantCapacityAdmission"
+        )
+        self.assertEqual(
+            self.validator.CAPACITY_ATTEMPT_FENCE_CONTRACT,
+            route["attempt_fence_contract"],
+        )
+        self.assertTrue(
+            self.validator.REQUIRED_CAPACITY_ADMISSION_ERRORS.issubset(
+                set(route["canonical_errors"]["any_of"])
+            )
+        )
+        self.assertEqual(
+            "no_accept_no_runtime_mutation_proof",
+            route["canonical_errors"]["fence_rejection_requirements"],
+        )
+        self.assertEqual([], validate_document(self.validator, baseline))
+
+        expected_attempt_error = (
+            f"{self.validator.route_label(route)} must declare the canonical "
+            "attempt_fence_contract"
+        )
+        for mutation_name, mutate in (
+            (
+                "missing capacity admission fence",
+                lambda contract: contract.pop("capacity_admission_fence"),
+            ),
+            (
+                "changed rearm effect",
+                lambda contract: contract.__setitem__(
+                    "rearm_effect", "advances_fence_only"
+                ),
+            ),
+            (
+                "missing changed attempt ordering",
+                lambda contract: contract.pop("changed_attempt_without_rearm_ordering"),
+            ),
+        ):
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                mutated_route = route_for(
+                    document, "account-service", "CommitTenantCapacityAdmission"
+                )
+                mutate(mutated_route["attempt_fence_contract"])
+                self.assertIn(
+                    expected_attempt_error, validate_document(self.validator, document)
+                )
+
+        expected_fence_error = (
+            f"{self.validator.route_label(route)} canonical_errors.any_of must "
+            "retain FENCE_REJECTED"
+        )
+        missing_fence_error = copy.deepcopy(baseline)
+        route_for(
+            missing_fence_error, "account-service", "CommitTenantCapacityAdmission"
+        )["canonical_errors"]["any_of"].remove("FENCE_REJECTED")
+        self.assertIn(expected_fence_error, validate_document(self.validator, missing_fence_error))
+
+        missing_existing_error = copy.deepcopy(baseline)
+        route_for(
+            missing_existing_error,
+            "account-service",
+            "CommitTenantCapacityAdmission",
+        )["canonical_errors"]["any_of"].remove("CAPACITY_QUOTA_EXCEEDED")
+        self.assertIn(
+            "canonical_errors.any_of must retain CAPACITY_QUOTA_EXCEEDED",
+            "\n".join(validate_document(self.validator, missing_existing_error)),
+        )
+
+        expected_proof_error = (
+            f"{self.validator.route_label(route)} canonical_errors must require "
+            "no_accept_no_runtime_mutation_proof for FENCE_REJECTED"
+        )
+        for mutation_name, mutate in (
+            (
+                "missing fence proof metadata",
+                lambda canonical_errors: canonical_errors.pop(
+                    "fence_rejection_requirements"
+                ),
+            ),
+            (
+                "wrong fence proof metadata",
+                lambda canonical_errors: canonical_errors.__setitem__(
+                    "fence_rejection_requirements", "no_commit_proof"
+                ),
+            ),
+        ):
+            with self.subTest(mutation=mutation_name):
+                document = copy.deepcopy(baseline)
+                mutated_route = route_for(
+                    document, "account-service", "CommitTenantCapacityAdmission"
+                )
+                mutate(mutated_route["canonical_errors"])
+                self.assertIn(
+                    expected_proof_error, validate_document(self.validator, document)
+                )
+
+    def test_capacity_admission_routable_game_session_requires_all_player_binding_checks(
+        self,
+    ):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        expected_checks = (
+            self.validator.REQUIRED_CAPACITY_GAME_SESSION_PLAYER_BINDING_CHECKS
+        )
+        route = route_for(
+            baseline, "account-service", "CommitTenantCapacityAdmission"
+        )
+        game_session_policy = next(
+            policy
+            for policy in route["caller_policies"]
+            if policy["caller"] == "game-session-service"
+        )
+        self.assertTrue(
+            expected_checks.issubset(set(game_session_policy["required_live_checks"]))
+        )
+        for missing_check in sorted(expected_checks):
+            with self.subTest(missing_check=missing_check):
+                document = copy.deepcopy(baseline)
+                mutated_route = route_for(
+                    document, "account-service", "CommitTenantCapacityAdmission"
+                )
+                mutated_route["route_status"] = "current_openapi_operator_surface"
+                mutated_policy = next(
+                    policy
+                    for policy in mutated_route["caller_policies"]
+                    if policy["caller"] == "game-session-service"
+                )
+                mutated_policy["required_live_checks"].remove(missing_check)
+                errors = validate_document(self.validator, document)
+                self.assertIn(
+                    "account-service CommitTenantCapacityAdmission game-session caller "
+                    "policy must require the complete player-binding live-check set: "
+                    f"missing ['{missing_check}']",
+                    errors,
+                )
+
+    def test_capacity_admission_requires_exactly_one_game_session_caller_policy(self):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(
+            baseline, "account-service", "CommitTenantCapacityAdmission"
+        )
+        game_session_policy = next(
+            policy
+            for policy in route["caller_policies"]
+            if policy["caller"] == "game-session-service"
+        )
+
+        for policy_count in (0, 2):
+            with self.subTest(policy_count=policy_count):
+                document = copy.deepcopy(baseline)
+                mutated_route = route_for(
+                    document, "account-service", "CommitTenantCapacityAdmission"
+                )
+                mutated_route["caller_policies"] = (
+                    []
+                    if policy_count == 0
+                    else [game_session_policy, copy.deepcopy(game_session_policy)]
+                )
+
+                errors = validate_document(self.validator, document)
+
+                self.assertIn(
+                    "account-service CommitTenantCapacityAdmission must contain exactly "
+                    "one game-session-service caller policy",
+                    errors,
+                )
+
+    def test_capacity_admission_routable_world_management_requires_all_caller_checks(
+        self,
+    ):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        expected_checks = self.validator.REQUIRED_CAPACITY_WORLD_MANAGEMENT_CALLER_CHECKS
+        route = route_for(
+            baseline, "account-service", "CommitTenantCapacityAdmission"
+        )
+        world_management_policy = next(
+            policy
+            for policy in route["caller_policies"]
+            if policy["caller"] == "world-management-service"
+        )
+        self.assertEqual(
+            expected_checks,
+            expected_checks.intersection(
+                set(world_management_policy["required_live_checks"])
+            ),
+        )
+        for missing_check in sorted(expected_checks):
+            with self.subTest(missing_check=missing_check):
+                document = copy.deepcopy(baseline)
+                mutated_route = route_for(
+                    document, "account-service", "CommitTenantCapacityAdmission"
+                )
+                mutated_policy = next(
+                    policy
+                    for policy in mutated_route["caller_policies"]
+                    if policy["caller"] == "world-management-service"
+                )
+                mutated_policy["required_live_checks"].remove(missing_check)
+                errors = validate_document(self.validator, document)
+                self.assertIn(
+                    "account-service CommitTenantCapacityAdmission "
+                    "world-management caller policy must require the complete "
+                    "capacity-admission live-check set: "
+                    f"missing ['{missing_check}']",
+                    errors,
+                )
+
+    def test_capacity_admission_requires_exactly_one_world_management_caller_policy(
+        self,
+    ):
+        baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(
+            baseline, "account-service", "CommitTenantCapacityAdmission"
+        )
+        world_management_policy = next(
+            policy
+            for policy in route["caller_policies"]
+            if policy["caller"] == "world-management-service"
+        )
+
+        for policy_count in (0, 2):
+            with self.subTest(policy_count=policy_count):
+                document = copy.deepcopy(baseline)
+                mutated_route = route_for(
+                    document, "account-service", "CommitTenantCapacityAdmission"
+                )
+                mutated_route["caller_policies"] = (
+                    [
+                        policy
+                        for policy in mutated_route["caller_policies"]
+                        if policy["caller"] != "world-management-service"
+                    ]
+                    if policy_count == 0
+                    else mutated_route["caller_policies"]
+                    + [copy.deepcopy(world_management_policy)]
+                )
+                errors = validate_document(self.validator, document)
+                self.assertIn(
+                    "account-service CommitTenantCapacityAdmission must contain exactly "
+                    "one world-management-service caller policy",
+                    errors,
+                )
+
+    def test_capacity_admission_rejects_extra_caller_policy_alternative(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(
+            document, "account-service", "CommitTenantCapacityAdmission"
+        )
+        route["caller_policies"].append(copy.deepcopy(route["caller_policies"][0]))
+        route["caller_policies"][-1]["caller"] = "unexpected-service"
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "account-service CommitTenantCapacityAdmission must contain exactly "
+                "the canonical caller-policy alternatives" in error
+                for error in errors
+            )
+        )
+
+    def test_capacity_admission_rejects_wrong_identity_or_auth_path(self):
+        mutations = (
+            ("mtls_identity", "spiffe://firemud/ns/{namespace}/sa/other-service"),
+            ("auth_path", "exact_mtls_workload"),
+        )
+        for field, value in mutations:
+            with self.subTest(field=field):
+                document = self.validator.yaml.safe_load(
+                    MATRIX.read_text(encoding="utf-8")
+                )
+                route = route_for(
+                    document, "account-service", "CommitTenantCapacityAdmission"
+                )
+                policy = next(
+                    policy
+                    for policy in route["caller_policies"]
+                    if policy["caller"] == "game-session-service"
+                )
+                policy[field] = value
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(
+                        "must exactly match the canonical caller" in error
+                        for error in errors
+                    )
+                )
+
+    def test_capacity_admission_rejects_altered_security_fields(self):
+        mutations = (
+            ("issued_token_state", "current_exact_active_registry_record"),
+            ("delegated_subject", "instance_lifecycle_context"),
+            ("tenant_billing_authority_generation_applies", False),
+            ("realm_grant_version", "optional"),
+        )
+        for field, value in mutations:
+            with self.subTest(field=field):
+                document = self.validator.yaml.safe_load(
+                    MATRIX.read_text(encoding="utf-8")
+                )
+                route = route_for(
+                    document, "account-service", "CommitTenantCapacityAdmission"
+                )
+                policy = next(
+                    policy
+                    for policy in route["caller_policies"]
+                    if policy["caller"] == "game-session-service"
+                )
+                policy[field] = value
+                errors = validate_document(self.validator, document)
+                self.assertTrue(
+                    any(
+                        "must exactly match the canonical caller" in error
+                        for error in errors
+                    )
+                )
+
+    def test_registry_backed_jwt_routes_require_closed_issued_token_state(self):
+        mutations = (
+            ("missing", None),
+            ("invalid", "not-a-token-state"),
+        )
+        for mutation, value in mutations:
+            with self.subTest(mutation=mutation):
+                document = self.validator.yaml.safe_load(
+                    MATRIX.read_text(encoding="utf-8")
+                )
+                route = route_for(
+                    document, "account-service", "GET /auth/bootstrap/worlds"
+                )
+                if mutation == "missing":
+                    route.pop("issued_token_state")
+                else:
+                    route["issued_token_state"] = value
+                errors = validate_document(self.validator, document)
+                route_index = document["routes"].index(route)
+                expected_error = (
+                    f"matrix.routes[{route_index}] must declare issued_token_state "
+                    "for accepted token profiles"
+                    if mutation == "missing"
+                    else f"matrix.routes[{route_index}] issued_token_state must be "
+                    "one of the closed vocabulary: "
+                    f"{sorted(self.validator.ISSUED_TOKEN_STATE_VOCABULARY)}"
+                )
+                self.assertIn(expected_error, errors)
+
+    def test_unmapped_mixed_token_profiles_require_issued_token_state_mapping(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "account-service", "AuthLogout")
+        route["accepted_token_profiles"] = [
+            "control-ui",
+            "player-bootstrap",
+            "gameplay-connect",
+        ]
+        route["accepted_token_profile_audiences"]["gameplay-connect"] = (
+            "gameplay-connect"
+        )
+        route["accepted_token_profile_types"]["gameplay-connect"] = (
+            "gameplay_handshake"
+        )
+        route["accepted_token_profile_issuers"]["gameplay-connect"] = (
+            "firemud-account-service"
+        )
+        route.pop("issued_token_state")
+
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "have no explicit issued_token_state mapping" in error
+                for error in errors
+            )
+        )
+
+    def test_player_bootstrap_conditional_branches_require_issued_token_state(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(
+            document,
+            "account-service",
+            "GET /auth/bootstrap/worlds/{worldSlug}/realms",
+        )
+        route["conditional_branches"]["private_or_playtest"].pop(
+            "issued_token_state"
+        )
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any("conditional_branches['private_or_playtest']" in error for error in errors)
+        )
+
+    def test_conditional_branch_token_state_vocabulary_checked_without_profiles(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "game-session-service", "REALMS")
+        route["conditional_branches"]["public_production"][
+            "issued_token_state"
+        ] = "not-a-token-state"
+
+        errors = validate_document(self.validator, document)
+
+        self.assertTrue(
+            any(
+                "conditional_branches['public_production'] issued_token_state must be "
+                "one of the closed vocabulary" in error
+                for error in errors
+            )
+        )
 
     def test_reporting_billing_route_has_no_mutation_provider_contract(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
@@ -5357,11 +5912,14 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             document, "account-service", "IssueConnectToken"
         )
         self.assertIn(
+            "tenant_authority_generation", issue_connect_token["required_live_checks"]
+        )
+        self.assertNotIn(
             "target_tenant_generation", issue_connect_token["required_live_checks"]
         )
         self.assertIn(
             ("account-service", "IssueConnectToken"),
-            self.validator.ROUTES_WITH_EXPLICIT_TARGET_TENANT_AUTHORITY,
+            self.validator.ROUTES_WITH_EXPLICIT_SELECTED_TENANT_AUTHORITY,
         )
         player_bootstrap_policy = document["tenant_generation_policy"][
             "no_target_tenant_classifications"
@@ -5393,7 +5951,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         errors = validate_document(self.validator, document)
         self.assertTrue(
             any(
-                "explicit target-tenant authority must use classification "
+                "explicit selected-tenant authority must use classification "
                 "player_bootstrap_tenant" in error
                 for error in errors
             )
@@ -5405,7 +5963,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         errors = validate_document(self.validator, document)
         self.assertTrue(
             any(
-                "explicit target-tenant authority must set "
+                "explicit selected-tenant authority must set "
                 "tenant_authority_generation_applies=true" in error
                 for error in errors
             )
@@ -5993,7 +6551,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             )
         )
 
-    def test_issue_connect_token_requires_selected_tenant_generation(self):
+    def test_issue_connect_token_requires_selected_tenant_authority_generation(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         route = route_for(document, "account-service", "IssueConnectToken")
         self.assertTrue(route["tenant_authority_generation_applies"])
@@ -6005,11 +6563,33 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
             )
         )
 
-        route["required_live_checks"].remove("target_tenant_generation")
+        route["required_live_checks"].remove("tenant_authority_generation")
         errors = validate_document(self.validator, document)
         self.assertTrue(
             any(
                 "IssueConnectToken is missing required live checks" in error
+                for error in errors
+            )
+        )
+
+        route["required_live_checks"].append("target_tenant_generation")
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "IssueConnectToken must use tenant_authority_generation rather than "
+                "target_tenant_generation" in error
+                for error in errors
+            )
+        )
+
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "account-service", "IssueConnectToken")
+        route["required_live_checks"].append("tenant_generation")
+        errors = validate_document(self.validator, document)
+        self.assertTrue(
+            any(
+                "IssueConnectToken must use tenant_authority_generation rather than "
+                "tenant_generation" in error
                 for error in errors
             )
         )

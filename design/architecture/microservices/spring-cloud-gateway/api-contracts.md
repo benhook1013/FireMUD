@@ -21,11 +21,11 @@ Spring Cloud Gateway exposes both HTTP and gRPC management interfaces for operat
 
 ### Authentication and Authorization
 
-- gRPC management calls use mutual TLS with cert-manager-issued client certificates. Only clients presenting trusted admin certificates can connect.
+- gRPC management calls use mutual TLS with client credentials resolved from the canonical [`operator-credential-binding/v1`](../../system-architecture-deploy-preflight-policy.md#canonical-target-operator-credential-binding-record) record. `CERT_MANAGER` is one accepted binding type; `SECRET_BACKED` resolves its dedicated Secret, while `WORKLOAD_IDENTITY` resolves the provider-projected client identity and trust bundle without a substitute Secret. Only clients presenting credentials that match the record's closed `bindingType`, positive generation, active/allowed overlap leaf fingerprints, URI SAN/profile, endpoint/workload audience, operation identity, and immutable readback evidence can connect. Missing, stale, contradictory, ambiguous, or unavailable binding evidence fails closed; a CA-valid certificate alone is insufficient.
 - Target-state: HTTP diagnostics and explicitly enabled dev/test mutation endpoints are authenticated and authorized at the gateway boundary, not delegated to downstream services. Production operator access is limited to diagnostics.
-- Target-state: the recommended model for gateway-owned management HTTP endpoints is mTLS client certificates plus `NetworkPolicy` allowlists restricting which pods or namespaces may reach the endpoint.
+- Target-state: the recommended model for gateway-owned management HTTP endpoints is mTLS client certificates plus `NetworkPolicy` allowlists restricting which pods or namespaces may reach the endpoint. Both controls are necessary but neither replaces the exact operator binding-record checks above.
 - JWT-based roles apply to product and admin APIs routed through the gateway but are not the primary authorization mechanism for gateway-owned management endpoints.
-- Operator client certificates should be issued by cert-manager under ClusterIssuer `firemud-ca-issuer`, must include the `clientAuth` EKU, and should be distributed as a dedicated Kubernetes Secret readable only by operator tooling service accounts.
+- For `SECRET_BACKED` and `CERT_MANAGER` bindings, operator client certificates must include the `clientAuth` EKU and use the dedicated Secret/output Secret selected by the binding record; cert-manager under ClusterIssuer `firemud-ca-issuer` is the `CERT_MANAGER` issuance example. For `WORKLOAD_IDENTITY`, the provider supplies the projected client identity and trust bundle instead of a substitute Secret. Generation advancement, routine bounded overlap, incident revocation, and accepted/rejected-leaf readback remain owned by the linked binding record; the current endpoint does not yet provide that target enforcement proof.
 
 ### Data Plane vs Control Plane
 
@@ -81,12 +81,22 @@ curl --fail-with-body \
 # Local development only (no mTLS)
 grpcurl -plaintext localhost:6565 gateway.v1.GatewayManagementService/Ping
 
-# Production diagnostic context (mTLS; route mutation is not enabled)
+# Production diagnostic context (mTLS; route mutation is not enabled). This
+# file-based grpcurl form applies to SECRET_BACKED and CERT_MANAGER bindings:
+# resolve the paths, endpoint, and TLS authority from the selected canonical
+# operator-credential-binding/v1 record during deployment preflight; they are
+# not FireMUD service environment variables. For WORKLOAD_IDENTITY, do not
+# invent certificate/key files or another grpcurl representation: invoke the
+# provider/platform-native operator tooling for the projected identity and
+# trust bundle, preserving the same binding-resolved endpoint and authority.
+# See the [binding record](../../system-architecture-deploy-preflight-policy.md#canonical-target-operator-credential-binding-record)
+# and [operator credentials runbook](../../system-architecture-operator-credentials-runbook.md#operator-client-certificates-mtls).
 grpcurl \
-  -cacert "$FIREMUD_GRPC_CA_CERT_PATH" \
-  -cert "$FIREMUD_GRPC_CERT_CHAIN_PATH" \
-  -key "$FIREMUD_GRPC_PRIVATE_KEY_PATH" \
-  spring-cloud-gateway:6565 \
+  -cacert "/secure/operator/<binding-resolved-grpc-ca-bundle>.crt" \
+  -cert "/secure/operator/<binding-resolved-client-cert-chain>.crt" \
+  -key "/secure/operator/<binding-resolved-client-private-key>.key" \
+  -authority "<binding-resolved-grpc-authority>" \
+  "<binding-resolved-grpc-endpoint>" \
   gateway.v1.GatewayManagementService/Ping
 ```
 
