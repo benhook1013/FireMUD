@@ -383,7 +383,9 @@ Game templates participate in the same version lifecycle as the domain templates
 
 ## Creating Templates
 
-Creators submit a `GameTemplateDto` via the REST API:
+The current REST endpoint is a local/internal implementation seam, not an approved official-hosted or general operator provisioning workflow. External exposure of `POST /templates` must remain unavailable until the hosted-content gate, tenant-safe create/readback behavior, and focused proof are implemented. The request must omit `id`; although the database assigns it for a normal create, the current DTO/service path accepts a caller-supplied id and can overwrite a row under the wrong tenant before tenant-filtered readback hides the result. Do not use this current seam for external or production template provisioning.
+
+For local or otherwise explicitly isolated development use, creators can submit a `GameTemplateDto` via the REST API:
 
 ```bash
 curl -X POST http://localhost:8080/templates \
@@ -392,7 +394,7 @@ curl -X POST http://localhost:8080/templates \
 ```
 
 The service validates the payload and stores it in the `game_templates` table.
-Templates can then be listed per `tenantId` to help bootstrap new games.
+Templates can then be listed per `tenantId` to help bootstrap new games in that same local/internal boundary.
 Template names must be unique for each tenant to avoid collisions.
 
 These examples use `tenantId=1` because the current REST request reader accepts positive decimal `Long` tenant identifiers. That is current transport behavior, not the target identity shape: the target architecture uses UUID tenant identifiers, and the examples must migrate together with the REST/OpenAPI and persistence contract when that transport change is implemented.

@@ -163,7 +163,7 @@ This formula is a conservative first-pass input, not a complete capacity predict
   - tick-batch and effect-ledger inserts/updates per second
   - remote follow-up claim/update QPS
   - replay-controller scan/update QPS
-  - effect-reconciliation backlog retry QPS
+  - target-state conditional effect-reconciliation backlog retry QPS, once a separate effect-reconciliation backlog surface is implemented
   - command-ingress and command-status update QPS
   - p95/p99 write latency for the primary tick-path tables
   - retention horizon, partitioning scheme, and vacuum/GC cadence for high-churn tables
