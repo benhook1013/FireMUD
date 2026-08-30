@@ -28,6 +28,8 @@ Current operator boundary: every Coordination Redis `recover`, `continueRecovery
 
 ## Canonical Coordination Reset Sequence
 
+> **Target state only — unavailable today.** The `coordination-maintenance` operation and phases below are not current operator instructions. Current operators must use the [Current Operator Fallback](./system-architecture-redis-reset-and-recovery.md#current-operator-fallback): preserve evidence, keep the affected scope fenced, use only shipped pause/status and read-only inspection, and escalate.
+
 This section is the normative source for the multi-step Coordination Redis reset/recovery workflow. Other runbooks should point here and then describe only scope choice, session policy, evidence, and scenario-specific abort or storage steps.
 
 Canonical public operation:
@@ -79,7 +81,7 @@ Rules:
 - The early epoch-bump/reset phase may perform only scope-safe coordination cleanup after the scope is fenced. It must not delete or recreate a full Coordination Redis deployment or AOF volume.
 - Internal ledger reconciliation and command convergence are required before traffic resumes; `replay_first` workflows use those same phases without a preceding epoch bump, but reset workflows must not skip them.
 - Internal metadata initialization re-establishes `tick:{tenantRegionTag}:meta` from the durable baseline after scope-safe cleanup and, where applicable, the external AOF/deployment reset; `{tenantRegionTag}` is the opaque full-scope tag for `<tenantId, gameInstanceId, regionId>`. A cold-start hot-path exception requires explicit proof that the exact environment and deployment are a documented non-reset profile; without that proof, metadata initialization remains recovery-owned and the scope stays fenced.
-- Reset-mode recovery requests Account Service to rebuild and verify the live legacy `session:auth:account:*` and `session:auth:tenant:*` projections used by the current runtime, the target `session:auth:generation:*` issuer/account/tenant/membership projections from Account durable authority, and the target-only affected `session:auth:token:<tokenHash>` issued-token projections when that registry cutover is implemented; it must preserve, recover, and read back the Account-owned `session:connect-token:*` issuance-result projections before the smoke phase. Recovery awaits the durable Account result and verifies its returned freshness/generation and exact connect-token projection evidence; it is not a writer of Account-owned projections. Account-owned projection repair may use idempotent set-if-greater only for a missing or lower Redis projection. If a Redis generation is greater than Account durable authority, it is poisoned; the workflow must quarantine or replace that exact scope through an Account-owned audited workflow, recreate it from durable authority, and emit immutable per-scope repair evidence and verification rather than preserving it with set-if-greater. Region- and tenant-scoped resets preserve unaffected Account-owned records but still require exact-generation and connect-token projection validation; a cluster reset verifies the Account repair/reset cutover that preceded physical cleanup, then registers replacement issued-token and exact connect-token issuance-result projections and proves exact-token/connect-result validation before representative-region smoke. A missing or untrusted connect-token result must be recovered exactly or remain fail-closed until its connect-scope/request identity expires; it must not be reminted from Redis or a JWT. The phase emits immutable projection evidence and fails closed on any missing, stale, malformed, mismatched, or poisoned generation, token, or connect-token result record.
+- Reset-mode recovery requests Account Service to rebuild and verify the complete Account-owned reset-sensitive inventory: current legacy `session:auth:account:<accountId>:<tokenHash>` and `session:auth:tenant:<tenantId>:<tokenHash>` projections, target `session:auth:token:<tokenHash>` and `session:auth:generation:*` projections, and the distinct exact-input `session:connect-token:tenant:<tenantId>:account:<accountId>:scope:<scopeHash>:request:<requestHash>` issuance-result records, before the smoke phase. For every live connect-token request identity, recovery must either read back the exact stored success/failure result or obtain owner-proven request-identity expiry before release; it must never reconstruct from a JWT or silently mint a replacement result. Recovery awaits the durable Account result and verifies its returned freshness/generation and exact connect-token projection evidence; it is not a writer of Account-owned projections. Account-owned projection repair may use idempotent set-if-greater only for a missing or lower Redis projection. If a Redis generation is greater than Account durable authority, it is poisoned; the workflow must quarantine or replace that exact scope through an Account-owned audited workflow, recreate it from durable authority, and emit immutable per-scope repair evidence and verification rather than preserving it with set-if-greater. Region- and tenant-scoped resets preserve unaffected Account-owned records but still require exact-generation and connect-token projection validation; a cluster reset verifies the Account repair/reset cutover that preceded physical cleanup, then registers replacement issued-token and exact connect-token issuance-result projections and proves exact-token/connect-result validation before representative-region smoke. A missing or untrusted connect-token result must be recovered exactly or remain fail-closed until its connect-scope/request identity expires; it must not be reminted from Redis or a JWT. The phase emits immutable projection evidence and fails closed on any missing, stale, malformed, mismatched, or poisoned generation, token, or connect-token result record.
 - Internal session rebinding is conditional and occurs only after the Account projection phase succeeds. Every region- and tenant-scoped reset records either `--preserve-sessions` or `--invalidate-sessions`; only the former permits preserved-session rebind, and neither scope infers the policy. A cluster-scoped reset accepts only explicit `--invalidate-sessions`, because its Account token-registry cutover drops the old exact-token records and requires reauthentication before replacement registration.
 - Account-wide recovery must acquire the account-scoped admission/creation fence `accountAdmissionFence` before capturing `inventorySnapshotRevision`, reject or queue new bindings for that account while the fence is held, and retain it through exact full-key readback and durable `coverageGeneration`. Child-owned account binding creation/reconciliation CAS, retry, acknowledgement, and readback carry the live fence while coverage is active; the independent parent edge and parent-consumption record carry the parent tuple plus the child result's fence proof. At the coverage-proven transition, the live fence is released and its exact value is retained as `historicalAccountAdmissionFence`; child results, edge creation/update and retries, readbacks, acknowledgements, and parent-consumption CAS exact-compare that historical value. The fence is distinct from the deployment maintenance lock, parent/child operation fences, and `coverageFence`.
 - Coverage carriers use `coverageGeneration=NOT_YET_ISSUED` from child creation through pre-coverage readback and assign a concrete generation only in the atomic coverage-proven transition. A linked child result is parent-independent; the parent tuple remains only on the independent parent edge and the parent's exact consumption record. The canonical account acknowledgement uses `accountCoverageState=ACTIVE` with the live `accountAdmissionFence` while coverage is active, then `accountCoverageState=HISTORICAL` with the exact released `historicalAccountAdmissionFence` after success. A flow that acquired account-wide fencing never changes to `accountCoverageState=NO_ACTIVE_ACCOUNT_WIDE_FLOW`; only flows that never acquired account-wide fencing carry that state and both account-fence fields as `NOT_APPLICABLE`.
@@ -127,7 +129,7 @@ This section centralizes the normative targets for Redis behavior that other doc
 - **Script runtime**
   - tick- and session-related Lua scripts are expected to complete within roughly 10–20 ms per invocation under normal load
 - **Coordination memory share**
-  - coordination prefixes should normally occupy no more than about 30–40% of `maxmemory` on Coordination Redis with `noeviction`
+  - coordination prefixes should normally occupy no more than about 30–40% of `maxmemory` on Coordination Redis with mandatory `maxmemory-policy=noeviction` for every non-ephemeral profile; the only permitted deviation is an explicitly labeled ephemeral one-shot test stack, and any non-ephemeral deviation or observed eviction is fail-closed incident evidence
 
 ### Cache/Rate-Limit Redis Core Targets
 
@@ -166,6 +168,12 @@ Manual AOF surgery is not supported. Either the AOF is trusted and replayed as-i
 
 Goal: provide a simple, explicit runbook for resetting Cache/Rate-Limit Redis without entangling it with Coordination Redis resets.
 
+> **Target state only — unavailable today.** The external Cache deployment maintenance gate, `FLUSHDB`/`FLUSHALL` or clustered deletion, client release, and authorized Automation rebuild/readback sequence below are not current operator instructions. The repository does not yet provide the required external gate, writer admission/acknowledgement proof, or authorized rebuild path. Current operators must preserve cache, reset, and incident evidence, avoid destructive reset or client-release actions, keep affected writers/clients quarantined or stopped, and use the safe fail-closed [Current Operator Fallback](./system-architecture-redis-reset-and-recovery.md#current-operator-fallback) and escalation path.
+
+### External Cache Deployment Maintenance Gate
+
+The reset gate reuses the ADR-0085 external durable operation/fence pattern without making Cache/Rate-Limit Redis an authority. It is one durable operation outside the target deployment with an immutable `operationId`, exact environment/deployment identity and generation, a frozen complete registered writer and prefix inventory, and a durable external fencing token/generation. Before deletion, every ordinary writer must either pause and drain with an acknowledgement bound to that exact operation/fence or be denied Cache/Rate-Limit Redis connection/network admission. Writer admission and acknowledgements must revalidate the operation/fence and deployment generation after every restart or replacement; stale writers, stale operations, inventory changes, and missing, partial, or ambiguous evidence are rejected. Competing operations are serialized, and takeover, expiry, abort, and release each require durable evidence bound to the same operation/fence. A local Redis key is not the gate: the external gate must survive Redis and writer restarts and remain held through deletion, verification, and rebuild. Only the target-only named ACL principal `automation_queue_rebuild_maint`, bound to the same operation/fence, deployment generation, and exact registered `automation:queue:*` prefix/scope, may write while the gate is held; ordinary writers remain denied, and its completion/readback is required before release. This is not a generic cache or operator writer: any future non-Automation Cache/Rate-Limit rebuild, if needed, requires its own separately named owner principal and prefix contract. The current tooling does not yet provide this complete gate, writer acknowledgement/admission proof, or authorized rebuild path, so current operators must use the fallback above.
+
 Cache/Rate-Limit Redis is fully reset-tolerant for the prefixes listed in [`system-architecture-redis-cache.md`](./system-architecture-redis-cache.md) and the reset policy matrix in [`system-architecture-redis-reset-and-recovery.md`](./system-architecture-redis-reset-and-recovery.md). A reset:
 
 - drops only the documented Cache/Rate-Limit families such as `inventory:*`, `character-cache:*`, `world-dynamic:*`, `room:*`, `view:room-look:*`, `chat:*`, and `ratelimit:*`; it must not use the broad `automation:*` wildcard
@@ -178,13 +186,15 @@ Do not use the generic Cache/Rate-Limit reset procedure below for the current Au
 
 ### Runbook: Environment-Scoped Cache Reset
 
-1. Identify the Cache/Rate-Limit deployment and verify it is distinct from Coordination Redis.
+1. Obtain trusted deployment/endpoint/role/ACL attestation and a bounded prefix inventory/readback proving that the selected deployment is Cache-only and distinct from Coordination Redis. If any coordination prefix, generic legacy writer, unknown prefix, or ambiguous role evidence is present, abort/escalate without deleting.
 2. Assess impact and communicate expected temporary DB/service load and rate-limit reset effects.
-3. Perform the reset:
+3. Establish and verify the [external Cache deployment maintenance gate](#external-cache-deployment-maintenance-gate) for the exact environment, deployment, generation, and complete registered writer inventory before deletion begins. Hold that same gate through deletion, verification, and rebuild; client disconnection alone is not the admission boundary.
+4. Perform the reset while the external generation-bound gate is held:
    - single-node: stop or disconnect clients, `FLUSHDB` or `FLUSHALL` only if dedicated, restart Redis
-   - clustered: use bounded prefix-scoped deletion over known cache families
-4. Monitor cache hit/miss behavior, DB/service load, and rate-limit behavior after reset.
-5. Fix the underlying key-shape, TTL, or cache-design issue if the reset was triggered by design drift.
+   - clustered: use the owner-defined complete Cache prefix inventory for deletion, including legacy `lookcache:*` when present, and verify the complete selected inventory is gone; known-prefix wildcard coverage alone is not cluster-wide proof
+5. While the same operation/fence remains held, complete bounded post-reset inventory/readback verification and the owner-controlled `automation:queue:*` rebuild/re-drive through the named target-only `automation_queue_rebuild_maint` ACL principal, with exact durable-identity completion/readback: every eligible durable identity is rematerialized or durably settled. Pointer loss is never treated as durable-work loss. Release the gate and reopen clients only after every deletion, verification, and Automation check succeeds; any missing, stale, partial, or ambiguous result keeps writers and clients closed.
+6. Monitor cache hit/miss behavior, DB/service load, and rate-limit behavior after reset.
+7. Fix the underlying key-shape, TTL, or cache-design issue if the reset was triggered by design drift.
 
 ## Reset Tolerance Classes
 
@@ -193,8 +203,9 @@ FireMUD classifies coordination-backed workloads by reset tolerance:
 - **reset-tolerant**
   - tick locks, `pending` entries, timers, retry queues, and conflict metadata
 - **reset-sensitive**
-  - gameplay session prefixes such as `session:game:*`; current live Account auth uses the legacy `session:auth:account:*` and `session:auth:tenant:*` projections, while target-only Account auth families are `session:auth:token:*` and `session:auth:generation:*`; the Account-owned `session:connect-token:*` issuance-result projections are also reset-sensitive
-  - certain automation queues or non-critical analytics that can be recomputed or re-enqueued
+  - gameplay session prefixes such as `session:game:*`; current live Account auth uses the legacy `session:auth:account:*` and `session:auth:tenant:*` projections, while target-only Account auth families are `session:auth:token:*` and `session:auth:generation:*`; the Account-owned `session:connect-token:*` issuance-result projections are also reset-sensitive. The target issuance-result family is the exact-input `session:connect-token:tenant:<tenantId>:account:<accountId>:scope:<scopeHash>:request:<requestHash>` form.
+  - The connect-token issuance-result family is distinct from Gateway replay/deny markers. Narrow region/tenant resets preserve it; cluster reset may discard it only after Account-owned durable/fenced recovery or request-identity expiry, otherwise missing state requires exact-result recovery or fail-closed refusal.
+  - certain automation queues or non-critical analytics that can be recomputed or re-enqueued. New automation or analytics prefixes are not implicitly assigned this class; each exact family must be registered with its owner and reset contract before use. The named automation pointer/counter families remain reset-tolerant under the canonical reset matrix.
 - **reset-forbidden**
   - future workloads that would treat Redis as a durable component of a long-lived contract
 
@@ -208,12 +219,12 @@ Facts:
 
 - Coordination Redis uses asynchronous replication.
 - A promoted replica may be missing recent coordination writes.
-- The new primary’s keyspace is authoritative after promotion.
+- The new primary becomes the active source for surviving Redis coordination projections after promotion, but remains only a coordination projection and never durable authority. PostgreSQL and the owning domain stores remain authoritative for durable outcomes, timeline baselines, and recovery decisions.
 
 Behavior:
 
 - modest promotion lag contributes to the measured unreplicated-write exposure
-- replay safety is preserved by lease/lock/epoch validation and PostgreSQL-backed effect ledgers
+- tick/effect replay safety is preserved by lease/lock/epoch validation and PostgreSQL-backed effect ledgers; protected admission is separate and requires owner-specific replay-marker, auth-token, session, generation, and relevant fence continuity/readback proof
 
 Runbook:
 
@@ -222,13 +233,13 @@ Runbook:
    - acceptable: `redis_replication_lag_ms <= 0.5 * redis_unreplicated_write_window_slo_ms`
    - warning: `0.5 * redis_unreplicated_write_window_slo_ms < redis_replication_lag_ms < redis_unreplicated_write_window_slo_ms`
    - red: `redis_replication_lag_ms >= redis_unreplicated_write_window_slo_ms`
-3. If lag is in the acceptable band, promotion is acceptable from a replay perspective.
+3. If lag is in the acceptable band, it bounds tick/effect replay exposure only; it does not by itself authorize protected admission or prove replay-marker/auth-token/session/generation continuity. Any uncertain continuity remains quarantined/fenced until the owning proof/readback succeeds.
 4. If lag is in the warning band, investigate immediately and delay promotion unless the failover risk of waiting is worse than accepting a wider measured exposure.
-5. If lag crosses the red line, either wait for recovery or treat promotion as a deliberate drop-recent-coordination-state event handled by one bounded `coordination-maintenance recover --mode reset --scope <scope> <session-policy-option>` operation under the normal maintenance-lock and epoch-fencing workflow, with exactly one of `--preserve-sessions` or `--invalidate-sessions` selected.
+5. If lag crosses the red line, the following is **target-state procedure only and unavailable in the current implementation**: either wait for recovery or treat promotion as a deliberate drop-recent-coordination-state event handled by one bounded `coordination-maintenance recover --mode reset --scope <scope> <session-policy-option>` operation under the normal maintenance-lock and epoch-fencing workflow, with exactly one of `--preserve-sessions` or `--invalidate-sessions` selected. For a current red-lag incident, do not invoke that unavailable reset; use the fail-closed [Current Operator Fallback](./system-architecture-redis-reset-and-recovery.md#current-operator-fallback), preserve AOF and incident evidence, keep the affected scope fenced, and escalate through the linked incident runbook.
 
 ## Key Shape Mistakes and Coordination Resets
 
-Coordination keys are treated as reset-tolerant, volatile, and backed by PostgreSQL plus replay.
+Coordination keys are volatile, and each prefix follows the class in the canonical [reset policy matrix](./system-architecture-redis-reset-and-recovery.md#reset-policy-matrix-prefix-summary). Only reset-tolerant families may be dropped without reset-sensitive owner gates. A reset-sensitive family may be deleted only after its owner’s pause and applicable cutover or invalidation and fencing gates succeed; the applicable reconciliation/readback must then complete before release, with preserved-session rebind required only when `--preserve-sessions` is selected.
 
 Before performing any coordination reset, operators should walk a short pre-reset validation checklist:
 
@@ -243,6 +254,8 @@ Every coordination reset that affects tick execution must include the Game Sessi
 
 ### Runbook: Mis-Sharded Coordination Keys
 
+> **Target state only — unavailable today.** Do not execute this reset/resume sequence in current operations. Use the [Current Operator Fallback](./system-architecture-redis-reset-and-recovery.md#current-operator-fallback) and escalate with the affected scope fenced.
+
 1. detect the issue through CI, logs, or metrics
 2. choose the smallest safe scope
 3. execute the [Canonical Coordination Reset Sequence](#canonical-coordination-reset-sequence) for that scope
@@ -250,10 +263,12 @@ Every coordination reset that affects tick execution must include the Game Sessi
 
 ### Key Enumeration Strategy for Scoped Resets
 
-Cluster-safe scoped resets rely on prefix-scoped `SCAN` per master under strict operational preconditions:
+Cluster-safe scoped resets use prefix-scoped `SCAN` per master only as an internal, target-state phase of the canonical durable `coordination-maintenance` operation described above. This phase is unavailable in the current implementation and is not a standalone reset or cleanup recipe. Before enumeration starts, that same operation must carry the unchanged ADR-0085 external maintenance handoff: the exact `operationId`, external maintenance fence/lock binding, classifier, immutable evidence digest, and complete affected scope, with the canonical pre-wipe gates already proven where the phase is destructive. The operation remains fenced through the canonical post-reset verification; scan completion or key absence is never evidence to bypass those gates. A fine-grained scoped reset lock may coordinate batches inside the already-held operation, but it never replaces the deployment-wide maintenance operation or lock.
 
-1. pause the target region or scope
-2. acquire a scoped reset lock
+Within that operation, cluster-safe enumeration follows these internal steps:
+
+1. use the operation-owned pause and external maintenance fence for the target scope
+2. bind any scoped reset lock to that operation and its complete recorded scope
 3. enumerate only known prefix families
 4. scan each master with modest `COUNT` and strict time budgets
 5. delete via `UNLINK` where possible
@@ -264,6 +279,8 @@ Cluster-safe scoped resets rely on prefix-scoped `SCAN` per master under strict 
 A lightweight unknown-prefix scanner periodically scans with conservative budgets, compares observed prefixes against the canonical catalogs, emits unknown-prefix metrics, and never mutates keys. It exists to surface drift between implementation and design before it becomes a larger incident.
 
 ## Session Schema Cleanup and Large Keyspaces
+
+> **Target state only — unavailable today.** The `coordination-maintenance recover --mode session-schema-cleanup` flow and its mutating continuation/release controls are not current operator instructions. Current operators must use the [Current Operator Fallback](./system-architecture-redis-reset-and-recovery.md#current-operator-fallback): preserve evidence, keep the affected scope fenced, use shipped pause/status and read-only inspection, and escalate.
 
 Session schema cleanup is a hygiene and recovery tool, not a normal steady-state path. When cleanup is required after a schema change or persistent unsupported-schema drift:
 
@@ -333,6 +350,8 @@ Canonical maintenance-active signal:
 
 ## Dual-Leader Detection and Coordination Reset
 
+> **Target state only — unavailable today.** The recovery commands in this runbook are not current operator instructions. Use the [Current Operator Fallback](./system-architecture-redis-reset-and-recovery.md#current-operator-fallback), keep affected admission and mutation fenced, and escalate.
+
 Goal: detect Redis split-brain or conflicting primaries and recover through a coordinated reset before duplicate logical effects can escape the tick subsystem.
 
 Signals include:
@@ -355,6 +374,8 @@ Runbook:
 Goal: change how `tenantId` / `gameInstanceId` / `regionId` normalization and hash tags are formed without breaking shard-local assumptions.
 
 ### Runbook: Normalization Migration via Reset
+
+> **Target state only — unavailable today.** This reset-based normalization migration and its `coordination-maintenance` CLI/release controls are not current operator instructions. Current operators must use the [Current Operator Fallback](./system-architecture-redis-reset-and-recovery.md#current-operator-fallback): preserve evidence, keep the affected scope fenced, use shipped pause/status and read-only inspection, and escalate.
 
 The migration reset gate must pass the complete [canonical post-reset verification checklist](./system-architecture-redis-ops-access.md#canonical-post-reset-verification-checklist), including the two independent exact digests, mode-specific startup attestation, all positive and destructive negative probes, and isolated-target cleanup/readback evidence. A combined or caller-asserted digest value or copied probe subset cannot satisfy this gate.
 

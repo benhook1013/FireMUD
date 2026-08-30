@@ -16,8 +16,8 @@ Current cross-seam security status is also blocked: Account's runtime membership
 - Publishing a version creates an immutable snapshot identified by `version_id`.
   Script-only fixes use a `scriptPatchVersion` tied to a `baseVersionId` so minor
   automation updates can go live without republishing all assets.
-- **Target state:** To provide Git-style history, revisions will be grouped under explicit branches and commits stored in a durable Game Design history model. No branch/commit tables or current APIs exist in the first slice; current history is limited to service-owned revision/version rows and publish metadata.
-- **Target state:** A future service contract may expose branch creation and commit-history reads; no such branch/commit APIs are currently exposed by the Game Design proto/service. Canonical multi-branch merge semantics require an explicit validated conflict contract.
+- **Target state:** To provide Git-style history, revisions will be grouped under explicit durable branches and commits stored in the Game Design history model. This branch/commit model is not implemented by the current schema or service; current history is limited to service-owned revision/version rows and publish metadata.
+- **Target state:** A future service contract may expose branch creation and commit-history reads, but no such branch/commit APIs are currently exposed by the Game Design proto/service. The current proto exposes version-scoped revision, publication, and version-read APIs instead. Canonical multi-branch merge semantics require an explicit validated conflict contract.
 - Any future external Git webhook or repository integration must submit changes through Game Design-owned revision APIs and must not become a second content authority.
 
 ### History and Provenance Across Services
@@ -37,7 +37,7 @@ content even though domain services own the runtime templates:
 - Domain services do not maintain their own commit histories; they expose only
   the current and historical versioned templates keyed by `(tenantId, versionId)`.
 
-To audit current history for a room, NPC, or item, contributors make a best-effort audit by querying the Game Design Service’s revision/version rows and correlating those revisions with the owning domain’s versioned templates and, where available, its applied-revision ledger (currently World Management’s ledger; Entity Management’s ledger remains future work). This cross-service view is not a canonical branch/commit audit because synchronized branch/commit read APIs do not exist yet. **Target state:** once the durable branch/commit model and synchronized read APIs exist, those surfaces will provide the canonical branch/commit audit view.
+To audit current history for a room, NPC, or item, contributors make a best-effort audit by querying the Game Design Service’s revision/version rows and correlating those revisions with the owning domain’s versioned templates and, where available, its applied-revision ledger (currently World Management’s ledger; Entity Management’s ledger remains future work). This cross-service view is not a canonical branch/commit audit because synchronized branch/commit read APIs do not exist yet. In the target state, contributors will audit through Game Design branches and commits and correlate the resulting revisions with domain-service versioned templates once those durable branch/commit and synchronized read APIs exist; the current service exposes only version-scoped revisions and version reads. **Target state:** those surfaces will provide the canonical branch/commit audit view.
 
 ### Design-Time Synchronization
 
