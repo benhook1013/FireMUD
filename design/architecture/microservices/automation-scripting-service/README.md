@@ -42,7 +42,7 @@ The current Automation pin projection and wire contract remain patch-only, so ex
 - Faction reputation influences NPC aggression states. NPCs may become `FLEEING` or `SURRENDERED` when low on health or morale, allowing players to resolve encounters non-lethally.
 - Web UI for creating and testing scripts using a component-based DSL.
 - Advanced AI modules support formations, squads, and complex behaviors.
-- Procedural population hooks populate rooms with NPCs and loot based on biome and depth by emitting idempotent, tick-driven commands; scripts do not persist world topology and do not directly mutate World Management instance rows.
+- Bounded procedural encounter generation is present: the current population hook invokes seeded encounter generation, but its result is discarded; it does not spawn or persist NPCs/loot or emit tick-driven commands. Full World-owned generation and tick handoff remain target work; see [Automation and Scheduler Runtime tracker](../../../project-management/implementation-tracking/automation-and-scheduler-runtime.md#active-gaps). Scripts do not persist world topology or directly mutate World Management instance rows.
 - `ScriptQuotaService` enforces fairness quotas and per-script resource limits.
 
 ## Document Map

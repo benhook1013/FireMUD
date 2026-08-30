@@ -29,14 +29,14 @@ Inventory and equipment mutations are also intended to be auditable through a ca
 
 ### Responsibilities
 
-- Persist characters, NPCs, and items with optimistic locking
+- Target responsibility: persist characters, NPCs, and items with optimistic locking. The current character update path does not yet provide tenant- and namespace-bound version CAS or stale-write proof; see [Runtime and Data](./runtime-and-data.md#implementation-status).
 - Own the persisted runtime actor core that unifies player and NPC gameplay identity; World Management remains authoritative for location and occupancy
 - Provide CRUD and query APIs for other services
 - Own and manage all inventories and item containment; character location and instance metadata live in the World Management Service
 - Own room-attached ground containers, hidden inventory containers, equipment bindings, and the audit trail for item/container movement
 - Coordinate deferred writes through Game Session Service
 
-World Management is therefore the sole owner of authoritative character and NPC location tables (`character_location`, `npc_location`) for each game instance. Entity Management reads location via World Management gRPC APIs or shared projections but must not persist its own competing location fields or treat cached location as authoritative.
+Target responsibility: World Management is the sole owner of authoritative character and NPC location tables (`character_location`, `npc_location`) for each game instance. Those tables and their write path are currently absent; Entity Management must not persist competing location fields or treat cached location as authoritative. See [World Management Runtime and Data](../world-management-service/runtime-and-data.md#character-location-ownership).
 
 For canonical naming and scoping rules, see [Identifier Glossary](../../system-architecture-identifier-glossary.md).
 

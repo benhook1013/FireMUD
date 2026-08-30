@@ -4,11 +4,20 @@ This document defines Entity Management’s runtime model, persistence ownership
 
 ## Implementation Status
 
-- Current runtime item/equipment/container mutation RPCs that carry an `effectId` use `entity_mutation_effects` as the domain-local replay table. Entity Management records the applied protobuf response for `{tenantId, effectId}` and returns that stored response on duplicate delivery so `GET`, `DROP`, `PUT`, `TAKE`, `WEAR`, and `REMOVE` do not double-apply after Game Session replay or retry.
+- The current crafting REST adapter has inconsistent HTTP auth metadata rather than a public boundary: the source OpenAPI advertises `security: []`, while the deployed interceptor requires any `AUTHENTICATED` bearer because this non-public path is not in the public-route list. Neither layer provides tenant binding; there is no controller `SessionContext` tenant guard. `CraftingServiceImpl` trusts the DTO's `tenantId`, `resultItemId`, and ingredient item IDs; `CraftingRecipeRepository.findWithIngredientsById` and the update branch use recipe ID alone, while ingredient loading also uses recipe ID alone. The tenant-qualified list methods first select IDs but then re-enter that unqualified lookup, so they are not evidence of an end-to-end tenant predicate. Existing crafting tests do not establish caller-tenant authorization, cross-tenant recipe isolation, or same-tenant result/ingredient ownership.
+- **Target crafting boundary:** require authenticated caller context and exact tenant authorization before any recipe operation, derive the target tenant rather than treating request `tenantId` as authority, and make recipe read/update and ingredient load/update predicates tenant-qualified. Validate that the result item and every ingredient item belong to the target tenant and the same applicable version/Draft scope before writing. A missing context, tenant mismatch, recipe mismatch, or cross-tenant item reference fails closed before any recipe or ingredient mutation; the target negative proof must exercise each case.
+- Current runtime item/equipment/container mutation RPCs that carry an `effectId` use `entity_mutation_effects` as the domain-local replay table. Entity Management records the applied protobuf response for `{tenantId, effectId}` and returns that stored response on duplicate delivery so `GET`, `DROP`, `PUT`, `TAKE`, `WEAR`, and `REMOVE` do not double-apply after Game Session replay or retry. Requests with a blank `effectId` bypass this table and execute directly; that fallback is current compatibility behavior, not a safe gameplay admission path. This is the current durable effect-replay guard, not a replacement tick-watermark implementation.
 - The `entitymanagement.mutation.effect.execution{operation,effect_status}` metric distinguishes first apply, replay/no-op, in-progress conflict, reported reuse outcome, and unreadable stored-response outcomes.
-- This current `{tenantId,effectId}` identity is not the target ADR 0054 participant guard; changed operation, target, or request reuse is not yet proven fail-closed.
+- This current `{tenantId,effectId}` identity is not the target ADR 0054 participant guard: the replay record persists only the operation/status/payload result and reuse checks only the operation name. It does not yet persist or validate the typed target, namespace/scope/fence, or immutable request digest, and changed operation, target, or request reuse is not yet proven fail-closed.
+- The current concurrent first-apply path catches a duplicate-marker `DataIntegrityViolationException` inside the outer replay transaction and then attempts the loser read in that same transaction. PostgreSQL transaction-abort/rollback-only behavior means this is not a reliable replay or conflict result; the target requires a conflict-safe marker insert or isolated marker transaction, followed by real PostgreSQL concurrent first-apply/replay proof. Until then replay readiness remains blocked.
+- Character updates are also not currently optimistic CAS: `CharacterRepository` increments `version` but updates by row ID without the old-version and tenant predicates or an affected-row conflict check. Concurrent progression/last-login writes can therefore overwrite each other. The target requires tenant- and namespace-bound version CAS with stale-write failure and focused concurrent proof; the current `@Transactional` service methods do not establish that invariant.
 - Current `jOOQ + Flyway` adoption and focused persistence proof remain implementation work.
 - Realm-authored actor entry remains partial: legacy creation and actor rows still expose fixed RPG-oriented fields, policy/descriptor/template resolution and auto-provision idempotency are incomplete, and synthetic-ID/fork-copy proof gaps remain. These target rules do not claim runtime convergence.
+- The live runtime-instance cleanup path currently deletes room-ground inventory, item stacks, item instances, and container instances by `(tenantId, gameInstanceId)` alone. It does not apply namespace, scope, and holder/container closure or prove S3 classification, so its cleanup acknowledgement is unsafe for replacement until owner-local classification, fencing, and focused proof are complete.
+- The live Entity schema does not yet represent the target namespace-stable identity for durable S1/S2 state: `characters` and `actor_resource_states` retain legacy `playable_state_key`, while `inventory`, `character_friend`, `character_equipment`, and durable holder/containment rows omit `playableStateNamespaceId` (and some omit `tenant_id` entirely). The current repositories consequently cannot enforce the target `{tenantId, playableStateNamespaceId, domainObjectId}` identity at the SQL boundary. A convergent migration, legacy-row disposition/backfill evidence, namespace-aware repository predicates, and focused isolation proof remain required; this does not change the target contract above.
+- The live `item_stacks` uniqueness constraint includes nullable holder columns, so PostgreSQL can accept duplicate rows for the same tenant/holder/item/fingerprint when another holder column is `NULL`. Inventory and container mutation paths still use find-then-create/save rather than an atomic conflict-safe operation. With no explicit `stackFamilyKey`, source resolution rejects more than one candidate row; with an explicit family key, the current implementation selects the first matching row and does not reject duplicate matches. Target resolution must enforce exactly one matching stack (or fail closed), alongside holder-kind-specific uniqueness or normalized non-null identity, atomic upsert/locking, and concurrent proof.
+- The current `characterGraph` helper caches `getWithInventory(characterId)` by character ID alone with a TTL and performs no namespace or authoritative version validation. It is not the target namespace-qualified Class A `character-cache:*` contract; until that contract is implemented and proved, this cache is not correctness authority.
+- `EntityDraftDesignDigestServiceImpl` currently emits `digestSchemaVersion=1` without hashing item `equipmentSlotGroupKey`, while `EquipmentServiceImpl` uses that field for slot compatibility admission. The digest is therefore incomplete for equipment semantics: different slot-group constraints may attest the same content digest. Target convergence adds the normalized field, bumps the schema version, and proves cross-version digest isolation plus publish-gate rejection of a changed constraint.
 
 ## Architecture and Design Notes
 
@@ -60,7 +69,7 @@ Entity Management must classify its runtime persistence surface for cutover and 
 - `S3` entity-owned ephemeral state:
   - synthetic room-ground containers and their contents keyed by `(tenantId, gameInstanceId, roomInstanceId)`;
   - transient containment, encounter-specific entities, corpses, summons, or equivalent rows whose lifecycle is tied to the source `gameInstanceId`;
-  - `entity_tick_state` watermark rows keyed by `(tenantId, gameInstanceId, playableStateScope, regionId, targetAggregateType, entityId)` for the concrete instance/region timeline;
+  - Target-only `entity_tick_state` watermark rows keyed by `(tenantId, gameInstanceId, playableStateNamespaceId, regionId, targetAggregateType, entityId)` for the concrete instance/region timeline; `playableStateScope` is separately persisted and exact-validated evidence, not a key dimension. No such live table or projection is currently implemented: the live schema has `entity_mutation_effects` for narrower effect/operation replay instead. Entity exact-validates the owner-resolved `playableStateNamespaceId` and immutable `playableStateScope` pair before reading or writing this future disposable watermark; neither value is inferred from an entity or instance id. Replay reads that exact row and compares `(last_region_epoch, last_tick_id)`, while durable S1/S2 effect replay continues to use the stable namespace plus structured `EffectId`/operation/target/request-digest guard rather than this watermark;
   - any row family explicitly documented as instance-scoped only.
 
 ### Conservative Current Implementation Inventory
@@ -75,7 +84,6 @@ The following inventory describes the conservative current implementation bounda
 - Durable inventory or character rows that need an approved template remap to remain valid are `S2` within the resolved namespace with separate scope validation.
 - Synthetic room-ground containers keyed by `(tenantId, gameInstanceId, roomInstanceId)` and their containment rows are `S3`.
 - Encounter-scoped NPCs, corpses, summons, temporary containers, and any containment rows tied only to the source `gameInstanceId` are `S3`.
-- `entity_tick_state` rows are `S3` instance/region timeline projections keyed by `{tenantId, gameInstanceId, playableStateScope, regionId, targetAggregateType, entityId}`. The separately validated `playableStateNamespaceId` authorizes mutation of namespace-backed S1/S2 state but is not watermark identity. Termination cleanup removes these rows with their source instance only after already-admitted source effects are reconciled; it must not delete or substitute for the stable root `EffectId`, typed operation/target guards, and request evidence that provide durable S1/S2 replay safety across replacement.
 
 Replacement classification rule:
 
@@ -108,25 +116,27 @@ Cutover fence contract:
 
 Illustrative responses for the current live first slice:
 
-- Current first-cut response with an incomplete, non-authoritative table-level enumeration. It intentionally predates the target namespace/scope-bound request and fence fields. The `item_instances` and `item_stacks` entries below mean only rows held by synthetic room-ground containers; they do not classify every row in either table as `S3`.
+- The current request carries `tenant_id`, `source_game_instance_id`, and `target_version_id` as positive decimal strings (for example, `"7"`, `"42"`, and `"43"`), which the service parses to numeric internal IDs; `remap_set_id` is optional text. The response below is only the live `ValidateEntityUpgradeMappingsResponse`: it does not echo tenant/source/target identifiers and exposes no target-only namespace, scope, fence, or classification fields. Its `stateClassesChecked` and `checkedFamilies` fields are aggregate current-response fields: `checkedFamilies` contains emitted family names, including the live spelling `characters`, and carries no per-family outcome. The live `hasS2Rows` calculation uses tenant-wide row counts rather than proving rows for the requested source instance, so it is not source-instance cutover evidence. The response is an incomplete, non-authoritative table-level enumeration. The `item_instances` and `item_stacks` entries below are family names consistent with the live `checkedFamilies` response only; they do not provide holder-scoped evidence or establish a synthetic-room-ground-only filter, nor do they classify every row in either table as `S3`.
 
 ```json
 {
-  "tenantId": "7b3b074e-d597-4e9b-b96f-4f5946d26120",
-  "sourceGameInstanceId": "2e3ee139-a6e8-44ad-b840-891b22c2255b",
-  "targetVersionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
+  "stateClassesChecked": ["S1", "S2", "S3"],
   "checkedFamilies": [
+    "characters",
+    "inventory",
+    "character_equipment",
+    "character_friend",
     "room_ground_inventory",
     "item_instances",
     "item_stacks",
     "container_instances"
   ],
-  "classificationScope": "synthetic room-ground holder rows only",
-  "authoritativeClassification": false,
-  "stateClassesChecked": ["S3"],
-  "hasS2Rows": false,
-  "result": "INCOMPLETE",
-  "remapSetRequired": false
+  "hasS2Rows": true,
+  "result": "INCOMPATIBLE",
+  "remapSetRequired": true,
+  "reasons": [
+    "ENTITY_REMAP_REQUIRED: inventory and equipment rows reference durable entity templates and require an approved remapSetId before replacement-instance cutover"
+  ]
 }
 ```
 
@@ -143,7 +153,7 @@ Target-state illustrative responses:
   "sourceVersionId": "1f6e7a82-3c4d-4b91-8a25-6d0e9f3b7c14",
   "targetVersionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
   "durableFenceToken": "8b7e1c4a-2d6f-4c91-a5b8-7e3d9f0a6c12",
-  "checkedFamilies": [
+  "familyClassifications": [
     {
       "family": "equipment_bindings",
       "referencedTemplateIds": ["itemTemplateId:iron-sword"],
@@ -169,7 +179,7 @@ Target-state illustrative responses:
   "sourceVersionId": "1f6e7a82-3c4d-4b91-8a25-6d0e9f3b7c14",
   "targetVersionId": "8e65e4a1-5b49-4c31-9f27-3d0b8c6a1e74",
   "durableFenceToken": "c4a9e6f1-7b2d-4d83-9c15-6e0f2a8b4d77",
-  "checkedFamilies": [
+  "familyClassifications": [
     {
       "family": "class_assignment",
       "referencedTemplateIds": ["classTemplateId:ranger-v1"],
@@ -193,7 +203,7 @@ Target-state illustrative responses:
   "sourceVersionId": "1f6e7a82-3c4d-4b91-8a25-6d0e9f3b7c14",
   "targetVersionId": "4f035f76-4b87-4a5e-8b9f-ea6c9e66e620",
   "durableFenceToken": "f1d6a3c8-9e24-4b70-b5f2-8c1a6d9e3f04",
-  "checkedFamilies": [
+  "familyClassifications": [
     {
       "family": "character",
       "referencedTemplateIds": [],
@@ -336,12 +346,14 @@ The current minimal `QueryInventory -> item_ids[]` shape is only sufficient for 
 - Query by structural properties such as stackability, quantity, visibility, accessibility, and ownership.
 - Query by game-defined item types, tags, or category taxonomies so gameplay commands and GUIs can filter for concepts such as quest items, reagents, weapons, salvage, consumables, rarity classes, or other design-defined groupings.
 
-Current `06.3` note:
+Current stack behavior:
 
-- the live runtime model already treats ordinary items as distinct `item_instances`;
-- item definitions now already expose an explicit authored `stackable` capability flag, defaulting to non-stackable;
-- authored stackability still remains a later holder/query behavior, not an implied consequence of item-definition sameness;
-- until that authored seam exists, same-definition items should remain separate physical instances rather than silently merging into aggregate quantity state.
+- the live runtime model treats ordinary non-stackable items as distinct `item_instances`;
+- item definitions expose an explicit authored `stackable` capability flag, defaulting to non-stackable;
+- eligible authored stackable items use holder-local `item_stacks` rows with compatibility fingerprints, optional family keys, quantity-bearing query views, and merge/move mutation paths;
+- same-definition non-stackable items remain separate physical instances rather than silently merging into aggregate quantity state.
+
+This holder-local stack behavior is live but remains partial: nullable stack-holder uniqueness, find-then-create concurrency, and explicit-family duplicate handling remain the gaps recorded in the implementation-status item above. Target convergence still requires exactly-one matching-stack resolution (or fail-closed ambiguity), holder-kind-specific uniqueness or normalized non-null identity, atomic upsert/locking, and concurrent proof.
 
 This richer query model is required both for player actions and for future clients with multiple inventory panes, filtered item grids, equipment screens, contextual loot UIs, or admin/operator tooling.
 
@@ -390,11 +402,11 @@ Entity Management does not orchestrate its own synchronous saga or Temporal work
 ## Redis Role and Prefixes
 
 - **Coordination Redis participation**
-  - Acquires tick locks via shared helpers using keys of the form `tick:{tenantRegionTag}:lock:<entityId>` so locks share a hash tag with tick queues and pending state as described in [Redis Architecture](../../system-architecture-redis.md#key-format-examples).
-  - Treats lock TTLs and other coordination parameters as opaque values derived by the Game Session Service and shared helpers; it does not define its own coordination-specific configuration.
+  - **Target state:** acquires tick locks via shared helpers using keys of the form `tick:{tenantRegionTag}:lock:<entityId>` so locks share a hash tag with tick queues and pending state as described in [Redis Architecture](../../system-architecture-redis.md#coordination-key-examples). **Current implementation:** `TickLockServiceImpl` still writes the legacy unscoped `tick:lock:<tenantId>:<entityId>` key with its private TTL formula and without `gameInstanceId`, `regionId`, or the canonical mutation fence; this drift is not a second lock authority and cannot authorize canonical mutation. See [Entity Management Operations](./operations.md#tick-locking) and the [Redis reset policy matrix](../../system-architecture-redis-reset-and-recovery.md#reset-policy-matrix-prefix-summary).
+  - **Target state:** Treats lock TTLs and other coordination parameters as opaque values derived by the Game Session Service and shared helpers; it does not define its own coordination-specific configuration.
 - **Cache/Rate-Limit Redis usage**
-  - Uses Cache/Rate-Limit Redis to cache frequently accessed namespace-backed character graphs and related aggregates under prefixes such as `character-cache:<tenantId>:<playableStateNamespaceId>:<characterId>`, following the key naming and TTL/versioning patterns in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md). Explicitly instance-scoped S3 projections use their complete instance scope instead.
-  - These character graph caches are treated as Class A, versioned caches:
+  - **Target state:** Uses Cache/Rate-Limit Redis to cache frequently accessed namespace-backed character graphs and related aggregates under prefixes such as `character-cache:<tenantId>:<playableStateNamespaceId>:<characterId>`, following the key naming and TTL/versioning patterns in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md). Explicitly instance-scoped S3 projections use their complete instance scope instead. The current character-ID-only helper is the implementation drift recorded above, not this cache contract.
+  - **Target state:** These character graph caches are treated as Class A, versioned caches:
     - Cached payloads include a stable version or `lastModified` value derived from the authoritative character tables (for example, the `character.version` or `last_modified` columns exposed via Entity Management APIs).
     - Readers validate versions against PostgreSQL (or version fields surfaced via gRPC) before reusing cached data; on mismatch they recompute the graph and overwrite the cache atomically (value + TTL).
     - TTLs (for example, `FIREMUD_CHARACTER_CACHE_TTL_SECONDS`) act as a safety valve for memory and stale entries, not as the primary correctness mechanism.

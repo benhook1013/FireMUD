@@ -17,7 +17,7 @@ This decision is partially implemented. Stage-qualified outcomes exist, but the 
 
 ## Context
 
-Scripting produces commands that must flow into the tick system. The design includes Redis-based staging (`automation:queue:*`, `automation:tick:*`) and internal gRPC handoff to Game Session. Without a clear contract, “success” can mean either “DSL ran” or “effects will happen”, which undermines rollback semantics and operator trust.
+Scripting produces commands that must flow into the tick system. The historical design included Redis-based staging (`automation:queue:*` and the former `automation:tick:*` path) and internal gRPC handoff to Game Session. The `automation:tick:*` path is retired and not live; current automation stages work through `automation:queue:*` and hands gameplay enqueue to Game Session. Without a clear contract, “success” can mean either “DSL ran” or “effects will happen”, which undermines rollback semantics and operator trust.
 
 ## Decision
 

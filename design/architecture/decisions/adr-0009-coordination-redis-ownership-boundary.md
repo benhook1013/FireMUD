@@ -4,6 +4,10 @@
 
 Accepted
 
+## Current inventory clarification
+
+The former `automation:tick:*` staging path is retired and not live. The canonical Redis inventory and responsibility matrix list Automation & Scripting's active coordination families as `automation:timer:*` and `script-scheduler:*`, with `automation:queue:*` and the other automation buffers/counters on Cache/Rate-Limit Redis; Game Session owns the gameplay `tick:*` mutation boundary. This records current implementation/catalogue state and does not introduce a new consequential decision or change this ADR's accepted ownership authority.
+
 ## Context
 
 Coordination Redis contains correctness-sensitive runtime state (ticks, leases, timers, session bindings, and related coordination metadata). Allowing broad ad hoc writes from many services increases coupling, makes incident recovery harder, and weakens enforceability of key schema and reset semantics.
@@ -17,7 +21,7 @@ Coordination Redis ownership is explicit and narrow:
 - Game Session Service owns gameplay coordination keyspace and schema (for example `tick:*`, `timer:*`, `retry:*`, `session:game:*`, and lease-related prefixes).
 - Account Service owns authentication allowlist/session-auth prefixes (`session:auth:*`) and their lifecycle semantics.
 - Automation & Scripting Service owns automation coordination and cache families with an explicit split:
-  - Coordination Redis: `automation:tick:*` keyspace and scripts for automation scheduling/execution that participate in tick timelines.
+  - Coordination Redis: active `automation:timer:*` and `script-scheduler:*` keyspaces for automation scheduling/execution. The former `automation:tick:*` staging path is retired, not live, and is not an active owned prefix.
   - Cache/Rate-Limit Redis: `automation:queue:*`, `automation:quota:*`, `automation:tenant-budget:*`, and `automation:test:capacity:*` best-effort buffers/counters.
 - Non-owner services may participate only through approved shared helpers and documented prefixes/contracts.
 

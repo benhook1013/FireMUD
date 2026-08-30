@@ -432,7 +432,7 @@ Retry and timer queues are protected against unbounded growth:
 - Timer keys (`timer:{tenantRegionTag}`) are ZSETs keyed by `due_ms` (absolute wall-clock milliseconds); scripts accept `now_ms` as a caller-supplied `ARGV` value (never Redis `TIME`), pop at most `N` timers per call, and delete processed members.
 - Defensive limits (for example, maximum timers per region) trigger alerts or throttling if exceeded so bugs cannot create unbounded timer or retry growth.
 
-Entity Management provides the reference example for per-aggregate tick idempotency; see `microservices/entity-management-service/README.md#tick-idempotency`.
+Entity Management provides the reference example for per-aggregate tick idempotency; see [Entity Management Operations](./microservices/entity-management-service/operations.md#tick-idempotency).
 
 ## Domain Idempotency Rules (Region Epoch + TickId in PostgreSQL)
 
@@ -447,13 +447,13 @@ Two patterns are used:
   - It is a narrow exception, not the default for gameplay-visible mutations.
   - Typical safe uses are once-per-tick watermark-style updates or aggregates whose design guarantees a single logical writer/effect per tick.
   - Aggregates that may receive multiple legitimate effects in one tick must not use this pattern.
-  - A shadow tick-state record such as `entity_tick_state` is keyed by the complete `(tenant_id, game_instance_id, playable_state_scope, region_id, target_aggregate_type, aggregate_id)` identity, not by the aggregate identifier alone.
+  - A shadow tick-state record such as `entity_tick_state` is keyed by `(tenant_id, game_instance_id, playable_state_namespace_id, region_id, target_aggregate_type, aggregate_id)`, not by the aggregate identifier alone; `playable_state_scope` is separately persisted and exact-validated evidence, not a key dimension.
   - The shadow state stores at minimum:
     - `last_region_epoch`
     - `last_tick_id`
     - (plus tenant/game-instance/region identifiers or a foreign key implying them)
   - When applying a tick effect:
-    - The handler resolves and reads the shadow tick-state row using the complete `(tenant_id, game_instance_id, playable_state_scope, region_id, target_aggregate_type, aggregate_id)` key; an aggregate-only or aggregate-type-free lookup is invalid.
+    - The handler resolves and reads the shadow tick-state row using `(tenant_id, game_instance_id, playable_state_namespace_id, region_id, target_aggregate_type, aggregate_id)`, exact-validating separately persisted `playable_state_scope` evidence; an aggregate-only, aggregate-type-free, or namespace-free lookup is invalid.
     - If `(last_region_epoch, last_tick_id) >= (currentRegionEpoch, currentTickId)` for that exact row, the update is treated as a replay or out-of-order attempt and becomes a no-op (or, in strict modes, a validation-only check).
     - If `(last_region_epoch, last_tick_id) < (currentRegionEpoch, currentTickId)`, the handler applies the change and updates `(last_region_epoch, last_tick_id) = (currentRegionEpoch, currentTickId)` on that same composite-key row in the same transaction as the domain mutation.
 - **Operation-level effect guard**
@@ -479,9 +479,9 @@ Two patterns are used:
 Examples:
 
 - **Once-per-tick aggregate watermark (per-aggregate last-tick state)**
-  - `AdvanceRegionAuraWatermark` receives `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, targetAggregateType, targetAggregateId)`.
+  - `AdvanceRegionAuraWatermark` receives `(tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch, tickId, targetAggregateType, targetAggregateId)`.
   - The design guarantees this aggregate is advanced at most once per tick.
-  - It reads the shadow tick state for the complete `(tenantId, gameInstanceId, playableStateScope, regionId, targetAggregateType, targetAggregateId)` key and applies the update only when `(last_region_epoch, last_tick_id) < (regionEpoch, tickId)`.
+  - It reads the shadow tick state for the complete `(tenantId, gameInstanceId, playableStateNamespaceId, regionId, targetAggregateType, targetAggregateId)` key, exact-validating separately persisted `playableStateScope` evidence, and applies the update only when `(last_region_epoch, last_tick_id) < (regionEpoch, tickId)`.
   - If `(last_region_epoch, last_tick_id) >= (regionEpoch, tickId)`, the handler treats the request as a replay/out-of-order and returns without changing state.
 - **Trade between two entities (operation-level effect guard)**
   - The `TradeItem` endpoint explicitly receives `rootEffectId` and immutable `requestDigest` in addition to `(tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, tickId, fromEntityId, toEntityId, itemId)`. It creates one participant guard/ledger projection linked to that root effect per affected inventory aggregate.
@@ -705,7 +705,7 @@ When introducing a new command type that will run under tick control, design doc
   - Does it run because an entry is dequeued from `tick:{tenantRegionTag}:queue:<entityId>` or because a tick timer/retry fired?
   - If not, it may follow different idempotency rules and does not belong in this section.
 - **What is the idempotency key?**
-  - For single-aggregate updates: which complete `(tenant_id, game_instance_id, playable_state_scope, region_id, target_aggregate_type, aggregate_id)` key plus `(last_region_epoch, last_tick_id)` (or equivalent) fields and table enforce “at most one update per tick timeline” for that aggregate?
+  - For single-aggregate updates: which complete `(tenant_id, game_instance_id, playable_state_namespace_id, region_id, target_aggregate_type, aggregate_id)` key, separately validated `playable_state_scope` evidence, and `(last_region_epoch, last_tick_id)` (or equivalent) fields and table enforce “at most one update per tick timeline” for that aggregate?
   - For multi-aggregate or multi-effect operations: what participant guard identity combines the root `EffectId`, typed operation, and target aggregate, and how is the immutable request digest bound and checked? `effect_key` is a concrete storage projection/descriptor, not a replacement for that guard identity.
 - **Where is the guard persisted?**
   - Which schema/table holds the per-aggregate “last applied tick” state or `tick_effect_guard` entries?

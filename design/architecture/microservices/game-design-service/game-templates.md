@@ -16,6 +16,8 @@ creators can quickly spin up new projects without starting from scratch.
 ## Implementation Status
 
 - The launch plugin-selection presence modes remain target-only and unimplemented: a presence-capable selection wrapper/mode, fresh omission or explicit empty resolving to the same immutable empty selection, rollback omission reusing a named target, rollback explicit empty, and explicit non-empty selection are not yet represented in proto/generated clients, launch-descriptor persistence/response, the request digest, service logic, or focused proof. Launch-resolution APIs are live, but the current implementation does not yet persist, expose, or prove the complete `enabledPluginVersions[]` set for deterministic retry and rollback. The detailed target contract remains below.
+- Current script-patch resolution is not yet the target launch predicate: a full-version template/request can persist an arbitrary patch ID without proving a same-base `PUBLISHED` Game Design publication or Automation `READY` status. These are implementation gaps; the target validation and fail-before-instance-row rules remain below.
+- The target tenant-scoped `GetTemplateReferencePhase` cutover read is not implemented in the current proto or service. Current launch resolution checks only the per-template `templateReferencePhase` field (`ENFORCED`/`LEGACY`); it does not expose or consume the target durable tenant phase (`BACKFILLING`/`VALIDATED`/`ENFORCED`) required by launch and retirement tooling.
 
 ## Starter Experience Profiles
 
@@ -382,7 +384,7 @@ Creators submit a `GameTemplateDto` via the REST API:
 ```bash
 curl -X POST http://localhost:8080/templates \
      -H 'Content-Type: application/json' \
-     -d '{"tenantId":"11111111-1111-4111-8111-111111111111","name":"Default","config":"{}"}'
+     -d '{"tenantId":"1","name":"Default","config":"{}"}'
 ```
 
 The service validates the payload and stores it in the `game_templates` table.
@@ -392,15 +394,16 @@ Template names must be unique for each tenant to avoid collisions.
 To list templates:
 
 ```bash
-curl "http://localhost:8080/templates?tenantId=11111111-1111-4111-8111-111111111111"
+curl "http://localhost:8080/templates?tenantId=1"
 ```
 
 See [openapi.yaml](../../../../services/game-design-service/src/main/resources/openapi.yaml)
 for request and response schemas.
 
-Management exists via REST and gRPC. Use `POST /templates` to create templates,
-`GET /templates?tenantId=<id>` to list them, and the gRPC endpoints to create,
-list, update, or delete templates.
+Current template management is REST-only. Use `POST /templates` to create
+templates and `GET /templates?tenantId=<id>` to list them. The current Game
+Design proto exposes no template create, list, update, or delete RPCs; any gRPC
+template-management surface remains target-only.
 
 ## Related Documentation
 

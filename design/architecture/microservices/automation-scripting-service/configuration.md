@@ -41,6 +41,8 @@ These knobs are the authoritative defaults referenced by the scripting architect
 
 ## Implementation Status
 
+The formation REST family is currently exposed under the service's HTTP auth configuration without a route-specific tenant binding; with the source OpenAPI's `security: []` and no controller guard, it is publicly reachable wherever the service is exposed. Configuration must not be treated as a substitute for domain authorization: the target removes public exposure and requires exact internal/admin route policy plus caller-to-tenant and Entity-owned NPC ownership checks, with denial proof for unauthenticated and cross-tenant formation operations.
+
 Current live bindings in the service are narrower than the full target-state scripting design:
 
 - the live runtime binds live per-script quota, priority-tagged live tenant-budget, dry-run quota/capacity, output-budget, pin-projection freshness, signer/component-policy reconciliation cadence, outbox retention, queue rebuild, and dead-letter size/age knobs listed below;

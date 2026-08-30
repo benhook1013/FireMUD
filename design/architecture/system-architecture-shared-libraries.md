@@ -8,6 +8,8 @@ FireMUD's microservices share a set of narrowly scoped modules so each service c
 
 The current `EnqueueAutomationCommandIfAbsentRequest` carries `scriptPatchVersion` but not `scriptPinEpoch`, so shared code must not synthesize an absent epoch; exact tuple propagation and final enforcement remain implementation and focused-proof gaps at that boundary. The narrow shared Redis-contract foundation, owner-local descriptor contributions, repository aggregation, ownership enforcement, and descriptor-driven proof required by [ADR 0176](./decisions/adr-0176-owner-local-redis-execution-with-aggregated-contracts.md) are not implemented. See the [Automation and Scheduler Runtime tracker](../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status) for current status and proof evidence.
 
+- `common-saga` adoption is not currently explicit: base service conventions add the dependency broadly, and deployed service configurations expose the Saga Flyway location even for services without a Saga workflow. This can materialize shared Saga tables and repositories outside the adopter boundary; the explicit adopter allowlist and focused conformance proof remain incomplete.
+
 ---
 
 ## Common DTOs & Error Handling
@@ -101,7 +103,7 @@ Structured logging is available via `LoggingUtil`:
 private static final Logger logger = LoggingUtil.getLogger(MyClass.class);
 ```
 
-`JwtUtil` helps verify tokens and is used by the Account Service when issuing new ones.
+`JwtUtil` is a target-state shared verification helper for Account-published JWKS. The checked-in `JwtUtil` currently constructs and verifies HMAC tokens; that implementation is current drift and must not be described as live JWKS verification. Target Account issuance delegates private-key operations to approved non-exportable signer custody rather than exporting signing material or making shared utilities token issuers.
 
 ## Short Synchronous Saga Orchestration
 
@@ -115,9 +117,7 @@ new SagaBuilder()
     .run();
 ```
 
-Saga state is stored in the bundled `saga_instance` and `saga_step` tables.
-These tables live in each adopting service's own schema (for example `${serviceSchema}.saga_instance` and `${serviceSchema}.saga_step`) rather than a separate dedicated `saga` schema.
-Flyway migrations packaged with `common-saga` are exposed as `classpath:db/migration/saga` and run alongside the owning service's local `classpath:db/migration` chain.
+Saga state is stored in the bundled `saga_instance` and `saga_step` tables. At target, these tables exist only in each explicit adopter's own schema (for example `${serviceSchema}.saga_instance` and `${serviceSchema}.saga_step`) rather than a separate dedicated `saga` schema or a non-adopter schema. Flyway migrations packaged with `common-saga` are exposed as `classpath:db/migration/saga` and run alongside the owning adopter's local `classpath:db/migration` chain; current convention wiring exposes that location more broadly, as recorded in [Implementation Status](#implementation-status).
 `SagaRunner` executes the orchestration inline, emitting metrics via `SagaMetrics` and adding a `correlationId` to logs for easier troubleshooting. `SagaMetrics` tracks the number of active synchronous saga executions so the Logging & Admin Service dashboard can display progress.
 
 `common-saga` is not FireMUD's durable workflow engine. Long-running control-plane workflows that need restart-safe continuation, durable waits, or operator-visible runtime state use `common-temporal` instead. The placement matrix and adopter proof requirement are owned by [Transaction Strategies](./system-architecture-transactions.md#mandatory-workflow-adopter-classification); this section records only the shared module and adopter-local runtime consequences.

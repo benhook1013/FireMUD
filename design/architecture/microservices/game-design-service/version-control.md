@@ -16,8 +16,8 @@ Current cross-seam security status is also blocked: Account's runtime membership
 - Publishing a version creates an immutable snapshot identified by `version_id`.
   Script-only fixes use a `scriptPatchVersion` tied to a `baseVersionId` so minor
   automation updates can go live without republishing all assets.
-- To provide Git-style history, revisions are grouped under branches and commits stored in the database.
-- The service exposes APIs to create branches and list commit history. Canonical multi-branch merge semantics require an explicit validated conflict contract.
+- **Target state:** To provide Git-style history, revisions will be grouped under explicit branches and commits stored in a durable Game Design history model. No branch/commit tables or current APIs exist in the first slice; current history is limited to service-owned revision/version rows and publish metadata.
+- **Target state:** A future service contract may expose branch creation and commit-history reads; no such branch/commit APIs are currently exposed by the Game Design proto/service. Canonical multi-branch merge semantics require an explicit validated conflict contract.
 - Any future external Git webhook or repository integration must submit changes through Game Design-owned revision APIs and must not become a second content authority.
 
 ### History and Provenance Across Services
@@ -27,16 +27,25 @@ content even though domain services own the runtime templates:
 
 - Each revision and commit references concrete domain objects (rooms, regions,
   NPCs, items, templates) via stable identifiers maintained by the owning domain services.
-- During authoring, design tools apply revisions incrementally to domain
-  services’ **Draft** template rows via idempotent design APIs keyed by
-  `(tenantId, versionId)`. Draft template graphs in World Management, Entity
-  Management, and related services are therefore the authoritative snapshots of
-  world and entity data for each version.
-- When a version is published, the service coordinates the durable `publish` workflow that validates and
-  finalizes the existing Draft data in each domain service and transitions the
-  version to Published as described in
-  [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
+- **Target state:** During authoring, design tools apply revisions incrementally
+  to domain services’ **Draft** template rows via idempotent design APIs bound to
+  the complete commit/revision identity and affected-epoch set. Draft template
+  graphs in World Management, Entity Management, and related services are then
+  the authoritative snapshots of world and entity data for each version.
+- **Current first slice:** `SaveRevision` optionally calls World Management to
+  apply a mutation and only afterward unconditionally inserts the Game Design
+  revision; Game Design has no matching deduplication lookup or uniqueness
+  constraint. This ordering is therefore not idempotent shared-Draft proof; the
+  current partial-application and retry gap is recorded in Implementation Status.
+- **Target state:** When a version is published, the service coordinates the
+  durable Temporal `publish` workflow that validates and finalizes the existing
+  Draft data in each domain service and transitions the version to Published as
+  described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
   No separate design database is copied into domain services at publish time.
+  **Current implementation:** the Temporal-disabled synchronous fallback remains
+  active and does not establish that durability contract; the Temporal-enabled
+  path is currently blocked by the Automation & Scripting digest participant's
+  `PERMISSION_DENIED` response.
 - These design APIs accept writes only for Draft versions. Once a version is
   marked Published, the corresponding template rows in domain services are
   treated as immutable for that `(tenantId, versionId)`; further edits require
@@ -44,9 +53,11 @@ content even though domain services own the runtime templates:
 - Domain services do not maintain their own commit histories; they expose only
   the current and historical versioned templates keyed by `(tenantId, versionId)`.
 
-To audit the history of a room, NPC, or item, contributors query the Game
-Design Service’s branches and commits and then correlate the resulting
-revisions with the versioned templates stored in domain services.
+To audit current history for a room, NPC, or item, contributors query the Game
+Design Service’s revision/version rows and correlate those revisions with the
+versioned templates stored in domain services. **Target state:** once the
+durable branch/commit model and read APIs exist, those surfaces will provide the
+canonical branch/commit audit view.
 
 ### Design-Time Synchronization
 
@@ -63,6 +74,10 @@ Game Design owns the durable, creator-visible coordination record for every shar
 - Owner-local application is not accepted shared Draft truth. Normal creator reads and subsequent edits use the durable snapshot/version at the last fully synchronized commit fence; rows applied under a later partial owner commit remain invisible to those reads. Each owner must preserve the ability to serve that fenced snapshot while later partial work exists.
 - Game Design advances the synchronized fence only after every required owner durably reports the same exact commit and digest. Partial application remains diagnostic workflow state and cannot satisfy `IN_SYNC` or become a publish target.
 - Conflict assistance may construct a new proposed diff, but it must produce a new digest and exact base/epoch binding for creator review. Reconciliation never silently merges a stale proposal.
+
+#### Publication freeze and owner handoff
+
+The synchronized Draft fence is also the lifecycle handoff into publication. Before collecting the World Management participant digest, reading the final release state, or committing `published_release_bundle` and `PUBLISHED` metadata, Game Design must obtain and retain the exact WMS owner-freeze acknowledgement, then complete or abort that same owner operation after reconciling its publication outcome. The canonical WMS operations, fields, phase transitions, exact replay/conflict behavior, and current implementation/proof boundary are defined in [World Management API Contracts](../world-management-service/api-contracts.md#publication-freeze-and-terminal-handoff-target-state). This is one owner-local freeze protocol, not a distributed transaction: the freeze serializes WMS Draft writes, while Game Design remains the lifecycle and final-attestation authority. Focused proof must interleave a WMS mutation with freeze acquisition, publication, retry, abort, and lost-response reconciliation and prove that no post-freeze Draft row or digest can become part of a Published release.
 
 The Game Design Service tracks a derived `designSyncStatus` for each `(tenantId, versionId)`. It is `IN_SYNC` only when the durable commit record, every required owner result, and the synchronized commit fence agree on the exact commit and digest. The `PublishVersion` workflow must verify this state before starting durable publication. The coordinator may use the canonical durable workflow substrate and transactional outbox delivery where appropriate, but it must not claim cross-database atomicity or expose partial application as accepted Draft state.
 
@@ -111,9 +126,19 @@ services as the source of truth for the current Draft template graphs:
 - The `PublishVersion` workflow must verify that `designSyncStatus == IN_SYNC`
   before starting the durable `publish` workflow. Versions that are out of sync cannot be
   published until reconciliation succeeds.
-- Reconciliation does not authorize silently broken drafts:
-  - commits introducing unresolved cross-service references must move the version into explicit invalid state (`UNRESOLVED_REFERENCE` or equivalent) rather than leaving it as a normal Draft;
-  - replay workers may retry delivery, but they must not invent identifier rewrites or downgrade hard validation failures into generic `OUT_OF_SYNC`.
+  - Reconciliation does not authorize silently broken drafts:
+    - commits introducing unresolved cross-service references must move the version into explicit invalid state (`UNRESOLVED_REFERENCE` or equivalent) rather than leaving it as a normal Draft;
+    - replay workers may retry delivery, but they must not invent identifier rewrites or downgrade hard validation failures into generic `OUT_OF_SYNC`.
+
+#### Owner-to-owner digest authorization and tenant identity
+
+`GetDraftDesignDigest` is a read-only owner-to-owner publication read across World Management, Entity Management, Game Logic, and Automation & Scripting. Every receiver uses the shared [Security Architecture](../../system-architecture-security.md) and [Authentication & Authorization](../../system-architecture-authentication.md) workload and method-allowlist rules: only the authenticated Game Design workload identity may call the publication method, and other internal workloads plus user/admin JWTs are denied. The invocation binds exact `{tenantId, scope}` (`versionId` for full publish or `scriptPatchVersion` for script patch), stable `publishRequestId`, derived workflow identity, and canonical `requestDigest`; missing, changed, or omitted binding evidence fails closed before a digest is returned. This context is owner-authentication and replay evidence, not an end-user role and not part of the content digest. Temporal activities never propagate the human operator JWT; operator authority ends when Game Design starts or attaches to the workflow. Each response's tenant and scope must be exact-compared by Game Design before recording or gating the attestation; Game Design remains publication coordinator and each participant remains owner of its digest.
+
+**Implementation status:** `TemporalVersionPublishActivitiesImpl` invokes reconciliation outside the incoming gRPC `SessionContext`, so Game Design's outbound client emits an internal-service JWT with empty global roles. Automation's current `GetDraftDesignDigest` handler invokes `AdminRoleGuard`, which requires a global privileged role, so the full-publish Automation participant returns `PERMISSION_DENIED` whenever Temporal orchestration is enabled. WMS, Entity, and Game Logic digest handlers have no equivalent owner/method authorization and accept any bearer that passes shared JWT parsing, creating the opposite unauthorized-reader drift. In addition, Game Design's live participant DTO/client/gate omit and do not compare response `tenantId`; Game Logic accepts a blank tenant and hashes a tenant/version-independent empty manifest. These gaps block the target tenant-bound attestation and require endpoint, wrong-workload, cross-tenant, and exact-identity negative proof. The Automation remediation remains a narrowly allowlisted Game Design workload path, not a restoration of admin-role authorization.
+
+#### Launch and attestation read authorization (target state)
+
+Launch and release-attestation reads are owner-to-owner control-plane APIs, not a generic internal-service read class. Each RPC must have an explicit authenticated workload allowlist and bind the caller's authorized tenant/scope to the request before reading data; a bearer that merely declares `isInternalService` is insufficient. The target allowlist is: `ResolveLaunchDescriptor` — Game Session only; `GetPublishedReleaseBundle` — Game Session, World Management, and Automation & Scripting; `GetVersionState` and `GetVersionAssetArtifactState` — Game Session and World Management. Each request must exact-bind its tenant and version/template/request scope (including source/target versions where present), and the owner must reject a wrong workload, cross-tenant scope, omitted scope, or changed replay identity before returning a descriptor, attestation, lifecycle state, or artifact state. Focused proof must exercise every allowlisted caller and a denied internal workload plus cross-tenant requests for each RPC.
 
 In addition to domain-service digests, publish safety requires a Game Design control-plane digest:
 
@@ -142,6 +167,7 @@ Digest comparison rules:
 - Reconciliation and publish-time checks compare the current digest reported by each service against the recorded digest for the target commit.
 - If `digestSchemaVersion` differs, publish must fail fast and require an explicit migration of digest semantics (for example by bumping `digestSchemaVersion` and replaying commits to record new digests), rather than silently comparing incompatible hashes.
 - For one publish attempt, every required participant must attest the same target commit scope. Publish must fail closed if required participants report different `appliedCommitId` values for the same requested publish target, even if no individual digest payload is malformed.
+- The Automation full-version participant must select only the script definitions and event bindings mapped to the requested `(tenantId, versionId)`. Including `versionId` only as a field in a digest over tenant-wide rows is not version-scoped attestation. If the live data model cannot map the requested version to an exact script/binding set, the participant must fail closed rather than return a tenant-wide digest. Proof must show two versions with disjoint script/binding inputs produce isolated digests and that a cross-version row cannot satisfy either publish gate.
 - The dedicated `abilitySchemaDigest` is compared exactly with the Game Logic-owned digest for the same target commit and its existing participant `digestSchemaVersion`/canonicalization contract; missing, unsupported, stale, or mismatched evidence fails closed.
 - Digest request/response payloads are canonical across participants:
   - `GetDraftDesignDigestRequest { tenantId, scope: oneof {versionId, scriptPatchVersion} }`
@@ -261,8 +287,8 @@ Scope constraints:
 
 ## Benefits
 
-- Designers can experiment on feature branches without affecting the main game line.
-- Patch notes are automatically generated from commit messages.
+- **Target benefit:** Once durable branch/commit APIs and their audit surfaces exist, designers can experiment on feature branches without affecting the main game line; those APIs are not live today.
+- **Target benefit:** Once commit metadata is persisted and exposed by the version-control contract, patch notes can be generated from commit messages; the current API does not provide that automation.
 - Downstream services continue to consume only published versions so runtime stability is preserved.
 
 ## Related Documentation
