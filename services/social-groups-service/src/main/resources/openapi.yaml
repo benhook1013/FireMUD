@@ -306,9 +306,11 @@ components:
           maxLength: 64
           nullable: true
           description: >-
-            Optional trimmed replay identity. Blank or absent values are stored
-            as null and bypass chat replay. Target state: a nonblank value is
-            scoped to the authenticated sender and this chat operation;
+            Optional effect identifier; it is not a safe replay identity until
+            authenticated-sender binding and full stable-field validation
+            converge. Blank or absent values are stored as null and bypass chat
+            replay. Target state: a nonblank value is scoped to the
+            authenticated sender and this chat operation;
             senderAccountId is checked against that caller and is not sender
             authority. Before any replay lookup or result disclosure, the
             service derives the sender from the authenticated principal and
@@ -361,8 +363,11 @@ components:
           maxLength: 64
           nullable: true
           description: >-
-            Normalized nonblank replay identity when supplied; null when the
-            request omitted or supplied only blank text.
+            Normalized nonblank effect identifier when supplied; it is not a
+            safe replay identity in the current implementation, which may
+            return a tenant/effect match before authenticated-sender or full
+            stable-field validation. Null when the request omitted or supplied
+            only blank text.
     AddGuildStorageItemRequest:
       type: object
       properties:
