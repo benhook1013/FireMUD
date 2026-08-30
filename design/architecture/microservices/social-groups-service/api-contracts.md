@@ -58,8 +58,9 @@ Example voice-token request:
 
 ```bash
 curl -X POST http://localhost:8080/voice/token \
+  -H 'Authorization: Bearer <access-token>' \
   -H 'Content-Type: application/json' \
-  -d '{"tenantId":"tenant-abc","accountId":100,"channelId":"guild-10"}'
+  -d '{"tenantId":7,"accountId":100,"channelId":"guild-10"}'
 ```
 
 ## gRPC APIs
