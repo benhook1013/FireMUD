@@ -268,7 +268,7 @@ opaque JSON blobs or service-specific payloads.
 
 ### Script Patch Versions and Runtime Behavior
 
-Script-only fixes are tracked as `scriptPatchVersion` values attached to a `baseVersionId`. Together, `(versionId, scriptPatchVersion)` define the effective script bundle for a game:
+Script-only fixes are tracked as `scriptPatchVersion` values attached to a `baseVersionId`. Together, `(baseVersionId, scriptPatchVersion)` define the effective script bundle for a game. A script-only publication may also receive a separate `versionId` for publication metadata and history; that identifier does not replace the base-version/patch pair when resolving the effective script bundle:
 
 The exact tuple propagation, final-effect fencing, and Game Session rollout-history guarantees described below are target-state behavior; current implementation and proof gaps are tracked in the [Game Session runtime and tick coordination tracker](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#active-gaps).
 
