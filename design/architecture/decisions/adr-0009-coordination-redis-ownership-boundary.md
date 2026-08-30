@@ -22,7 +22,7 @@ Coordination Redis ownership is explicit and narrow:
 - Account Service owns authentication allowlist/session-auth prefixes (`session:auth:*`) and their lifecycle semantics.
 - Automation & Scripting Service owns automation coordination and cache families with an explicit split:
   - Coordination Redis: Automation & Scripting owns the target scheduler/checkpoint boundary represented by `automation:timer:*` and `script-scheduler:*` once implemented. These are reset-tolerant projections rebuilt from durable schedules, trigger-instance rows, and heartbeat progress; durable schedules and trigger-instance de-duplication remain PostgreSQL authority. They are target-state names, not current runtime guarantees. The former `automation:tick:*` staging path is retired, not live, and is not an active owned prefix.
-  - Cache/Rate-Limit Redis: `automation:queue:*`, `automation:quota:*`, `automation:tenant-budget:*`, and `automation:test:capacity:*` best-effort buffers/counters.
+  - Cache/Rate-Limit Redis: `automation:queue:*`, `automation:quota:*`, `automation:tenant-budget:*`, `automation:test:quota:*`, `automation:test:capacity:*`, and `automation:readiness:capacity:*` best-effort buffers/counters and owner-token leases. These remain distinct from the target Coordination Redis `automation:timer:*` and `script-scheduler:*` projections.
 - Non-owner services may participate only through approved shared helpers and documented prefixes/contracts.
 
 Owner-managed bridge contracts are the only approved exception to “write only your own keys”:
