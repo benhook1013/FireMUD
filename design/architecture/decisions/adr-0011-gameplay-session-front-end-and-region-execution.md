@@ -29,7 +29,7 @@ FireMUD adopts a **session front-end + lease-owner execution** model inside the 
 - The session front-end pod must not mutate tick-owned gameplay coordination state for a region it does not own.
 - When command execution or tick-owned mutation targets a region leased by another pod, the session front-end forwards the request over internal gRPC to the current **lease owner**.
 - Only the lease owner may stage or commit Redis coordination changes for that region.
-- `playableStateScope` is part of the forwarded request identity and must be preserved and validated end to end because it distinguishes the gameplay state/effect scope being acted on.
+- `playableStateScope` is exact-validated request evidence/context in the forwarded request and must be preserved end to end because it validates the gameplay state/effect scope being acted on; it is excluded from uniqueness and deduplication identity.
 - `playableStateScope` is not an additional lease-ownership dimension. Lease ownership remains keyed by `<tenantId, gameInstanceId, regionId>`; the current owner and its fence apply to the region, while the owner validates the forwarded playable-state scope against the authoritative gameplay binding.
 
 ## Consequences
