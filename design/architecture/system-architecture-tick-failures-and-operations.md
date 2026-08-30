@@ -163,6 +163,8 @@ Tick-related durable structures are intentionally split between a central ledger
 
 New designs must not create ad-hoc ledger tables for tick effects in other services; they should either extend the Game Session–owned ledger/follow-up schema or add domain-local guard tables that project the existing `EffectId`.
 
+Cross-region follow-ups extend the same concrete identity rather than treating a region or scope label as sufficient. Each durable coordinator, target follow-up, and origin-addressed result must carry both the origin and target runtime tuples `(tenant_id, game_instance_id, playable_state_namespace_id, playable_state_scope, region_id, region_epoch)` (with the origin/target role made explicit). `playable_state_namespace_id` participates in target-leg uniqueness/claim identity, exact replay comparison, old-epoch recovery, and coordinator-to-result correlation; `playable_state_scope` is separately persisted and exact-validated evidence, not a replacement key. A target result is admissible only when its origin and target namespace/timeline tuples, stable follow-up/coordinator identity, target effect/aggregate identity, and immutable request/result digest agree with the durable rows. Recovery retains the original namespace-complete projection and must not rebind an old follow-up to a new namespace or epoch. The current cross-region storage/wire substrate remains narrower than this target contract.
+
 Replay of a tick is driven from ledger state:
 
 - When reprocessing a tick, the executor loads ledger rows for that `<tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch, tickId>` with `status = SCHEDULED` and:
