@@ -62,8 +62,9 @@ Key steps:
 ## Scaling PostgreSQL
 
 - Treat PostgreSQL as a primary scaling boundary for the tick system, not only as a backing store:
-  - **Target-state:** Tick execution will write tick-batch rows, effect-ledger rows, region status updates, remote follow-up claims, and reconciliation backlog state. Current Game Session has no implemented cross-service reconciliation backlog schema or API; see [Game Session API status](./microservices/game-session-service/api-contracts.md#implementation-status).
-  - **Target-state:** Replay and recovery will add their own write/read pressure through replay scans, backlog retries, and operator-driven reconcile flows.
+  - **Current live:** Tick execution writes `tick_batch` and effect-ledger (`tick_effect`) rows. These are the implemented durable PostgreSQL writes that must be included in primary-write capacity estimates.
+  - **Target-state only:** Region-status writes, remote-follow-up claims, and effect-reconciliation backlog state are separate target persistence surfaces and must not be presented as current live tick writes. Current Game Session has no implemented target region-status, cross-service reconciliation-backlog schema/API, or the target remote-follow-up claim surface; see [Game Session API status](./microservices/game-session-service/api-contracts.md#implementation-status).
+  - **Target-state only:** Replay and recovery will add their own write/read pressure through replay scans, remote-follow-up/reconciliation backlog retries, and operator-driven reconcile flows.
 - Use read replicas for read-heavy workloads where supported by the design, but do not assume replicas solve tick-path pressure; the primary write path must be sized for peak tick and replay throughput.
 - Increase instance size or provisioned IOPS as necessary, following database operations runbooks.
 - Monitor Slow Query logs and apply schema/index optimizations as needed.
