@@ -8,7 +8,8 @@ info:
     url: https://opensource.org/licenses/MIT
 servers:
   - url: https://api.firemud.com
-security: []
+security:
+  - bearerAuth: []
 components:
   securitySchemes:
     bearerAuth:
@@ -229,16 +230,6 @@ components:
         email:
           type: string
       required: [email]
-    LinkExternalAccountRequest:
-      type: object
-      properties:
-        tenantId:
-          type: string
-        provider:
-          type: string
-        externalId:
-          type: string
-      required: [tenantId, provider, externalId]
     AccountIdRequest:
       type: object
       properties:
@@ -256,6 +247,7 @@ paths:
     get:
       summary: Health check endpoint
       operationId: ping
+      security: []
       responses:
         '200':
           description: Pong response
@@ -274,6 +266,7 @@ paths:
     post:
       summary: Authenticate and return JWT
       operationId: login
+      security: []
       requestBody:
         required: true
         content:
@@ -300,6 +293,7 @@ paths:
     post:
       summary: Authenticate and return a short-lived first-party bootstrap token
       operationId: playerBootstrap
+      security: []
       requestBody:
         required: true
         content:
@@ -450,6 +444,7 @@ paths:
     post:
       summary: Request password reset
       operationId: requestPasswordReset
+      security: []
       requestBody:
         required: true
         content:
@@ -465,6 +460,7 @@ paths:
     post:
       summary: Complete password reset
       operationId: completePasswordReset
+      security: []
       requestBody:
         required: true
         content:
@@ -480,6 +476,7 @@ paths:
     post:
       summary: Request email verification
       operationId: requestEmailVerification
+      security: []
       requestBody:
         required: true
         content:
@@ -510,6 +507,7 @@ paths:
     post:
       summary: Send username reminder
       operationId: recoverUsername
+      security: []
       requestBody:
         required: true
         content:
@@ -525,6 +523,7 @@ paths:
     post:
       summary: Create a new account
       operationId: createAccount
+      security: []
       requestBody:
         required: true
         content:
@@ -636,27 +635,6 @@ paths:
           description: Exported tenant data
         '400':
           description: Invalid account or tenant ID
-  /accounts/{accountId}/external:
-    post:
-      summary: Link external account
-      operationId: linkExternalAccount
-      parameters:
-        - name: accountId
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/LinkExternalAccountRequest'
-      responses:
-        '200':
-          description: Linked
-        '400':
-          description: Invalid account or external data
   /accounts/{accountId}:
     delete:
       summary: Delete global account after billing preconditions pass
@@ -724,6 +702,7 @@ paths:
     get:
       summary: JWKS public keys
       operationId: jwks
+      security: []
       responses:
         '200':
           description: JSON Web Key Set

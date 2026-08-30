@@ -872,7 +872,7 @@ routes:
       any_of: [designer, tenantAdmin]
     implementation_status:
       known_drift:
-        - current_openapi_security_is_empty_and_controller_accepts_caller_tenant_id
+        - route_omitted_from_current_authoritative_openapi_and_controller_accepts_caller_tenant_id
         - recipe_lookup_and_update_are_not_tenant_qualified
         - cross_tenant_result_and_ingredient_item_ownership_is_not_proved
   - service: entity-management-service
@@ -899,7 +899,7 @@ routes:
       any_of: [designer, tenantAdmin]
     implementation_status:
       known_drift:
-        - current_openapi_security_is_empty_and_recipe_id_lookup_is_global_shaped
+        - route_omitted_from_current_authoritative_openapi_and_recipe_id_lookup_is_global_shaped
         - cross_tenant_recipe_and_item_read_is_not_proved_denied
   - service: automation-scripting-service
     route: POST /formations

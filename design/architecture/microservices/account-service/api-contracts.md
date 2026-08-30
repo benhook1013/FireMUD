@@ -98,7 +98,7 @@ For `security_locked` accounts, Account's successful recovery authorization issu
 - `POST /auth/pending-deletion/recovery/challenge` and `POST /auth/pending-deletion/recovery` are dedicated target recovery routes classified `public`; they may issue only `pending-deletion-access`, never normal login, bootstrap, connect-token, tenant, purchase, or gameplay authority. These target routes are not currently routable.
 - `RequestPasswordReset` – initiate a password reset email.
 - `CompletePasswordReset` – update the password using a token.
-- External identity binding and lifecycle are owned by [Account Runtime and Data](./runtime-and-data.md). Provider-specific linking is planned but not currently routable; the caller-asserted `LinkExternalAccount` scaffold remains unsupported drift.
+- External identity binding and lifecycle are owned by [Account Runtime and Data](./runtime-and-data.md). Provider-specific linking is planned but not currently routable. The live `POST /accounts/{accountId}/external` controller still accepts caller-supplied `tenantId`, `provider`, and `externalId` after only the existing Account/tenant access check, and `AccountServiceImpl` persists that unverified external ID; no provider authorization or recent ordinary reauthentication is enforced. This is an implementation/security gap, not a runtime-denial claim. The unsupported route is intentionally omitted from the authoritative OpenAPI until the target globally bound flow is implemented and proved.
 - `IssuePlayerBootstrapToken` – authenticate a first-party player account and issue the short-lived `player-bootstrap` token profile used only for gameplay bootstrap.
 - `ListBootstrapWorlds` – list caller-visible worlds for first-party gameplay bootstrap.
 - `ListBootstrapRealms` – list caller-visible realms for a selected world during first-party gameplay bootstrap.
@@ -195,6 +195,8 @@ These RPCs and schemas are accepted target state but are not present in the curr
 | `GET` | `/tenants/{tenantId}/entitlements/me` | Caller-bound tenant-admin entitlement view for billing-safe UX |
 | `GET` | `/support/tenants/{tenantId}/entitlements` | Cross-tenant support-safe entitlement view with redacted fields |
 | `GET` | `/.well-known/jwks.json` | JWKS for verifying issued JWTs |
+
+Current verification routing/auth status: `POST /auth/verify-email` inherits bearer authentication because both HTTP configurations allowlist only `GET /auth/verify-email`, while that allowlisted GET has no controller mapping; see the existing [verification-routing gap in Runtime and Data](./runtime-and-data.md#email-and-notification-design).
 
 The target `POST /auth/connect-token` REST response body is metadata-only: it contains no raw connect token or internal `jti`, and no custom response header may provide one. **Current implementation drift:** `ConnectTokenResponse` currently includes `jti` in the body, despite this target metadata-only contract. The token is delivered only in the protected HttpOnly `Firemud-Connect-Token` `Set-Cookie` with the documented cookie security attributes. An exact retry with the same `(accountId, connectScopeId, requestId)` and digest replays the stored result; after the response envelope recovery horizon, a matching compact receipt returns `RESPONSE_RECOVERY_EXPIRED` and the caller must use a fresh `requestId`, while a changed digest returns `IDEMPOTENCY_CONFLICT`. No gRPC `IssueConnectToken` transport exists.
 
