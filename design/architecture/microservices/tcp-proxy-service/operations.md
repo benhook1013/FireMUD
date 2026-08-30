@@ -122,10 +122,24 @@ curl http://localhost:8080/ping
 - The proxy gRPC server listens on port `6565` by default as configured in `src/main/resources/application.yml`.
 
 ```bash
-grpcurl -cacert "$FIREMUD_GRPC_CA_CERT_PATH" \
-  -cert "$FIREMUD_GRPC_CERT_CHAIN_PATH" \
-  -key "$FIREMUD_GRPC_PRIVATE_KEY_PATH" \
-  localhost:6565 tcp_proxy.v1.TcpProxyService/Ping
+# Production diagnostic context (mTLS). This file-based grpcurl form applies to
+# SECRET_BACKED and CERT_MANAGER bindings: resolve the endpoint, TLS authority,
+# and operator-tool paths from the selected canonical
+# operator-credential-binding/v1 record and its source-specific delivery—the
+# named Secret or declared Certificate output—during deployment preflight. For
+# WORKLOAD_IDENTITY, do not invent certificate/key files or another grpcurl
+# representation: invoke the provider/platform-native operator tooling for the
+# projected identity and trust bundle, preserving the same binding-resolved
+# endpoint and authority. These are not service environment variables and must
+# not use FIREMUD_GRPC_* workload paths. The authority must match the endpoint
+# certificate SAN selected by that binding.
+grpcurl \
+  -cacert "/secure/operator/<binding-resolved-grpc-ca-bundle>.crt" \
+  -cert "/secure/operator/<binding-resolved-client-cert-chain>.crt" \
+  -key "/secure/operator/<binding-resolved-client-private-key>.key" \
+  -authority "<binding-resolved-grpc-authority>" \
+  "<binding-resolved-grpc-endpoint>" \
+  tcp_proxy.v1.TcpProxyService/Ping
 ```
 
 For dev-only plaintext verification:

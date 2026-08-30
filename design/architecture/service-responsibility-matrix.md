@@ -70,10 +70,11 @@ The matrix below is the target participation and ownership contract. `Authoritat
 | Command queuing and dispatch | | | | ✔ | | | | | | | |
 | Session state storage (volatile, Redis gameplay bindings) | | | | ✔ | | | | | | | |
 | Authoritative owner: Coordination Redis gameplay sessions (`session:game:*`) | | | | ✔ | | | | | | | |
-| Authoritative owner: Coordination Redis gameplay coordination keys (`tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`) | | | | ✔ | | | | | | | |
-| Authoritative owner: Coordination Redis auth sessions (`session:auth:*`) | | | ✔ | | | | | | | | |
-| Authoritative owner: Coordination Redis connect-token replay (`gateway:connect-token:jti:*` and replay-readiness fence) | | | | | | | | | | | ✔ |
-| Authoritative owner: Coordination Redis automation tick keyspace (`automation:tick:*`) | | | | | | | ✔ | | | | |
+| Authoritative owner: Coordination Redis gameplay coordination keys (`tick:*`, generic `timer:*`, `retry:*`, `tick-executor-lease:*`; generic `timer:*` is Game Session-owned and excludes Automation families) | | | | ✔ | | | | | | | |
+| Authoritative owner: Coordination Redis auth sessions — Account owns current legacy `session:auth:account:*` and `session:auth:tenant:*`; target-only `session:auth:token:*` and `session:auth:generation:*` projections remain Account-owned | | | ✔ | | | | | | | | |
+| Authoritative owner: Account connect-token issuance operation and exact-result authority (Account SQL `connect_token_issuance_operation` plus encrypted response envelope; Coordination Redis `session:connect-token:tenant:<tenantId>:account:<accountId>:scope:<scopeHash>:request:<requestHash>` is only the reset-sensitive projection/cache; current map and target durable/fenced recovery remain distinct) | | | ✔ | | | | | | | | |
+| Authoritative owner: Coordination Redis connect-token replay and browser-revocation denial state (`gateway:connect-token:{gateway-connect-token-replay-v1}:jti:<jti>`, `gateway:connect-token:{gateway-connect-token-replay-v1}:deny:jti:<jti>`, and `gateway:connect-token:{gateway-connect-token-replay-v1}:readiness` carrying the shared `replayAdmissionFence`; Gateway owns this narrow readiness/fence and reset boundary, with region/tenant resets preserving it and cluster replay loss/reset requiring quarantine, fence advance, and proven reopen) | | | | | | | | | | | ✔ |
+| Authoritative owner: Coordination Redis automation scheduling/execution state (`automation:timer:*`, `script-scheduler:*`) | | | | | | | ✔ | | | | |
 | Tick-region lease ownership and executor coordination (`<tenantId, gameInstanceId, regionId>`) | | | | ✔ | | | | | | | |
 | Authoritative owner: logical-effect reconciliation and player-outcome derivation | | | | ✔ | | | | | | | |
 | Gameplay WebSocket route definition and routing (`/ws/game/**` canonical route) | | | | | | | | | | | ✔ |
@@ -107,6 +108,7 @@ The matrix below is the target participation and ownership contract. `Authoritat
 | Command parsing and alias resolution | | | | | | ✔ | | | | | |
 | Action execution (movement, attack, etc.) | | | | | | ✔ | | | | | |
 | Progression logic (XP, levels, effects) | | | | | | ✔ | | | | | |
+| Durable player faction reputation/standing (Social-owned under exact `{tenantId, playableStateNamespaceId, characterId, factionId}` identity; Automation and Game Logic are read-only consumers through the owner contract; the live Automation `PATCH /factions/{id}/reputation`/`faction_standing` writer must fail closed or delegate during cutover; migration, consumer cutover, and proof remain incomplete) | | | | | | ✔ | ✔ | ✔ | | | |
 | Weather and ambient state persistence (weather, time-of-day, ambient modifiers) | | ✔ | | | | | | | | | |
 | Environmental effects computation (weather, hazards, modifiers) | | | | | | ✔ | | | | | |
 | Economy logic (trading, shops, pricing) | | | | | | ✔ | | | | | |
@@ -115,7 +117,7 @@ The matrix below is the target participation and ownership contract. `Authoritat
 | Exact script admission/execution fence (Game Session exact pin tuple and append-only rollout history; Automation immutable exact-version compiled graphs and bindings plus tenant-scoped readiness and instance-scoped admission, scheduling, execution/recovery, plugin runtime state, convergence projections, and projection freshness) | | | | ✔ | | | ✔ | | | | |
 | Redis-backed automation queue projection and timer coordination (`automation:queue:*`, `automation:timer:*`, `script-scheduler:*`) | | | | | | | ✔ | | | | |
 | Coordination Redis participation via shared helpers (locks and documented automation/tick prefix rules) | | | | ✔ | ✔ | | ✔ | | | | |
-| Cache/Rate-Limit Redis usage (caches, quotas, rate limiting) | | ✔ | | | ✔ | | ✔ | ✔ | | ✔ | ✔ |
+| Cache/Rate-Limit Redis usage (caches, quotas, rate limiting; World Management, Game Session, Entity Management, Automation & Scripting, Social & Groups, and Spring Cloud Gateway participate; Logging & Admin has no direct Redis runtime/target role and consumes derived health/metrics only; TCP Proxy target/optional and absent-current) | | ✔ | | ✔ | ✔ | | ✔ | | | | ✔ |
 | Social-channel communication, mail envelopes, applicable history, and delivery state (account messaging, ordinary channels, and ordinary account/social mail enter Social directly) | | | | | | | | ✔ | | | |
 | World/gameplay communication semantic resolution (typed classes, topology, candidate audiences, and closed observer views) | | | | | | ✔ | | | | | |
 | Connected gameplay communication transport delivery and final player projection | | | | ✔ | | | | | | | |

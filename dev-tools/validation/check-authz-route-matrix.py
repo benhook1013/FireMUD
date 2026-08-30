@@ -22,14 +22,14 @@ REQUIRED_WS_GAME_CHECKS = {
     "connect_scope_match",
 }
 REQUIRED_ISSUE_CONNECT_TOKEN_CHECKS = {
-    "target_tenant_generation",
+    "tenant_authority_generation",
     "membership_generation",
     "membership_version",
     "replay_protection_available",
     "replay_admission_fence_match",
 }
 REQUIRED_PLAY_GENERATION_CHECKS = {
-    "target_tenant_generation",
+    "tenant_authority_generation",
     "membership_generation",
     "membership_version",
 }
@@ -106,6 +106,24 @@ REQUIRED_MEMBERSHIP_WRITER_CHECKS = {
     "pending_deletion_state",
 }
 GAMEPLAY_CONNECT_ISSUED_TOKEN_STATE = "none_bounded_single_use_replay_exception"
+ISSUED_TOKEN_STATE_VOCABULARY = {
+    "none",
+    GAMEPLAY_CONNECT_ISSUED_TOKEN_STATE,
+    "current_exact_active_registry_record",
+    "current_exact_active_control_ui_registry_record",
+    "current_exact_active_player_bootstrap_registry_record",
+    "current_exact_private_delegation",
+    "current_exact_private_delegation_when_player_scoped",
+}
+PLAYER_BOOTSTRAP_ISSUED_TOKEN_STATE = (
+    "current_exact_active_player_bootstrap_registry_record"
+)
+CONTROL_UI_ISSUED_TOKEN_STATE = "current_exact_active_control_ui_registry_record"
+GENERIC_ACTIVE_REGISTRY_ISSUED_TOKEN_STATE = "current_exact_active_registry_record"
+PRIVATE_DELEGATION_ISSUED_TOKEN_STATES = {
+    "current_exact_private_delegation",
+    "current_exact_private_delegation_when_player_scoped",
+}
 EXPLICIT_NO_JWT_ROUTES = {
     ("game-session-service", "LOGIN"),
     ("game-session-service", "LOGON"),
@@ -349,21 +367,197 @@ PENDING_DELETION_EXPORT_OPERATION_BINDINGS = {
     },
 }
 CAPACITY_ADMISSION_ROUTE = ("account-service", "CommitTenantCapacityAdmission")
+CAPACITY_ADMISSION_REQUIRED_FIELDS = [
+    "tenant_id",
+    "request_id",
+    "admission_id",
+    "admission_attempt_id",
+    "capacity_rearm_fence",
+    "account_evidence_bundle",
+    "outbox_checkpoints",
+    "expected_authority_tuple",
+    "expected_bundle_version",
+    "expected_snapshot_identity",
+    "expected_evaluation_identity",
+    "expected_entitlement_version",
+    "expected_billing_evidence",
+    "capacity_delta",
+    "mutation_digest",
+]
+REQUIRED_CAPACITY_GAME_SESSION_PLAYER_BINDING_CHECKS = {
+    "exact_binding_admission_lease",
+    "binding_fence",
+    "binding_ownership",
+    "playable_state_namespace",
+}
+REQUIRED_CAPACITY_WORLD_MANAGEMENT_CALLER_CHECKS = {
+    "tenant_generation",
+    "runtime_entitlements",
+    "world_instance_lifecycle",
+    "world_instance_lifecycle_epoch",
+    "account_authority_tuple",
+    "account_outbox_checkpoint",
+    "capacity_admission_fence",
+    "idempotency",
+}
 CAPACITY_DELTA_WIRE_CONTRACT = {
     "field": "capacityDelta",
+    "protobuf_field": "capacity_delta",
+    "protobuf_type": "optional_int64",
+    "protobuf_wire_encoding": "varint",
+    "canonical_json_field": "capacityDelta",
+    "canonical_json_encoding": "base10_decimal_string",
     "presence": "explicit",
+    "presence_requirement": "required",
+    "protobuf_absent_encoding": "field_absent",
+    "canonical_json_absent_encoding": "member_omitted",
     "absent_encoding": "omitted",
+    "absent_request": "rejected_before_commit",
+    "null_request": "rejected_before_commit",
     "present_zero_encoding": "explicit_zero",
     "boolean_zero_encoding": "rejected",
+    "accepted_value_range": {
+        "integer_type": "signed_int64",
+        "minimum": 0,
+        "maximum": 9223372036854775807,
+        "positive_required_for": "net_capacity_creation",
+        "zero_allowed_only_for": "non_expanding_recovery",
+        "negative_or_overflow": "rejected_before_commit",
+    },
+    "operation_modes": {
+        "capacity_creation": {
+            "delta": "positive",
+            "usage_effect": "reserve_or_increment_after_account_fence",
+        },
+        "non_expanding_recovery": {
+            "delta": "exactly_zero",
+            "shape_proof": "exact_prior_shape_or_account_validated_non_expanding_shape",
+            "standalone_zero_proof": "forbidden",
+            "account_commitment": "required_after_shape_validation",
+            "attempt_fence": "same_as_capacity_creation",
+            "replay": "same_as_capacity_creation",
+            "reconciliation": "same_as_capacity_creation",
+            "owner_execution": "same_as_capacity_creation",
+            "accepted_outcome_after_account_validation": "accepted_pending_owner_execution",
+            "usage_effect": "no_usage_mutation",
+        },
+        "release": {
+            "operation": "separate_account_owned_reconciliation",
+            "this_route": "not_used",
+        },
+    },
+    "idempotency": {
+        "stable_outer_identity": ["tenant_id", "request_id", "admission_id"],
+        "attempt_identity": "admission_attempt_id",
+        "exact_retry": "replay_stored_result",
+        "changed_payload": "IDEMPOTENCY_CONFLICT",
+    },
     "golden_vectors": {
         "absent": {
             "presence": "absent",
-            "wire_value": "omitted",
+            "protobuf_wire_value": "omitted",
+            "canonical_json_wire_value": "omitted",
+            "expected_outcome": "rejected_before_commit",
         },
         "present_zero": {
             "presence": "present",
-            "wire_value_type": "integer",
-            "wire_value": 0,
+            "protobuf_wire_value_type": "int64_varint",
+            "protobuf_wire_value": 0,
+            "canonical_json_wire_value_type": "decimal_string",
+            "canonical_json_wire_value": "0",
+            "expected_outcome": "accepted_pending_owner_execution",
+        },
+        "positive_representative": {
+            "presence": "present",
+            "protobuf_wire_value_type": "int64_varint",
+            "protobuf_wire_value": 17,
+            "canonical_json_wire_value_type": "decimal_string",
+            "canonical_json_wire_value": "17",
+            "expected_outcome": "accepted_pending_owner_execution",
+        },
+        "positive_int64_max": {
+            "presence": "present",
+            "protobuf_wire_value_type": "int64_varint",
+            "protobuf_wire_value": 9223372036854775807,
+            "canonical_json_wire_value_type": "decimal_string",
+            "canonical_json_wire_value": "9223372036854775807",
+            "expected_outcome": "accepted_pending_owner_execution",
+        },
+    },
+}
+CAPACITY_ATTEMPT_FENCE_CONTRACT = {
+    "capacity_rearm_fence": "caller_supplied_attempt_bound_fence",
+    "capacity_admission_fence": "account_live_check_compared_at_commit",
+    "initial_attempt": "binds_fresh_attempt_id_current_rearm_fence_exact_payload_and_digest",
+    "exact_retry": "replays_stored_result",
+    "changed_attempt": "requires_committed_account_owned_rearm_cas",
+    "rearm_effect": "advances_fence_and_binds_fresh_attempt_id_exact_payload_and_digest",
+    "changed_attempt_without_rearm": "IDEMPOTENCY_CONFLICT",
+    "changed_attempt_without_rearm_ordering": "rejected_before_any_mutation",
+}
+REQUIRED_CAPACITY_ADMISSION_ERRORS = {
+    "CAPACITY_ADMISSION_STALE",
+    "CAPACITY_QUOTA_EXCEEDED",
+    "FENCE_REJECTED",
+    "IDEMPOTENCY_CONFLICT",
+    "AUTH_UNAVAILABLE",
+}
+CAPACITY_CANONICAL_CALLER_POLICIES = {
+    "game-session-service": {
+        "caller": "game-session-service",
+        "auth_path": "exact_mtls_workload_plus_caller_specific_context",
+        "issued_token_state": "none",
+        "accepted_token_profiles": [],
+        "token_type": "none",
+        "token_issuer": "none",
+        "token_audience": "none",
+        "method_policy": "exact_declared_route",
+        "tenant_billing_authority_generation_applies": True,
+        "membership_authority_generation_applies": True,
+        "mtls_identity": "spiffe://firemud/ns/{namespace}/sa/game-session-service",
+        "delegated_subject": "typed_player_execution_context",
+        "required_live_checks": {
+            "tenant_generation",
+            "membership_generation",
+            "membership",
+            "runtime_entitlements",
+            "conditional_realm_access_grant",
+            "grant_version",
+            "playable_state_namespace",
+            "exact_binding_admission_lease",
+            "binding_fence",
+            "binding_ownership",
+            "account_authority_tuple",
+            "account_outbox_checkpoint",
+            "capacity_admission_fence",
+            "idempotency",
+        },
+        "realm_grant_authority": "conditional_account_owned",
+        "realm_grant_version": "required_when_grant_gated",
+    },
+    "world-management-service": {
+        "caller": "world-management-service",
+        "auth_path": "exact_mtls_workload",
+        "issued_token_state": "none",
+        "accepted_token_profiles": [],
+        "token_type": "none",
+        "token_issuer": "none",
+        "token_audience": "none",
+        "method_policy": "exact_declared_route",
+        "tenant_billing_authority_generation_applies": True,
+        "membership_authority_generation_applies": False,
+        "mtls_identity": "spiffe://firemud/ns/{namespace}/sa/world-management-service",
+        "caller_context": "tenant_and_operation_bound_instance_lifecycle_context",
+        "delegated_subject": "instance_lifecycle_context",
+        "required_live_checks": {
+            "tenant_generation",
+            "runtime_entitlements",
+            "world_instance_lifecycle",
+            "world_instance_lifecycle_epoch",
+            "account_authority_tuple",
+            "account_outbox_checkpoint",
+            "capacity_admission_fence",
+            "idempotency",
         },
     },
 }
@@ -542,7 +736,7 @@ PENDING_DELETION_ACTION_FAMILIES = {
     "deletion_cancel",
     "billing_settlement",
 } | PENDING_DELETION_EXPORT_ACTION_FAMILIES
-ROUTES_WITH_EXPLICIT_TARGET_TENANT_AUTHORITY = {
+ROUTES_WITH_EXPLICIT_SELECTED_TENANT_AUTHORITY = {
     ("account-service", "IssueConnectToken"),
 }
 PROFILE_ROUTES = (
@@ -1156,6 +1350,95 @@ def validate_token_profiles(
         if "kind" in raw_profile:
             errors.append(f"{label} must use type instead of legacy kind")
     return profiles
+
+
+def validate_issued_token_state_vocabulary(
+    document: dict[str, Any], errors: list[str]
+) -> None:
+    vocabulary = document.get("issued_token_state_vocabulary")
+    if not isinstance(vocabulary, list) or any(
+        not isinstance(item, str) for item in vocabulary
+    ):
+        errors.append(
+            "issued_token_state_vocabulary must be a list of strings"
+        )
+        return
+    if len(vocabulary) != len(set(vocabulary)):
+        errors.append("issued_token_state_vocabulary must not contain duplicates")
+    if set(vocabulary) != ISSUED_TOKEN_STATE_VOCABULARY:
+        errors.append(
+            "issued_token_state_vocabulary must contain exactly the closed "
+            f"issued-token-state vocabulary: {sorted(ISSUED_TOKEN_STATE_VOCABULARY)}"
+        )
+
+
+def expected_issued_token_states(profiles: list[str]) -> set[str] | None:
+    profile_set = set(profiles)
+    if not profile_set:
+        return set()
+    if profile_set == {"player-bootstrap"}:
+        return {PLAYER_BOOTSTRAP_ISSUED_TOKEN_STATE}
+    if profile_set == {"control-ui"}:
+        return {CONTROL_UI_ISSUED_TOKEN_STATE}
+    if profile_set == {"gameplay-connect"}:
+        return {GAMEPLAY_CONNECT_ISSUED_TOKEN_STATE}
+    if profile_set == {"game-session-account-delegation"}:
+        return PRIVATE_DELEGATION_ISSUED_TOKEN_STATES
+    if profile_set == {"control-ui", "player-bootstrap"}:
+        return {GENERIC_ACTIVE_REGISTRY_ISSUED_TOKEN_STATE}
+    return None
+
+
+def validate_issued_token_state(
+    entry: dict[str, Any],
+    label: str,
+    profiles: list[str],
+    errors: list[str],
+    known_profile_names: set[str] | None = None,
+) -> None:
+    state_declared = "issued_token_state" in entry
+    state = entry.get("issued_token_state")
+    if state is not None and (
+        not isinstance(state, str)
+        or state not in ISSUED_TOKEN_STATE_VOCABULARY
+    ):
+        errors.append(
+            f"{label} issued_token_state must be one of the closed vocabulary: "
+            f"{sorted(ISSUED_TOKEN_STATE_VOCABULARY)}"
+        )
+    expected = expected_issued_token_states(profiles)
+    if (
+        profiles
+        and expected is None
+        and (
+            known_profile_names is None
+            or all(profile in known_profile_names for profile in profiles)
+        )
+    ):
+        errors.append(
+            f"{label} accepted token profiles {profiles!r} have no explicit "
+            "issued_token_state mapping"
+        )
+        return
+    if expected is None:
+        return
+    if expected == set():
+        if not state_declared or state == "none":
+            return
+        errors.append(
+            f"{label} issued_token_state must be omitted or 'none' when "
+            "accepted token profiles are empty"
+        )
+        return
+    if state is None:
+        errors.append(
+            f"{label} must declare issued_token_state for accepted token profiles"
+        )
+    elif not isinstance(state, str) or state not in expected:
+        errors.append(
+            f"{label} issued_token_state must be one of {sorted(expected)} "
+            f"for accepted token profiles {profiles!r}"
+        )
 
 
 def canonicalize_role_assurance_route_identities(
@@ -2297,28 +2580,213 @@ def validate_capacity_admission_wire_contract(
     if route is None:
         return
     label = route_label(route)
+    required_fields = route.get("required_fields")
+    if required_fields != CAPACITY_ADMISSION_REQUIRED_FIELDS:
+        append_unique_error(
+            errors,
+            f"{label} must require capacity_delta with explicit presence and "
+            "exactly the canonical required_fields list",
+        )
     contract = route.get("capacity_delta_wire_contract")
-    present_zero_wire_type = None
-    present_zero_wire_value = None
+    present_zero_protobuf_type = None
+    present_zero_protobuf_value = None
+    present_zero_json_type = None
+    present_zero_json_value = None
     if isinstance(contract, dict):
         golden_vectors = contract.get("golden_vectors")
         if isinstance(golden_vectors, dict):
             present_zero = golden_vectors.get("present_zero")
             if isinstance(present_zero, dict):
-                present_zero_wire_type = present_zero.get("wire_value_type")
-                present_zero_wire_value = present_zero.get("wire_value")
+                present_zero_protobuf_type = present_zero.get("protobuf_wire_value_type")
+                present_zero_protobuf_value = present_zero.get("protobuf_wire_value")
+                present_zero_json_type = present_zero.get("canonical_json_wire_value_type")
+                present_zero_json_value = present_zero.get("canonical_json_wire_value")
     # Check int and bool explicitly because Python treats False as equal to 0.
     if (
         contract != CAPACITY_DELTA_WIRE_CONTRACT
-        or present_zero_wire_type != "integer"
-        or not isinstance(present_zero_wire_value, int)
-        or isinstance(present_zero_wire_value, bool)
-        or present_zero_wire_value != 0
+        or present_zero_protobuf_type != "int64_varint"
+        or not isinstance(present_zero_protobuf_value, int)
+        or isinstance(present_zero_protobuf_value, bool)
+        or present_zero_protobuf_value != 0
+        or present_zero_json_type != "decimal_string"
+        or present_zero_json_value != "0"
     ):
         append_unique_error(
             errors,
             f"{label} must declare explicit capacityDelta wire presence with "
             "distinct absent and present_zero golden vectors",
+        )
+
+
+def validate_capacity_admission_attempt_contract(
+    routes: list[Any],
+    errors: list[str],
+    cardinality_errors: set[str] | None = None,
+) -> None:
+    route = resolve_unique_route(
+        routes,
+        *CAPACITY_ADMISSION_ROUTE,
+        errors,
+        cardinality_errors,
+    )
+    if route is None:
+        return
+    label = route_label(route)
+    if route.get("attempt_fence_contract") != CAPACITY_ATTEMPT_FENCE_CONTRACT:
+        append_unique_error(
+            errors,
+            f"{label} must declare the canonical attempt_fence_contract",
+        )
+
+    canonical_errors = route.get("canonical_errors")
+    outcomes = (
+        canonical_errors.get("any_of")
+        if isinstance(canonical_errors, dict)
+        else None
+    )
+    if not isinstance(outcomes, list) or any(
+        not isinstance(outcome, str) for outcome in outcomes
+    ):
+        outcomes = []
+    for required_error in sorted(REQUIRED_CAPACITY_ADMISSION_ERRORS):
+        if required_error not in outcomes:
+            append_unique_error(
+                errors,
+                f"{label} canonical_errors.any_of must retain {required_error}",
+            )
+    proof_requirement = (
+        canonical_errors.get("fence_rejection_requirements")
+        if isinstance(canonical_errors, dict)
+        else None
+    )
+    if proof_requirement != "no_accept_no_runtime_mutation_proof":
+        append_unique_error(
+            errors,
+            f"{label} canonical_errors must require "
+            "no_accept_no_runtime_mutation_proof for FENCE_REJECTED",
+        )
+
+
+def validate_capacity_admission_caller_policy_shape(
+    route: dict[str, Any], label: str, errors: list[str]
+) -> None:
+    caller_policies = route.get("caller_policies")
+    if not isinstance(caller_policies, list):
+        return
+    expected_callers = set(CAPACITY_CANONICAL_CALLER_POLICIES)
+    actual_callers = {
+        policy.get("caller")
+        for policy in caller_policies
+        if isinstance(policy, dict)
+    }
+    if (
+        len(caller_policies) != len(expected_callers)
+        or actual_callers != expected_callers
+    ):
+        append_unique_error(
+            errors,
+            f"{label} must contain exactly the canonical caller-policy alternatives "
+            f"{sorted(expected_callers)}",
+        )
+        return
+    for caller, expected in CAPACITY_CANONICAL_CALLER_POLICIES.items():
+        policy = next(
+            policy
+            for policy in caller_policies
+            if isinstance(policy, dict) and policy.get("caller") == caller
+        )
+        actual = dict(policy)
+        if isinstance(actual.get("required_live_checks"), list):
+            actual["required_live_checks"] = set(actual["required_live_checks"])
+        if actual != expected:
+            append_unique_error(
+                errors,
+                f"{label} {caller} caller policy must exactly match the canonical "
+                "caller, mTLS identity, auth path, token state, delegation/context, "
+                "generation, grant, and live-check fields",
+            )
+
+
+def validate_capacity_admission_player_binding_contract(
+    routes: list[Any],
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None = None,
+    cardinality_errors: set[str] | None = None,
+) -> None:
+    route = resolve_unique_route(
+        routes,
+        *CAPACITY_ADMISSION_ROUTE,
+        errors,
+        cardinality_errors,
+    )
+    if route is None:
+        return
+    label = route_label(route)
+    validate_capacity_admission_caller_policy_shape(route, label, errors)
+    caller_policies = route.get("caller_policies")
+    game_session_policies = (
+        [
+            policy
+            for policy in caller_policies
+            if isinstance(policy, dict)
+            and policy.get("caller") == "game-session-service"
+        ]
+        if isinstance(caller_policies, list)
+        else []
+    )
+    world_management_policies = (
+        [
+            policy
+            for policy in caller_policies
+            if isinstance(policy, dict)
+            and policy.get("caller") == "world-management-service"
+        ]
+        if isinstance(caller_policies, list)
+        else []
+    )
+    if len(game_session_policies) != 1:
+        append_unique_error(
+            errors,
+            f"{label} must contain exactly one game-session-service caller policy",
+        )
+    else:
+        checks = route_live_checks(
+            game_session_policies[0],
+            f"{label} game-session caller policy",
+            errors,
+            live_checks_cache,
+        )
+        missing_checks = sorted(
+            REQUIRED_CAPACITY_GAME_SESSION_PLAYER_BINDING_CHECKS - checks
+        )
+        if missing_checks:
+            append_unique_error(
+                errors,
+                f"{label} game-session caller policy must require the complete "
+                "player-binding live-check set: "
+                f"missing {missing_checks}",
+            )
+    if len(world_management_policies) != 1:
+        append_unique_error(
+            errors,
+            f"{label} must contain exactly one world-management-service caller policy",
+        )
+        return
+    world_checks = route_live_checks(
+        world_management_policies[0],
+        f"{label} world-management caller policy",
+        errors,
+        live_checks_cache,
+    )
+    missing_world_checks = sorted(
+        REQUIRED_CAPACITY_WORLD_MANAGEMENT_CALLER_CHECKS - world_checks
+    )
+    if missing_world_checks:
+        append_unique_error(
+            errors,
+            f"{label} world-management caller policy must require the complete "
+            "capacity-admission live-check set: "
+            f"missing {missing_world_checks}",
         )
 
 
@@ -2774,6 +3242,13 @@ def validate_caller_policies(
         if isinstance(policy_profiles_value, list) and all(
             isinstance(profile_name, str) for profile_name in policy_profiles_value
         ):
+            validate_issued_token_state(
+                policy,
+                policy_label,
+                policy_profiles,
+                errors,
+                set(token_profiles),
+            )
             validate_token_fields(
                 policy, policy_label, policy_profiles, token_profiles, errors
             )
@@ -2839,6 +3314,25 @@ def validate_receiver_predicates(
         profiles_value, profiles, unknown_profiles = validate_route_profile_declaration(
             route, index, token_profiles, errors
         )
+        validate_issued_token_state(
+            route,
+            f"matrix.routes[{index}]",
+            profiles,
+            errors,
+            set(token_profiles),
+        )
+        conditional_branches = route.get("conditional_branches")
+        if isinstance(conditional_branches, dict):
+            for branch_name, branch in conditional_branches.items():
+                if not isinstance(branch, dict):
+                    continue
+                validate_issued_token_state(
+                    branch,
+                    f"matrix.routes[{index}] conditional_branches[{branch_name!r}]",
+                    profiles,
+                    errors,
+                    set(token_profiles),
+                )
         if route.get("classification") != "internal_workload":
             if profiles_value is None or (
                 isinstance(profiles_value, list)
@@ -3113,7 +3607,7 @@ def validate_no_target_tenant_routes(
     errors: list[str],
     live_checks_cache: LiveChecksCache | None = None,
 ) -> None:
-    matched_explicit_target_routes: set[tuple[str, str]] = set()
+    matched_explicit_selected_tenant_routes: set[tuple[str, str]] = set()
     for route in routes:
         if not isinstance(route, dict):
             continue
@@ -3121,17 +3615,17 @@ def validate_no_target_tenant_routes(
         if not isinstance(classification, str):
             continue
         route_key_value = route_set_key(route)
-        if route_key_value in ROUTES_WITH_EXPLICIT_TARGET_TENANT_AUTHORITY:
-            matched_explicit_target_routes.add(route_key_value)
+        if route_key_value in ROUTES_WITH_EXPLICIT_SELECTED_TENANT_AUTHORITY:
+            matched_explicit_selected_tenant_routes.add(route_key_value)
             label = route_label(route)
             if classification != "player_bootstrap_tenant":
                 errors.append(
-                    f"{label} explicit target-tenant authority must use "
+                    f"{label} explicit selected-tenant authority must use "
                     "classification player_bootstrap_tenant"
                 )
             if route.get("tenant_authority_generation_applies") is not True:
                 errors.append(
-                    f"{label} explicit target-tenant authority must set "
+                    f"{label} explicit selected-tenant authority must set "
                     "tenant_authority_generation_applies=true"
                 )
             continue
@@ -3149,13 +3643,14 @@ def validate_no_target_tenant_routes(
                 f"{label} must not require tenant-generation checks for no-target "
                 f"classification {classification}: {sorted(forbidden_checks)}"
             )
-    missing_explicit_target_routes = sorted(
-        ROUTES_WITH_EXPLICIT_TARGET_TENANT_AUTHORITY - matched_explicit_target_routes
+    missing_explicit_selected_tenant_routes = sorted(
+        ROUTES_WITH_EXPLICIT_SELECTED_TENANT_AUTHORITY
+        - matched_explicit_selected_tenant_routes
     )
-    if missing_explicit_target_routes:
+    if missing_explicit_selected_tenant_routes:
         errors.append(
-            "explicit target-tenant authority routes must be declared exactly once: "
-            f"{missing_explicit_target_routes}"
+            "explicit selected-tenant authority routes must be declared exactly once: "
+            f"{missing_explicit_selected_tenant_routes}"
         )
 
 
@@ -5341,6 +5836,16 @@ def validate_issue_connect_token(
     checks = route_live_checks(
         issue_connect_route, "IssueConnectToken", errors, live_checks_cache
     )
+    if "tenant_generation" in checks:
+        errors.append(
+            "IssueConnectToken must use tenant_authority_generation rather than "
+            "tenant_generation"
+        )
+    if "target_tenant_generation" in checks:
+        errors.append(
+            "IssueConnectToken must use tenant_authority_generation rather than "
+            "target_tenant_generation"
+        )
     for field in (
         "tenant_authority_generation_applies",
         "membership_authority_generation_applies",
@@ -5384,6 +5889,16 @@ def validate_play_generation(
         if route.get(field) is not True:
             errors.append(f"{label} must declare {field}=true")
     checks = route_live_checks(route, label, errors, live_checks_cache)
+    if "tenant_generation" in checks:
+        errors.append(
+            f"{label} must use tenant_authority_generation rather than "
+            "tenant_generation"
+        )
+    if "target_tenant_generation" in checks:
+        errors.append(
+            f"{label} must use tenant_authority_generation rather than "
+            "target_tenant_generation"
+        )
     missing_checks = sorted(REQUIRED_PLAY_GENERATION_CHECKS - checks)
     if missing_checks:
         errors.append(
@@ -5609,6 +6124,7 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
 
     validate_auth_path_vocabulary(document, errors)
     token_profiles = validate_token_profiles(document, errors)
+    validate_issued_token_state_vocabulary(document, errors)
     role_assurance_predicates = validate_role_assurance(document, errors)
     validate_known_drift(document, "matrix", errors)
     # Keep both caches local to this validation call and therefore to this document.
@@ -5639,6 +6155,17 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     validate_capacity_admission_wire_contract(
         routes,
         errors,
+        cardinality_errors,
+    )
+    validate_capacity_admission_attempt_contract(
+        routes,
+        errors,
+        cardinality_errors,
+    )
+    validate_capacity_admission_player_binding_contract(
+        routes,
+        errors,
+        live_checks_cache,
         cardinality_errors,
     )
     validate_authority_unavailable_outcomes(routes, errors, cardinality_errors)

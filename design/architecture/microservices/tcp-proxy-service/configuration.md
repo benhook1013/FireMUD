@@ -93,7 +93,7 @@ When all three routing defaults are configured coherently, TCP Proxy forwards th
 
 ## WebSocket mTLS to Spring Cloud Gateway
 
-The trust and identity requirements are defined by [Security](../../system-architecture-security.md#tls-termination--internal-encryption); the TCP Proxy-local wiring is:
+The trust and identity requirements are defined by [Security](../../system-architecture-security.md#tls-termination--internal-encryption) and the [environment and secrets catalog](../../infrastructure/environment-and-secrets-catalog.md#tls--certificates); the TCP Proxy-local wiring is:
 
 In production, the TCP Proxy Service connects to Spring Cloud Gateway over `wss://` using mutual TLS by dialing a dedicated internal-only Gateway WebSocket mTLS listener.
 

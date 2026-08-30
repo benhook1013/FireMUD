@@ -70,6 +70,7 @@ Coordination Redis (ticks, locks, timers, sessions):
 | `FIREMUD_REDIS_COORD_HOST` | Coordination Redis host |
 | `FIREMUD_REDIS_COORD_PORT` | Coordination Redis port |
 | `FIREMUD_REDIS_COORD_URL` | Coordination Redis URL (for example `redis://redis-coord:6379`) |
+| `FIREMUD_GATEWAY_REPLAY_DOMAIN` | Target non-secret Gateway replay-domain pin; the only accepted value is `gateway-connect-token-replay-v1`, rendered in target keys as the fixed `{gateway-connect-token-replay-v1}` hash tag. |
 
 Cache/Rate‑Limit Redis (gateway rate limiting, caches):
 
@@ -101,9 +102,9 @@ Only an explicitly labelled one-shot test/CI stack may collapse roles into a sin
 
 ## TLS & Certificates
 
-Mutual TLS protects internal service-to-service traffic in shared and player-facing Kubernetes environments. Certificates are normally provisioned by **cert-manager** and mounted from distinct per-workload Kubernetes Secrets so every service has a concrete private identity. Explicit local-development and throwaway-test profiles may use plaintext internal transport, including the documented `ws://` Proxy-to-Gateway bridge, and do not provide player-facing or promotion evidence. These certificates secure:
+Internal service-to-service **gRPC** traffic uses mutual TLS in shared and player-facing Kubernetes environments. Gateway-to-backend HTTP/WebSocket hops remain explicit in-cluster exceptions with their existing Gateway trust, header-canonicalization, and NetworkPolicy controls; see [Security Architecture](../system-architecture-security.md#cross-service-trust). The canonical target provisions certificates through **cert-manager** and mounts distinct per-workload leaf certificate/private-key Secrets so every service has a concrete private identity. Current hosted Helm manifests for `pr-preview` and `dev-demo-cluster` use the shared `firemud-grpc-tls` Secret across gRPC workloads; that is evidence of encrypted mTLS transport only, not distinct workload leaf identity or player-facing equivalence. Explicit local-development and throwaway-test profiles may use plaintext internal transport, including the documented `ws://` Proxy-to-Gateway bridge, and do not provide player-facing or promotion evidence. The bounded Spring gRPC `1.0.x` plaintext `pr-preview` migration exception documented in [gRPC TLS requirements](../system-architecture-grpc.md#tls-requirements) is reserved policy, not the current hosted configuration. Hosted `pr-preview` currently uses the shared-secret mTLS boundary and remains non-player-facing/non-promotion evidence; the canonical non-local target remains distinct per-workload mTLS. These certificates secure:
 
-- All gRPC calls between services
+- All mTLS-protected gRPC calls between services
 - Any internal WebSocket bridges that require mTLS (for example, the TCP Proxy Service connecting to Spring Cloud Gateway over `wss://`)
 
 A sample `Certificate` manifest is provided at `k8s/base/firemud-grpc-certificate.yaml`.
@@ -118,7 +119,7 @@ A sample `Certificate` manifest is provided at `k8s/base/firemud-grpc-certificat
 
 ### Gateway HTTP Management-Plane TLS (Target State)
 
-Gateway-owned HTTP management endpoints use a dedicated operator client identity and listener trust bundle. These paths are separate from the Gateway service's `FIREMUD_GRPC_*` workload identity and are supplied to operator tooling from a dedicated credential Secret:
+Gateway-owned HTTP management endpoints use a dedicated operator client identity and listener trust bundle. These paths are separate from the Gateway service's `FIREMUD_GRPC_*` workload identity and are resolved from the selected `operator-credential-binding/v1` record. For `SECRET_BACKED` and `CERT_MANAGER` bindings, the client certificate/key and trust bundle are file-backed through the variables below; a `WORKLOAD_IDENTITY` binding uses its provider-projected client identity and trust bundle and does not require a substitute Secret or these file paths. The binding record's closed `bindingType` and source-specific resolution, not this catalog or endpoint-local configuration, determine which representation applies:
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
@@ -163,9 +164,15 @@ Target state delivers the public JWKS to Account and every JWT validator through
 | `FIREMUD_AUTH_JWT_SECRET` | Inline JWT signing key material for local/dev and ephemeral stacks only (legacy compatibility mode) | *(none)* |
 | `FIREMUD_AUTH_JWT_SECRET_PATH` | Current legacy shared-HMAC Secret/path mode and interim Account-only mounted asymmetric fallback bundle; private-file validation applies only in the interim mode, and target non-exportable signer mode leaves it unset. Current code still treats this as one HMAC secret. | *(none)* |
 | `FIREMUD_AUTH_JWKS_PATH` | Required filesystem path for Account Service and each JWT validator to consume the published public `jwks.json`; in player-facing environments it must point into that workload's read-only public `jwt-jwks` mount. It is a public-key delivery selector, not a publication or private-signing path. | *(required for Account/validators; explicit local/test classpath fixture only outside player-facing modes)* |
-| `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
+| `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of newly issued `control-ui` and receiver-specific private player-delegation JWTs (target profile scope) | `3600000` |
+| `FIREMUD_ACCOUNT_TOKENS_SESSION_EXPIRATION_MS` | Current legacy Account authentication-session record TTL for `session:auth:account:*` and `session:auth:tenant:*`; it is not target gameplay-continuity retention or issued-token-registry retention. | `3600000` |
+| `FIREMUD_ACCOUNT_TOKENS_PLAYER_BOOTSTRAP_EXPIRATION_MS` | `player-bootstrap` JWT lifetime; target ceiling `300000` ms (five minutes) | `300000` |
+| `FIREMUD_ACCOUNT_TOKENS_CONNECT_SCOPE_EXPIRATION_MS` | Current Account discovery `connectScopeId` selector lifetime, surfaced as `connectScopeExpiresAt`; target scope proof remains short-lived and expiry-bound. | `120000` |
+| `FIREMUD_ACCOUNT_TOKENS_CONNECT_TOKEN_EXPIRATION_MS` | `gameplay-connect` JWT lifetime; target ceiling `30000` ms | `30000` |
 | `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Cleanup margin added to each token's remaining lifetime for issued-token registry retention only | `300000` |
 | `FIREMUD_AUTH_SESSION_EXPIRATION_MS` | Initial gameplay-continuity retention; target range is `1..300000` ms and target default is five minutes | `300000` (target; current Game Session default is `3600000`) |
+
+These current Account-specific overrides are separate from the global JWT lifetime and do not establish target convergence: `FIREMUD_ACCOUNT_TOKENS_SESSION_EXPIRATION_MS` is legacy Account-session retention, while `FIREMUD_ACCOUNT_TOKENS_CONNECT_SCOPE_EXPIRATION_MS` controls the expiry-bound discovery selector. Target startup/preflight validation for the player-bootstrap and connect-token non-positive/ceiling rules remains an active gap in the shared-runtime tracker; no corresponding target-bound proof is claimed here for the current connect-scope or legacy Account-session behavior.
 
 Server-side gameplay sessions use a distinct bounded continuity policy:
 
