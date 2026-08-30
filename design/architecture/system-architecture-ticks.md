@@ -97,8 +97,8 @@ FireMUD uses two explicit tick boundaries for `<tenantId, gameInstanceId, region
 
 - **`durable_committed`** (authoritative commit boundary):
   - The Game Session tick effect ledger has reconciled each effect for that tick under authoritative evidence: `APPLIED` only when proven applied, `ABANDONED` only when proven unapplied, and inconclusive work remains nonterminal/reconciliation-required. There are no remaining `SCHEDULED` ledger rows for that tick.
-  - For a non-empty batch, `tick_batch.status` is `COMMITTED` in this same fenced durable visibility boundary; a `CREATED`, `REDIS_STAGED`, or otherwise non-committed batch cannot advertise committed progress.
-  - Target-state `RegionStatus.lastCommittedTickId` has been advanced to the complete `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)` scope as part of that same durable visibility boundary. In the current-live deployment, the committed tick fields on `RuntimeOwnershipStatus` advance under the same opaque fence; `ObserveRuntimeTickProgress` is the progress feed and does not replace that durable authority.
+  - **Target-state only:** For a non-empty batch, `tick_batch.status` is `COMMITTED` in this same fenced durable visibility boundary; a `CREATED`, `REDIS_STAGED`, or otherwise non-committed batch cannot advertise committed progress. The current-live code retains `APPLIED` as its batch terminal status and uses the committed tick fields on `RuntimeOwnershipStatus` as its commit-authority watermark under the same opaque fence; `ObserveRuntimeTickProgress` is the progress feed and does not replace that durable authority.
+  - Target-state `RegionStatus.lastCommittedTickId` has been advanced to the complete `(tenantId, gameInstanceId, regionId, regionEpoch, tickId)` scope as part of that same durable visibility boundary.
 - **`coordination_cleared`** (in-flight clearance boundary):
   - Redis staging/lock state for that tick is no longer in flight (for example, `tick:{tenantRegionTag}:pending` is cleared/abandoned and lock cleanup has completed).
 
