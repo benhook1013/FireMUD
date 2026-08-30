@@ -63,7 +63,7 @@ The current Automation pin projection and wire contract remain patch-only, so ex
 - **Internal:**
   - Game Session Service sends events that trigger scripts.
   - Game Logic Service supports rule evaluation.
-  - World Management Service receives world-state update commands from scripts (for example door/weather toggles) via tick-driven effects scoped by `RoomInstanceRef` and guarded by `EffectId`.
+  - World Management Service receives world-state update commands from scripts (for example door toggles) via tick-driven effects scoped by `RoomInstanceRef` and guarded by `EffectId`. Weather admission and writes remain deferred and non-mutating pending an accepted World aggregate selector and typed effect contract; scripts must not treat Weather as `RoomInstanceRef`-scoped.
 - **External:**
   - PostgreSQL for script storage and durable automation work items.
   - Redis for automation coordination, queue indexes, and quota counters.
