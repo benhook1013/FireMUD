@@ -6,7 +6,7 @@ Accepted
 
 ## Current inventory clarification
 
-The former `automation:tick:*` staging path is retired and not live. The canonical Redis inventory and responsibility matrix list Automation & Scripting's active coordination families as `automation:timer:*` and `script-scheduler:*`, with `automation:queue:*` and the other automation buffers/counters on Cache/Rate-Limit Redis; Game Session owns the gameplay `tick:*` mutation boundary. This records current implementation/catalogue state and does not introduce a new consequential decision or change this ADR's accepted ownership authority.
+The former `automation:tick:*` staging path is retired and is not a current Redis family. The current Automation implementation persists schedule, timer, and trigger-instance authority in PostgreSQL and implements only the documented queue, quota, budget, and readiness Redis projections; `AutomationRedisKeys` does not define the target scheduler/checkpoint families. The canonical target inventory reserves `automation:timer:*` and `script-scheduler:*` as Automation-owned, reset-tolerant Coordination Redis projections rebuilt from durable state, but those families are not implemented/current runtime guarantees. Game Session owns the gameplay `tick:*` mutation boundary. This records implementation and catalogue status; it preserves this ADR's accepted ownership boundary and does not silently accept a consequential replacement of its former staging-path wording.
 
 ## Context
 
@@ -21,7 +21,7 @@ Coordination Redis ownership is explicit and narrow:
 - Game Session Service owns gameplay coordination keyspace and schema (for example `tick:*`, `timer:*`, `retry:*`, `session:game:*`, and lease-related prefixes).
 - Account Service owns authentication allowlist/session-auth prefixes (`session:auth:*`) and their lifecycle semantics.
 - Automation & Scripting Service owns automation coordination and cache families with an explicit split:
-  - Coordination Redis: Automation & Scripting owns the active `automation:timer:*` and `script-scheduler:*` keyspaces for scheduling/execution. `automation:timer:*` is a reset-tolerant region timer index rebuilt from durable schedules and trigger-instance rows; `script-scheduler:*` is a reset-tolerant heartbeat-discovery checkpoint rebuilt from the next heartbeat. Durable schedules and trigger-instance de-duplication remain PostgreSQL authority. The former `automation:tick:*` staging path is retired, not live, and is not an active owned prefix.
+  - Coordination Redis: Automation & Scripting owns the target scheduler/checkpoint boundary represented by `automation:timer:*` and `script-scheduler:*` once implemented. These are reset-tolerant projections rebuilt from durable schedules, trigger-instance rows, and heartbeat progress; durable schedules and trigger-instance de-duplication remain PostgreSQL authority. They are target-state names, not current runtime guarantees. The former `automation:tick:*` staging path is retired, not live, and is not an active owned prefix.
   - Cache/Rate-Limit Redis: `automation:queue:*`, `automation:quota:*`, `automation:tenant-budget:*`, and `automation:test:capacity:*` best-effort buffers/counters.
 - Non-owner services may participate only through approved shared helpers and documented prefixes/contracts.
 
