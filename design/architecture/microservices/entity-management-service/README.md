@@ -8,6 +8,8 @@ Handles player characters, NPCs, runtime actor identity, items, and all inventor
 
 Persisted rows and realm-aware listing exist, but synthetic-ID paths, fixed RPG columns, published entry-policy/descriptor/template resolution, policy-specific roster handling, namespace-idempotent auto-provision, and fork-local copy proof remain gaps.
 
+World-owned `character_location` and `npc_location` tables, together with their authoritative movement, occupancy, and read paths, are target-only. They are absent from the current schema and runtime; current room topology or session bindings do not establish location authority, and Entity Management must not persist a competing location table, field, or cache authority.
+
 The target-state model is container-first:
 
 - character and NPC inventories are hidden containers owned by that runtime entity;
@@ -30,13 +32,13 @@ Inventory and equipment mutations are also intended to be auditable through a ca
 ### Responsibilities
 
 - Target responsibility: persist characters, NPCs, and items with optimistic locking. The current character update path does not yet provide tenant- and namespace-bound version CAS or stale-write proof; see [Runtime and Data](./runtime-and-data.md#implementation-status).
-- Own the persisted runtime actor core that unifies player and NPC gameplay identity; World Management remains authoritative for location and occupancy
+- Own the persisted runtime actor core that unifies player and NPC gameplay identity; target location and occupancy authority belongs to World Management, but its tables and read/write path are not implemented
 - Provide CRUD and query APIs for other services
 - Own and manage all inventories and item containment; character location and instance metadata live in the World Management Service
 - Own room-attached ground containers, hidden inventory containers, equipment bindings, and the audit trail for item/container movement
 - Coordinate deferred writes through Game Session Service
 
-Target responsibility: World Management is the sole owner of authoritative character and NPC location tables (`character_location`, `npc_location`) for each game instance. Those tables and their write path are currently absent; Entity Management must not persist competing location fields or treat cached location as authoritative. See [World Management Runtime and Data](../world-management-service/runtime-and-data.md#character-location-ownership).
+Target responsibility: World Management is the sole owner of authoritative character and NPC location tables (`character_location`, `npc_location`) for each game instance. Those tables and their authoritative write/read path are currently absent; Entity Management must not persist competing location fields or treat cached location as authoritative. See [World Management Runtime and Data](../world-management-service/runtime-and-data.md#character-location-ownership).
 
 For canonical naming and scoping rules, see [Identifier Glossary](../../system-architecture-identifier-glossary.md).
 
