@@ -1,4 +1,5 @@
 import importlib.util
+import types
 import unittest
 from pathlib import Path
 
@@ -8,7 +9,7 @@ SCRIPT_PATH = (
 )
 
 
-def _load_checker_module() -> object:
+def _load_checker_module() -> types.ModuleType:
     spec = importlib.util.spec_from_file_location(
         "check_metrics_cardinality_test_helper", SCRIPT_PATH
     )

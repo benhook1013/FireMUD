@@ -11,6 +11,7 @@ Implementation status: the canonical mode-aware tick execution/TTL/ratio familie
 - `redis_coordinator_restart_duration_seconds`
 - `redis_coordination_tail_loss_ms{scope}` (current compatibility exposure series; `scope` is a bounded Redis deployment bucket)
 - `redis_unreplicated_write_window_ms{scope}` (target measured exposure, pre-aggregated as the worst eligible candidate within the bounded deployment/environment/ruleset scope)
+- `redis_unreplicated_write_window_slo_ms{scope}` (configured measured-exposure target for the same bounded deployment/environment/ruleset scope; not an individual replica or shard target)
 - `redis_unreplicated_write_window_slo_breached{scope}` (target measured-SLO breach series)
 - `redis_coordination_tail_loss_budget_ms{scope}` (current compatibility recording rule; one bounded scalar per Coordination Redis deployment/environment/ruleset scope equal to the maximum `clamp_min(2 * tick_interval_ms, 2000)` across that scope's `tick_interval_ms{scope,scope_class}` series)
 - `redis_coordination_tail_loss_slo_breached{scope}` (current compatibility recording rule comparing each bounded exposure scope with that scalar budget, not the target measured-SLO breach)

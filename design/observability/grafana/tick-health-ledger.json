@@ -22,7 +22,7 @@
       "title": "Tick Execution Time Ratio (p99 / mode-specific lock TTL)",
       "targets": [
         {
-          "expr": "(tick_execution_time_ms_p99{scope_class=~\".+\",tick_mode=\"normal\"} / on (scope_class) tick_lock_ttl_ms{scope_class=~\".+\"}) or (tick_execution_time_ms_p99{scope_class=~\".+\",tick_mode=\"solo\"} / on (scope_class) solo_lock_ttl_ms{scope_class=~\".+\"})",
+          "expr": "(tick_execution_time_ms_p99{scope_class=~\".+\",tick_mode=\"normal\"} / on (scope_class) group_left() tick_lock_ttl_ms{scope_class=~\".+\"}) or (tick_execution_time_ms_p99{scope_class=~\".+\",tick_mode=\"solo\"} / on (scope_class) group_left() solo_lock_ttl_ms{scope_class=~\".+\"})",
           "legendFormat": "scope bucket {{scope_class}} ({{tick_mode}})",
           "refId": "A"
         }

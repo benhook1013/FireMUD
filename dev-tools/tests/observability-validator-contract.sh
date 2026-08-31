@@ -2552,7 +2552,7 @@ for ratio_path in (
     root / "k8s/monitoring/prometheus-rules-firemud.yaml",
     root / "design/observability/grafana/tick-alerts-snippets.md",
 ):
-    ratio_text = ratio_path.read_text()
+    ratio_text = ratio_path.read_text(encoding="utf-8")
     for denominator in ("tick_lock_ttl_ms", "solo_lock_ttl_ms"):
         expected_join = f"on (scope_class) group_left() {denominator}"
         if ratio_text.count(expected_join) != 1:

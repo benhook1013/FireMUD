@@ -111,7 +111,7 @@ local docs and treat it as part of their migration review process.
 
 Once a service has no active compatibility obligation, it may converge directly only when the objective evidence and atomic-convergence conditions above are recorded; project phase labels do not substitute for that evidence.
 
-Migration changes use the canonical [Validation and Runtime Proof](../developer-workflows/validation-and-runtime-proof.md) workflow to select formatting, checks, and runtime proof, with results recorded in PR/CI evidence or the owning implementation tracker. This document does not duplicate that workflow or act as a validation ledger.
+Migration changes use the canonical [Validation and Runtime Proof](../developer-workflows/validation-and-runtime-proof.md) workflow to select formatting, checks, and runtime proof, with execution results recorded in PR/CI evidence and, when applicable, synchronized into the owning implementation tracker. This document does not duplicate that workflow or act as a validation ledger.
 
 ### Cross-Service Identifier Migration
 
