@@ -2450,6 +2450,10 @@ for scalar_variant in (
 
 if validator._check_ms_thresholds("tick_cleanup_lag_ms > 5") is None:
     raise AssertionError("a low threshold on a metric ending in _ms was silently accepted")
+if validator._check_ms_thresholds("tick_cleanup_lag_ms > 0.75") is None:
+    raise AssertionError(
+        "a fractional threshold on a raw _ms metric was silently accepted"
+    )
 for comparison_operator in ("<", "<=", ">", ">="):
     low_threshold = f"tick_cleanup_lag_ms {comparison_operator} 5"
     if validator._check_ms_thresholds(low_threshold) is None:
@@ -2503,6 +2507,14 @@ for invalid_compound_ms_expr in (
     if validator._check_ms_thresholds(invalid_compound_ms_expr) is None:
         raise AssertionError(
             f"a low threshold on an _ms metric in a compound expression was silently accepted: {invalid_compound_ms_expr!r}"
+        )
+for valid_ms_ratio_expr in (
+    "((tick_execution_time_ms_p99{scope_class=~\".+\",tick_mode=\"normal\"} / on (scope_class) tick_lock_ttl_ms{scope_class=~\".+\"}) or (tick_execution_time_ms_p99{scope_class=~\".+\",tick_mode=\"solo\"} / on (scope_class) solo_lock_ttl_ms{scope_class=~\".+\"})) > 0.75",
+    "first_latency_ms / ignoring(scope_class) group_left(region) second_budget_ms > 0.75",
+):
+    if validator._check_ms_thresholds(valid_ms_ratio_expr):
+        raise AssertionError(
+            f"a dimensionless _ms ratio was treated as a raw millisecond threshold: {valid_ms_ratio_expr!r}"
         )
 for valid_ms_expr in (
     "tick_cleanup_lag_ms > 100 # explanatory threshold > 1",

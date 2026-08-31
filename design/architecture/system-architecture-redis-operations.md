@@ -168,7 +168,7 @@ Goal: provide a simple, explicit runbook for resetting Cache/Rate-Limit Redis wi
 
 Cache/Rate-Limit Redis is fully reset-tolerant for the prefixes listed in [`system-architecture-redis-cache.md`](./system-architecture-redis-cache.md) and the reset policy matrix in [`system-architecture-redis-reset-and-recovery.md`](./system-architecture-redis-reset-and-recovery.md). A reset:
 
-- drops only the documented Cache/Rate-Limit families such as `inventory:*`, `character-cache:*`, `world-dynamic:*`, `room:*`, `view:room-look:*`, `chat:*`, `automation:queue:{tenantInstanceTag}:*`, and `ratelimit:*`; it must not use the broad `automation:*` wildcard
+- drops only the documented Cache/Rate-Limit families such as `inventory:*`, `character-cache:*`, `world-dynamic:*`, `room:*`, `view:room-look:*`, `chat:*`, and `ratelimit:*`; it must not use the broad `automation:*` wildcard
 - does not affect Coordination Redis keys such as `tick:*`, `timer:*`, `retry:*`, `session:*`, `tick-executor-lease:*`, `automation:timer:*`, or `script-scheduler:*`
 - increases load on backing services temporarily but must not lose authoritative game data
 

@@ -345,7 +345,7 @@ This keeps the platform compatible with games that need unusual body plans or at
 
 ### Inventory Queries and Type Filtering
 
-The current minimal `QueryInventory -> item_ids[]` shape is only sufficient for the earliest bootstrap slices. The target-state inventory contract should support richer gameplay and UI queries:
+The current `QueryInventory` response is an unpaged repeated `InventoryItem items[]` projection. The live handler emits item/template identity and display fields (`item_id`, `item_name`, `item_description`, and `quantity`), with `container_instance_id`, `item_instance_id`, and `visible_ref` when present. The older `item_ids[]` description is not the current wire shape. This projection is only sufficient for the earliest bootstrap slices; the target-state inventory contract should support richer gameplay and UI queries:
 
 - Query by containment scope such as inventory container, room-ground container, nested container, bank, vendor stock, or corpse.
 - Query by equipped state and slot binding.

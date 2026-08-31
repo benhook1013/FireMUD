@@ -1538,6 +1538,17 @@ def _check_ms_thresholds(expr: str) -> str | None:
     if not re.search(r"_ms(?:_|\b)", code_expr):
         return None
 
+    # A division of two `_ms` operands produces a dimensionless ratio. PromQL
+    # may place `on`/`ignoring` and `group_left`/`group_right` vector-matching
+    # modifiers between the operands, so do not interpret its scalar
+    # comparison as a raw millisecond threshold.
+    dimensionless_ms_ratio = re.compile(
+        r"_ms(?:_|\b)[^/]*/"
+        r"(?:(?:on|ignoring)\([^()]*\))?"
+        r"(?:(?:group_left|group_right)(?:\([^()]*\))?)?"
+        r"[^/]*_ms(?:_|\b)"
+    )
+
     # A compound PromQL expression can contain unrelated numeric comparisons.
     # Keep each logical clause with the metric it constrains so a later
     # `queue_depth > 0` cannot be mistaken for the threshold of an earlier
@@ -1556,7 +1567,7 @@ def _check_ms_thresholds(expr: str) -> str | None:
         if not re.search(r"_ms(?:_|\b)", clause_code):
             continue
         normalized = re.sub(r"\s+", "", clause_code)
-        if re.search(r"_ms[^)]*/[^)]*_ms", normalized):
+        if dimensionless_ms_ratio.search(normalized):
             continue
         # PromQL supports decimal and exponent-form float literals. Match the
         # complete literal after any scalar comparison so `1e2` is not parsed
