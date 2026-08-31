@@ -1538,15 +1538,18 @@ def _check_ms_thresholds(expr: str) -> str | None:
     if not re.search(r"_ms(?:_|\b)", code_expr):
         return None
 
-    # A division of two `_ms` operands produces a dimensionless ratio. PromQL
-    # may place `on`/`ignoring` and `group_left`/`group_right` vector-matching
-    # modifiers between the operands, so do not interpret its scalar
-    # comparison as a raw millisecond threshold.
+    # A direct division of two `_ms` operands produces a dimensionless ratio.
+    # PromQL may place `on`/`ignoring` and `group_left`/`group_right`
+    # vector-matching modifiers between the operands. Only mask those direct
+    # ratio operands; an unrelated raw `_ms` comparison in the same arithmetic
+    # expression must still be checked.
     dimensionless_ms_ratio = re.compile(
-        r"_ms(?:_|\b)[^/]*/"
+        r"(?<![A-Za-z0-9_:])[A-Za-z_:][A-Za-z0-9_:]*_ms(?:_[A-Za-z0-9_:]+)*"
+        r"(?:\{[^{}]*\})?/"
         r"(?:(?:on|ignoring)\([^()]*\))?"
         r"(?:(?:group_left|group_right)(?:\([^()]*\))?)?"
-        r"[^/]*_ms(?:_|\b)"
+        r"[A-Za-z_:][A-Za-z0-9_:]*_ms(?:_[A-Za-z0-9_:]+)*"
+        r"(?:\{[^{}]*\})?"
     )
 
     # A compound PromQL expression can contain unrelated numeric comparisons.
@@ -1567,7 +1570,13 @@ def _check_ms_thresholds(expr: str) -> str | None:
         if not re.search(r"_ms(?:_|\b)", clause_code):
             continue
         normalized = re.sub(r"\s+", "", clause_code)
-        if dimensionless_ms_ratio.search(normalized):
+        ratio_spans = [
+            match.span() for match in dimensionless_ms_ratio.finditer(normalized)
+        ]
+        residual = normalized
+        for ratio_start, ratio_end in reversed(ratio_spans):
+            residual = residual[:ratio_start] + residual[ratio_end:]
+        if ratio_spans and not re.search(r"_ms(?:_|\b)", residual):
             continue
         # PromQL supports decimal and exponent-form float literals. Match the
         # complete literal after any scalar comparison so `1e2` is not parsed
@@ -1583,6 +1592,28 @@ def _check_ms_thresholds(expr: str) -> str | None:
         if threshold < 10:
             return f"expression compares an `_ms` metric against {threshold}; this looks like seconds, but `_ms` metrics are milliseconds"
     return None
+
+
+def _tick_replay_scope_matching_finding(
+    path: Path, alert_name: str, expr: str
+) -> Finding | None:
+    if alert_name not in {"TickEffectLedgerBacklog", "TickReplayFairnessStarved"}:
+        return None
+    code_expr = _mask_promql_non_code(expr)
+    expected = re.compile(
+        r"tick_effects_pending_total\s*(?:\{[^}]*\})?\s*>\s*0"
+        r"\s+and\s+on\s*\(\s*scope_class\s*\)",
+        re.IGNORECASE,
+    )
+    if expected.search(code_expr):
+        return None
+    return Finding(
+        path=path,
+        message=(
+            f"{alert_name} must match pending work with its companion metric "
+            "explicitly on (scope_class)"
+        ),
+    )
 
 
 def _check_grpc_app_error_scoping(expr: str) -> str | None:
@@ -1870,6 +1901,12 @@ def _validate_alert_snippet(path: Path) -> list[Finding]:
             ms_issue = _check_ms_thresholds(expr)
             if ms_issue:
                 findings.append(Finding(path=path, message=ms_issue))
+
+            tick_scope_issue = _tick_replay_scope_matching_finding(
+                path, entry.name, expr
+            )
+            if tick_scope_issue:
+                findings.append(tick_scope_issue)
 
             grpc_scope_issue = _check_grpc_app_error_scoping(expr)
             if grpc_scope_issue:
@@ -2590,6 +2627,10 @@ def _validate_reference_prometheus_rules(
         ms_issue = _check_ms_thresholds(expr)
         if ms_issue:
             findings.append(Finding(path=path, message=f"{alert_name}: {ms_issue}"))
+
+        tick_scope_issue = _tick_replay_scope_matching_finding(path, alert_name, expr)
+        if tick_scope_issue:
+            findings.append(tick_scope_issue)
 
         grpc_scope_issue = _check_grpc_app_error_scoping(expr)
         if grpc_scope_issue:

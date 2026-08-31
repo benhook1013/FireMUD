@@ -312,6 +312,9 @@ The ledger makes replay visible operationally via metrics such as:
 - `tick_effects_replay_convergence_budget_seconds{scope_class}` – emitted budget for detecting replay pressure in the bounded scope-class rollup; it does not classify an individual region as unhealthy.
 - `tick_effects_replay_slo_breached{scope_class}` – recording rule indicating oldest pending age has exceeded the emitted budget.
 - `tick_effects_replay_starved{scope_class}` – recording rule indicating replay batches are not advancing despite pending work.
+
+For replay-controller budget lookup, the Game Session owner must configure a deterministic, versioned mapping from each complete recovery scope `(tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch)` to exactly one applicable `scope_class` budget. This mapping is selection metadata only: durable replay and fairness retain the complete scope plus `tickId` and work identity, while Prometheus `scope_class` rollups remain non-authoritative and cannot select, authorize, terminalize, or identify replay work. Missing, ambiguous, stale, or mismatched mapping or budget evidence fails closed and remains reconciliation-required.
+
 - `tick_durable_commit_total{scope_class}` – count of ticks that reached the durable commit boundary.
 - `tick_coordination_cleared_total{scope_class}` – count of ticks whose Redis coordination state reached the in-flight clearance boundary.
 - `tick_cleanup_lag_ms{scope_class}` – lag from durable commit to coordination-cleared for each tick.

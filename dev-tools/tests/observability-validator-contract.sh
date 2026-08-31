@@ -2535,10 +2535,45 @@ for invalid_compound_ms_expr in (
     "tick_cleanup_lag_ms > 5 and queue_depth > 0",
     "queue_depth > 0 and tick_cleanup_lag_ms > 5",
     "first_latency_ms > 100 and second_latency_ms > 5",
+    "(tick_cleanup_lag_ms > 0.75) * (first_latency_ms / second_budget_ms)",
 ):
     if validator._check_ms_thresholds(invalid_compound_ms_expr) is None:
         raise AssertionError(
             f"a low threshold on an _ms metric in a compound expression was silently accepted: {invalid_compound_ms_expr!r}"
+        )
+if validator._tick_replay_scope_matching_finding(
+    root / "k8s/monitoring/prometheus-rules-firemud.yaml",
+    "TickEffectLedgerBacklog",
+    "tick_effects_pending_total{scope_class=~\".+\"} > 0 and (time() - tick_effects_pending_oldest_scheduled_timestamp_seconds{scope_class=~\".+\"}) > 300",
+) is None:
+    raise AssertionError(
+        "tick backlog alert without explicit scope_class matching was silently accepted"
+    )
+if validator._tick_replay_scope_matching_finding(
+    root / "k8s/monitoring/prometheus-rules-firemud.yaml",
+    "TickReplayFairnessStarved",
+    "tick_effects_pending_total{scope_class=~\".+\"} > 0 and increase(tick_effects_replay_batches_total{scope_class=~\".+\"}[15m]) == 0",
+) is None:
+    raise AssertionError(
+        "tick replay fairness alert without explicit scope_class matching was silently accepted"
+    )
+for valid_tick_scope_alert, valid_tick_scope_expr in (
+    (
+        "TickEffectLedgerBacklog",
+        "tick_effects_pending_total{scope_class=~\".+\"} > 0 and on (scope_class) (time() - tick_effects_pending_oldest_scheduled_timestamp_seconds{scope_class=~\".+\"}) > 300",
+    ),
+    (
+        "TickReplayFairnessStarved",
+        "tick_effects_pending_total{scope_class=~\".+\"} > 0 and on (scope_class) increase(tick_effects_replay_batches_total{scope_class=~\".+\"}[15m]) == 0",
+    ),
+):
+    if validator._tick_replay_scope_matching_finding(
+        root / "k8s/monitoring/prometheus-rules-firemud.yaml",
+        valid_tick_scope_alert,
+        valid_tick_scope_expr,
+    ):
+        raise AssertionError(
+            f"explicit scope_class matching was rejected: {valid_tick_scope_expr!r}"
         )
 for valid_ms_ratio_expr in (
     "((tick_execution_time_ms_p99{scope_class=~\".+\",tick_mode=\"normal\"} / on (scope_class) group_left() tick_lock_ttl_ms{scope_class=~\".+\"}) or (tick_execution_time_ms_p99{scope_class=~\".+\",tick_mode=\"solo\"} / on (scope_class) group_left() solo_lock_ttl_ms{scope_class=~\".+\"})) > 0.75",

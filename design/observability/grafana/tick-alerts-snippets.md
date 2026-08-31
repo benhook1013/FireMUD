@@ -38,7 +38,7 @@ Example alert for stuck `SCHEDULED` rows in the tick effect ledger:
 
 ```yaml
 - alert: TickEffectLedgerBacklog
-  expr: tick_effects_pending_total{scope_class=~".+"} > 0 and (time() - tick_effects_pending_oldest_scheduled_timestamp_seconds{scope_class=~".+"}) > 300
+  expr: tick_effects_pending_total{scope_class=~".+"} > 0 and on (scope_class) (time() - tick_effects_pending_oldest_scheduled_timestamp_seconds{scope_class=~".+"}) > 300
   for: 10m
   labels:
     service: game-session-service
@@ -62,7 +62,7 @@ Example alert for stuck `SCHEDULED` rows in the tick effect ledger:
     description: Cleanup lag from durable commit to coordination-cleared is elevated for one or more bounded scope-class rollups; investigate replay pressure and coordination cleanup behavior.
 
 - alert: TickReplayFairnessStarved
-  expr: tick_effects_pending_total{scope_class=~".+"} > 0 and increase(tick_effects_replay_batches_total{scope_class=~".+"}[15m]) == 0
+  expr: tick_effects_pending_total{scope_class=~".+"} > 0 and on (scope_class) increase(tick_effects_replay_batches_total{scope_class=~".+"}[15m]) == 0
   for: 15m
   labels:
     service: game-session-service
