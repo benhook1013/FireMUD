@@ -44,7 +44,7 @@ FireMUD adopts a **session front-end + lease-owner execution** model inside the 
 
 Any session front-end to lease-owner forwarding path must implement one canonical contract:
 
-- Every forwarded request carries `tenantId`, `gameInstanceId`, `playableStateScope`, `sessionId`, `characterId`, target `regionId`, command or action identifier, and a monotonic per-session sequencing token so the lease owner can preserve session-local ordering.
+- Every forwarded request carries `tenantId`, `gameInstanceId`, `playableStateNamespaceId`, `playableStateScope`, `sessionId`, `characterId`, target `regionId`, command or action identifier, and a monotonic per-session sequencing token so the lease owner can preserve session-local ordering.
 - Every forwarded request carries the lease/epoch fence for the target region. A lease owner must reject requests with a stale or missing fence using an application-level stale-lease error.
 - The session front-end may retry only idempotent forwarded operations and must not create duplicate tick-owned mutations when a response is ambiguous.
 - If lease ownership changes before execution starts, the front-end must refresh ownership and retry against the new lease owner. If ownership changes after execution has begun, the in-flight attempt is owned by the executor that accepted the fenced request and later attempts must use the new fence.
