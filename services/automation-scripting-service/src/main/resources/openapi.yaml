@@ -1,11 +1,14 @@
 openapi: 3.0.3
 info:
   title: Automation Scripting Service API
-  description: API for NPC automation and script management
+  description: >-
+    API for NPC automation and script management. Current REST routes are
+    unauthenticated and trust caller-supplied tenant/subject selectors; this
+    is an implementation security gap, not tenant-isolation proof.
   version: 1.0.0
   license:
-    name: MIT
-    url: https://opensource.org/licenses/MIT
+    name: PolyForm Noncommercial License 1.0.0
+    url: https://polyformproject.org/licenses/noncommercial/1.0.0
 servers:
   - url: https://api.firemud.com
 security: []

@@ -124,13 +124,14 @@ The registry and focused proof must reject scripts declaring or receiving more t
 
 ## Timers and Time Scaling (Conceptual)
 
-Tick timers (cooldowns, regeneration, delayed effects) are:
+Timer sources (including cooldowns, regeneration, and delayed effects) carry exactly one explicit due-domain tag and one corresponding due value:
 
-- Stored in per-region sorted sets such as `timer:{tenantRegionTag}`, where the score is an absolute millisecond timestamp and each member encodes the target entity/effect.
-- Evaluated using a single, consistent application time source (NTP-synchronized wall clock); Redis server time is not used for timer comparisons.
-- Treated as absolute wall-clock due times: changing `tick_interval_ms` does not rescale existing timer scores, and any time-scaling logic must be applied when scheduling (producing a new `due_ms`), not by rewriting past timers.
+- Tick/game timers use committed tick identifiers (`dueTickId`, or `due_tick_id` in storage fields) for eligibility and cadence. Wall-clock timers use one immutable absolute `dueAt` in epoch milliseconds; changing `tick_interval_ms` does not rescale it.
+- When a wall-clock timer is admitted to a gameplay tick, the scheduler assigns a separate `due_tick_id` admission-order coordinate. That coordinate does not replace, mutate, or become an alias for the timer's `dueAt` due domain.
+- Per-region projections such as `timer:{tenantRegionTag}` must preserve the tag and value for each member; a sorted-set score or other index representation must not imply a shared numeric domain. Tick IDs and epoch-millisecond values are never compared or aliased.
+- Wall-clock eligibility uses one consistent application time source (NTP-synchronized wall clock); tick eligibility uses the committed region heartbeat/timeline. Redis server time is not used for either comparison.
 - Drained with bounded work per tick (for example, up to `game.tick-max-timers` timers per region per tick) so delayed or bursty timers do not turn a single tick into unbounded work.
-- Implemented using deterministic, idempotent Lua scripts that accept `now_ms` as a caller-supplied `ARGV` value; scripts must not call Redis `TIME`, and AOF replay reuses the same `ARGV` values.
+- Implemented using deterministic, idempotent Lua scripts that accept explicit caller-supplied `currentTickId` and, when evaluating a wall-clock source, `now_ms` values as `ARGV`; scripts must not call Redis `TIME`, and AOF replay reuses the same arguments.
 
 All writes to timer keys (`timer:{tenantRegionTag}`) are performed under the same region lease and Lua scripts as tick processing; domain services must not modify timer keys via ad-hoc Redis commands. This keeps timers and command queues in the same concurrency domain.
 
@@ -171,14 +172,14 @@ These mode-aware metric families and formulas are target-only and currently unav
 Changing tick cadence is also constrained by replay determinism:
 
 - `tick_interval_ms` is fixed within a live `region_epoch`.
-- Any cadence change that would alter timer ordering or due normalization requires an explicit `regionEpoch` bump and timer re-derivation/reconciliation for the affected region.
+- Any cadence change that would alter tick-domain timer ordering or due normalization requires an explicit `regionEpoch` bump and timer re-derivation/reconciliation for the affected region; it does not rewrite an existing wall-clock `dueAt`.
 
 Worked cadence-change example:
 
 1. Region `R7` is running at `tick_interval_ms = 100` in `regionEpoch = 13`.
 2. Operators decide to move `R7` to `tick_interval_ms = 200`.
 3. Game Session pauses the region and bumps `regionEpoch` to `14` rather than changing cadence in place.
-4. Timer ordering state is re-derived for the new epoch, including canonical `due_tick_id` values for any timers that must survive the change.
+4. Tick-domain timer ordering state is re-derived for the new epoch, including canonical `due_tick_id` values for tick timers that must survive the change. A wall-clock timer retains its immutable `dueAt` and receives a separate admission `due_tick_id` only when it is admitted to a tick.
 5. The new epoch resumes at `lastCommittedTickId = -1`, so the first committable tick under the new cadence is `tickId = 0`.
 
 At runtime, once the target-only mode-aware metric capability is advertised and proven with fresh required series, observed tick durations are compared against lock TTLs using Prometheus-facing series such as `tick_execution_time_ms_p95{scope_class,tick_mode}` and `tick_execution_time_ms_p99{scope_class,tick_mode}` (derived from `tick_execution_time_ms_bucket{scope_class,tick_mode,le}` recording rules). Normal ticks use `tick_execution_time_ms_p99{scope_class,tick_mode="normal"} / on (scope_class) tick_lock_ttl_ms{scope_class}` for detection and escalation; an admitted solo-budget tick uses `tick_execution_time_ms_p99{scope_class,tick_mode="solo"} / on (scope_class) solo_lock_ttl_ms{scope_class}` instead. If the capability or any required series is absent or stale, these metrics and ratios are unknown/unavailable and cannot drive a decision. The `scope_class` value is the controlled aggregation class (`region`, `game_instance`, `tenant`, or `cluster`), never an individual region or other raw runtime identity; `tick_mode` is exactly `normal` or `solo`; the exact `<tenantId, gameInstanceId, regionId>` tuple and its health remain authoritative control-plane/runtime-health evidence. A class-level rollup cannot identify or set the health of any individual region.

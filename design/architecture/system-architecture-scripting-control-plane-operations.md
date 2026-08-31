@@ -250,7 +250,7 @@ Semantics:
 
 - `reason` is required and must be non-blank; Game Session validates it before reading the owned instance or purging queue or durable command state.
 - Idempotent.
-- Under the shared queue mutation/tick lease, terminal-marks matching durable Game Session command rows before post-commit Redis queue/pending cleanup. Pre-batch commands use `executionOutcome = LOST_BEFORE_STAGING`; an explicitly retryable command with a durable prior tick-effect binding uses `executionOutcome = ABANDONED`. Both use `gameplayResult = NOT_APPLIED`, `failureCode = ROLLBACK_PURGED`, and the validated nonblank ingress `reason` as `failureMessage`.
+- Under the shared queue mutation/tick lease, terminal-marks matching durable Game Session command rows before post-commit Redis queue/pending cleanup. `executionOutcome = LOST_BEFORE_STAGING` applies only to commands acknowledged `ACCEPTED_VOLATILE` whose ingress status is still `RECEIVED` or `ENQUEUED` and that have no surviving batch; `ACCEPTED_DURABLE` pre-batch work cannot use this outcome and remains under its durable retry/recovery contract. An explicitly retryable command with a durable prior tick-effect binding uses `executionOutcome = ABANDONED`. Both use `gameplayResult = NOT_APPLIED`, `failureCode = ROLLBACK_PURGED`, and the validated nonblank ingress `reason` as `failureMessage`.
 - Batch-bound work that is not in the explicit retry queue is not purged through this hook; it requires effect-ledger remediation or rollback recovery because it has crossed the tick-batch boundary.
 - Emits an operator-visible metric for purge activity and for version-fence drops; exact metric names, labels, and increment units follow [Table 4](./system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix), while audit and handoff diagnostics follow the observability contract.
 
@@ -275,7 +275,7 @@ Inputs:
 
 `reason` is required and must be non-blank; Game Session validates it before reading the owned instance or purging queue/durable command state.
 
-Semantics and outputs: same as `PurgeQueuedTickCommandsForScriptPatch`, including the pre-batch `LOST_BEFORE_STAGING` versus durably batch-bound retry `ABANDONED` outcome split, `gameplayResult = NOT_APPLIED`, `failureCode = ROLLBACK_PURGED`, and the validated nonblank ingress `reason` as `failureMessage`, scoped to plugin-produced commands by the `pluginId` and `pluginVersionId` provenance carried from Automation into Game Session during handoff.
+Semantics and outputs: same as `PurgeQueuedTickCommandsForScriptPatch`, including `LOST_BEFORE_STAGING` only for commands acknowledged `ACCEPTED_VOLATILE` that remain `RECEIVED` or `ENQUEUED` with no surviving batch, while `ACCEPTED_DURABLE` pre-batch work remains under its durable retry/recovery contract; durably batch-bound retry uses `ABANDONED`. Both outcomes use `gameplayResult = NOT_APPLIED`, `failureCode = ROLLBACK_PURGED`, and the validated nonblank ingress `reason` as `failureMessage`, scoped to plugin-produced commands by the `pluginId` and `pluginVersionId` provenance carried from Automation into Game Session during handoff.
 
 ### Automation & Scripting: Drain/Purge Hooks (Rollback Support)
 
