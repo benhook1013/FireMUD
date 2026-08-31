@@ -188,6 +188,7 @@ paths:
           description: Invalid template data
     get:
       summary: List game templates
+      description: Results are returned in fixed ascending template-ID order.
       operationId: listTemplates
       parameters:
         - in: query
@@ -196,6 +197,24 @@ paths:
           schema:
             type: string
             pattern: '^[1-9][0-9]*$'
+        - in: query
+          name: page
+          required: false
+          description: Zero-based page index. Defaults to 0.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+            default: 0
+        - in: query
+          name: size
+          required: false
+          description: Page size. Defaults to 20.
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            default: 20
       responses:
         '200':
           description: Template list

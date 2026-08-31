@@ -2557,6 +2557,18 @@ if validator._tick_replay_scope_matching_finding(
     raise AssertionError(
         "tick replay fairness alert without explicit scope_class matching was silently accepted"
     )
+for invalid_tick_scope_expr in (
+    "tick_effects_pending_total{scope_class=~\".+\"} > 0 and on (scope_class) (time() - tick_effects_pending_oldest_scheduled_timestamp_seconds) > 300",
+    "tick_effects_pending_total{scope_class=~\".+\"} > 0 and on (scope_class) increase(tick_effects_replay_batches_total[15m]) == 0",
+):
+    if validator._tick_replay_scope_matching_finding(
+        root / "k8s/monitoring/prometheus-rules-firemud.yaml",
+        "TickEffectLedgerBacklog",
+        invalid_tick_scope_expr,
+    ) is None:
+        raise AssertionError(
+            "tick replay alert whose RHS drops scope_class was silently accepted"
+        )
 for valid_tick_scope_alert, valid_tick_scope_expr in (
     (
         "TickEffectLedgerBacklog",

@@ -31,7 +31,7 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
   `LoggingInterceptor`, `SagaRunner`, and Temporal workflow/activity hosts attach
   correlation-friendly context using MDC so logs from different services can be
   correlated.
-- **Security Utilities** – Target-state shared JWT support, including the planned JWKS verifier, verifies Account-published JWKS tokens; Account issues tokens by delegating private-key signing to approved non-exportable signer custody, so no application workload receives private signing material. The checked-in `JwtUtil` currently constructs and verifies HMAC tokens in application code; that is implementation drift, not evidence that the target JWKS verifier or asymmetric `kid` validation is live. Phased overlap remains implementation debt. `AuthTokenInterceptor`, `SessionContext`, `ReloadableJwtUtil`, and `RequireAdminRole` remain shared helpers for centrally enforcing JWT-based roles and supporting rotation. See the [Authentication Design](./system-architecture-authentication.md).
+- **Security Utilities** – The checked-in shared `JwtUtil` is the current HMAC issuer/verifier: it accepts a configured secret, signs with an HMAC key, and parses with that same key. It is not a JWKS verifier. Target shared JWT middleware will verify Account-published asymmetric JWKS, while Account remains authoritative for JWT issuance, JWKS publication, signing generations, and custody; target non-exportable signer custody keeps private signing material out of application workloads and shared utilities. Asymmetric `kid` validation, JWKS convergence, and the custody-backed issuer remain unimplemented; `AuthTokenInterceptor`, `SessionContext`, `ReloadableJwtUtil`, and `RequireAdminRole` are current shared helpers around the legacy path. See the [Authentication Design](./system-architecture-authentication.md).
 - **Database Connectors** – `DatabaseAutoConfiguration` with `PostgresProperties` and `RedisProperties` reduces boilerplate setup. Defaults suit Docker Compose but any field can be overridden with `FIREMUD_POSTGRES_*` or the Redis role‑specific environment variables. Redis‑backed services choose the appropriate prefix:
   - Coordination clients (ticks, locks, timers, sessions) bind `RedisProperties` to `FIREMUD_REDIS_COORD_HOST` / `FIREMUD_REDIS_COORD_PORT`.
   - Cache/rate‑limit clients (for example Spring Cloud Gateway) bind to `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`.
@@ -103,7 +103,7 @@ Structured logging is available via `LoggingUtil`:
 private static final Logger logger = LoggingUtil.getLogger(MyClass.class);
 ```
 
-`JwtUtil` is a target-state shared verification helper for Account-published JWKS. The checked-in `JwtUtil` currently constructs and verifies HMAC tokens; that implementation is current drift and must not be described as live JWKS verification. Target Account issuance delegates private-key operations to approved non-exportable signer custody rather than exporting signing material or making shared utilities token issuers.
+The checked-in `JwtUtil` is a current HMAC signing/verifying helper and must not be described as live JWKS verification. Target shared verification consumes Account-published JWKS, while Account owns issuance and delegates private-key operations to approved non-exportable signer custody rather than exporting signing material or making shared utilities token issuers.
 
 ## Short Synchronous Saga Orchestration
 

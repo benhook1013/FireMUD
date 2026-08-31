@@ -20,6 +20,7 @@ creators can quickly spin up new projects without starting from scratch.
 - The target tenant-scoped `GetTemplateReferencePhase` cutover read is not implemented in the current proto or service. Current launch resolution checks only the per-template `templateReferencePhase` field (`ENFORCED`/`LEGACY`); it does not expose or consume the target durable tenant phase (`BACKFILLING`/`VALIDATED`/`ENFORCED`) required by launch and retirement tooling.
 - Normalized `game_template_*_ref` storage and its lifecycle/query authority are target-only. The current implementation persists `game_templates` and revision rows, but has no normalized reference tables, create/update derivation and atomic synchronization, one-time backfill/validation marker, or retirement/reference-query tooling; current lifecycle checks cannot rely on those rows and remain unimplemented or unproven.
 - The current REST `POST /templates` path is named and documented as create-only, but a caller-supplied `id` is accepted by the DTO and makes the repository update the row by global `id` while also writing the supplied `tenantId`; the subsequent tenant-filtered readback can then hide the changed row. This is a current cross-tenant reassignment/overwrite gap, not tenant-scoped update safety. The target contract must reject `id` on create and make any future update and readback exact-tenant-qualified while keeping the stored tenant binding immutable; focused cross-tenant denial proof is absent.
+- Current template-remap-set APIs persist tenant-scoped `DRAFT`/`APPROVED` sets and entries. When `ResolveLaunchDescriptor` receives a `sourceVersionId` that differs from the resolved target, it selects exactly one `APPROVED` set for the source/target pair and persists and returns that set's `remapSetId`; it does not collect or verify owning-domain attestations. The target attestation predicate remains below.
 
 ## Starter Experience Profiles
 
@@ -128,7 +129,7 @@ Normalized reference storage is only safe if it is operationally enforced:
   - Fail fast if `GetTemplateReferencePhase` is not `ENFORCED` for the target scope.
   - Defer release-attestation semantics to [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md#launch-descriptor-version-resolution-rules); locally, Game Design must reject a template launch when the resolved version has no supported attestation identity or the descriptor cannot bind to that version.
   - If the launch path depends on cross-version durable-state remaps, fail fast unless an approved `remapSetId` exists for the source/target version pair and all required owning domains attest it as usable.
-  - The target Game Design implementation persists this control-plane state explicitly and returns the frozen `remapSetId` on the resolved launch descriptor rather than requiring downstream services to infer or rediscover remap identity.
+  - The target Game Design contract persists this control-plane state explicitly and returns the frozen `remapSetId` on the resolved launch descriptor rather than requiring downstream services to infer or rediscover remap identity.
 
 > **Note**
 

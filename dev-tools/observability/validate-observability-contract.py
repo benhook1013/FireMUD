@@ -1602,10 +1602,24 @@ def _tick_replay_scope_matching_finding(
     code_expr = _mask_promql_non_code(expr)
     expected = re.compile(
         r"tick_effects_pending_total\s*(?:\{[^}]*\})?\s*>\s*0"
-        r"\s+and\s+on\s*\(\s*scope_class\s*\)",
+        r"\s+and\s+on\s*\(\s*scope_class\s*\)"
+        r"(?P<rhs>[\s\S]*)$",
         re.IGNORECASE,
     )
-    if expected.search(code_expr):
+    match = expected.search(code_expr)
+    rhs = match.group("rhs") if match else ""
+    if match and (
+        re.search(
+            r"\{[^{}]*\bscope_class\s*(?:=|=~|!=|!~)",
+            rhs,
+            re.IGNORECASE,
+        )
+        or re.search(
+            r"\bby\s*\([^)]*\bscope_class\b[^)]*\)",
+            rhs,
+            re.IGNORECASE,
+        )
+    ):
         return None
     return Finding(
         path=path,
