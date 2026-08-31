@@ -182,8 +182,6 @@ Cache/Rate-Limit Redis is fully reset-tolerant for the prefixes listed in [`syst
 
 The current `automation:queue:{tenantInstanceTag}:*` family is a non-authoritative Cache/Rate-Limit projection. The target rebuild permits `PENDING_EVALUATION` and only an owner-reconciled/reclaimed safe non-stale `EVALUATING` row; stale or unresolved rows remain excluded. Current `rebuildPendingWorkItemIndex` unconditionally selects both statuses and has no stale, owner, or compare-and-set gate, so queue-prefix reset/rebuild and resume are unavailable and must fail closed; a non-atomic status preflight cannot authorize a safe PENDING-only path. Redis queue payloads are never recovery authority. The reserved `automation:timer:{tenantRegionTag}` and `script-scheduler:{tenantRegionTag}:lastTickId` timer/checkpoint projections remain target-only and unavailable.
 
-
-
 ### Runbook: Environment-Scoped Cache Reset
 
 1. Obtain trusted deployment/endpoint/role/ACL attestation and a bounded prefix inventory/readback proving that the selected deployment is Cache-only and distinct from Coordination Redis. If any coordination prefix, generic legacy writer, unknown prefix, or ambiguous role evidence is present, abort/escalate without deleting.
