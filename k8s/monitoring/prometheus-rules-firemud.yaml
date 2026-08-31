@@ -27,12 +27,12 @@ spec:
           expr: |
             (
               tick_execution_time_ms_p99{tick_mode="normal"}
-                / on (scope_class) tick_lock_ttl_ms
+                / on (scope_class) group_left() tick_lock_ttl_ms
             )
             or
             (
               tick_execution_time_ms_p99{tick_mode="solo"}
-                / on (scope_class) solo_lock_ttl_ms
+                / on (scope_class) group_left() solo_lock_ttl_ms
             )
         - record: command_latency_stage_ms_p99_5m
           expr: |

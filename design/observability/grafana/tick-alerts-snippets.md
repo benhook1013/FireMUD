@@ -8,7 +8,7 @@ Example alert for tick execution time approaching unsafe ratios relative to lock
 
 ```yaml
 - alert: TickExecutionUnsafeRatio
-  expr: ((tick_execution_time_ms_p99{scope_class=~".+",tick_mode="normal"} / on (scope_class) tick_lock_ttl_ms{scope_class=~".+"}) or (tick_execution_time_ms_p99{scope_class=~".+",tick_mode="solo"} / on (scope_class) solo_lock_ttl_ms{scope_class=~".+"})) > 0.75
+  expr: ((tick_execution_time_ms_p99{scope_class=~".+",tick_mode="normal"} / on (scope_class) group_left() tick_lock_ttl_ms{scope_class=~".+"}) or (tick_execution_time_ms_p99{scope_class=~".+",tick_mode="solo"} / on (scope_class) group_left() solo_lock_ttl_ms{scope_class=~".+"})) > 0.75
   for: 10m
   labels:
     service: game-session-service

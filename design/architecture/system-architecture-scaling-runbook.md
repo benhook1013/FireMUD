@@ -167,7 +167,7 @@ This formula is a conservative first-pass input, not a complete capacity predict
   - target-state conditional effect-reconciliation backlog retry QPS, once a separate effect-reconciliation backlog surface is implemented
   - command-ingress and command-status update QPS
   - p95/p99 write latency for the primary tick-path tables
-  - retention horizon, partitioning scheme, and vacuum/GC cadence for high-churn tables
+  - **Target-state conditional:** retention horizon, partitioning scheme, and vacuum/GC cadence for high-churn tables, once the shared retention contract and its cross-service compatibility inputs are implemented; current deployments must not treat these as established shared-retention evidence
 
 Scaling decisions must not rely only on Redis unreplicated-write exposure and pod density signals. For implemented durable paths, rising ledger age or follow-up claim latency should be treated as a PostgreSQL bottleneck and should prompt scaling or redesign there before increasing tick concurrency. Rising replay scan lag is a comparable signal only when the replay controller is implemented and the corresponding metric is emitted. Effect-reconciliation-backlog bloat is a conditional target-state signal only after a separate backlog table/API is implemented; its absence in the current deployment is not a zero-valued measurement or evidence that the backlog is healthy.
 

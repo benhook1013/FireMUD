@@ -2541,13 +2541,25 @@ for invalid_compound_ms_expr in (
             f"a low threshold on an _ms metric in a compound expression was silently accepted: {invalid_compound_ms_expr!r}"
         )
 for valid_ms_ratio_expr in (
-    "((tick_execution_time_ms_p99{scope_class=~\".+\",tick_mode=\"normal\"} / on (scope_class) tick_lock_ttl_ms{scope_class=~\".+\"}) or (tick_execution_time_ms_p99{scope_class=~\".+\",tick_mode=\"solo\"} / on (scope_class) solo_lock_ttl_ms{scope_class=~\".+\"})) > 0.75",
+    "((tick_execution_time_ms_p99{scope_class=~\".+\",tick_mode=\"normal\"} / on (scope_class) group_left() tick_lock_ttl_ms{scope_class=~\".+\"}) or (tick_execution_time_ms_p99{scope_class=~\".+\",tick_mode=\"solo\"} / on (scope_class) group_left() solo_lock_ttl_ms{scope_class=~\".+\"})) > 0.75",
     "first_latency_ms / ignoring(scope_class) group_left(region) second_budget_ms > 0.75",
 ):
     if validator._check_ms_thresholds(valid_ms_ratio_expr):
         raise AssertionError(
             f"a dimensionless _ms ratio was treated as a raw millisecond threshold: {valid_ms_ratio_expr!r}"
         )
+for ratio_path in (
+    root / "k8s/monitoring/prometheus-rules-firemud.yaml",
+    root / "design/observability/grafana/tick-alerts-snippets.md",
+):
+    ratio_text = ratio_path.read_text()
+    for denominator in ("tick_lock_ttl_ms", "solo_lock_ttl_ms"):
+        expected_join = f"on (scope_class) group_left() {denominator}"
+        if ratio_text.count(expected_join) != 1:
+            raise AssertionError(
+                f"{ratio_path.relative_to(root)} must use exactly one explicit many-to-one "
+                f"scope_class join for {denominator}"
+            )
 for valid_ms_expr in (
     "tick_cleanup_lag_ms > 100 # explanatory threshold > 1",
     'tick_cleanup_lag_ms > 100 + label_replace(foo, "note", "_ms > 1", "a", "b")',
