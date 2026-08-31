@@ -9,20 +9,31 @@ spec:
   groups:
     - name: firemud.recording.tick
       rules:
+        # Target-only until Game Session emits and proves the bounded scope_class/tick_mode
+        # execution, TTL, and derived-ratio metric families consumed below.
         - record: tick_execution_time_ms_p95
           expr: |
             histogram_quantile(
               0.95,
-              sum by (scope_class, le) (rate(tick_execution_time_ms_bucket[5m]))
+              sum by (scope_class, tick_mode, le) (rate(tick_execution_time_ms_bucket[5m]))
             )
         - record: tick_execution_time_ms_p99
           expr: |
             histogram_quantile(
               0.99,
-              sum by (scope_class, le) (rate(tick_execution_time_ms_bucket[5m]))
+              sum by (scope_class, tick_mode, le) (rate(tick_execution_time_ms_bucket[5m]))
             )
         - record: tick_execution_safety_ratio_p99
-          expr: tick_execution_time_ms_p99 / on (scope_class) tick_lock_ttl_ms
+          expr: |
+            (
+              tick_execution_time_ms_p99{tick_mode="normal"}
+                / on (scope_class) tick_lock_ttl_ms
+            )
+            or
+            (
+              tick_execution_time_ms_p99{tick_mode="solo"}
+                / on (scope_class) solo_lock_ttl_ms
+            )
         - record: command_latency_stage_ms_p99_5m
           expr: |
             histogram_quantile(
@@ -278,8 +289,8 @@ spec:
             owner: gameplay
             runbook: design/architecture/system-architecture-tick-incident-runbook.md#stalled-tick-region
           annotations:
-            summary: Tick execution time approaching unsafe fraction of lock TTL
-            description: Tick p99 execution time is nearing or exceeding the configured lock TTL for one or more bounded scope-class rollups.
+            summary: Tick execution time approaching unsafe fraction of mode-specific lock TTL
+            description: Tick p99 execution time is nearing or exceeding the configured mode-specific lock TTL for one or more bounded scope-class rollups; normal samples use tick_lock_ttl_ms and solo-budget samples use solo_lock_ttl_ms.
         - alert: TickEffectLedgerBacklog
           expr: tick_effects_pending_total{scope_class=~".+"} > 0 and (time() - tick_effects_pending_oldest_scheduled_timestamp_seconds{scope_class=~".+"}) > 300
           for: 10m

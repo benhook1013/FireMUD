@@ -3,7 +3,7 @@
   "schemaVersion": 36,
   "version": 1,
   "timezone": "browser",
-  "description": "Tick metrics are bounded scope-class rollups (region, game_instance, tenant, or cluster), not individual regions or other raw runtime identities. Use control-plane and structured runtime evidence for exact diagnosis.",
+  "description": "Tick metrics are bounded scope-class rollups (region, game_instance, tenant, or cluster), not individual regions or other raw runtime identities. The mode-aware execution/TTL/ratio panels are target-only/currently unavailable until Game Session emits and proves the canonical families and bounded labels. Use control-plane and structured runtime evidence for exact diagnosis.",
   "panels": [
     {
       "type": "graph",
@@ -19,11 +19,11 @@
     },
     {
       "type": "graph",
-      "title": "Tick Execution Time Ratio (p99 / lock TTL)",
+      "title": "Tick Execution Time Ratio (p99 / mode-specific lock TTL)",
       "targets": [
         {
-          "expr": "tick_execution_time_ms_p99{scope_class=~\".+\"} / on (scope_class) tick_lock_ttl_ms{scope_class=~\".+\"}",
-          "legendFormat": "scope bucket {{scope_class}}",
+          "expr": "(tick_execution_time_ms_p99{scope_class=~\".+\",tick_mode=\"normal\"} / on (scope_class) tick_lock_ttl_ms{scope_class=~\".+\"}) or (tick_execution_time_ms_p99{scope_class=~\".+\",tick_mode=\"solo\"} / on (scope_class) solo_lock_ttl_ms{scope_class=~\".+\"})",
+          "legendFormat": "scope bucket {{scope_class}} ({{tick_mode}})",
           "refId": "A"
         }
       ],

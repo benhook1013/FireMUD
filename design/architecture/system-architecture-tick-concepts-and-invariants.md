@@ -154,7 +154,7 @@ Two related configuration concepts control how long tick work is allowed to run 
 
 - `tick_interval_ms` – the configured target interval between ticks for a region.
 - `tick_budget_ms` – the soft execution budget for a tick. The shared bootstrap default starts from `tick_interval_ms * 0.8`; the canonical resolver rounds to the nearest integer millisecond with exact halves rounded upward and validates a positive integer before deriving lock TTL.
-- `lock_ttl_ms` – the TTL used for per-entity locks. The shared bootstrap derivation starts from the resolved `tick_budget_ms * 8` and applies the same deterministic positive-integer rounding rule. `tick_lock_ttl_ms` is the effective regional `lock_ttl_ms` health metric. Numeric minimum and maximum bounds remain pending an owning settings decision.
+- `lock_ttl_ms` – the TTL used for per-entity locks. The shared bootstrap derivation starts from the resolved `tick_budget_ms * 8` and applies the same deterministic positive-integer rounding rule. `tick_lock_ttl_ms{scope_class}` is the effective `lock_ttl_ms` health metric for bounded scope-class rollups, not an individual-region series. Numeric minimum and maximum bounds remain pending an owning settings decision.
 
 These formulas are shared bootstrap defaults only. Production values remain explicitly pending evidence from p95/p99 execution, RPC latency/errors, runtime pauses, cleanup lag, takeover/recovery objectives, representative load, and fault injection. One resolver owns the defaults, operator safety settings, validation, and provenance; numeric minimum and maximum bounds remain pending the owning settings decision, and services may not define private derivations. Cadence, execution budget, and lock lifetime are separate health dimensions. See [ADR 0073](./decisions/adr-0073-evidence-calibrated-tick-budgets-and-lock-ttls.md).
 
@@ -164,7 +164,7 @@ The only allowed exception is an explicit **solo-tick budget mode** for commands
 - When enabled for a tick, `solo_lock_ttl_ms` is derived from `solo_tick_budget_ms` using the same shared helper family and operator-visible health model.
 - The scheduler must admit solo-budget ticks only when the command is the sole work item for that region tick.
 - A deployment that does not enable `solo_tick_budget_ms` must treat `requiresSoloTick` as isolation-only; it does not permit budget overruns beyond the normal `tick_budget_ms`.
-- During a solo-budget tick, health and alerting use the solo-derived ratios (`tick_execution_time_ms_* / solo_lock_ttl_ms`) for that tick rather than the normal `tick_lock_ttl_ms` denominator.
+- During a solo-budget tick, health and alerting use the solo-derived ratios (`tick_execution_time_ms_*{scope_class,tick_mode="solo"} / on (scope_class) solo_lock_ttl_ms{scope_class}`) for that tick rather than the normal `tick_lock_ttl_ms` denominator. Normal samples use `tick_mode="normal"`; `tick_mode` is a closed bounded metric label, never a command or runtime identity.
 
 Changing tick cadence is also constrained by replay determinism:
 
@@ -179,7 +179,7 @@ Worked cadence-change example:
 4. Timer ordering state is re-derived for the new epoch, including canonical `due_tick_id` values for any timers that must survive the change.
 5. The new epoch resumes at `lastCommittedTickId = -1`, so the first committable tick under the new cadence is `tickId = 0`.
 
-At runtime, observed tick durations are compared against lock TTLs using Prometheus-facing series such as `tick_execution_time_ms_p95{scope_class}` and `tick_execution_time_ms_p99{scope_class}` (derived from `tick_execution_time_ms_bucket{scope_class,le}` recording rules). Ratios like `tick_execution_time_ms_p99{scope_class} / tick_lock_ttl_ms{scope_class}` are detection and escalation signals for bounded scope-class rollups. The `scope_class` value is the controlled aggregation class (`region`, `game_instance`, `tenant`, or `cluster`), never an individual region or other raw runtime identity; the exact `<tenantId, gameInstanceId, regionId>` tuple and its health remain authoritative control-plane/runtime-health evidence. A class-level rollup cannot identify or set the health of any individual region.
+At runtime, observed tick durations are compared against lock TTLs using Prometheus-facing series such as `tick_execution_time_ms_p95{scope_class,tick_mode}` and `tick_execution_time_ms_p99{scope_class,tick_mode}` (derived from `tick_execution_time_ms_bucket{scope_class,tick_mode,le}` recording rules). Normal ticks use `tick_execution_time_ms_p99{scope_class,tick_mode="normal"} / on (scope_class) tick_lock_ttl_ms{scope_class}` for detection and escalation; an admitted solo-budget tick uses `tick_execution_time_ms_p99{scope_class,tick_mode="solo"} / on (scope_class) solo_lock_ttl_ms{scope_class}` instead. The `scope_class` value is the controlled aggregation class (`region`, `game_instance`, `tenant`, or `cluster`), never an individual region or other raw runtime identity; `tick_mode` is exactly `normal` or `solo`; the exact `<tenantId, gameInstanceId, regionId>` tuple and its health remain authoritative control-plane/runtime-health evidence. A class-level rollup cannot identify or set the health of any individual region.
 
 ### Canonical Region Health States and Threshold Source
 
@@ -227,7 +227,7 @@ At the configuration level:
   - `automation.tick-max-events`
   - These caps exist so no single player or script can monopolize either lane, even if it enqueues many actions or effects; excess work spills into subsequent ticks according to the lane budgets, backoff, and the persisted ordering tuple.
 
-Runtime health pressure is also detected via ratios such as `tick_execution_time_ms_p95{scope_class}` or `tick_execution_time_ms_p99{scope_class}` over `tick_lock_ttl_ms{scope_class}`. These are class-level Prometheus rollups for detection and escalation, not per-region status or actionability:
+Runtime health pressure is also detected via ratios such as `tick_execution_time_ms_p95{scope_class,tick_mode="normal"} / on (scope_class) tick_lock_ttl_ms{scope_class}` or `tick_execution_time_ms_p99{scope_class,tick_mode="normal"} / on (scope_class) tick_lock_ttl_ms{scope_class}` for normal ticks; an admitted solo-budget tick uses `tick_execution_time_ms_p95{scope_class,tick_mode="solo"} / on (scope_class) solo_lock_ttl_ms{scope_class}` or `tick_execution_time_ms_p99{scope_class,tick_mode="solo"} / on (scope_class) solo_lock_ttl_ms{scope_class}`. These are class-level Prometheus rollups for detection and escalation, not per-region status or actionability:
 
 - `RUNNING` – the authoritative runtime-health record reports normal forward progress; a low class-level p99 ratio is supporting evidence only.
 - `DEGRADED` – the authoritative runtime-health record reports progress near safety limits; a sustained high class-level p99 ratio is supporting detection/escalation evidence.

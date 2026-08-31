@@ -1,6 +1,6 @@
 # Tick Alertmanager Snippets
 
-This file contains reference PromQL expressions and Alertmanager rule snippets for tick execution and ledger alerts. These complement the TCP Proxy-specific rules in `tcp-proxy-alerts-snippets.md` and are intended to be imported or adapted into environment-specific rulesets. Every `scope_class` selector below is a bounded aggregation class (`region`, `game_instance`, `tenant`, or `cluster`), not an individual region or other raw runtime identity; use control-plane records for exact diagnosis.
+This file contains reference PromQL expressions and Alertmanager rule snippets for tick execution and ledger alerts. These complement the TCP Proxy-specific rules in `tcp-proxy-alerts-snippets.md` and are intended to be imported or adapted into environment-specific rulesets. The mode-aware execution/TTL/ratio snippets are target-only/currently unavailable until Game Session emits and proves the canonical metric families and bounded labels. Every `scope_class` selector below is a bounded aggregation class (`region`, `game_instance`, `tenant`, or `cluster`), not an individual region or other raw runtime identity; use control-plane records for exact diagnosis.
 
 ## Tick Execution Health
 
@@ -8,7 +8,7 @@ Example alert for tick execution time approaching unsafe ratios relative to lock
 
 ```yaml
 - alert: TickExecutionUnsafeRatio
-  expr: (tick_execution_time_ms_p99{scope_class=~".+"} / tick_lock_ttl_ms{scope_class=~".+"}) > 0.75
+  expr: ((tick_execution_time_ms_p99{scope_class=~".+",tick_mode="normal"} / on (scope_class) tick_lock_ttl_ms{scope_class=~".+"}) or (tick_execution_time_ms_p99{scope_class=~".+",tick_mode="solo"} / on (scope_class) solo_lock_ttl_ms{scope_class=~".+"})) > 0.75
   for: 10m
   labels:
     service: game-session-service
@@ -17,7 +17,7 @@ Example alert for tick execution time approaching unsafe ratios relative to lock
     runbook: design/architecture/system-architecture-tick-incident-runbook.md#stalled-tick-region
   annotations:
     summary: Tick execution time approaching unsafe fraction of lock TTL
-    description: Tick p99 execution time is nearing or exceeding the configured lock TTL for one or more bounded scope-class rollups. Investigate the corresponding control-plane/runtime-health evidence and workload density before adjusting tick cadence.
+    description: Tick p99 execution time is nearing or exceeding the configured mode-specific lock TTL for one or more bounded scope-class rollups. Normal samples use tick_lock_ttl_ms; solo-budget samples use solo_lock_ttl_ms. Investigate the corresponding control-plane/runtime-health evidence and workload density before adjusting tick cadence.
 ```
 
 This rule assumes the **canonical metric contract** from:
@@ -27,8 +27,8 @@ This rule assumes the **canonical metric contract** from:
 
 Concretely:
 
-- `tick_execution_time_ms_p99` is a recording rule derived from `tick_execution_time_ms_bucket{scope_class,le}`.
-- `tick_lock_ttl_ms` is emitted (or recorded) per approved bounded gameplay `scope_class` and represents the lock/lease TTL budget used by tick executors.
+- `tick_execution_time_ms_p99{scope_class,tick_mode}` is a recording rule derived from `tick_execution_time_ms_bucket{scope_class,tick_mode,le}`; `tick_mode` is exactly `normal` or `solo`.
+- `tick_lock_ttl_ms{scope_class}` is emitted (or recorded) per approved bounded gameplay `scope_class` for normal samples, while `solo_lock_ttl_ms{scope_class}` carries the derived solo-budget TTL. The alert selects the denominator by `tick_mode` and never blends normal and solo samples.
 
 Do not use “Timer-in-seconds” histograms under `_ms` names; producers must either emit millisecond-valued histograms/summaries or publish explicit `_seconds` metrics and define separate `_ms` recording rules with unambiguous unit conversions.
 

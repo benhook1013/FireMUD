@@ -14,6 +14,8 @@ Profile-aware asynchronous log-queryability emit-and-query automation is also ta
 
 The target-state `PlayerFlowCanary*` alert family is also not currently installed. The shared PrometheusRule and current profile overlays withhold it until a deployment-owned `playerFlowCanary=advertised` applicability/expected-series gate and safe advertised-to-omitted transition cleanup exist; the alert snippets below remain reference fixtures for that future boundary.
 
+The target-state `tick_execution_safety_ratio_p99{scope_class,tick_mode}` recording is also currently unavailable because the live Game Session producer does not emit the required bounded mode-aware families. Until that producer and label proof exists, absent or stale ratio series are `unknown` and cannot authorize a pause, reset, degradation, or resume decision; use authoritative runtime-health/control-plane evidence instead.
+
 ## Objectives
 
 - Preserve player-facing operation using authoritative systems (services, PostgreSQL, coordination rules) even when observability backends are impaired.
@@ -181,7 +183,7 @@ Implementation status: Steps 3–5 below are target-state-only and are not curre
   - target-state recovery-controller recordings (`recovery_participant_convergence_blocked`, `recovery_environment_convergence_blocked`, `recovery_participant_convergence_coverage_missing`, `recovery_participant_convergence_source_missing`) only after the durable controller and exporter are implemented and proved; until then, their absence is `unknown` and operators use the owning recovery-evidence path,
   - the five backup source-absence alerts (`BackupLastSuccessMetricsAbsent`, `BackupVerificationLastSuccessMetricsAbsent`, `BackupRestoreDrillLastSuccessMetricsAbsent`, `BackupArtifactLineageMetricsAbsent`, `BackupArtifactRestoreReadabilityMetricsAbsent`), which diagnose missing evidence; the owning backup/readiness control blocks on authoritative evidence state rather than alert state, and missing or unavailable diagnostics are `unknown`,
   - target-state `RecoveryParticipantConvergenceCoverageMissing` and `RecoveryParticipantConvergenceMetricsAbsent`, which diagnose affected-environment coverage and global monitoring gaps without replacing or mutating durable controller state; the recovery controller owns any readiness block, and missing or unavailable diagnostics are `unknown`, so operators follow the owning recovery-evidence path,
-  - tick safety ratio (`tick_execution_safety_ratio_p99`),
+  - target-state mode-aware tick safety ratio (`tick_execution_safety_ratio_p99{scope_class,tick_mode}`) only after the required producer and bounded-label proof exists; until then, the recording is unavailable and absent or stale series are `unknown`,
   - coordination tail-loss (`redis_coordination_tail_loss_ms`, `redis_coordination_tail_loss_budget_ms`, and `redis_coordination_tail_loss_slo_breached`).
 - Prefer recorded rules where available so operators do not hand-craft complex PromQL during an incident. These diagnostics never become a second Alertmanager authority, replace owner evidence, or establish, clear, or mutate readiness and recovery state; the owning authority or control plane makes those decisions.
 
@@ -233,7 +235,7 @@ Recording rules:
 - `entrypath_availability_gateway_1d`
 - `entrypath_availability_tcpproxy_1d`
 - `chat_delivery_latency_ms_p99_5m`
-- `tick_execution_safety_ratio_p99`
+- target-state `tick_execution_safety_ratio_p99{scope_class,tick_mode}` (currently unavailable; absent or stale series are `unknown`)
 - `redis_coordination_tail_loss_budget_ms`
 - `redis_coordination_tail_loss_slo_breached`
 - `backup_pipeline_recent_backup_slo_breached`

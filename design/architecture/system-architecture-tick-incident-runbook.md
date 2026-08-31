@@ -28,6 +28,8 @@ Canonical API and workflow scope names in this runbook use `tenantId`, `gameInst
 
 Prometheus labels in this runbook are bounded categories only. `scope_class` is one of the controlled aggregation classes `region`, `game_instance`, `tenant`, or `cluster`; it never contains a raw identifier or identifies an individual region. Operators resolve the exact tuple and current epoch/fence from durable tick-batch/ledger and control-plane records before taking action. Metrics select the incident family; they do not establish which game instance or region is authoritative.
 
+The canonical mode-aware execution/TTL/ratio metric families are target-only and currently unavailable in the live Game Session producer: absent or stale `tick_execution_time_ms_*`, `tick_lock_ttl_ms`, `solo_lock_ttl_ms`, or derived ratio series are `unknown` and cannot authorize a pause, reset, degradation, or resume decision. Use authoritative runtime-health/control-plane evidence and structured logs until producer and bounded-label proof exists.
+
 ## Incident Types
 
 - **Stalled tick region** (lease held but no forward progress)
@@ -58,7 +60,7 @@ Normal incident escalation groups by `<tenantId, gameInstanceId, playableStateNa
 
 - Alerts fire on tick health, for example:
   - `tick_status{scope_class,status="STALLED"}` or `tick_status{scope_class,status="DEGRADED"}` being `1` for a sustained window; this is a bounded class-level detection/escalation rollup, not an individual-region status.
-  - `tick_execution_time_ms_p95{scope_class}` / `tick_execution_time_ms_p99{scope_class}` ratios vs `tick_lock_ttl_ms{scope_class}` exceeding the degraded thresholds described in `system-architecture-tick-concepts-and-invariants.md`; these ratios identify pressure for investigation, not the authoritative region or action.
+  - Mode-specific ratios such as `tick_execution_time_ms_p95{scope_class,tick_mode="normal"} / on (scope_class) tick_lock_ttl_ms{scope_class}` or `tick_execution_time_ms_p99{scope_class,tick_mode="normal"} / on (scope_class) tick_lock_ttl_ms{scope_class}`, with the corresponding solo forms matched as `tick_execution_time_ms_p95{scope_class,tick_mode="solo"} / on (scope_class) solo_lock_ttl_ms{scope_class}` or `tick_execution_time_ms_p99{scope_class,tick_mode="solo"} / on (scope_class) solo_lock_ttl_ms{scope_class}`, exceeding the degraded thresholds described in `system-architecture-tick-concepts-and-invariants.md`; these ratios identify pressure for investigation, not the authoritative region or action.
 - Redis coordination metrics and dashboards show:
   - A region holding `tick-executor-lease:{tenantRegionTag}` for longer than expected without advancing `tickId`.
   - Growing `tick_retry_queue_depth{scope_class}` or `tick_command_queue_depth{scope_class}` for the affected `<tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch>`.

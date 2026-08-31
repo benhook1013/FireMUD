@@ -2,6 +2,8 @@
 
 This document summarizes the canonical Redis-related metrics, alerting surfaces, and size/complexity budgets referenced across the Redis architecture, incident runbooks, and service designs.
 
+Implementation status: the canonical mode-aware tick execution/TTL/ratio families below are target-only and currently unavailable. Live Game Session records `game_session_tick_duration_ms` without the required bounded `scope_class`/`tick_mode` labels; the recording rules and dashboards are templates until the producer and label contract are implemented and proved.
+
 ## Coordination Redis Core Metrics
 
 - `redis_aof_current_size_bytes`
@@ -36,10 +38,12 @@ For measured exposure, replication-lag, replication-offset, and dashboard-compar
 ## Coordination and Tick Metrics
 
 - `tick_interval_ms{scope_class}`
-- `tick_execution_time_ms_bucket{scope_class,le}`
-- `tick_execution_time_ms_p95{scope_class}`
-- `tick_execution_time_ms_p99{scope_class}`
+- `tick_execution_time_ms_bucket{scope_class,tick_mode,le}`
+- `tick_execution_time_ms_p95{scope_class,tick_mode}`
+- `tick_execution_time_ms_p99{scope_class,tick_mode}`
 - `tick_lock_ttl_ms{scope_class}`
+- `solo_lock_ttl_ms{scope_class}`
+- `tick_execution_safety_ratio_p99{scope_class,tick_mode}`
 - `tick_status{scope_class,status}`
 - `current_tick_state{scope_class,state}`
 - `current_tick_terminal_at_ms{scope_class}`
@@ -51,9 +55,9 @@ For measured exposure, replication-lag, replication-offset, and dashboard-compar
 - `tick_coordination_cleared_total{scope_class}`
 - `tick_cleanup_lag_ms{scope_class}`
 
-`scope_class` is the required bounded operational rollup label for the tick metric families above. Its value is one of `region`, `game_instance`, `tenant`, or `cluster`, identifying the aggregation class rather than an individual runtime scope. Every related tick metric must use the same mapping for a deployment: a region-level rollup is labelled `region`, a game-instance rollup `game_instance`, a tenant rollup `tenant`, and a deployment-wide rollup `cluster`. The label never contains a tenant, game-instance, playable-state, or region identifier, and exact diagnosis remains on control-plane/runtime-health records and structured logs.
+`scope_class` is the required label for bounded operational rollups of the tick metric families above. Its value is one of `region`, `game_instance`, `tenant`, or `cluster`, identifying the aggregation class rather than an individual runtime scope. Every related tick metric must use the same mapping for a deployment: a region-level rollup is labelled `region`, a game-instance rollup `game_instance`, a tenant rollup `tenant`, and a deployment-wide rollup `cluster`. The label never contains a tenant, game-instance, playable-state, or region identifier, and exact diagnosis remains on control-plane/runtime-health records and structured logs. `tick_mode` is a second bounded label on execution-time samples and is exactly `normal` or `solo`; it never contains a command, actor, or runtime identity.
 
-Recording rules must preserve this label through aggregation (for example, `sum by (scope_class, le)` for the execution histogram) and match companion series such as `tick_lock_ttl_ms` on `scope_class`. Producers and dashboards must not mix this class mapping with a raw `scope` label or infer an individual region from a class-level series.
+Recording rules must preserve both bounded labels through aggregation (for example, `sum by (scope_class, tick_mode, le)` for the execution histogram). Normal samples use `tick_lock_ttl_ms{scope_class}` and solo-budget samples use `solo_lock_ttl_ms{scope_class}`; the resulting `tick_execution_safety_ratio_p99{scope_class,tick_mode}` must select the denominator by `tick_mode` rather than blend normal and solo samples. Producers and dashboards must not mix this class/mode mapping with a raw `scope` label or infer an individual region from a class-level series.
 
 ### Remote Follow-Up Drainage
 
