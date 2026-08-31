@@ -59,13 +59,15 @@ Write behavior requirements:
 - Conflicting concurrent writes for the same Trigger Identity must converge on a single row with deterministic precedence (higher stage wins).
 - Handler-scoped admission rejections and backpressure outcomes (for example `quota_denied`, `script_disabled`, timer-scope `skipped_reloading`, post-resolution `rollback_paused`, or plugin `disabled_due_to_errors`) must still produce the row for that Trigger Identity with `finalStage=ADMISSION`; plugin breaker denials use canonical bounded `finalReason=failure_rate_breaker` and retain `breakerState=DISABLED_DUE_TO_ERRORS` with the exact plugin version/runtime scope. When present on that row or a runtime read, `breakerReason` carries the same bounded `failure_rate_breaker` value as runtime-state evidence; it is not a competing audit reason. Handler retries reuse that full identity and propagated `scriptEventId`. Pre-resolution event-scope denials belong in the ingress audit/logging surface described above and follow the [event-scope claim retry lifecycle](./system-architecture-scripting-normative-contract-tables.md#event-scope-claim-and-retry-semantics-normative). Timer/cadence candidate skips remain on the `scheduleCandidateId` candidate-audit surface rather than becoming event-scope claims.
 
-Audit records must include at least:
+The following is the canonical target `script_event_audit` field list (with the stated conditional absences):
 
 - Identity and versioning
   - `tenantId`
   - `gameInstanceId` (absent for tenant-readiness `onLoad`)
-  - `regionId`
-  - `regionEpoch` (required for gameplay/runtime and scheduler triggers; exceptions must be explicitly documented in the normative Trigger Identity table)
+  - `playableStateNamespaceId` (required for gameplay/runtime; absent for tenant-readiness `onLoad`)
+  - `playableStateScope` (separately persisted server-derived policy/routing/authorization/migration-fence evidence required for gameplay/runtime; explicitly excluded from identity)
+  - `regionId` (required for gameplay/runtime; absent for tenant-readiness `onLoad`)
+  - `regionEpoch` (required for gameplay/runtime and scheduler triggers; absent for tenant-readiness `onLoad`)
   - `entityId` (for entity-scoped events)
   - `scriptId`
   - `pluginId`, `pluginVersionId`, and `bindingId` (required for resolved plugin handlers)
@@ -75,6 +77,9 @@ Audit records must include at least:
   - `scriptEventId`
   - `isDryRun` (boolean)
   - `sourceService` (derived from authenticated producer/workload identity for custom/service-specific events; the same value used in ingress dedupe and persisted unchanged in ingress and handler audit; omitted for built-in events that originate entirely within Automation & Scripting)
+
+Tenant-readiness `onLoad` uses the non-gameplay Trigger Identity branch defined by the [normative Trigger Identity table](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields): `gameInstanceId`, `playableStateNamespaceId`, `playableStateScope`, `regionId`, `regionEpoch`, and `scriptPinEpoch` are absent, rather than represented by sentinels or inferred current-runtime values. Gameplay/runtime audit records use the namespace as identity and retain scope only as separately validated evidence.
+
 - Scheduling context (when applicable)
   - `triggerMode` (for example `NORMAL` vs `CATCH_UP`)
   - Exactly one of `dueTickId` or `dueAt` (for timers/intervals); the alternate field is absent/`NULL`
@@ -172,7 +177,7 @@ Rules:
 
 During rollback, operator views must show the handler's `finalStage`/`finalOutcome` beside the `commandHandoffDispositions[]` returned from `ListScriptHandoffEvents`. A `TICK_HANDOFF` with `finalOutcome=handoff_accepted` therefore remains visible even when one or more individual commands later receive `version_fence_dropped`; a child result must never overwrite the handler result or collapse sibling command records.
 
-Concrete example. Both child records below carry the complete `T123` Trigger Identity (`tenantId=11111111-1111-4111-8111-111111111111`, `gameInstanceId=44444444-4444-4444-8444-444444444444`, `playableStateScope=isolated`, `regionId=R2`, `regionEpoch=14`, `entityId=npc-guard-9`, `scriptId=guard-on-enter`, `eventType=onEnterRegion`, `eventSchemaVersion=1`, `scriptPatchVersion=P22`, `scriptPinEpoch=23`, `scriptEventId=evt-7f4c`, `isDryRun=false`) for correlation and diagnosis. Each child is keyed by the complete Command-Handoff Identity: complete source/target runtime scope plus `automationDispatchId` and `commandOrdinal`. Parent Trigger Identity fields, `outboxWorkItemId`, and `scriptEventId` are not child uniqueness, deduplication, or replay keys. `automationDispatchId=dispatch-9` identifies the dispatch group, while `outboxWorkItemId=work-9` is parent correlation only. The `(automationDispatchId, commandOrdinal)` notation in the bullets is a display suffix, not a standalone key. This is a same-instance, same-runtime-scope example; the optional target fields (`targetGameInstanceId`, `targetPlayableStateScope`, `targetRegionId`, `targetRegionEpoch`) are intentionally absent because no distinct target scope applies.
+Concrete example. Both child records below carry the complete `T123` Trigger Identity (`tenantId=11111111-1111-4111-8111-111111111111`, `gameInstanceId=44444444-4444-4444-8444-444444444444`, `playableStateNamespaceId=55555555-5555-4555-8555-555555555555`, `regionId=R2`, `regionEpoch=14`, `entityId=npc-guard-9`, `scriptId=guard-on-enter`, `eventType=onEnterRegion`, `eventSchemaVersion=1`, `scriptPatchVersion=P22`, `scriptPinEpoch=23`, `scriptEventId=evt-7f4c`, `isDryRun=false`) for correlation and diagnosis. The same records retain `playableStateScope=isolated` as separately validated policy/routing/authorization/migration-fence evidence; it is not part of Trigger Identity. Each child is keyed by the complete Command-Handoff Identity: complete source/target runtime identity plus `automationDispatchId` and `commandOrdinal`. Parent Trigger Identity fields, `outboxWorkItemId`, and `scriptEventId` are not child uniqueness, deduplication, or replay keys. `automationDispatchId=dispatch-9` identifies the dispatch group, while `outboxWorkItemId=work-9` is parent correlation only. The `(automationDispatchId, commandOrdinal)` notation in the bullets is a display suffix, not a standalone key. This is a same-instance, same-runtime-scope example; the optional target fields (`targetGameInstanceId`, `targetPlayableStateNamespaceId`, `targetPlayableStateScope`, `targetRegionId`, `targetRegionEpoch`) are intentionally absent because no distinct target scope applies.
 
 - `script_event_audit` row for Trigger Identity `T123` ends with `finalStage=TICK_HANDOFF`, `finalOutcome=handoff_accepted`.
 - The handler emitted two commands. Later, Game Session rejects only the child ending in `(automationDispatchId=dispatch-9, commandOrdinal=1)` under the same complete command-handoff scope during rollback convergence and appends a child disposition with `outcome=version_fence_dropped`, `reason=script_patch_mismatch`, `sourceService=game-session`, and `recordedAt=...`; the child ending in `(automationDispatchId=dispatch-9, commandOrdinal=0)` remains a separate sibling record.
@@ -184,6 +189,7 @@ Illustrative record shape:
 {
   "tenantId": "11111111-1111-4111-8111-111111111111",
   "gameInstanceId": "44444444-4444-4444-8444-444444444444",
+  "playableStateNamespaceId": "55555555-5555-4555-8555-555555555555",
   "playableStateScope": "isolated",
   "regionId": "R2",
   "regionEpoch": 14,
@@ -228,6 +234,7 @@ Illustrative record shape:
     {
       "tenantId": "11111111-1111-4111-8111-111111111111",
       "gameInstanceId": "44444444-4444-4444-8444-444444444444",
+      "playableStateNamespaceId": "55555555-5555-4555-8555-555555555555",
       "regionId": "R2",
       "regionEpoch": 14,
       "entityId": "npc-guard-9",
@@ -256,6 +263,7 @@ Illustrative record shape:
     {
       "tenantId": "11111111-1111-4111-8111-111111111111",
       "gameInstanceId": "44444444-4444-4444-8444-444444444444",
+      "playableStateNamespaceId": "55555555-5555-4555-8555-555555555555",
       "regionId": "R2",
       "regionEpoch": 14,
       "entityId": "npc-guard-9",

@@ -6,13 +6,14 @@ Accepted
 
 ## Implementation Status
 
-The command/effect boundary and single logical terminal outcome are target state; complete durable identity guards, evidence-based reconciliation, and focused crash/replay proof remain incomplete.
+The command/effect boundary, deterministic command-plan root identity, and single logical terminal outcome are target state; complete durable identity guards, evidence-based reconciliation, and focused crash/replay proof remain incomplete.
 
 ## Canonical Design
 
 - [Tick Execution Flows](../system-architecture-tick-execution-flows.md)
 - [Tick Failure and Operations](../system-architecture-tick-failures-and-operations.md)
 - [Transaction Strategies](../system-architecture-transactions.md)
+- [Identifier Glossary](../system-architecture-identifier-glossary.md#cross-service-effect-identity)
 
 ## Decision Record
 
@@ -35,18 +36,32 @@ Describing this as “exactly-once execution” would wrongly imply one physical
 
 ## Decision
 
-An accepted command lost before durable staging terminates at the command lifecycle with:
+An `ACCEPTED_VOLATILE` command still in `RECEIVED` or `ENQUEUED`, with no surviving durable `tickBatchId`, effect ledger, or source/effect claim, may terminate as lost before durable staging only when an atomic owner-defined no-batch CAS/version-fenced check wins. A pre-staging plan manifest or root-allocation row alone is a non-executable identity reservation, not a batch/effect binding and does not disqualify this outcome; it remains linked to the terminal command as evidence and cannot be reused for another command:
 
 - `executionOutcome = LOST_BEFORE_STAGING`; and
 - `gameplayResult = NOT_APPLIED`.
 
-No effect ledger row is invented for a command that never produced a durably claimed or staged effect.
+An `ACCEPTED_DURABLE` command follows its feature-specific durable intake and recovery contract instead; it is not classified as `LOST_BEFORE_STAGING` by this rule. No effect ledger row is invented for a command that never produced a durably claimed or staged effect.
 
-Before any participant verification, the canonical Game Session context binds each durably claimed or staged effect's root `EffectId` to its typed operation, immutable request digest, required-participant context, and sealed manifest. Participants validate that sealed binding before their local guard/effect work; a conflicting operation, digest, or participant binding fails closed. Before terminal aggregation, Game Session must also verify that the returned participant projections exactly equal the sealed expected participant set and that every projection matches that same root, operation, digest, participant context, and manifest binding. A missing, extra, duplicate, partial, or conflicting projection fails closed and remains reconciliation-required rather than producing a terminal aggregate. Physical execution is at least once: retries may invoke the handler multiple times after crashes, lost acknowledgements, or replay.
+Before any participant verification, the canonical Game Session context binds each durably claimed or staged effect's persisted mutation `EffectId`—the root `EffectId` for a root effect or the generated child's persisted `EffectId` for a child effect—to its typed operation, immutable request digest, required-participant context (including applicable `playableStateNamespaceId` identity evidence and separately persisted `playableStateScope` fence evidence), and sealed manifest. When applicable, the enclosing `rootEffectId` is retained only as lineage and reconciliation context. Participants exact-validate that sealed binding before their local guard/effect work; a conflicting operation, digest, namespace, scope, or participant binding fails closed. Before terminal aggregation, Game Session must also verify that the returned participant projections exactly equal the sealed expected participant set and that every projection matches that same persisted mutation `EffectId`, operation, digest, participant context, namespace, scope, and manifest binding. A missing, extra, duplicate, partial, or conflicting projection fails closed and remains reconciliation-required rather than producing a terminal aggregate. Physical execution is at least once: retries may invoke the handler multiple times after crashes, lost acknowledgements, or replay.
 
 The owning domain's durable idempotency guard permits at most one logical authoritative state mutation for that identity and digest. Reuse of the identity with a conflicting digest fails closed.
 
-Every staged effect ledger row reaches exactly one terminal status:
+The accepted decision does not select a generated-child allocator or exact scalar format. Those unresolved target-state questions are recorded, without authority, in the pending [ADR 0182 proposal](./adr-0182-deterministic-effect-id-allocation-and-replay-binding.md).
+
+### Deterministic command plans and root identity
+
+An admitted command has one deterministic effect plan: the ordered set of logical root effects admitted for that command. The order is supplied by the frozen typed command or `ResolvedEffectPlan` semantic order owned by the command/action contract; Game Session does not infer it from scheduler selection. Built-in commands declare an equivalent stable semantic order. An ambiguous or duplicate root order fails before admission, and Game Session persists the ordered plan manifest and its digest before tick staging. Each logical operation in the plan has exactly one root `EffectId`, with any affected participants represented by guards beneath that root. A conserved multi-participant operation normally shares one root across its participants, but still follows [ADR 0053](./adr-0053-command-atomicity-by-invariant-class.md)'s required/optional classification and its co-location or reservation/escrow rules; one root does not claim global atomicity.
+
+The plan assigns a stable zero-based `planOrdinal` in that supplied semantic order. A single-root plan uses `planOrdinal=0`; a multi-root plan uses `0..n-1`; a zero-effect plan allocates no ordinal and no root `EffectId`. Before allocation, the durable gameplay command row freezes/binds its request fingerprint, resolved runtime scope, applicable `playableStateNamespaceId`, and separately persisted `playableStateScope` fence evidence. Game Session owns an opaque root `EffectId` allocation row unique on `(tenantId, gameInstanceId, commandId, planOrdinal)`; that row also binds the ordered plan manifest digest and exact-validates the command row's frozen binding, including the namespace and scope evidence. Reuse requires the same command row identity, frozen command/runtime binding, `planOrdinal`, and manifest digest; any mismatch fails closed. `playableStateNamespaceId` and `playableStateScope` are bound evidence, not additional allocation-key dimensions. For Automation, the complete applicable Command-Handoff Identity, including any optional distinct target runtime fields, is the admission/deduplication identity and must exact-map to one durable target `commandId`; after that mapping, root allocation uses the target command row's same canonical key. Trigger Identity and `scriptEventId` remain handler/correlation identities, not root-allocation inputs. Ordinary retries, replay, and reconciliation read and reuse the binding; the opaque ID is not derived by participants.
+
+`planOrdinal` and this allocation binding apply only to command-root work. Passive, inbound/remote, timer, retry, and already-generated effects retain their owner/source-specific root identity contracts and do not synthesize a command plan unless they materialize as an admitted command; generated children remain beneath the enclosing root. Random `tickBatchId`, mutable command text, `effectKey`, `sourceOrdinal`/`enqueueSeq`, participant tuples, Trigger Identity or `scriptEventId`, and child ordinals cannot substitute for the durable command row identity or allocation binding; they retain their existing staging, ordering, descriptor, participant, handler, and lineage roles.
+
+Command receipts, root-allocation records, tick batches, and selected-work manifests are S3 instance-scoped operational evidence: they may be cleaned up only after linked source claims and effects are terminal, replay/restore and reconciliation horizons have elapsed, and the owner cleanup fence permits it. Participant guards remain owner-domain durable evidence, with their own namespace/state classification and retention contract; they are not disposable Redis coordination state. A reset or replacement alone never authorizes bulk deletion or abandonment.
+
+The plan root is distinct from the command ingress identity, source-claim identity, Automation Command-Handoff Identity, participant guard identity, and generated child identity. A post-abandon command re-drive may receive a fresh root only under the existing conclusive `ABANDONED` and source-terminalization rules and must create a new durable `commandId` linked to the abandoned command and effect lineage; reusing the old `commandId` returns its prior terminal result and cannot allocate another plan root. A non-command source follows its owner-specific linked re-drive identity. An ordinary retry or replay never allocates a fresh root.
+
+Every staged effect ledger row reaches at most one terminal status, and terminalization occurs only when the applicable evidence policy permits it:
 
 - `APPLIED` when authoritative domain evidence proves that the logical mutation committed; or
 - `ABANDONED` only when authoritative evidence proves the effect was unapplied and any already-declared applicable feature rule permits it to be no longer valid, with an explicit reason. Inconclusive execution remains `SCHEDULED`/reconciliation-required; timeout, retry exhaustion, missing coordination, age, or technical failure alone never proves `ABANDONED`.
@@ -65,6 +80,8 @@ The system does not silently drop staged effects, leave them permanently ambiguo
 - Recovery may retry physical work without duplicating authoritative gameplay state.
 - Operators and callers can distinguish command results, effect terminal states, and replay reasons.
 - Owner services require durable identity-and-digest guards and authoritative evidence queries.
+- Deterministic plans make command-root admission and replay stable without deriving the allocation binding from scheduler selection, staging coordinates, source ordering, or handler identity.
+- Multi-participant conservation remains governed by command atomicity/co-location or reservation semantics; a shared root is not a distributed transaction.
 - The ledger and recovery controller must retain unresolved staged effects until they reach a justified terminal outcome.
 - Presentation output can duplicate even while authoritative state remains logically single-apply.
 
@@ -88,7 +105,7 @@ Rejected as the normal contract because unresolved effects could remain ambiguou
 
 ## Implementation and Proof Obligations
 
-Proof must cover accepted-command loss before staging without an invented effect row; sealed root/operation/digest/participant/manifest binding before participant verification and conflict rejection; crashes before and after domain commit; lost acknowledgements; duplicate physical invocation with one logical mutation; authoritative `REPLAY_NOOP` evidence terminalizing as `APPLIED`; evidence-qualified `ABANDONED` outcomes with timeout, retry-exhaustion, missing-coordination, age, and technical-failure rejection; command-result derivation across zero, one, and multiple required effects; duplicate presentation feedback without duplicate state; replay and reset convergence; and absence of silent drop or permanently ambiguous staged rows.
+Proof must cover accepted-command loss before staging without an invented effect row, including a surviving pre-staging plan/root allocation but no batch/effect binding; semantic zero-, single-, and multi-root plan ordering supplied by the frozen typed command/action contract, including built-in stable order and ambiguous/duplicate-order rejection; freezing/binding of command request fingerprint, runtime scope, `playableStateNamespaceId`, and separately persisted/exact-validated `playableStateScope`; persistence of the ordered plan manifest/digest and opaque allocation-row binding; uniqueness on `(tenantId, gameInstanceId, commandId, planOrdinal)`; reuse only with the same command row identity, frozen command/runtime binding, `planOrdinal`, and manifest digest, with mismatch rejection; Automation handoff admission exact-mapping to one durable target command; preservation of separate source-ordering, participant, handler, and child identities; command-root-only scope; conserved multi-participant handling under ADR 0053; sealed root/operation/digest/participant/manifest binding before participant verification and conflict rejection; crashes before and after domain commit; lost acknowledgements; duplicate physical invocation with one logical mutation; authoritative `REPLAY_NOOP` evidence terminalizing as `APPLIED`; evidence-qualified `ABANDONED` outcomes with timeout, retry-exhaustion, missing-coordination, age, and technical-failure rejection; command-result derivation across zero, one, and multiple required effects; duplicate presentation feedback without duplicate state; replay and reset convergence; and absence of silent drop or permanently ambiguous staged rows.
 
 The current implementation and runtime proof are not claimed to satisfy this decision.
 

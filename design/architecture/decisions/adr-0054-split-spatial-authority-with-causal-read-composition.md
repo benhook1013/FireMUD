@@ -46,11 +46,11 @@ The existing split is sound, but two contracts are too weak. Reusing an `EffectI
 
 ### Effect Identity and Participant Guards
 
-Game Session assigns one stable root `EffectId` to the logical effect and persists intended pre/post state and required participants. Each participant derives a deterministic guard identity from the root effect, typed operation, and target aggregate. Its durable guard binds that identity to an immutable request digest and stored outcome.
+For a root mutation, Game Session assigns one stable root `EffectId` to the logical effect and persists intended pre/post state and required participants. Each participant resolves its owner-local guard using the persisted mutation `EffectId` as the stable collision key for that participant (the root `EffectId` for a root mutation or the persisted child `EffectId` for a generated child). An existing candidate is reusable only after separately exact-comparing the typed operation, exact target aggregate, owner-declared runtime-family partition—S1/S2 use `(tenantId, playableStateNamespaceId)`, explicit S3 uses `(tenantId, gameInstanceId)`, and an unknown or unclassified family fails closed—and immutable `requestDigest`; any mismatch fails closed. Where one mutation has multiple participants, the owner-local participant/target slot keeps those sibling guards distinct. A generated child retains its enclosing root only as lineage and reconciliation context. The durable guard stores the binding and outcome. The separate [ADR 0182 proposal](./adr-0182-deterministic-effect-id-allocation-and-replay-binding.md) is not accepted target state and may not be used as an implementation requirement.
 
 - Same identity plus the same request returns the prior durable result.
 - Same identity with a different operation, target, or request digest fails closed.
-- Derived reactions use deterministic child effect identities rather than accidental reuse.
+- Derived reactions use deterministic child effect identities rather than accidental reuse. Any future allocator or replay binding remains subject to the non-authoritative [ADR 0182 proposal](./adr-0182-deterministic-effect-id-allocation-and-replay-binding.md).
 - Participant acknowledgement means the guard and effect-visible domain rows committed together.
 - Player success waits for all declared required participants under ADR 0053.
 

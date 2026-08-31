@@ -48,7 +48,7 @@ The canonical Game Session root binding is authenticated and exact-compared befo
 - `MOVE` mutates World location/occupancy in one World transaction. Pure movement has no Entity mutation participant.
 - `DROP` and `PICKUP` mutate the item's holder in one Entity transaction. They use the existing World `TargetingFactSnapshot` actor-location/location-version token, admitted under the Game Session actor/executor fence and passed to Entity as owner-issued location evidence. Before committing, Entity atomically validates that token for the same room/epoch together with the expected holder and Entity aggregate version; stale or mismatched World location evidence fails admission and re-resolves under the same root `EffectId` and immutable request digest, without transferring item authority to World.
 
-Every owner derives a participant guard identity from the root `EffectId`, typed operation, and target aggregate, and binds it to an immutable request digest and durable result. Same guard and same request replays the prior result; the same guard with a different operation, target, or digest fails closed.
+Every owner resolves its participant guard using the persisted mutation `EffectId` as the stable collision key for that participant (the root `EffectId` for a root mutation or the persisted child `EffectId` for a generated child). An existing candidate is reusable only after separately exact-comparing the typed operation, exact target aggregate, owner-declared runtime-family partition—S1/S2 use `(tenantId, playableStateNamespaceId)`, explicit S3 uses `(tenantId, gameInstanceId)`, and an unknown or unclassified family fails closed—and immutable `requestDigest`; any mismatch fails closed. Where one mutation has multiple participants, the owner-local participant/target slot keeps those sibling guards distinct. A generated child retains its enclosing root only as lineage and reconciliation context. Same guard and same request replays the prior result. Generated-child allocation and root/child lineage beyond this accepted guard boundary remain subject to the non-authoritative [ADR 0182 proposal](./adr-0182-deterministic-effect-id-allocation-and-replay-binding.md).
 
 Correctness mutations carry exact scope, epoch, and relevant expected state:
 
@@ -56,7 +56,7 @@ Correctness mutations carry exact scope, epoch, and relevant expected state:
 - drop and pickup include World-authoritative actor-location evidence plus expected current holder and Entity aggregate version; and
 - ambient changes include the owning World aggregate and expected version.
 
-Derived ambient or gameplay reactions use deterministic child effect identities and declare whether they are required or optional. Only declared required participants delay logical player success. Presentation reads use ADR 0059's causal floor and distinct component versions, never service-local snapshot equality; that presentation causal floor is not a mutation guard and is never substituted for the World targeting token.
+Derived ambient or gameplay reactions use deterministic child effect identities and declare whether they are required or optional. Only declared required participants delay logical player success. Presentation reads use ADR 0059's causal floor and distinct component versions, never service-local snapshot equality; that presentation causal floor is not a mutation guard and is never substituted for the World targeting token. The non-authoritative [ADR 0182 proposal](./adr-0182-deterministic-effect-id-allocation-and-replay-binding.md) describes a possible future allocation boundary.
 
 ## Consequences
 
@@ -90,7 +90,7 @@ Rejected because at-least-once delivery and stale room evidence could duplicate 
 
 ## Implementation and Proof Obligations
 
-Proof must cover digest-conflict rejection, duplicate replay, stale epoch/location/holder/version, move without an Entity mutation, drop/pickup without World item ownership, no double location or holder, deterministic required and optional child effects, crash and reconciliation, and causal-floor room presentation. The effect catalog is the required inventory for new spatial and ambient effect families.
+Proof must cover digest-conflict rejection, duplicate replay, stale epoch/location/holder/version, move without an Entity mutation, drop/pickup without World item ownership, no double location or holder, deterministic required/optional child admission and outcome classification, crash and reconciliation, and causal-floor room presentation. Allocation/replay proof for the pending [ADR 0182 proposal](./adr-0182-deterministic-effect-id-allocation-and-replay-binding.md) is not claimed here. The effect catalog is the required inventory for new spatial and ambient effect families.
 
 ## Reversibility and Revisit Triggers
 

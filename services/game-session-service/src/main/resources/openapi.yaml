@@ -1,14 +1,15 @@
-openapi: 3.0.3
+openapi: 3.1.0
 info:
   title: Game Session Service API
   description: API for managing active game sessions
   version: 1.0.0
   license:
-    name: MIT
-    url: https://opensource.org/licenses/MIT
+    name: PolyForm Noncommercial License 1.0.0
+    url: https://polyformproject.org/licenses/noncommercial/1.0.0
 servers:
   - url: https://api.firemud.com
-security: []
+security:
+  - bearerAuth: []
 components:
   securitySchemes:
     bearerAuth:
@@ -59,11 +60,32 @@ components:
           type: integer
         status:
           type: string
+    ResultStatus:
+      type: string
+      enum: [SUCCESS, ERROR]
+    ErrorDetail:
+      type: object
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+    RefreshRolesResponse:
+      type: object
+      properties:
+        status:
+          $ref: '#/components/schemas/ResultStatus'
+        data:
+          type: string
+          example: refreshed
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
 paths:
   /ping:
     get:
       summary: Health check endpoint
       operationId: ping
+      security: []
       responses:
         '200':
           description: Pong response
@@ -99,6 +121,10 @@ paths:
                     $ref: '#/components/schemas/GameInstanceDto'
         '400':
           description: Invalid request
+        '401':
+          description: Missing or invalid Bearer JWT
+        '403':
+          description: Caller lacks a privileged role under the current predicate
   /sessions/{sessionId}/stop:
     post:
       summary: Stop a running session
@@ -121,6 +147,10 @@ paths:
                     $ref: '#/components/schemas/GameInstanceDto'
         '400':
           description: Invalid session ID
+        '401':
+          description: Missing or invalid Bearer JWT
+        '403':
+          description: Caller lacks a privileged role under the current predicate
   /sessions/{sessionId}/restart:
     post:
       summary: Restart a stopped session
@@ -143,3 +173,38 @@ paths:
                     $ref: '#/components/schemas/GameInstanceDto'
         '400':
           description: Invalid session ID
+        '401':
+          description: Missing or invalid Bearer JWT
+        '403':
+          description: Caller lacks a privileged role under the current predicate
+  /sessions/{sessionId}/refresh-roles:
+    post:
+      summary: Acknowledge a session role refresh request
+      description: >-
+        Current behavior requires a privileged Bearer JWT and returns an
+        acknowledgement (`data: refreshed`); the service currently only logs
+        the request and does not refresh session roles. Target behavior is an
+        internal_workload route requiring the exact mTLS workload identity of
+        the allowlisted Logging & Admin Service, with no end-user token. That
+        target mTLS authorization and role-refresh mutation are not implemented
+        yet.
+      operationId: refreshRoles
+      parameters:
+        - in: path
+          name: sessionId
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: ApiResponse acknowledgement; current implementation is a no-op
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefreshRolesResponse'
+        '400':
+          description: Invalid session ID
+        '401':
+          description: Missing or invalid Bearer JWT
+        '403':
+          description: Caller lacks a privileged role under the current predicate

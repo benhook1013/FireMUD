@@ -1,15 +1,26 @@
 openapi: 3.0.3
 info:
   title: Spring Cloud Gateway API
-  description: API for dynamic route management
+  description: >-
+    Current REST route mutations require a Bearer JWT accepted by the gateway's
+    privileged-role predicate, which currently accepts global or tenant-scoped
+    privileged roles; global-role-only enforcement is implementation drift.
+    The target management contract requires exact operator authentication and
+    global privileged authorization on an internal dev/test-only surface.
   version: 1.0.0
   license:
-    name: MIT
-    url: https://opensource.org/licenses/MIT
+    name: PolyForm Noncommercial License 1.0.0
+    url: https://polyformproject.org/licenses/noncommercial/1.0.0
 servers:
   - url: https://api.firemud.com
-security: []
+security:
+  - bearerAuth: []
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
   schemas:
     GatewayRoute:
       type: object
@@ -31,6 +42,7 @@ paths:
     get:
       summary: Health check
       operationId: ping
+      security: []
       responses:
         '200':
           description: Pong response
@@ -66,6 +78,10 @@ paths:
                     $ref: '#/components/schemas/GatewayRoute'
         '400':
           description: Invalid route configuration
+        '401':
+          description: Missing or invalid Bearer JWT
+        '403':
+          description: Caller lacks a privileged role under the current predicate
   /routes/{routeId}:
     delete:
       summary: Remove a gateway route
@@ -89,3 +105,7 @@ paths:
                     example: removed
         '400':
           description: Invalid route ID
+        '401':
+          description: Missing or invalid Bearer JWT
+        '403':
+          description: Caller lacks a privileged role under the current predicate

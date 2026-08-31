@@ -276,6 +276,7 @@ Validation precedence is fixed: first parse every checked queue row and validate
 | [ADR 0179](./adr-0179-firemud-managed-creator-commerce-boundary.md) | Accepted | `AA-1.4` | `AA-1.5`, `PO-1.3`, `EA-3.3` | Future FireMUD-managed creator-commerce boundary without marketplace enablement |
 | [ADR 0180](./adr-0180-account-owned-hosted-terms-acceptance-gate.md) | Accepted | `AA-1.3` | `AA-1.5`, `AR-1.1`, `AR-1.4`, `AR-1.5`, `EA-3.2`, `PO-1.3`, `SF-2.3` | Account-owned hosted-terms catalog, acceptance evidence, and official-hosted creator mutation gate |
 | [ADR 0181](./adr-0181-changed-hosted-terms-decline-and-existing-content-continuity.md) | Accepted | `PO-1.3` | `AA-1.3`, `AA-1.4`, `AA-1.5`, `AR-1.1`, `AR-1.4`, `AR-1.5`, `EA-3.2`, `SF-2.3` | Changed hosted-terms decline, prior-terms continuity, lifecycle-reducing access, and finite transition |
+| [ADR 0182](./adr-0182-deterministic-effect-id-allocation-and-replay-binding.md) | Proposed - Pending Human Review | `GR-1.2` | `GR-1.4`, `GR-4.1`, `AS-1.2`, `AS-1.4`, `SF-1.4`, `SF-2.3`, `PO-4.2` | Pending deterministic command-plan and generated-child EffectId allocation and replay binding |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../../product/capability-taxonomy.md).
 
