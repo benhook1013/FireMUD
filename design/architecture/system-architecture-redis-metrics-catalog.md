@@ -12,7 +12,7 @@ Implementation status: the canonical mode-aware tick execution/TTL/ratio familie
 - `redis_coordination_tail_loss_ms{scope}` (current compatibility exposure series; `scope` is a bounded Redis deployment bucket)
 - `redis_unreplicated_write_window_ms{scope}` (target measured exposure, pre-aggregated as the worst eligible candidate within the bounded deployment/environment/ruleset scope)
 - `redis_unreplicated_write_window_slo_breached{scope}` (target measured-SLO breach series)
-- `redis_coordination_tail_loss_budget_ms` (current compatibility recording rule; one deployment-wide bounded scalar equal to the maximum `clamp_min(2 * tick_interval_ms, 2000)` across `tick_interval_ms{scope_class}`)
+- `redis_coordination_tail_loss_budget_ms{scope}` (current compatibility recording rule; one bounded scalar per Coordination Redis deployment/environment/ruleset scope equal to the maximum `clamp_min(2 * tick_interval_ms, 2000)` across that scope's `tick_interval_ms{scope,scope_class}` series)
 - `redis_coordination_tail_loss_slo_breached{scope}` (current compatibility recording rule comparing each bounded exposure scope with that scalar budget, not the target measured-SLO breach)
 - `redis_replication_lag_ms{redis_role,scope}`
 - `redis_replication_offset_lag_bytes{redis_role,scope}`
@@ -26,7 +26,7 @@ Implementation status: the canonical mode-aware tick execution/TTL/ratio familie
   - `redis_tick_timers_over_budget_total`
   - `redis_session_payload_oversized_total`
 
-For measured exposure, replication-lag, replication-offset, and dashboard-comparison metrics, bounded `scope` consistently identifies one Coordination Redis deployment together with its canonical environment class and active configuration/ruleset. `redis_unreplicated_write_window_ms{scope}` and the exported replication metrics are pre-aggregated worst-eligible-candidate values within that scope. Because no replica identity label is exported, these metrics do not identify individual candidates or replicas; exact candidate and node IDs remain control-plane and structured-log evidence. The current compatibility budget is deliberately deployment-wide: `redis_coordination_tail_loss_budget_ms` has no `scope` or `scope_class` label and is the maximum cadence-derived budget across the bounded `tick_interval_ms{scope_class}` classes. `redis_coordination_tail_loss_slo_breached{scope}` compares each bounded exposure scope with that scalar; `scope` and `scope_class` are not aliases. The target measured-SLO breach series is distinct from this current compatibility recording rule, which is derived from the tick-based exposure budget.
+For measured exposure, replication-lag, replication-offset, and dashboard-comparison metrics, bounded `scope` consistently identifies one Coordination Redis deployment together with its canonical environment class and active configuration/ruleset. `redis_unreplicated_write_window_ms{scope}` and the exported replication metrics are pre-aggregated worst-eligible-candidate values within that scope. Because no replica identity label is exported, these metrics do not identify individual candidates or replicas; exact candidate and node IDs remain control-plane and structured-log evidence. The current compatibility budget is deployment-scoped: `redis_coordination_tail_loss_budget_ms{scope}` is the maximum cadence-derived budget across the matching `tick_interval_ms{scope,scope_class}` classes for each bounded deployment/environment/ruleset scope. `redis_coordination_tail_loss_slo_breached{scope}` joins on that same `scope`; `scope` and `scope_class` are not aliases. The target measured-SLO breach series is distinct from this current compatibility recording rule, which is derived from the tick-based exposure budget.
 
 ## Session Schema and Cleanup Metrics
 
@@ -37,7 +37,7 @@ For measured exposure, replication-lag, replication-offset, and dashboard-compar
 
 ## Coordination and Tick Metrics
 
-- `tick_interval_ms{scope_class}`
+- `tick_interval_ms{scope,scope_class}`
 - `tick_execution_time_ms_bucket{scope_class,tick_mode,le}`
 - `tick_execution_time_ms_p95{scope_class,tick_mode}`
 - `tick_execution_time_ms_p99{scope_class,tick_mode}`

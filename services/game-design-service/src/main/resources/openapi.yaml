@@ -57,6 +57,7 @@ components:
           nullable: true
         templateReferencePhase:
           type: string
+          nullable: true
           enum:
             - ENFORCED
             - LEGACY

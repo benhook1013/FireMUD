@@ -192,6 +192,38 @@ if actual_slash_anchor != expected_slash_anchor:
 
 rules_path = root / "k8s/monitoring/prometheus-rules-firemud.yaml"
 valid_text = rules_path.read_text(encoding="utf-8")
+rules_doc = yaml.safe_load(valid_text)
+recording_rules = {
+    rule["record"]: rule
+    for group in rules_doc["spec"]["groups"]
+    for rule in group["rules"]
+    if "record" in rule
+}
+tail_loss_budget_expr = recording_rules["redis_coordination_tail_loss_budget_ms"]["expr"]
+tail_loss_breach_expr = recording_rules["redis_coordination_tail_loss_slo_breached"]["expr"]
+if "max by (scope)" not in tail_loss_budget_expr:
+    raise AssertionError(
+        "tail-loss compatibility budget must be scoped per bounded deployment"
+    )
+if "scalar(redis_coordination_tail_loss_budget_ms)" in tail_loss_breach_expr:
+    raise AssertionError(
+        "tail-loss compatibility breach must not compare against a global scalar"
+    )
+if "> on (scope)" not in tail_loss_breach_expr:
+    raise AssertionError(
+        "tail-loss compatibility breach must join its deployment-scoped budget on scope"
+    )
+metrics_catalog_text = (
+    root / "design/architecture/system-architecture-redis-metrics-catalog.md"
+).read_text(encoding="utf-8")
+if "redis_coordination_tail_loss_budget_ms{scope}" not in metrics_catalog_text:
+    raise AssertionError(
+        "Redis metrics catalog must document a deployment-scoped tail-loss budget"
+    )
+if "tick_interval_ms{scope,scope_class}" not in metrics_catalog_text:
+    raise AssertionError(
+        "Redis metrics catalog must bind tick cadence to the deployment scope"
+    )
 if "ObservabilityDeadmanHeartbeatStale" in valid_text:
     raise AssertionError(
         "shared Prometheus rules must not install the profile-dependent deadman alert"

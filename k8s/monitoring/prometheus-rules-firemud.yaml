@@ -44,10 +44,13 @@ spec:
             )
         - record: redis_coordination_tail_loss_budget_ms
           expr: |
-            max(clamp_min(2 * tick_interval_ms, 2000))
+            max by (scope) (
+              clamp_min(2 * tick_interval_ms, 2000)
+            )
         - record: redis_coordination_tail_loss_slo_breached
           expr: |
-            redis_coordination_tail_loss_ms{scope=~".+"} > scalar(redis_coordination_tail_loss_budget_ms)
+            redis_coordination_tail_loss_ms{scope=~".+"}
+              > on (scope) redis_coordination_tail_loss_budget_ms{scope=~".+"}
     - name: firemud.recording.backup
       rules:
         - record: backup_pipeline_recent_backup_slo_breached

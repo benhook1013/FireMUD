@@ -22,8 +22,8 @@ Example alert for Coordination Redis tail-loss SLO breaches:
 
 This assumes that the canonical recording rules expose:
 
-- `redis_coordination_tail_loss_budget_ms` – one deployment-wide bounded scalar equal to the maximum `clamp_min(2 * tick_interval_ms, 2000)` across `tick_interval_ms{scope_class}`.
-- `redis_coordination_tail_loss_slo_breached{scope}` – derived breach indicator comparing each bounded exposure scope with that scalar; `scope` and `scope_class` are separate labels and are not aliased.
+- `redis_coordination_tail_loss_budget_ms{scope}` – one bounded scalar per Coordination Redis deployment/environment/ruleset scope equal to the maximum `clamp_min(2 * tick_interval_ms, 2000)` across that scope's `tick_interval_ms{scope,scope_class}` series.
+- `redis_coordination_tail_loss_slo_breached{scope}` – derived breach indicator joining each bounded exposure scope with its matching scoped budget on `scope`; `scope` and `scope_class` are separate labels and are not aliased.
 
 Example alerts for additional Coordination Redis core red lines from the Redis metrics contract:
 
