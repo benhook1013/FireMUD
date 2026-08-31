@@ -13,16 +13,16 @@ spec:
           expr: |
             histogram_quantile(
               0.95,
-              sum by (scope, le) (rate(tick_execution_time_ms_bucket[5m]))
+              sum by (scope_class, le) (rate(tick_execution_time_ms_bucket[5m]))
             )
         - record: tick_execution_time_ms_p99
           expr: |
             histogram_quantile(
               0.99,
-              sum by (scope, le) (rate(tick_execution_time_ms_bucket[5m]))
+              sum by (scope_class, le) (rate(tick_execution_time_ms_bucket[5m]))
             )
         - record: tick_execution_safety_ratio_p99
-          expr: tick_execution_time_ms_p99 / tick_lock_ttl_ms
+          expr: tick_execution_time_ms_p99 / on (scope_class) tick_lock_ttl_ms
         - record: command_latency_stage_ms_p99_5m
           expr: |
             histogram_quantile(
@@ -33,10 +33,10 @@ spec:
             )
         - record: redis_coordination_tail_loss_budget_ms
           expr: |
-            clamp_min(2000, 2 * tick_interval_ms)
+            max(clamp_min(2 * tick_interval_ms, 2000))
         - record: redis_coordination_tail_loss_slo_breached
           expr: |
-            redis_coordination_tail_loss_ms > on (scope) redis_coordination_tail_loss_budget_ms
+            redis_coordination_tail_loss_ms{scope=~".+"} > scalar(redis_coordination_tail_loss_budget_ms)
     - name: firemud.recording.backup
       rules:
         - record: backup_pipeline_recent_backup_slo_breached
@@ -201,7 +201,7 @@ spec:
     - name: firemud.alerts.redis
       rules:
         - alert: RedisCoordinationTailLossSLOBreached
-          expr: redis_coordination_tail_loss_slo_breached > 0
+          expr: redis_coordination_tail_loss_slo_breached{scope=~".+"} > 0
           for: 5m
           labels:
             service: redis-coordination
@@ -210,7 +210,7 @@ spec:
             runbook: design/architecture/system-architecture-redis-incident-runbook.md#coordination-aof-tail-loss-slo-breach
           annotations:
             summary: Coordination Redis tail-loss SLO breached
-            description: Tail-loss exceeds the 1–2s envelope for one or more regions.
+            description: Tail-loss exceeds the cadence-derived envelope for one or more bounded Redis deployment scopes; resolve affected regions from authoritative runtime-health and control-plane records.
         - alert: RedisLuaScriptLoadFailures
           expr: increase(redis_lua_script_load_failures_total[5m]) >= 1
           for: 5m
@@ -270,7 +270,7 @@ spec:
     - name: firemud.alerts.tick
       rules:
         - alert: TickExecutionUnsafeRatio
-          expr: tick_execution_safety_ratio_p99 > 0.75
+          expr: tick_execution_safety_ratio_p99{scope_class=~".+"} > 0.75
           for: 10m
           labels:
             service: game-session-service
@@ -279,9 +279,9 @@ spec:
             runbook: design/architecture/system-architecture-tick-incident-runbook.md#stalled-tick-region
           annotations:
             summary: Tick execution time approaching unsafe fraction of lock TTL
-            description: Tick p99 execution time is nearing or exceeding the configured lock TTL for one or more regions.
+            description: Tick p99 execution time is nearing or exceeding the configured lock TTL for one or more bounded scope-class rollups.
         - alert: TickEffectLedgerBacklog
-          expr: tick_effects_pending_total > 0 and (time() - tick_effects_pending_oldest_scheduled_timestamp_seconds) > 300
+          expr: tick_effects_pending_total{scope_class=~".+"} > 0 and (time() - tick_effects_pending_oldest_scheduled_timestamp_seconds{scope_class=~".+"}) > 300
           for: 10m
           labels:
             service: game-session-service
@@ -290,9 +290,9 @@ spec:
             runbook: design/architecture/system-architecture-tick-incident-runbook.md#stuck-tick-effect-ledger-entries
           annotations:
             summary: Tick effect ledger has pending rows beyond grace window
-            description: One or more regions have SCHEDULED tick effects that have not converged to APPLIED or ABANDONED within the expected grace window.
+            description: One or more bounded scope-class rollups have SCHEDULED tick effects that have not converged to APPLIED or ABANDONED within the expected grace window.
         - alert: TickCleanupLagHigh
-          expr: tick_cleanup_lag_ms > 15000
+          expr: tick_cleanup_lag_ms{scope_class=~".+"} > 15000
           for: 10m
           labels:
             service: game-session-service
@@ -301,9 +301,9 @@ spec:
             runbook: design/architecture/system-architecture-tick-incident-runbook.md#durable-commitcoordination-cleanup-divergence
           annotations:
             summary: Tick durable commit and coordination cleanup are diverging
-            description: Cleanup lag from durable commit to coordination-cleared is elevated for one or more regions; investigate replay pressure and coordination cleanup behavior.
+            description: Cleanup lag from durable commit to coordination-cleared is elevated for one or more bounded scope-class rollups; investigate replay pressure and coordination cleanup behavior.
         - alert: TickReplayFairnessStarved
-          expr: tick_effects_pending_total > 0 and increase(tick_effects_replay_batches_total[15m]) == 0
+          expr: tick_effects_pending_total{scope_class=~".+"} > 0 and increase(tick_effects_replay_batches_total{scope_class=~".+"}[15m]) == 0
           for: 15m
           labels:
             service: game-session-service
@@ -311,10 +311,10 @@ spec:
             owner: gameplay
             runbook: design/architecture/system-architecture-tick-incident-runbook.md#stuck-tick-effect-ledger-entries
           annotations:
-            summary: Tick replay controller is not servicing pending regions fairly
-            description: One or more regions still have pending ledger work, but replay batches are not being executed for those regions.
+            summary: Tick replay controller is not servicing pending scope classes fairly
+            description: One or more bounded scope-class rollups still have pending ledger work, but replay batches are not being executed for those scope classes.
         - alert: TickReplayScanLagHigh
-          expr: tick_effects_replay_scan_lag_ms > 300000
+          expr: tick_effects_replay_scan_lag_ms{scope_class=~".+"} > 300000
           for: 15m
           labels:
             service: game-session-service
@@ -323,7 +323,7 @@ spec:
             runbook: design/architecture/system-architecture-tick-incident-runbook.md#stuck-tick-effect-ledger-entries
           annotations:
             summary: Tick replay scan lag indicates controller starvation
-            description: Replay scan lag is growing for one or more regions even though the replay controller remains active elsewhere.
+            description: Replay scan lag is growing for one or more bounded scope-class rollups even though the replay controller remains active elsewhere.
 
     - name: firemud.alerts.backup
       rules:

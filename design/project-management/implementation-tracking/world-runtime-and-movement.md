@@ -14,6 +14,7 @@ This tracker is the permanent reader-facing implementation record for world runt
 - `AR-3.1`: [ADR 0123](../../architecture/decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md) records the database lifecycle row/epoch and Temporal coordination boundary. Existing prepare/activate/terminate caveats, including blocking calls and missing stages, remain active gaps.
 - `GR-2.1` / `SF-2.3`: The synchronous termination seam returns a `TERMINATED` snapshot before checking a supplied `terminationRequestId`; mismatched terminal retries therefore are not fail-closed, and exact identity/conflict proof remains incomplete. See [World Management Runtime and Data](../../architecture/microservices/world-management-service/runtime-and-data.md#implementation-status).
 - `GR-2.1` / `SF-2.1`: Versioned topology and spawn schemas carry tenant/version columns but use scalar parent foreign keys, so the database does not enforce child/parent scope equality. Composite ownership enforcement (or an equivalent owner-local guard) and database readback proof remain incomplete; this is separate from sentinel-default and hierarchy/version-graph backfill drift. See [World Management Runtime and Data](../../architecture/microservices/world-management-service/runtime-and-data.md#implementation-status).
+
 These links add decision provenance only; they do not upgrade world runtime, lifecycle, or Draft mutation status.
 
 ## Capability Status

@@ -8,7 +8,7 @@ Example alert for Coordination Redis tail-loss SLO breaches:
 
 ```yaml
 - alert: RedisCoordinationTailLossSLOBreached
-  expr: redis_coordination_tail_loss_slo_breached > 0
+  expr: redis_coordination_tail_loss_slo_breached{scope=~".+"} > 0
   for: 5m
   labels:
     service: redis-coordination
@@ -17,13 +17,13 @@ Example alert for Coordination Redis tail-loss SLO breaches:
     runbook: design/architecture/system-architecture-redis-incident-runbook.md#coordination-aof-tail-loss-slo-breach
   annotations:
     summary: Coordination Redis tail-loss SLO breached
-    description: Tail-loss exceeds the 1–2s envelope for one or more regions. See the Redis incident runbook for reset guidance.
+    description: Tail-loss exceeds the cadence-derived envelope for one or more bounded Redis deployment scopes; resolve affected regions from authoritative runtime-health and control-plane records. See the Redis incident runbook for reset guidance.
 ```
 
 This assumes that the canonical recording rules expose:
 
-- `redis_coordination_tail_loss_budget_ms{scope}` – dynamic budget computed as `max(2000, 2 * tick_interval_ms)` for an approved bounded gameplay scope.
-- `redis_coordination_tail_loss_slo_breached{scope}` – derived breach indicator based on the dynamic budget.
+- `redis_coordination_tail_loss_budget_ms` – one deployment-wide bounded scalar equal to the maximum `clamp_min(2 * tick_interval_ms, 2000)` across `tick_interval_ms{scope_class}`.
+- `redis_coordination_tail_loss_slo_breached{scope}` – derived breach indicator comparing each bounded exposure scope with that scalar; `scope` and `scope_class` are separate labels and are not aliased.
 
 Example alerts for additional Coordination Redis core red lines from the Redis metrics contract:
 

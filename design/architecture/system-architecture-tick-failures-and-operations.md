@@ -128,7 +128,7 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
 
 To keep replay-controller alerting and runbooks deterministic, the replay path uses an explicit convergence budget:
 
-- `tick_effects_replay_convergence_budget_seconds{scope_class}` is the canonical emitted budget for each active region-sized gameplay scope.
+- `tick_effects_replay_convergence_budget_seconds{scope_class}` is the canonical emitted budget for each bounded gameplay scope-class rollup; it does not identify an individual region.
 - Bootstrap alert only (not a production acceptance formula):
   - `replay_convergence_budget_seconds = max(60, ceil(20 * tick_interval_ms / 1000))`
   - The numeric `60s` floor remains provisional until measured backlog, scan/claim, throughput, owner latency, and fault-injection evidence establishes the environment budget.
@@ -137,16 +137,16 @@ To keep replay-controller alerting and runbooks deterministic, the replay path u
   - `tick_effects_replay_slo_breached{scope_class}` when oldest pending age exceeds the emitted convergence budget
   - `tick_effects_replay_starved{scope_class}` when `tick_effects_pending_total > 0` but replay batches do not advance for longer than the emitted convergence budget
 - Alerting guidance:
-  - Warning/P1 when `tick_effects_replay_slo_breached` is sustained beyond one budget window for an otherwise running region.
-  - Escalate the region to `DEGRADED` or `STALLED` and require scoped remediation when the oldest pending age exceeds multiple budget windows or when `tick_effects_replay_starved` remains true.
+  - Warning/P1 when `tick_effects_replay_slo_breached` is sustained beyond one budget window for a bounded scope-class rollup; resolve the exact region and its current state from authoritative runtime-health evidence.
+  - Use the rollup as an escalation trigger when the oldest pending age exceeds multiple budget windows or when `tick_effects_replay_starved` remains true. Only the authoritative runtime-health/control-plane record may classify an exact region as `DEGRADED` or `STALLED` and authorize scoped remediation.
   - The emitted budget is evidence-derived from admitted/recovery backlog distributions, durable scan/claim latency, fair worker throughput, owner response/error rates, and representative fault-injection capacity. `max(60 seconds, 20 ticks)` is only a provisional bootstrap alert, not a production acceptance guarantee; environment overlays must publish the accepted numeric budget rather than hiding it inside PromQL.
 
 Canonical alert names for shared rulesets:
 
 - `TickEffectsReplaySloBreached`
-  - Fires when `tick_effects_replay_slo_breached` is sustained and the region has exceeded its emitted convergence budget.
+  - Fires when `tick_effects_replay_slo_breached{scope_class}` is sustained for a bounded scope-class rollup; exact region health and actionability come from authoritative runtime-health/control-plane lookup.
 - `TickEffectsReplayStarved`
-  - Fires when `tick_effects_replay_starved` is sustained, indicating the replay controller is not servicing a region with pending work.
+  - Fires when `tick_effects_replay_starved{scope_class}` is sustained, indicating the replay controller is not servicing a bounded scope-class rollup with pending work.
 
 Environment overlays may tune durations or routing, but they should preserve these alert names and the shared labels (`service`, `severity`, `owner`, `runbook`) so Logging & Admin and incident runbooks remain stable.
 
@@ -309,7 +309,7 @@ The ledger makes replay visible operationally via metrics such as:
 - `tick_effects_replayed_total{scope_class}` (or, where available, `tick_effect_outcome_total{outcome="replay_ok"}` for service-level detail)
 - `tick_effects_pending_oldest_scheduled_timestamp_seconds{scope_class}` – helper metric tracking the oldest `created_at` among SCHEDULED rows for each approved bounded gameplay scope; `created_at` is diagnostic age input only, never an ordering key.
 - `tick_effects_pending_oldest_age_seconds{scope_class}` – recording rule for the current age of the oldest `SCHEDULED` row.
-- `tick_effects_replay_convergence_budget_seconds{scope_class}` – emitted budget for how long replay may take before the scope is considered unhealthy.
+- `tick_effects_replay_convergence_budget_seconds{scope_class}` – emitted budget for detecting replay pressure in the bounded scope-class rollup; it does not classify an individual region as unhealthy.
 - `tick_effects_replay_slo_breached{scope_class}` – recording rule indicating oldest pending age has exceeded the emitted budget.
 - `tick_effects_replay_starved{scope_class}` – recording rule indicating replay batches are not advancing despite pending work.
 - `tick_durable_commit_total{scope_class}` – count of ticks that reached the durable commit boundary.
@@ -319,8 +319,8 @@ The ledger makes replay visible operationally via metrics such as:
 Alerts fire when:
 
 - Pending (`SCHEDULED`) counts remain above thresholds for longer than a tick window, or
-- The abandoned ratio grows unexpectedly for a region or effect type, or
-- The oldest SCHEDULED effect in a region exceeds the emitted replay budget as indicated by `tick_effects_pending_oldest_age_seconds` and `tick_effects_replay_slo_breached`.
+- The abandoned ratio grows unexpectedly for a bounded scope-class rollup or effect type, or
+- The oldest SCHEDULED effect in a bounded scope-class rollup exceeds the emitted replay budget as indicated by `tick_effects_pending_oldest_age_seconds{scope_class}` and `tick_effects_replay_slo_breached{scope_class}`; exact region diagnosis uses authoritative runtime-health/control-plane lookup.
 
 These metrics complement the Redis- and lock-level health metrics described in the Redis architecture and operations docs.
 
@@ -328,8 +328,8 @@ Operators diagnosing stalled regions, replay storms, or ledger backlogs should u
 
 Replay fairness is part of the operational contract, not just an implementation detail:
 
-- Dashboards and alerts should show regions where `tick_effects_pending_total > 0` but `tick_effects_replay_batches_total` is not increasing over the same interval.
-- Sustained `tick_effects_replay_scan_lag_ms` growth for a subset of regions should be treated as replay-controller starvation, even if a hot region is still making progress.
+- Dashboards and alerts should show bounded scope-class rollups where `tick_effects_pending_total{scope_class} > 0` but `tick_effects_replay_batches_total{scope_class}` is not increasing over the same interval; exact affected regions require authoritative runtime-health/control-plane lookup.
+- Sustained `tick_effects_replay_scan_lag_ms{scope_class}` growth for a scope-class rollup should be treated as replay-controller starvation, even if a hot region is still making progress; it does not identify an individual region.
 
 ### Ledger Replay Controller
 
@@ -347,7 +347,7 @@ Responsibility for driving ledger rows to a terminal outcome lies with the Game 
 - For incident handling, the same replay logic is exposed via coordination tooling (for example, an admin CLI or maintenance API) so operators can explicitly drive convergence for a selected complete `(tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch)` after authoritative enumeration and exact validation. Incomplete or caller-supplied namespace/scope evidence must fail closed before any replay or maintenance mutation when guided by runbooks in the Redis operations docs.
 - Convergence SLO contract (required):
   - `SCHEDULED` rows should converge to terminal `APPLIED`/`ABANDONED` within the emitted `tick_effects_replay_convergence_budget_seconds` window when evidence permits; explicitly marked inconclusive/reconciliation-required work—including current-epoch timeout or retry-exhaustion cases—remains non-terminal and is escalated under the applicable reconciliation policy.
-  - If oldest `SCHEDULED` age exceeds the emitted budget for a region, the region is escalated to `DEGRADED`/`STALLED` and incident runbooks require scoped remediation.
+  - If oldest `SCHEDULED` age exceeds the emitted budget for a bounded scope-class rollup, incident runbooks require exact-scope enumeration and authoritative runtime-health lookup. The rollup does not itself classify or authorize a region as `DEGRADED`/`STALLED`.
 
 ### Inconclusive Old-Epoch Reconciliation Policy
 
@@ -523,7 +523,7 @@ Endpoints participating in tick-driven effects should also emit a small, standar
 
 This metric provides a cross-service view of how often replay paths are exercised and highlights handlers that are not honoring the canonical idempotency contract.
 
-All tick metrics use bounded labels only. `scope_class` is a controlled enum such as `region`, `game_instance`, `tenant`, or `cluster`; it is not a serialized scope or an identifier. `service`, `effect_type`, `outcome`, and `reason` are also controlled vocabularies. Exact `<tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch, tickId>` diagnosis comes from the durable tick-batch/ledger and runtime control-plane records, joined by `tick_batch_id`, `executor_fence`, `EffectId`, or an approved trace/correlation ID. Prometheus labels must never carry those raw tuple values.
+All tick metrics use bounded labels only. `scope_class` is a controlled enum such as `region`, `game_instance`, `tenant`, or `cluster`; it is not a serialized scope or an identifier, and even `scope_class="region"` is a rollup across the region class rather than an individual region. `service`, `effect_type`, `outcome`, and `reason` are also controlled vocabularies. Class-level Prometheus signals are for detection and escalation only: they cannot identify or authoritatively set an individual region's health or actionability. Exact `<tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch, tickId>` diagnosis and `RUNNING`/`DEGRADED`/`STALLED`/`PAUSED` actionability come from durable tick-batch/ledger and runtime-health/control-plane records, joined by `tick_batch_id`, `executor_fence`, `EffectId`, or an approved trace/correlation ID. Prometheus labels must never carry those raw tuple values.
 
 ### Side-Effect Categories and Idempotency Strategies
 

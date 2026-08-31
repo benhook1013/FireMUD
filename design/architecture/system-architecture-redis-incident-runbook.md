@@ -180,11 +180,9 @@ Alerts based on `redis_coordination_tail_loss_ms` should follow the conventions 
    - Automation consumers log deserialization errors or unknown `schemaVersion` values for `automation:queue:{tenantInstanceTag}:*` keys.
    - Metrics show sustained failures processing automation work items.
 2. **Decide**
-   - If automation queues are purely best-effort, consider treating affected items as lost and flushing the prefix.
-   - If the workflow requires guaranteed preservation, do not migrate from Redis queue contents; rebuild from the durable PostgreSQL trigger/effect tables and idempotent handlers.
+   - Treat the queue as a non-authoritative Cache/Rate-Limit projection. The current queue-prefix flush/rebuild path is supported: durable PostgreSQL `script_work_items` remain authoritative, and Redis contents are not migrated.
+   - Do not treat the reserved `automation:timer:{tenantRegionTag}` or `script-scheduler:{tenantRegionTag}:lastTickId` timer/checkpoint projections as available reset targets; they remain target-only and unavailable.
 3. **Act**
    1. Pause automation processing for the affected tenants or globally, depending on blast radius.
-   2. Choose one explicit remediation path:
-      - Best-effort path: flush `automation:queue:{tenantInstanceTag}:*` and restart consumers.
-      - Durable path: run the Automation rebuild workflow that re-enqueues from PostgreSQL-backed triggers/quotas, not from Redis queue payload migration.
+   2. Flush only the affected `automation:queue:{tenantInstanceTag}:*` prefix using the Cache/Rate-Limit reset procedure, then run Automation's bounded idempotent rebuild from durable PostgreSQL `script_work_items` in `PENDING_EVALUATION`. Stale `EVALUATING` rows are not executable queue pointers; they require owner reconciliation/reclaim under the scripting recovery contract, which remains an implementation gap.
    3. Resume automation processing and monitor error rates and queue depths until they stabilize.

@@ -101,9 +101,9 @@ Exact durations are deployment policy derived from declared retry, recovery, and
 When deciding **what** to scale, prefer signals tied to the tick model and Redis SLOs:
 
 - Tick duration vs budget (primary safety ratio):
-  - Watch `tick_execution_time_ms_p95` and `tick_execution_time_ms_p99` (recording rules derived from `tick_execution_time_ms_bucket`) relative to **lock TTLs** as described in `system-architecture-tick-concepts-and-invariants.md` (that is, `tick_execution_time_ms_p99 / tick_lock_ttl_ms`).
-  - Treat `tick_execution_time_ms_p99 / tick_lock_ttl_ms` as the primary safety ratio for tick runtime; regions that sustain ratios near `DEGRADED`/`STALLED` transition thresholds from the concepts doc should first reduce region density per Game Session instance or add Game Session replicas before changing tick cadence.
-  - For intuition, you may also track `tick_execution_time_ms_p99 / tick_interval_ms`, but decisions should be grounded in the TTL-based ratio because production `lock_ttl_ms` is the shared resolver's evidence-calibrated setting. The interval-based relationship is a bootstrap default only, not a production TTL derivation.
+  - Watch `tick_execution_time_ms_p95{scope_class}` and `tick_execution_time_ms_p99{scope_class}` (recording rules derived from `tick_execution_time_ms_bucket{scope_class,le}`) relative to **lock TTLs** as described in `system-architecture-tick-concepts-and-invariants.md` (that is, `tick_execution_time_ms_p99{scope_class} / tick_lock_ttl_ms{scope_class}`). These are bounded class-level rollups, not selectors for an individual region.
+  - Treat `tick_execution_time_ms_p99{scope_class} / tick_lock_ttl_ms{scope_class}` as the primary detection/escalation signal for tick runtime pressure. When a rollup sustains a ratio near the `DEGRADED`/`STALLED` thresholds, resolve the exact affected regions through control-plane/runtime-health evidence, then first reduce region density per Game Session instance or add Game Session replicas before changing tick cadence.
+  - For intuition, you may also track `tick_execution_time_ms_p99{scope_class} / tick_interval_ms{scope_class}`, but decisions should be grounded in the TTL-based ratio because production `lock_ttl_ms` is the shared resolver's evidence-calibrated setting. The interval-based relationship is a bootstrap default only, not a production TTL derivation.
   - Treat any `tick_interval_ms` change as a topology-level/runtime-contract change for the affected live `regionEpoch`, not as a harmless tuning knob. If cadence changes would alter timer ordering normalization, perform them with an epoch bump and timer re-derivation as required by the tick invariants.
   - Example: moving a live region from `100ms` cadence to `200ms` cadence requires pause, epoch bump, timer `due_tick_id` re-derivation, and resume on the new epoch; it is not an in-place tuning-only change.
 - Coordination-write exposure envelopes:
@@ -127,7 +127,7 @@ The exact safe limits for a deployment depend on hardware and tuning, but the fo
 
 - **Per-Game Session instance region density**
   - For tick intervals around `100–250ms`, start with **no more than 50–100 active regions** per Game Session pod.
-  - If `tick_execution_time_ms_p99 / tick_lock_ttl_ms` regularly approaches the canonical `DEGRADED`/`STALLED` thresholds from the tick concepts doc for any region, treat that as a signal to reduce regions per pod or increase pod resources before tightening tick cadence.
+  - If the class-level `tick_execution_time_ms_p99{scope_class} / tick_lock_ttl_ms{scope_class}` rollup regularly approaches the canonical `DEGRADED`/`STALLED` thresholds, use authoritative runtime-health records to identify the affected regions, then treat the pressure as a signal to reduce regions per pod or increase pod resources before tightening tick cadence.
 - **Per-region coordination load**
   - Aim for `tick:{tenantRegionTag}:pending` to represent at most **one in-flight tick** plus a small buffer of staged work; thousands of uncommitted effects for a single region should be treated as an anomaly and investigated.
   - Keep `timer:{tenantRegionTag}` and `retry:{tenantRegionTag}` counts per region within the “tens of thousands” envelope from the Redis operations doc; sustained higher values usually indicate that timers or retries are being used as data stores rather than scheduling hints.
@@ -156,7 +156,7 @@ This formula is a conservative first-pass input, not a complete capacity predict
 - process and node memory, garbage collection, network throughput, connection pressure, and required operating headroom.
 
 - Calibrate each term from load tests in the target profile (`dev_local`, `hobby_self_hosted`, `production_clustered`) and record:
-  - `p99_region_tick_ms` from `tick_execution_time_ms_p99`.
+  - `p99_region_tick_ms` from load-test measurements and exact per-region runtime-health evidence; the bounded `tick_execution_time_ms_p99{scope_class}` rollup is corroborating pressure only and cannot identify a region’s p99.
   - `p99_remote_drain_ms` from remote follow-up lag/drain metrics.
   - `p99_replay_overhead_ms` from replay-controller and tick replay metrics when the replay controller and those metrics are implemented and emitted.
 - PostgreSQL capacity inputs are required alongside the pod cost model. Load tests and environment docs should record at minimum:

@@ -26,7 +26,7 @@ Bounded metrics identify the operational bucket (for example, stalled, replay pr
 
 Canonical API and workflow scope names in this runbook use `tenantId`, `gameInstanceId`, `playableStateNamespaceId`, `playableStateScope`, `regionId`, and `regionEpoch`. SQL and storage examples may use `tenant_id`, `game_instance_id`, `playable_state_namespace_id`, `playable_state_scope`, `region_id`, and `region_epoch`; these are aliases for the same fields, not different scopes.
 
-Prometheus labels in this runbook are bounded categories only. `scope_class` identifies a controlled bucket such as `region`, `game_instance`, `tenant`, or `cluster`; it never contains a raw identifier. Operators resolve the exact tuple and current epoch/fence from durable tick-batch/ledger and control-plane records before taking action. Metrics select the incident family; they do not establish which game instance or region is authoritative.
+Prometheus labels in this runbook are bounded categories only. `scope_class` is one of the controlled aggregation classes `region`, `game_instance`, `tenant`, or `cluster`; it never contains a raw identifier or identifies an individual region. Operators resolve the exact tuple and current epoch/fence from durable tick-batch/ledger and control-plane records before taking action. Metrics select the incident family; they do not establish which game instance or region is authoritative.
 
 ## Incident Types
 
@@ -49,7 +49,7 @@ Normal incident escalation groups by `<tenantId, gameInstanceId, playableStateNa
 - Use `tick_execute` / `tick_apply_effect` traces only when the environment advertises and proves the named workflow-tracing capability. The approximately 1% value is only a calibration seed for high-volume entry paths, not a universal sampling rule or correctness boundary; use that seed only when the named capability is advertised and proven. Otherwise do not use tracing or the calibration seed; no explicit disable action is required.
 - Apply temporary service-scoped sampling escalation only when that control is advertised and proved, with a positive TTL/lease, durable rollback/reconciliation that survives operator loss, safe policy reload/rollback, the exact affected service/workflow scope, incident identity, start time, volume budget, automatic expiry, recorded completion, and verified reversion. Remove the elevated policy automatically at the declared deadline. If removal, reload, or rollback fails, the expired elevated configuration is not terminal “last valid” state: continue durable reconciliation, use an emergency disable-to-baseline path when available (with safe reload/rollback and verification), and keep completion pending until measured baseline sampling is restored and proven.
 - Use collector tail-sampling by the exact `tenantId`/`gameInstanceId`/`playableStateNamespaceId`/`playableStateScope`/`regionId`/`regionEpoch` tuple only when the environment advertises and proves scoped escalation; require a positive TTL/lease, durable rollback/reconciliation that survives operator loss, safe policy reload/rollback, and record the exact scope, incident identity, start time, volume budget, automatic expiry, completion, and verified reversion. Remove the policy automatically at the declared deadline. If removal, reload, or rollback fails, the expired elevated policy is not terminal “last valid” state: continue durable reconciliation, use an emergency disable-to-baseline path when available (with safe reload/rollback and verification), and keep completion pending until measured baseline sampling is restored and proven.
-- If the relevant capability is absent or traces remain unavailable, continue with metrics and logs and proceed with region/tenant reset decisions using runbook thresholds.
+- If the relevant capability is absent or traces remain unavailable, continue with metrics and logs and proceed with region/tenant reset decisions using authoritative runtime-health evidence plus runbook thresholds.
 - Missing sampled traces are not evidence that a tick/effect did not execute.
 
 ## Stalled Tick Region
@@ -57,8 +57,8 @@ Normal incident escalation groups by `<tenantId, gameInstanceId, playableStateNa
 ### Detect (Stalled tick region)
 
 - Alerts fire on tick health, for example:
-  - `tick_status{scope_class,status="STALLED"}` or `tick_status{scope_class,status="DEGRADED"}` being `1` for a sustained window.
-  - `tick_execution_time_ms_p95{scope_class}` / `tick_execution_time_ms_p99{scope_class}` ratios vs `tick_lock_ttl_ms{scope_class}` exceeding the degraded thresholds described in `system-architecture-tick-concepts-and-invariants.md`.
+  - `tick_status{scope_class,status="STALLED"}` or `tick_status{scope_class,status="DEGRADED"}` being `1` for a sustained window; this is a bounded class-level detection/escalation rollup, not an individual-region status.
+  - `tick_execution_time_ms_p95{scope_class}` / `tick_execution_time_ms_p99{scope_class}` ratios vs `tick_lock_ttl_ms{scope_class}` exceeding the degraded thresholds described in `system-architecture-tick-concepts-and-invariants.md`; these ratios identify pressure for investigation, not the authoritative region or action.
 - Redis coordination metrics and dashboards show:
   - A region holding `tick-executor-lease:{tenantRegionTag}` for longer than expected without advancing `tickId`.
   - Growing `tick_retry_queue_depth{scope_class}` or `tick_command_queue_depth{scope_class}` for the affected `<tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch>`.
@@ -68,11 +68,10 @@ Normal incident escalation groups by `<tenantId, gameInstanceId, playableStateNa
 
 ### Decide (Stalled tick region)
 
-- If the stall is brief and metrics already show recovery (status returns to `RUNNING`, queues drain, execution time ratios return to healthy ranges), continue to monitor without intervention.
-- If the region remains stalled or degraded long enough that the shared tick-health paging conditions would still be firing for that scope, plan a **region-scoped** coordination reset for the affected `<tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch>` as described in `system-architecture-redis-reset-and-recovery.md`.
-  - In shared rulesets, this means the same conditions that would keep the finalized per-region tick-health paging alert active for that region, starting with sustained `tick_status{scope_class,status="STALLED"} == 1` and any environment overlay that pages on prolonged `DEGRADED` state.
-  - Treat `tick_status{scope_class,status="STALLED"} == 1` sustained through the environment’s alert hold time as an intervention threshold by itself.
-  - Also treat sustained `tick_status{scope_class,status="DEGRADED"} == 1` together with continued over-threshold `tick_execution_time_ms_p95{scope_class}` / `tick_execution_time_ms_p99{scope_class}` ratios versus `tick_lock_ttl_ms{scope_class}`, or continued growth in `tick_retry_queue_depth{scope_class}` / `tick_command_queue_depth{scope_class}`, as sufficient to intervene before the region flips fully to `STALLED`.
+- If the stall is brief and authoritative runtime-health evidence shows recovery to `RUNNING` (with queues draining and class-level execution-time ratios returning to healthy ranges), continue to monitor without intervention.
+- If the authoritative runtime-health/control-plane record reports the exact region as `STALLED` or `DEGRADED` long enough to require action, use the class-level tick-health paging conditions as supporting detection/escalation evidence and plan a **region-scoped** coordination reset for the affected `<tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch>` as described in `system-architecture-redis-reset-and-recovery.md`.
+  - In shared rulesets, sustained `tick_status{scope_class,status="STALLED"} == 1`, a prolonged `DEGRADED` rollup, or continued queue/ratio pressure starts exact-scope enumeration and authoritative status lookup; none of these class-level signals alone identifies a region, sets its status, or authorizes intervention.
+  - Treat the control-plane/runtime-health status and its forward-progress evidence as the intervention threshold. The current live authority is `GetRuntimeOwnershipStatus` with `ObserveRuntimeTickProgress`; target state is `RegionStatus` through `GetRegionTickStatus`.
 - Only escalate to a **tenant-scoped** or **cluster-wide** reset if multiple regions for the same `<tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope>` group show similar symptoms or if Redis incident runbooks indicate broader coordination corruption, and only after enumerating every affected game instance, namespace/scope pair, and region and passing the explicit blast-radius approval/gate required above.
 
 ### Act (Stalled tick region)
@@ -82,8 +81,8 @@ Normal incident escalation groups by `<tenantId, gameInstanceId, playableStateNa
    - Ensure no new executor instances are attempting to acquire the region lease while you inspect metrics.
 2. **Inspect metrics and optional workflow traces**
    - Use the Tick Health dashboard to confirm:
-     - `tick_status` indicates stalled or degraded state.
-     - `tick_execution_time_ms_*` ratios and queue depths support the stalled diagnosis.
+     - The authoritative runtime-health/control-plane record identifies the exact region as stalled or degraded.
+     - `tick_status` rollups, `tick_execution_time_ms_*` ratios, and queue depths support the diagnosis.
    - When the Trace Preconditions are satisfied, use Jaeger to inspect `tick_execute` spans for this region to verify whether the stall is due to downstream services, coordination, or domain logic. Otherwise, use the correlated metrics and Game Session logs.
 3. **Apply a region-scoped coordination reset**
    - Follow the **Per-region reset** flow in `system-architecture-redis-reset-and-recovery.md`, scoping the Job to:
@@ -101,8 +100,8 @@ Normal incident escalation groups by `<tenantId, gameInstanceId, playableStateNa
 4. **Resume ticks and verify recovery**
    - Resume tick scheduling for the region only after Game Session coordination cleanup and, **once the target Automation projections exist**, the Automation & Scripting cleanup/rebuild have completed, followed by the canonical post-reset smoke gate. The current operator fallback has no executable Automation cleanup/rebuild and must not claim this target gate is complete.
    - Confirm via dashboards that:
-     - `tick_status{scope_class,status="RUNNING"}` is `1`.
-     - `tick_execution_time_ms_*` ratios fall back into healthy envelopes.
+     - The authoritative runtime-health/control-plane record reports the exact region as `RUNNING`.
+     - `tick_status{scope_class,status="RUNNING"}` and `tick_execution_time_ms_*` ratios fall back into healthy class-level envelopes.
      - Command and retry queue depths stabilize.
 
    - Review `tick_effects_pending_total{scope_class}` for the approved bounded scope bucket to ensure the ledger is draining and not accumulating new stuck rows.
@@ -209,7 +208,7 @@ Normal incident escalation groups by `<tenantId, gameInstanceId, playableStateNa
 - Alert: `TickCleanupLagHigh` fires (`tick_cleanup_lag_ms{scope_class}` sustained above the configured threshold).
 - Metrics and dashboards show:
   - `tick_durable_commit_total{scope_class}` continues increasing, but `tick_coordination_cleared_total{scope_class}` lags for the same approved bounded scope buckets.
-  - `tick_cleanup_lag_ms{scope_class}` remains elevated for affected `<tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch>` scopes.
+  - `tick_cleanup_lag_ms{scope_class}` remains elevated for a bounded class rollup; use durable ledger/runtime records to identify affected `<tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch>` scopes.
 - Logs and optional workflow traces:
   - Game Session logs show repeated cleanup retries or failed transitions from durable commit to coordination-cleared.
   - When the Trace Preconditions are satisfied, `tick_execute` traces show long or repeated cleanup-related phases after durable state has been committed.
@@ -249,7 +248,7 @@ Normal incident escalation groups by `<tenantId, gameInstanceId, playableStateNa
   - `tick_effects_replay_slo_breached{scope_class}` indicating replay is outside the normative convergence budget.
   - Replay fairness signals distinguish two failure shapes:
     - `tick_effects_pending_total{scope_class} > 0` while `tick_effects_replay_batches_total{scope_class}` does not advance for the same approved bounded scope bucket, or `tick_effects_replay_starved{scope_class}` becomes `1`.
-    - `tick_effects_replay_scan_lag_ms{scope_class}` grows for a subset of regions even though the controller is still making progress elsewhere.
+    - `tick_effects_replay_scan_lag_ms{scope_class}` grows for a bounded class rollup even though the controller is still making progress elsewhere; use durable ledger/runtime records to identify any affected regions.
 - Logs and optional workflow traces:
   - Game Session logs may show repeated attempts to process the same effects or gaps in processing for certain tick IDs.
   - When the Trace Preconditions are satisfied, traces for those tick IDs show missing or incomplete spans for expected domain calls.

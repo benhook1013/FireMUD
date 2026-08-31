@@ -1,6 +1,6 @@
 # Tick Alertmanager Snippets
 
-This file contains reference PromQL expressions and Alertmanager rule snippets for tick execution and ledger alerts. These complement the TCP Proxy-specific rules in `tcp-proxy-alerts-snippets.md` and are intended to be imported or adapted into environment-specific rulesets.
+This file contains reference PromQL expressions and Alertmanager rule snippets for tick execution and ledger alerts. These complement the TCP Proxy-specific rules in `tcp-proxy-alerts-snippets.md` and are intended to be imported or adapted into environment-specific rulesets. Every `scope_class` selector below is a bounded aggregation class (`region`, `game_instance`, `tenant`, or `cluster`), not an individual region or other raw runtime identity; use control-plane records for exact diagnosis.
 
 ## Tick Execution Health
 
@@ -17,7 +17,7 @@ Example alert for tick execution time approaching unsafe ratios relative to lock
     runbook: design/architecture/system-architecture-tick-incident-runbook.md#stalled-tick-region
   annotations:
     summary: Tick execution time approaching unsafe fraction of lock TTL
-    description: Tick p99 execution time is nearing or exceeding the configured lock TTL for one or more regions. Investigate tick health and region density before adjusting tick cadence.
+    description: Tick p99 execution time is nearing or exceeding the configured lock TTL for one or more bounded scope-class rollups. Investigate the corresponding control-plane/runtime-health evidence and workload density before adjusting tick cadence.
 ```
 
 This rule assumes the **canonical metric contract** from:
@@ -47,7 +47,7 @@ Example alert for stuck `SCHEDULED` rows in the tick effect ledger:
     runbook: design/architecture/system-architecture-tick-incident-runbook.md#stuck-tick-effect-ledger-entries
   annotations:
     summary: Tick effect ledger has pending rows beyond grace window
-    description: One or more regions have SCHEDULED tick effects that have not converged to APPLIED or ABANDONED within the expected grace window.
+    description: One or more bounded scope-class rollups have SCHEDULED tick effects that have not converged to APPLIED or ABANDONED within the expected grace window.
 
 - alert: TickCleanupLagHigh
   expr: tick_cleanup_lag_ms{scope_class=~".+"} > 15000
@@ -59,7 +59,7 @@ Example alert for stuck `SCHEDULED` rows in the tick effect ledger:
     runbook: design/architecture/system-architecture-tick-incident-runbook.md#durable-commitcoordination-cleanup-divergence
   annotations:
     summary: Tick durable commit and coordination cleanup are diverging
-    description: Cleanup lag from durable commit to coordination-cleared is elevated for one or more regions; investigate replay pressure and coordination cleanup behavior.
+    description: Cleanup lag from durable commit to coordination-cleared is elevated for one or more bounded scope-class rollups; investigate replay pressure and coordination cleanup behavior.
 
 - alert: TickReplayFairnessStarved
   expr: tick_effects_pending_total{scope_class=~".+"} > 0 and increase(tick_effects_replay_batches_total{scope_class=~".+"}[15m]) == 0
@@ -70,8 +70,8 @@ Example alert for stuck `SCHEDULED` rows in the tick effect ledger:
     owner: gameplay
     runbook: design/architecture/system-architecture-tick-incident-runbook.md#stuck-tick-effect-ledger-entries
   annotations:
-    summary: Tick replay controller is not servicing pending regions fairly
-    description: One or more regions still have pending ledger work, but replay batches are not being executed for those regions. Investigate replay-controller fairness and starvation.
+    summary: Tick replay controller is not servicing pending scope classes fairly
+    description: One or more bounded scope-class rollups still have pending ledger work, but replay batches are not being executed for those scope classes. Investigate replay-controller fairness and starvation.
 
 - alert: TickReplayScanLagHigh
   expr: tick_effects_replay_scan_lag_ms{scope_class=~".+"} > 300000
@@ -83,7 +83,7 @@ Example alert for stuck `SCHEDULED` rows in the tick effect ledger:
     runbook: design/architecture/system-architecture-tick-incident-runbook.md#stuck-tick-effect-ledger-entries
   annotations:
     summary: Tick replay scan lag indicates controller starvation
-    description: Replay scan lag is growing for one or more regions even though the replay controller remains active elsewhere.
+    description: Replay scan lag is growing for one or more bounded scope-class rollups even though the replay controller remains active elsewhere.
 ```
 
 This assumes a helper metric such as `tick_effects_pending_oldest_scheduled_timestamp_seconds{scope_class}` that tracks the oldest `SCHEDULED` entry per approved bounded gameplay scope.

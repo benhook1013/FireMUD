@@ -179,7 +179,7 @@ Worked cadence-change example:
 4. Timer ordering state is re-derived for the new epoch, including canonical `due_tick_id` values for any timers that must survive the change.
 5. The new epoch resumes at `lastCommittedTickId = -1`, so the first committable tick under the new cadence is `tickId = 0`.
 
-At runtime, observed tick durations are compared against lock TTLs using Prometheus-facing series such as `tick_execution_time_ms_p95` and `tick_execution_time_ms_p99` (derived from `tick_execution_time_ms_bucket` recording rules). Ratios like `tick_execution_time_ms_p99 / tick_lock_ttl_ms` drive region health for each `<tenantId, gameInstanceId, regionId>`.
+At runtime, observed tick durations are compared against lock TTLs using Prometheus-facing series such as `tick_execution_time_ms_p95{scope_class}` and `tick_execution_time_ms_p99{scope_class}` (derived from `tick_execution_time_ms_bucket{scope_class,le}` recording rules). Ratios like `tick_execution_time_ms_p99{scope_class} / tick_lock_ttl_ms{scope_class}` are detection and escalation signals for bounded scope-class rollups. The `scope_class` value is the controlled aggregation class (`region`, `game_instance`, `tenant`, or `cluster`), never an individual region or other raw runtime identity; the exact `<tenantId, gameInstanceId, regionId>` tuple and its health remain authoritative control-plane/runtime-health evidence. A class-level rollup cannot identify or set the health of any individual region.
 
 ### Canonical Region Health States and Threshold Source
 
@@ -187,12 +187,12 @@ This table is the single source of truth for region health state names and thres
 
 | State | Meaning | Primary triggers |
 | --- | --- | --- |
-| `RUNNING` | Region is making normal forward progress. | `tick_execution_time_ms_p99 / tick_lock_ttl_ms` remains below the degraded threshold and commit progress is advancing. During an admitted solo-budget tick, evaluate the same state against `solo_lock_ttl_ms` instead. |
-| `DEGRADED` | Region is still progressing but close to safety limits. | `tick_execution_time_ms_p99 / tick_lock_ttl_ms` is near or above the degraded threshold over a sustained window, or remote/retry backlog exceeds budget. During an admitted solo-budget tick, evaluate the same state against `solo_lock_ttl_ms` instead. |
+| `RUNNING` | Region is making normal forward progress. | The authoritative control-plane/runtime-health record reports advancing commit progress without a safety-limit breach. A class-level execution-time ratio below the degraded threshold is supporting rollup evidence only. During an admitted solo-budget tick, evaluate the same state against the solo-derived TTL instead. |
+| `DEGRADED` | Region is still progressing but close to safety limits. | The authoritative control-plane/runtime-health record reports progress near safety limits or a remote/retry backlog over budget. A class-level execution-time ratio near or above the degraded threshold is detection/escalation evidence only. During an admitted solo-budget tick, evaluate the same state against the solo-derived TTL instead. |
 | `STALLED` | Region lease may still be held but progress has stopped. | No successful commits for multiple `tick_interval_ms` windows, repeated failed ticks, or persistent stuck cleanup/ledger signals. |
 | `PAUSED` | Region is intentionally paused by control plane or maintenance flow. | Operator/control-plane pause for reset, migration, or incident mitigation. |
 
-Threshold values and alert windows are defined by this document’s ratio formulas plus the concrete metric thresholds in `system-architecture-redis-operations.md` and enforced through `tick_status{status="RUNNING|DEGRADED|STALLED|PAUSED"}`.
+Threshold values and alert windows are defined by this document’s ratio formulas plus the concrete metric thresholds in `system-architecture-redis-operations.md`; they produce detection/escalation rollups such as `tick_status{scope_class,status="RUNNING|DEGRADED|STALLED|PAUSED"}`. These rollups do not enforce or write an individual region status. Exact per-region `RUNNING`, `DEGRADED`, `STALLED`, or `PAUSED` status and actionability come from the authoritative runtime-health/control-plane record: current live uses `GetRuntimeOwnershipStatus` with `ObserveRuntimeTickProgress`, while target state uses `RegionStatus` through `GetRegionTickStatus`. Any later metric reference that omits `{scope_class}` is shorthand for the same bounded class-level series; it must not be read as an exact region selector.
 
 In addition to timing-based health, Game Session tracks **forward progress** for each `<tenantId, gameInstanceId, regionId>`:
 
@@ -227,11 +227,11 @@ At the configuration level:
   - `automation.tick-max-events`
   - These caps exist so no single player or script can monopolize either lane, even if it enqueues many actions or effects; excess work spills into subsequent ticks according to the lane budgets, backoff, and the persisted ordering tuple.
 
-Runtime health is also expressed via ratios such as `tick_execution_time_ms_p95` or `tick_execution_time_ms_p99` over `tick_lock_ttl_ms`:
+Runtime health pressure is also detected via ratios such as `tick_execution_time_ms_p95{scope_class}` or `tick_execution_time_ms_p99{scope_class}` over `tick_lock_ttl_ms{scope_class}`. These are class-level Prometheus rollups for detection and escalation, not per-region status or actionability:
 
-- `RUNNING` – p99 execution time is well below `tick_lock_ttl_ms` (for example, < 0.5 × `tick_lock_ttl_ms`).
-- `DEGRADED` – p99 execution time is approaching or exceeding `tick_lock_ttl_ms` over a sustained window.
-- `STALLED` – forward progress has stopped even if timing ratios are noisy or unavailable.
+- `RUNNING` – the authoritative runtime-health record reports normal forward progress; a low class-level p99 ratio is supporting evidence only.
+- `DEGRADED` – the authoritative runtime-health record reports progress near safety limits; a sustained high class-level p99 ratio is supporting detection/escalation evidence.
+- `STALLED` – authoritative forward progress has stopped even if class-level timing ratios are noisy or unavailable.
 
 This keeps fairness and safety enforceable through bounded per-tick work and timing-based health checks without introducing alternate state names in other docs.
 

@@ -168,9 +168,11 @@ Goal: provide a simple, explicit runbook for resetting Cache/Rate-Limit Redis wi
 
 Cache/Rate-Limit Redis is fully reset-tolerant for the prefixes listed in [`system-architecture-redis-cache.md`](./system-architecture-redis-cache.md) and the reset policy matrix in [`system-architecture-redis-reset-and-recovery.md`](./system-architecture-redis-reset-and-recovery.md). A reset:
 
-- drops cache and rate-limit keys such as `inventory:*`, `character-cache:*`, `world-dynamic:*`, `room:*`, `view:room-look:*`, `chat:*`, `automation:*`, and `ratelimit:*`
-- does not affect Coordination Redis keys such as `tick:*`, `timer:*`, `retry:*`, `session:*`, or `tick-executor-lease:*`
+- drops only the documented Cache/Rate-Limit families such as `inventory:*`, `character-cache:*`, `world-dynamic:*`, `room:*`, `view:room-look:*`, `chat:*`, `automation:queue:{tenantInstanceTag}:*`, and `ratelimit:*`; it must not use the broad `automation:*` wildcard
+- does not affect Coordination Redis keys such as `tick:*`, `timer:*`, `retry:*`, `session:*`, `tick-executor-lease:*`, `automation:timer:*`, or `script-scheduler:*`
 - increases load on backing services temporarily but must not lose authoritative game data
+
+The current `automation:queue:{tenantInstanceTag}:*` family is a rebuildable Cache/Rate-Limit projection. When its prefix is flushed, pause affected Automation processing and run the bounded idempotent Automation rebuild from durable PostgreSQL `script_work_items` in `PENDING_EVALUATION`; Redis queue payloads are never recovery authority. Stale `EVALUATING` rows are not executable queue pointers: they require owner reconciliation/reclaim under the scripting recovery contract, which remains an implementation gap. The reserved `automation:timer:{tenantRegionTag}` and `script-scheduler:{tenantRegionTag}:lastTickId` timer/checkpoint projections remain target-only and unavailable.
 
 ### Runbook: Environment-Scoped Cache Reset
 

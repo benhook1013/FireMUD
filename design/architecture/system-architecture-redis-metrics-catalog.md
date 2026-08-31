@@ -7,10 +7,11 @@ This document summarizes the canonical Redis-related metrics, alerting surfaces,
 - `redis_aof_current_size_bytes`
 - `redis_coordination_aof_growth_bytes_total`
 - `redis_coordinator_restart_duration_seconds`
-- `redis_coordination_tail_loss_ms{scope}` (current compatibility exposure series)
+- `redis_coordination_tail_loss_ms{scope}` (current compatibility exposure series; `scope` is a bounded Redis deployment bucket)
 - `redis_unreplicated_write_window_ms{scope}` (target measured exposure, pre-aggregated as the worst eligible candidate within the bounded deployment/environment/ruleset scope)
 - `redis_unreplicated_write_window_slo_breached{scope}` (target measured-SLO breach series)
-- `redis_coordination_tail_loss_slo_breached{scope}` (current compatibility alias/rule derived from the tick-based exposure budget, not the target measured-SLO breach)
+- `redis_coordination_tail_loss_budget_ms` (current compatibility recording rule; one deployment-wide bounded scalar equal to the maximum `clamp_min(2 * tick_interval_ms, 2000)` across `tick_interval_ms{scope_class}`)
+- `redis_coordination_tail_loss_slo_breached{scope}` (current compatibility recording rule comparing each bounded exposure scope with that scalar budget, not the target measured-SLO breach)
 - `redis_replication_lag_ms{redis_role,scope}`
 - `redis_replication_offset_lag_bytes{redis_role,scope}`
 - `coordination_maintenance_active{scope_type,scope_bucket,operation}`
@@ -23,7 +24,7 @@ This document summarizes the canonical Redis-related metrics, alerting surfaces,
   - `redis_tick_timers_over_budget_total`
   - `redis_session_payload_oversized_total`
 
-For measured exposure, replication-lag, replication-offset, and dashboard-comparison metrics, bounded `scope` consistently identifies one Coordination Redis deployment together with its canonical environment class and active configuration/ruleset. `redis_unreplicated_write_window_ms{scope}` and the exported replication metrics are pre-aggregated worst-eligible-candidate values within that scope. Because no replica identity label is exported, these metrics do not identify individual candidates or replicas; exact candidate and node IDs remain control-plane and structured-log evidence. The target measured-SLO breach series is distinct from the current `redis_coordination_tail_loss_slo_breached{scope}` compatibility alias/rule, which derives from the tick-based exposure budget.
+For measured exposure, replication-lag, replication-offset, and dashboard-comparison metrics, bounded `scope` consistently identifies one Coordination Redis deployment together with its canonical environment class and active configuration/ruleset. `redis_unreplicated_write_window_ms{scope}` and the exported replication metrics are pre-aggregated worst-eligible-candidate values within that scope. Because no replica identity label is exported, these metrics do not identify individual candidates or replicas; exact candidate and node IDs remain control-plane and structured-log evidence. The current compatibility budget is deliberately deployment-wide: `redis_coordination_tail_loss_budget_ms` has no `scope` or `scope_class` label and is the maximum cadence-derived budget across the bounded `tick_interval_ms{scope_class}` classes. `redis_coordination_tail_loss_slo_breached{scope}` compares each bounded exposure scope with that scalar; `scope` and `scope_class` are not aliases. The target measured-SLO breach series is distinct from this current compatibility recording rule, which is derived from the tick-based exposure budget.
 
 ## Session Schema and Cleanup Metrics
 
@@ -49,6 +50,10 @@ For measured exposure, replication-lag, replication-offset, and dashboard-compar
 - `tick_durable_commit_total{scope_class}`
 - `tick_coordination_cleared_total{scope_class}`
 - `tick_cleanup_lag_ms{scope_class}`
+
+`scope_class` is the required bounded operational rollup label for the tick metric families above. Its value is one of `region`, `game_instance`, `tenant`, or `cluster`, identifying the aggregation class rather than an individual runtime scope. Every related tick metric must use the same mapping for a deployment: a region-level rollup is labelled `region`, a game-instance rollup `game_instance`, a tenant rollup `tenant`, and a deployment-wide rollup `cluster`. The label never contains a tenant, game-instance, playable-state, or region identifier, and exact diagnosis remains on control-plane/runtime-health records and structured logs.
+
+Recording rules must preserve this label through aggregation (for example, `sum by (scope_class, le)` for the execution histogram) and match companion series such as `tick_lock_ttl_ms` on `scope_class`. Producers and dashboards must not mix this class mapping with a raw `scope` label or infer an individual region from a class-level series.
 
 ### Remote Follow-Up Drainage
 
