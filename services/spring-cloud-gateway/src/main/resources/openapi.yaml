@@ -4,8 +4,8 @@ info:
   description: API for dynamic route management
   version: 1.0.0
   license:
-    name: MIT
-    url: https://opensource.org/licenses/MIT
+    name: PolyForm Noncommercial License 1.0.0
+    url: https://polyformproject.org/licenses/noncommercial/1.0.0
 servers:
   - url: https://api.firemud.com
 security: []

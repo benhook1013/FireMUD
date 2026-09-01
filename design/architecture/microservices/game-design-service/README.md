@@ -177,7 +177,7 @@ The Game Design Service must also persist an immutable `published_release_bundle
   - World Management Service for map data.
   - Automation & Scripting Service for scripts.
   - Logging & Admin Service may receive a non-authoritative operator-audit projection for actions entering its ingress; Game Design retains the authoritative publishing and domain-audit records.
-- **External:** PostgreSQL for design metadata and object storage for asset bytes.
+- **External:** PostgreSQL for design metadata and current asset bytes; object storage for later version-scoped asset export/publication.
 
 > See [**Gateway Architecture**](../../system-architecture-gateway.md),
 [**Deployment Environments**](../../infrastructure/deployment-environments.md),
