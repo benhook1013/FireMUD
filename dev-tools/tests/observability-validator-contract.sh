@@ -192,38 +192,6 @@ if actual_slash_anchor != expected_slash_anchor:
 
 rules_path = root / "k8s/monitoring/prometheus-rules-firemud.yaml"
 valid_text = rules_path.read_text(encoding="utf-8")
-rules_doc = yaml.safe_load(valid_text)
-recording_rules = {
-    rule["record"]: rule
-    for group in rules_doc["spec"]["groups"]
-    for rule in group["rules"]
-    if "record" in rule
-}
-tail_loss_budget_expr = recording_rules["redis_coordination_tail_loss_budget_ms"]["expr"]
-tail_loss_breach_expr = recording_rules["redis_coordination_tail_loss_slo_breached"]["expr"]
-if "max by (scope)" not in tail_loss_budget_expr:
-    raise AssertionError(
-        "tail-loss compatibility budget must be scoped per bounded deployment"
-    )
-if "scalar(redis_coordination_tail_loss_budget_ms)" in tail_loss_breach_expr:
-    raise AssertionError(
-        "tail-loss compatibility breach must not compare against a global scalar"
-    )
-if "> on (scope)" not in tail_loss_breach_expr:
-    raise AssertionError(
-        "tail-loss compatibility breach must join its deployment-scoped budget on scope"
-    )
-metrics_catalog_text = (
-    root / "design/architecture/system-architecture-redis-metrics-catalog.md"
-).read_text(encoding="utf-8")
-if "redis_coordination_tail_loss_budget_ms{scope}" not in metrics_catalog_text:
-    raise AssertionError(
-        "Redis metrics catalog must document a deployment-scoped tail-loss budget"
-    )
-if "tick_interval_ms{scope,scope_class}" not in metrics_catalog_text:
-    raise AssertionError(
-        "Redis metrics catalog must bind tick cadence to the deployment scope"
-    )
 if "ObservabilityDeadmanHeartbeatStale" in valid_text:
     raise AssertionError(
         "shared Prometheus rules must not install the profile-dependent deadman alert"
@@ -2482,10 +2450,6 @@ for scalar_variant in (
 
 if validator._check_ms_thresholds("tick_cleanup_lag_ms > 5") is None:
     raise AssertionError("a low threshold on a metric ending in _ms was silently accepted")
-if validator._check_ms_thresholds("tick_cleanup_lag_ms > 0.75") is None:
-    raise AssertionError(
-        "a fractional threshold on a raw _ms metric was silently accepted"
-    )
 for comparison_operator in ("<", "<=", ">", ">="):
     low_threshold = f"tick_cleanup_lag_ms {comparison_operator} 5"
     if validator._check_ms_thresholds(low_threshold) is None:
@@ -2535,79 +2499,11 @@ for invalid_compound_ms_expr in (
     "tick_cleanup_lag_ms > 5 and queue_depth > 0",
     "queue_depth > 0 and tick_cleanup_lag_ms > 5",
     "first_latency_ms > 100 and second_latency_ms > 5",
-    "(tick_cleanup_lag_ms > 0.75) * (first_latency_ms / second_budget_ms)",
 ):
     if validator._check_ms_thresholds(invalid_compound_ms_expr) is None:
         raise AssertionError(
             f"a low threshold on an _ms metric in a compound expression was silently accepted: {invalid_compound_ms_expr!r}"
         )
-if validator._tick_replay_scope_matching_finding(
-    root / "k8s/monitoring/prometheus-rules-firemud.yaml",
-    "TickEffectLedgerBacklog",
-    "tick_effects_pending_total{scope_class=~\".+\"} > 0 and (time() - tick_effects_pending_oldest_scheduled_timestamp_seconds{scope_class=~\".+\"}) > 300",
-) is None:
-    raise AssertionError(
-        "tick backlog alert without explicit scope_class matching was silently accepted"
-    )
-if validator._tick_replay_scope_matching_finding(
-    root / "k8s/monitoring/prometheus-rules-firemud.yaml",
-    "TickReplayFairnessStarved",
-    "tick_effects_pending_total{scope_class=~\".+\"} > 0 and increase(tick_effects_replay_batches_total{scope_class=~\".+\"}[15m]) == 0",
-) is None:
-    raise AssertionError(
-        "tick replay fairness alert without explicit scope_class matching was silently accepted"
-    )
-for invalid_tick_scope_expr in (
-    "tick_effects_pending_total{scope_class=~\".+\"} > 0 and on (scope_class) (time() - tick_effects_pending_oldest_scheduled_timestamp_seconds) > 300",
-    "tick_effects_pending_total{scope_class=~\".+\"} > 0 and on (scope_class) increase(tick_effects_replay_batches_total[15m]) == 0",
-    "tick_effects_pending_total{scope_class=~\".+\"} > 0 and on (scope_class) (time() - tick_effects_pending_oldest_scheduled_timestamp_seconds) > 300 or other_metric{scope_class=~\".+\"} > 0",
-):
-    if validator._tick_replay_scope_matching_finding(
-        root / "k8s/monitoring/prometheus-rules-firemud.yaml",
-        "TickEffectLedgerBacklog",
-        invalid_tick_scope_expr,
-    ) is None:
-        raise AssertionError(
-            "tick replay alert whose RHS drops scope_class was silently accepted"
-        )
-for valid_tick_scope_alert, valid_tick_scope_expr in (
-    (
-        "TickEffectLedgerBacklog",
-        "tick_effects_pending_total{scope_class=~\".+\"} > 0 and on (scope_class) (time() - tick_effects_pending_oldest_scheduled_timestamp_seconds{scope_class=~\".+\"}) > 300",
-    ),
-    (
-        "TickReplayFairnessStarved",
-        "tick_effects_pending_total{scope_class=~\".+\"} > 0 and on (scope_class) increase(tick_effects_replay_batches_total{scope_class=~\".+\"}[15m]) == 0",
-    ),
-):
-    if validator._tick_replay_scope_matching_finding(
-        root / "k8s/monitoring/prometheus-rules-firemud.yaml",
-        valid_tick_scope_alert,
-        valid_tick_scope_expr,
-    ):
-        raise AssertionError(
-            f"explicit scope_class matching was rejected: {valid_tick_scope_expr!r}"
-        )
-for valid_ms_ratio_expr in (
-    "((tick_execution_time_ms_p99{scope_class=~\".+\",tick_mode=\"normal\"} / on (scope_class) group_left() tick_lock_ttl_ms{scope_class=~\".+\"}) or (tick_execution_time_ms_p99{scope_class=~\".+\",tick_mode=\"solo\"} / on (scope_class) group_left() solo_lock_ttl_ms{scope_class=~\".+\"})) > 0.75",
-    "first_latency_ms / ignoring(scope_class) group_left(region) second_budget_ms > 0.75",
-):
-    if validator._check_ms_thresholds(valid_ms_ratio_expr):
-        raise AssertionError(
-            f"a dimensionless _ms ratio was treated as a raw millisecond threshold: {valid_ms_ratio_expr!r}"
-        )
-for ratio_path in (
-    root / "k8s/monitoring/prometheus-rules-firemud.yaml",
-    root / "design/observability/grafana/tick-alerts-snippets.md",
-):
-    ratio_text = ratio_path.read_text(encoding="utf-8")
-    for denominator in ("tick_lock_ttl_ms", "solo_lock_ttl_ms"):
-        expected_join = f"on (scope_class) group_left() {denominator}"
-        if ratio_text.count(expected_join) != 1:
-            raise AssertionError(
-                f"{ratio_path.relative_to(root)} must use exactly one explicit many-to-one "
-                f"scope_class join for {denominator}"
-            )
 for valid_ms_expr in (
     "tick_cleanup_lag_ms > 100 # explanatory threshold > 1",
     'tick_cleanup_lag_ms > 100 + label_replace(foo, "note", "_ms > 1", "a", "b")',

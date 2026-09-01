@@ -38,7 +38,7 @@ The existing formulas provide safe initial values, but their constants are not p
 The current shared formulas remain bootstrap defaults only:
 
 - `tick_budget_ms` starts from `tick_interval_ms * 0.8`; the canonical shared resolver rounds to the nearest integer millisecond with exact halves rounded upward and validates a positive integer before deriving lock TTL.
-- `lock_ttl_ms` starts from the resolved `tick_budget_ms * 8` and uses the same deterministic positive-integer rounding rule. `tick_lock_ttl_ms{scope_class}` is the effective `lock_ttl_ms` health metric for bounded scope-class rollups, not an individual-region series. The explicit solo-tick exception may resolve `solo_tick_budget_ms` and derive `solo_lock_ttl_ms{scope_class}` with the same helper family; solo samples use that TTL for health ratios rather than the normal denominator.
+- `lock_ttl_ms` starts from the resolved `tick_budget_ms * 8` and uses the same deterministic positive-integer rounding rule. `tick_lock_ttl_ms` is the effective regional `lock_ttl_ms` health metric.
 
 All consumers use the shared helper and canonical resolved settings as opaque resolved values. Services must not define private derivations, multipliers, clamps, or fallback formulas. Numeric minimum and maximum bounds remain pending an owning settings decision.
 

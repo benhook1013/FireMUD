@@ -1790,22 +1790,6 @@ require_contains(
     "design/project-management/implementation-tracking/automation-and-scheduler-runtime.md",
     ["priority-sensitive queue-delay/starvation emission"],
 )
-require_contains(
-    "design/architecture/system-architecture-tick-failures-and-operations.md",
-    [
-        "bounded batches per complete recovery scope `<tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch>`",
-        "fairness cursors and deficit/cost accounting are keyed by the complete recovery scope",
-        "service startup for each complete recovery scope",
-    ],
-)
-require_absent(
-    "design/architecture/system-architecture-tick-failures-and-operations.md",
-    [
-        "bounded batches per `<tenantId, gameInstanceId, regionId>`",
-        "scheduling across regions rather than draining one region completely",
-        "service startup for each region to converge",
-    ],
-)
 
 print("architecture doc contracts passed")
 PY

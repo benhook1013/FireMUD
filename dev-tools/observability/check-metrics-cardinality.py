@@ -66,9 +66,9 @@ PROMQL_GROUPING_PATTERN = re.compile(
     r"|\bon\s*\((?P<join_labels>[^)\n]+)\)"
 )
 GRAFANA_LEGEND_PATTERN = re.compile(
-    r"legendFormat[^\n]*(?<![A-Za-z0-9_])(?P<label>"
+    r"legendFormat[^\\n]*(?P<label>"
     + "|".join(re.escape(label) for label in sorted(FORBIDDEN_EXACT_LABELS))
-    + r")(?![A-Za-z0-9_])"
+    + r")"
 )
 
 

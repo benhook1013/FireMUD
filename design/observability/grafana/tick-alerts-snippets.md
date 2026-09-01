@@ -1,6 +1,6 @@
 # Tick Alertmanager Snippets
 
-This file contains reference PromQL expressions and Alertmanager rule snippets for tick execution and ledger alerts. These complement the TCP Proxy-specific rules in `tcp-proxy-alerts-snippets.md` and are intended to be imported or adapted into environment-specific rulesets. The mode-aware execution/TTL/ratio snippets are target-only/currently unavailable until Game Session emits and proves the canonical metric families and bounded labels. Every `scope_class` selector below is a bounded aggregation class (`region`, `game_instance`, `tenant`, or `cluster`), not an individual region or other raw runtime identity; use control-plane records for exact diagnosis.
+This file contains reference PromQL expressions and Alertmanager rule snippets for tick execution and ledger alerts. These complement the TCP Proxy-specific rules in `tcp-proxy-alerts-snippets.md` and are intended to be imported or adapted into environment-specific rulesets.
 
 ## Tick Execution Health
 
@@ -8,7 +8,7 @@ Example alert for tick execution time approaching unsafe ratios relative to lock
 
 ```yaml
 - alert: TickExecutionUnsafeRatio
-  expr: ((tick_execution_time_ms_p99{scope_class=~".+",tick_mode="normal"} / on (scope_class) group_left() tick_lock_ttl_ms{scope_class=~".+"}) or (tick_execution_time_ms_p99{scope_class=~".+",tick_mode="solo"} / on (scope_class) group_left() solo_lock_ttl_ms{scope_class=~".+"})) > 0.75
+  expr: (tick_execution_time_ms_p99 / tick_lock_ttl_ms) > 0.75
   for: 10m
   labels:
     service: game-session-service
@@ -17,7 +17,7 @@ Example alert for tick execution time approaching unsafe ratios relative to lock
     runbook: design/architecture/system-architecture-tick-incident-runbook.md#stalled-tick-region
   annotations:
     summary: Tick execution time approaching unsafe fraction of lock TTL
-    description: Tick p99 execution time is nearing or exceeding the configured mode-specific lock TTL for one or more bounded scope-class rollups. Normal samples use tick_lock_ttl_ms; solo-budget samples use solo_lock_ttl_ms. Investigate the corresponding control-plane/runtime-health evidence and workload density before adjusting tick cadence.
+    description: Tick p99 execution time is nearing or exceeding the configured lock TTL for one or more regions. Investigate tick health and region density before adjusting tick cadence.
 ```
 
 This rule assumes the **canonical metric contract** from:
@@ -27,8 +27,8 @@ This rule assumes the **canonical metric contract** from:
 
 Concretely:
 
-- `tick_execution_time_ms_p99{scope_class,tick_mode}` is a recording rule derived from `tick_execution_time_ms_bucket{scope_class,tick_mode,le}`; `tick_mode` is exactly `normal` or `solo`.
-- `tick_lock_ttl_ms{scope_class}` is emitted (or recorded) per approved bounded gameplay `scope_class` for normal samples, while `solo_lock_ttl_ms{scope_class}` carries the derived solo-budget TTL. The alert selects the denominator by `tick_mode` and never blends normal and solo samples.
+- `tick_execution_time_ms_p99` is a recording rule derived from `tick_execution_time_ms_bucket{scope,le}`.
+- `tick_lock_ttl_ms` is emitted (or recorded) per approved bounded gameplay `scope` and represents the lock/lease TTL budget used by tick executors.
 
 Do not use “Timer-in-seconds” histograms under `_ms` names; producers must either emit millisecond-valued histograms/summaries or publish explicit `_seconds` metrics and define separate `_ms` recording rules with unambiguous unit conversions.
 
@@ -38,7 +38,7 @@ Example alert for stuck `SCHEDULED` rows in the tick effect ledger:
 
 ```yaml
 - alert: TickEffectLedgerBacklog
-  expr: tick_effects_pending_total{scope_class=~".+"} > 0 and on (scope_class) (time() - tick_effects_pending_oldest_scheduled_timestamp_seconds{scope_class=~".+"}) > 300
+  expr: tick_effects_pending_total > 0 and (time() - tick_effects_pending_oldest_scheduled_timestamp_seconds) > 300
   for: 10m
   labels:
     service: game-session-service
@@ -47,10 +47,10 @@ Example alert for stuck `SCHEDULED` rows in the tick effect ledger:
     runbook: design/architecture/system-architecture-tick-incident-runbook.md#stuck-tick-effect-ledger-entries
   annotations:
     summary: Tick effect ledger has pending rows beyond grace window
-    description: One or more bounded scope-class rollups have SCHEDULED tick effects that have not converged to APPLIED or ABANDONED within the expected grace window.
+    description: One or more regions have SCHEDULED tick effects that have not converged to APPLIED or ABANDONED within the expected grace window.
 
 - alert: TickCleanupLagHigh
-  expr: tick_cleanup_lag_ms{scope_class=~".+"} > 15000
+  expr: tick_cleanup_lag_ms > 15000
   for: 10m
   labels:
     service: game-session-service
@@ -59,10 +59,10 @@ Example alert for stuck `SCHEDULED` rows in the tick effect ledger:
     runbook: design/architecture/system-architecture-tick-incident-runbook.md#durable-commitcoordination-cleanup-divergence
   annotations:
     summary: Tick durable commit and coordination cleanup are diverging
-    description: Cleanup lag from durable commit to coordination-cleared is elevated for one or more bounded scope-class rollups; investigate replay pressure and coordination cleanup behavior.
+    description: Cleanup lag from durable commit to coordination-cleared is elevated for one or more regions; investigate replay pressure and coordination cleanup behavior.
 
 - alert: TickReplayFairnessStarved
-  expr: tick_effects_pending_total{scope_class=~".+"} > 0 and on (scope_class) increase(tick_effects_replay_batches_total{scope_class=~".+"}[15m]) == 0
+  expr: tick_effects_pending_total > 0 and increase(tick_effects_replay_batches_total[15m]) == 0
   for: 15m
   labels:
     service: game-session-service
@@ -70,11 +70,11 @@ Example alert for stuck `SCHEDULED` rows in the tick effect ledger:
     owner: gameplay
     runbook: design/architecture/system-architecture-tick-incident-runbook.md#stuck-tick-effect-ledger-entries
   annotations:
-    summary: Tick replay controller is not servicing pending scope classes fairly
-    description: One or more bounded scope-class rollups still have pending ledger work, but replay batches are not being executed for those scope classes. Investigate replay-controller fairness and starvation.
+    summary: Tick replay controller is not servicing pending regions fairly
+    description: One or more regions still have pending ledger work, but replay batches are not being executed for those regions. Investigate replay-controller fairness and starvation.
 
 - alert: TickReplayScanLagHigh
-  expr: tick_effects_replay_scan_lag_ms{scope_class=~".+"} > 300000
+  expr: tick_effects_replay_scan_lag_ms > 300000
   for: 15m
   labels:
     service: game-session-service
@@ -83,10 +83,10 @@ Example alert for stuck `SCHEDULED` rows in the tick effect ledger:
     runbook: design/architecture/system-architecture-tick-incident-runbook.md#stuck-tick-effect-ledger-entries
   annotations:
     summary: Tick replay scan lag indicates controller starvation
-    description: Replay scan lag is growing for one or more bounded scope-class rollups even though the replay controller remains active elsewhere.
+    description: Replay scan lag is growing for one or more regions even though the replay controller remains active elsewhere.
 ```
 
-This assumes a helper metric such as `tick_effects_pending_oldest_scheduled_timestamp_seconds{scope_class}` that tracks the oldest `SCHEDULED` entry per approved bounded gameplay scope.
+This assumes a helper metric such as `tick_effects_pending_oldest_scheduled_timestamp_seconds` that tracks the oldest `SCHEDULED` entry per region.
 
 ## Tick Scheduler Pressure
 

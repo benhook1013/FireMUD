@@ -3,15 +3,14 @@
   "schemaVersion": 36,
   "version": 1,
   "timezone": "browser",
-  "description": "Tick metrics are bounded scope-class rollups (region, game_instance, tenant, or cluster), not individual regions or other raw runtime identities. The mode-aware execution/TTL/ratio panels are target-only/currently unavailable until Game Session emits and proves the canonical families and bounded labels. Use control-plane and structured runtime evidence for exact diagnosis.",
   "panels": [
     {
       "type": "graph",
-      "title": "Tick Status by Scope Class",
+      "title": "Tick Status by Region",
       "targets": [
         {
-          "expr": "tick_status{scope_class=~\".+\"} == 1",
-          "legendFormat": "scope bucket {{scope_class}} = {{status}}",
+          "expr": "tick_status == 1",
+          "legendFormat": "{{scope}} = {{status}}",
           "refId": "A"
         }
       ],
@@ -19,11 +18,11 @@
     },
     {
       "type": "graph",
-      "title": "Tick Execution Time Ratio (p99 / mode-specific lock TTL)",
+      "title": "Tick Execution Time Ratio (p99 / lock TTL)",
       "targets": [
         {
-          "expr": "(tick_execution_time_ms_p99{scope_class=~\".+\",tick_mode=\"normal\"} / on (scope_class) group_left() tick_lock_ttl_ms{scope_class=~\".+\"}) or (tick_execution_time_ms_p99{scope_class=~\".+\",tick_mode=\"solo\"} / on (scope_class) group_left() solo_lock_ttl_ms{scope_class=~\".+\"})",
-          "legendFormat": "scope bucket {{scope_class}} ({{tick_mode}})",
+          "expr": "tick_execution_time_ms_p99 / tick_lock_ttl_ms",
+          "legendFormat": "{{scope}}",
           "refId": "A"
         }
       ],
@@ -34,13 +33,13 @@
       "title": "Retry and Command Queue Depth",
       "targets": [
         {
-          "expr": "tick_retry_queue_depth{scope_class=~\".+\"}",
-          "legendFormat": "retry (scope bucket {{scope_class}})",
+          "expr": "tick_retry_queue_depth",
+          "legendFormat": "retry {{scope}}",
           "refId": "A"
         },
         {
-          "expr": "tick_command_queue_depth{scope_class=~\".+\"}",
-          "legendFormat": "command (scope bucket {{scope_class}})",
+          "expr": "tick_command_queue_depth",
+          "legendFormat": "command {{scope}}",
           "refId": "B"
         }
       ],
@@ -51,18 +50,18 @@
       "title": "Tick Effect Ledger (Pending/Applied/Abandoned)",
       "targets": [
         {
-          "expr": "tick_effects_pending_total{scope_class=~\".+\"}",
-          "legendFormat": "pending (scope bucket {{scope_class}})",
+          "expr": "tick_effects_pending_total",
+          "legendFormat": "pending {{scope}}",
           "refId": "A"
         },
         {
-          "expr": "tick_effects_applied_total{scope_class=~\".+\"}",
-          "legendFormat": "applied (scope bucket {{scope_class}})",
+          "expr": "tick_effects_applied_total",
+          "legendFormat": "applied {{scope}}",
           "refId": "B"
         },
         {
-          "expr": "sum by (scope_class) (tick_effects_abandoned_total{scope_class=~\".+\"})",
-          "legendFormat": "abandoned (scope bucket {{scope_class}})",
+          "expr": "sum by (scope) (tick_effects_abandoned_total)",
+          "legendFormat": "abandoned {{scope}}",
           "refId": "C"
         }
       ],
@@ -70,11 +69,11 @@
     },
     {
       "type": "graph",
-      "title": "Non-RUNNING Scope Classes (count)",
+      "title": "Non-RUNNING Regions (count)",
       "targets": [
         {
-          "expr": "sum by (scope_class, status) (tick_status{scope_class=~\".+\",status!=\"RUNNING\"} == 1)",
-          "legendFormat": "scope bucket {{scope_class}} = {{status}}",
+          "expr": "sum by (status) (tick_status{status!=\"RUNNING\"} == 1)",
+          "legendFormat": "{{status}}",
           "refId": "A"
         }
       ],
@@ -85,13 +84,13 @@
       "title": "Durable Commit vs Coordination Cleared",
       "targets": [
         {
-          "expr": "rate(tick_durable_commit_total{scope_class=~\".+\"}[5m])",
-          "legendFormat": "durable (scope bucket {{scope_class}})",
+          "expr": "rate(tick_durable_commit_total[5m])",
+          "legendFormat": "durable {{scope}}",
           "refId": "A"
         },
         {
-          "expr": "rate(tick_coordination_cleared_total{scope_class=~\".+\"}[5m])",
-          "legendFormat": "cleared (scope bucket {{scope_class}})",
+          "expr": "rate(tick_coordination_cleared_total[5m])",
+          "legendFormat": "cleared {{scope}}",
           "refId": "B"
         }
       ],
@@ -102,8 +101,8 @@
       "title": "Tick Cleanup Lag (ms)",
       "targets": [
         {
-          "expr": "tick_cleanup_lag_ms{scope_class=~\".+\"}",
-          "legendFormat": "scope bucket {{scope_class}}",
+          "expr": "tick_cleanup_lag_ms",
+          "legendFormat": "{{scope}}",
           "refId": "A"
         }
       ],
