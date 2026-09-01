@@ -17,7 +17,7 @@ Example alert for Coordination Redis tail-loss SLO breaches:
     runbook: design/architecture/system-architecture-redis-incident-runbook.md#coordination-aof-tail-loss-slo-breach
   annotations:
     summary: Coordination Redis tail-loss SLO breached
-    description: Tail-loss exceeds the cadence-derived envelope for one or more bounded Redis deployment scopes; resolve affected regions from authoritative runtime-health and control-plane records. See the Redis incident runbook for reset guidance.
+    description: Tail-loss exceeds the cadence-derived envelope for one or more bounded Redis deployment scopes; identify the affected deployment scope(s) from the alert labels, then enumerate affected regions from authoritative runtime-health and control-plane records. See the Redis incident runbook for reset guidance.
 ```
 
 This assumes that the canonical recording rules expose:

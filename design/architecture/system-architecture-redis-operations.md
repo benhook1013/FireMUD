@@ -194,7 +194,7 @@ FireMUD classifies coordination-backed workloads by reset tolerance:
   - tick locks, `pending` entries, timers, retry queues, and conflict metadata
 - **reset-sensitive**
   - gameplay session prefixes such as `session:game:*`; current live Account auth uses the legacy `session:auth:account:*` and `session:auth:tenant:*` projections, while target-only Account auth families are `session:auth:token:*` and `session:auth:generation:*`; the Account-owned `session:connect-token:*` issuance-result projections are also reset-sensitive
-  - certain automation queues or non-critical analytics that can be recomputed or re-enqueued
+  - future automation queues explicitly assigned to Coordination Redis by their owner contract (the current `automation:queue:{tenantInstanceTag}:*` family is a Cache/Rate-Limit projection and follows the unavailable queue-reset path above), or non-critical analytics that can be recomputed or re-enqueued
 - **reset-forbidden**
   - future workloads that would treat Redis as a durable component of a long-lived contract
 
