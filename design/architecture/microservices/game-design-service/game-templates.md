@@ -405,10 +405,7 @@ curl "http://localhost:8080/templates?tenantId=1"
 See [openapi.yaml](../../../../services/game-design-service/src/main/resources/openapi.yaml)
 for request and response schemas.
 
-Current template management is REST-only. Use `POST /templates` to create
-templates and `GET /templates?tenantId=<id>` to list them. The current Game
-Design proto exposes no template create, list, update, or delete RPCs; any gRPC
-template-management surface remains target-only.
+Within that local/internal development boundary, current template management is REST-only: use `POST /templates` to create templates and `GET /templates?tenantId=<id>` to list them. This seam is not an approved official-hosted or general operator provisioning workflow. The current Game Design proto exposes no template create, list, update, or delete RPCs; any gRPC template-management surface remains target-only.
 
 ## Related Documentation
 

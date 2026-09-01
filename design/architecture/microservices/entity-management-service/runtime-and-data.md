@@ -161,6 +161,16 @@ Target-state illustrative responses:
   "durableFenceToken": "8b7e1c4a-2d6f-4c91-a5b8-7e3d9f0a6c12",
   "familyClassifications": [
     {
+      "family": "actor_resource_states",
+      "referencedTemplateIds": [],
+      "outcome": "COMPATIBLE"
+    },
+    {
+      "family": "actor_active_conditions",
+      "referencedTemplateIds": [],
+      "outcome": "COMPATIBLE"
+    },
+    {
       "family": "equipment_bindings",
       "referencedTemplateIds": ["itemTemplateId:iron-sword"],
       "outcome": "COMPATIBLE"
@@ -212,6 +222,16 @@ Target-state illustrative responses:
   "familyClassifications": [
     {
       "family": "character",
+      "referencedTemplateIds": [],
+      "outcome": "COMPATIBLE"
+    },
+    {
+      "family": "actor_resource_states",
+      "referencedTemplateIds": [],
+      "outcome": "COMPATIBLE"
+    },
+    {
+      "family": "actor_active_conditions",
       "referencedTemplateIds": [],
       "outcome": "COMPATIBLE"
     },

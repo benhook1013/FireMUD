@@ -1594,6 +1594,37 @@ def _check_ms_thresholds(expr: str) -> str | None:
     return None
 
 
+def _promql_immediate_operand(expr: str, start: int) -> str:
+    """Return the operand after a binary operator, stopping at top-level logic."""
+    index = start
+    while index < len(expr) and expr[index].isspace():
+        index += 1
+    operand_start = index
+    delimiters: list[str] = []
+    matching_delimiters = {
+        ")": "(",
+        "]": "[",
+        "}": "{",
+    }
+    logical_operator = re.compile(
+        r"(?<![A-Za-z0-9_:])(?:and|or|unless)(?![A-Za-z0-9_:])",
+        re.IGNORECASE,
+    )
+    while index < len(expr):
+        character = expr[index]
+        if character in "([{":
+            delimiters.append(character)
+        elif character in ")]}":
+            if delimiters and delimiters[-1] == matching_delimiters[character]:
+                delimiters.pop()
+        elif not delimiters:
+            match = logical_operator.match(expr, index)
+            if match:
+                return expr[operand_start:index].rstrip()
+        index += 1
+    return expr[operand_start:].rstrip()
+
+
 def _tick_replay_scope_matching_finding(
     path: Path, alert_name: str, expr: str
 ) -> Finding | None:
@@ -1602,12 +1633,11 @@ def _tick_replay_scope_matching_finding(
     code_expr = _mask_promql_non_code(expr)
     expected = re.compile(
         r"tick_effects_pending_total\s*(?:\{[^}]*\})?\s*>\s*0"
-        r"\s+and\s+on\s*\(\s*scope_class\s*\)"
-        r"(?P<rhs>[\s\S]*)$",
+        r"\s+and\s+on\s*\(\s*scope_class\s*\)",
         re.IGNORECASE,
     )
     match = expected.search(code_expr)
-    rhs = match.group("rhs") if match else ""
+    rhs = _promql_immediate_operand(code_expr, match.end()) if match else ""
     if match and (
         re.search(
             r"\{[^{}]*\bscope_class\s*(?:=|=~|!=|!~)",
