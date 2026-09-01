@@ -62,8 +62,10 @@ Key steps:
 ## Scaling PostgreSQL
 
 - Treat PostgreSQL as a primary scaling boundary for the tick system, not only as a backing store:
-  - Tick execution writes tick-batch rows, effect-ledger rows, region status updates, remote follow-up claims, and reconciliation backlog state.
-  - Replay and recovery add their own write/read pressure through replay scans, backlog retries, and operator-driven reconcile flows.
+  - **Current live:** Tick execution writes `tick_batch` and effect-ledger (`tick_effect`) rows and advances the owner-fenced `runtime_region_status` row once per committed tick (including its last-committed tick and update timestamp). These are implemented durable PostgreSQL writes that must be included in primary-write capacity estimates.
+  - **Current live:** Remote-follow-up scheduling writes coordinator/follow-up state, and the tick path claims due `remote_followup` rows and updates their queue/status state while draining them; result and timeout reconciliation also updates the existing follow-up/coordinator/result rows. Size this workload from both origin scheduling and per-tick claim/update/reconciliation rates, not only from `tick_batch` and `tick_effect` volume.
+  - **Target-state conditional:** Any additional effect-reconciliation backlog schema or API beyond the existing remote-follow-up/result state remains a future persistence surface and must be sized when that design is implemented; it is not current deployment evidence.
+  - **Target-state conditional:** Future replay/recovery scans and any new operator-driven reconciliation flows add their own read/write pressure when implemented. Existing remote-follow-up draining and result/timeout reconciliation are current paths and are not examples of an unimplemented target surface; see [Game Session API status](./microservices/game-session-service/api-contracts.md#implementation-status).
 - Use read replicas for read-heavy workloads where supported by the design, but do not assume replicas solve tick-path pressure; the primary write path must be sized for peak tick and replay throughput.
 - Increase instance size or provisioned IOPS as necessary, following database operations runbooks.
 - Monitor Slow Query logs and apply schema/index optimizations as needed.
@@ -99,9 +101,10 @@ Exact durations are deployment policy derived from declared retry, recovery, and
 When deciding **what** to scale, prefer signals tied to the tick model and Redis SLOs:
 
 - Tick duration vs budget (primary safety ratio):
-  - Watch `tick_execution_time_ms_p95` and `tick_execution_time_ms_p99` (recording rules derived from `tick_execution_time_ms_bucket`) relative to **lock TTLs** as described in `system-architecture-tick-concepts-and-invariants.md` (that is, `tick_execution_time_ms_p99 / tick_lock_ttl_ms`).
-  - Treat `tick_execution_time_ms_p99 / tick_lock_ttl_ms` as the primary safety ratio for tick runtime; regions that sustain ratios near `DEGRADED`/`STALLED` transition thresholds from the concepts doc should first reduce region density per Game Session instance or add Game Session replicas before changing tick cadence.
-  - For intuition, you may also track `tick_execution_time_ms_p99 / tick_interval_ms`, but decisions should be grounded in the TTL-based ratio because production `lock_ttl_ms` is the shared resolver's evidence-calibrated setting. The interval-based relationship is a bootstrap default only, not a production TTL derivation.
+  - The canonical mode-aware execution/TTL/ratio families and their dashboard consumers are target-only and currently unavailable until Game Session emits and proves the bounded `scope_class`/`tick_mode` labels. Treat absent or stale series as unknown; use authoritative runtime-health/control-plane evidence and structured logs for current scaling decisions.
+  - Watch `tick_execution_time_ms_p95{scope_class=~".+",tick_mode=~".+"}` and `tick_execution_time_ms_p99{scope_class=~".+",tick_mode=~".+"}` (recording rules derived from `tick_execution_time_ms_bucket{scope_class=~".+",tick_mode=~".+",le=~".+"}`) relative to the mode-specific **lock TTL**: normal samples use `tick_execution_time_ms_p99{scope_class=~".+",tick_mode="normal"} / on (scope_class) tick_lock_ttl_ms{scope_class=~".+"}`, while solo-budget samples use `tick_execution_time_ms_p99{scope_class=~".+",tick_mode="solo"} / on (scope_class) solo_lock_ttl_ms{scope_class=~".+"}`. These are bounded class-level rollups, not selectors for an individual region.
+  - Treat the mode-specific p99 ratio above as the primary detection/escalation signal for tick runtime pressure. When a rollup sustains a ratio near the `DEGRADED`/`STALLED` thresholds, resolve the exact affected regions through control-plane/runtime-health evidence, then first reduce region density per Game Session instance or add Game Session replicas before changing tick cadence.
+  - For intuition, you may also track `tick_execution_time_ms_p99{scope_class=~".+",tick_mode=~".+"} / on (scope_class) max by (scope_class) (tick_interval_ms{scope=~".+"})`, using the deployment-scoped cadence input's class-only maximum; do not directly join the raw `scope` label to target mode-aware families. Decisions should be grounded in the mode-specific TTL-based ratio because production `lock_ttl_ms` and `solo_lock_ttl_ms` are the shared resolver's evidence-calibrated settings. The interval-based relationship is a bootstrap default only, not a production TTL derivation.
   - Treat any `tick_interval_ms` change as a topology-level/runtime-contract change for the affected live `regionEpoch`, not as a harmless tuning knob. If cadence changes would alter timer ordering normalization, perform them with an epoch bump and timer re-derivation as required by the tick invariants.
   - Example: moving a live region from `100ms` cadence to `200ms` cadence requires pause, epoch bump, timer `due_tick_id` re-derivation, and resume on the new epoch; it is not an in-place tuning-only change.
 - Coordination-write exposure envelopes:
@@ -125,7 +128,7 @@ The exact safe limits for a deployment depend on hardware and tuning, but the fo
 
 - **Per-Game Session instance region density**
   - For tick intervals around `100–250ms`, start with **no more than 50–100 active regions** per Game Session pod.
-  - If `tick_execution_time_ms_p99 / tick_lock_ttl_ms` regularly approaches the canonical `DEGRADED`/`STALLED` thresholds from the tick concepts doc for any region, treat that as a signal to reduce regions per pod or increase pod resources before tightening tick cadence.
+  - If the mode-specific class-level p99 rollup (`tick_execution_time_ms_p99{scope_class=~".+",tick_mode="normal"} / on (scope_class) tick_lock_ttl_ms{scope_class=~".+"}` or `tick_execution_time_ms_p99{scope_class=~".+",tick_mode="solo"} / on (scope_class) solo_lock_ttl_ms{scope_class=~".+"}`) regularly approaches the canonical `DEGRADED`/`STALLED` thresholds, use authoritative runtime-health records to identify the affected regions, then treat the pressure as a signal to reduce regions per pod or increase pod resources before tightening tick cadence.
 - **Per-region coordination load**
   - Aim for `tick:{tenantRegionTag}:pending` to represent at most **one in-flight tick** plus a small buffer of staged work; thousands of uncommitted effects for a single region should be treated as an anomaly and investigated.
   - Keep `timer:{tenantRegionTag}` and `retry:{tenantRegionTag}` counts per region within the “tens of thousands” envelope from the Redis operations doc; sustained higher values usually indicate that timers or retries are being used as data stores rather than scheduling hints.
@@ -141,6 +144,7 @@ Baseline guardrails are only a starting point. Before materially increasing regi
 - `pod_tick_cost_ms = active_regions * (p99_region_tick_ms + p99_remote_drain_ms + p99_replay_overhead_ms)`
 - Keep `pod_tick_cost_ms` below the effective scheduling envelope implied by `tick_interval_ms`, lock TTL headroom, and observed Redis script latency.
 - When `solo_tick_budget_ms` is enabled for `requiresSoloTick` commands, capacity reviews must also model the isolated solo-tick path and its derived TTL/health thresholds rather than treating those commands as ordinary ticks.
+- `p99_replay_overhead_ms` is an unknown input when the replay controller or its corresponding metric is absent, stale, or unavailable. Do not substitute `0` or treat an absent replay series as evidence of no replay work; pause this model-driven capacity decision and use authoritative replay/runtime-health evidence until the input is emitted and validated.
 
 This formula is a conservative first-pass input, not a complete capacity predictor. It must not be interpreted as proof that all region work executes serially or that summing independent p99 values predicts the p99 of the combined workload. Calibration must additionally account for:
 
@@ -154,19 +158,19 @@ This formula is a conservative first-pass input, not a complete capacity predict
 - process and node memory, garbage collection, network throughput, connection pressure, and required operating headroom.
 
 - Calibrate each term from load tests in the target profile (`dev_local`, `hobby_self_hosted`, `production_clustered`) and record:
-  - `p99_region_tick_ms` from `tick_execution_time_ms_p99`.
+  - `p99_region_tick_ms` from load-test measurements and exact per-region runtime-health evidence; the bounded `tick_execution_time_ms_p99{scope_class=~".+",tick_mode=~".+"}` rollup is corroborating pressure only and cannot identify a region’s p99.
   - `p99_remote_drain_ms` from remote follow-up lag/drain metrics.
-  - `p99_replay_overhead_ms` from replay-controller and tick replay metrics.
+  - `p99_replay_overhead_ms` from replay-controller and tick replay metrics only when the replay controller and those metrics are implemented and emitted; an absent, stale, or unavailable series is `UNKNOWN`, not zero, and blocks treating the computed pod cost as a complete capacity estimate.
 - PostgreSQL capacity inputs are required alongside the pod cost model. Load tests and environment docs should record at minimum:
   - tick-batch and effect-ledger inserts/updates per second
   - remote follow-up claim/update QPS
-  - replay-controller scan/update QPS
-  - effect-reconciliation backlog retry QPS
+  - replay-controller scan/update QPS when the replay controller and its metrics are implemented and emitted
+  - target-state conditional effect-reconciliation backlog retry QPS, once a separate effect-reconciliation backlog surface is implemented
   - command-ingress and command-status update QPS
   - p95/p99 write latency for the primary tick-path tables
-  - retention horizon, partitioning scheme, and vacuum/GC cadence for high-churn tables
+  - **Target-state conditional:** retention horizon, partitioning scheme, and vacuum/GC cadence for high-churn tables, once the shared retention contract and its cross-service compatibility inputs are implemented; current deployments must not treat these as established shared-retention evidence
 
-Scaling decisions must not rely only on Redis unreplicated-write exposure and pod density signals. If ledger age, replay scan lag, follow-up claim latency, or backlog-table bloat is rising, treat PostgreSQL as the bottleneck and scale or redesign there before increasing tick concurrency.
+Scaling decisions must not rely only on Redis unreplicated-write exposure and pod density signals. For implemented durable paths, rising ledger age or follow-up claim latency should be treated as a PostgreSQL bottleneck and should prompt scaling or redesign there before increasing tick concurrency. Rising replay scan lag is a comparable signal only when the replay controller is implemented and the corresponding metric is emitted. Effect-reconciliation-backlog bloat is a conditional target-state signal only after a separate backlog table/API is implemented; its absence in the current deployment is not a zero-valued measurement or evidence that the backlog is healthy.
 
 Scaling plans should include this calibration so “add replicas” and “increase regions per pod” decisions are tied to measured tick and coordination cost, not only static guardrail numbers.
 

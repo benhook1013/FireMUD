@@ -11,11 +11,16 @@ creators can quickly spin up new projects without starting from scratch.
 - **Starter Items and NPCs** – basic entity definitions for a new game.
 - **Default Rulesets** – gameplay rules and runtime flags stored with the
   template.
-- **Admin Accounts** – initial administrators configured at template creation.
+- **Administrator provisioning** – not stored in templates. Any future bootstrap flow must use Account-owned account, membership, and grant operations; Game Design does not create administrator authority.
 
 ## Implementation Status
 
 - The launch plugin-selection presence modes remain target-only and unimplemented: a presence-capable selection wrapper/mode, fresh omission or explicit empty resolving to the same immutable empty selection, rollback omission reusing a named target, rollback explicit empty, and explicit non-empty selection are not yet represented in proto/generated clients, launch-descriptor persistence/response, the request digest, service logic, or focused proof. Launch-resolution APIs are live, but the current implementation does not yet persist, expose, or prove the complete `enabledPluginVersions[]` set for deterministic retry and rollback. The detailed target contract remains below.
+- Current script-patch resolution is not yet the target launch predicate: a full-version template/request can persist an arbitrary patch ID without proving a same-base `PUBLISHED` Game Design publication or Automation `READY` status. These are implementation gaps; the target validation and fail-before-instance-row rules remain below.
+- The target tenant-scoped `GetTemplateReferencePhase` cutover read is not implemented in the current proto or service. Current launch resolution checks only the per-template `templateReferencePhase` field (`ENFORCED`/`LEGACY`); it does not expose or consume the target durable tenant phase (`BACKFILLING`/`VALIDATED`/`ENFORCED`) required by launch and retirement tooling.
+- Normalized `game_template_*_ref` storage and its lifecycle/query authority are target-only. The current implementation persists `game_templates` and revision rows, but has no normalized reference tables, create/update derivation and atomic synchronization, one-time backfill/validation marker, or retirement/reference-query tooling; current lifecycle checks cannot rely on those rows and remain unimplemented or unproven.
+- The current REST `POST /templates` path is named and documented as create-only, but a caller-supplied `id` is accepted by the DTO and makes the repository update the row by global `id` while also writing the supplied `tenantId`; the subsequent tenant-filtered readback can then hide the changed row. This is a current cross-tenant reassignment/overwrite gap, not tenant-scoped update safety. The target contract must reject `id` on create and make any future update and readback exact-tenant-qualified while keeping the stored tenant binding immutable; focused cross-tenant denial proof is absent.
+- Current template-remap-set APIs persist tenant-scoped `DRAFT`/`APPROVED` sets and entries. When `ResolveLaunchDescriptor` receives a `sourceVersionId` that differs from the resolved target, it selects exactly one `APPROVED` set for the source/target pair and persists and returns that set's `remapSetId`; it does not collect or verify owning-domain attestations. The target attestation predicate remains below.
 
 ## Starter Experience Profiles
 
@@ -48,11 +53,7 @@ This guarded planning and application is target-state behavior. The current `Sav
 
 After a successful upgrade, the exact profile baseline advances to `N`, while retained local differences, explicit deletions, detachments, mappings, and resolution outcomes remain recorded for the next upgrade. This makes repeated upgrades deterministic without turning the profile into an authoring or runtime inheritance layer.
 
-`GameTemplateDto` includes `id`, `tenantId`, `name`, an optional `description`,
-the raw `config` JSON and a `createdAt` timestamp. The `id` is assigned by the
-database when the template is saved. The `config` field uses a structured
-schema describing world layout, starter items, default rulesets, and admin
-accounts.
+`GameTemplateDto` includes `id`, `tenantId`, `name`, an optional `description`, the raw `config` JSON and a `createdAt` timestamp. On a normal create with `id` omitted, the database assigns the ID when the template is saved. The current DTO/service path also accepts a caller-supplied `id` and can update a row by that global ID while changing its claimed tenant; this is the cross-tenant overwrite/reassignment gap recorded in [Implementation Status](#implementation-status), not supported create behavior. The target create contract rejects `id`, and future updates/readbacks must use exact tenant-qualified identity while keeping the stored tenant binding immutable. The `config` field uses a structured schema describing world layout, starter items, default rulesets, template references, and non-authoritative settings.
 
 The `config` payload does not embed authoritative copies of world, entity, or script definitions. Instead it carries:
 
@@ -68,11 +69,11 @@ Creator-facing launch-default note:
 
 Canonical schemas, identifiers, and versioned template rows remain in the owning domain services; `GameTemplateDto.config` is a configuration and wiring layer that composes these existing templates for bootstrapping new games.
 
-### Normalized Reference Storage
+### Normalized Reference Storage (Target State)
 
-Game templates participate in version retirement, auditing, and bulk migration workflows. Because `GameTemplateDto.config` is JSON, the system must not rely on ad hoc JSON parsing to enforce invariants like “do not retire a version that is still referenced” or to perform controlled rewrites of references.
+The target design includes game templates in version retirement, auditing, and bulk migration workflows. Because `GameTemplateDto.config` is JSON, the implemented target must not rely on ad hoc JSON parsing to enforce invariants like “do not retire a version that is still referenced” or to perform controlled rewrites of references.
 
-The Game Design Service therefore stores normalized reference rows alongside the JSON config, derived and validated on every create/update:
+The target Game Design implementation stores normalized reference rows alongside the JSON config, derived and validated on every create/update:
 
 - `game_template_version_ref` keyed by `(tenantId, gameTemplateId, versionId)` for the base design bundle referenced by the template.
 - `game_template_world_ref` keyed by `(tenantId, gameTemplateId, versionId, regionTemplateId/roomTemplateId/...)` for any explicit world references present in the config.
@@ -80,7 +81,7 @@ The Game Design Service therefore stores normalized reference rows alongside the
 - `game_template_script_ref` keyed by `(tenantId, gameTemplateId, versionId, scriptId/...)` for script bindings where templates need to pin or validate script identifiers.
 - `game_template_script_patch_ref` keyed by `(tenantId, gameTemplateId, baseVersionId, scriptPatchVersion)` when a template pins a default `scriptPatchVersion` for a base version.
 
-Administrative tooling and lifecycle checks (retirement eligibility, “list templates referencing version”, bulk migrations) operate on these normalized tables. The JSON config remains the user-facing payload and can be reconstructed or validated against normalized rows, but it is not the only queryable representation of dependencies.
+In the target state, administrative tooling and lifecycle checks (retirement eligibility, “list templates referencing version”, bulk migrations) operate on these normalized tables. The JSON config remains the user-facing payload and can be reconstructed or validated against normalized rows, but it is not the only queryable representation of dependencies.
 
 ### Single Base-Version Invariant
 
@@ -128,7 +129,7 @@ Normalized reference storage is only safe if it is operationally enforced:
   - Fail fast if `GetTemplateReferencePhase` is not `ENFORCED` for the target scope.
   - Defer release-attestation semantics to [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md#launch-descriptor-version-resolution-rules); locally, Game Design must reject a template launch when the resolved version has no supported attestation identity or the descriptor cannot bind to that version.
   - If the launch path depends on cross-version durable-state remaps, fail fast unless an approved `remapSetId` exists for the source/target version pair and all required owning domains attest it as usable.
-  - Game Design now persists this control-plane state explicitly and returns the frozen `remapSetId` on the resolved launch descriptor rather than requiring downstream services to infer or rediscover remap identity.
+  - The target Game Design contract persists this control-plane state explicitly and returns the frozen `remapSetId` on the resolved launch descriptor rather than requiring downstream services to infer or rediscover remap identity.
 
 > **Note**
 
@@ -189,6 +190,8 @@ Ownership and usage rules:
 - If descriptor resolution fails because a dependency is missing, the selected script patch is not tenant-`READY`, required immutable publication/compatibility evidence is absent, the release is not attested, or the dependency is not enforceable under `GetTemplateReferencePhase`, the launch fails before any instance rows are created. Plugin runtime readiness and current signer, component, and capability policy remain Automation activation/resume gates rather than launch-descriptor predicates.
 
 ### Launch Orchestration Ownership
+
+The following launch-orchestration sequence is target-state behavior, not a current implementation contract. The target preflight reads tenant-scoped `GetTemplateReferencePhase` and fails with `TEMPLATE_REFERENCE_PHASE_NOT_ENFORCED` unless that phase is `ENFORCED`. That RPC is absent from the current proto/service, so the narrower current preflight checks only each template's `templateReferencePhase` field (`ENFORCED` or legacy `LEGACY`); it does not enforce the target tenant phase or provide the target failure guarantee. This distinction is recorded in [Implementation Status](#implementation-status).
 
 The first implementation slice must use one control-plane launch orchestrator. The canonical owner is the Game Session instance-creation workflow consuming Game Design control-plane APIs.
 
@@ -367,7 +370,7 @@ Illustrative startup sequence:
 4. World creation starts using only the resolved descriptor fields and persists instance rows under `(tenantId, gameInstanceId)` without re-reading mutable template defaults.
 5. Game Session opens admission only after World reports successful activation for that same resolved descriptor.
 
-### Interaction with Version Lifecycle
+### Interaction with Version Lifecycle (Target State)
 
 Game templates participate in the same version lifecycle as the domain templates they reference:
 
@@ -377,30 +380,32 @@ Game templates participate in the same version lifecycle as the domain templates
 
 ## Creating Templates
 
-Creators submit a `GameTemplateDto` via the REST API:
+The current REST endpoint is a local/internal implementation seam, not an approved official-hosted or general operator provisioning workflow. External exposure of `POST /templates` must remain unavailable until the hosted-content gate, tenant-safe create/readback behavior, and focused proof are implemented. The request must omit `id`; although the database assigns it for a normal create, the current DTO/service path accepts a caller-supplied id and can overwrite a row under the wrong tenant before tenant-filtered readback hides the result. Do not use this current seam for external or production template provisioning.
+
+For local or otherwise explicitly isolated development use, creators can submit a `GameTemplateDto` via the REST API:
 
 ```bash
 curl -X POST http://localhost:8080/templates \
      -H 'Content-Type: application/json' \
-     -d '{"tenantId":"11111111-1111-4111-8111-111111111111","name":"Default","config":"{}"}'
+     -d '{"tenantId":"1","name":"Default","config":"{}"}'
 ```
 
 The service validates the payload and stores it in the `game_templates` table.
-Templates can then be listed per `tenantId` to help bootstrap new games.
+Templates can then be listed per `tenantId` to help bootstrap new games in that same local/internal boundary.
 Template names must be unique for each tenant to avoid collisions.
+
+These examples use `tenantId=1` because the current REST request reader accepts positive decimal `Long` tenant identifiers. That is current transport behavior, not the target identity shape: the target architecture uses UUID tenant identifiers, and the examples must migrate together with the REST/OpenAPI and persistence contract when that transport change is implemented.
 
 To list templates:
 
 ```bash
-curl "http://localhost:8080/templates?tenantId=11111111-1111-4111-8111-111111111111"
+curl "http://localhost:8080/templates?tenantId=1"
 ```
 
 See [openapi.yaml](../../../../services/game-design-service/src/main/resources/openapi.yaml)
 for request and response schemas.
 
-Management exists via REST and gRPC. Use `POST /templates` to create templates,
-`GET /templates?tenantId=<id>` to list them, and the gRPC endpoints to create,
-list, update, or delete templates.
+Within that local/internal development boundary, current template management is REST-only: use `POST /templates` to create templates and `GET /templates?tenantId=<id>` to list them. This seam is not an approved official-hosted or general operator provisioning workflow. The current Game Design proto exposes no template create, list, update, or delete RPCs; any gRPC template-management surface remains target-only.
 
 ## Related Documentation
 

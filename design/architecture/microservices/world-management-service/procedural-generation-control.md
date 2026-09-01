@@ -4,6 +4,8 @@
 
 The target design places the generation engine and typed design-time/runtime ingress in World Management. Current `SimpleDungeonGenerator` and registry implementations remain in Automation & Scripting, and World Management lacks typed APIs that invoke a World-owned engine; its current typed Draft mutation path for generated subtrees is not such an invocation API.
 
+The legacy `POST /generation/rules` endpoint remains live as a direct persistence path. It only checks tenant access, does not require the authenticated Game Design Draft workflow or validate version lifecycle state, and its DTO mapping defaults `versionId` rather than accepting the target version. This is migration drift: generation inputs must converge on the typed Game Design-authorized Draft/version-state path, and the legacy endpoint must be removed or fail closed before procedural-generation readiness is claimed.
+
 ## Derived World Artifact Publication
 
 Derived world artifacts such as navmesh/path graph bundles follow one canonical publication path:
@@ -34,7 +36,7 @@ Initial-slice `contentDigest` participation includes world-owned version-scoped 
 
 Current implementation note:
 
-- The live first-slice tables are named `region`, `zone`, `room`, `room_exit`, and `generation_rule` rather than the target-state `*_template` names. They are already version-scoped by `(tenantId, versionId)` and are the concrete rows hashed by `GetDraftDesignDigest(versionId)`.
+- The live first-slice tables are named `region`, `zone`, `room`, `room_exit`, and `generation_rule` rather than the target-state `*_template` names. They carry `(tenantId, versionId)` and are the concrete rows hashed by `GetDraftDesignDigest(versionId)`, but that scope is not fully enforced by SQL: topology and spawn parent references use scalar IDs and do not enforce parent tenant/version equality. Normal mutation guards are not database integrity; composite parent keys/foreign keys or an equivalent owner-local guard with database integration/readback proof remain required. See [World Management Runtime and Data](./runtime-and-data.md#implementation-status).
 - The current `region` digest includes generation-affecting fields `generationSeed`, `generatorType`, `generatorParams`, and `spacingMultiplier` in addition to identity and presentation fields.
 - The current `generation_rule` digest includes `name`, `scopeType`, `scopeId`, and `value`. Scoped generation-rule writes must use the same `REGION_SUBTREE` / `ZONE_SUBTREE` request scope and Draft scope-epoch guard as topology and spawn-binding generation writes.
 - The current `WORLD_GENERATION_SUBTREE` mutation applies generated rooms, room exits, generation rules, and spawn bindings as one scoped Draft write. `REPLACE_SCOPE` clears prior generated rows in that declared subtree before reapplying the payload so digest inputs converge from the same scoped mutation contract instead of from ad hoc table-specific editor paths.
@@ -67,18 +69,18 @@ The cross-service generation ownership and ingress contract is canonical in [Pro
 
 Procedural-generation control surfaces are split by authorization and persistence scope:
 
-- Design-time generation requests are accepted only through the authenticated Game Design workflow’s typed Draft target. World Management validates the target, version, and scope and persists only World-owned Draft topology.
+- Target contract: design-time generation requests are accepted only through the authenticated Game Design workflow’s typed Draft target. World Management validates the target, version, and scope and persists only World-owned Draft topology. Current migration drift remains because the live legacy `POST /generation/rules` path bypasses that authority (see the implementation-status note above).
 - Runtime generation requests are accepted only through approved world-lifecycle or gameplay command paths with a typed instance target. World Management validates instance lifecycle and identity and persists only instance topology; Published template rows remain immutable.
 - The typed target and authorized endpoint determine namespace and persistence behavior. Automation & Scripting may populate runtime entities or bindings only after World Management has persisted topology, and only through canonical bindings or runtime commands. World Management remains the sole topology writer; Automation & Scripting cannot invoke World generation or persist or mutate topology.
-- Design-time generation-input APIs mutate version-scoped generation design rows in World Management only for Draft versions.
-- Operational runtime-default APIs are owned by World Management and mutate only tenant-scoped `generation_runtime_default` rows that are explicitly excluded from publish inputs and draft digests.
+- Target contract: design-time generation-input APIs mutate version-scoped generation design rows in World Management only for Draft versions. The live legacy endpoint described above does not enforce this Draft/version boundary and remains migration drift until it is removed or fails closed.
+- Operational runtime-default APIs are target-only and not implemented or available. If and when this contract is accepted and implemented, World Management will own the APIs and mutate only tenant-scoped `generation_runtime_default` rows that are explicitly excluded from publish inputs and draft digests; no current caller may treat these routes as an available mutation or read surface.
 
-Operational runtime-default API:
+Operational runtime-default API (target-only; not implemented/unavailable):
 
-- `POST /generation/runtime-defaults` – create or update runtime-only defaults for a tenant.
-- `GET /generation/runtime-defaults?tenantId=...` – list runtime-only defaults for a tenant.
+- `POST /generation/runtime-defaults` – target-only create/update route; unavailable until its authenticated tenant binding, request identity/replay, durable persistence, and failure semantics are defined and proved.
+- `GET /generation/runtime-defaults?tenantId=...` – target-only read route; unavailable until its authenticated tenant binding and read consistency/failure semantics are defined and proved.
 
-These endpoints are limited to live operational tuning for future runtime-only generation runs. They must not mutate `generation_rule_template`, any other version-scoped design rows, or any input that contributes to `generationConfigRevision`.
+If implemented, these endpoints are limited to live operational tuning for future runtime-only generation runs. They must not mutate `generation_rule_template`, any other version-scoped design rows, or any input that contributes to `generationConfigRevision`. This matches [World Management API Contracts](./api-contracts.md), which requires both routes to remain unavailable until their owner and safety contract is proved.
 
 ## Destructive Regeneration Plans
 

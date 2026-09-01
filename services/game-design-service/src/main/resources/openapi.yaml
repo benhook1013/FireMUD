@@ -1,14 +1,23 @@
+---
 openapi: 3.0.3
 info:
   title: Game Design Service API
-  description: Tools for editing game assets and publishing versions
+  description: >-
+    Tools for editing game assets and publishing versions. Current REST DTOs
+    carry tenantId as a String, while the request reader validates positive
+    decimal Long values; the string pattern in this contract is therefore the
+    exact current wire representation. This is an explicit migration gap from
+    the canonical UUID tenant identity and must not be changed without
+    converging the DTO, controller, persistence, and authorization boundaries
+    together.
   version: 1.0.0
   license:
-    name: MIT
-    url: https://opensource.org/licenses/MIT
+    name: PolyForm Noncommercial License 1.0.0
+    url: https://polyformproject.org/licenses/noncommercial/1.0.0
 servers:
   - url: https://api.firemud.com
-security: []
+security:
+  - bearerAuth: []
 components:
   securitySchemes:
     bearerAuth:
@@ -18,11 +27,17 @@ components:
   schemas:
     GameTemplateDto:
       type: object
+      required:
+        - tenantId
+        - name
+        - config
       properties:
         id:
           type: integer
+          format: int64
         tenantId:
           type: string
+          pattern: '^[1-9][0-9]*$'
         name:
           type: string
         description:
@@ -30,6 +45,22 @@ components:
           nullable: true
         config:
           type: string
+        defaultVersionId:
+          type: integer
+          format: int64
+          nullable: true
+        defaultScriptPatchVersion:
+          type: string
+          nullable: true
+        defaultRuntimeFlagsJson:
+          type: string
+          nullable: true
+        templateReferencePhase:
+          type: string
+          nullable: true
+          enum:
+            - ENFORCED
+            - LEGACY
         createdAt:
           type: string
           format: date-time
@@ -38,8 +69,10 @@ components:
       properties:
         id:
           type: integer
+          format: int64
         tenantId:
           type: string
+          pattern: '^[1-9][0-9]*$'
         fileName:
           type: string
         contentType:
@@ -50,11 +83,74 @@ components:
         createdAt:
           type: string
           format: date-time
+    GameTemplatePage:
+      type: object
+      description: >-
+        Spring Data Page<GameTemplateDto> serialization returned by GET
+        /templates.
+      properties:
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/GameTemplateDto'
+        pageable:
+          $ref: '#/components/schemas/Pageable'
+        totalElements:
+          type: integer
+          format: int64
+        totalPages:
+          type: integer
+          format: int32
+        last:
+          type: boolean
+        size:
+          type: integer
+          format: int32
+        number:
+          type: integer
+          format: int32
+        sort:
+          $ref: '#/components/schemas/Sort'
+        numberOfElements:
+          type: integer
+          format: int32
+        first:
+          type: boolean
+        empty:
+          type: boolean
+    Pageable:
+      type: object
+      properties:
+        pageNumber:
+          type: integer
+          format: int32
+        pageSize:
+          type: integer
+          format: int32
+        offset:
+          type: integer
+          format: int64
+        sort:
+          $ref: '#/components/schemas/Sort'
+        paged:
+          type: boolean
+        unpaged:
+          type: boolean
+    Sort:
+      type: object
+      properties:
+        empty:
+          type: boolean
+        sorted:
+          type: boolean
+        unsorted:
+          type: boolean
 paths:
   /ping:
     get:
       summary: Health check endpoint
       operationId: ping
+      security: []
       responses:
         '200':
           description: Pong response
@@ -92,6 +188,7 @@ paths:
           description: Invalid template data
     get:
       summary: List game templates
+      description: Results are returned in fixed ascending template-ID order.
       operationId: listTemplates
       parameters:
         - in: query
@@ -99,6 +196,25 @@ paths:
           required: true
           schema:
             type: string
+            pattern: '^[1-9][0-9]*$'
+        - in: query
+          name: page
+          required: false
+          description: Zero-based page index. Defaults to 0.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+            default: 0
+        - in: query
+          name: size
+          required: false
+          description: Page size. Defaults to 20.
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            default: 20
       responses:
         '200':
           description: Template list
@@ -108,9 +224,7 @@ paths:
                 type: object
                 properties:
                   data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/GameTemplateDto'
+                    $ref: '#/components/schemas/GameTemplatePage'
         '400':
           description: Invalid tenant ID
   /assets:
@@ -123,9 +237,13 @@ paths:
           multipart/form-data:
             schema:
               type: object
+              required:
+                - tenantId
+                - file
               properties:
                 tenantId:
                   type: string
+                  pattern: '^[1-9][0-9]*$'
                 file:
                   type: string
                   format: binary

@@ -6,6 +6,7 @@ This document defines the Game Logic Service REST and gRPC surfaces, exposure cl
 
 - The current Game Logic adapters still return `shared.v1.ErrorDetail` for many failures and record `grpc.app_error`; that is implementation drift and a migration/proof gap, not a second contract.
 - Causal-read status is target-only: the complete `CausalReadFence` and participant-proof enforcement described below are not current behavior. The live `ResolveLook` request/proto and World/Entity adapters remain floor-free, so protobuf propagation, adapter evidence, and focused causal-floor proof are implementation gaps.
+- The publish-gate digest handler currently has no owner/method authorization or exact Game Design publication binding beyond shared bearer parsing. It also accepts a blank tenant through the service layer and returns an empty manifest digest independent of tenant/version. The target workload, tenant/scope/request/workflow/digest context, exact response identity comparison, and denial proof are canonical in [Game Design Version Control](../game-design-service/version-control.md#owner-to-owner-digest-authorization-and-tenant-identity).
 
 ### Player execution context
 

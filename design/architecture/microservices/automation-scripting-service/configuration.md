@@ -41,6 +41,8 @@ These knobs are the authoritative defaults referenced by the scripting architect
 
 ## Implementation Status
 
+The formation REST family is currently exposed under the service's HTTP auth configuration without a route-specific tenant binding; with the source OpenAPI's `security: []` and no controller guard, it is publicly reachable wherever the service is exposed. Configuration must not be treated as a substitute for domain authorization: the target removes public exposure and requires exact internal/admin route policy plus caller-to-tenant and Entity-owned NPC ownership checks, with denial proof for unauthenticated and cross-tenant formation operations.
+
 Current live bindings in the service are narrower than the full target-state scripting design:
 
 - the live runtime binds live per-script quota, priority-tagged live tenant-budget, dry-run quota/capacity, output-budget, pin-projection freshness, signer/component-policy reconciliation cadence, outbox retention, queue rebuild, and dead-letter size/age knobs listed below;
@@ -80,8 +82,8 @@ Current live bindings in the service are narrower than the full target-state scr
 | `SCRIPT_OUTBOX_HANDED_OFF_RETENTION_DAYS` | Retention window for successfully handed-off outbox rows needed for rollback and replay diagnosis | `7` | Stable operator knob |
 | `SCRIPT_OUTBOX_CANCELED_RETENTION_DAYS` | Retention window for canceled outbox rows needed for rollback and drain diagnosis | `7` | Stable operator knob |
 | `SCRIPT_OUTBOX_TERMINAL_CLEANUP_INTERVAL_SECONDS` | Cleanup sweep interval for terminal outbox rows (`HANDED_OFF`, `CANCELED`, `DEAD_LETTERED`) | `300` | Stable operator knob |
-| `SCRIPT_OUTBOX_QUEUE_REBUILD_INTERVAL_SECONDS` | Scheduled interval for bounded rebuild of missing `automation:queue:*` pointer entries from durable pending work items | `60` | Stable operator knob |
-| `SCRIPT_OUTBOX_QUEUE_REBUILD_BATCH_SIZE` | Maximum durable pending work items inspected per queue-rebuild sweep | `200` | Stable operator knob |
+| `SCRIPT_OUTBOX_QUEUE_REBUILD_INTERVAL_SECONDS` | Scheduled interval for the target bounded rebuild of missing `automation:queue:*` pointer entries from durable pending work items; current implementation also selects `EVALUATING` without a stale/owner/CAS gate, so reset/resume is unavailable and must fail closed; a non-atomic status preflight cannot authorize the target PENDING-only path | `60` | Stable operator knob |
+| `SCRIPT_OUTBOX_QUEUE_REBUILD_BATCH_SIZE` | Maximum durable work items inspected per target queue-rebuild sweep; the current query also includes `EVALUATING` rows | `200` | Stable operator knob |
 | `SCRIPT_OUTBOX_EXECUTION_INTERVAL_SECONDS` | Scheduled interval for the durable work-item execution loop that claims and evaluates pending work | `5` | Stable operator knob |
 | `SCRIPT_OUTBOX_EXECUTION_BATCH_SIZE` | Maximum claimed work items processed per execution sweep | `50` | Stable operator knob |
 | `SCRIPT_DEAD_LETTER_MAX_ROWS` | Maximum dead-lettered automation work items retained before cleanup | `100000` | Stable operator knob |

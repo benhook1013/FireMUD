@@ -16,7 +16,11 @@ The target chat write contract derives `senderAccountId` from authenticated call
 
 The friend-presence slice currently implements non-pageable friend-roster and presence reads over tenant-scoped mutually accepted reciprocal links whose two directed rows are both `active`; that is implementation status, not the target relationship authority. The player-facing Gateway `/api/social/friends` route is removed/unavailable because the current endpoint path has no directional block-state model or block revalidation. The direct service-local implementation remains available for direct-service and future non-edge use and retains reciprocal-active filtering, but it does not claim the target player-facing safety boundary. The target distinguishes tenant-free account-pair relationships from separate tenant-local records and binds each group to one declared membership subject type. One-way links, inactive reciprocal links, and links stored under another tenant are not endpoint-visible; focused integration proof covers those boundaries in [SocialGroupsApplicationIntegrationTest.java](../../../../services/social-groups-service/src/test/java/integration/net/firedevops/firemud/socialgroups/SocialGroupsApplicationIntegrationTest.java). It does not create snapshots, continuations, or paginated bulk pages. Snapshot-bound continuation, continuation-time relationship and block revalidation, bounded paginated bulk reads, and the failure-precedence contract below remain target behavior; this document does not claim that the current implementation or existing tests prove those target obligations.
 
-The current chat writer paths remain internal/non-player-safe: the Gateway `/api/social/chat` edge route is removed/unavailable, while service-local `/chat` and gRPC `SendMessage` still use the request-body `senderAccountId` with the Social access guard. The synchronous `EvaluateModerationPolicy` read at `CHAT_SEND` remains the current Logging & Admin hot-path compatibility seam and is consumed only after a cache/replay miss. Replay storage and lookup remain tenant/effect-only and occur before that policy check, with no authenticated-caller or full request-digest binding. Owner-local restriction state, essential notices, independent stacking, expiry/reordering, appeal handling, and the target gate are not yet implemented or proved; these writers therefore remain nonconformant to the target contract above.
+The current chat writer paths remain internal/non-player-safe: the Gateway `/api/social/chat` edge route is removed/unavailable, while service-local `/chat` and gRPC `SendMessage` still use the request-body `senderAccountId` with the Social access guard. The synchronous `EvaluateModerationPolicy` read at `CHAT_SEND` remains the current Logging & Admin hot-path compatibility seam and is consumed only after a cache/replay miss. Replay storage and lookup remain tenant/effect-only and occur before that policy check, with no authenticated-caller or full request-digest binding. The duplicate-effect catch also queries after a unique violation in the same outer transaction, so PostgreSQL transaction-abort/rollback-only behavior is not a reliable replay result; conflict-safe insert or isolated transaction handling and real concurrent proof remain required. Owner-local restriction state, essential notices, independent stacking, expiry/reordering, appeal handling, and the target gate are not yet implemented or proved; these writers therefore remain nonconformant to the target contract above.
+
+Guild membership is account-only in the current implementation: the live `guild_members` schema, DTOs, and controllers persist and authorize `accountId` and have no character subject or declared subject-type field. The `ACCOUNT`/`CHARACTER` choice below is target behavior and remains unimplemented for `CHARACTER`; the current account route must not be read as proof of the richer target model.
+
+The current `/guilds/storage` route is a legacy, nonconformant implementation: it writes Social-owned `guild_storage_items` rows containing `itemName` and `quantity`. The target cutover retires or migrates those direct value writes to Entity-owned container/item operations, leaving Social with ACL and typed owner/escrow references only.
 
 ### Mail request identity
 
@@ -31,13 +35,13 @@ The player-facing `/mail` route requires `senderAccountId` to match authenticate
 | `GET` | `/friends/presence` | List bounded cross-game friend presence for one account |
 | `POST` | `/mail` | Send Social-owned account or gameplay-adapted mail; durable history/acknowledgement follows the declared mail type contract |
 | `POST` | `/guilds` | Create a guild |
-| `POST` | `/guilds/storage` | Authorize a guild ACL operation against an Entity-owned container; Social does not mint or persist item/value rows |
+| `POST` | `/guilds/storage` | Current legacy/nonconformant route writes Social `guild_storage_items` item/value rows; target cutover uses Entity-owned container/item operations and leaves Social with ACL/reference state |
 | `POST` | `/guilds/alliances` | Create a guild alliance |
 | `POST` | `/guilds/members` | Add a guild member |
 | `POST` | `/guilds/members/role` | Update a guild member's role |
 | `POST` | `/guilds/members/remove` | Remove a guild member |
 | `POST` | `/chat` | Current internal/non-player-safe writer; see [Implementation Status](#implementation-status) for the Gateway, sender, replay, and moderation-seam limitations. Target behavior is defined by the [Chat and Moderation Contract](#chat-and-moderation-contract). |
-| `POST` | `/voice/token` | Issue a temporary WebRTC token for voice chat; the gateway relays media between participants |
+| `POST` | `/voice/token` | Issue a temporary token as voice-integration scaffolding; WebRTC/media gateway delivery is target/optional and unavailable/unproved |
 
 Example health check:
 
@@ -51,15 +55,16 @@ Current internal/non-player-safe chat request (the Gateway `/api/social/chat` ed
 curl -X POST http://localhost:8080/chat \
   -H 'Authorization: Bearer <access-token>' \
   -H 'Content-Type: application/json' \
-  -d '{"tenantId":"tenant-abc","senderAccountId":100,"content":"hello"}'
+  -d '{"tenantId":7,"senderAccountId":100,"content":"hello"}'
 ```
 
 Example voice-token request:
 
 ```bash
 curl -X POST http://localhost:8080/voice/token \
+  -H 'Authorization: Bearer <access-token>' \
   -H 'Content-Type: application/json' \
-  -d '{"tenantId":"tenant-abc","accountId":100,"channelId":"guild-10"}'
+  -d '{"tenantId":7,"accountId":100,"channelId":"guild-10"}'
 ```
 
 ## gRPC APIs
@@ -74,7 +79,7 @@ curl -X POST http://localhost:8080/voice/token \
 ### Relationship, Group, and Value Authority
 
 - Social & Groups owns friend/block relationships, guild/group definitions, membership subject type, membership and role policy, alliances, social audience resolution, and message/mail envelopes. An account-global relationship is a genuinely tenant-free account pair with an explicit request/accept/reject/remove lifecycle; a tenant-local relationship is a separate tenant-qualified record. A global relationship is never copied into a tenant using a synthetic `tenantId`.
-- Every guild/group declares exactly one membership subject type: `ACCOUNT` identified by `accountId`, or `CHARACTER` identified by `{tenantId, playableStateNamespaceId, characterId}`. Membership, uniqueness, roles, ownership transfer, audience resolution, and ACL evaluation use that type consistently; `gameInstanceId` is not durable membership identity.
+- **Target state:** Every guild/group declares exactly one membership subject type: `ACCOUNT` identified by `accountId`, or `CHARACTER` identified by `{tenantId, playableStateNamespaceId, characterId}`. Membership, uniqueness, roles, ownership transfer, audience resolution, and ACL evaluation use that type consistently; `gameInstanceId` is not durable membership identity. The current implementation is account-only as noted in [Implementation Status](#implementation-status).
 - Account owns account identity, status, and profile-visibility policy; Game Session owns raw presence and connected gameplay transports. Social consumes bounded reads from those owners to produce social projections and does not rewrite their facts or treat a cached projection as authority.
 - Entity Management owns guild containers, items, inventory containment, currency, and mail attachments. Social may authorize a guild ACL and retain a typed Entity-container binding, but it must not persist independent `itemName + quantity`, currency, or attachment value. Attachment send/claim/return/expiry/deletion uses owner-controlled transfer or escrow with stable references and idempotent retries.
 - Ordinary account or social mail enters Social directly. A game-specific mail type may enter Game Logic for explicit gameplay semantics, then returns an authorized result to Social and value owners; tenant-authored gameplay rules cannot inspect ordinary private mail. Active [ADR 0148](../../decisions/adr-0148-social-relationship-authority-and-entity-owned-value.md) records this boundary, mapped from reviewed archive record `archive-ADR-0135`.
@@ -123,5 +128,5 @@ grpcurl -plaintext localhost:6565 social_groups.v1.SocialGroupsService/Ping
 - Social & Groups applies social audience/membership, moderation, history, retention, and delivery-state rules to that plan. Game Session owns final delivery to connected gameplay transports and reports transport outcome separately; Social cannot infer spatial observers, broaden views, or claim end-user delivery from a history commit.
 - Account messaging, ordinary guild/group channels, browser social interactions, and ordinary account/social mail enter Social directly after authentication and applicable membership, privacy, and moderation checks. An in-game adapter does not turn them into Game Logic actions or make private platform content visible to tenant-authored scripts. Operator/system communication enters through the originating owner's typed request.
 - Observer views are a closed type-declared vocabulary; unknown fields are excluded, gameplay `TELL` is non-observable by default, and a partial view requires a named published mechanic. `SHOUT` remains deferred until a profile publishes a named bounded topology and fanout cap; Social never invents area/region/map semantics. Active [ADR 0150](../../decisions/adr-0150-closed-observer-views-and-profile-scoped-shout.md) records this boundary, mapped from reviewed archive record `archive-ADR-0137`.
-- Voice chat is an optional feature layered on a lightweight WebRTC gateway; the service issues temporary tokens via `/voice/token` and records voice activity for moderation under its own declared evidence lifecycle.
+- Voice integration is an optional target capability. The current service only issues temporary tokens via `/voice/token`; no WebRTC/media gateway, deployment, end-to-end voice delivery, or voice-activity moderation evidence is implemented or proved. Those capabilities remain unavailable until separately delivered and validated under their declared evidence lifecycle.
 - Current gameplay-connected proof covers `SAY`, `WHISPER`, and `TELL`, including canonical actor and live-recipient views. It proves those cross-service paths, not complete durable plan recovery, full recipient-specific projection, cross-pod delivery, or type-specific history. Active [ADR 0147](../../decisions/adr-0147-explicit-communication-classes-and-owner-delivery.md) records the class/owner split, mapped from reviewed archive record `archive-ADR-0134`.

@@ -21,7 +21,8 @@ This doc set is the authoritative source for:
 - Provide procedural-generation support.
 - Expose geometry and region metadata. Pathfinding is handled by the Movement/Travel subsystem in Game Logic, while World Management stores and publishes versioned navmesh/path graph artifacts.
 - Notify Game Session and Automation services when the world changes.
-- Track character locations and instance occupancy.
+- Target responsibility: track character/NPC locations and instance occupancy through World-owned persistence. The current implementation has no authoritative location/occupancy tables or write path; see [runtime and data](./runtime-and-data.md#character-location-ownership).
+- Current LOOK behavior is separate from that target: the World `GetRoomSnapshot` data consumed by Game Logic's `ResolveLook` is fixture-backed and does not establish authoritative character/NPC location or occupancy persistence. The target owner contract remains unimplemented until the World-owned location/occupancy write and read surfaces exist.
 - Avoid storing or managing live item or inventory state. Room inventory and ground items are derived from Entity Management queries scoped by room and instance identifiers.
 
 ## Identifier Model

@@ -28,7 +28,7 @@ This document is the current target authority for SQL persistence, schema owners
 - Flyway reads connection settings from the `FIREMUD_POSTGRES_*` environment variables described in
   [Environment & Secrets](./infrastructure/environment-and-secrets.md).
 - Local destructive reset and standalone Gradle Flyway workflows also need the owning service schema and Flyway history table to stay aligned with the runtime service configuration. In this repo that means local tooling should preserve `SERVICE_SCHEMA`, `SPRING_FLYWAY_TABLE`, `FLYWAY_SCHEMAS`, `FLYWAY_DEFAULT_SCHEMA`, and `FLYWAY_TABLE` instead of silently falling back to `public` and the default `flyway_schema_history`.
-- Java-based callbacks are avoided; migrations remain SQL-only for portability.
+- SQL migrations are the default and Java-based callbacks are avoided. The active Game Session `V8__remote_followup_target_instance_effect_identity` Flyway Java migration is the explicitly documented nontransactional exception; it remains an implementation/proof gap requiring focused exception and deployment proof, as recorded in the [shared runtime and persistence tracker](../project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md#packet-5-tail-and-packet-6-p0-status-and-proof-gaps). It must not be generalized into a preferred migration path.
 
 ## Per-Service Organization
 
@@ -111,6 +111,8 @@ local docs and treat it as part of their migration review process.
 
 Once a service has no active compatibility obligation, it may converge directly only when the objective evidence and atomic-convergence conditions above are recorded; project phase labels do not substitute for that evidence.
 
+Migration changes use the canonical [Validation and Runtime Proof](../developer-workflows/validation-and-runtime-proof.md) workflow to select formatting, checks, and runtime proof, with execution results recorded in PR/CI evidence and, when applicable, synchronized into the owning implementation tracker. This document does not duplicate that workflow or act as a validation ledger.
+
 ### Cross-Service Identifier Migration
 
 Classify each identifier migration before changing storage or wire shape:
@@ -122,7 +124,7 @@ Classify each identifier migration before changing storage or wire shape:
 
 Cross-service identifier migrations are design-time workflows, not ad-hoc SQL rewrites. The current implementation and proof of a complete durable migration workflow remain incomplete; target conformance must not be inferred from partial remap records or launch gates.
 
-Runtime replacement adds a mandatory local schema consequence: each service that owns runtime state must record whether a family is S1 namespace-stable, S2 mapping-dependent, or S3 disposable. S1/S2 durable identity uses the tenant, `playableStateNamespaceId`, and resolved scope; the current `gameInstanceId` is validated separately as the active-instance authorization fence. Only an owner-declared S3 family includes `gameInstanceId` in durable identity. Unknown, unowned, or unclassified families block cutover. A `remapSetId` echoed by a caller is evidence to resolve, not proof that the owning service validated and applied the mapping. The lifecycle owner registry must include every new instance-owned family and its idempotent cleanup/acknowledgement contract before launch paths write it. See [ADR 0122](./decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md) and [ADR 0123](./decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md).
+Runtime replacement adds a mandatory local schema consequence: each service that owns runtime state must record whether a family is S1 namespace-stable, S2 mapping-dependent, or S3 disposable. S1/S2 durable identity uses the tenant, `playableStateNamespaceId`, and owning-domain identity; immutable `playableStateScope` is separately persisted and exact-validated as policy/routing/authorization evidence, and the current `gameInstanceId` is validated separately as the active-instance authorization fence. Only an owner-declared S3 family includes `gameInstanceId` in durable identity. Unknown, unowned, or unclassified families block cutover. A `remapSetId` echoed by a caller is evidence to resolve, not proof that the owning service validated and applied the mapping. The lifecycle owner registry must include every new instance-owned family and its idempotent cleanup/acknowledgement contract before launch paths write it. Concrete scheduler and tick/effect family classifications belong to those owner documents; this migration rule does not assign every runtime row one blanket class. See [ADR 0122](./decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md) and [ADR 0123](./decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md).
 
 Runtime migration validation must keep `gameInstanceId` separate from S1/S2 identity and validate the exact runtime scope at the authoritative mutation boundary. The scope predicate and its active-instance authorization token must be checked atomically with enqueue, claim, or mutation, or immediately before apply against that authoritative token; a detached precheck cannot authorize later work. A stale, missing, or mismatched scope token fails closed.
 
