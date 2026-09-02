@@ -32,6 +32,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 @SuppressFBWarnings(
@@ -187,13 +189,14 @@ public class ScriptGameplayCommandHandoffServiceImpl
         aggregateSnapshot == null
             ? admissionFenceReason(workItem)
             : aggregateSnapshot.admissionFenceReason();
-    if ("runtime_paused".equals(admissionFenceReason)) {
+    if (ScriptHandoffOutcomeSupport.REASON_RUNTIME_PAUSED.equals(admissionFenceReason)) {
       Instant now = Instant.now();
       cancelForAdmissionPause(
           workItem, command, dispatchId, now, deferAggregateTerminalization(workItem));
-      return new HandoffResult(false, "runtime_paused", "", "", "", "RUNTIME_PAUSED");
+      return new HandoffResult(
+          false, ScriptHandoffOutcomeSupport.REASON_RUNTIME_PAUSED, "", "", "", "RUNTIME_PAUSED");
     }
-    if ("authority_unavailable".equals(admissionFenceReason)) {
+    if (ScriptHandoffOutcomeSupport.REASON_AUTHORITY_UNAVAILABLE.equals(admissionFenceReason)) {
       Instant now = Instant.now();
       HandoffResult result =
           new HandoffResult(
@@ -207,11 +210,12 @@ public class ScriptGameplayCommandHandoffServiceImpl
       applyOutcome(workItem, command, dispatchId, result, now);
       return result;
     }
-    if ("rollback_epoch_advanced".equals(admissionFenceReason)) {
+    if (ScriptHandoffOutcomeSupport.REASON_ROLLBACK_EPOCH_ADVANCED.equals(admissionFenceReason)) {
       Instant now = Instant.now();
       cancelForRollbackEpochAdvance(
           workItem, command, dispatchId, now, deferAggregateTerminalization(workItem));
-      return new HandoffResult(false, "rollback_epoch_advanced", "", "", "", "");
+      return new HandoffResult(
+          false, ScriptHandoffOutcomeSupport.REASON_ROLLBACK_EPOCH_ADVANCED, "", "", "", "");
     }
     RuntimeRegionScopeStatus runtimeScopeStatus =
         aggregateSnapshot == null
@@ -358,15 +362,17 @@ public class ScriptGameplayCommandHandoffServiceImpl
         automationAdmissionStateService.getState(
             workItem.getTenantId(), workItem.getGameInstanceId(), workItem.getRegionId());
     if (state == null) {
-      return "authority_unavailable";
+      return ScriptHandoffOutcomeSupport.REASON_AUTHORITY_UNAVAILABLE;
     }
     if (state.admissionEpoch() != workItem.getAdmissionEpoch()) {
-      return "rollback_epoch_advanced";
+      return ScriptHandoffOutcomeSupport.REASON_ROLLBACK_EPOCH_ADVANCED;
     }
     if ("PAUSED_FOR_ROLLBACK".equals(state.mode())) {
-      return "runtime_paused";
+      return ScriptHandoffOutcomeSupport.REASON_RUNTIME_PAUSED;
     }
-    return "NORMAL".equals(state.mode()) ? null : "authority_unavailable";
+    return "NORMAL".equals(state.mode())
+        ? null
+        : ScriptHandoffOutcomeSupport.REASON_AUTHORITY_UNAVAILABLE;
   }
 
   /**
@@ -393,7 +399,9 @@ public class ScriptGameplayCommandHandoffServiceImpl
       String dispatchId,
       Instant now,
       boolean deferAggregateTerminalization) {
-    HandoffResult result = new HandoffResult(false, "runtime_paused", "", "", "", "RUNTIME_PAUSED");
+    HandoffResult result =
+        new HandoffResult(
+            false, ScriptHandoffOutcomeSupport.REASON_RUNTIME_PAUSED, "", "", "", "RUNTIME_PAUSED");
     appendHandoffEvent(workItem, command, dispatchId, result, now);
     if (deferAggregateTerminalization) {
       return;
@@ -421,13 +429,19 @@ public class ScriptGameplayCommandHandoffServiceImpl
         workItem,
         command,
         dispatchId,
-        new HandoffResult(false, "rollback_epoch_advanced", "", "", "", "rollback_epoch_advanced"),
+        new HandoffResult(
+            false,
+            ScriptHandoffOutcomeSupport.REASON_ROLLBACK_EPOCH_ADVANCED,
+            "",
+            "",
+            "",
+            ScriptHandoffOutcomeSupport.REASON_ROLLBACK_EPOCH_ADVANCED),
         now);
     if (deferAggregateTerminalization) {
       return;
     }
     workItem.setStatus(STATUS_CANCELED);
-    workItem.setCancelReason("rollback_epoch_advanced");
+    workItem.setCancelReason(ScriptHandoffOutcomeSupport.REASON_ROLLBACK_EPOCH_ADVANCED);
     workItem.setUpdatedAt(now);
     workItemRepository.save(workItem);
     rolloutProjectionService.refreshForWorkItem(workItem);
@@ -651,7 +665,21 @@ public class ScriptGameplayCommandHandoffServiceImpl
     workItem.setUpdatedAt(now);
     workItemRepository.save(workItem);
     rolloutProjectionService.refreshForWorkItem(workItem);
-    publishRetryPointer(workItem);
+    runAfterCommit(() -> publishRetryPointer(workItem));
+  }
+
+  private static void runAfterCommit(Runnable action) {
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      action.run();
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            action.run();
+          }
+        });
   }
 
   private void publishRetryPointer(ScriptWorkItem workItem) {

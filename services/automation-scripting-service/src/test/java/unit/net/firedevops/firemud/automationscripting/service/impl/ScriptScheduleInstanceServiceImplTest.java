@@ -185,6 +185,29 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
+  void reconcileObservedRuntimeStateRejectsNullTransitionPluginIdBeforeLookup() {
+    assertThatThrownBy(
+            () ->
+                service.reconcileObservedRuntimeState(
+                    "1", "game-1", GameInstanceRuntimeState.getDefaultInstance(), null, null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("transition_plugin_id must not be null");
+
+    verifyNoInteractions(
+        scheduleDefinitionRepository,
+        scheduleInstanceRepository,
+        pinProjectionRepository,
+        pluginRuntimeStateRepository,
+        bindingRepository,
+        workItemRepository,
+        eventAuditRepository,
+        automationQueueService,
+        automationAdmissionStateService,
+        gameDesignControlPlaneClient,
+        gameSessionControlPlaneClient);
+  }
+
+  @Test
   void reconcileObservedRuntimeStateMaterializesMillisecondAndTickSchedules() {
     when(scheduleDefinitionRepository
             .findByTenantIdAndScriptPatchVersionOrderByScriptIdAscEventTypeAscScheduleDefinitionIdAsc(

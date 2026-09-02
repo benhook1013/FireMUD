@@ -232,6 +232,8 @@ A sample Terraform module for a local Kind cluster is provided in [k8s/terraform
   - Scales services up/down via deployments or Horizontal Pod Autoscalers (HPA). An example manifest is provided in `k8s/base/hpa-example.yaml` and serves as the default configuration.
 - Pod restarts are transparent to players; see [Reconnection Strategy](../system-architecture-reconnection.md) for cross-environment behavior.
 
+The Automation & Scripting Deployment intentionally uses `strategy.type: Recreate` in the base and hosted Helm manifests. Executor and scheduled-rebuild generations must not overlap during replacement, because an overlapping rollout could leave an older generation claiming or republishing work while the new generation starts. This deliberately accepts deployment-wide Automation availability downtime while the old pods stop and the new pods become ready; it is not a zero-downtime `RollingUpdate` contract. Recovery ordering remains pause admission and prove drain, stop or replace the deployment, then verify readiness and owner readback before resuming.
+
 ---
 
 ## Telnet TLS Deployment

@@ -869,7 +869,15 @@ class TickBatchExecutionServiceTest {
             .count(),
         0.001);
     assertEquals(
-        2.0,
+        1.0,
+        meterRegistry
+            .get("tick_requeued_action_total")
+            .tag("source", "remote_followup")
+            .counter()
+            .count(),
+        0.001);
+    assertEquals(
+        1.0,
         meterRegistry.get("tick_requeued_action_total").tag("source", "unknown").counter().count(),
         0.001);
     assertTrue(
@@ -877,7 +885,7 @@ class TickBatchExecutionServiceTest {
             .filter(meter -> "tick_requeued_action_total".equals(meter.getId().getName()))
             .allMatch(
                 meter ->
-                    java.util.Set.of("player", "automation", "unknown")
+                    java.util.Set.of("player", "automation", "remote_followup", "unknown")
                         .contains(meter.getId().getTag("source"))));
   }
 

@@ -58,7 +58,9 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
       GetGameInstanceRuntimeStateResponse runtime =
           gameSessionControlPlaneClient.getGameInstanceRuntimeState(
               tenantId, gameInstanceId, regionId);
-      if (runtime != null && runtime.hasRuntimeState()) {
+      if (runtime != null
+          && !(runtime.hasError() && !runtime.getError().getCode().isBlank())
+          && runtime.hasRuntimeState()) {
         GameInstanceRuntimeState runtimeState = runtime.getRuntimeState();
         if (!runtimeStateMatchesScope(tenantId, gameInstanceId, runtimeState)) {
           return new PinConvergenceLookup(

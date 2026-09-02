@@ -234,7 +234,8 @@ class RoutingBundleSupportTest {
     assertThat(RoutingBundleSupport.sameRoutingBundle(current, persisted)).isTrue();
     assertThat(current.worldSlug()).isEqualTo("demo");
     assertThat(current.realmSlug()).isEqualTo("production");
-    assertThat(persisted.pointerVersion()).isEqualTo("017");
+    assertThat(current.pointerVersion()).isEqualTo("17");
+    assertThat(persisted.pointerVersion()).isEqualTo("17");
   }
 
   @Test
@@ -272,8 +273,15 @@ class RoutingBundleSupportTest {
 
   @Test
   void normalizeFailsClosedForOverlengthSlugsInBothOverloads() {
+    String maxLengthSlug = "a".repeat(120);
     String overlengthSlug = "a".repeat(121);
 
+    assertThat(RoutingBundleSupport.normalize(maxLengthSlug, "production", 17L).isPresent())
+        .isTrue();
+    assertThat(RoutingBundleSupport.normalize("demo", maxLengthSlug, 17L).isPresent()).isTrue();
+    assertThat(RoutingBundleSupport.normalize(maxLengthSlug, "production", "17").isPresent())
+        .isTrue();
+    assertThat(RoutingBundleSupport.normalize("demo", maxLengthSlug, "17").isPresent()).isTrue();
     assertThat(RoutingBundleSupport.normalize(overlengthSlug, "production", 17L).isPresent())
         .isFalse();
     assertThat(RoutingBundleSupport.normalize("demo", overlengthSlug, 17L).isPresent()).isFalse();

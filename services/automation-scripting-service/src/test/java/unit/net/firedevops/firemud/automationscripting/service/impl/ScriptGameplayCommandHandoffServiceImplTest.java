@@ -37,6 +37,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class ScriptGameplayCommandHandoffServiceImplTest {
   @Test
@@ -244,16 +245,27 @@ class ScriptGameplayCommandHandoffServiceImplTest {
             admissionStateService(),
             rolloutProjectionService);
 
-    ScriptGameplayCommandHandoffService.HandoffResult result =
-        service.handoff(
-            item, emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      ScriptGameplayCommandHandoffService.HandoffResult result =
+          service.handoff(
+              item, emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
 
-    assertThat(result.accepted()).isFalse();
-    assertThat(result.errorCode()).isEqualTo("QUEUE_UNAVAILABLE");
-    assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
-    assertThat(operations)
-        .containsExactly(
-            "save:HANDOFF_IN_FLIGHT", "refresh", "save:PENDING_EVALUATION", "refresh", "enqueue");
+      assertThat(result.accepted()).isFalse();
+      assertThat(result.errorCode()).isEqualTo("QUEUE_UNAVAILABLE");
+      assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
+      assertThat(operations)
+          .containsExactly(
+              "save:HANDOFF_IN_FLIGHT", "refresh", "save:PENDING_EVALUATION", "refresh");
+      assertThat(TransactionSynchronizationManager.getSynchronizations()).hasSize(1);
+
+      TransactionSynchronizationManager.getSynchronizations().getFirst().afterCommit();
+      assertThat(operations)
+          .containsExactly(
+              "save:HANDOFF_IN_FLIGHT", "refresh", "save:PENDING_EVALUATION", "refresh", "enqueue");
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
   }
 
   @Test

@@ -144,6 +144,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       String transitionPluginId) {
     requireText(tenantId, "tenant_id");
     requireText(gameInstanceId, "game_instance_id");
+    if (transitionPluginId == null) {
+      throw new IllegalArgumentException("transition_plugin_id must not be null");
+    }
     long tenantKey = RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
     if (runtimeState != null
         && (!tenantId.equals(runtimeState.getTenantId())
@@ -437,7 +440,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             advanceRuntimeProgress(
                 instance, observation, observedAt, now, perScheduleCandidateLimit);
       } catch (IllegalArgumentException ex) {
-        if (!REASON_DUE_TICK_OVERFLOW.equals(ex.getMessage())) {
+        String reason = ex.getMessage();
+        if (!REASON_DUE_TICK_OVERFLOW.equals(reason) && !REASON_INVALID_CADENCE.equals(reason)) {
           throw ex;
         }
         fenceOverflow(
@@ -449,7 +453,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
                     : instance.getNextDueTickId(),
                 observation.regionId(),
                 observation.regionEpoch()),
-            REASON_DUE_TICK_OVERFLOW,
+            reason,
             now);
         updates.add(instance);
         continue;
@@ -468,7 +472,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       try {
         advance = advanceWallClockProgress(instance, observation, observedAt, now);
       } catch (IllegalArgumentException ex) {
-        if (!REASON_DUE_TIME_OVERFLOW.equals(ex.getMessage())) {
+        String reason = ex.getMessage();
+        if (!REASON_DUE_TIME_OVERFLOW.equals(reason) && !REASON_INVALID_CADENCE.equals(reason)) {
           throw ex;
         }
         fenceOverflow(
@@ -478,7 +483,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
                 instance.getNextDueAt() == null ? observedAt : instance.getNextDueAt(),
                 observation.regionId(),
                 observation.regionEpoch()),
-            REASON_DUE_TIME_OVERFLOW,
+            reason,
             now);
         updates.add(instance);
         continue;

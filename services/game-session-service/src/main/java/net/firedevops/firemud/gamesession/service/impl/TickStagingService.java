@@ -216,7 +216,7 @@ final class TickStagingService {
           tickQueueControlService.requireRuntimeOwnership(tenantId, gameInstanceId, null);
       if (!hasUsableOwnershipContract(tenantId, gameInstanceId, ownership)) {
         logger.warn(
-            "Discarding pending tick payload without a usable runtime ownership contract tenantId={} gameInstanceId={}",
+            "Deferring pending tick payload until usable runtime ownership is available tenantId={} gameInstanceId={}",
             tenantId,
             gameInstanceId);
         return null;
@@ -224,7 +224,7 @@ final class TickStagingService {
       return ownership;
     } catch (TickQueueControlService.StaleOwnershipException ex) {
       logger.warn(
-          "Discarding pending tick payload without current runtime ownership tenantId={} gameInstanceId={} message={}",
+          "Deferring pending tick payload until current runtime ownership is available tenantId={} gameInstanceId={} message={}",
           tenantId,
           gameInstanceId,
           ex.getMessage());
@@ -378,11 +378,11 @@ final class TickStagingService {
     }
     boolean requiresSoloTick = "S".equals(parts[0]);
     String commandId = parts[1];
-    if (commandId.isBlank() || "-".equals(commandId) || parts[2].isBlank()) {
+    if (parts[2].isBlank()) {
       throw new IllegalStateException("Malformed tick queue entry: " + payload);
     }
     try {
-      TickQueueControlService.requireQueueEncodingSafe(commandId, "command_id");
+      TickQueueControlService.requireDurableCommandIdWireSafe(commandId, "command_id");
     } catch (IllegalArgumentException ex) {
       throw new IllegalStateException("Malformed tick queue entry: " + payload, ex);
     }
@@ -405,13 +405,12 @@ final class TickStagingService {
       List<SealedReplayCommand> sealedCommands = new ArrayList<>();
       for (JsonNode item : items) {
         String commandId = item.path("commandId").asText("").trim();
-        if (commandId.isBlank() || "-".equals(commandId)) {
-          throw new IllegalStateException(
-              "Sealed replay manifest requires commandId for tickBatchId="
-                  + batch.getTickBatchId());
-        }
         try {
-          TickQueueControlService.requireQueueEncodingSafe(commandId, "command_id");
+          TickQueueControlService.requireDurableCommandIdWireSafe(commandId, "command_id");
+        } catch (TickQueueControlService.MissingDurableCommandIdException ex) {
+          throw new IllegalStateException(
+              "Sealed replay manifest requires commandId for tickBatchId=" + batch.getTickBatchId(),
+              ex);
         } catch (IllegalArgumentException ex) {
           throw new IllegalStateException(
               "Sealed replay manifest contains an unsafe commandId for tickBatchId="
@@ -757,14 +756,11 @@ final class TickStagingService {
 
   private void requireDurableCommandIdentifiers(List<TickQueuedCommandEnvelope> entries) {
     for (TickQueuedCommandEnvelope entry : entries) {
-      if (entry.commandId() == null
-          || entry.commandId().isBlank()
-          || "-".equals(entry.commandId())) {
-        throw new IllegalStateException(
-            "Durable tick batching requires linked command ids for all queued commands");
-      }
       try {
-        TickQueueControlService.requireQueueEncodingSafe(entry.commandId(), "command_id");
+        TickQueueControlService.requireDurableCommandIdWireSafe(entry.commandId(), "command_id");
+      } catch (TickQueueControlService.MissingDurableCommandIdException ex) {
+        throw new IllegalStateException(
+            "Durable tick batching requires linked command ids for all queued commands", ex);
       } catch (IllegalArgumentException ex) {
         throw new IllegalStateException(
             "Durable tick batching requires queue-safe command ids for all queued commands", ex);

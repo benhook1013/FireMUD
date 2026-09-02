@@ -411,7 +411,21 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     workItem.setUpdatedAt(Instant.now());
     workItemRepository.save(workItem);
     rolloutProjectionService.refreshForWorkItem(workItem);
-    publishRetryPointer(workItem);
+    runAfterCommit(() -> publishRetryPointer(workItem));
+  }
+
+  private static void runAfterCommit(Runnable action) {
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      action.run();
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            action.run();
+          }
+        });
   }
 
   private void publishRetryPointer(ScriptWorkItem workItem) {

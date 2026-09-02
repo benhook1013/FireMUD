@@ -62,6 +62,10 @@ final class ScriptHandoffOutcomeSupport {
         };
   }
 
+  /**
+   * Classifies the bounded machine-readable errorCode (or outcome when no code is present).
+   * Diagnostic errorMessage is intentionally ignored.
+   */
   static String canonicalInfrastructureReason(HandoffResult result) {
     String code = normalizeToken(result.errorCode());
     if (code.isBlank()) {
@@ -82,6 +86,9 @@ final class ScriptHandoffOutcomeSupport {
     };
   }
 
+  /**
+   * Canonicalizes bounded reason/outcome tokens; free-form diagnostic messages are not accepted.
+   */
   static String canonicalHandoffReason(String reason, String outcome) {
     String normalizedReason = normalizeToken(reason);
     String normalizedOutcome = normalizeToken(outcome);

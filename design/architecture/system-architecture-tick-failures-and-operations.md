@@ -148,7 +148,7 @@ Canonical alert names for shared rulesets:
 - `TickEffectsReplayStarved`
   - Fires when `tick_effects_replay_starved{scope_class}` is sustained, indicating the replay controller is not servicing a bounded scope-class rollup with pending work.
 
-`TickReplayScanLagHigh` is a distinct supplemental target-only alert, not a replacement for either canonical replay alert above. It exposes sustained scan/claim lag for the bounded `scope_class` rollup so operators can investigate controller fairness even when batches continue advancing elsewhere. The shared reference template uses `tick_effects_replay_scan_lag_ms{scope_class} > 300000` for 15 minutes; this `300000ms` value is a bootstrap template threshold, not a production acceptance guarantee. A profile overlay may tune the threshold or persistence window only through its advertised, evidence-backed owner contract while preserving the alert's supplemental role and bounded labels.
+`TickReplayScanLagHigh` is a distinct supplemental target-only alert, not a replacement for either canonical replay alert above. It exposes sustained scan/claim lag for the bounded `scope_class` rollup so operators can investigate controller fairness even when batches continue advancing elsewhere. The shared reference template uses `tick_effects_replay_scan_lag_ms{scope_class=~"^(region|game_instance|tenant|cluster)$"} > 300000` for 15 minutes; this `300000ms` value is a bootstrap template threshold, not a production acceptance guarantee. A profile overlay may tune the threshold or persistence window only through its advertised, evidence-backed owner contract while preserving the alert's supplemental role and bounded labels.
 
 Environment overlays may tune durations or routing, but they should preserve these alert names and the shared labels (`service`, `severity`, `owner`, `runbook`) so Logging & Admin and incident runbooks remain stable.
 
@@ -335,7 +335,7 @@ Replay fairness is part of the operational contract, not just an implementation 
 
 When these metric-family signatures are used as executable selectors, every `scope_class` matcher must be the anchored bounded selector `scope_class=~"^(region|game_instance|tenant|cluster)$"`; brace forms without a matcher are notation only and must not be copied into unrestricted PromQL. Exact scope still comes from authoritative runtime-health/control-plane records.
 
-- Dashboards and alerts should show bounded scope-class rollups where `tick_effects_pending_total{scope_class=~"^(region|game_instance|tenant|cluster)$"} > 0` but `tick_effects_replay_batches_total{scope_class=~"^(region|game_instance|tenant|cluster)$"}` is not increasing over the same interval; exact affected regions require authoritative runtime-health/control-plane lookup.
+- Dashboards and alerts should show bounded scope-class rollups where `tick_effects_pending_total{scope_class=~"^(region|game_instance|tenant|cluster)$"} > 0` and `increase(tick_effects_replay_batches_total{scope_class=~"^(region|game_instance|tenant|cluster)$"}[5m]) == 0` (or the equivalent `rate(...[5m]) == 0`) over the explicit five-minute window; exact affected regions require authoritative runtime-health/control-plane lookup.
 - Sustained `tick_effects_replay_scan_lag_ms{scope_class=~"^(region|game_instance|tenant|cluster)$"}` growth for a scope-class rollup should be treated as replay-controller starvation, even if a hot region is still making progress; it does not identify an individual region.
 
 ### Ledger Replay Controller

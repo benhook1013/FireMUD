@@ -178,7 +178,7 @@ class ScriptWorkItemExecutionServiceImplTest {
   }
 
   @Test
-  void retryableHandoffRequeuesAndPublishesPointerAfterDurableSave() {
+  void retryableHandoffRequeuesAndPublishesPointerAfterCommit() {
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
     ScriptDefinitionRepository definitionRepository =
         Mockito.mock(ScriptDefinitionRepository.class);
@@ -237,12 +237,21 @@ class ScriptWorkItemExecutionServiceImplTest {
             new SimpleMeterRegistry(),
             automationQueueService);
 
-    ScriptWorkItemExecutionService.ExecutionBatchResult result =
-        service.processPendingWorkItems(10);
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      ScriptWorkItemExecutionService.ExecutionBatchResult result =
+          service.processPendingWorkItems(10);
 
-    assertThat(result.failedCount()).isEqualTo(1);
-    assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
-    assertThat(operations).containsExactly("save:PENDING_EVALUATION", "refresh", "enqueue");
+      assertThat(result.failedCount()).isEqualTo(1);
+      assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
+      assertThat(operations).containsExactly("save:PENDING_EVALUATION", "refresh");
+      assertThat(TransactionSynchronizationManager.getSynchronizations()).hasSize(1);
+
+      TransactionSynchronizationManager.getSynchronizations().getFirst().afterCommit();
+      assertThat(operations).containsExactly("save:PENDING_EVALUATION", "refresh", "enqueue");
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
   }
 
   @ParameterizedTest(name = "accepts command metadata {0}")

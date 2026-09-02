@@ -534,12 +534,11 @@ final class TickBatchExecutionService {
   }
 
   private void requireRestorableCommandId(String commandId) {
-    if (commandId == null || commandId.isBlank() || "-".equals(commandId)) {
-      throw new IllegalStateException(
-          "Cannot restore or requeue tick work without a durable command id");
-    }
     try {
-      TickQueueControlService.requireQueueEncodingSafe(commandId, "command_id");
+      TickQueueControlService.requireDurableCommandIdWireSafe(commandId, "command_id");
+    } catch (TickQueueControlService.MissingDurableCommandIdException ex) {
+      throw new IllegalStateException(
+          "Cannot restore or requeue tick work without a durable command id", ex);
     } catch (IllegalArgumentException ex) {
       throw new IllegalStateException(
           "Cannot restore or requeue tick work with an unsafe command id", ex);
@@ -586,7 +585,9 @@ final class TickBatchExecutionService {
     if ("AUTOMATION".equalsIgnoreCase(sourceType)) {
       return "automation";
     }
-    // REMOTE_FOLLOWUP and any unrecognized source are intentionally not exposed as labels.
+    if ("REMOTE_FOLLOWUP".equalsIgnoreCase(sourceType)) {
+      return "remote_followup";
+    }
     return "unknown";
   }
 

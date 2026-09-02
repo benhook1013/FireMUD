@@ -32,6 +32,11 @@ public interface ScriptGameplayCommandHandoffService {
       long dueTickId,
       int ordinal) {}
 
+  /**
+   * Handoff outcome. Classification and durable reason mapping use the bounded machine-readable
+   * outcome and errorCode fields only; errorMessage is diagnostic-only and must not affect routing,
+   * retry, cancellation, or persisted state.
+   */
   record HandoffResult(
       boolean accepted,
       String outcome,

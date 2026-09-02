@@ -28,7 +28,11 @@ public interface ScriptScheduleInstanceService {
    * Reconciles a plugin transition while identifying the plugin whose transition seed applies. A
    * non-null transition seed fans out to every matching materialized schedule instance in the
    * selected scope: a blank transitionPluginId selects all rows, while a nonblank value selects
-   * only that plugin's rows. Other plugin-owned schedule rows retain their existing due state.
+   * only that plugin's rows. Other plugin-owned schedule rows retain their existing due state. A
+   * null transitionPluginId is invalid; callers must use an empty string when selecting all rows. A
+   * null transition seed is valid and means no non-pin transition reset is requested.
+   *
+   * @throws IllegalArgumentException if transitionPluginId is null
    */
   void reconcileObservedRuntimeState(
       String tenantId,

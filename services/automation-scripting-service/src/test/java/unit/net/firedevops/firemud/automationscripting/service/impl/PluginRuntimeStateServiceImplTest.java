@@ -216,7 +216,8 @@ class PluginRuntimeStateServiceImplTest {
             Mockito.any(),
             transitionSeedCaptor.capture(),
             Mockito.eq("plugin-1"));
-    assertThat(transitionSeedCaptor.getValue()).isNotNull();
+    assertThat(transitionSeedCaptor.getValue())
+        .isEqualTo(stateCaptor.getValue().getLastChangedAt());
     assertThat(stateCaptor.getValue().getPluginState())
         .isEqualTo(PluginState.PLUGIN_STATE_ENABLED.name());
     assertThat(stateCaptor.getValue().getRuntimeRegionId()).isEqualTo("region-7");
@@ -277,13 +278,15 @@ class PluginRuntimeStateServiceImplTest {
     assertThat(existing.getRuntimeRegionEpoch()).isEqualTo(21L);
     Mockito.verify(repository, Mockito.atLeast(2)).save(existing);
     Mockito.verify(eventRepository).save(Mockito.any(PluginRuntimeEvent.class));
+    ArgumentCaptor<Instant> transitionSeedCaptor = ArgumentCaptor.forClass(Instant.class);
     Mockito.verify(scheduleInstanceService)
         .reconcileObservedRuntimeState(
             Mockito.eq("1"),
             Mockito.eq("game-1"),
             Mockito.any(),
-            Mockito.any(),
+            transitionSeedCaptor.capture(),
             Mockito.eq("plugin-1"));
+    assertThat(transitionSeedCaptor.getValue()).isEqualTo(existing.getLastChangedAt());
   }
 
   @Test

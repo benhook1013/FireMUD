@@ -1,6 +1,7 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
@@ -76,6 +77,51 @@ class ScriptPatchPinProjectionServiceImplTest {
     assertThat(lookup.summary().get().worldSlug()).isEqualTo("demo");
     assertThat(lookup.summary().get().realmSlug()).isEqualTo("production");
     assertThat(lookup.summary().get().pointerVersion()).isEqualTo("17");
+  }
+
+  @Test
+  void treatsRuntimeErrorAsUnavailableEvenWhenRuntimeStateIsAlsoPresent() {
+    ScriptPatchPinProjectionRepository repository =
+        Mockito.mock(ScriptPatchPinProjectionRepository.class);
+    GameSessionControlPlaneClient gameSessionControlPlaneClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
+        Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
+    ScriptScheduleInstanceService scheduleInstanceService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    Mockito.when(repository.findByTenantIdAndGameInstanceId("1", "game-1"))
+        .thenReturn(Optional.empty());
+    Mockito.when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", ""))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("GAME_SESSION_UNAVAILABLE")
+                        .setMessage("unavailable"))
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("game-1")
+                        .setPinnedScriptPatchVersion("patch-7")
+                        .build())
+                .build());
+
+    ScriptPatchPinProjectionService service =
+        new ScriptPatchPinProjectionServiceImpl(
+            repository,
+            gameSessionControlPlaneClient,
+            rolloutProjectionService,
+            scheduleInstanceService,
+            runtimeProperties());
+
+    ScriptPatchPinProjectionService.PinConvergenceLookup lookup =
+        service.getPinConvergence("1", "game-1");
+
+    assertThat(lookup.summary()).isEmpty();
+    assertThat(lookup.errorCode()).isEqualTo("GAME_SESSION_UNAVAILABLE");
+    assertThat(lookup.errorMessage()).isEqualTo("unavailable");
+    verify(repository, never()).save(Mockito.any());
+    verifyNoInteractions(rolloutProjectionService, scheduleInstanceService);
   }
 
   @Test

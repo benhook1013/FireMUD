@@ -33,7 +33,10 @@ final class RoutingBundleSupport {
       return RoutingBundle.EMPTY;
     }
     return new RoutingBundle(
-        normalizedWorldSlug, normalizedRealmSlug, pointerVersion, parsedPointerVersion);
+        normalizedWorldSlug,
+        normalizedRealmSlug,
+        Long.toString(parsedPointerVersion),
+        parsedPointerVersion);
   }
 
   static RoutingBundle normalize(String worldSlug, String realmSlug, long pointerVersion) {

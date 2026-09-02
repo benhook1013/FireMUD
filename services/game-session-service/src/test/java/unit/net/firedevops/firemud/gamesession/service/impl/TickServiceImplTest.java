@@ -499,7 +499,7 @@ class TickServiceImplTest {
   }
 
   @Test
-  void processTickStopsAfterLeaseLossInsideStageScript() {
+  void processTickStopsWhenStageScriptReportsLeaseLoss() {
     RedisScript<Long> stageMarker = mock(RedisScript.class);
     RedisScript<Long> commitMarker = mock(RedisScript.class);
     RedisScript<Long> rollbackMarker = mock(RedisScript.class);
@@ -525,11 +525,10 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertFalse(invokedScripts.contains(commitMarker));
     org.junit.jupiter.api.Assertions.assertFalse(invokedScripts.contains(rollbackMarker));
     verify(runtimeRegionStatusRepository, never()).advanceLastCommittedTickId(any());
-    verify(conflictTracker).recordConflict("session:1:2");
   }
 
   @Test
-  void processTickStopsAfterLeaseLossBeforeCommitScript() {
+  void processTickStopsWhenCommitScriptReportsLeaseLoss() {
     when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     RedisScript<Long> commitMarker = mock(RedisScript.class);
@@ -2235,6 +2234,17 @@ class TickStageScriptTest {
     assertThat(execute("wrong-token", "1", "N")).isEqualTo(-1L);
     assertThat(execute(LEASE_TOKEN, "0", "N")).isEqualTo(-3L);
     assertThat(execute(LEASE_TOKEN, "1", "X")).isEqualTo(-3L);
+    assertThat(values(QUEUE_KEY)).containsExactlyElementsOf(queueBefore);
+    assertThat(values(PENDING_KEY)).containsExactlyElementsOf(pendingBefore);
+  }
+
+  @Test
+  void rejectsFractionalMaxWithoutMutation() {
+    enqueue("N|command-id|look");
+    List<String> queueBefore = values(QUEUE_KEY);
+    List<String> pendingBefore = values(PENDING_KEY);
+
+    assertThat(execute(LEASE_TOKEN, "1.5", "N")).isEqualTo(-3L);
     assertThat(values(QUEUE_KEY)).containsExactlyElementsOf(queueBefore);
     assertThat(values(PENDING_KEY)).containsExactlyElementsOf(pendingBefore);
   }

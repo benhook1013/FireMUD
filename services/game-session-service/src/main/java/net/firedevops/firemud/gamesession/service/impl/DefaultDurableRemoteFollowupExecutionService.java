@@ -637,7 +637,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
               ? response.getError().getCode()
               : response.getAdmissionReason().isBlank()
                   ? "REMOTE_SCRIPT_EVENT_REJECTED"
-                  : response.getAdmissionReason().toUpperCase();
+                  : response.getAdmissionReason().toUpperCase(Locale.ROOT);
       String errorMessage =
           response.hasError() && !response.getError().getMessage().isBlank()
               ? response.getError().getMessage()

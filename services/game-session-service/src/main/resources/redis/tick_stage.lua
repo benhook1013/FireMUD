@@ -6,7 +6,10 @@ if redis.call('GET', lease) ~= ARGV[1] then
 end
 local max = tonumber(ARGV[2])
 local expectedMode = ARGV[3]
-if (expectedMode ~= 'N' and expectedMode ~= 'S') or not max or max < 1 then
+if (expectedMode ~= 'N' and expectedMode ~= 'S')
+    or not max
+    or max ~= math.floor(max)
+    or max < 1 then
   return -3
 end
 

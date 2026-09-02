@@ -334,11 +334,21 @@ public class TickQueueControlService {
 
   String queuePayload(boolean requiresSoloTick, String commandId, String command) {
     String mode = requiresSoloTick ? "S" : "N";
-    if (commandId == null || commandId.isBlank() || "-".equals(commandId)) {
-      throw new IllegalArgumentException("command_id cannot be blank or '-'");
-    }
-    requireQueueEncodingSafe(commandId, "command_id");
+    requireDurableCommandIdWireSafe(commandId, "command_id");
     return mode + "|" + commandId + "|" + command;
+  }
+
+  static void requireDurableCommandIdWireSafe(String value, String fieldName) {
+    if (value == null || value.isBlank() || "-".equals(value)) {
+      throw new MissingDurableCommandIdException(fieldName + " cannot be blank or '-'");
+    }
+    requireQueueEncodingSafe(value, fieldName);
+  }
+
+  static final class MissingDurableCommandIdException extends IllegalArgumentException {
+    MissingDurableCommandIdException(String message) {
+      super(message);
+    }
   }
 
   static void requireQueueEncodingSafe(String value, String fieldName) {

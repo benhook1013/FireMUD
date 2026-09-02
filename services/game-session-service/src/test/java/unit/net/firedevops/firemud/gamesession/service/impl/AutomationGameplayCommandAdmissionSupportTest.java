@@ -375,6 +375,17 @@ class AutomationGameplayCommandAdmissionSupportTest {
   }
 
   @Test
+  void admitsRoutedCommandWhenCurrentPointerTargetHasWideGameInstanceId() {
+    AdmissionRequest request = automationRequestForGameInstance(128L);
+    AdmissionResult result =
+        admitWithCurrentPointers(
+            List.of(currentPointerForGameInstance("demo", "production", 17L, 128L)), request);
+
+    assertEquals(true, result.accepted());
+    assertEquals("ENQUEUED", result.admissionOutcome());
+  }
+
+  @Test
   void acceptsCurrentPointerRouteWhenSlugsDifferOnlyByCase() {
     AdmissionRequest request =
         new AdmissionRequest(
@@ -968,6 +979,37 @@ class AutomationGameplayCommandAdmissionSupportTest {
         null);
   }
 
+  private static AdmissionRequest automationRequestForGameInstance(long gameInstanceId) {
+    AdmissionRequest base = automationRequest();
+    return new AdmissionRequest(
+        base.tenantId(),
+        gameInstanceId,
+        base.regionId(),
+        base.regionEpoch(),
+        base.sourceType(),
+        base.automationDispatchId(),
+        base.automationWorkItemId(),
+        base.scriptId(),
+        base.scriptPatchVersion(),
+        base.pluginId(),
+        base.pluginVersionId(),
+        base.playableStateScope(),
+        base.worldSlug(),
+        base.realmSlug(),
+        base.pointerVersion(),
+        base.originSourceKind(),
+        base.originSourceState(),
+        base.originSourceOrdinal(),
+        base.originSourceDueTickId(),
+        base.originSourceDueAtMs(),
+        base.targetEntityId(),
+        base.remoteCoordinatorId(),
+        base.remoteFollowupId(),
+        base.command(),
+        base.requiresSoloTick(),
+        base.dueTickId());
+  }
+
   private static AdmissionRequest remoteFollowupRequest(String remoteFollowupId) {
     return new AdmissionRequest(
         1L,
@@ -1240,13 +1282,18 @@ class AutomationGameplayCommandAdmissionSupportTest {
 
   private static GameplayAdmissionPointerSnapshot currentPointer(
       String worldSlug, String realmSlug, long pointerVersion) {
+    return currentPointerForGameInstance(worldSlug, realmSlug, pointerVersion, 2L);
+  }
+
+  private static GameplayAdmissionPointerSnapshot currentPointerForGameInstance(
+      String worldSlug, String realmSlug, long pointerVersion, long gameInstanceId) {
     return new GameplayAdmissionPointerSnapshot(
         worldSlug,
         "Demo",
         realmSlug,
         "Production",
         1L,
-        2L,
+        gameInstanceId,
         pointerVersion,
         true,
         true,
