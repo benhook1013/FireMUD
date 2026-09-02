@@ -2229,6 +2229,7 @@ class RemoteFollowupRuntimeServiceImplTest {
     coordinator.setExecutionOutcome(RemoteFollowupRuntimeServiceImpl.COMMAND_PENDING_REMOTE);
     coordinator.setGameplayResult("PENDING");
     RemoteFollowupResult result = result("APPLIED");
+    result.setTargetGameInstanceId(9L);
     GameplayCommand originCommand = gameplayCommand();
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE))
@@ -2250,6 +2251,9 @@ class RemoteFollowupRuntimeServiceImplTest {
         RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE, coordinator.getState());
     assertEquals("STAGED", originCommand.getExecutionOutcome());
     assertEquals("PENDING", originCommand.getGameplayResult());
+    verify(gameplayCommandRepository)
+        .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
+            1L, 9L, "region-b", 8L, "followup-1");
     verify(coordinatorRepository, never()).save(any());
     verify(gameplayCommandRepository, never()).save(any());
   }

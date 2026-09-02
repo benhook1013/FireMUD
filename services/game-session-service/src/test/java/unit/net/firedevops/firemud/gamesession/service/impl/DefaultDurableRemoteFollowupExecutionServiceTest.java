@@ -313,14 +313,16 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     assertEquals("APPLIED", requestCaptor.getValue().outcome());
   }
 
-  @Test
-  void executeRejectsDivergentScopeBeforeTargetCommandOrResultSideEffects() {
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("divergentScopeMutations")
+  void executeRejectsDivergentScopeBeforeTargetCommandOrResultSideEffects(
+      String divergentScope, Consumer<RemoteFollowup> mutation) {
     TickEffect effect = triggerScriptEventEffect();
     RemoteFollowup followup =
         triggerScriptEventFollowup("{\"kind\":\"enqueue_gameplay_command\",\"command\":\"LOOK\"}");
     followup.setPayloadKind("enqueue_gameplay_command");
     followup.setRequestedCommand("LOOK");
-    followup.setOriginRegionId("region-other");
+    mutation.accept(followup);
     RemoteCommandCoordinator coordinator = triggerScriptEventCoordinator();
     when(remoteFollowupRepository.findByFollowupId("followup-1")).thenReturn(Optional.of(followup));
     when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
@@ -344,6 +346,28 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
         runtimeRegionStatusRepository,
         tickService,
         automationScriptingClient);
+  }
+
+  private static Stream<Arguments> divergentScopeMutations() {
+    return Stream.of(
+        Arguments.of(
+            "originGameInstanceId",
+            (Consumer<RemoteFollowup>) followup -> followup.setOriginGameInstanceId(8L)),
+        Arguments.of(
+            "originRegionId",
+            (Consumer<RemoteFollowup>) followup -> followup.setOriginRegionId("region-other")),
+        Arguments.of(
+            "originRegionEpoch",
+            (Consumer<RemoteFollowup>) followup -> followup.setOriginRegionEpoch(5L)),
+        Arguments.of(
+            "targetGameInstanceId",
+            (Consumer<RemoteFollowup>) followup -> followup.setTargetGameInstanceId(8L)),
+        Arguments.of(
+            "targetRegionId",
+            (Consumer<RemoteFollowup>) followup -> followup.setTargetRegionId("region-other")),
+        Arguments.of(
+            "targetRegionEpoch",
+            (Consumer<RemoteFollowup>) followup -> followup.setTargetRegionEpoch(9L)));
   }
 
   @ParameterizedTest

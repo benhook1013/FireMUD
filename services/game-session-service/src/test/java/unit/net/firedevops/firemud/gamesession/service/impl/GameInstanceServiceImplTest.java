@@ -281,7 +281,14 @@ class GameInstanceServiceImplTest {
   @Test
   void stopSessionKeepsSessionStoppedWhenFinalizationFailsAfterWorldTermination() {
     persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
-    doThrow(new IllegalStateException("local finalization failed"))
+    AtomicInteger mapperCalls = new AtomicInteger();
+    doAnswer(
+            invocation -> {
+              if (mapperCalls.getAndIncrement() == 0) {
+                throw new IllegalStateException("local finalization failed");
+              }
+              return configureMappedDto(invocation.getArgument(0));
+            })
         .when(mapper)
         .toDto(any(GameInstance.class));
 
@@ -289,6 +296,7 @@ class GameInstanceServiceImplTest {
 
     verify(worldManagementClient)
         .terminateWorldInstance(anyLong(), anyLong(), anyLong(), any(), any());
+    verify(mapper, times(2)).toDto(any(GameInstance.class));
     assertEquals("STOPPED", store.get(10L).getStatus());
   }
 
@@ -467,22 +475,23 @@ class GameInstanceServiceImplTest {
   private void configureMapper() {
     when(mapper.toDto(any(GameInstance.class)))
         .thenAnswer(
-            invocation -> {
-              GameInstance entity = invocation.getArgument(0);
-              return new GameInstanceDto(
-                  entity.getId(),
-                  entity.getTenantId(),
-                  entity.getRuntimeVersion(),
-                  entity.getScriptPatchVersion(),
-                  entity.getGameTemplateId(),
-                  entity.getLaunchDescriptorId(),
-                  entity.getVersionId(),
-                  entity.getReleaseBundleId(),
-                  entity.getVersionStateEpoch(),
-                  entity.getGenerationConfigRevision(),
-                  entity.getOwnerAccountId(),
-                  entity.getStatus());
-            });
+            invocation -> configureMappedDto(invocation.getArgument(0)));
+  }
+
+  private GameInstanceDto configureMappedDto(GameInstance entity) {
+    return new GameInstanceDto(
+        entity.getId(),
+        entity.getTenantId(),
+        entity.getRuntimeVersion(),
+        entity.getScriptPatchVersion(),
+        entity.getGameTemplateId(),
+        entity.getLaunchDescriptorId(),
+        entity.getVersionId(),
+        entity.getReleaseBundleId(),
+        entity.getVersionStateEpoch(),
+        entity.getGenerationConfigRevision(),
+        entity.getOwnerAccountId(),
+        entity.getStatus());
   }
 
   private void configureLaunchPreflight() {

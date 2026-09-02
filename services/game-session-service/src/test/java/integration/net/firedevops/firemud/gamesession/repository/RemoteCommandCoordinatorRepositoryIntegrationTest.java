@@ -182,6 +182,9 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
         1L,
         9L);
 
+    assertThat(findCoordinatorsByCurrentTarget("region-target", 4L, 9L)).isEmpty();
+    assertThat(findFollowupsByCurrentTarget("region-target", 4L, 9L)).isEmpty();
+    assertThat(findResultsByCurrentTarget("region-target", 4L, 9L)).isEmpty();
     assertThat(findCoordinatorsByCurrentTarget("region-sibling", 99L, 9L))
         .extracting(RemoteCommandCoordinator::getCoordinatorId)
         .containsExactly("coord-1");
@@ -258,8 +261,8 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
     assertThat(findFollowupsByTargetOutcome("STAGED", "exact-policy"))
         .extracting(RemoteFollowup::getFollowupId)
         .containsExactly("rf-1");
-    assertThat(findResultsByCommandOutcome("APPLIED", "effect-1", "wrong-policy")).isEmpty();
-    assertThat(findResultsByCommandOutcome("APPLIED", "effect-1", "exact-policy"))
+    assertThat(findResultsByCommandOutcome("STAGED", "effect-1", "wrong-policy")).isEmpty();
+    assertThat(findResultsByCommandOutcome("STAGED", "effect-1", "exact-policy"))
         .extracting(RemoteFollowupResult::getResultId)
         .containsExactly("result-exact");
   }
