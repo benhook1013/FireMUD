@@ -284,6 +284,8 @@ public final class DefaultDurableRemoteFollowupExecutionService
       RemoteCommandCoordinator coordinator,
       RemoteFollowup followup) {
     try {
+      GameplayAdmissionPointerSnapshots.RoutingBundle routingBundle =
+          sourceRoutingBundle(followup, root);
       AutomationGameplayCommandAdmissionSupport.AdmissionResult result =
           AutomationGameplayCommandAdmissionSupport.admitRemoteIfAbsent(
               new AutomationGameplayCommandAdmissionSupport.AdmissionRequest(
@@ -301,10 +303,10 @@ public final class DefaultDurableRemoteFollowupExecutionService
                       coordinator.getScriptPatchVersion(), root, "scriptPatchVersion"),
                   authoritativeText(coordinator.getPluginId(), root, "pluginId"),
                   authoritativeText(coordinator.getPluginVersionId(), root, "pluginVersionId"),
-                  followup.getPlayableStateScope(),
-                  followup.getWorldSlug(),
-                  followup.getRealmSlug(),
-                  followup.getPointerVersion(),
+                  routingBundle == null ? null : routingBundle.playableStateScope(),
+                  routingBundle == null ? null : routingBundle.worldSlug(),
+                  routingBundle == null ? null : routingBundle.realmSlug(),
+                  routingBundle == null ? null : routingBundle.pointerVersion(),
                   firstNonBlank(
                       followup.getOriginSourceKind(),
                       textOrDefault(root, "originSourceKind", "REMOTE_FOLLOWUP")),
@@ -369,6 +371,8 @@ public final class DefaultDurableRemoteFollowupExecutionService
       RemoteCommandCoordinator coordinator,
       RemoteFollowup followup) {
     try {
+      GameplayAdmissionPointerSnapshots.RoutingBundle routingBundle =
+          sourceRoutingBundle(followup, root);
       AutomationGameplayCommandAdmissionSupport.AdmissionResult result =
           AutomationGameplayCommandAdmissionSupport.admitRemoteIfAbsent(
               new AutomationGameplayCommandAdmissionSupport.AdmissionRequest(
@@ -384,10 +388,10 @@ public final class DefaultDurableRemoteFollowupExecutionService
                       coordinator.getScriptPatchVersion(), root, "scriptPatchVersion"),
                   authoritativeText(coordinator.getPluginId(), root, "pluginId"),
                   authoritativeText(coordinator.getPluginVersionId(), root, "pluginVersionId"),
-                  followup.getPlayableStateScope(),
-                  followup.getWorldSlug(),
-                  followup.getRealmSlug(),
-                  followup.getPointerVersion(),
+                  routingBundle == null ? null : routingBundle.playableStateScope(),
+                  routingBundle == null ? null : routingBundle.worldSlug(),
+                  routingBundle == null ? null : routingBundle.realmSlug(),
+                  routingBundle == null ? null : routingBundle.pointerVersion(),
                   firstNonBlank(
                       followup.getOriginSourceKind(),
                       textOrDefault(root, "originSourceKind", "REMOTE_FOLLOWUP")),
@@ -459,7 +463,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
         playableStateScope,
         "worldSlug, realmSlug, pointerVersion, and playableStateScope must be provided together");
     return GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
-        worldSlug, realmSlug, pointerVersion);
+        worldSlug, realmSlug, pointerVersion, playableStateScope);
   }
 
   private static void validateSourceRoutingPayload(RemoteFollowup followup, JsonNode root) {

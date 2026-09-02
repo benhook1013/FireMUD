@@ -36,6 +36,10 @@ public final class V9__unique_gameplay_admission_pointer_runtime_target extends 
     Connection connection = context.getConnection();
     ensureNoDuplicates(connection);
     IndexState state = inspectIndex(connection);
+    if (state == IndexState.CONFLICTING_OBJECT) {
+      throw new IllegalStateException(
+          "Cannot create admission-pointer uniqueness index: an object with the expected index name is owned by another table");
+    }
     try (Statement statement = connection.createStatement()) {
       for (String sql : statements(state)) {
         statement.execute(sql);
@@ -53,7 +57,11 @@ public final class V9__unique_gameplay_admission_pointer_runtime_target extends 
         ResultSet results = statement.executeQuery(DUPLICATE_PREFLIGHT)) {
       if (results.next()) {
         throw new IllegalStateException(
-            "Cannot create admission-pointer uniqueness index while duplicate runtime targets exist");
+            "Cannot create admission-pointer uniqueness index while duplicate runtime target exists"
+                + " for tenantId="
+                + results.getLong(1)
+                + " gameInstanceId="
+                + results.getLong(2));
       }
     }
   }
@@ -64,6 +72,9 @@ public final class V9__unique_gameplay_admission_pointer_runtime_target extends 
       try (ResultSet results = statement.executeQuery()) {
         if (!results.next()) {
           return IndexState.MISSING;
+        }
+        if (!results.getBoolean(3)) {
+          return IndexState.CONFLICTING_OBJECT;
         }
         for (int column = 1; column <= 8; column++) {
           if (!results.getBoolean(column)) {
@@ -76,6 +87,10 @@ public final class V9__unique_gameplay_admission_pointer_runtime_target extends 
   }
 
   static List<String> statements(IndexState state) {
+    if (state == IndexState.CONFLICTING_OBJECT) {
+      throw new IllegalStateException(
+          "Cannot create admission-pointer uniqueness index: an object with the expected index name is owned by another table");
+    }
     if (state == IndexState.EXPECTED) {
       return List.of();
     }
@@ -94,6 +109,7 @@ public final class V9__unique_gameplay_admission_pointer_runtime_target extends 
   enum IndexState {
     MISSING,
     EXPECTED,
-    INVALID
+    INVALID,
+    CONFLICTING_OBJECT
   }
 }

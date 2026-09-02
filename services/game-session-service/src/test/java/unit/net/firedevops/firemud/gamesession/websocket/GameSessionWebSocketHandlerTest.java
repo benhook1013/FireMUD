@@ -551,10 +551,10 @@ class GameSessionWebSocketHandlerTest {
                     context.sessionId() == 41L
                         && context.tenantId() == 22L
                         && context.bootstrapGameInstanceId() == 7L
-                        && "demo".equals(context.worldSlug())
-                        && "production".equals(context.realmSlug())
-                        && context.pointerVersion() == 3L
-                        && "SHARED".equals(context.playableStateScope())));
+                        && context.worldSlug() == null
+                        && context.realmSlug() == null
+                        && context.pointerVersion() == 0L
+                        && context.playableStateScope() == null));
   }
 
   @Test

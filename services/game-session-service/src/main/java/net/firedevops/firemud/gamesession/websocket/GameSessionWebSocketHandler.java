@@ -688,6 +688,10 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     }
     Optional<SessionContext> existing =
         sessionAuthenticationService.resolveUnverifiedSessionContext(tenantId.get(), sessionId);
+    String resolvedPlayableStateScope =
+        GameplayAdmissionPointerSnapshots.singularCompletePointer(currentPointers)
+            .map(GameplayAdmissionPointerSnapshot::stateScope)
+            .orElse(null);
     SessionContext incomingShell =
         GameplayAdmissionPointerSnapshots.repairGenericBootstrapShell(
             bootstrapShell(
@@ -697,7 +701,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                 resolveWorldSlug(session),
                 resolveRealmSlug(session),
                 resolvePointerVersion(session),
-                null,
+                resolvedPlayableStateScope,
                 null,
                 null,
                 resolveLocaleTag(session)),
@@ -729,15 +733,18 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     }
     Optional<GameplayAdmissionPointerSnapshot> currentPointer =
         GameplayAdmissionPointerSnapshots.singularCompletePointer(currentPointers);
-    if (currentPointer.isEmpty()
-        || !GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
-            currentPointers,
-            connectContext.tenantId(),
-            connectContext.gameInstanceId(),
-            connectContext.worldSlug(),
-            connectContext.realmSlug(),
-            connectContext.pointerVersion(),
-            currentPointer.orElseThrow().stateScope())) {
+    if (currentPointer.isEmpty()) {
+      closeAdmissionPointerAuthorityUnavailable(session);
+      return;
+    }
+    if (!GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
+        currentPointers,
+        connectContext.tenantId(),
+        connectContext.gameInstanceId(),
+        connectContext.worldSlug(),
+        connectContext.realmSlug(),
+        connectContext.pointerVersion(),
+        currentPointer.orElseThrow().stateScope())) {
       closeInvalidFirstPartyContext(session);
       return;
     }

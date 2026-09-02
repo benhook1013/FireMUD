@@ -1,6 +1,7 @@
 package db.migration;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -38,6 +39,17 @@ class V9__unique_gameplay_admission_pointer_runtime_targetTest {
             V9__unique_gameplay_admission_pointer_runtime_target.statements(
                 V9__unique_gameplay_admission_pointer_runtime_target.IndexState.EXPECTED))
         .isEmpty();
+  }
+
+  @Test
+  void doesNotTreatConflictingObjectAsRepairableIndex() {
+    assertThatThrownBy(
+            () ->
+                V9__unique_gameplay_admission_pointer_runtime_target.statements(
+                    V9__unique_gameplay_admission_pointer_runtime_target.IndexState
+                        .CONFLICTING_OBJECT))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("owned by another table");
   }
 
   @Test

@@ -219,15 +219,12 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     followup.setTargetRegionEpoch(8L);
     followup.setTargetEntityId("321");
     followup.setDueTickId(55L);
-    followup.setPlayableStateScope("SHARED");
-    followup.setWorldSlug("demo");
-    followup.setRealmSlug("production");
-    followup.setPointerVersion(17L);
+    // The payload is the only source of the validated routing bundle for this case.
     followup.setStatus(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED);
     followup.setClaimedTickBatchId("tb-1");
     followup.setPayloadJson(
         """
-        {"kind":"enqueue_automation_command","command":"LOOK"}
+        {"kind":"enqueue_automation_command","command":"LOOK","worldSlug":"demo","realmSlug":"production","pointerVersion":17,"playableStateScope":"SHARED"}
         """);
     followup.setRequiresSoloTick(true);
     followup.setOriginSourceKind("REMOTE_FOLLOWUP");

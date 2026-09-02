@@ -15,7 +15,12 @@ public final class GameplayAdmissionPointerSnapshots {
     }
   }
 
-  public record RoutingBundle(String worldSlug, String realmSlug, Long pointerVersion) {}
+  public record RoutingBundle(
+      String worldSlug, String realmSlug, Long pointerVersion, String playableStateScope) {
+    public RoutingBundle(String worldSlug, String realmSlug, Long pointerVersion) {
+      this(worldSlug, realmSlug, pointerVersion, null);
+    }
+  }
 
   public static AdmittedRoutingBundle admittedRoutingBundle(SessionContext context) {
     if (context == null) {
@@ -63,7 +68,7 @@ public final class GameplayAdmissionPointerSnapshots {
     SessionContext normalizedShell = normalizePartialGenericRouting(shell);
     if (hasCompleteRoutingBundle(normalizedShell)) {
       if (filteredRuntimePointers.isEmpty()) {
-        return normalizedShell;
+        return clearGenericBootstrapRouting(normalizedShell);
       }
       if (matchesCurrentRuntimeTarget(
           filteredRuntimePointers,
@@ -255,6 +260,11 @@ public final class GameplayAdmissionPointerSnapshots {
 
   public static RoutingBundle normalizeRoutingBundle(
       String worldSlug, String realmSlug, Long pointerVersion) {
+    return normalizeRoutingBundle(worldSlug, realmSlug, pointerVersion, null);
+  }
+
+  public static RoutingBundle normalizeRoutingBundle(
+      String worldSlug, String realmSlug, Long pointerVersion, String playableStateScope) {
     String normalizedWorldSlug = blankToNull(worldSlug);
     String normalizedRealmSlug = blankToNull(realmSlug);
     Long normalizedPointerVersion =
@@ -270,7 +280,11 @@ public final class GameplayAdmissionPointerSnapshots {
     if (!hasAny || !hasAll) {
       return null;
     }
-    return new RoutingBundle(normalizedWorldSlug, normalizedRealmSlug, normalizedPointerVersion);
+    return new RoutingBundle(
+        normalizedWorldSlug,
+        normalizedRealmSlug,
+        normalizedPointerVersion,
+        blankToNull(playableStateScope));
   }
 
   public static void requireCompleteOrAbsentRoutingBundle(
@@ -316,7 +330,7 @@ public final class GameplayAdmissionPointerSnapshots {
         null,
         null,
         0L,
-        shell.playableStateScope(),
+        null,
         shell.connectScopeId(),
         shell.connectRequestId());
   }
