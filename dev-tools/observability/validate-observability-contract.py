@@ -39,6 +39,49 @@ SERVICE_OPTIONAL_ALERTS = {
     "PlayerFlowCanaryLatencyHigh",
 }
 SERVICE_DERIVED_ALERTS = {"ChatDeliveryLatencyP99High"}
+TARGET_ONLY_INSTALLED_ALERTS = {
+    "TickEffectsReplaySloBreached",
+    "TickEffectsReplayStarved",
+    "RedisLuaScriptLoadFailures",
+    "RedisLuaScriptMissingForRegion",
+    "RedisLuaScriptRuntimeHigh",
+    "RedisCoordinationOomErrors",
+    "RedisCoordinationTailLossSLOBreached",
+    "RedisTickPendingStuck",
+    "TickExecutionUnsafeRatio",
+    "TickCleanupLagHigh",
+    "TickReplayScanLagHigh",
+    "LoginSuccessRatioLowGateway",
+    "LoginSuccessRatioLowTcpProxy",
+    "CommandLatencyP99HighGateway",
+    "CommandLatencyP99HighTcpProxy",
+    "ChatDeliveryLatencyP99High",
+    "EntryPathAvailabilityLowGateway",
+    "EntryPathAvailabilityLowGatewayCompliance",
+    "EntryPathAvailabilityLowTcpProxy",
+    "EntryPathAvailabilityLowTcpProxyCompliance",
+}
+TARGET_ONLY_INSTALLED_RECORDINGS = {
+    "tick_effects_replay_convergence_budget_seconds",
+    "tick_effects_replay_starved",
+    "command_latency_stage_ms_p99_5m",
+    "tick_execution_time_ms_p95",
+    "tick_execution_time_ms_p99",
+    "tick_execution_safety_ratio_p99",
+    "redis_coordination_tail_loss_budget_ms",
+    "redis_coordination_tail_loss_slo_breached",
+    "tick_effects_pending_oldest_age_seconds",
+    "tick_effects_replay_slo_breached",
+    "login_success_ratio_gateway_15m",
+    "login_success_ratio_tcpproxy_15m",
+    "command_latency_ms_p99_gateway_5m",
+    "command_latency_ms_p99_tcpproxy_5m",
+    "chat_delivery_latency_ms_p99_5m",
+    "entrypath_availability_gateway_1d",
+    "entrypath_availability_gateway_5m",
+    "entrypath_availability_tcpproxy_1d",
+    "entrypath_availability_tcpproxy_5m",
+}
 PLAYER_SLO_CALIBRATION_ALERTS = {
     "LoginSuccessRatioLowGateway",
     "LoginSuccessRatioLowTcpProxy",
@@ -92,6 +135,79 @@ ENTRY_PATH_BLACKBOX_ALERT_CONTRACTS = {
         "expression": "zero",
     },
 }
+SERVICE_SCOPED_ALERT_CONTRACTS = {
+    "LoginSuccessRatioLowGateway": (
+        "login_requests_total",
+        "spring-cloud-gateway",
+    ),
+    "LoginSuccessRatioLowTcpProxy": (
+        "login_requests_total",
+        "tcp-proxy-service",
+    ),
+    "CommandLatencyP99HighGateway": (
+        "command_end_to_end_latency_ms_bucket",
+        "spring-cloud-gateway",
+    ),
+    "CommandLatencyP99HighTcpProxy": (
+        "command_end_to_end_latency_ms_bucket",
+        "tcp-proxy-service",
+    ),
+}
+TICK_SCOPE_CLASS_MATCHER = 'scope_class=~"region|game_instance|tenant|cluster"'
+_TICK_SCOPE_LABEL, _TICK_SCOPE_CLASS_REGEX = TICK_SCOPE_CLASS_MATCHER.split("=~", 1)
+TICK_SCOPE_CLASS_MATCHER_RE = re.compile(
+    rf'(?:^|,)\s*{re.escape(_TICK_SCOPE_LABEL)}\s*=\s*~\s*'
+    rf'{re.escape(_TICK_SCOPE_CLASS_REGEX)}\s*(?:,|$)',
+)
+TICK_REPLAY_ALERT_METRICS = {
+    "TickEffectsReplaySloBreached": "tick_effects_replay_slo_breached",
+    "TickEffectsReplayStarved": "tick_effects_replay_starved",
+    "TickReplayScanLagHigh": "tick_effects_replay_scan_lag_ms",
+}
+TICK_REPLAY_ALERT_THRESHOLDS = {
+    "TickEffectsReplaySloBreached": "0",
+    "TickEffectsReplayStarved": "0",
+    "TickReplayScanLagHigh": "300000",
+}
+# These label sets mirror the canonical metric families in
+# system-architecture-redis-metrics-catalog.md.  A selector may omit a
+# documented dimension when it intentionally aggregates it (for example the
+# dashboard's abandoned-effects sum omits `reason`, and the Redis compatibility
+# alert selects `tick_interval_ms` by bounded deployment `scope`), but it may
+# not introduce an unbounded runtime identity or an otherwise unknown label.
+TICK_SCOPED_METRIC_LABELS = {
+    "tick_interval_ms": {"scope", "scope_class"},
+    "tick_execution_time_ms_bucket": {"scope_class", "tick_mode", "le"},
+    "tick_execution_time_ms_p95": {"scope_class", "tick_mode"},
+    "tick_execution_time_ms_p99": {"scope_class", "tick_mode"},
+    "tick_execution_safety_ratio_p99": {"scope_class", "tick_mode"},
+    "tick_lock_ttl_ms": {"scope_class"},
+    "solo_lock_ttl_ms": {"scope_class"},
+    "tick_status": {"scope_class", "status"},
+    "current_tick_state": {"scope_class", "state"},
+    "current_tick_terminal_at_ms": {"scope_class"},
+    "tick_current_id": {"scope_class"},
+    "tick_pending_oldest_id": {"scope_class"},
+    "tick_retry_queue_depth": {"scope_class"},
+    "tick_command_queue_depth": {"scope_class"},
+    "tick_effects_pending_total": {"scope_class"},
+    "tick_effects_applied_total": {"scope_class"},
+    "tick_effects_abandoned_total": {"scope_class", "reason"},
+    "tick_effects_pending_oldest_scheduled_timestamp_seconds": {"scope_class"},
+    "tick_effects_pending_oldest_age_seconds": {"scope_class"},
+    "tick_effects_replay_convergence_budget_seconds": {"scope_class"},
+    "tick_effects_replay_slo_breached": {"scope_class"},
+    "tick_effects_replay_scan_lag_ms": {"scope_class"},
+    "tick_effects_replay_batches_total": {"scope_class"},
+    "tick_effects_replay_starved": {"scope_class"},
+    "tick_durable_commit_total": {"scope_class"},
+    "tick_coordination_cleared_total": {"scope_class"},
+    "tick_cleanup_lag_ms": {"scope_class"},
+    "tick_effects_replayed_total": {"scope_class"},
+    "gamesession_tick_replayed_total": {"scope_class"},
+    "gamesession_tick_executed_total": {"scope_class"},
+}
+TICK_SCOPED_METRICS = set(TICK_SCOPED_METRIC_LABELS)
 DISALLOWED_ALERT_SERVICE_LABELS = {"gateway", "game-session"}
 GRAFANA_DIR = REPO_ROOT / "design" / "observability" / "grafana"
 CORE_ALERT_SNIPPET_PATHS = [
@@ -224,6 +340,7 @@ STALE_BLOCKED_CONVERGENCE_EXPR = re.compile(
     r'recovery_participant_convergence_total\s*\{[^}]*result\s*=\s*["\']blocked["\']'
 )
 RESTORE_DRILL_30_DAY_EXPR = re.compile(
+    r"time\s*\(\s*\)\s*-\s*"
     r"backup_restore_drill_last_success_timestamp_seconds\s*>\s*30\s*\*\s*24\s*\*\s*60\s*\*\s*60"
 )
 
@@ -1280,6 +1397,36 @@ def _entry_path_blackbox_findings(
     return findings
 
 
+def _service_scoped_alert_findings(
+    path: Path,
+    alert_name: str,
+    labels: dict[str, str],
+    expr: str,
+) -> list[Finding]:
+    contract = SERVICE_SCOPED_ALERT_CONTRACTS.get(alert_name)
+    if contract is None:
+        return []
+    metric_name, service = contract
+    findings: list[Finding] = []
+    if labels.get("service") != service:
+        findings.append(
+            Finding(
+                path=path,
+                message=f"{alert_name} must use labels.service={service}",
+            )
+        )
+    if not _all_metric_selectors_have_exact_label(
+        expr, metric_name, "service", service
+    ):
+        findings.append(
+            Finding(
+                path=path,
+                message=f'{alert_name} must scope expr to service="{service}"',
+            )
+        )
+    return findings
+
+
 def _playerflow_canary_label_findings(
     path: Path, alert_name: str, labels: dict[str, str]
 ) -> list[Finding]:
@@ -1538,6 +1685,23 @@ def _check_ms_thresholds(expr: str) -> str | None:
     if not re.search(r"_ms(?:_|\b)", code_expr):
         return None
 
+    # A direct division of two `_ms` operands produces a dimensionless ratio.
+    # PromQL may place `on`/`ignoring` and `group_left`/`group_right`
+    # vector-matching modifiers between the operands. Only mask those direct
+    # ratio operands; an unrelated raw `_ms` comparison in the same arithmetic
+    # expression must still be checked.
+    ms_operand = (
+        r"(?:[A-Za-z_:][A-Za-z0-9_:]*_ms(?:_[A-Za-z0-9_:]+)*"
+        r"(?:\{[^{}]*\})?|label_replace\([^()]*_ms(?:_[A-Za-z0-9_:]+)*"
+        r"(?:\{[^{}]*\})?[^()]*\))"
+    )
+    dimensionless_ms_ratio = re.compile(
+        rf"(?<![A-Za-z0-9_:]){ms_operand}/"
+        r"(?:(?:on|ignoring)\([^()]*\))?"
+        r"(?:(?:group_left|group_right)(?:\([^()]*\))?)?"
+        rf"{ms_operand}"
+    )
+
     # A compound PromQL expression can contain unrelated numeric comparisons.
     # Keep each logical clause with the metric it constrains so a later
     # `queue_depth > 0` cannot be mistaken for the threshold of an earlier
@@ -1556,7 +1720,13 @@ def _check_ms_thresholds(expr: str) -> str | None:
         if not re.search(r"_ms(?:_|\b)", clause_code):
             continue
         normalized = re.sub(r"\s+", "", clause_code)
-        if re.search(r"_ms[^)]*/[^)]*_ms", normalized):
+        ratio_spans = [
+            match.span() for match in dimensionless_ms_ratio.finditer(normalized)
+        ]
+        residual = normalized
+        for ratio_start, ratio_end in reversed(ratio_spans):
+            residual = residual[:ratio_start] + residual[ratio_end:]
+        if ratio_spans and not re.search(r"_ms(?:_|\b)", residual):
             continue
         # PromQL supports decimal and exponent-form float literals. Match the
         # complete literal after any scalar comparison so `1e2` is not parsed
@@ -1571,6 +1741,213 @@ def _check_ms_thresholds(expr: str) -> str | None:
         threshold = float(numeric_comparisons[-1])
         if threshold < 10:
             return f"expression compares an `_ms` metric against {threshold}; this looks like seconds, but `_ms` metrics are milliseconds"
+    return None
+
+
+def _tick_replay_scope_matching_finding(
+    path: Path, alert_name: str, expr: str
+) -> Finding | None:
+    metric_name = TICK_REPLAY_ALERT_METRICS.get(alert_name)
+    if metric_name is None:
+        return None
+    code_expr = _mask_promql_non_code(expr)
+    occurrences = _promql_metric_occurrences(code_expr, metric_name)
+    scoped = bool(occurrences) and all(
+        (selector := _promql_selector_after(expr, occurrence.end())) is not None
+        and TICK_SCOPE_CLASS_MATCHER_RE.search(_mask_promql_comments(selector[1:-1]))
+        for occurrence in occurrences
+    )
+    expected = (
+        f"{metric_name}{{{TICK_SCOPE_CLASS_MATCHER}}}>"
+        f"{TICK_REPLAY_ALERT_THRESHOLDS[alert_name]}"
+    )
+    if scoped and _compact_promql(_mask_promql_comments(expr)) == expected:
+        return None
+    return Finding(
+        path=path,
+        message=(
+            f"{alert_name} must use {metric_name} with the exact bounded "
+            "scope_class matcher"
+        ),
+    )
+
+
+def _promql_logical_operator_depths(expr: str) -> list[tuple[str, int]]:
+    """Return logical operators and their parenthesis depth outside literals."""
+    code_expr = _mask_promql_non_code(expr)
+    operators = re.compile(r"(?<![A-Za-z0-9_:])(?:and|or|unless)(?![A-Za-z0-9_:])", re.IGNORECASE)
+    depths: list[tuple[str, int]] = []
+    depth = 0
+    index = 0
+    while index < len(code_expr):
+        character = code_expr[index]
+        if character == "(":
+            depth += 1
+            index += 1
+            continue
+        if character == ")":
+            depth = max(0, depth - 1)
+            index += 1
+            continue
+        match = operators.match(code_expr, index)
+        if match:
+            depths.append((match.group(0).lower(), depth))
+            index = match.end()
+            continue
+        index += 1
+    return depths
+
+
+def _tick_execution_ratio_finding(
+    path: Path, alert_name: str, expr: str, *, require_threshold: bool = False
+) -> Finding | None:
+    if alert_name != "TickExecutionUnsafeRatio":
+        return None
+    normalized = _compact_promql(_mask_promql_comments(expr))
+    if require_threshold:
+        if not normalized.endswith(">0.75"):
+            return Finding(
+                path=path,
+                message="TickExecutionUnsafeRatio must use the exact >0.75 threshold",
+            )
+        core = normalized[: -len(">0.75")]
+    else:
+        if re.search(r"(?:<=|>=|<|>)", normalized):
+            return Finding(
+                path=path,
+                message="TickExecutionUnsafeRatio dashboard expressions must not add a threshold",
+            )
+        core = normalized
+
+    # Alert expressions wrap the two branches in one outer pair so the
+    # comparison applies to the complete ratio. Dashboard expressions expose
+    # the same branches without that outer wrapper. In either form there must
+    # be exactly one OR at the branch level and no logical operator outside it.
+    expected_depth = 1 if require_threshold else 0
+    logical_depths = _promql_logical_operator_depths(core)
+    if any(depth < expected_depth for _, depth in logical_depths):
+        return Finding(
+            path=path,
+            message="TickExecutionUnsafeRatio must not contain extra top-level logical branches",
+        )
+    branch_ors = [
+        (operator, depth) for operator, depth in logical_depths if depth == expected_depth
+    ]
+    if branch_ors != [("or", expected_depth)]:
+        return Finding(
+            path=path,
+            message="TickExecutionUnsafeRatio must contain exactly one normal/solo OR branch",
+        )
+
+    if require_threshold:
+        if not (core.startswith("(") and core.endswith(")")):
+            return Finding(
+                path=path,
+                message="TickExecutionUnsafeRatio alert must wrap both branches before applying >0.75",
+            )
+        branch_core = core[1:-1]
+    else:
+        branch_core = core
+
+    branch_operator = re.search(r"(?<![A-Za-z0-9_:])or(?![A-Za-z0-9_:])", _mask_promql_non_code(branch_core))
+    if branch_operator is None:
+        return Finding(
+            path=path,
+            message="TickExecutionUnsafeRatio must retain separate normal and solo branches",
+        )
+    branches = [
+        branch_core[: branch_operator.start()],
+        branch_core[branch_operator.end() :],
+    ]
+    bounded = TICK_SCOPE_CLASS_MATCHER
+    for mode, denominator in (("normal", "tick_lock_ttl_ms"), ("solo", "solo_lock_ttl_ms")):
+        expected_branch = (
+            f"(tick_execution_time_ms_p99{{{bounded},tick_mode=\"{mode}\"}}"
+            f"/on(scope_class,tick_mode)label_replace({denominator}{{{bounded}}},"
+            f"\"tick_mode\",\"{mode}\",\"scope_class\",\".*\"))"
+        )
+        branch_index = 0 if mode == "normal" else 1
+        if branches[branch_index] != expected_branch:
+            return Finding(
+                path=path,
+                message=(
+                    "TickExecutionUnsafeRatio must select normal and solo "
+                    "p99 series with the exact bounded scope_class matcher"
+                ),
+            )
+    return None
+
+
+def _tick_scope_selector_finding(
+    path: Path, expr: str, *, allow_unbounded_scope: bool = False
+) -> Finding | None:
+    """Require bounded scope and canonical labels on every shared tick selector."""
+    bounded_scope_matcher = re.compile(
+        r'(?:^|,)\s*scope\s*(?P<operator>=~|=)\s*'
+        r'"(?P<value>(?:\\.|[^"\\])*)"\s*(?:,|$)',
+        re.IGNORECASE,
+    )
+    # A deployment scope is bounded only when it is an exact matcher or a
+    # regex that enumerates bounded values.  In particular, PromQL wildcard
+    # constructs such as `.+` and `.*` must not satisfy the tick_interval_ms
+    # scope exemption.  Escaped metacharacters remain literal values.
+    unbounded_scope_regex = re.compile(
+        r'(?<!\\)(?:[.*+?\[\]{}]|\\[dDsSwW])'
+    )
+    label_matcher = re.compile(
+        r'(?:^|,)\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:!=|=~|!~|=)'
+    )
+    code_expr = _mask_promql_non_code(expr)
+    for metric_name in sorted(TICK_SCOPED_METRICS):
+        for occurrence in _promql_metric_occurrences(code_expr, metric_name):
+            selector = _promql_selector_after(expr, occurrence.end())
+            if selector is None:
+                return Finding(
+                    path=path,
+                    message=(
+                        f"tick metric {metric_name} must use the exact bounded "
+                        "scope_class matcher region|game_instance|tenant|cluster"
+                    ),
+                )
+            selector_body = _mask_promql_non_code(selector[1:-1])
+            selector_comments = _mask_promql_comments(selector[1:-1])
+            has_bounded_scope_class = TICK_SCOPE_CLASS_MATCHER_RE.search(selector_comments)
+            scope_matchers = list(bounded_scope_matcher.finditer(selector_comments))
+            has_bounded_scope = any(
+                match.group("operator") == "="
+                or unbounded_scope_regex.search(match.group("value")) is None
+                for match in scope_matchers
+            )
+            has_unbounded_scope = any(
+                match.group("operator") == "=~"
+                and unbounded_scope_regex.search(match.group("value")) is not None
+                for match in scope_matchers
+            )
+            if not has_bounded_scope_class and not (
+                metric_name == "tick_interval_ms"
+                and (
+                    allow_unbounded_scope
+                    or (has_bounded_scope and not has_unbounded_scope)
+                )
+            ):
+                return Finding(
+                    path=path,
+                    message=(
+                        f"tick metric {metric_name} must use the exact bounded "
+                        "scope_class matcher region|game_instance|tenant|cluster"
+                    ),
+                )
+            labels = set(label_matcher.findall(selector_body))
+            allowed_labels = TICK_SCOPED_METRIC_LABELS[metric_name]
+            unexpected_labels = sorted(labels - allowed_labels)
+            if unexpected_labels:
+                return Finding(
+                    path=path,
+                    message=(
+                        f"tick metric {metric_name} uses unsupported labels: "
+                        + ", ".join(unexpected_labels)
+                    ),
+                )
     return None
 
 
@@ -1597,6 +1974,26 @@ def _all_metric_selectors_have_label(
         ):
             return False
     return True
+
+
+def _all_metric_selectors_have_exact_label(
+    expr: str, metric_name: str, label_name: str, label_value: str
+) -> bool:
+    """Require exact labels on every occurrence.
+
+    Unlike the looser helper, absence fails closed.
+    """
+    exact_matcher = re.compile(
+        rf'(?:^|,)\s*{re.escape(label_name)}\s*=\s*"{re.escape(label_value)}"\s*(?:,|$)',
+    )
+    occurrences = _promql_metric_occurrences(expr, metric_name)
+    if not occurrences:
+        return False
+    return all(
+        (selector := _promql_selector_after(expr, occurrence.end())) is not None
+        and exact_matcher.search(_mask_promql_comments(selector[1:-1]))
+        for occurrence in occurrences
+    )
 
 
 def _check_dotted_metric_tokens(expr: str) -> str | None:
@@ -1838,6 +2235,10 @@ def _validate_alert_snippet(path: Path) -> list[Finding]:
                 continue
 
             findings.extend(
+                _service_scoped_alert_findings(path, entry.name, labels, expr)
+            )
+
+            findings.extend(
                 _entry_path_blackbox_findings(
                     path,
                     entry.name,
@@ -1859,6 +2260,27 @@ def _validate_alert_snippet(path: Path) -> list[Finding]:
             ms_issue = _check_ms_thresholds(expr)
             if ms_issue:
                 findings.append(Finding(path=path, message=ms_issue))
+
+            tick_scope_issue = _tick_replay_scope_matching_finding(
+                path, entry.name, expr
+            )
+            if tick_scope_issue:
+                findings.append(tick_scope_issue)
+            tick_ratio_issue = _tick_execution_ratio_finding(
+                path, entry.name, expr, require_threshold=True
+            )
+            if tick_ratio_issue:
+                findings.append(tick_ratio_issue)
+            tick_selector_issue = _tick_scope_selector_finding(
+                path,
+                expr,
+                # Target-only snippets intentionally use deployment-scope
+                # placeholders until their producer and bounded-label
+                # contract are implemented.
+                allow_unbounded_scope=entry.name in TARGET_ONLY_INSTALLED_ALERTS,
+            )
+            if tick_selector_issue:
+                findings.append(tick_selector_issue)
 
             grpc_scope_issue = _check_grpc_app_error_scoping(expr)
             if grpc_scope_issue:
@@ -1916,6 +2338,15 @@ def _validate_grafana_dashboards(grafana_dir: Path) -> list[Finding]:
                 expr = target.get("expr")
                 if not expr or not isinstance(expr, str):
                     continue
+                if "tick_execution_time_ms_p99" in _mask_promql_non_code(expr):
+                    tick_ratio_issue = _tick_execution_ratio_finding(
+                        json_path, "TickExecutionUnsafeRatio", expr
+                    )
+                    if tick_ratio_issue:
+                        findings.append(tick_ratio_issue)
+                tick_selector_issue = _tick_scope_selector_finding(json_path, expr)
+                if tick_selector_issue:
+                    findings.append(tick_selector_issue)
                 grpc_scope_issue = _check_grpc_app_error_scoping(expr)
                 if grpc_scope_issue:
                     findings.append(Finding(path=json_path, message=grpc_scope_issue))
@@ -2370,28 +2801,11 @@ def _validate_doc_semantics() -> list[Finding]:
                 rule_lines = entry.lines
                 labels = _parse_labels(rule_lines)
                 expr = _parse_expr(rule_lines) or ""
-                compact_expr = re.sub(r"\s+", "", expr)
-
-                if alert_name == "LoginSuccessRatioLowGateway":
-                    if labels.get("service") != "spring-cloud-gateway":
-                        findings.append(Finding(path=core_alerts, message="LoginSuccessRatioLowGateway must use labels.service=spring-cloud-gateway"))
-                    if 'login_requests_total{service="spring-cloud-gateway"' not in compact_expr:
-                        findings.append(Finding(path=core_alerts, message="LoginSuccessRatioLowGateway must scope expr to service=\"spring-cloud-gateway\""))
-                if alert_name == "LoginSuccessRatioLowTcpProxy":
-                    if labels.get("service") != "tcp-proxy-service":
-                        findings.append(Finding(path=core_alerts, message="LoginSuccessRatioLowTcpProxy must use labels.service=tcp-proxy-service"))
-                    if 'login_requests_total{service="tcp-proxy-service"' not in compact_expr:
-                        findings.append(Finding(path=core_alerts, message="LoginSuccessRatioLowTcpProxy must scope expr to service=\"tcp-proxy-service\""))
-                if alert_name == "CommandLatencyP99HighGateway":
-                    if labels.get("service") != "spring-cloud-gateway":
-                        findings.append(Finding(path=core_alerts, message="CommandLatencyP99HighGateway must use labels.service=spring-cloud-gateway"))
-                    if 'command_end_to_end_latency_ms_bucket{service="spring-cloud-gateway"' not in compact_expr:
-                        findings.append(Finding(path=core_alerts, message="CommandLatencyP99HighGateway must scope expr to service=\"spring-cloud-gateway\""))
-                if alert_name == "CommandLatencyP99HighTcpProxy":
-                    if labels.get("service") != "tcp-proxy-service":
-                        findings.append(Finding(path=core_alerts, message="CommandLatencyP99HighTcpProxy must use labels.service=tcp-proxy-service"))
-                    if 'command_end_to_end_latency_ms_bucket{service="tcp-proxy-service"' not in compact_expr:
-                        findings.append(Finding(path=core_alerts, message="CommandLatencyP99HighTcpProxy must scope expr to service=\"tcp-proxy-service\""))
+                findings.extend(
+                    _service_scoped_alert_findings(
+                        core_alerts, alert_name, labels, expr
+                    )
+                )
                 recovery_coverage_issue = _recovery_coverage_alert_finding(
                     core_alerts, alert_name, expr
                 )
@@ -2485,6 +2899,7 @@ def _validate_reference_prometheus_rules(
     required_alerts: set[str] | None = None,
     *,
     allow_profile_dependent_alerts: bool = False,
+    installed_in_shared_prometheus_rule: bool = False,
 ) -> list[Finding]:
     findings: list[Finding] = []
     text = _read_text(path)
@@ -2499,6 +2914,13 @@ def _validate_reference_prometheus_rules(
         if not alert_name:
             findings.append(Finding(path=path, message="alert rule is missing name"))
             continue
+        if installed_in_shared_prometheus_rule and alert_name in TARGET_ONLY_INSTALLED_ALERTS:
+            findings.append(
+                Finding(
+                    path=path,
+                    message=f"target-only alert {alert_name} must not be installed in the shared PrometheusRule",
+                )
+            )
         alert_occurrences[alert_name] = alert_occurrences.get(alert_name, 0) + 1
         if (
             alert_name in PROFILE_DEPENDENT_ALERTS
@@ -2580,6 +3002,18 @@ def _validate_reference_prometheus_rules(
         if ms_issue:
             findings.append(Finding(path=path, message=f"{alert_name}: {ms_issue}"))
 
+        tick_scope_issue = _tick_replay_scope_matching_finding(path, alert_name, expr)
+        if tick_scope_issue:
+            findings.append(tick_scope_issue)
+        tick_ratio_issue = _tick_execution_ratio_finding(
+            path, alert_name, expr, require_threshold=True
+        )
+        if tick_ratio_issue:
+            findings.append(tick_ratio_issue)
+        tick_selector_issue = _tick_scope_selector_finding(path, expr)
+        if tick_selector_issue:
+            findings.append(tick_selector_issue)
+
         grpc_scope_issue = _check_grpc_app_error_scoping(expr)
         if grpc_scope_issue:
             findings.append(Finding(path=path, message=f"{alert_name}: {grpc_scope_issue}"))
@@ -2601,10 +3035,10 @@ def _validate_reference_prometheus_rules(
         absent_metric = REQUIRED_ABSENT_ALERT_METRICS.get(alert_name)
         if absent_metric:
             absent_expr = re.compile(rf"absent\s*\(\s*{re.escape(absent_metric)}\s*\)")
-            if not absent_expr.search(expr or ""):
+            if absent_expr.fullmatch(_mask_promql_non_code(expr or "").strip()) is None:
                 findings.append(Finding(path=path, message=f"{alert_name} must use absent({absent_metric})"))
         if alert_name == "RecoveryReopenAttemptBlocked":
-            if not BLOCKED_REOPEN_ATTEMPT_EXPR.search(expr or ""):
+            if BLOCKED_REOPEN_ATTEMPT_EXPR.fullmatch(_mask_promql_comments(expr or "").strip()) is None:
                 findings.append(
                     Finding(
                         path=path,
@@ -2618,17 +3052,15 @@ def _validate_reference_prometheus_rules(
                 findings.append(Finding(path=path, message="RecoveryReopenAttemptBlocked must use severity=P0"))
         if alert_name.startswith("Tick") and alert_name not in {
             "TickExecutionUnsafeRatio",
-            "TickEffectLedgerBacklog",
+            "TickEffectsReplaySloBreached",
             "TickCleanupLagHigh",
-            "TickReplayFairnessStarved",
+            "TickEffectsReplayStarved",
             "TickReplayScanLagHigh",
         }:
             findings.append(Finding(path=path, message=f"unexpected tick alert name {alert_name!r} in reference rules; update validator contract if intentional"))
 
     if required_alerts is None:
         required_alerts = {
-            "RedisCoordinationTailLossSLOBreached",
-            "TickExecutionUnsafeRatio",
             "BackupPipelineNoRecentBackup",
             "BackupLastSuccessMetricsAbsent",
             "BackupPipelineNoRecentVerification",
@@ -2643,17 +3075,6 @@ def _validate_reference_prometheus_rules(
             "RecoveryParticipantConvergenceCoverageMissing",
             "RecoveryParticipantConvergenceMetricsAbsent",
             "RecoveryReopenAttemptBlocked",
-            "LoginSuccessRatioLowGateway",
-            "LoginSuccessRatioLowTcpProxy",
-            "CommandLatencyP99HighGateway",
-            "CommandLatencyP99HighTcpProxy",
-            "EntryPathAvailabilityLowGateway",
-            "EntryPathAvailabilityLowTcpProxy",
-            "EntryPathAvailabilityLowGatewayCompliance",
-            "EntryPathAvailabilityLowTcpProxyCompliance",
-            "ChatDeliveryLatencyP99High",
-            "TickReplayFairnessStarved",
-            "TickReplayScanLagHigh",
             "AlertmanagerNotificationsFailing",
             "AlertmanagerConfigReloadFailed",
             "PrometheusRuleEvaluationsFailing",
@@ -2702,7 +3123,9 @@ def _validate_reference_prometheus_rules(
     return findings
 
 
-def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
+def _validate_reference_prometheus_recordings(
+    path: Path, *, installed_in_shared_prometheus_rule: bool = False
+) -> list[Finding]:
     text = _read_text(path)
     findings: list[Finding] = []
     recording_occurrences: dict[str, list[str | None]] = {}
@@ -2714,7 +3137,21 @@ def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
         if not recording:
             findings.append(Finding(path=path, message="recording rule is missing name"))
             continue
-        recording_occurrences.setdefault(recording, []).append(_parse_expr(entry.lines))
+        if installed_in_shared_prometheus_rule and recording in TARGET_ONLY_INSTALLED_RECORDINGS:
+            findings.append(
+                Finding(
+                    path=path,
+                    message=(
+                        f"target-only recording {recording} must not be installed in the shared PrometheusRule"
+                    ),
+                )
+            )
+        expression = _parse_expr(entry.lines)
+        recording_occurrences.setdefault(recording, []).append(expression)
+        if expression:
+            tick_selector_issue = _tick_scope_selector_finding(path, expression)
+            if tick_selector_issue:
+                findings.append(tick_selector_issue)
 
     missing_required = sorted(REQUIRED_BACKUP_RECORDINGS - recording_occurrences.keys())
     if missing_required:
@@ -2764,17 +3201,20 @@ def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
     }
     chat_recording_name = "chat_delivery_latency_ms_p99_5m"
     chat_recording_expressions = recording_occurrences.get(chat_recording_name, [])
-    if len(chat_recording_expressions) != 1:
+    # The player-experience recording family is target-only until its
+    # producers are implemented. If a deployment supplies the optional
+    # recording, validate its canonical shape; absence is valid here.
+    if len(chat_recording_expressions) > 1:
         findings.append(
             Finding(
                 path=path,
                 message=(
                     "canonical chat delivery recording rule must be declared "
-                    f"exactly once: {chat_recording_name}"
+                    f"at most once: {chat_recording_name}"
                 ),
             )
         )
-    elif not chat_recording_expressions[0]:
+    elif chat_recording_expressions and not chat_recording_expressions[0]:
         findings.append(
             Finding(
                 path=path,
@@ -2784,7 +3224,7 @@ def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
                 ),
             )
         )
-    else:
+    elif chat_recording_expressions:
         chat_selector_issue = _recipient_dispatch_selector_finding(
             path,
             chat_recording_expressions[0],
@@ -2853,7 +3293,7 @@ def _validate_reference_prometheus_recordings(path: Path) -> list[Finding]:
         )
 
     restore_drill_expr = recordings.get("backup_pipeline_recent_restore_drill_slo_breached") or ""
-    if not RESTORE_DRILL_30_DAY_EXPR.search(restore_drill_expr):
+    if RESTORE_DRILL_30_DAY_EXPR.fullmatch(_mask_promql_non_code(restore_drill_expr).strip()) is None:
         findings.append(
             Finding(
                 path=path,
@@ -2883,8 +3323,16 @@ def main() -> int:
     findings.extend(_validate_kibana_saved_objects(REPO_ROOT / "design" / "observability" / "kibana"))
     findings.extend(_validate_doc_semantics())
     prometheus_rules = REPO_ROOT / "k8s" / "monitoring" / "prometheus-rules-firemud.yaml"
-    findings.extend(_validate_reference_prometheus_recordings(prometheus_rules))
-    findings.extend(_validate_reference_prometheus_rules(prometheus_rules))
+    findings.extend(
+        _validate_reference_prometheus_recordings(
+            prometheus_rules, installed_in_shared_prometheus_rule=True
+        )
+    )
+    findings.extend(
+        _validate_reference_prometheus_rules(
+            prometheus_rules, installed_in_shared_prometheus_rule=True
+        )
+    )
     independent_required_rules = (
         REPO_ROOT
         / "k8s"
@@ -2912,6 +3360,7 @@ def main() -> int:
                     "ObservabilityDeadmanHeartbeatStale",
                 },
                 allow_profile_dependent_alerts=True,
+                installed_in_shared_prometheus_rule=False,
             )
         )
 

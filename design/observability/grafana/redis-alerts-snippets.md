@@ -2,13 +2,17 @@
 
 This file contains reference PromQL expressions and Alertmanager rule snippets for Redis coordination alerts. These complement the TCP Proxy-specific rules in `tcp-proxy-alerts-snippets.md` and are intended to be imported or adapted into environment-specific rulesets.
 
+## Implementation status
+
+The raw `redis_coordination_tail_loss_ms{scope}` series, when supplied by a deployment, is a bounded compatibility diagnostic only and is not measured-SLO authority. The Lua-script metrics and cadence-derived compatibility metrics used by the examples below are target-only and currently have no repository producer or owner contract. They are not installed by the shared PrometheusRule. A deployment may install these examples only after implementing and proving their bounded labels and owner contract.
+
 ## Redis Tail-Loss and Coordination Health
 
 Example alert for Coordination Redis tail-loss SLO breaches:
 
 ```yaml
 - alert: RedisCoordinationTailLossSLOBreached
-  expr: redis_coordination_tail_loss_slo_breached > 0
+  expr: redis_coordination_tail_loss_slo_breached{scope=~".+"} > 0
   for: 5m
   labels:
     service: redis-coordination
@@ -17,13 +21,13 @@ Example alert for Coordination Redis tail-loss SLO breaches:
     runbook: design/architecture/system-architecture-redis-incident-runbook.md#coordination-aof-tail-loss-slo-breach
   annotations:
     summary: Coordination Redis tail-loss SLO breached
-    description: Tail-loss exceeds the 1–2s envelope for one or more regions. See the Redis incident runbook for reset guidance.
+    description: Tail-loss exceeds the cadence-derived envelope for one or more bounded Redis deployment scopes; identify the affected deployment scope(s) from the alert labels, then enumerate affected regions from authoritative runtime-health and control-plane records. See the Redis incident runbook for reset guidance.
 ```
 
 This assumes that the canonical recording rules expose:
 
-- `redis_coordination_tail_loss_budget_ms{scope}` – dynamic budget computed as `max(2000, 2 * tick_interval_ms)` for an approved bounded gameplay scope.
-- `redis_coordination_tail_loss_slo_breached{scope}` – derived breach indicator based on the dynamic budget.
+- `redis_coordination_tail_loss_budget_ms{scope}` – one bounded scalar per Coordination Redis deployment/environment/ruleset scope equal to the maximum `clamp_min(2 * tick_interval_ms, 2000)` across that scope's `tick_interval_ms{scope,scope_class}` series.
+- `redis_coordination_tail_loss_slo_breached{scope}` – derived breach indicator joining each bounded exposure scope with its matching scoped budget on `scope`; `scope` and `scope_class` are separate labels and are not aliased.
 
 Example alerts for additional Coordination Redis core red lines from the Redis metrics contract:
 
@@ -53,7 +57,7 @@ Example alerts for additional Coordination Redis core red lines from the Redis m
     description: Tick scheduling should halt for affected regions until script preload is healthy.
 
 - alert: RedisLuaScriptRuntimeHigh
-  expr: redis_lua_script_runtime_ms_p99 > (2 * tick_interval_ms)
+  expr: redis_lua_script_runtime_ms_p99{scope=~".+"} > on (scope) group_left() (2 * max by (scope) (tick_interval_ms{scope=~".+"}))
   for: 3m
   labels:
     service: redis-coordination

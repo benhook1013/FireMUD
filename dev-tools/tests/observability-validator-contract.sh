@@ -143,6 +143,19 @@ validator = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = validator
 spec.loader.exec_module(validator)
 
+canonical_scope_matcher = 'scope_class=~"region|game_instance|tenant|cluster"'
+if validator.TICK_SCOPE_CLASS_MATCHER_RE.search(canonical_scope_matcher) is None:
+    raise AssertionError("canonical tick scope_class matcher was not accepted")
+for noncanonical_scope_matcher in (
+    'SCOPE_CLASS=~"region|game_instance|tenant|cluster"',
+    'scope_class=~"REGION|game_instance|tenant|cluster"',
+):
+    if validator.TICK_SCOPE_CLASS_MATCHER_RE.search(noncanonical_scope_matcher) is not None:
+        raise AssertionError(
+            "tick scope_class matcher accepted non-canonical case: "
+            f"{noncanonical_scope_matcher!r}"
+        )
+
 checked_in_alert_snippets = set(
     (root / "design/observability/grafana").glob("*alerts-snippets.md")
 )
@@ -192,6 +205,232 @@ if actual_slash_anchor != expected_slash_anchor:
 
 rules_path = root / "k8s/monitoring/prometheus-rules-firemud.yaml"
 valid_text = rules_path.read_text(encoding="utf-8")
+rules_doc = yaml.safe_load(valid_text)
+target_only_alerts = set(validator.TARGET_ONLY_INSTALLED_ALERTS)
+installed_alerts = {
+    rule["alert"]
+    for group in rules_doc["spec"]["groups"]
+    for rule in group["rules"]
+    if "alert" in rule
+}
+if target_only_alerts & installed_alerts:
+    raise AssertionError(
+        "target-only alerts must not be installed in the shared PrometheusRule: "
+        f"{sorted(target_only_alerts & installed_alerts)!r}"
+    )
+for target_only_alert in (
+    "TickEffectsReplaySloBreached",
+    "TickEffectsReplayStarved",
+):
+    mutated_shared_alerts = valid_text.replace(
+        "        - alert: BackupPipelineNoRecentBackup",
+        f"        - alert: {target_only_alert}",
+        1,
+    )
+    original_read_text = validator._read_text
+    validator._read_text = lambda path, mutated=mutated_shared_alerts: (
+        mutated if path == rules_path else original_read_text(path)
+    )
+    try:
+        target_only_findings = validator._validate_reference_prometheus_rules(
+            rules_path,
+            installed_in_shared_prometheus_rule=True,
+        )
+    finally:
+        validator._read_text = original_read_text
+    if not any(
+        finding.message
+        == f"target-only alert {target_only_alert} must not be installed in the shared PrometheusRule"
+        for finding in target_only_findings
+    ):
+        raise AssertionError(
+            f"installing target-only alert {target_only_alert} was not rejected"
+        )
+alternate_mutated_shared_alerts = valid_text.replace(
+    "        - alert: BackupPipelineNoRecentBackup",
+    "        - alert: TickEffectsReplayStarved",
+    1,
+)
+with tempfile.TemporaryDirectory() as temp_dir:
+    alternate_shared_rules_path = Path(temp_dir) / "rules-from-an-alternate-path.yaml"
+    alternate_shared_rules_path.write_text(
+        alternate_mutated_shared_alerts, encoding="utf-8"
+    )
+    alternate_path_findings = validator._validate_reference_prometheus_rules(
+        alternate_shared_rules_path,
+        installed_in_shared_prometheus_rule=True,
+    )
+if not any(
+    finding.message
+    == "target-only alert TickEffectsReplayStarved must not be installed in the shared PrometheusRule"
+    for finding in alternate_path_findings
+):
+    raise AssertionError(
+        "explicit shared-rule identity did not reject a target-only alert at an alternate path"
+    )
+recording_rules = {
+    rule["record"]: rule
+    for group in rules_doc["spec"]["groups"]
+    for rule in group["rules"]
+    if "record" in rule
+}
+target_only_recordings = set(validator.TARGET_ONLY_INSTALLED_RECORDINGS)
+if target_only_recordings & recording_rules.keys():
+    raise AssertionError(
+        "target-only recordings must not be installed in the shared PrometheusRule: "
+        f"{sorted(target_only_recordings & recording_rules.keys())!r}"
+    )
+for target_only_recording in (
+    "tick_effects_replay_convergence_budget_seconds",
+    "tick_effects_replay_starved",
+):
+    mutated_shared_recordings = valid_text.replace(
+        "        - record: backup_artifact_lineage_invalid",
+        f"        - record: {target_only_recording}",
+        1,
+    )
+    original_read_text = validator._read_text
+    validator._read_text = lambda path, mutated=mutated_shared_recordings: (
+        mutated if path == rules_path else original_read_text(path)
+    )
+    try:
+        target_only_recording_findings = validator._validate_reference_prometheus_recordings(
+            rules_path,
+            installed_in_shared_prometheus_rule=True,
+        )
+    finally:
+        validator._read_text = original_read_text
+    if not any(
+        finding.message
+        == f"target-only recording {target_only_recording} must not be installed in the shared PrometheusRule"
+        for finding in target_only_recording_findings
+    ):
+        raise AssertionError(
+            f"installing target-only recording {target_only_recording} was not rejected"
+        )
+alternate_mutated_shared_recordings = valid_text.replace(
+    "        - record: backup_artifact_lineage_invalid",
+    "        - record: tick_effects_replay_starved",
+    1,
+)
+with tempfile.TemporaryDirectory() as temp_dir:
+    alternate_shared_recordings_path = Path(temp_dir) / "recordings-from-an-alternate-path.yaml"
+    alternate_shared_recordings_path.write_text(
+        alternate_mutated_shared_recordings, encoding="utf-8"
+    )
+    alternate_recording_findings = validator._validate_reference_prometheus_recordings(
+        alternate_shared_recordings_path,
+        installed_in_shared_prometheus_rule=True,
+    )
+if not any(
+    finding.message
+    == "target-only recording tick_effects_replay_starved must not be installed in the shared PrometheusRule"
+    for finding in alternate_recording_findings
+):
+    raise AssertionError(
+        "explicit shared-rule identity did not reject a target-only recording at an alternate path"
+    )
+metrics_catalog_text = (
+    root / "design/architecture/system-architecture-redis-metrics-catalog.md"
+).read_text(encoding="utf-8")
+if "redis_coordination_tail_loss_budget_ms{scope}" not in metrics_catalog_text:
+    raise AssertionError(
+        "Redis metrics catalog must document a deployment-scoped tail-loss budget"
+    )
+if "tick_interval_ms{scope,scope_class}" not in metrics_catalog_text:
+    raise AssertionError(
+        "Redis metrics catalog must bind tick cadence to the deployment scope"
+    )
+redis_snippet_text = (
+    root / "design/observability/grafana/redis-alerts-snippets.md"
+).read_text(encoding="utf-8")
+if "target-only" not in redis_snippet_text.lower():
+    raise AssertionError(
+        "Redis Lua alert snippets must declare their target-only status"
+    )
+redis_lua_runtime_examples = [
+    block
+    for block in validator._extract_fenced_blocks(redis_snippet_text, "yaml")
+    if re.search(
+        r"(?m)^\s*-\s*alert:\s*RedisLuaScriptRuntimeHigh\s*$", block
+    )
+]
+if len(redis_lua_runtime_examples) != 1:
+    raise AssertionError(
+        "Redis Lua runtime target example must be present exactly once in a YAML block"
+    )
+redis_lua_runtime_example = redis_lua_runtime_examples[0]
+redis_lua_runtime_entries = [
+    entry
+    for entry in validator._split_alert_rules(redis_lua_runtime_example)
+    if entry.name == "RedisLuaScriptRuntimeHigh"
+]
+if len(redis_lua_runtime_entries) != 1:
+    raise AssertionError(
+        "Redis Lua runtime target example must contain exactly one named runtime rule"
+    )
+redis_lua_runtime_expr = validator._parse_expr(redis_lua_runtime_entries[0].lines) or ""
+if (
+    redis_lua_runtime_expr.count("max by (scope)") != 1
+    or redis_lua_runtime_expr.count("> on (scope) group_left()") != 1
+):
+    raise AssertionError(
+        "Redis Lua runtime target example must use exactly one explicit many-to-one scope join"
+    )
+# Regression-proof that matching prose in another field cannot satisfy the
+# expression-specific proof.
+redis_runtime_expr_literal = 'redis_lua_script_runtime_ms_p99{scope=~".+"} > on (scope) group_left() (2 * max by (scope) (tick_interval_ms{scope=~".+"}))'
+if redis_runtime_expr_literal not in redis_lua_runtime_expr:
+    raise AssertionError(
+        "RedisLuaScriptRuntimeHigh expression replacement target is missing: "
+        f"{redis_runtime_expr_literal!r}"
+    )
+redis_runtime_description_literal = (
+    "description: Coordination script latency is beyond the runtime envelope and can degrade tick health."
+)
+if redis_runtime_description_literal not in redis_lua_runtime_example:
+    raise AssertionError(
+        "RedisLuaScriptRuntimeHigh description replacement target is missing: "
+        f"{redis_runtime_description_literal!r}"
+    )
+redis_runtime_expr_replacement = (
+    'redis_lua_script_runtime_ms_p99{scope=~".+"} > 2000 * tick_interval_ms{scope=~".+"}'
+)
+redis_runtime_expr_field = f"  expr: {redis_runtime_expr_literal}"
+if redis_runtime_expr_field not in redis_lua_runtime_example:
+    raise AssertionError(
+        "RedisLuaScriptRuntimeHigh expression field replacement target is missing: "
+        f"{redis_runtime_expr_field!r}"
+    )
+spoofed_redis_lua_runtime = redis_lua_runtime_example.replace(
+    redis_runtime_expr_field,
+    f"  expr: {redis_runtime_expr_replacement}",
+    1,
+).replace(
+    redis_runtime_description_literal,
+    "description: Coordination script latency is beyond the runtime envelope and can degrade tick health. Require > on (scope) group_left() and max by (scope).",
+    1,
+)
+spoofed_runtime_entry = next(
+    entry
+    for entry in validator._split_alert_rules(spoofed_redis_lua_runtime)
+    if entry.name == "RedisLuaScriptRuntimeHigh"
+)
+spoofed_runtime_expr = validator._parse_expr(spoofed_runtime_entry.lines) or ""
+if (
+    spoofed_runtime_expr.count("max by (scope)") != 0
+    or spoofed_runtime_expr.count("> on (scope) group_left()") != 0
+):
+    raise AssertionError(
+        "Redis Lua runtime proof fixture did not remove joins from the runtime expr"
+    )
+if (
+    "max by (scope)" not in spoofed_redis_lua_runtime
+    or "> on (scope) group_left()" not in spoofed_redis_lua_runtime
+):
+    raise AssertionError(
+        "Redis Lua runtime proof fixture must retain spoofing prose outside expr"
+    )
 if "ObservabilityDeadmanHeartbeatStale" in valid_text:
     raise AssertionError(
         "shared Prometheus rules must not install the profile-dependent deadman alert"
@@ -993,6 +1232,11 @@ quoted_rules_findings = findings_for(
 if quoted_rules_findings:
     raise AssertionError(f"quoted rules key was not canonically validated: {quoted_rules_findings!r}")
 
+recording_backup_anchor = "    - name: firemud.recording.backup\n      rules:"
+if valid_text.count(recording_backup_anchor) < 1:
+    raise AssertionError(
+        "fixture mutation anchor is missing: firemud.recording.backup rules mapping"
+    )
 unsupported_rules_key_shapes = (
     (
         "explicit rules key",
@@ -1006,8 +1250,8 @@ unsupported_rules_key_shapes = (
     (
         "sequence explicit rules key",
         valid_text.replace(
-            "    - name: firemud.recording.tick\n      rules:",
-            "    - ? rules\n      : []\n    - name: firemud.recording.tick\n      rules:",
+            recording_backup_anchor,
+            "    - ? rules\n      : []\n    - name: firemud.recording.backup\n      rules:",
             1,
         ),
         "unsupported explicit rules key shape; the dependency-free validator cannot safely inspect this YAML shape",
@@ -1015,8 +1259,8 @@ unsupported_rules_key_shapes = (
     (
         "inline flow rules mapping",
         valid_text.replace(
-            "    - name: firemud.recording.tick\n      rules:",
-            "    - {name: firemud.invalid, rules: []}\n    - name: firemud.recording.tick\n      rules:",
+            recording_backup_anchor,
+            "    - {name: firemud.invalid, rules: []}\n    - name: firemud.recording.backup\n      rules:",
             1,
         ),
         "unsupported flow rules key shape; the dependency-free validator cannot safely inspect this YAML shape",
@@ -1024,8 +1268,8 @@ unsupported_rules_key_shapes = (
     (
         "multiline flow rules mapping",
         valid_text.replace(
-            "    - name: firemud.recording.tick\n      rules:",
-            "    - {\n        name: firemud.invalid,\n        rules: []\n      }\n    - name: firemud.recording.tick\n      rules:",
+            recording_backup_anchor,
+            "    - {\n        name: firemud.invalid,\n        rules: []\n      }\n    - name: firemud.recording.backup\n      rules:",
             1,
         ),
         "unsupported flow rules key shape; the dependency-free validator cannot safely inspect this YAML shape",
@@ -1277,7 +1521,6 @@ if set(calibration_alerts) != validator.PLAYER_SLO_CALIBRATION_ALERTS:
     raise AssertionError("calibration alert test set drifted from the validator contract")
 calibration_sources = (
     (valid_playerflow_snippet, validator._validate_alert_snippet),
-    (valid_text, validator._validate_reference_prometheus_rules),
 )
 for source_text, source_validator in calibration_sources:
     baseline_findings = findings_for(source_text, source_validator)
@@ -1355,64 +1598,6 @@ for old, replacement in (
         ),
     ),
 ):
-    mutated_recording = mutate_recording_rule(
-        valid_text,
-        "chat_delivery_latency_ms_p99_5m",
-        old,
-        replacement,
-    )
-    require_message(
-        findings_for(
-            mutated_recording,
-            validator._validate_reference_prometheus_recordings,
-        ),
-        recording_message,
-    )
-
-for replacement in (
-    'chat_delivery_latency_ms_p99_5m{completion_boundary="server_acceptance"}',
-    "chat_delivery_latency_ms_p99_5m",
-    (
-        "(" + chat_recording_selector
-        + " + chat_delivery_latency_ms_p99_5m)"
-    ),
-    (
-        "(" + chat_recording_selector
-        + ' + chat_delivery_latency_ms_p99_5m{completion_boundary="server_acceptance"})'
-    ),
-):
-    mutated_shipped_alert = mutate_alert_rule(
-        valid_text,
-        "ChatDeliveryLatencyP99High",
-        chat_recording_selector,
-        replacement,
-    )
-    require_message(
-        findings_for(
-            mutated_shipped_alert,
-            validator._validate_reference_prometheus_rules,
-        ),
-        shipped_alert_message,
-    )
-
-for old, replacement in (
-    (
-        raw_chat_selector,
-        'chat_delivery_latency_ms_bucket{completion_boundary="server_acceptance"}',
-    ),
-    (raw_chat_selector, "chat_delivery_latency_ms_bucket"),
-    (
-        raw_chat_term,
-        f"({raw_chat_term} + rate(chat_delivery_latency_ms_bucket[5m]))",
-    ),
-    (
-        raw_chat_term,
-        (
-            f"({raw_chat_term} + rate(chat_delivery_latency_ms_bucket"
-            '{completion_boundary="server_acceptance"}[5m]))'
-        ),
-    ),
-):
     mutated_snippet_alert = mutate_alert_rule(
         valid_playerflow_snippet,
         "ChatDeliveryLatencyP99High",
@@ -1433,12 +1618,6 @@ chat_service_label_message = (
 )
 chat_service_label_mutations = (
     (
-        valid_text,
-        validator._validate_reference_prometheus_rules,
-        "          labels:\n",
-        "          labels:\n            service: '{{ $labels.service }}'\n",
-    ),
-    (
         valid_playerflow_snippet,
         validator._validate_alert_snippet,
         "  labels:\n",
@@ -1455,20 +1634,6 @@ for source_text, source_validator, old, replacement in chat_service_label_mutati
         ),
         chat_service_label_message,
     )
-
-chat_recording_without_service = mutate_recording_rule(
-    valid_text,
-    "chat_delivery_latency_ms_p99_5m",
-    "sum by (service, scope, completion_boundary, channel_type, le)",
-    "sum by (scope, completion_boundary, channel_type, le)",
-)
-require_message(
-    findings_for(
-        chat_recording_without_service,
-        validator._validate_reference_prometheus_recordings,
-    ),
-    "canonical chat delivery recording rule must group by service, scope, completion_boundary, channel_type, and le",
-)
 
 chat_grouping_message = (
     "canonical chat delivery recording rule must group by service, scope, "
@@ -2450,6 +2615,10 @@ for scalar_variant in (
 
 if validator._check_ms_thresholds("tick_cleanup_lag_ms > 5") is None:
     raise AssertionError("a low threshold on a metric ending in _ms was silently accepted")
+if validator._check_ms_thresholds("tick_cleanup_lag_ms > 0.75") is None:
+    raise AssertionError(
+        "a fractional threshold on a raw _ms metric was silently accepted"
+    )
 for comparison_operator in ("<", "<=", ">", ">="):
     low_threshold = f"tick_cleanup_lag_ms {comparison_operator} 5"
     if validator._check_ms_thresholds(low_threshold) is None:
@@ -2499,10 +2668,172 @@ for invalid_compound_ms_expr in (
     "tick_cleanup_lag_ms > 5 and queue_depth > 0",
     "queue_depth > 0 and tick_cleanup_lag_ms > 5",
     "first_latency_ms > 100 and second_latency_ms > 5",
+    "(tick_cleanup_lag_ms > 0.75) * (first_latency_ms / second_budget_ms)",
 ):
     if validator._check_ms_thresholds(invalid_compound_ms_expr) is None:
         raise AssertionError(
             f"a low threshold on an _ms metric in a compound expression was silently accepted: {invalid_compound_ms_expr!r}"
+        )
+for canonical_alert, canonical_metric in (
+    ("TickEffectsReplaySloBreached", "tick_effects_replay_slo_breached"),
+    ("TickEffectsReplayStarved", "tick_effects_replay_starved"),
+    ("TickReplayScanLagHigh", "tick_effects_replay_scan_lag_ms"),
+):
+    threshold = validator.TICK_REPLAY_ALERT_THRESHOLDS[canonical_alert]
+    valid_tick_scope_expr = (
+        f'{canonical_metric}{{scope_class=~"region|game_instance|tenant|cluster"}} > {threshold}'
+    )
+    if validator._tick_replay_scope_matching_finding(
+        root / "k8s/monitoring/prometheus-rules-firemud.yaml",
+        canonical_alert,
+        valid_tick_scope_expr,
+    ):
+        raise AssertionError(
+            f"canonical bounded scope matcher was rejected: {valid_tick_scope_expr!r}"
+        )
+    for invalid_tick_scope_expr in (
+        f'{canonical_metric}{{scope_class=~".+"}} > 0',
+        f'{canonical_metric}{{scope_class=~"region|game_instance"}} > 0',
+        f'{canonical_metric} > 0',
+        f'{canonical_metric}{{scope_class=~"region|game_instance|tenant|cluster"}} > {threshold} or other_metric > 0',
+    ):
+        if validator._tick_replay_scope_matching_finding(
+            root / "k8s/monitoring/prometheus-rules-firemud.yaml",
+            canonical_alert,
+            invalid_tick_scope_expr,
+        ) is None:
+            raise AssertionError(
+                f"invalid canonical replay scope expression was accepted: {invalid_tick_scope_expr!r}"
+            )
+for valid_ms_ratio_expr in (
+    "((tick_execution_time_ms_p99{scope_class=~\"region|game_instance|tenant|cluster\",tick_mode=\"normal\"} / on (scope_class, tick_mode) label_replace(tick_lock_ttl_ms{scope_class=~\"region|game_instance|tenant|cluster\"}, \"tick_mode\", \"normal\", \"scope_class\", \".*\")) or (tick_execution_time_ms_p99{scope_class=~\"region|game_instance|tenant|cluster\",tick_mode=\"solo\"} / on (scope_class, tick_mode) label_replace(solo_lock_ttl_ms{scope_class=~\"region|game_instance|tenant|cluster\"}, \"tick_mode\", \"solo\", \"scope_class\", \".*\"))) > 0.75",
+    "first_latency_ms / ignoring(scope_class) group_left(region) second_budget_ms > 0.75",
+):
+    if validator._check_ms_thresholds(valid_ms_ratio_expr):
+        raise AssertionError(
+            f"a dimensionless _ms ratio was treated as a raw millisecond threshold: {valid_ms_ratio_expr!r}"
+        )
+ratio_fixture = (
+    "((tick_execution_time_ms_p99{scope_class=~\"region|game_instance|tenant|cluster\",tick_mode=\"normal\"} "
+    "/ on (scope_class, tick_mode) label_replace(tick_lock_ttl_ms{scope_class=~\"region|game_instance|tenant|cluster\"}, \"tick_mode\", \"normal\", \"scope_class\", \".*\")) "
+    "or (tick_execution_time_ms_p99{scope_class=~\"region|game_instance|tenant|cluster\",tick_mode=\"solo\"} "
+    "/ on (scope_class, tick_mode) label_replace(solo_lock_ttl_ms{scope_class=~\"region|game_instance|tenant|cluster\"}, \"tick_mode\", \"solo\", \"scope_class\", \".*\"))) > 0.75"
+)
+if validator._tick_execution_ratio_finding(
+    root / "design/observability/grafana/tick-alerts-snippets.md",
+    "TickExecutionUnsafeRatio",
+    ratio_fixture,
+    require_threshold=True,
+):
+    raise AssertionError("mode-labelled tick execution ratio fixture was rejected")
+for invalid_ratio_fixture in (
+    ratio_fixture.replace("on (scope_class, tick_mode)", "on (scope_class) group_left()"),
+    ratio_fixture.replace('scope_class=~"region|game_instance|tenant|cluster"', 'scope_class=~".+"'),
+):
+    if validator._tick_execution_ratio_finding(
+        root / "design/observability/grafana/tick-alerts-snippets.md",
+        "TickExecutionUnsafeRatio",
+        invalid_ratio_fixture,
+        require_threshold=True,
+    ) is None:
+        raise AssertionError("unsafe tick execution ratio fixture was silently accepted")
+for invalid_ratio_fixture in (
+    ratio_fixture.replace("> 0.75", "> 0.5"),
+    ratio_fixture.replace(") or (tick_execution_time_ms_p99", ") or other_metric > 0 or (tick_execution_time_ms_p99"),
+):
+    if validator._tick_execution_ratio_finding(
+        root / "design/observability/grafana/tick-alerts-snippets.md",
+        "TickExecutionUnsafeRatio",
+        invalid_ratio_fixture,
+        require_threshold=True,
+    ) is None:
+        raise AssertionError("unsafe tick execution threshold/branch fixture was silently accepted")
+for ratio_path in (
+    root / "design/observability/grafana/tick-alerts-snippets.md",
+):
+    ratio_text = ratio_path.read_text(encoding="utf-8")
+    yaml_blocks = validator._extract_fenced_blocks(ratio_text, "yaml")
+    parsed_rules = [
+        entry
+        for block in (yaml_blocks or [ratio_text])
+        for entry in validator._split_alert_rules(block)
+    ]
+    ratio_entries = [
+        entry for entry in parsed_rules if entry.name == "TickExecutionUnsafeRatio"
+    ]
+    if len(ratio_entries) != 1:
+        raise AssertionError(
+            "TickExecutionUnsafeRatio must have exactly one parsed fenced YAML rule"
+        )
+    ratio_expression = validator._parse_expr(ratio_entries[0].lines)
+    if not ratio_expression:
+        raise AssertionError("TickExecutionUnsafeRatio parsed rule has no expression")
+    if validator._tick_execution_ratio_finding(
+        ratio_path, "TickExecutionUnsafeRatio", ratio_expression,
+        require_threshold=True,
+    ):
+        raise AssertionError(
+            f"{ratio_path.relative_to(root)} must preserve tick_mode through both ratio branches"
+        )
+dashboard_path = root / "design/observability/grafana/tick-health-ledger.json"
+dashboard = json.loads(dashboard_path.read_text(encoding="utf-8"))
+for panel in dashboard["panels"]:
+    for target in panel.get("targets", []):
+        expression = target.get("expr")
+        if isinstance(expression, str):
+            if "tick_execution_time_ms_p99" in expression and validator._tick_execution_ratio_finding(
+                dashboard_path, "TickExecutionUnsafeRatio", expression
+            ):
+                raise AssertionError("tick health dashboard ratio does not preserve tick_mode")
+            issue = validator._tick_scope_selector_finding(dashboard_path, expression)
+            if issue:
+                raise AssertionError(issue.message)
+for metric_name in validator.TICK_SCOPED_METRICS:
+    valid_tick_metric = (
+        f'{metric_name}{{scope_class=~"region|game_instance|tenant|cluster"}}'
+    )
+    if validator._tick_scope_selector_finding(
+        dashboard_path, valid_tick_metric
+    ):
+        raise AssertionError(
+            f"canonical bounded selector was rejected for {metric_name}"
+        )
+    invalid_tick_metric = f'{metric_name}{{scope_class=~".+"}}'
+    if validator._tick_scope_selector_finding(
+        dashboard_path, invalid_tick_metric
+    ) is None:
+        raise AssertionError(
+            f"unbounded selector was silently accepted for {metric_name}"
+        )
+for valid_tick_metric in (
+    'tick_execution_time_ms_bucket{scope_class=~"region|game_instance|tenant|cluster",tick_mode="normal",le="500"}',
+    'tick_status{scope_class=~"region|game_instance|tenant|cluster",status!="RUNNING"}',
+    'tick_effects_abandoned_total{scope_class=~"region|game_instance|tenant|cluster",reason="expired"}',
+    'tick_interval_ms{scope=~"redis-prod",scope_class=~"region|game_instance|tenant|cluster"}',
+    'tick_interval_ms{scope="redis-prod"}',
+    'tick_interval_ms{scope=~"redis-(prod|staging)"}',
+):
+    if validator._tick_scope_selector_finding(dashboard_path, valid_tick_metric):
+        raise AssertionError(
+            f"documented tick labels were rejected: {valid_tick_metric!r}"
+        )
+for invalid_tick_metric in (
+    'tick_interval_ms{scope=~".+"}',
+    'tick_interval_ms{scope=~".*"}',
+    'tick_interval_ms{scope=~"redis-.*"}',
+    'tick_interval_ms{scope!="redis-prod"}',
+    'tick_interval_ms{scope!~"redis-prod"}',
+    'tick_interval_ms{not_scope=~"redis-prod"}',
+    'tick_retry_queue_depth{scope_class=~"region|game_instance|tenant|cluster",regionId=~".+"}',
+    'tick_status{scope_class=~"region|game_instance|tenant|cluster",gameInstanceId="g1"}',
+    'tick_effects_abandoned_total{scope_class=~"region|game_instance|tenant|cluster",entity_id=~".+"}',
+    'tick_effects_pending_total{scope_class=~"region|game_instance|tenant|cluster",tenantId="tenant-1"}',
+    'tick_current_id{scope_class=~"region|game_instance|tenant|cluster",tickId="t1"}',
+    'tick_execution_time_ms_bucket{scope_class=~"region|game_instance|tenant|cluster",unknown_dimension="x"}',
+):
+    if validator._tick_scope_selector_finding(dashboard_path, invalid_tick_metric) is None:
+        raise AssertionError(
+            f"unsupported tick label was silently accepted: {invalid_tick_metric!r}"
         )
 for valid_ms_expr in (
     "tick_cleanup_lag_ms > 100 # explanatory threshold > 1",
@@ -2555,6 +2886,29 @@ for valid_exact_expr in (
         raise AssertionError(
             f"valid PromQL exact selector form was rejected: {valid_exact_expr!r}"
         )
+case_mismatched_exact_expr = (
+    'chat_delivery_latency_ms_bucket{completion_boundary="Recipient_Dispatch"}'
+)
+if validator._exact_metric_label_selector_finding(
+    Path("selector.json"),
+    case_mismatched_exact_expr,
+    "chat_delivery_latency_ms_bucket",
+    "completion_boundary",
+    "recipient_dispatch",
+    exact_selector_message,
+) is None:
+    raise AssertionError(
+        "case-mismatched exact selector value was silently accepted"
+    )
+if validator._all_metric_selectors_have_exact_label(
+    case_mismatched_exact_expr,
+    "chat_delivery_latency_ms_bucket",
+    "completion_boundary",
+    "recipient_dispatch",
+):
+    raise AssertionError(
+        "case-mismatched service-style exact selector value was silently accepted"
+    )
 invalid_exact_expr = (
     'chat_delivery_latency_ms_bucket{completion_boundary="recipient_dispatch"} '
     '+ chat_delivery_latency_ms_bucket{completion_boundary="server_acceptance"}'
@@ -3359,6 +3713,74 @@ require_message(
     "RecoveryReopenAttemptBlocked must query blocked recovery reopen attempts with reason=incomplete_convergence",
 )
 
+for absent_alert, absent_metric in (
+    ("BackupLastSuccessMetricsAbsent", "backup_last_success_timestamp_seconds"),
+    ("BackupVerificationLastSuccessMetricsAbsent", "backup_verify_last_success_timestamp_seconds"),
+):
+    comment_only_absent = mutate_alert_rule(
+        valid_text,
+        absent_alert,
+        f"absent({absent_metric})",
+        f"|\n            vector(1)\n            # absent({absent_metric})",
+    )
+    require_message(
+        findings_for(
+            comment_only_absent,
+            validator._validate_reference_prometheus_rules,
+        ),
+        f"{absent_alert} must use absent({absent_metric})",
+    )
+
+comment_only_reopen = mutate_alert_rule(
+    valid_text,
+    "RecoveryReopenAttemptBlocked",
+    complete_reopen_expr,
+    "|\n            vector(1)\n            # " + complete_reopen_expr,
+)
+require_message(
+    findings_for(comment_only_reopen, validator._validate_reference_prometheus_rules),
+    "RecoveryReopenAttemptBlocked must query blocked recovery reopen attempts with reason=incomplete_convergence",
+)
+
+restore_record_expr = "time() - backup_restore_drill_last_success_timestamp_seconds > 30 * 24 * 60 * 60"
+if restore_record_expr not in valid_text:
+    raise AssertionError("canonical restore-drill freshness expression was not found")
+comment_only_restore = mutate_recording_rule(
+    valid_text,
+    "backup_pipeline_recent_restore_drill_slo_breached",
+    restore_record_expr,
+    "|\n            vector(1)\n            # " + restore_record_expr,
+)
+require_message(
+    findings_for(
+        comment_only_restore,
+        validator._validate_reference_prometheus_recordings,
+    ),
+    "restore-drill freshness must use the accepted 30-day baseline",
+)
+
+player_alert_snippet = (
+    root / "design/observability/grafana/player-experience-alerts-snippets.md"
+).read_text(encoding="utf-8")
+for alert_name, metric, expected_service in (
+    ("LoginSuccessRatioLowGateway", "login_requests_total", "spring-cloud-gateway"),
+    ("LoginSuccessRatioLowTcpProxy", "login_requests_total", "tcp-proxy-service"),
+    ("CommandLatencyP99HighGateway", "command_end_to_end_latency_ms_bucket", "spring-cloud-gateway"),
+    ("CommandLatencyP99HighTcpProxy", "command_end_to_end_latency_ms_bucket", "tcp-proxy-service"),
+):
+    first_scoped_selector = f'{metric}{{service="{expected_service}",'
+    if first_scoped_selector not in player_alert_snippet:
+        raise AssertionError(f"{alert_name} fixture has no scoped metric selector")
+    unscoped_snippet = player_alert_snippet.replace(
+        first_scoped_selector,
+        f"{metric}{{",
+        1,
+    )
+    require_message(
+        findings_for(unscoped_snippet, validator._validate_alert_snippet),
+        f"{alert_name} must scope expr to service=\"{expected_service}\"",
+    )
+
 blocked_record = """        - record: recovery_participant_convergence_blocked
           expr: |
             (
@@ -3471,7 +3893,9 @@ source_missing_record = """        - record: recovery_participant_convergence_so
             )"""
 if source_missing_record not in valid_text:
     raise AssertionError("canonical participant source-missing recording was not found")
-if validator._validate_reference_prometheus_recordings(rules_path):
+if validator._validate_reference_prometheus_recordings(
+    rules_path, installed_in_shared_prometheus_rule=True
+):
     raise AssertionError("canonical participant coverage recordings were rejected")
 
 invalid_coverage = valid_text.replace(
