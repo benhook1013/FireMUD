@@ -1080,6 +1080,128 @@ require_contains(
 
 operations_text = (root / "design/architecture/system-architecture-redis-operations.md").read_text(encoding="utf-8")
 
+# Internal recovery classifications use enum-style values, but the durable
+# operation/maintenance-lock compatibilityClass is a serialized contract and
+# therefore uses the canonical token for each mode. Keep the boundary explicit
+# so CLI/documentation edits cannot silently reintroduce an invalid value.
+require_contains(
+    "design/architecture/system-architecture-redis-operations.md",
+    [
+        "CLI `--mode replay-first` maps to internal classification `replay_first` and the serialized operation/maintenance-lock field `compatibilityClass=replay-first`",
+        "CLI `--mode session-schema-cleanup` maps to internal and serialized `cleanup` (`compatibilityClass=cleanup`)",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-ops-access.md",
+    [
+        "`--mode replay-first` maps to internal classification `replay_first` and persists `compatibilityClass=replay-first`",
+        "`--mode session-schema-cleanup` maps to internal and serialized `cleanup` (`compatibilityClass=cleanup`)",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-incident-runbook.md",
+    [
+        "`--mode replay-first` maps to internal classification `replay_first` and serialized `compatibilityClass=replay-first`",
+        "serialized `compatibilityClass=replay-first` only after controller validation of the internal `replay_first` classification",
+        "Escalation atomically upgrades the existing maintenance lock's serialized compatibility class from `compatibilityClass=replay-first` to `compatibilityClass=reset-first`",
+    ],
+)
+
+serialized_replay_first_pattern = re.compile(
+    r"[`'\" ]*compatibilityClass[`'\" ]*\s*(?:[=:]|\bis\b)\s*"
+    r"[`'\" ]*replay\s*_\s*first\b",
+    re.IGNORECASE,
+)
+serialized_bare_reset_pattern = re.compile(
+    r"[`'\" ]*compatibilityClass[`'\" ]*\s*(?:[=:]|\bis\b)\s*"
+    r"[`'\" ]*reset[`'\" ]*(?![-_A-Za-z0-9])",
+    re.IGNORECASE,
+)
+serialized_bare_reset_upgrade_pattern = re.compile(
+    r"upgrades?\s+(?:the\s+)?[`'\" ]*(?:serialized\s+)?"
+    r"(?:compatibilityClass|compatibility\s+class|class)[`'\" ]*\s+to\s+"
+    r"[`'\" ]*reset[`'\" ]*(?![-_A-Za-z0-9])",
+    re.IGNORECASE,
+)
+serialized_replay_first_fixture_cases = (
+    "compatibilityClass=replay_first",
+    "compatibilityClass = replay_first",
+    'compatibilityClass: "replay_first"',
+    '"compatibilityClass": "replay_first"',
+    "'compatibilityClass' : 'replay_first'",
+    "`compatibilityClass` is `replay_first`",
+)
+for fixture_text in serialized_replay_first_fixture_cases:
+    if serialized_replay_first_pattern.search(fixture_text) is None:
+        raise SystemExit(
+            f"serialized replay_first fixture was not rejected: {fixture_text!r}"
+        )
+for fixture_text in (
+    "compatibilityClass=replay-first",
+    '"compatibilityClass": "replay-first"',
+    "`compatibilityClass` is `replay-first`",
+):
+    if serialized_replay_first_pattern.search(fixture_text) is not None:
+        raise SystemExit(
+            f"canonical serialized replay-first token was incorrectly rejected: {fixture_text!r}"
+        )
+for fixture_text in (
+    "compatibilityClass=reset",
+    '"compatibilityClass": "reset"',
+    "`compatibilityClass` is `reset`",
+):
+    if serialized_bare_reset_pattern.search(fixture_text) is None:
+        raise SystemExit(
+            f"bare serialized reset compatibility class was not recognized: {fixture_text!r}"
+        )
+for fixture_text in (
+    "compatibilityClass=reset-first",
+    '"compatibilityClass": "reset-first"',
+):
+    if serialized_bare_reset_pattern.search(fixture_text) is not None:
+        raise SystemExit(
+            f"canonical serialized reset-first token was incorrectly rejected: {fixture_text!r}"
+        )
+for fixture_text in (
+    "upgrade the class to `reset`",
+    "upgrades the class to `reset`",
+    "upgrade the compatibility class to reset",
+    "upgrade the serialized compatibility class to `reset`",
+    "upgrade `compatibilityClass` to `reset`",
+):
+    if serialized_bare_reset_upgrade_pattern.search(fixture_text) is None:
+        raise SystemExit(
+            f"bare reset upgrade fixture was not recognized: {fixture_text!r}"
+        )
+# A canonical reset-first upgrade must remain a negative fixture for the bare
+# reset detector: its hyphenated serialized token is not the internal `reset`
+# value that the detector is intended to reject.
+for fixture_text in (
+    "upgrade the serialized compatibility class to `reset-first`",
+):
+    if serialized_bare_reset_upgrade_pattern.search(fixture_text) is not None:
+        raise SystemExit(
+            f"canonical serialized reset-first upgrade was incorrectly rejected: {fixture_text!r}"
+        )
+for path in [
+    "design/architecture/system-architecture-redis-operations.md",
+    "design/architecture/system-architecture-redis-incident-runbook.md",
+    "design/architecture/system-architecture-redis-ops-access.md",
+]:
+    serialized_text = (root / path).read_text(encoding="utf-8")
+    if serialized_replay_first_pattern.search(serialized_text):
+        raise SystemExit(
+            f"{path}: replay_first must not be used as serialized compatibilityClass"
+        )
+    if serialized_bare_reset_pattern.search(serialized_text):
+        raise SystemExit(
+            f"{path}: bare reset must not be used as serialized compatibilityClass"
+        )
+    if serialized_bare_reset_upgrade_pattern.search(serialized_text):
+        raise SystemExit(
+            f"{path}: bare reset upgrade must distinguish internal and serialized classes"
+        )
+
 
 def extract_unique_markdown_section(text, heading, source_label):
     heading_pattern = re.compile(
@@ -1568,8 +1690,9 @@ if len(dsl_eval_rows) != 1:
         "system-architecture-scripting-normative-contract-tables.md: expected exactly one DSL_EVAL stage row"
     )
 for required_clause in (
-    "Only `readiness_success` or `completed_no_commands` in their declared cases",
-    "`dry_run_completed` is permitted only when `executionSurface=LEGACY_TRIGGER_DRY_RUN`",
+    "A resolved handler uses `completed_no_commands` when it validly emits no commands, or its applicable handler failure outcome",
+    "`readiness_success` is reserved for the tenant-readiness patch-level owner/projection and is never a resolved-handler `finalOutcome`",
+    "`dry_run_completed` is a legacy-only outcome, permitted only when `executionSurface=LEGACY_TRIGGER_DRY_RUN`",
 ):
     if required_clause not in dsl_eval_rows[0]:
         raise SystemExit(
@@ -1637,7 +1760,7 @@ require_contains(
 require_contains(
     "design/architecture/system-architecture-scripting-normative-contract-tables.md",
     [
-        "`finalOutcome=dry_run_completed` maps to metric `result=dry_run_success`",
+        "For the current legacy materialized dry-run handler only, `finalOutcome=dry_run_completed` with `executionSurface=LEGACY_TRIGGER_DRY_RUN` maps to metric `result=dry_run_success`",
         "For every classified non-success Table 2 outcome, metric `result` uses that same canonical outcome value",
     ],
 )
@@ -1790,6 +1913,22 @@ require_contains(
     "design/project-management/implementation-tracking/automation-and-scheduler-runtime.md",
     ["priority-sensitive queue-delay/starvation emission"],
 )
+require_contains(
+    "design/architecture/system-architecture-tick-failures-and-operations.md",
+    [
+        "bounded batches per complete recovery scope `<tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch>`",
+        "fairness cursors and deficit/cost accounting are keyed by the complete recovery scope",
+        "service startup for each complete recovery scope",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-tick-failures-and-operations.md",
+    [
+        "bounded batches per `<tenantId, gameInstanceId, regionId>`",
+        "scheduling across regions rather than draining one region completely",
+        "service startup for each region to converge",
+    ],
+)
 
 print("architecture doc contracts passed")
 PY
@@ -1800,5 +1939,7 @@ python3 dev-tools/validation/check-adr-review-status.py
 python3 dev-tools/validation/test_adr_review_status.py
 python3 dev-tools/validation/check-implementation-capability-tracking.py
 python3 dev-tools/validation/test_implementation_capability_tracking.py
+python3 dev-tools/observability/check-metrics-cardinality.py
+python3 dev-tools/validation/test_check_metrics_cardinality.py
 python3 dev-tools/validation/check-authz-route-matrix.py
 python3 dev-tools/validation/test_check_authz_route_matrix.py

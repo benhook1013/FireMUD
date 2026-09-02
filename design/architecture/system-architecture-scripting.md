@@ -139,7 +139,7 @@ At a high level, a script (or plugin) must pass through several stages before it
 
 7. **Command staging and tick execution**
    - Commands from successful evaluations are handed to the Game Session Service for enqueue into tick queues, where they follow the standard tick idempotency and replay semantics. The durable parent work item and `automation:queue:{tenantInstanceTag}:<entityId>` pointer were created earlier for the admitted handler; a successful evaluation does not create a second parent or queue pointer.
-   - Current checks cap generated command count and per-entity output after construction and bound ingress payload and DSL shape. Full generated-output serialized-byte enforcement, pre-construction metering, and atomic all-or-none per-handler output remain target gaps owned by [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#output-budgeting-and-command-fan-out).
+   - Current checks enforce generated command-count and per-entity ceilings incrementally while expanding output and bound ingress payload and DSL shape. Full generated-output serialized-byte enforcement, artifact-cost validation, and atomic all-or-none per-handler output remain target gaps owned by [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#output-budgeting-and-command-fan-out).
 
 All stages emit metrics and audit records (especially `script_event_audit`) so designers and operators can see where a script failed to progress. The quotas and operations document (`design/architecture/system-architecture-scripting-quotas-and-operations.md`) is the primary reference for interpreting these outcomes in production.
 

@@ -5,11 +5,13 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 
 /** Shared load-oriented gameplay scenario helpers above the base cross-service stack. */
 public final class GameplayLoadScenarios {
   private static final String DEFAULT_REALM_SLUG = "production";
-  private static final String DEFAULT_POINTER_VERSION = "1";
 
   private GameplayLoadScenarios() {}
 
@@ -35,12 +37,43 @@ public final class GameplayLoadScenarios {
       long accountId = characterIds[i];
       long bootstrapGameInstanceId =
           stack.insertRunningGameInstance(tenantId, accountId, gameTemplateId, false);
+      // Admission pointers are uniquely identified by world/realm and runtime target. Give each
+      // isolated player target its own world and retain the persisted pointer version for the
+      // matching WebSocket bootstrap headers.
+      String bootstrapWorldSlug = GameplayCrossServiceStack.SYNTHETIC_LOAD_WORLD_PREFIX + accountId;
+      GameplayAdmissionPointerSnapshot pointer =
+          stack
+              .gameSessionBean(GameplayAdmissionPointerAuthorityService.class)
+              .upsertPointer(
+                  new GameplayAdmissionPointerMutation(
+                      bootstrapWorldSlug,
+                      "Demo Player " + accountId,
+                      DEFAULT_REALM_SLUG,
+                      "Live Realm",
+                      tenantId,
+                      bootstrapGameInstanceId,
+                      false,
+                      false,
+                      false,
+                      "SHARED",
+                      "ALLOW_NEW",
+                      GameplayCrossServiceStack.SYNTHETIC_LOAD_ACTOR,
+                      "Seed per-player load-test admission pointer",
+                      "load-test:" + accountId,
+                      null,
+                      null));
       long sessionId = firstAccountId + 10_000L + i + 1;
       String email = "player" + (i + 1) + "@example.com";
       stack.accountStub().mapAccountId(email, accountId);
       players.add(
           new PlayerSeed(
-              sessionId, bootstrapGameInstanceId, accountId, email, "player-" + (i + 1)));
+              sessionId,
+              bootstrapGameInstanceId,
+              accountId,
+              email,
+              "player-" + (i + 1),
+              bootstrapWorldSlug,
+              pointer.pointerVersion()));
     }
     return List.copyOf(players);
   }
@@ -56,9 +89,9 @@ public final class GameplayLoadScenarios {
             player.bootstrapGameInstanceId(),
             Map.of(
                 "X-Firemud-Transport-Session-Id", Long.toString(player.sessionId()),
-                "X-World-Slug", world,
+                "X-World-Slug", player.bootstrapWorldSlug(),
                 "X-Realm-Slug", DEFAULT_REALM_SLUG,
-                "X-Pointer-Version", DEFAULT_POINTER_VERSION));
+                "X-Pointer-Version", Long.toString(player.bootstrapPointerVersion())));
     try {
       driver.enterGameplayAndWaitReady(player.username(), "swordfish", world, readyText);
       return driver;
@@ -73,5 +106,7 @@ public final class GameplayLoadScenarios {
       long bootstrapGameInstanceId,
       long accountId,
       String username,
-      String label) {}
+      String label,
+      String bootstrapWorldSlug,
+      long bootstrapPointerVersion) {}
 }

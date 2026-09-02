@@ -498,7 +498,11 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
       repository.save(state);
     }
     scriptScheduleInstanceService.reconcileObservedRuntimeState(
-        state.getTenantId(), state.getGameInstanceId(), runtime.getRuntimeState());
+        state.getTenantId(),
+        state.getGameInstanceId(),
+        runtime.getRuntimeState(),
+        state.getLastChangedAt(),
+        state.getPluginId());
   }
 
   private static PluginRuntimeState newState(

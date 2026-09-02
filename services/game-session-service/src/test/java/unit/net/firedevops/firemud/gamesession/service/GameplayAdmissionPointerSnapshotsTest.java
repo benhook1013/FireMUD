@@ -190,7 +190,7 @@ class GameplayAdmissionPointerSnapshotsTest {
 
     assertThat(
             GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
-                List.of(pointer), 1L, 11L, "demo", "production", 7L))
+                List.of(pointer), 1L, 11L, "demo", "production", 7L, "SHARED"))
         .isTrue();
   }
 
@@ -213,7 +213,7 @@ class GameplayAdmissionPointerSnapshotsTest {
 
     assertThat(
             GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
-                List.of(pointer), 1L, 11L, "DEMO", "PRODUCTION", 7L))
+                List.of(pointer), 1L, 11L, "DEMO", "PRODUCTION", 7L, "SHARED"))
         .isTrue();
   }
 
@@ -241,7 +241,7 @@ class GameplayAdmissionPointerSnapshotsTest {
   }
 
   @Test
-  void matchesCurrentRuntimeTargetAcceptsBlankPlayableStateScopeAsStateAgnostic() {
+  void matchesCurrentRuntimeTargetRejectsBlankRequestedPlayableStateScope() {
     GameplayAdmissionPointerSnapshot pointer =
         new GameplayAdmissionPointerSnapshot(
             "demo",
@@ -254,17 +254,17 @@ class GameplayAdmissionPointerSnapshotsTest {
             true,
             true,
             false,
-            "OPEN",
+            "SHARED",
             "ALLOW_NEW");
 
     assertThat(
             GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
                 List.of(pointer), 1L, 11L, "demo", "production", 7L, " "))
-        .isTrue();
+        .isFalse();
     assertThat(
             GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
                 List.of(pointer), 1L, 11L, "demo", "production", 7L, null))
-        .isTrue();
+        .isFalse();
   }
 
   @Test
@@ -354,6 +354,14 @@ class GameplayAdmissionPointerSnapshotsTest {
   }
 
   @Test
+  void sameBootstrapRouteRejectsPlayableStateScopeChanges() {
+    SessionContext existing = bootstrapShell(22L, 1L, "demo", "production", 7L, "SHARED");
+    SessionContext incoming = bootstrapShell(22L, 1L, "demo", "production", 7L, "ISOLATED");
+
+    assertThat(GameplayAdmissionPointerSnapshots.sameBootstrapRoute(existing, incoming)).isFalse();
+  }
+
+  @Test
   void sameBootstrapRouteRejectsFirstPartyConnectContextWhenRoutingIdentityChanges() {
     FirstPartyConnectContext existing =
         new FirstPartyConnectContext(
@@ -363,6 +371,22 @@ class GameplayAdmissionPointerSnapshotsTest {
             GameplayAdmissionPointerSnapshots.sameBootstrapRoute(
                 existing, 22L, 1L, "sandbox", "production", 7L))
         .isFalse();
+  }
+
+  @Test
+  void sameBootstrapRouteFailsClosedForScopeOnlyContext() {
+    SessionContext existing = bootstrapShell(22L, 1L, null, null, 0L, "SHARED");
+    SessionContext incoming = bootstrapShell(22L, 1L, null, null, 0L, null);
+
+    assertThat(GameplayAdmissionPointerSnapshots.sameBootstrapRoute(existing, incoming)).isFalse();
+  }
+
+  @Test
+  void sameBootstrapRouteAcceptsTwoContextsWithNoRoutingValues() {
+    SessionContext existing = bootstrapShell(22L, 1L, null, null, 0L, null);
+    SessionContext incoming = bootstrapShell(22L, 1L, null, null, 0L, null);
+
+    assertThat(GameplayAdmissionPointerSnapshots.sameBootstrapRoute(existing, incoming)).isTrue();
   }
 
   @Test
@@ -383,6 +407,17 @@ class GameplayAdmissionPointerSnapshotsTest {
       String worldSlug,
       String realmSlug,
       long pointerVersion) {
+    return bootstrapShell(
+        tenantId, bootstrapGameInstanceId, worldSlug, realmSlug, pointerVersion, "SHARED");
+  }
+
+  private static SessionContext bootstrapShell(
+      long tenantId,
+      long bootstrapGameInstanceId,
+      String worldSlug,
+      String realmSlug,
+      long pointerVersion,
+      String playableStateScope) {
     return new SessionContext(
         1L,
         tenantId,
@@ -398,7 +433,7 @@ class GameplayAdmissionPointerSnapshotsTest {
         worldSlug,
         realmSlug,
         pointerVersion,
-        null,
+        playableStateScope,
         null,
         null);
   }

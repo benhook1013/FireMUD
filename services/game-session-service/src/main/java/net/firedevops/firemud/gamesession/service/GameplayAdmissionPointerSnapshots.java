@@ -1,6 +1,8 @@
 package net.firedevops.firemud.gamesession.service;
 
 import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 import org.springframework.util.StringUtils;
 
@@ -13,7 +15,12 @@ public final class GameplayAdmissionPointerSnapshots {
     }
   }
 
-  public record RoutingBundle(String worldSlug, String realmSlug, Long pointerVersion) {}
+  public record RoutingBundle(
+      String worldSlug, String realmSlug, Long pointerVersion, String playableStateScope) {
+    public RoutingBundle(String worldSlug, String realmSlug, Long pointerVersion) {
+      this(worldSlug, realmSlug, pointerVersion, null);
+    }
+  }
 
   public static AdmittedRoutingBundle admittedRoutingBundle(SessionContext context) {
     if (context == null) {
@@ -61,7 +68,7 @@ public final class GameplayAdmissionPointerSnapshots {
     SessionContext normalizedShell = normalizePartialGenericRouting(shell);
     if (hasCompleteRoutingBundle(normalizedShell)) {
       if (filteredRuntimePointers.isEmpty()) {
-        return normalizedShell;
+        return clearGenericBootstrapRouting(normalizedShell);
       }
       if (matchesCurrentRuntimeTarget(
           filteredRuntimePointers,
@@ -92,7 +99,7 @@ public final class GameplayAdmissionPointerSnapshots {
                     pointer.worldSlug(),
                     pointer.realmSlug(),
                     pointer.pointerVersion(),
-                    normalizedShell.playableStateScope(),
+                    pointer.stateScope(),
                     normalizedShell.connectScopeId(),
                     normalizedShell.connectRequestId()))
         .orElse(clearGenericBootstrapRouting(normalizedShell));
@@ -115,7 +122,8 @@ public final class GameplayAdmissionPointerSnapshots {
     return shell != null
         && shell.pointerVersion() > 0L
         && StringUtils.hasText(shell.worldSlug())
-        && StringUtils.hasText(shell.realmSlug());
+        && StringUtils.hasText(shell.realmSlug())
+        && StringUtils.hasText(shell.playableStateScope());
   }
 
   public static boolean sameBootstrapRoute(SessionContext existing, SessionContext incoming) {
@@ -134,13 +142,16 @@ public final class GameplayAdmissionPointerSnapshots {
       return false;
     }
     if (!incomingHasBundle) {
-      return true;
+      return !hasAnyRoutingValue(existing) && !hasAnyRoutingValue(incoming);
     }
     if (!sameRoutingIdentity(
         existing.worldSlug(), existing.realmSlug(), incoming.worldSlug(), incoming.realmSlug())) {
       return false;
     }
-    return existing.pointerVersion() == incoming.pointerVersion();
+    return existing.pointerVersion() == incoming.pointerVersion()
+        && Objects.equals(
+            normalizeScope(existing.playableStateScope()),
+            normalizeScope(incoming.playableStateScope()));
   }
 
   public static boolean sameBootstrapRoute(
@@ -191,6 +202,11 @@ public final class GameplayAdmissionPointerSnapshots {
     return hasCompleteRoutingBundle(pointer) ? Optional.of(pointer) : Optional.empty();
   }
 
+  /**
+   * Matches a runtime target using the scope from its singular authoritative pointer. Callers
+   * without a separate scope claim should use this overload; it does not validate a caller-supplied
+   * playable-state scope.
+   */
   public static boolean matchesCurrentRuntimeTarget(
       List<GameplayAdmissionPointerSnapshot> pointers,
       long tenantId,
@@ -198,8 +214,18 @@ public final class GameplayAdmissionPointerSnapshots {
       String worldSlug,
       String realmSlug,
       long pointerVersion) {
-    return matchesCurrentRuntimeTarget(
-        pointers, tenantId, gameInstanceId, worldSlug, realmSlug, pointerVersion, null);
+    return singularCompletePointer(pointers)
+        .map(
+            pointer ->
+                matchesCurrentRuntimeTarget(
+                    List.of(pointer),
+                    tenantId,
+                    gameInstanceId,
+                    worldSlug,
+                    realmSlug,
+                    pointerVersion,
+                    pointer.stateScope()))
+        .orElse(false);
   }
 
   public static boolean matchesCurrentRuntimeTarget(
@@ -216,8 +242,10 @@ public final class GameplayAdmissionPointerSnapshots {
     if (!StringUtils.hasText(worldSlug) || !StringUtils.hasText(realmSlug)) {
       return false;
     }
-    String normalizedPlayableStateScope =
-        StringUtils.hasText(playableStateScope) ? playableStateScope : null;
+    if (!StringUtils.hasText(playableStateScope)) {
+      return false;
+    }
+    String normalizedPlayableStateScope = normalizeScope(playableStateScope);
     return singularCompletePointer(pointers)
         .filter(pointer -> pointer.tenantId() == tenantId)
         .filter(pointer -> pointer.gameInstanceId() == gameInstanceId)
@@ -226,14 +254,17 @@ public final class GameplayAdmissionPointerSnapshots {
                 sameRoutingIdentity(pointer.worldSlug(), pointer.realmSlug(), worldSlug, realmSlug))
         .filter(pointer -> pointer.pointerVersion() == pointerVersion)
         .filter(
-            pointer ->
-                normalizedPlayableStateScope == null
-                    || normalizedPlayableStateScope.equals(blankToNull(pointer.stateScope())))
+            pointer -> normalizedPlayableStateScope.equals(normalizeScope(pointer.stateScope())))
         .isPresent();
   }
 
   public static RoutingBundle normalizeRoutingBundle(
       String worldSlug, String realmSlug, Long pointerVersion) {
+    return normalizeRoutingBundle(worldSlug, realmSlug, pointerVersion, null);
+  }
+
+  public static RoutingBundle normalizeRoutingBundle(
+      String worldSlug, String realmSlug, Long pointerVersion, String playableStateScope) {
     String normalizedWorldSlug = blankToNull(worldSlug);
     String normalizedRealmSlug = blankToNull(realmSlug);
     Long normalizedPointerVersion =
@@ -249,13 +280,36 @@ public final class GameplayAdmissionPointerSnapshots {
     if (!hasAny || !hasAll) {
       return null;
     }
-    return new RoutingBundle(normalizedWorldSlug, normalizedRealmSlug, normalizedPointerVersion);
+    return new RoutingBundle(
+        normalizedWorldSlug,
+        normalizedRealmSlug,
+        normalizedPointerVersion,
+        blankToNull(playableStateScope));
   }
 
   public static void requireCompleteOrAbsentRoutingBundle(
       String worldSlug, String realmSlug, Long pointerVersion, String message) {
     if (normalizeRoutingBundle(worldSlug, realmSlug, pointerVersion) == null
         && hasAnyRoutingValue(worldSlug, realmSlug, pointerVersion)) {
+      throw new IllegalArgumentException(message);
+    }
+  }
+
+  public static void requireCompleteOrAbsentRoutingBundle(
+      String worldSlug,
+      String realmSlug,
+      Long pointerVersion,
+      String playableStateScope,
+      String message) {
+    RoutingBundle routingBundle = normalizeRoutingBundle(worldSlug, realmSlug, pointerVersion);
+    if (routingBundle == null) {
+      if (hasAnyRoutingValue(worldSlug, realmSlug, pointerVersion)
+          || StringUtils.hasText(playableStateScope)) {
+        throw new IllegalArgumentException(message);
+      }
+      return;
+    }
+    if (!StringUtils.hasText(playableStateScope)) {
       throw new IllegalArgumentException(message);
     }
   }
@@ -276,7 +330,7 @@ public final class GameplayAdmissionPointerSnapshots {
         null,
         null,
         0L,
-        shell.playableStateScope(),
+        null,
         shell.connectScopeId(),
         shell.connectRequestId());
   }
@@ -290,6 +344,10 @@ public final class GameplayAdmissionPointerSnapshots {
 
   private static String blankToNull(String value) {
     return StringUtils.hasText(value) ? value : null;
+  }
+
+  private static String normalizeScope(String value) {
+    return StringUtils.hasText(value) ? value.trim().toUpperCase(Locale.ROOT) : null;
   }
 
   private static boolean sameRoutingIdentity(
@@ -306,6 +364,12 @@ public final class GameplayAdmissionPointerSnapshots {
     return StringUtils.hasText(worldSlug)
         || StringUtils.hasText(realmSlug)
         || (pointerVersion != null && pointerVersion > 0L);
+  }
+
+  private static boolean hasAnyRoutingValue(SessionContext shell) {
+    return shell != null
+        && (hasAnyRoutingValue(shell.worldSlug(), shell.realmSlug(), shell.pointerVersion())
+            || StringUtils.hasText(shell.playableStateScope()));
   }
 
   private static AdmittedRoutingBundle admittedRoutingBundle(

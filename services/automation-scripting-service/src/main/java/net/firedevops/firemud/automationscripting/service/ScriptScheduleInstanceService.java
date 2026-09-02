@@ -1,13 +1,45 @@
 package net.firedevops.firemud.automationscripting.service;
 
+import java.time.Instant;
 import java.util.List;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService.PluginPublicationLink;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService.ScriptPatchPublicationLink;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 
 public interface ScriptScheduleInstanceService {
+  default void reconcileObservedRuntimeState(
+      String tenantId, String gameInstanceId, GameInstanceRuntimeState runtimeState) {
+    reconcileObservedRuntimeState(tenantId, gameInstanceId, runtimeState, null);
+  }
+
+  /**
+   * Reconciles schedules using a non-pin transition commit timestamp when applicable. A null seed
+   * means this is ordinary Game Session pin materialization and uses the pin timestamp.
+   */
+  default void reconcileObservedRuntimeState(
+      String tenantId,
+      String gameInstanceId,
+      GameInstanceRuntimeState runtimeState,
+      Instant nonPinTransitionSeed) {
+    reconcileObservedRuntimeState(tenantId, gameInstanceId, runtimeState, nonPinTransitionSeed, "");
+  }
+
+  /**
+   * Reconciles a plugin transition while identifying the plugin whose transition seed applies. A
+   * non-null transition seed fans out to every matching materialized schedule instance in the
+   * selected scope: a blank transitionPluginId selects all rows, while a nonblank value selects
+   * only that plugin's rows. Other plugin-owned schedule rows retain their existing due state. A
+   * null transitionPluginId is invalid; callers must use an empty string when selecting all rows. A
+   * null transition seed is valid and means no non-pin transition reset is requested.
+   *
+   * @throws IllegalArgumentException if transitionPluginId is null
+   */
   void reconcileObservedRuntimeState(
-      String tenantId, String gameInstanceId, GameInstanceRuntimeState runtimeState);
+      String tenantId,
+      String gameInstanceId,
+      GameInstanceRuntimeState runtimeState,
+      Instant nonPinTransitionSeed,
+      String transitionPluginId);
 
   void reconcilePinnedPatchInstances(String tenantId, String scriptPatchVersion);
 

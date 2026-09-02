@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -383,6 +384,31 @@ class TickBatchExecutionServiceTest {
     assertEquals(5000L, command.getQueueSourceOrdinal());
     assertEquals(14L, command.getQueueSourceDueTickId());
     assertEquals(9000L, command.getQueueSourceDueAtMs());
+  }
+
+  @Test
+  void executeDurableEffectsKeepsRemoteRetryEffectNonTerminal() {
+    TickBatch batch = drainedBatch("tb-remote-retry", "fence-a");
+    batch.setBatchSource("REMOTE_FOLLOWUP_DRAIN");
+    TickEffect effect = remoteDrainedEffect("tb-remote-retry", "followup-1");
+    when(tickBatchRepository.findByTenantIdAndGameInstanceIdAndStatusOrderByCompletedAtAsc(
+            1L, 2L, "DRAINED"))
+        .thenReturn(List.of(batch));
+    when(tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc("tb-remote-retry", "DRAINED"))
+        .thenAnswer(
+            invocation -> "DRAINED".equals(effect.getStatus()) ? List.of(effect) : List.of());
+    when(durableRemoteFollowupExecutionService.execute(effect))
+        .thenReturn(
+            new DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult(
+                "RETRY_QUEUED", "AUTH_UNAVAILABLE", "pointer authority unavailable"));
+
+    service.executeDurableEffects(1L, 2L);
+
+    assertEquals("DRAINED", effect.getStatus());
+    assertEquals("AUTH_UNAVAILABLE", effect.getFailureCode());
+    assertEquals("DRAINED", batch.getStatus());
+    verify(tickEffectRepository).save(effect);
+    verify(tickBatchRepository, never()).save(batch);
   }
 
   @Test
@@ -806,6 +832,93 @@ class TickBatchExecutionServiceTest {
                 .counter()
                 .count()
             > 0.0);
+  }
+
+  @Test
+  void restorePendingProjectionBoundsRequeueMetricSourceLabels() {
+    List<TickQueuedCommandEnvelope> pendingEntries =
+        List.of(
+            new TickQueuedCommandEnvelope(false, "cmd-player", "look"),
+            new TickQueuedCommandEnvelope(false, "cmd-automation", "look"),
+            new TickQueuedCommandEnvelope(false, "cmd-remote", "look"),
+            new TickQueuedCommandEnvelope(false, "cmd-unrecognized", "look"));
+    GameplayCommand player = gameplayCommand("cmd-player");
+    player.setSourceType("PLAYER");
+    GameplayCommand automation = gameplayCommand("cmd-automation");
+    automation.setSourceType("AUTOMATION");
+    GameplayCommand remoteFollowup = gameplayCommand("cmd-remote");
+    remoteFollowup.setSourceType("REMOTE_FOLLOWUP");
+    GameplayCommand unrecognized = gameplayCommand("cmd-unrecognized");
+    unrecognized.setSourceType("caller-controlled-source");
+    when(gameplayCommandRepository.findByCommandIdIn(
+            List.of("cmd-player", "cmd-automation", "cmd-remote", "cmd-unrecognized")))
+        .thenReturn(List.of(player, automation, remoteFollowup, unrecognized));
+
+    service.restorePendingProjection(1L, 2L, pendingEntries, List.of());
+
+    assertEquals(
+        1.0,
+        meterRegistry.get("tick_requeued_action_total").tag("source", "player").counter().count(),
+        0.001);
+    assertEquals(
+        1.0,
+        meterRegistry
+            .get("tick_requeued_action_total")
+            .tag("source", "automation")
+            .counter()
+            .count(),
+        0.001);
+    assertEquals(
+        1.0,
+        meterRegistry
+            .get("tick_requeued_action_total")
+            .tag("source", "remote_followup")
+            .counter()
+            .count(),
+        0.001);
+    assertEquals(
+        1.0,
+        meterRegistry.get("tick_requeued_action_total").tag("source", "unknown").counter().count(),
+        0.001);
+    assertTrue(
+        meterRegistry.getMeters().stream()
+            .filter(meter -> "tick_requeued_action_total".equals(meter.getId().getName()))
+            .allMatch(
+                meter ->
+                    java.util.Set.of("player", "automation", "remote_followup", "unknown")
+                        .contains(meter.getId().getTag("source"))));
+  }
+
+  @Test
+  void restorePendingProjectionRejectsSentinelBeforeAnyRedisWrite() {
+    TickQueuedCommandEnvelope sealed = new TickQueuedCommandEnvelope(false, "-", "look");
+
+    IllegalStateException exception =
+        assertThrows(
+            IllegalStateException.class,
+            () -> service.restorePendingProjection(1L, 2L, List.of(), List.of(sealed)));
+
+    assertTrue(exception.getMessage().contains("durable command id"));
+    verify(redisTemplate, never()).delete(anyString());
+    verify(listOps, never()).leftPush(any(), any());
+    verify(listOps, never()).rightPush(any(), any());
+  }
+
+  @Test
+  void restorePendingProjectionRejectsUnsafeMixedListBeforeAnyRedisWrite() {
+    TickQueuedCommandEnvelope sealed = new TickQueuedCommandEnvelope(false, "cmd-1", "look");
+    TickQueuedCommandEnvelope unsafe = new TickQueuedCommandEnvelope(false, "cmd|unsafe", "wave");
+
+    IllegalStateException exception =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.restorePendingProjection(1L, 2L, List.of(sealed, unsafe), List.of(sealed)));
+
+    assertTrue(exception.getMessage().contains("unsafe command id"));
+    verify(redisTemplate, never()).delete(anyString());
+    verify(listOps, never()).leftPush(any(), any());
+    verify(listOps, never()).rightPush(any(), any());
   }
 
   private static GameplayCommand gameplayCommand(String commandId) {

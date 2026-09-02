@@ -1,6 +1,8 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import java.time.Instant;
+import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
@@ -10,6 +12,8 @@ import net.firedevops.firemud.gamesession.logging.GameSessionCommandLogSanitizer
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.TickService;
 
@@ -22,6 +26,22 @@ final class AutomationGameplayCommandAdmissionSupport {
       GameplayCommandRepository gameplayCommandRepository,
       RuntimeRegionStatusRepository runtimeRegionStatusRepository,
       TickService tickService) {
+    return admitIfAbsent(
+        request,
+        gameInstanceRepository,
+        gameplayCommandRepository,
+        runtimeRegionStatusRepository,
+        null,
+        tickService);
+  }
+
+  static AdmissionResult admitIfAbsent(
+      AdmissionRequest request,
+      GameInstanceRepository gameInstanceRepository,
+      GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      TickService tickService) {
     validate(request);
     GameInstance instance =
         gameInstanceRepository
@@ -31,9 +51,136 @@ final class AutomationGameplayCommandAdmissionSupport {
       throw new IllegalArgumentException("tenant_id does not own game_instance_id");
     }
 
+    GameplayCommand requestedCommand = acceptedAutomationCommand(request);
     Optional<GameplayCommand> existing = findExistingCommand(request, gameplayCommandRepository);
     if (existing.isPresent()) {
-      return existingAdmissionResult(existing.orElseThrow());
+      return existingAdmissionResult(existing.orElseThrow(), requestedCommand);
+    }
+
+    return admitFresh(
+        request,
+        requestedCommand,
+        gameplayCommandRepository,
+        runtimeRegionStatusRepository,
+        gameplayAdmissionPointerAuthorityService,
+        null,
+        tickService);
+  }
+
+  static AdmissionResult admitRemoteIfAbsent(
+      AdmissionRequest request,
+      GameInstanceRepository gameInstanceRepository,
+      GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      TickService tickService) {
+    if (gameplayAdmissionPointerAuthorityService == null) {
+      return admitIfAbsent(
+          request,
+          gameInstanceRepository,
+          gameplayCommandRepository,
+          runtimeRegionStatusRepository,
+          null,
+          tickService);
+    }
+    // Remote admission receives routing fields from an upstream retry payload.  The
+    // pointer authority below is the source of truth for those fields, so validate
+    // the request's non-routing identity first and validate the authoritative request
+    // after routing has been supplied.
+    validate(request, false);
+    GameInstance instance =
+        gameInstanceRepository
+            .findById(request.gameInstanceId())
+            .orElseThrow(() -> new IllegalArgumentException("game_instance_id not found"));
+    if (!request.tenantId().equals(instance.getTenantId())) {
+      throw new IllegalArgumentException("tenant_id does not own game_instance_id");
+    }
+
+    GameplayCommand requestedCommand = acceptedAutomationCommand(request);
+    Optional<GameplayCommand> existing = findExistingCommand(request, gameplayCommandRepository);
+    if (existing.isPresent()) {
+      return existingAdmissionResult(existing.orElseThrow(), requestedCommand);
+    }
+
+    final List<GameplayAdmissionPointerSnapshot> currentPointers;
+    try {
+      currentPointers =
+          gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
+              request.tenantId(), request.gameInstanceId());
+    } catch (RuntimeException ex) {
+      return temporaryPointerAuthorityUnavailable(true);
+    }
+    if (currentPointers == null
+        || currentPointers.size() != 1
+        || !GameplayAdmissionPointerSnapshots.hasCompleteRoutingBundle(
+            currentPointers.getFirst())) {
+      return temporaryPointerAuthorityUnavailable(false);
+    }
+    GameplayAdmissionPointerSnapshot targetPointer = currentPointers.getFirst();
+    if (targetPointer.tenantId() != request.tenantId()
+        || targetPointer.gameInstanceId() != request.gameInstanceId()) {
+      return permanentPointerAuthorityMismatch();
+    }
+    // A retry may omit routing entirely, but a supplied routing bundle is an
+    // assertion from the original caller and must not be silently replaced by
+    // the current pointer.  This preserves stale world/realm/version rejection.
+    try {
+      GameplayAdmissionPointerSnapshots.requireCompleteOrAbsentRoutingBundle(
+          request.worldSlug(),
+          request.realmSlug(),
+          request.pointerVersion(),
+          request.playableStateScope(),
+          "world_slug, realm_slug, pointer_version, and playable_state_scope must be provided together");
+    } catch (IllegalArgumentException ex) {
+      return permanentPointerAuthorityMismatch();
+    }
+    if ((request.worldSlug() != null && !request.worldSlug().isBlank())
+        || (request.realmSlug() != null && !request.realmSlug().isBlank())
+        || (request.pointerVersion() != null && request.pointerVersion() > 0L)
+        || (request.playableStateScope() != null && !request.playableStateScope().isBlank())) {
+      // requireCompleteOrAbsentRoutingBundle above guarantees this is a complete bundle.
+      if (!GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
+          currentPointers,
+          request.tenantId(),
+          request.gameInstanceId(),
+          request.worldSlug(),
+          request.realmSlug(),
+          request.pointerVersion(),
+          request.playableStateScope())) {
+        return permanentPointerAuthorityMismatch();
+      }
+    }
+    AdmissionRequest targetRequest =
+        withRouting(
+            request,
+            targetPointer.stateScope(),
+            targetPointer.worldSlug(),
+            targetPointer.realmSlug(),
+            targetPointer.pointerVersion());
+    validate(targetRequest, true);
+    return admitFresh(
+        targetRequest,
+        acceptedAutomationCommand(targetRequest),
+        gameplayCommandRepository,
+        runtimeRegionStatusRepository,
+        gameplayAdmissionPointerAuthorityService,
+        currentPointers,
+        tickService);
+  }
+
+  private static AdmissionResult admitFresh(
+      AdmissionRequest request,
+      GameplayCommand requestedCommand,
+      GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      List<GameplayAdmissionPointerSnapshot> preReadCurrentPointers,
+      TickService tickService) {
+    Optional<AdmissionResult> pointerRejected =
+        rejectIfCurrentPointerAuthorityMismatch(
+            request, gameplayAdmissionPointerAuthorityService, preReadCurrentPointers);
+    if (pointerRejected.isPresent()) {
+      return pointerRejected.orElseThrow();
     }
 
     Optional<AdmissionResult> rejected =
@@ -42,12 +189,16 @@ final class AutomationGameplayCommandAdmissionSupport {
       return rejected.orElseThrow();
     }
 
-    GameplayCommand command = acceptedAutomationCommand(request);
-    GameplayCommandRepository.IdempotentInsertResult insertResult =
-        gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(command);
+    GameplayCommand command = requestedCommand;
+    GameplayCommandRepository.IdempotentInsertResult insertResult;
+    try {
+      insertResult = gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(command);
+    } catch (GameplayCommandRepository.AdmissionPointerUnavailableException ex) {
+      return temporaryPointerAuthorityUnavailable(false);
+    }
     command = insertResult.command();
     if (!insertResult.inserted()) {
-      return existingAdmissionResult(command);
+      return existingAdmissionResult(command, requestedCommand);
     }
     try {
       tickService.enqueueCommand(
@@ -74,7 +225,16 @@ final class AutomationGameplayCommandAdmissionSupport {
     }
   }
 
-  private static AdmissionResult existingAdmissionResult(GameplayCommand command) {
+  private static AdmissionResult existingAdmissionResult(
+      GameplayCommand command, GameplayCommand requestedCommand) {
+    if (!sameAdmissionPayload(command, requestedCommand)) {
+      return new AdmissionResult(
+          false,
+          "REJECTED",
+          command.getCommandId(),
+          "IDEMPOTENCY_CONFLICT",
+          "Idempotency identity was already used with different admission fields");
+    }
     if (isReusableExecutionOutcome(command.getExecutionOutcome())) {
       return new AdmissionResult(true, "DUPLICATE_NOOP", command.getCommandId(), null, null);
     }
@@ -107,6 +267,93 @@ final class AutomationGameplayCommandAdmissionSupport {
         "Gameplay command admission state is not safely reusable");
   }
 
+  /**
+   * Compares the immutable fields carried by the current live automation admission request.
+   *
+   * <p>The command row also contains mutable execution/recovery state and downstream queue-source
+   * fields; those deliberately do not participate in this comparison. The target-only namespace,
+   * command ordinal, and script pin epoch fields are not part of the current request/schema and are
+   * therefore not fabricated here.
+   */
+  private static boolean sameAdmissionPayload(GameplayCommand existing, GameplayCommand requested) {
+    return Objects.equals(existing.getTenantId(), requested.getTenantId())
+        && Objects.equals(existing.getGameInstanceId(), requested.getGameInstanceId())
+        && sameText(existing.getSourceType(), requested.getSourceType())
+        && sameText(existing.getAutomationDispatchId(), requested.getAutomationDispatchId())
+        && sameText(existing.getAutomationWorkItemId(), requested.getAutomationWorkItemId())
+        && sameText(existing.getScriptId(), requested.getScriptId())
+        && sameText(existing.getScriptPatchVersion(), requested.getScriptPatchVersion())
+        && sameText(existing.getPluginId(), requested.getPluginId())
+        && sameText(existing.getPluginVersionId(), requested.getPluginVersionId())
+        && sameRemoteOrExactPlayableStateScope(existing, requested)
+        && sameRemoteOrExactRouting(existing, requested)
+        && sameText(existing.getOriginSourceKind(), requested.getOriginSourceKind())
+        && sameText(existing.getOriginSourceState(), requested.getOriginSourceState())
+        && Objects.equals(existing.getOriginSourceOrdinal(), requested.getOriginSourceOrdinal())
+        && Objects.equals(existing.getOriginSourceDueTickId(), requested.getOriginSourceDueTickId())
+        && Objects.equals(existing.getOriginSourceDueAtMs(), requested.getOriginSourceDueAtMs())
+        && sameText(existing.getTargetEntityId(), requested.getTargetEntityId())
+        && Objects.equals(existing.getCharacterId(), requested.getCharacterId())
+        && sameText(existing.getRemoteCoordinatorId(), requested.getRemoteCoordinatorId())
+        && sameText(existing.getRemoteFollowupId(), requested.getRemoteFollowupId())
+        && sameText(existing.getCommandName(), requested.getCommandName())
+        && sameText(existing.getCommandText(), requested.getCommandText())
+        && sameText(existing.getSanitizedCommandText(), requested.getSanitizedCommandText())
+        && existing.isRequiresSoloTick() == requested.isRequiresSoloTick()
+        && sameText(existing.getRegionId(), requested.getRegionId())
+        && Objects.equals(existing.getRegionEpoch(), requested.getRegionEpoch())
+        && Objects.equals(existing.getDueTickId(), requested.getDueTickId());
+  }
+
+  private static boolean sameRemoteOrExactRouting(
+      GameplayCommand existing, GameplayCommand requested) {
+    if (existing.getRemoteFollowupId() != null
+        && !existing.getRemoteFollowupId().isBlank()
+        && requested.getRemoteFollowupId() != null
+        && !requested.getRemoteFollowupId().isBlank()) {
+      return true;
+    }
+    return sameRoutingSlug(existing.getWorldSlug(), requested.getWorldSlug())
+        && sameRoutingSlug(existing.getRealmSlug(), requested.getRealmSlug())
+        && Objects.equals(existing.getPointerVersion(), requested.getPointerVersion());
+  }
+
+  private static boolean sameRemoteOrExactPlayableStateScope(
+      GameplayCommand existing, GameplayCommand requested) {
+    if (existing.getRemoteFollowupId() != null
+        && !existing.getRemoteFollowupId().isBlank()
+        && requested.getRemoteFollowupId() != null
+        && !requested.getRemoteFollowupId().isBlank()) {
+      return true;
+    }
+    return samePlayableStateScope(
+        existing.getPlayableStateScope(), requested.getPlayableStateScope());
+  }
+
+  private static boolean sameText(String left, String right) {
+    return Objects.equals(blankToNull(left), blankToNull(right));
+  }
+
+  private static boolean samePlayableStateScope(String left, String right) {
+    String normalizedLeft = normalizePlayableStateScope(left);
+    String normalizedRight = normalizePlayableStateScope(right);
+    return Objects.equals(normalizedLeft, normalizedRight);
+  }
+
+  private static String normalizePlayableStateScope(String value) {
+    return value == null || value.isBlank()
+        ? null
+        : value.trim().toUpperCase(java.util.Locale.ROOT);
+  }
+
+  private static boolean sameRoutingSlug(String left, String right) {
+    String normalizedLeft = blankToNull(left);
+    String normalizedRight = blankToNull(right);
+    return normalizedLeft == null
+        ? normalizedRight == null
+        : normalizedRight != null && normalizedLeft.equalsIgnoreCase(normalizedRight);
+  }
+
   private static boolean isReusableExecutionOutcome(String executionOutcome) {
     return "STAGED".equals(executionOutcome)
         || "RETRY_QUEUED".equals(executionOutcome)
@@ -123,6 +370,10 @@ final class AutomationGameplayCommandAdmissionSupport {
   }
 
   private static void validate(AdmissionRequest request) {
+    validate(request, true);
+  }
+
+  private static void validate(AdmissionRequest request, boolean requireRoutingBundle) {
     ControlPlaneRequestParser.requirePositive(request.tenantId(), "tenant_id");
     ControlPlaneRequestParser.requirePositive(request.gameInstanceId(), "game_instance_id");
     requireText(request.regionId(), "region_id is required");
@@ -136,14 +387,19 @@ final class AutomationGameplayCommandAdmissionSupport {
     } else if ("REMOTE_FOLLOWUP".equals(request.sourceType())) {
       requireText(request.remoteCoordinatorId(), "remote_coordinator_id is required");
       requireText(request.remoteFollowupId(), "remote_followup_id is required");
+      TickQueueControlService.requireQueueEncodingSafe(
+          request.remoteFollowupId(), "remote_followup_id");
     }
     requireText(request.targetEntityId(), "target_entity_id is required");
     requireText(request.command(), "command is required");
-    GameplayAdmissionPointerSnapshots.requireCompleteOrAbsentRoutingBundle(
-        request.worldSlug(),
-        request.realmSlug(),
-        request.pointerVersion(),
-        "world_slug, realm_slug, and pointer_version must be provided together");
+    if (requireRoutingBundle) {
+      GameplayAdmissionPointerSnapshots.requireCompleteOrAbsentRoutingBundle(
+          request.worldSlug(),
+          request.realmSlug(),
+          request.pointerVersion(),
+          request.playableStateScope(),
+          "world_slug, realm_slug, pointer_version, and playable_state_scope must be provided together");
+    }
   }
 
   private static Optional<GameplayCommand> findExistingCommand(
@@ -207,6 +463,104 @@ final class AutomationGameplayCommandAdmissionSupport {
               false, "RUNTIME_PAUSED", null, "runtime_paused", "Runtime ownership is paused"));
     }
     return Optional.empty();
+  }
+
+  private static Optional<AdmissionResult> rejectIfCurrentPointerAuthorityMismatch(
+      AdmissionRequest request,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      List<GameplayAdmissionPointerSnapshot> preReadCurrentPointers) {
+    GameplayAdmissionPointerSnapshots.RoutingBundle requestedRoutingBundle =
+        GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
+            request.worldSlug(), request.realmSlug(), request.pointerVersion());
+    if (requestedRoutingBundle == null || gameplayAdmissionPointerAuthorityService == null) {
+      return Optional.empty();
+    }
+
+    final List<GameplayAdmissionPointerSnapshot> currentPointers;
+    if (preReadCurrentPointers != null) {
+      currentPointers = preReadCurrentPointers;
+    } else {
+      try {
+        currentPointers =
+            gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
+                request.tenantId(), request.gameInstanceId());
+      } catch (RuntimeException ex) {
+        return Optional.of(temporaryPointerAuthorityUnavailable(true));
+      }
+    }
+    if (currentPointers == null
+        || currentPointers.size() != 1
+        || !GameplayAdmissionPointerSnapshots.hasCompleteRoutingBundle(
+            currentPointers.getFirst())) {
+      return Optional.of(temporaryPointerAuthorityUnavailable(false));
+    }
+    if (!GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
+        currentPointers,
+        request.tenantId(),
+        request.gameInstanceId(),
+        requestedRoutingBundle.worldSlug(),
+        requestedRoutingBundle.realmSlug(),
+        requestedRoutingBundle.pointerVersion(),
+        request.playableStateScope())) {
+      return Optional.of(permanentPointerAuthorityMismatch());
+    }
+    return Optional.empty();
+  }
+
+  static AdmissionRequest withRouting(
+      AdmissionRequest request,
+      String playableStateScope,
+      String worldSlug,
+      String realmSlug,
+      Long pointerVersion) {
+    return new AdmissionRequest(
+        request.tenantId(),
+        request.gameInstanceId(),
+        request.regionId(),
+        request.regionEpoch(),
+        request.sourceType(),
+        request.automationDispatchId(),
+        request.automationWorkItemId(),
+        request.scriptId(),
+        request.scriptPatchVersion(),
+        request.pluginId(),
+        request.pluginVersionId(),
+        playableStateScope,
+        worldSlug,
+        realmSlug,
+        pointerVersion,
+        request.originSourceKind(),
+        request.originSourceState(),
+        request.originSourceOrdinal(),
+        request.originSourceDueTickId(),
+        request.originSourceDueAtMs(),
+        request.targetEntityId(),
+        request.remoteCoordinatorId(),
+        request.remoteFollowupId(),
+        request.command(),
+        request.requiresSoloTick(),
+        request.dueTickId());
+  }
+
+  private static AdmissionResult temporaryPointerAuthorityUnavailable(
+      boolean authorityUnavailable) {
+    return new AdmissionResult(
+        false,
+        "RETRY_QUEUED",
+        null,
+        authorityUnavailable ? "AUTH_UNAVAILABLE" : "ADMISSION_POINTER_UNAVAILABLE",
+        authorityUnavailable
+            ? "Current gameplay admission pointer authority is unavailable"
+            : "Current target gameplay admission pointer is temporarily incomplete");
+  }
+
+  private static AdmissionResult permanentPointerAuthorityMismatch() {
+    return new AdmissionResult(
+        false,
+        "REJECTED",
+        null,
+        "ADMISSION_POINTER_UNAVAILABLE",
+        "Current target gameplay admission pointer does not match the requested routing");
   }
 
   private static Optional<RuntimeRegionStatus> findRuntimeOwnership(

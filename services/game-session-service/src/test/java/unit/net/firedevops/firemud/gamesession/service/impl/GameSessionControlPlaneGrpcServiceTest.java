@@ -2848,7 +2848,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
-            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            automationPointerAuthority(),
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
             tickService,
@@ -2917,7 +2917,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
-            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            automationPointerAuthority(),
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
             tickService,
@@ -2960,7 +2960,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
-            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            automationPointerAuthority(),
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
             tickService,
@@ -2984,6 +2984,195 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void enqueueAutomationCommandReturnsRetryQueuedWhenPointerAuthorityIsUnreadable() {
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
+    Mockito.when(
+            commandRepository
+                .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+                    1L, 7L, "region-1", 12L, "dispatch-1"))
+        .thenReturn(Optional.empty());
+    RuntimeRegionStatusRepository runtimeRepository = runtimeRepository(runtimeStatus(false, 12L));
+    GameplayAdmissionPointerAuthorityService pointerAuthority =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.doThrow(new IllegalStateException("pointer authority unavailable"))
+        .when(pointerAuthority)
+        .listByRuntimeTarget(1L, 7L);
+    TickService tickService = Mockito.mock(TickService.class);
+    GameSessionControlPlaneGrpcService service =
+        controlPlaneService(
+            gameInstanceRepository,
+            commandRepository,
+            runtimeRepository,
+            pointerAuthority,
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            tickService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<EnqueueAutomationCommandIfAbsentResponse> responseRef = new AtomicReference<>();
+    service.enqueueAutomationCommandIfAbsent(
+        automationRequest(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(EnqueueAutomationCommandIfAbsentResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals(false, responseRef.get().getAccepted());
+    assertEquals("RETRY_QUEUED", responseRef.get().getAdmissionOutcome());
+    assertEquals("AUTH_UNAVAILABLE", responseRef.get().getError().getCode());
+    Mockito.verify(commandRepository, Mockito.never()).save(Mockito.any());
+    Mockito.verify(commandRepository, Mockito.never())
+        .insertIfAbsentByIdempotencyIdentity(Mockito.any(GameplayCommand.class));
+    Mockito.verifyNoInteractions(tickService);
+  }
+
+  @Test
+  void enqueueAutomationCommandReturnsRetryQueuedWhenPointerAuthorityIsAmbiguous() {
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
+    Mockito.when(
+            commandRepository
+                .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+                    1L, 7L, "region-1", 12L, "dispatch-1"))
+        .thenReturn(Optional.empty());
+    RuntimeRegionStatusRepository runtimeRepository = runtimeRepository(runtimeStatus(false, 12L));
+    GameplayAdmissionPointerAuthorityService pointerAuthority =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(pointerAuthority.listByRuntimeTarget(1L, 7L))
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo",
+                    "production",
+                    "Production",
+                    1L,
+                    7L,
+                    17L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "NONE"),
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo",
+                    "production",
+                    "Production",
+                    1L,
+                    7L,
+                    18L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "NONE")));
+    TickService tickService = Mockito.mock(TickService.class);
+    GameSessionControlPlaneGrpcService service =
+        controlPlaneService(
+            gameInstanceRepository,
+            commandRepository,
+            runtimeRepository,
+            pointerAuthority,
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            tickService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<EnqueueAutomationCommandIfAbsentResponse> responseRef = new AtomicReference<>();
+    service.enqueueAutomationCommandIfAbsent(
+        automationRequest(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(EnqueueAutomationCommandIfAbsentResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals(false, responseRef.get().getAccepted());
+    assertEquals("RETRY_QUEUED", responseRef.get().getAdmissionOutcome());
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", responseRef.get().getError().getCode());
+    Mockito.verify(commandRepository, Mockito.never()).save(Mockito.any());
+    Mockito.verify(commandRepository, Mockito.never())
+        .insertIfAbsentByIdempotencyIdentity(Mockito.any(GameplayCommand.class));
+    Mockito.verifyNoInteractions(tickService);
+  }
+
+  @Test
+  void enqueueAutomationCommandRejectsMovedPointerAuthorityTarget() {
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
+    Mockito.when(
+            commandRepository
+                .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+                    1L, 7L, "region-1", 12L, "dispatch-1"))
+        .thenReturn(Optional.empty());
+    RuntimeRegionStatusRepository runtimeRepository = runtimeRepository(runtimeStatus(false, 12L));
+    GameplayAdmissionPointerAuthorityService pointerAuthority =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(pointerAuthority.listByRuntimeTarget(1L, 7L))
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo",
+                    "production",
+                    "Production",
+                    1L,
+                    128L,
+                    17L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "NONE")));
+    TickService tickService = Mockito.mock(TickService.class);
+    GameSessionControlPlaneGrpcService service =
+        controlPlaneService(
+            gameInstanceRepository,
+            commandRepository,
+            runtimeRepository,
+            pointerAuthority,
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            tickService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<EnqueueAutomationCommandIfAbsentResponse> responseRef = new AtomicReference<>();
+    service.enqueueAutomationCommandIfAbsent(
+        automationRequest(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(EnqueueAutomationCommandIfAbsentResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals(false, responseRef.get().getAccepted());
+    assertEquals("REJECTED", responseRef.get().getAdmissionOutcome());
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", responseRef.get().getError().getCode());
+    Mockito.verify(commandRepository, Mockito.never()).save(Mockito.any());
+    Mockito.verify(commandRepository, Mockito.never())
+        .insertIfAbsentByIdempotencyIdentity(Mockito.any(GameplayCommand.class));
+    Mockito.verifyNoInteractions(tickService);
+  }
+
+  @Test
   void enqueueAutomationCommandRejectsStaleRuntimeEpochBeforeTickQueue() {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();
@@ -3003,7 +3192,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
-            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            automationPointerAuthority(),
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
             tickService,
@@ -3048,7 +3237,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
-            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            automationPointerAuthority(),
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
             tickService,
@@ -3091,7 +3280,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
-            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            automationPointerAuthority(),
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
             tickService,
@@ -3155,7 +3344,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("REJECTED", responseRef.get().getAdmissionOutcome());
     assertEquals("INVALID_ARGUMENT", responseRef.get().getError().getCode());
     assertEquals(
-        "world_slug, realm_slug, and pointer_version must be provided together",
+        "world_slug, realm_slug, pointer_version, and playable_state_scope must be provided together",
         responseRef.get().getError().getMessage());
     assertEquals(
         1.0, meterRegistry.get("grpc.app_error").tag("code", "INVALID_ARGUMENT").counter().count());
@@ -3274,7 +3463,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
-            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            automationPointerAuthority(),
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
             tickService,
@@ -3328,7 +3517,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
-            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            automationPointerAuthority(),
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
             tickService,
@@ -3620,6 +3809,32 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
     GameplayCommand existing = new GameplayCommand();
     existing.setCommandId("auto-existing");
+    existing.setTenantId(1L);
+    existing.setGameInstanceId(7L);
+    existing.setSessionId(0L);
+    existing.setCommandName("SAY");
+    existing.setCommandText("say hello");
+    existing.setSanitizedCommandText("say hello");
+    existing.setRequiresSoloTick(false);
+    existing.setSourceType("AUTOMATION");
+    existing.setAutomationDispatchId("dispatch-1");
+    existing.setAutomationWorkItemId("work-1");
+    existing.setScriptId("script-1");
+    existing.setScriptPatchVersion("patch-1");
+    existing.setPluginId("plugin-1");
+    existing.setPluginVersionId("plugin-v1");
+    existing.setPlayableStateScope("SHARED");
+    existing.setWorldSlug("demo");
+    existing.setRealmSlug("production");
+    existing.setPointerVersion(17L);
+    existing.setOriginSourceKind("SCHEDULE_TIMER");
+    existing.setOriginSourceState("SCHEDULE_DUE_CLAIMED");
+    existing.setOriginSourceOrdinal(5000L);
+    existing.setOriginSourceDueAtMs(5000L);
+    existing.setTargetEntityId("entity-1");
+    existing.setRegionId("region-1");
+    existing.setRegionEpoch(12L);
+    existing.setDueTickId(34L);
     existing.setExecutionOutcome("STAGED");
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     Mockito.when(
@@ -6809,6 +7024,28 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(repository.findByTenantIdAndGameInstanceId(1L, 7L))
         .thenReturn(Optional.of(status));
     return repository;
+  }
+
+  private static GameplayAdmissionPointerAuthorityService automationPointerAuthority() {
+    GameplayAdmissionPointerAuthorityService authority =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(authority.listByRuntimeTarget(1L, 7L))
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo",
+                    "production",
+                    "Production",
+                    1L,
+                    7L,
+                    17L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "NONE")));
+    return authority;
   }
 
   private static RuntimeRegionStatusRepository runtimeRegionStatusRepository(

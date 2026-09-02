@@ -197,6 +197,7 @@ public final class GameSessionCommandControlPlaneService {
             gameInstanceRepository,
             gameplayCommandRepository,
             runtimeRegionStatusRepository,
+            gameplayAdmissionPointerAuthorityService,
             tickService);
     EnqueueAutomationCommandIfAbsentResponse.Builder builder =
         EnqueueAutomationCommandIfAbsentResponse.newBuilder()

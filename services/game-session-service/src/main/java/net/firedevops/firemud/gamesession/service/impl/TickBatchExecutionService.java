@@ -100,6 +100,8 @@ final class TickBatchExecutionService {
       Long gameInstanceId,
       List<TickQueuedCommandEnvelope> pendingEntries,
       List<TickQueuedCommandEnvelope> sealedEntries) {
+    requireRestorableCommandIdentifiers(pendingEntries);
+    requireRestorableCommandIdentifiers(sealedEntries);
     Instant now = Instant.now();
     Set<String> sealedCommandIds =
         sealedEntries.stream()
@@ -497,6 +499,9 @@ final class TickBatchExecutionService {
   }
 
   private void requeueCommands(Long tenantId, Long gameInstanceId, List<GameplayCommand> commands) {
+    for (GameplayCommand command : commands) {
+      requireRestorableCommandId(command.getCommandId());
+    }
     for (int index = commands.size() - 1; index >= 0; index--) {
       GameplayCommand command = commands.get(index);
       redisTemplate
@@ -510,6 +515,7 @@ final class TickBatchExecutionService {
 
   private void requeueEntries(
       Long tenantId, Long gameInstanceId, List<TickQueuedCommandEnvelope> entries) {
+    requireRestorableCommandIdentifiers(entries);
     for (int index = entries.size() - 1; index >= 0; index--) {
       TickQueuedCommandEnvelope entry = entries.get(index);
       redisTemplate
@@ -518,6 +524,24 @@ final class TickBatchExecutionService {
               tickQueueControlService.queueKey(tenantId, gameInstanceId),
               tickQueueControlService.queuePayload(
                   entry.requiresSoloTick(), entry.commandId(), entry.command()));
+    }
+  }
+
+  private void requireRestorableCommandIdentifiers(List<TickQueuedCommandEnvelope> entries) {
+    for (TickQueuedCommandEnvelope entry : entries) {
+      requireRestorableCommandId(entry.commandId());
+    }
+  }
+
+  private void requireRestorableCommandId(String commandId) {
+    try {
+      TickQueueControlService.requireDurableCommandIdWireSafe(commandId, "command_id");
+    } catch (TickQueueControlService.MissingDurableCommandIdException ex) {
+      throw new IllegalStateException(
+          "Cannot restore or requeue tick work without a durable command id", ex);
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalStateException(
+          "Cannot restore or requeue tick work with an unsafe command id", ex);
     }
   }
 
@@ -555,7 +579,16 @@ final class TickBatchExecutionService {
 
   private String requeueMetricSource(GameplayCommand command) {
     String sourceType = normalize(command.getSourceType()).trim();
-    return sourceType.isBlank() ? "unknown" : sourceType.toLowerCase(java.util.Locale.ROOT);
+    if ("PLAYER".equalsIgnoreCase(sourceType)) {
+      return "player";
+    }
+    if ("AUTOMATION".equalsIgnoreCase(sourceType)) {
+      return "automation";
+    }
+    if ("REMOTE_FOLLOWUP".equalsIgnoreCase(sourceType)) {
+      return "remote_followup";
+    }
+    return "unknown";
   }
 
   private void executeDurableEffect(TickBatch batch, TickEffect effect) {
@@ -564,14 +597,18 @@ final class TickBatchExecutionService {
           status -> {
             DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
                 durableRemoteFollowupExecutionService.execute(effect);
-            markEffectTerminal(
-                batch,
-                effect,
-                result.effectStatus(),
-                "COMPLETED",
-                "NOT_APPLIED",
-                result.failureCode(),
-                result.failureMessage());
+            if ("RETRY_QUEUED".equals(result.effectStatus())) {
+              markEffectRetryable(effect, result.failureCode(), result.failureMessage());
+            } else {
+              markEffectTerminal(
+                  batch,
+                  effect,
+                  result.effectStatus(),
+                  "COMPLETED",
+                  "NOT_APPLIED",
+                  result.failureCode(),
+                  result.failureMessage());
+            }
           });
       return;
     }
@@ -659,6 +696,12 @@ final class TickBatchExecutionService {
               command.setFailureMessage(truncate(failureMessage, 500));
               gameplayCommandRepository.save(command);
             });
+  }
+
+  private void markEffectRetryable(TickEffect effect, String failureCode, String failureMessage) {
+    effect.setFailureCode(failureCode);
+    effect.setFailureMessage(truncate(failureMessage, 500));
+    tickEffectRepository.save(effect);
   }
 
   private void updateEffectStatuses(

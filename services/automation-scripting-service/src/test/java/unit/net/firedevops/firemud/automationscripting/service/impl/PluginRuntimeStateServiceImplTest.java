@@ -208,8 +208,16 @@ class PluginRuntimeStateServiceImplTest {
         ArgumentCaptor.forClass(PluginRuntimeState.class);
     Mockito.verify(repository, Mockito.atLeastOnce()).save(stateCaptor.capture());
     Mockito.verify(eventRepository).save(Mockito.any(PluginRuntimeEvent.class));
+    ArgumentCaptor<Instant> transitionSeedCaptor = ArgumentCaptor.forClass(Instant.class);
     Mockito.verify(scheduleInstanceService)
-        .reconcileObservedRuntimeState(Mockito.eq("1"), Mockito.eq("game-1"), Mockito.any());
+        .reconcileObservedRuntimeState(
+            Mockito.eq("1"),
+            Mockito.eq("game-1"),
+            Mockito.any(),
+            transitionSeedCaptor.capture(),
+            Mockito.eq("plugin-1"));
+    assertThat(transitionSeedCaptor.getValue())
+        .isEqualTo(stateCaptor.getValue().getLastChangedAt());
     assertThat(stateCaptor.getValue().getPluginState())
         .isEqualTo(PluginState.PLUGIN_STATE_ENABLED.name());
     assertThat(stateCaptor.getValue().getRuntimeRegionId()).isEqualTo("region-7");
@@ -270,8 +278,15 @@ class PluginRuntimeStateServiceImplTest {
     assertThat(existing.getRuntimeRegionEpoch()).isEqualTo(21L);
     Mockito.verify(repository, Mockito.atLeast(2)).save(existing);
     Mockito.verify(eventRepository).save(Mockito.any(PluginRuntimeEvent.class));
+    ArgumentCaptor<Instant> transitionSeedCaptor = ArgumentCaptor.forClass(Instant.class);
     Mockito.verify(scheduleInstanceService)
-        .reconcileObservedRuntimeState(Mockito.eq("1"), Mockito.eq("game-1"), Mockito.any());
+        .reconcileObservedRuntimeState(
+            Mockito.eq("1"),
+            Mockito.eq("game-1"),
+            Mockito.any(),
+            transitionSeedCaptor.capture(),
+            Mockito.eq("plugin-1"));
+    assertThat(transitionSeedCaptor.getValue()).isEqualTo(existing.getLastChangedAt());
   }
 
   @Test
@@ -372,6 +387,7 @@ class PluginRuntimeStateServiceImplTest {
     assertThat(status).isPresent();
     assertThat(status.get().activePublication()).isNotNull();
     assertThat(status.get().activePublication().pluginVersionId()).isEqualTo("plugin-v1");
+    assertThat(status.get().lastChangedAtMs()).isEqualTo(123L);
     assertThat(status.get().activePublication().lookupErrorCode())
         .isEqualTo("GAME_DESIGN_UNAVAILABLE");
   }
@@ -821,6 +837,7 @@ class PluginRuntimeStateServiceImplTest {
     assertThat(result.disabledCount()).isZero();
     assertThat(active.getPluginState()).isEqualTo(PluginState.PLUGIN_STATE_ENABLED.name());
     assertThat(active.getLastPolicyCheckedAt()).isAfter(java.time.Instant.EPOCH);
+    assertThat(active.getLastChangedAt()).isEqualTo(java.time.Instant.EPOCH);
     Mockito.verify(repository).save(active);
     Mockito.verifyNoInteractions(eventRepository);
   }
@@ -853,6 +870,7 @@ class PluginRuntimeStateServiceImplTest {
     assertThat(result.inspectedCount()).isEqualTo(1);
     assertThat(result.disabledCount()).isZero();
     assertThat(active.getPluginState()).isEqualTo(PluginState.PLUGIN_STATE_ENABLED.name());
+    assertThat(active.getLastChangedAt()).isEqualTo(java.time.Instant.EPOCH);
     Mockito.verify(repository).save(active);
     Mockito.verifyNoInteractions(eventRepository);
   }

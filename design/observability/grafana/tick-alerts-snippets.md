@@ -8,7 +8,7 @@ Example alert for tick execution time approaching unsafe ratios relative to lock
 
 ```yaml
 - alert: TickExecutionUnsafeRatio
-  expr: ((tick_execution_time_ms_p99{scope_class=~"region|game_instance|tenant|cluster",tick_mode="normal"} / on (scope_class, tick_mode) label_replace(tick_lock_ttl_ms{scope_class=~"region|game_instance|tenant|cluster"}, "tick_mode", "normal", "scope_class", ".*")) or (tick_execution_time_ms_p99{scope_class=~"region|game_instance|tenant|cluster",tick_mode="solo"} / on (scope_class, tick_mode) label_replace(solo_lock_ttl_ms{scope_class=~"region|game_instance|tenant|cluster"}, "tick_mode", "solo", "scope_class", ".*"))) > 0.75
+  expr: ((tick_execution_time_ms_p99{scope_class=~"^(region|game_instance|tenant|cluster)$",tick_mode="normal"} / on (scope_class, tick_mode) label_replace(tick_lock_ttl_ms{scope_class=~"^(region|game_instance|tenant|cluster)$"}, "tick_mode", "normal", "scope_class", ".*")) or (tick_execution_time_ms_p99{scope_class=~"^(region|game_instance|tenant|cluster)$",tick_mode="solo"} / on (scope_class, tick_mode) label_replace(solo_lock_ttl_ms{scope_class=~"^(region|game_instance|tenant|cluster)$"}, "tick_mode", "solo", "scope_class", ".*"))) > 0.75
   for: 10m
   labels:
     service: game-session-service
@@ -39,7 +39,7 @@ Example alert for stuck `SCHEDULED` rows in the tick effect ledger:
 
 ```yaml
 - alert: TickEffectsReplaySloBreached
-  expr: tick_effects_replay_slo_breached{scope_class=~"region|game_instance|tenant|cluster"} > 0
+  expr: tick_effects_replay_slo_breached{scope_class=~"^(region|game_instance|tenant|cluster)$"} > 0
   for: 10m
   labels:
     service: game-session-service
@@ -51,7 +51,7 @@ Example alert for stuck `SCHEDULED` rows in the tick effect ledger:
     description: The oldest pending tick effect exceeds the emitted replay convergence budget for one or more bounded scope-class rollups; investigate replay pressure, durable state, and approved fan-out or safety settings.
 
 - alert: TickCleanupLagHigh
-  expr: tick_cleanup_lag_ms{scope_class=~"region|game_instance|tenant|cluster"} > 15000
+  expr: tick_cleanup_lag_ms{scope_class=~"^(region|game_instance|tenant|cluster)$"} > 15000
   for: 10m
   labels:
     service: game-session-service
@@ -63,7 +63,7 @@ Example alert for stuck `SCHEDULED` rows in the tick effect ledger:
     description: Cleanup lag from durable commit to coordination-cleared is elevated for one or more bounded scope-class rollups; investigate replay pressure and coordination cleanup behavior.
 
 - alert: TickEffectsReplayStarved
-  expr: tick_effects_replay_starved{scope_class=~"region|game_instance|tenant|cluster"} > 0
+  expr: tick_effects_replay_starved{scope_class=~"^(region|game_instance|tenant|cluster)$"} > 0
   for: 15m
   labels:
     service: game-session-service
@@ -75,7 +75,7 @@ Example alert for stuck `SCHEDULED` rows in the tick effect ledger:
     description: The canonical starvation signal reports pending work without replay-batch progress beyond the emitted convergence budget for one or more bounded scope-class rollups. Investigate replay-controller fairness, approved fan-out, and safety settings.
 
 - alert: TickReplayScanLagHigh
-  expr: tick_effects_replay_scan_lag_ms{scope_class=~"region|game_instance|tenant|cluster"} > 300000
+  expr: tick_effects_replay_scan_lag_ms{scope_class=~"^(region|game_instance|tenant|cluster)$"} > 300000
   for: 15m
   labels:
     service: game-session-service

@@ -58,22 +58,31 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
       GetGameInstanceRuntimeStateResponse runtime =
           gameSessionControlPlaneClient.getGameInstanceRuntimeState(
               tenantId, gameInstanceId, regionId);
-      if (runtime.hasRuntimeState()) {
+      if (runtime != null
+          && !(runtime.hasError() && !runtime.getError().getCode().isBlank())
+          && runtime.hasRuntimeState()) {
+        GameInstanceRuntimeState runtimeState = runtime.getRuntimeState();
+        if (!runtimeStateMatchesScope(tenantId, gameInstanceId, runtimeState)) {
+          return new PinConvergenceLookup(
+              Optional.empty(),
+              "RUNTIME_SCOPE_MISMATCH",
+              "GetAutomationPinConvergence failed: runtime_scope_mismatch");
+        }
         ScriptPatchPinProjection refreshed =
             saveObservation(
                 existing.orElseGet(ScriptPatchPinProjection::new),
                 tenantId,
                 gameInstanceId,
-                runtime.getRuntimeState(),
+                runtimeState,
                 now);
         scheduleInstanceService.reconcileObservedRuntimeState(
-            tenantId, gameInstanceId, runtime.getRuntimeState());
+            tenantId, gameInstanceId, runtimeState);
         return new PinConvergenceLookup(Optional.of(toSummary(refreshed, now)), "", "");
       }
       if (existing.isPresent()) {
         return new PinConvergenceLookup(Optional.of(toSummary(existing.get(), now)), "", "");
       }
-      if (runtime.hasError() && !runtime.getError().getCode().isBlank()) {
+      if (runtime != null && runtime.hasError() && !runtime.getError().getCode().isBlank()) {
         return new PinConvergenceLookup(
             Optional.empty(), runtime.getError().getCode(), runtime.getError().getMessage());
       }
@@ -91,7 +100,7 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
       String tenantId, String gameInstanceId, GameInstanceRuntimeState runtimeState) {
     requireText(tenantId, "tenant_id");
     requireText(gameInstanceId, "game_instance_id");
-    if (runtimeState == null) {
+    if (!runtimeStateMatchesScope(tenantId, gameInstanceId, runtimeState)) {
       return;
     }
     Optional<ScriptPatchPinProjection> existing =
@@ -104,6 +113,13 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
         Instant.now());
     scheduleInstanceService.reconcileObservedRuntimeState(tenantId, gameInstanceId, runtimeState);
     rolloutProjectionService.refreshForInstance(tenantId, gameInstanceId);
+  }
+
+  private static boolean runtimeStateMatchesScope(
+      String tenantId, String gameInstanceId, GameInstanceRuntimeState runtimeState) {
+    return runtimeState != null
+        && tenantId.equals(runtimeState.getTenantId())
+        && gameInstanceId.equals(runtimeState.getGameInstanceId());
   }
 
   private ScriptPatchPinProjection saveObservation(

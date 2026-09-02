@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -165,7 +166,7 @@ class TickStagingServiceTest {
   }
 
   @Test
-  void readExecutablePendingEntriesDropsMissingAcceptedAndTerminalCommands() {
+  void readPendingEntriesForReplayDropsMissingAcceptedAndTerminalCommands() {
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
         .thenReturn(
             List.of(
@@ -183,15 +184,17 @@ class TickStagingServiceTest {
             List.of("cmd-staged", "cmd-accepted", "cmd-terminal", "cmd-missing")))
         .thenReturn(List.of(staged, accepted, terminal));
 
-    List<TickQueuedCommandEnvelope> executable = service.readExecutablePendingEntries(1L, 2L);
+    TickStagingService.PendingEntriesReadResult result =
+        service.readPendingEntriesForReplay(1L, 2L);
 
+    assertEquals(TickStagingService.PendingEntriesReadStatus.ORPHANED_OR_STALE, result.status());
     assertEquals(
         List.of("cmd-staged"),
-        executable.stream().map(TickQueuedCommandEnvelope::commandId).toList());
+        result.entries().stream().map(TickQueuedCommandEnvelope::commandId).toList());
   }
 
   @Test
-  void readExecutablePendingEntriesDropsCrossTenantResidue() {
+  void readPendingEntriesForReplayDropsCrossTenantResidue() {
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
         .thenReturn(List.of("N|cmd-cross-tenant|look"));
     GameplayCommand command = gameplayCommand("cmd-cross-tenant");
@@ -199,11 +202,15 @@ class TickStagingServiceTest {
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-cross-tenant")))
         .thenReturn(List.of(command));
 
-    assertTrue(service.readExecutablePendingEntries(1L, 2L).isEmpty());
+    TickStagingService.PendingEntriesReadResult result =
+        service.readPendingEntriesForReplay(1L, 2L);
+
+    assertEquals(TickStagingService.PendingEntriesReadStatus.ORPHANED_OR_STALE, result.status());
+    assertTrue(result.entries().isEmpty());
   }
 
   @Test
-  void readExecutablePendingEntriesDropsCrossGameInstanceResidue() {
+  void readPendingEntriesForReplayDropsCrossGameInstanceResidue() {
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
         .thenReturn(List.of("N|cmd-cross-game|look"));
     GameplayCommand command = gameplayCommand("cmd-cross-game");
@@ -211,11 +218,15 @@ class TickStagingServiceTest {
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-cross-game")))
         .thenReturn(List.of(command));
 
-    assertTrue(service.readExecutablePendingEntries(1L, 2L).isEmpty());
+    TickStagingService.PendingEntriesReadResult result =
+        service.readPendingEntriesForReplay(1L, 2L);
+
+    assertEquals(TickStagingService.PendingEntriesReadStatus.ORPHANED_OR_STALE, result.status());
+    assertTrue(result.entries().isEmpty());
   }
 
   @Test
-  void readExecutablePendingEntriesDropsStaleRegionAndEpochResidue() {
+  void readPendingEntriesForReplayDropsStaleRegionAndEpochResidue() {
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
         .thenReturn(List.of("N|cmd-stale-region|look", "N|cmd-stale-epoch|look"));
     GameplayCommand staleRegion = gameplayCommand("cmd-stale-region");
@@ -226,7 +237,46 @@ class TickStagingServiceTest {
             List.of("cmd-stale-region", "cmd-stale-epoch")))
         .thenReturn(List.of(staleRegion, staleEpoch));
 
-    assertTrue(service.readExecutablePendingEntries(1L, 2L).isEmpty());
+    TickStagingService.PendingEntriesReadResult result =
+        service.readPendingEntriesForReplay(1L, 2L);
+
+    assertEquals(TickStagingService.PendingEntriesReadStatus.ORPHANED_OR_STALE, result.status());
+    assertTrue(result.entries().isEmpty());
+  }
+
+  @Test
+  void readPendingEntriesForReplayReportsUnavailableOwnershipSeparately() {
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-staged|look"));
+    when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 2L))
+        .thenReturn(Optional.empty());
+
+    TickStagingService.PendingEntriesReadResult result =
+        service.readPendingEntriesForReplay(1L, 2L);
+
+    assertEquals(
+        TickStagingService.PendingEntriesReadStatus.AUTHORITY_UNAVAILABLE, result.status());
+    assertTrue(result.entries().isEmpty());
+  }
+
+  @Test
+  void readPendingEntriesForReplayReportsMixedExecutableAndStaleEvidence() {
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-staged|look", "N|cmd-stale|wave"));
+    GameplayCommand staged = gameplayCommand("cmd-staged");
+    staged.setExecutionOutcome("STAGED");
+    GameplayCommand stale = gameplayCommand("cmd-stale");
+    stale.setExecutionOutcome("DRAINED");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-staged", "cmd-stale")))
+        .thenReturn(List.of(staged, stale));
+
+    TickStagingService.PendingEntriesReadResult result =
+        service.readPendingEntriesForReplay(1L, 2L);
+
+    assertEquals(TickStagingService.PendingEntriesReadStatus.ORPHANED_OR_STALE, result.status());
+    assertEquals(
+        List.of("cmd-staged"),
+        result.entries().stream().map(TickQueuedCommandEnvelope::commandId).toList());
   }
 
   @Test
@@ -304,6 +354,272 @@ class TickStagingServiceTest {
     verify(tickBatchRepository, never()).save(any());
     verify(tickEffectRepository, never()).saveAll(any());
     verify(gameplayCommandRepository, never()).saveAll(any());
+  }
+
+  @Test
+  void createBatchRejectsUnsafeCommandIdBeforeAnyDurableWrite() {
+    TickQueuedCommandEnvelope unsafe = new TickQueuedCommandEnvelope(false, "cmd|unsafe", "look");
+
+    IllegalStateException exception =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.createBatch(
+                    "FRESH_STAGE",
+                    1L,
+                    2L,
+                    false,
+                    new TickQueueControlService.OwnershipSnapshot(
+                        "region-a", 1L, "fence-a", false, 0L),
+                    List.of(unsafe)));
+
+    assertTrue(exception.getMessage().contains("queue-safe command ids"));
+    verify(tickBatchRepository, never()).save(any());
+    verify(tickEffectRepository, never()).saveAll(any());
+    verify(gameplayCommandRepository, never()).saveAll(any());
+  }
+
+  @Test
+  void createBatchRejectsMixedNormalAndSoloEntriesBeforeAnyDurableWrite() {
+    GameplayCommand normal = gameplayCommand("cmd-normal");
+    GameplayCommand solo = gameplayCommand("cmd-solo");
+    solo.setRequiresSoloTick(true);
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-normal", "cmd-solo")))
+        .thenReturn(List.of(normal, solo));
+
+    IllegalStateException exception =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.createBatch(
+                    "FRESH_STAGE",
+                    1L,
+                    2L,
+                    false,
+                    new TickQueueControlService.OwnershipSnapshot(
+                        "region-a", 1L, "fence-a", false, 0L),
+                    List.of(
+                        new TickQueuedCommandEnvelope(false, "cmd-normal", "look"),
+                        new TickQueuedCommandEnvelope(true, "cmd-solo", "generate"))));
+
+    assertEquals("Mixed normal/solo entries in tick batch", exception.getMessage());
+    verify(tickBatchRepository, never()).save(any());
+    verify(tickEffectRepository, never()).saveAll(any());
+    verify(gameplayCommandRepository, never()).saveAll(any());
+  }
+
+  @Test
+  void readPendingEntriesRejectsMalformedEntryWithoutDroppingIt() {
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("not-a-queue-entry"));
+
+    IllegalStateException exception =
+        assertThrows(IllegalStateException.class, () -> service.readPendingEntries(1L, 2L));
+
+    assertTrue(exception.getMessage().contains("Malformed tick queue entry"));
+    verify(listOps, never()).remove(anyString(), eq(0L), any());
+    verify(listOps, never()).trim(anyString(), eq(0L), eq(-1L));
+  }
+
+  @Test
+  void readPendingEntriesRoundTripsDelimiterInCommandText() {
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-pipe|look|east"));
+
+    List<TickQueuedCommandEnvelope> entries = service.readPendingEntries(1L, 2L);
+
+    assertEquals(1, entries.size());
+    assertEquals("cmd-pipe", entries.getFirst().commandId());
+    assertEquals("look|east", entries.getFirst().command());
+  }
+
+  @Test
+  void pendingReplayCreatesSoloBatchWhenNoStagedBatchExists() {
+    GameplayCommand command = gameplayCommand("cmd-solo-replay");
+    command.setRequiresSoloTick(true);
+    command.setCommandText("generate");
+    command.setSanitizedCommandText("generate");
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.empty());
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-solo-replay")))
+        .thenReturn(List.of(command));
+
+    TickBatch replayBatch =
+        service.resolveReplayBatch(
+            1L,
+            2L,
+            List.of(new TickQueuedCommandEnvelope(true, "cmd-solo-replay", "generate")),
+            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L));
+
+    assertEquals("PENDING_REPLAY", replayBatch.getBatchSource());
+    org.junit.jupiter.api.Assertions.assertTrue(replayBatch.isRequiresSoloTick());
+    assertTrue(replayBatch.getSelectedWorkManifestJson().contains("\"requiresSoloTick\":true"));
+  }
+
+  @Test
+  void equalReplayDigestStillRequiresStoredBatchModeToMatch() {
+    GameplayCommand command = gameplayCommand("cmd-mode-mismatch");
+    command.setRequiresSoloTick(false);
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-mode-mismatch")))
+        .thenReturn(List.of(command));
+    TickBatch existingBatch = new TickBatch();
+    existingBatch.setTickBatchId("tb-mode-mismatch");
+    existingBatch.setTenantId(1L);
+    existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionId("region-a");
+    existingBatch.setRegionEpoch(1L);
+    existingBatch.setExecutorFence("fence-a");
+    existingBatch.setStatus("STAGED");
+    existingBatch.setRequiresSoloTick(true);
+    existingBatch.setSelectedWorkManifestJson(
+        replayManifestJson(service, List.of("N|cmd-mode-mismatch|look")));
+    existingBatch.setSelectedWorkManifestDigest(
+        replayManifestDigest(service, List.of("N|cmd-mode-mismatch|look")));
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.of(existingBatch));
+
+    IllegalStateException exception =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.resolveReplayBatch(
+                    1L,
+                    2L,
+                    List.of(new TickQueuedCommandEnvelope(false, "cmd-mode-mismatch", "look")),
+                    new TickQueueControlService.OwnershipSnapshot(
+                        "region-a", 1L, "fence-a", false, 0L)));
+
+    assertTrue(exception.getMessage().contains("Pending replay mode does not match"));
+    verify(tickEffectRepository, never()).findByTickBatchId(anyString());
+  }
+
+  @Test
+  void durableCommandAndSealedBatchModeOverrideStaleQueueMode() {
+    GameplayCommand command = gameplayCommand("cmd-sealed-solo");
+    command.setRequiresSoloTick(true);
+    command.setCommandText("generate");
+    command.setSanitizedCommandText("generate");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-sealed-solo")))
+        .thenReturn(List.of(command));
+    TickBatch existingBatch = new TickBatch();
+    existingBatch.setTickBatchId("tb-sealed-solo");
+    existingBatch.setTenantId(1L);
+    existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionId("region-a");
+    existingBatch.setRegionEpoch(1L);
+    existingBatch.setExecutorFence("fence-a");
+    existingBatch.setStatus("STAGED");
+    existingBatch.setRequiresSoloTick(true);
+    existingBatch.setExpectedEffectCount(1);
+    existingBatch.setSelectedWorkManifestJson(
+        replayManifestJson(service, List.of("S|cmd-sealed-solo|generate")));
+    existingBatch.setSelectedWorkManifestDigest("stale-digest");
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.of(existingBatch));
+    TickQueuedCommandEnvelope staleQueueEntry =
+        new TickQueuedCommandEnvelope(false, "cmd-sealed-solo", "generate");
+
+    TickBatch replayBatch =
+        service.resolveReplayBatch(
+            1L,
+            2L,
+            List.of(staleQueueEntry),
+            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L));
+
+    assertFalse(staleQueueEntry.requiresSoloTick());
+    assertTrue(command.isRequiresSoloTick());
+    assertTrue(existingBatch.isRequiresSoloTick());
+    assertTrue(existingBatch.getSelectedWorkManifestJson().contains("\"requiresSoloTick\":true"));
+    assertEquals("PENDING_REPLAY", replayBatch.getBatchSource());
+    org.junit.jupiter.api.Assertions.assertTrue(replayBatch.isRequiresSoloTick());
+    assertTrue(replayBatch.getSelectedWorkManifestJson().contains("\"requiresSoloTick\":true"));
+  }
+
+  @Test
+  void sealedReplayRejectsSentinelCommandIdBeforeRestagingOrRedisWrites() {
+    GameplayCommand pendingCommand = gameplayCommand("cmd-pending");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-pending")))
+        .thenReturn(List.of(pendingCommand));
+    TickBatch existingBatch = new TickBatch();
+    existingBatch.setTickBatchId("tb-sentinel");
+    existingBatch.setTenantId(1L);
+    existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionId("region-a");
+    existingBatch.setRegionEpoch(1L);
+    existingBatch.setExecutorFence("fence-a");
+    existingBatch.setStatus("STAGED");
+    existingBatch.setSelectedWorkManifestDigest("stale-digest");
+    existingBatch.setSelectedWorkManifestJson(
+        "{\"version\":1,\"source\":\"GAMEPLAY_COMMAND_QUEUE\",\"regionId\":\"region-a\","
+            + "\"items\":[{\"sourceKind\":\"GAMEPLAY_RETRY\",\"sourceOrdinal\":1,"
+            + "\"sourceState\":\"RETRY_QUEUED\",\"effectKey\":\"command:-\","
+            + "\"commandId\":\"-\",\"requiresSoloTick\":false,\"commandDigest\":\"digest\"}]}");
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.of(existingBatch));
+
+    IllegalStateException exception =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.resolveReplayBatch(
+                    1L,
+                    2L,
+                    List.of(new TickQueuedCommandEnvelope(false, "cmd-pending", "look")),
+                    new TickQueueControlService.OwnershipSnapshot(
+                        "region-a", 1L, "fence-a", false, 0L)));
+
+    assertTrue(exception.getMessage().contains("requires commandId"));
+    verify(redisTemplate, never()).delete(anyString());
+    verify(listOps, never()).leftPush(anyString(), any());
+    verify(listOps, never()).rightPush(anyString(), any());
+    verify(tickBatchRepository, never()).save(any());
+    verify(tickEffectRepository, never()).saveAll(any());
+  }
+
+  @Test
+  void sealedReplayRejectsUnsafeCommandIdBeforeRestagingOrRedisWrites() {
+    GameplayCommand pendingCommand = gameplayCommand("cmd-pending");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-pending")))
+        .thenReturn(List.of(pendingCommand));
+    TickBatch existingBatch = new TickBatch();
+    existingBatch.setTickBatchId("tb-unsafe-command-id");
+    existingBatch.setTenantId(1L);
+    existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionId("region-a");
+    existingBatch.setRegionEpoch(1L);
+    existingBatch.setExecutorFence("fence-a");
+    existingBatch.setStatus("STAGED");
+    existingBatch.setSelectedWorkManifestDigest("stale-digest");
+    existingBatch.setSelectedWorkManifestJson(
+        "{\"version\":1,\"source\":\"GAMEPLAY_COMMAND_QUEUE\",\"regionId\":\"region-a\","
+            + "\"items\":[{\"sourceKind\":\"GAMEPLAY_RETRY\",\"sourceOrdinal\":1,"
+            + "\"sourceState\":\"RETRY_QUEUED\",\"effectKey\":\"command:cmd|unsafe\","
+            + "\"commandId\":\"cmd|unsafe\",\"requiresSoloTick\":false,\"commandDigest\":\"digest\"}]}");
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.of(existingBatch));
+
+    IllegalStateException exception =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.resolveReplayBatch(
+                    1L,
+                    2L,
+                    List.of(new TickQueuedCommandEnvelope(false, "cmd-pending", "look")),
+                    new TickQueueControlService.OwnershipSnapshot(
+                        "region-a", 1L, "fence-a", false, 0L)));
+
+    assertTrue(exception.getMessage().contains("unsafe commandId"));
+    verify(redisTemplate, never()).delete(anyString());
+    verify(listOps, never()).leftPush(anyString(), any());
+    verify(listOps, never()).rightPush(anyString(), any());
+    verify(tickBatchRepository, never()).save(any());
+    verify(tickEffectRepository, never()).saveAll(any());
   }
 
   @Test

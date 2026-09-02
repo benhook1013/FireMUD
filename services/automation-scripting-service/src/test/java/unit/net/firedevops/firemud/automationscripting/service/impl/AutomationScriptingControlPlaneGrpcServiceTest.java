@@ -533,6 +533,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(
                     net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("1")
                         .setGameInstanceId("game-1")
                         .setRegionId("region-1")
                         .setRegionEpoch(12L)
@@ -738,13 +739,15 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(
                     net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("1")
                         .setGameInstanceId("game-1")
                         .setRegionId("region-live")
                         .setRegionEpoch(44L)
                         .setPlayableStateScope(
                             net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
                                 .PLAYABLE_STATE_SCOPE_ISOLATED)
-                        .addCurrentAdmissionPointers(currentPointer("demo-next", "staging", 99L))
+                        .addCurrentAdmissionPointers(
+                            currentPointer("demo-next", "staging", 99L, "game-1", "ISOLATED"))
                         .setWorldSlug("demo-next")
                         .setRealmSlug("staging")
                         .setPointerVersion(99L)
@@ -1148,13 +1151,15 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(
                     net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("1")
                         .setGameInstanceId("game-2")
                         .setRegionId("region-live")
                         .setRegionEpoch(22L)
                         .setPlayableStateScope(
                             net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
                                 .PLAYABLE_STATE_SCOPE_ISOLATED)
-                        .addCurrentAdmissionPointers(currentPointer("demo-next", "staging", 99L))
+                        .addCurrentAdmissionPointers(
+                            currentPointer("demo-next", "staging", 99L, "game-2", "ISOLATED"))
                         .setWorldSlug("demo-next")
                         .setRealmSlug("staging")
                         .setPointerVersion(99L)
@@ -1406,13 +1411,15 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(
                     net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("1")
                         .setGameInstanceId("game-1")
                         .setRegionId("region-1")
                         .setRegionEpoch(99L)
                         .setPlayableStateScope(
                             net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
                                 .PLAYABLE_STATE_SCOPE_ISOLATED)
-                        .addCurrentAdmissionPointers(currentPointer("demo-next", "staging", 99L))
+                        .addCurrentAdmissionPointers(
+                            currentPointer("demo-next", "staging", 99L, "game-1", "ISOLATED"))
                         .setWorldSlug("demo-next")
                         .setRealmSlug("staging")
                         .setPointerVersion(99L)
@@ -1909,10 +1916,22 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
 
   private static AdmissionPointerControlPlaneEntry currentPointer(
       String worldSlug, String realmSlug, long pointerVersion) {
+    return currentPointer(worldSlug, realmSlug, pointerVersion, "game-1", "SHARED");
+  }
+
+  private static AdmissionPointerControlPlaneEntry currentPointer(
+      String worldSlug,
+      String realmSlug,
+      long pointerVersion,
+      String gameInstanceId,
+      String stateScope) {
     return AdmissionPointerControlPlaneEntry.newBuilder()
         .setWorldSlug(worldSlug)
         .setRealmSlug(realmSlug)
+        .setTenantId("1")
+        .setGameInstanceId(gameInstanceId)
         .setPointerVersion(pointerVersion)
+        .setStateScope(stateScope)
         .build();
   }
 }
