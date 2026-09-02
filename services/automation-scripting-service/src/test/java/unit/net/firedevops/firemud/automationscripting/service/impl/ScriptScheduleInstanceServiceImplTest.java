@@ -1648,12 +1648,14 @@ class ScriptScheduleInstanceServiceImplTest {
     ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
     verify(workItemRepository, org.mockito.Mockito.times(1))
         .insertIfAbsentByTriggerIdentity(workItemCaptor.capture());
-    assertThat(workItemCaptor.getAllValues())
-        .extracting(ScriptWorkItem::getScriptEventId)
-        .doesNotHaveDuplicates()
-        .allMatch(scriptEventId -> scriptEventId.matches("timer-[0-9a-f]{60}"));
+    assertThat(workItemCaptor.getValue().getScriptEventId()).matches("timer-[0-9a-f]{60}");
+    assertThat(workItemCaptor.getValue().getPlayableStateScope()).isEqualTo("SHARED");
+    assertThat(workItemCaptor.getValue().getRegionId()).isEqualTo("region-1");
+    assertThat(workItemCaptor.getValue().getGameInstanceId()).isEqualTo("game-1");
     assertThat(isolated.getMaterializationStatus()).isEqualTo("FENCED");
     assertThat(isolated.getNextDueTickId()).isNull();
+    assertThat(workItemCaptor.getValue().getScriptId()).isEqualTo(shared.getScriptId());
+    assertThat(workItemCaptor.getValue().getEntityId()).isEqualTo("guard-1");
   }
 
   @Test

@@ -85,7 +85,7 @@ class ScriptEventAuditRepositoryTest {
     assertThat(result.audit().getId()).isEqualTo(7L);
     assertThat(result.audit().getScriptEventId()).isEqualTo("event-1");
     assertThat(sqlRef.get().toLowerCase(Locale.ROOT))
-        .contains("on conflict", " do update", "returning");
+        .contains("on conflict", " do update", "returning", "xmax = 0");
     String conflictClause = conflictClause(sqlRef.get());
     assertThat(conflictClause)
         .contains(

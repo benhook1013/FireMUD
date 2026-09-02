@@ -13,6 +13,7 @@ import org.flywaydb.core.api.migration.Context;
 public final class V9__unique_gameplay_admission_pointer_runtime_target extends BaseJavaMigration {
 
   static final String INDEX_NAME = "uq_gameplay_admission_pointer_runtime_target";
+  static final String LOCK_TIMEOUT = "30s";
   private static final String DUPLICATE_PREFLIGHT =
       "SELECT tenant_id, game_instance_id FROM gameplay_admission_pointer "
           + "GROUP BY tenant_id, game_instance_id HAVING COUNT(*) > 1 LIMIT 1";
@@ -41,8 +42,13 @@ public final class V9__unique_gameplay_admission_pointer_runtime_target extends 
           "Cannot create admission-pointer uniqueness index: an object with the expected index name is owned by another table");
     }
     try (Statement statement = connection.createStatement()) {
-      for (String sql : statements(state)) {
-        statement.execute(sql);
+      statement.execute("SET lock_timeout = '" + LOCK_TIMEOUT + "'");
+      try {
+        for (String sql : statements(state)) {
+          statement.execute(sql);
+        }
+      } finally {
+        statement.execute("SET lock_timeout = DEFAULT");
       }
     }
   }

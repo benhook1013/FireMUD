@@ -180,6 +180,13 @@ The following examples illustrate how to apply the version-aware guidelines to c
   under the owning service's data-recovery procedure, verify one canonical row per runtime target,
   and rerun the migration. A concurrently created or invalid index may be retried only after the
   same preflight passes; an invalid index is not evidence that the uniqueness contract is safe.
+- The Game Session V9 runtime-target uniqueness migration bounds PostgreSQL lock waits for its
+  concurrent index create/drop to 30 seconds and resets the connection `lock_timeout` in a
+  `finally` path. A timeout or other DDL failure aborts startup and leaves Flyway history for
+  the operator to inspect; do not mark it repaired or drop an index automatically. After resolving
+  the blocking session and confirming the duplicate preflight and index state, use the owning
+  service's Flyway `repair` only when its schema-history metadata actually records a failed entry,
+  then rerun the migration. An invalid or partial index is never treated as proof of uniqueness.
 - See [DEVELOPER_SETUP.md](../../DEVELOPER_SETUP.md) for the environment variables needed to connect to your local PostgreSQL instance. Copy the `FIREMUD_POSTGRES_*` values from `.env.sample` into `.env` so Flyway can connect locally.
 - During deployment GitHub Actions builds the Docker image, pushes it, and Kubernetes restarts the service. This step is fully automated.
 - On startup the container executes Flyway against its database schema before the Spring application fully starts.

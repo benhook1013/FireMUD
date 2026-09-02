@@ -88,7 +88,7 @@ class GameplayCommandRepositoryIntegrationTest {
   void routedInsertIsConditionallyBoundToCurrentAdmissionPointer() {
     insertAdmissionPointer("demo", "production", 17L, "SHARED", 7L);
     GameplayCommand command = automationCommand("routed-current", "dispatch-routed-current");
-    command.setPlayableStateScope("SHARED");
+    command.setPlayableStateScope("shared");
     command.setWorldSlug("DEMO");
     command.setRealmSlug("Production");
     command.setPointerVersion(17L);
@@ -96,6 +96,13 @@ class GameplayCommandRepositoryIntegrationTest {
     GameplayCommandRepository.IdempotentInsertResult inserted =
         repository.insertIfAbsentByIdempotencyIdentity(command);
     assertThat(inserted.inserted()).isTrue();
+    assertThat(inserted.command())
+        .extracting(
+            GameplayCommand::getWorldSlug,
+            GameplayCommand::getRealmSlug,
+            GameplayCommand::getPointerVersion,
+            GameplayCommand::getPlayableStateScope)
+        .containsExactly("demo", "production", 17L, "SHARED");
 
     dsl.update(GAMEPLAY_ADMISSION_POINTER)
         .set(GAMEPLAY_ADMISSION_POINTER.POINTER_VERSION, 18L)
