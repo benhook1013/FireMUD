@@ -814,6 +814,10 @@ class ScriptEventIngressServiceImplTest {
     assertThat(admission.outcome())
         .isEqualTo(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE.name());
     assertThat(admission.reason()).isEqualTo("plugin_binding_unresolved");
+    ArgumentCaptor<ScriptEventIngressAudit> auditCaptor =
+        ArgumentCaptor.forClass(ScriptEventIngressAudit.class);
+    verify(repository).save(auditCaptor.capture());
+    assertThat(auditCaptor.getValue().getAdmissionReason()).isEqualTo("plugin_binding_unresolved");
     verify(pluginRuntimeStateService, never())
         .getActivePluginVersions(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyLong());

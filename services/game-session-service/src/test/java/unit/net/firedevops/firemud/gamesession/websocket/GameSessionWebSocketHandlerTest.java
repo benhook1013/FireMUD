@@ -198,6 +198,37 @@ class GameSessionWebSocketHandlerTest {
   }
 
   @Test
+  void afterConnectionEstablishedClosesWithServiceUnavailableWhenPointerAuthorityFails()
+      throws Exception {
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR,
+                "first_party_web",
+                GameSessionWebSocketHandshakeInterceptor.CONNECT_CONTEXT_ATTR,
+                "token"));
+    FirstPartyConnectContext connectContext =
+        new FirstPartyConnectContext(
+            123L, 22L, "demo", "production", 7L, 3L, "scope-1", "jti", "req-1", "gw-1");
+    when(firstPartyConnectContextService.parse("token")).thenReturn(Optional.of(connectContext));
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
+        .thenThrow(new IllegalStateException("database unavailable"));
+
+    handler.afterConnectionEstablished(session);
+
+    verify(session)
+        .close(
+            argThat(
+                status ->
+                    status.getCode() == 1013
+                        && "ADMISSION_POINTER_AUTHORITY_UNAVAILABLE".equals(status.getReason())));
+    verify(firstPartyConnectContextRegistry, never()).register(Mockito.anyLong(), Mockito.any());
+    verify(sessionContextService, never()).save(Mockito.any());
+  }
+
+  @Test
   void afterConnectionEstablishedRepairsGenericBootstrapShellFromSingularRuntimeAuthority() {
     when(session.getAttributes())
         .thenReturn(

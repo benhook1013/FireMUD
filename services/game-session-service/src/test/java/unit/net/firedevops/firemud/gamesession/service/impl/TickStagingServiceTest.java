@@ -417,6 +417,8 @@ class TickStagingServiceTest {
         assertThrows(IllegalStateException.class, () -> service.readPendingEntries(1L, 2L));
 
     assertTrue(exception.getMessage().contains("Malformed tick queue entry"));
+    verify(listOps, never()).remove(anyString(), eq(0L), any());
+    verify(listOps, never()).trim(anyString(), eq(0L), eq(-1L));
   }
 
   @Test

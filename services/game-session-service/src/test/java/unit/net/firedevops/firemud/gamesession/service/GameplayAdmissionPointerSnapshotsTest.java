@@ -254,7 +254,7 @@ class GameplayAdmissionPointerSnapshotsTest {
             true,
             true,
             false,
-            "OPEN",
+            "SHARED",
             "ALLOW_NEW");
 
     assertThat(

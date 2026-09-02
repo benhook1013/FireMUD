@@ -143,10 +143,11 @@ validator = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = validator
 spec.loader.exec_module(validator)
 
-canonical_scope_matcher = 'scope_class=~"region|game_instance|tenant|cluster"'
+canonical_scope_matcher = 'scope_class=~"^(region|game_instance|tenant|cluster)$"'
 if validator.TICK_SCOPE_CLASS_MATCHER_RE.search(canonical_scope_matcher) is None:
     raise AssertionError("canonical tick scope_class matcher was not accepted")
 for noncanonical_scope_matcher in (
+    'scope_class=~"region|game_instance|tenant|cluster"',
     'SCOPE_CLASS=~"region|game_instance|tenant|cluster"',
     'scope_class=~"REGION|game_instance|tenant|cluster"',
 ):
@@ -2681,7 +2682,7 @@ for canonical_alert, canonical_metric in (
 ):
     threshold = validator.TICK_REPLAY_ALERT_THRESHOLDS[canonical_alert]
     valid_tick_scope_expr = (
-        f'{canonical_metric}{{scope_class=~"region|game_instance|tenant|cluster"}} > {threshold}'
+        f'{canonical_metric}{{scope_class=~"^(region|game_instance|tenant|cluster)$"}} > {threshold}'
     )
     if validator._tick_replay_scope_matching_finding(
         root / "k8s/monitoring/prometheus-rules-firemud.yaml",
@@ -2695,7 +2696,7 @@ for canonical_alert, canonical_metric in (
         f'{canonical_metric}{{scope_class=~".+"}} > 0',
         f'{canonical_metric}{{scope_class=~"region|game_instance"}} > 0',
         f'{canonical_metric} > 0',
-        f'{canonical_metric}{{scope_class=~"region|game_instance|tenant|cluster"}} > {threshold} or other_metric > 0',
+        f'{canonical_metric}{{scope_class=~"^(region|game_instance|tenant|cluster)$"}} > {threshold} or other_metric > 0',
     ):
         if validator._tick_replay_scope_matching_finding(
             root / "k8s/monitoring/prometheus-rules-firemud.yaml",
@@ -2706,7 +2707,7 @@ for canonical_alert, canonical_metric in (
                 f"invalid canonical replay scope expression was accepted: {invalid_tick_scope_expr!r}"
             )
 for valid_ms_ratio_expr in (
-    "((tick_execution_time_ms_p99{scope_class=~\"region|game_instance|tenant|cluster\",tick_mode=\"normal\"} / on (scope_class, tick_mode) label_replace(tick_lock_ttl_ms{scope_class=~\"region|game_instance|tenant|cluster\"}, \"tick_mode\", \"normal\", \"scope_class\", \".*\")) or (tick_execution_time_ms_p99{scope_class=~\"region|game_instance|tenant|cluster\",tick_mode=\"solo\"} / on (scope_class, tick_mode) label_replace(solo_lock_ttl_ms{scope_class=~\"region|game_instance|tenant|cluster\"}, \"tick_mode\", \"solo\", \"scope_class\", \".*\"))) > 0.75",
+    "((tick_execution_time_ms_p99{scope_class=~\"^(region|game_instance|tenant|cluster)$\",tick_mode=\"normal\"} / on (scope_class, tick_mode) label_replace(tick_lock_ttl_ms{scope_class=~\"^(region|game_instance|tenant|cluster)$\"}, \"tick_mode\", \"normal\", \"scope_class\", \".*\")) or (tick_execution_time_ms_p99{scope_class=~\"^(region|game_instance|tenant|cluster)$\",tick_mode=\"solo\"} / on (scope_class, tick_mode) label_replace(solo_lock_ttl_ms{scope_class=~\"^(region|game_instance|tenant|cluster)$\"}, \"tick_mode\", \"solo\", \"scope_class\", \".*\"))) > 0.75",
     "first_latency_ms / ignoring(scope_class) group_left(region) second_budget_ms > 0.75",
 ):
     if validator._check_ms_thresholds(valid_ms_ratio_expr):
@@ -2714,10 +2715,10 @@ for valid_ms_ratio_expr in (
             f"a dimensionless _ms ratio was treated as a raw millisecond threshold: {valid_ms_ratio_expr!r}"
         )
 ratio_fixture = (
-    "((tick_execution_time_ms_p99{scope_class=~\"region|game_instance|tenant|cluster\",tick_mode=\"normal\"} "
-    "/ on (scope_class, tick_mode) label_replace(tick_lock_ttl_ms{scope_class=~\"region|game_instance|tenant|cluster\"}, \"tick_mode\", \"normal\", \"scope_class\", \".*\")) "
-    "or (tick_execution_time_ms_p99{scope_class=~\"region|game_instance|tenant|cluster\",tick_mode=\"solo\"} "
-    "/ on (scope_class, tick_mode) label_replace(solo_lock_ttl_ms{scope_class=~\"region|game_instance|tenant|cluster\"}, \"tick_mode\", \"solo\", \"scope_class\", \".*\"))) > 0.75"
+    "((tick_execution_time_ms_p99{scope_class=~\"^(region|game_instance|tenant|cluster)$\",tick_mode=\"normal\"} "
+    "/ on (scope_class, tick_mode) label_replace(tick_lock_ttl_ms{scope_class=~\"^(region|game_instance|tenant|cluster)$\"}, \"tick_mode\", \"normal\", \"scope_class\", \".*\")) "
+    "or (tick_execution_time_ms_p99{scope_class=~\"^(region|game_instance|tenant|cluster)$\",tick_mode=\"solo\"} "
+    "/ on (scope_class, tick_mode) label_replace(solo_lock_ttl_ms{scope_class=~\"^(region|game_instance|tenant|cluster)$\"}, \"tick_mode\", \"solo\", \"scope_class\", \".*\"))) > 0.75"
 )
 if validator._tick_execution_ratio_finding(
     root / "design/observability/grafana/tick-alerts-snippets.md",
@@ -2728,7 +2729,10 @@ if validator._tick_execution_ratio_finding(
     raise AssertionError("mode-labelled tick execution ratio fixture was rejected")
 for invalid_ratio_fixture in (
     ratio_fixture.replace("on (scope_class, tick_mode)", "on (scope_class) group_left()"),
-    ratio_fixture.replace('scope_class=~"region|game_instance|tenant|cluster"', 'scope_class=~".+"'),
+    ratio_fixture.replace(
+        'scope_class=~"^(region|game_instance|tenant|cluster)$"',
+        'scope_class=~".+"',
+    ),
 ):
     if validator._tick_execution_ratio_finding(
         root / "design/observability/grafana/tick-alerts-snippets.md",
@@ -2790,7 +2794,7 @@ for panel in dashboard["panels"]:
                 raise AssertionError(issue.message)
 for metric_name in validator.TICK_SCOPED_METRICS:
     valid_tick_metric = (
-        f'{metric_name}{{scope_class=~"region|game_instance|tenant|cluster"}}'
+        f'{metric_name}{{scope_class=~"^(region|game_instance|tenant|cluster)$"}}'
     )
     if validator._tick_scope_selector_finding(
         dashboard_path, valid_tick_metric
@@ -2806,10 +2810,10 @@ for metric_name in validator.TICK_SCOPED_METRICS:
             f"unbounded selector was silently accepted for {metric_name}"
         )
 for valid_tick_metric in (
-    'tick_execution_time_ms_bucket{scope_class=~"region|game_instance|tenant|cluster",tick_mode="normal",le="500"}',
-    'tick_status{scope_class=~"region|game_instance|tenant|cluster",status!="RUNNING"}',
-    'tick_effects_abandoned_total{scope_class=~"region|game_instance|tenant|cluster",reason="expired"}',
-    'tick_interval_ms{scope=~"redis-prod",scope_class=~"region|game_instance|tenant|cluster"}',
+    'tick_execution_time_ms_bucket{scope_class=~"^(region|game_instance|tenant|cluster)$",tick_mode="normal",le="500"}',
+    'tick_status{scope_class=~"^(region|game_instance|tenant|cluster)$",status!="RUNNING"}',
+    'tick_effects_abandoned_total{scope_class=~"^(region|game_instance|tenant|cluster)$",reason="expired"}',
+    'tick_interval_ms{scope=~"redis-prod",scope_class=~"^(region|game_instance|tenant|cluster)$"}',
     'tick_interval_ms{scope="redis-prod"}',
     'tick_interval_ms{scope=~"redis-(prod|staging)"}',
 ):
@@ -2824,12 +2828,12 @@ for invalid_tick_metric in (
     'tick_interval_ms{scope!="redis-prod"}',
     'tick_interval_ms{scope!~"redis-prod"}',
     'tick_interval_ms{not_scope=~"redis-prod"}',
-    'tick_retry_queue_depth{scope_class=~"region|game_instance|tenant|cluster",regionId=~".+"}',
-    'tick_status{scope_class=~"region|game_instance|tenant|cluster",gameInstanceId="g1"}',
-    'tick_effects_abandoned_total{scope_class=~"region|game_instance|tenant|cluster",entity_id=~".+"}',
-    'tick_effects_pending_total{scope_class=~"region|game_instance|tenant|cluster",tenantId="tenant-1"}',
-    'tick_current_id{scope_class=~"region|game_instance|tenant|cluster",tickId="t1"}',
-    'tick_execution_time_ms_bucket{scope_class=~"region|game_instance|tenant|cluster",unknown_dimension="x"}',
+    'tick_retry_queue_depth{scope_class=~"^(region|game_instance|tenant|cluster)$",regionId=~".+"}',
+    'tick_status{scope_class=~"^(region|game_instance|tenant|cluster)$",gameInstanceId="g1"}',
+    'tick_effects_abandoned_total{scope_class=~"^(region|game_instance|tenant|cluster)$",entity_id=~".+"}',
+    'tick_effects_pending_total{scope_class=~"^(region|game_instance|tenant|cluster)$",tenantId="tenant-1"}',
+    'tick_current_id{scope_class=~"^(region|game_instance|tenant|cluster)$",tickId="t1"}',
+    'tick_execution_time_ms_bucket{scope_class=~"^(region|game_instance|tenant|cluster)$",unknown_dimension="x"}',
 ):
     if validator._tick_scope_selector_finding(dashboard_path, invalid_tick_metric) is None:
         raise AssertionError(

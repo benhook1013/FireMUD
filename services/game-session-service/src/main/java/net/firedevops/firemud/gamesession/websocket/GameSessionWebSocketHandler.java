@@ -715,7 +715,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
               connectContext.tenantId(), connectContext.gameInstanceId());
     } catch (RuntimeException ex) {
       logger.warn("Unable to resolve runtime pointer for first-party bootstrap", ex);
-      closeInvalidFirstPartyContext(session);
+      closeAdmissionPointerAuthorityUnavailable(session);
       return;
     }
     Optional<GameplayAdmissionPointerSnapshot> currentPointer =
@@ -892,6 +892,14 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
           new CloseStatus(CloseStatus.POLICY_VIOLATION.getCode(), "CONNECT_CONTEXT_INVALID"));
     } catch (IOException ex) {
       logger.warn("Failed to close session with invalid first-party connect context", ex);
+    }
+  }
+
+  private void closeAdmissionPointerAuthorityUnavailable(WebSocketSession session) {
+    try {
+      session.close(new CloseStatus(1013, "ADMISSION_POINTER_AUTHORITY_UNAVAILABLE"));
+    } catch (IOException ex) {
+      logger.warn("Failed to close session while admission pointer authority was unavailable", ex);
     }
   }
 

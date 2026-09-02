@@ -116,38 +116,44 @@ public class GameplayAdmissionPointerRepository {
       throw new IllegalStateException(
           "Admission pointer update conflicted with another route for the runtime target");
     }
-    int updated =
-        dsl.update(GAMEPLAY_ADMISSION_POINTER)
-            .set(GAMEPLAY_ADMISSION_POINTER.WORLD_SLUG, entity.getWorldSlug())
-            .set(GAMEPLAY_ADMISSION_POINTER.WORLD_DISPLAY_NAME, entity.getWorldDisplayName())
-            .set(GAMEPLAY_ADMISSION_POINTER.REALM_SLUG, entity.getRealmSlug())
-            .set(GAMEPLAY_ADMISSION_POINTER.REALM_DISPLAY_NAME, entity.getRealmDisplayName())
-            .set(GAMEPLAY_ADMISSION_POINTER.TENANT_ID, entity.getTenantId())
-            .set(GAMEPLAY_ADMISSION_POINTER.GAME_INSTANCE_ID, entity.getGameInstanceId())
-            .set(GAMEPLAY_ADMISSION_POINTER.POINTER_VERSION, entity.getPointerVersion())
-            .set(GAMEPLAY_ADMISSION_POINTER.VISIBLE, entity.isVisible())
-            .set(
-                GAMEPLAY_ADMISSION_POINTER.PUBLIC_PRODUCTION_REALM,
-                entity.isPublicProductionRealm())
-            .set(
-                GAMEPLAY_ADMISSION_POINTER.REQUIRES_CHARACTER_SELECTION,
-                entity.isRequiresCharacterSelection())
-            .set(GAMEPLAY_ADMISSION_POINTER.STATE_SCOPE, entity.getStateScope())
-            .set(
-                GAMEPLAY_ADMISSION_POINTER.CHARACTER_CREATION_POLICY,
-                entity.getCharacterCreationPolicy())
-            .set(GAMEPLAY_ADMISSION_POINTER.LAST_UPDATED_BY, entity.getLastUpdatedBy())
-            .set(GAMEPLAY_ADMISSION_POINTER.LAST_UPDATE_REASON, entity.getLastUpdateReason())
-            .set(GAMEPLAY_ADMISSION_POINTER.CREATED_AT, toLocalDateTime(entity.getCreatedAt()))
-            .set(GAMEPLAY_ADMISSION_POINTER.UPDATED_AT, toLocalDateTime(entity.getUpdatedAt()))
-            .where(
-                GAMEPLAY_ADMISSION_POINTER
-                    .ID
-                    .eq(entity.getId())
-                    .and(
-                        GAMEPLAY_ADMISSION_POINTER.POINTER_VERSION.eq(
-                            entity.getPointerVersion() - 1L)))
-            .execute();
+    int updated;
+    try {
+      updated =
+          dsl.update(GAMEPLAY_ADMISSION_POINTER)
+              .set(GAMEPLAY_ADMISSION_POINTER.WORLD_SLUG, entity.getWorldSlug())
+              .set(GAMEPLAY_ADMISSION_POINTER.WORLD_DISPLAY_NAME, entity.getWorldDisplayName())
+              .set(GAMEPLAY_ADMISSION_POINTER.REALM_SLUG, entity.getRealmSlug())
+              .set(GAMEPLAY_ADMISSION_POINTER.REALM_DISPLAY_NAME, entity.getRealmDisplayName())
+              .set(GAMEPLAY_ADMISSION_POINTER.TENANT_ID, entity.getTenantId())
+              .set(GAMEPLAY_ADMISSION_POINTER.GAME_INSTANCE_ID, entity.getGameInstanceId())
+              .set(GAMEPLAY_ADMISSION_POINTER.POINTER_VERSION, entity.getPointerVersion())
+              .set(GAMEPLAY_ADMISSION_POINTER.VISIBLE, entity.isVisible())
+              .set(
+                  GAMEPLAY_ADMISSION_POINTER.PUBLIC_PRODUCTION_REALM,
+                  entity.isPublicProductionRealm())
+              .set(
+                  GAMEPLAY_ADMISSION_POINTER.REQUIRES_CHARACTER_SELECTION,
+                  entity.isRequiresCharacterSelection())
+              .set(GAMEPLAY_ADMISSION_POINTER.STATE_SCOPE, entity.getStateScope())
+              .set(
+                  GAMEPLAY_ADMISSION_POINTER.CHARACTER_CREATION_POLICY,
+                  entity.getCharacterCreationPolicy())
+              .set(GAMEPLAY_ADMISSION_POINTER.LAST_UPDATED_BY, entity.getLastUpdatedBy())
+              .set(GAMEPLAY_ADMISSION_POINTER.LAST_UPDATE_REASON, entity.getLastUpdateReason())
+              .set(GAMEPLAY_ADMISSION_POINTER.CREATED_AT, toLocalDateTime(entity.getCreatedAt()))
+              .set(GAMEPLAY_ADMISSION_POINTER.UPDATED_AT, toLocalDateTime(entity.getUpdatedAt()))
+              .where(
+                  GAMEPLAY_ADMISSION_POINTER
+                      .ID
+                      .eq(entity.getId())
+                      .and(
+                          GAMEPLAY_ADMISSION_POINTER.POINTER_VERSION.eq(
+                              entity.getPointerVersion() - 1L)))
+              .execute();
+    } catch (IntegrityConstraintViolationException ex) {
+      throw new IllegalStateException(
+          "Admission pointer update conflicted with another committed pointer", ex);
+    }
     if (updated != 1) {
       throw new AdmissionPointerVersionMismatchException(
           "Admission pointer changed before the requested version could be committed: id="

@@ -721,7 +721,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
                     true,
                     false,
                     "SHARED",
-                    "")));
+                    "ALLOW_NEW")));
     service =
         new DefaultDurableRemoteFollowupExecutionService(
             remoteFollowupRepository,

@@ -3,7 +3,6 @@ package net.firedevops.firemud.automationscripting.service.impl;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.eq;
-import static org.mockito.Mockito.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.same;
 import static org.mockito.Mockito.verify;
@@ -21,7 +20,13 @@ class AutomationQueuePublicationSupportTest {
   private final AutomationQueueService automationQueueService =
       Mockito.mock(AutomationQueueService.class);
   private final Logger logger = Mockito.mock(Logger.class);
-  private final ScriptWorkItem workItem = new ScriptWorkItem();
+  private final ScriptWorkItem workItem = workItemWithId(42L);
+
+  private static ScriptWorkItem workItemWithId(long id) {
+    ScriptWorkItem item = new ScriptWorkItem();
+    item.setId(id);
+    return item;
+  }
 
   @AfterEach
   void clearSynchronization() {
@@ -70,7 +75,7 @@ class AutomationQueuePublicationSupportTest {
         .warn(
             eq(
                 "Automation queue pointer publication failed for work item {}; durable pending state remains rebuildable"),
-            isNull(),
+            eq(42L),
             same(failure));
   }
 

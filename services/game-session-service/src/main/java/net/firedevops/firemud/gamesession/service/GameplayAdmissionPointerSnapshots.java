@@ -197,6 +197,11 @@ public final class GameplayAdmissionPointerSnapshots {
     return hasCompleteRoutingBundle(pointer) ? Optional.of(pointer) : Optional.empty();
   }
 
+  /**
+   * Matches a runtime target using the scope from its singular authoritative pointer. Callers
+   * without a separate scope claim should use this overload; it does not validate a caller-supplied
+   * playable-state scope.
+   */
   public static boolean matchesCurrentRuntimeTarget(
       List<GameplayAdmissionPointerSnapshot> pointers,
       long tenantId,

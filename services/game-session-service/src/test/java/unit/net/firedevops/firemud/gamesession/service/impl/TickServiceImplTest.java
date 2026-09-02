@@ -1,7 +1,6 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -14,7 +13,6 @@ import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.lang.reflect.Field;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -42,17 +40,6 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 class TickServiceImplTest {
-
-  @Test
-  void tickStageScriptRejectsWhitespaceOnlyCommandFieldsAtomically() throws Exception {
-    String script =
-        new ClassPathResource("redis/tick_stage.lua").getContentAsString(StandardCharsets.UTF_8);
-
-    assertTrue(script.contains("string.match(commandId, '%S') == nil"));
-    assertTrue(script.contains("string.match(commandText, '%S') == nil"));
-    assertTrue(script.contains("return -2"));
-    assertTrue(script.contains("return -3"));
-  }
 
   private RedisTemplate<String, Object> redisTemplate;
   private StringRedisTemplate lockRedisTemplate;

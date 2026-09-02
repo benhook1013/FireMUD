@@ -274,14 +274,12 @@ public class ScriptGameplayCommandHandoffServiceImpl
     rolloutProjectionService.refreshForWorkItem(workItem);
 
     EnqueueAutomationCommandIfAbsentResponse response =
-        requiresRemoteHandoff(workItem, command)
+        remoteHandoff
             ? null
             : gameSessionClient.enqueueAutomationCommandIfAbsent(
                 toRequest(workItem, command, dispatchId));
     HandoffResult result;
-    if (response != null) {
-      result = localHandoffResult(response);
-    } else {
+    if (remoteHandoff) {
       ScopeValidationResult scopeValidation = validateRemoteHandoffScope(workItem, command);
       if (scopeValidation != null) {
         result =
@@ -299,6 +297,18 @@ public class ScriptGameplayCommandHandoffServiceImpl
                 toRemoteScheduleRequest(workItem, command, dispatchId));
         result = remoteHandoffResult(remoteResponse);
       }
+    } else if (response == null) {
+      result =
+          new HandoffResult(
+              false,
+              ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
+              "",
+              "",
+              "",
+              ScriptHandoffOutcomeSupport.ERROR_REMOTE_RESPONSE_INVALID,
+              "local owner response was null");
+    } else {
+      result = localHandoffResult(response);
     }
     applyOutcome(workItem, command, dispatchId, result, now);
     return result;
@@ -322,13 +332,16 @@ public class ScriptGameplayCommandHandoffServiceImpl
   private static HandoffResult localHandoffResult(
       EnqueueAutomationCommandIfAbsentResponse response) {
     if (!response.getAccepted()) {
+      String errorCode = response.hasError() ? normalize(response.getError().getCode()) : "";
       return new HandoffResult(
           false,
           response.getAdmissionOutcome(),
           response.getCommandId(),
           "",
           "",
-          response.hasError() ? response.getError().getCode() : "");
+          errorCode.isBlank()
+              ? ScriptHandoffOutcomeSupport.ERROR_REMOTE_RESPONSE_INVALID
+              : errorCode);
     }
     String admissionOutcome = normalize(response.getAdmissionOutcome());
     boolean hasNonBlankErrorMetadata =
@@ -352,16 +365,29 @@ public class ScriptGameplayCommandHandoffServiceImpl
   }
 
   private static HandoffResult remoteHandoffResult(ScheduleRemoteFollowupResponse remoteResponse) {
+    if (remoteResponse == null) {
+      return new HandoffResult(
+          false,
+          ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
+          "",
+          "",
+          "",
+          ScriptHandoffOutcomeSupport.ERROR_REMOTE_RESPONSE_INVALID,
+          "remote owner response was null");
+    }
     String remoteCoordinatorId = remoteResponse.getCoordinatorId();
     String remoteFollowupId = remoteResponse.getFollowupId();
     if (remoteResponse.hasError()) {
+      String errorCode = normalize(remoteResponse.getError().getCode());
       return new HandoffResult(
           false,
           ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
           "",
           remoteCoordinatorId,
           remoteFollowupId,
-          remoteResponse.getError().getCode());
+          errorCode.isBlank()
+              ? ScriptHandoffOutcomeSupport.ERROR_REMOTE_RESPONSE_INVALID
+              : errorCode);
     }
     boolean hasDurableIds =
         remoteCoordinatorId != null
