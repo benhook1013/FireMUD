@@ -294,16 +294,42 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
 
   @Override
   public synchronized void close() {
-    clearSyntheticAdmissionPointerState(jdbc());
-    gameSession.close();
-    gameLogic.close();
-    if (socialStub != null) {
-      socialStub.close();
+    RuntimeException firstFailure = null;
+    try {
+      clearSyntheticAdmissionPointerState(jdbc());
+    } catch (RuntimeException failure) {
+      firstFailure = failure;
     }
-    entityStub.close();
-    worldStub.close();
-    gameDesignStub.close();
-    accountStub.close();
+    firstFailure = closeResource(() -> gameSession.close(), firstFailure);
+    firstFailure = closeResource(() -> gameLogic.close(), firstFailure);
+    firstFailure =
+        closeResource(
+            () -> {
+              if (socialStub != null) {
+                socialStub.close();
+              }
+            },
+            firstFailure);
+    firstFailure = closeResource(() -> entityStub.close(), firstFailure);
+    firstFailure = closeResource(() -> worldStub.close(), firstFailure);
+    firstFailure = closeResource(() -> gameDesignStub.close(), firstFailure);
+    firstFailure = closeResource(() -> accountStub.close(), firstFailure);
+    if (firstFailure != null) {
+      throw firstFailure;
+    }
+  }
+
+  private static RuntimeException closeResource(
+      Runnable closeAction, RuntimeException firstFailure) {
+    try {
+      closeAction.run();
+    } catch (RuntimeException failure) {
+      if (firstFailure == null) {
+        return failure;
+      }
+      firstFailure.addSuppressed(failure);
+    }
+    return firstFailure;
   }
 
   public static final class Builder {

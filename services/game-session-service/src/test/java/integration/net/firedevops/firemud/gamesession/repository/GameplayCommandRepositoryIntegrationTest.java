@@ -398,6 +398,7 @@ class GameplayCommandRepositoryIntegrationTest {
                   transactionTemplate.execute(
                       status -> {
                         dsl.execute("SET LOCAL lock_timeout = '100ms'");
+                        assertThat(dsl.fetchValue("SHOW lock_timeout")).isEqualTo("100ms");
                         return updateAdmissionPointer();
                       });
                   pointerLockInterlock.pointerMutationBlocked.countDown();
