@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.List;
+import net.firedevops.firemud.common.GlobalExceptionHandler;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
 import net.firedevops.firemud.common.security.JwtUtil;
@@ -20,13 +21,18 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(SagaDashboardController.class)
 @AutoConfigureMockMvc(addFilters = false)
-@Import({CommonSecurityAutoConfiguration.class, CommonSecurityServletAutoConfiguration.class})
+@Import({
+  CommonSecurityAutoConfiguration.class,
+  CommonSecurityServletAutoConfiguration.class,
+  GlobalExceptionHandler.class
+})
 @WithFiremudJwtTestProperties
 class SagaDashboardControllerTest {
 
@@ -105,6 +111,27 @@ class SagaDashboardControllerTest {
         .andExpect(jsonPath("$.error.message").value("id must be positive"));
 
     verifyNoInteractions(service);
+  }
+
+  @Test
+  void listStepsReturnsNotFoundForUnknownSagaInstance() throws Exception {
+    when(service.listSteps(404L))
+        .thenThrow(
+            new org.springframework.web.server.ResponseStatusException(
+                HttpStatus.NOT_FOUND, "Saga instance not found"));
+
+    mockMvc
+        .perform(
+            get("/sagas/404/steps")
+                .header(
+                    HttpHeaders.AUTHORIZATION,
+                    "Bearer "
+                        + jwtUtil.generateToken(
+                            "user",
+                            java.util.Map.of("globalRoles", java.util.List.of("platformAdmin")))))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.error.code").value("NOT_FOUND"))
+        .andExpect(jsonPath("$.error.message").value("Saga instance not found"));
   }
 
   @Test

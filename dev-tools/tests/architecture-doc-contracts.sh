@@ -1834,8 +1834,11 @@ require_contains(
 require_contains(
     "design/operations/deployments/production/recovery/README.md",
     [
-        "complete authoritative affected scope set from the durable PostgreSQL/runtime inventory",
-        "successful `APPLIED` or `ALREADY_APPLIED` outcome",
+        "not a current recovery authorization",
+        "does not yet provide a durable request-result acknowledgement",
+        "deployment-wide Automation containment only with explicit impact approval",
+        "complete affected-scope enumeration from the durable PostgreSQL/runtime inventory",
+        "distinct durable deployment/owner acknowledgement plus authoritative readback",
     ],
 )
 require_absent(

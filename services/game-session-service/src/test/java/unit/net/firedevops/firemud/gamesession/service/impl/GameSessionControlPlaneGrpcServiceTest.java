@@ -1494,6 +1494,54 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void listAdmissionPointersReturnsInternalForUnrelatedIllegalStateFailure() {
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(authorityService.listPointers())
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo World",
+                    "production",
+                    "Live Realm",
+                    1L,
+                    7L,
+                    3L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW")));
+    Mockito.when(authorityService.listPointerAudit(1L, "demo", "production"))
+        .thenThrow(new IllegalStateException("audit store failed"));
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        controlPlaneService(
+            Mockito.mock(GameInstanceRepository.class),
+            Mockito.mock(GameplayCommandRepository.class),
+            Mockito.mock(RuntimeRegionStatusRepository.class),
+            authorityService,
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry());
+
+    AtomicReference<ListAdmissionPointersResponse> responseRef = new AtomicReference<>();
+    service.listAdmissionPointers(
+        ListAdmissionPointersRequest.getDefaultInstance(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(ListAdmissionPointersResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("INTERNAL", responseRef.get().getError().getCode());
+    assertEquals(0, responseRef.get().getPointersCount());
+  }
+
+  @Test
   void listAdmissionPointerAuditReturnsEntriesForAdminCaller() {
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
@@ -1992,7 +2040,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     command.setRegionEpoch(4L);
 
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
-    Mockito.when(commandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-binding"))
+    Mockito.when(
+            commandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-binding"))
         .thenReturn(Optional.of(command));
 
     RemoteCommandCoordinatorRepository coordinatorRepository =
@@ -2082,6 +2131,88 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.verify(followupRepository, Mockito.never())
         .findByTenantIdAndFollowupId(1L, "followup-foreign");
     Mockito.verify(resultRepository, Mockito.never()).findLatestForCoordinator(foreignCoordinator);
+  }
+
+  @Test
+  void getGameplayCommandStatusRetainsRemoteIdsButHidesRemoteStateForIncompleteOriginScope() {
+    GameplayCommand command = new GameplayCommand();
+    command.setCommandId("cmd-incomplete-origin");
+    command.setTenantId(1L);
+    command.setGameInstanceId(7L);
+    command.setSessionId(41L);
+    command.setCommandName("LOOK");
+    command.setSanitizedCommandText("LOOK");
+    command.setExecutionOutcome("STAGED");
+    command.setGameplayResult("PENDING");
+    command.setRegionId("origin-region");
+    command.setRemoteCoordinatorId("coord-incomplete-origin");
+    command.setRemoteFollowupId("followup-incomplete-origin");
+
+    GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
+    Mockito.when(
+            commandRepository.findByTenantIdAndGameInstanceIdAndCommandId(
+                1L, 7L, "cmd-incomplete-origin"))
+        .thenReturn(Optional.of(command));
+    RemoteCommandCoordinatorRepository coordinatorRepository =
+        Mockito.mock(RemoteCommandCoordinatorRepository.class);
+    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    coordinator.setTenantId(1L);
+    coordinator.setCommandId("cmd-incomplete-origin");
+    coordinator.setCoordinatorId("coord-incomplete-origin");
+    coordinator.setFollowupId("followup-incomplete-origin");
+    coordinator.setOriginGameInstanceId(7L);
+    coordinator.setOriginRegionId("origin-region");
+    coordinator.setOriginRegionEpoch(4L);
+    coordinator.setTargetGameInstanceId(9L);
+    coordinator.setTargetRegionId("target-region");
+    coordinator.setTargetRegionEpoch(8L);
+    coordinator.setState("REMOTE_APPLIED");
+    Mockito.when(
+            coordinatorRepository.findByTenantIdAndCoordinatorId(1L, "coord-incomplete-origin"))
+        .thenReturn(Optional.of(coordinator));
+    RemoteFollowupRepository followupRepository = Mockito.mock(RemoteFollowupRepository.class);
+    RemoteFollowupResultRepository resultRepository =
+        Mockito.mock(RemoteFollowupResultRepository.class);
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        controlPlaneService(
+            Mockito.mock(GameInstanceRepository.class),
+            commandRepository,
+            Mockito.mock(RuntimeRegionStatusRepository.class),
+            followupRepository,
+            coordinatorRepository,
+            resultRepository,
+            null,
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            gameDesignClient(),
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry(),
+            new GameSessionProperties());
+
+    AtomicReference<GetGameplayCommandStatusResponse> responseRef = new AtomicReference<>();
+    service.getGameplayCommandStatus(
+        GetGameplayCommandStatusRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .setCommandId("cmd-incomplete-origin")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetGameplayCommandStatusResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertNotNull(responseRef.get());
+    assertEquals(
+        "coord-incomplete-origin", responseRef.get().getCommand().getRemoteCoordinatorId());
+    assertEquals(
+        "followup-incomplete-origin", responseRef.get().getCommand().getRemoteFollowupId());
+    assertEquals("", responseRef.get().getCommand().getRemoteState());
+    assertEquals("", responseRef.get().getCommand().getRemoteResultOutcome());
+    Mockito.verifyNoInteractions(followupRepository, resultRepository);
   }
 
   @Test
@@ -4752,6 +4883,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     coordinator.setTenantId(1L);
     coordinator.setCoordinatorId("coord-1");
     coordinator.setFollowupId("rf-1");
+    coordinator.setCommandId("cmd-1");
     coordinator.setOriginGameInstanceId(7L);
     coordinator.setOriginRegionId("region-a");
     coordinator.setOriginRegionEpoch(3L);
@@ -4939,6 +5071,93 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("", responseRef.get().getResult().getCurrentTargetRuntimeRealmSlug());
     assertEquals(0L, responseRef.get().getResult().getCurrentTargetRuntimePointerVersion());
     assertTrue(responseRef.get().getResult().getIsTargetRoutingBundleStale());
+  }
+
+  @Test
+  void getRemoteFollowupResultHidesRelatedStateForIncompleteRuntimeScope() {
+    RemoteFollowupResult result = new RemoteFollowupResult();
+    result.setResultId("rr-incomplete");
+    result.setTenantId(1L);
+    result.setCoordinatorId("coord-incomplete");
+    result.setFollowupId("rf-incomplete");
+    result.setOriginGameInstanceId(7L);
+    result.setOriginRegionId("");
+    result.setOriginRegionEpoch(0L);
+    result.setTargetGameInstanceId(9L);
+    result.setTargetRegionId("");
+    result.setTargetRegionEpoch(0L);
+    result.setOutcome("REMOTE_APPLIED");
+    RemoteFollowupResultRepository resultRepository =
+        Mockito.mock(RemoteFollowupResultRepository.class);
+    Mockito.when(resultRepository.findByTenantIdAndResultId(1L, "rr-incomplete"))
+        .thenReturn(Optional.of(result));
+
+    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    coordinator.setTenantId(1L);
+    coordinator.setCoordinatorId("coord-incomplete");
+    coordinator.setFollowupId("rf-incomplete");
+    coordinator.setOriginGameInstanceId(7L);
+    coordinator.setOriginRegionId("");
+    coordinator.setOriginRegionEpoch(0L);
+    coordinator.setTargetGameInstanceId(9L);
+    coordinator.setTargetRegionId("");
+    coordinator.setTargetRegionEpoch(0L);
+    coordinator.setOriginDeadlineRegionEpoch(17L);
+    coordinator.setOriginDeadlineTickId(88L);
+    coordinator.setLateResultPolicy("late_result_safe_to_ignore");
+    RemoteCommandCoordinatorRepository coordinatorRepository =
+        Mockito.mock(RemoteCommandCoordinatorRepository.class);
+    Mockito.when(coordinatorRepository.findByTenantIdAndCoordinatorId(1L, "coord-incomplete"))
+        .thenReturn(Optional.of(coordinator));
+
+    RemoteFollowup followup = new RemoteFollowup();
+    followup.setTenantId(1L);
+    followup.setFollowupId("rf-incomplete");
+    followup.setOriginGameInstanceId(7L);
+    followup.setOriginRegionId("");
+    followup.setOriginRegionEpoch(0L);
+    followup.setTargetGameInstanceId(9L);
+    followup.setTargetRegionId("");
+    followup.setTargetRegionEpoch(0L);
+    followup.setTargetEntityId("npc-incomplete");
+    followup.setClaimTargetAggregate("entity:npc-incomplete");
+    RemoteFollowupRepository followupRepository = Mockito.mock(RemoteFollowupRepository.class);
+    Mockito.when(followupRepository.findByTenantIdAndFollowupId(1L, "rf-incomplete"))
+        .thenReturn(Optional.of(followup));
+    GameplayCommandRepository gameplayCommandRepository =
+        Mockito.mock(GameplayCommandRepository.class);
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        remoteControlPlaneService(
+            followupRepository,
+            coordinatorRepository,
+            resultRepository,
+            gameplayCommandRepository,
+            null,
+            null,
+            gameDesignClient());
+
+    AtomicReference<GetRemoteFollowupResultResponse> responseRef = new AtomicReference<>();
+    service.getRemoteFollowupResult(
+        GetRemoteFollowupResultRequest.newBuilder()
+            .setTenantId("1")
+            .setResultId("rr-incomplete")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetRemoteFollowupResultResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("coord-incomplete", responseRef.get().getResult().getCoordinatorId());
+    assertEquals("rf-incomplete", responseRef.get().getResult().getFollowupId());
+    assertEquals(0L, responseRef.get().getResult().getOriginDeadlineRegionEpoch());
+    assertEquals(0L, responseRef.get().getResult().getOriginDeadlineTickId());
+    assertEquals("", responseRef.get().getResult().getLateResultPolicy());
+    assertEquals("", responseRef.get().getResult().getTargetEntityId());
+    assertEquals("", responseRef.get().getResult().getClaimTargetAggregate());
+    Mockito.verifyNoInteractions(gameplayCommandRepository);
   }
 
   @Test
@@ -5583,6 +5802,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     coordinator.setTenantId(1L);
     coordinator.setCoordinatorId("coord-1");
     coordinator.setFollowupId("rf-1");
+    coordinator.setCommandId("cmd-1");
     coordinator.setOriginGameInstanceId(7L);
     coordinator.setOriginRegionId("region-a");
     coordinator.setOriginRegionEpoch(3L);

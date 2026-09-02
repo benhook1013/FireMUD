@@ -142,7 +142,7 @@ leaves a version incomplete or unusable:
 - Preferred recovery is to:
   - Investigate and fix the underlying issue (for example missing assets or
     permission errors).
-  - **Target-state only:** Trigger a documented “retry publish” or “repair version” workflow in the Game Design or Logging & Admin Service so the Saga re-runs the asset export step and transitions the version back to Draft/Published as appropriate. No such retry-publish or repair-version operation is currently exposed by Game Design or Logging & Admin; the current first slice writes a plain filename-to-URL
+  - **Target-state only:** Trigger a documented “retry publish” or “repair version” workflow in the Game Design or Logging & Admin Service so the Temporal-coordinated publication workflow re-runs the asset export step and transitions the version back to Draft/Published as appropriate. No such retry-publish or repair-version operation is currently exposed by Game Design or Logging & Admin; the current first slice writes a plain filename-to-URL
     `manifest.json` map without a `schemaVersion` field. The target manifest
     contract adds an explicit schema version; until that target is implemented,
     operators must not claim current schema-versioned manifest discovery. For

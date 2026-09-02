@@ -170,6 +170,20 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
   }
 
   @Test
+  void controlPlaneListJoinsRequireExactCurrentOriginRegionScope() {
+    Instant observedAt = Instant.parse("2026-06-25T12:00:00Z");
+    coordinatorRepository.save(remoteCoordinator(observedAt));
+    followupRepository.save(remoteFollowup(observedAt));
+    resultRepository.save(
+        remoteResult("result-current-origin-scope", observedAt, "REMOTE_APPLIED", "EXACT"));
+    insertRuntimeRegionStatus(1L, 7L, "region-sibling", 99L);
+
+    assertThat(findCoordinatorsByCurrentOrigin("region-sibling", 99L, 7L)).isEmpty();
+    assertThat(findFollowupsByCurrentOrigin("region-sibling", 99L, 7L)).isEmpty();
+    assertThat(findResultsByCurrentOrigin("region-sibling", 99L, 7L)).isEmpty();
+  }
+
+  @Test
   void controlPlaneQueriesRequireCompleteOriginScope() {
     Instant observedAt = Instant.parse("2026-06-25T12:00:00Z");
     RemoteCommandCoordinator exactCoordinator = remoteCoordinator(observedAt);
@@ -225,7 +239,22 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
   private java.util.List<RemoteCommandCoordinator> findCoordinatorsByTargetOutcome(
       String targetCommandExecutionOutcome, String followupStatus) {
     return findCoordinatorsByTargetOutcome(
-        targetCommandExecutionOutcome, followupStatus, "", 0L, null);
+        targetCommandExecutionOutcome, followupStatus, "", 0L, null, "", 0L, null);
+  }
+
+  private java.util.List<RemoteCommandCoordinator> findCoordinatorsByCurrentOrigin(
+      String currentOriginRuntimeRegionId,
+      long currentOriginRuntimeRegionEpoch,
+      Long currentOriginRuntimeGameInstanceId) {
+    return findCoordinatorsByTargetOutcome(
+        "",
+        "",
+        currentOriginRuntimeRegionId,
+        currentOriginRuntimeRegionEpoch,
+        currentOriginRuntimeGameInstanceId,
+        "",
+        0L,
+        null);
   }
 
   private java.util.List<RemoteCommandCoordinator> findCoordinatorsByCurrentTarget(
@@ -235,6 +264,9 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
     return findCoordinatorsByTargetOutcome(
         "",
         "",
+        "",
+        0L,
+        null,
         currentTargetRuntimeRegionId,
         currentTargetRuntimeRegionEpoch,
         currentTargetRuntimeGameInstanceId);
@@ -243,6 +275,9 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
   private java.util.List<RemoteCommandCoordinator> findCoordinatorsByTargetOutcome(
       String targetCommandExecutionOutcome,
       String followupStatus,
+      String currentOriginRuntimeRegionId,
+      long currentOriginRuntimeRegionEpoch,
+      Long currentOriginRuntimeGameInstanceId,
       String currentTargetRuntimeRegionId,
       long currentTargetRuntimeRegionEpoch,
       Long currentTargetRuntimeGameInstanceId) {
@@ -254,9 +289,9 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
         null, // targetGameInstanceId
         "", // targetRegionId
         0L, // targetRegionEpoch
-        "", // currentOriginRuntimeRegionId
-        0L, // currentOriginRuntimeRegionEpoch
-        null, // currentOriginRuntimeGameInstanceId
+        currentOriginRuntimeRegionId, // currentOriginRuntimeRegionId
+        currentOriginRuntimeRegionEpoch, // currentOriginRuntimeRegionEpoch
+        currentOriginRuntimeGameInstanceId, // currentOriginRuntimeGameInstanceId
         currentTargetRuntimeRegionId, // currentTargetRuntimeRegionId
         currentTargetRuntimeRegionEpoch, // currentTargetRuntimeRegionEpoch
         currentTargetRuntimeGameInstanceId, // currentTargetRuntimeGameInstanceId
@@ -319,6 +354,9 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
         0L,
         0L,
         "",
+        "",
+        0L,
+        null,
         currentTargetRuntimeRegionId,
         currentTargetRuntimeRegionEpoch,
         currentTargetRuntimeGameInstanceId);
@@ -336,6 +374,26 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
         lateResultPolicy,
         "",
         0L,
+        null,
+        "",
+        0L,
+        null);
+  }
+
+  private java.util.List<RemoteFollowup> findFollowupsByCurrentOrigin(
+      String currentOriginRuntimeRegionId,
+      long currentOriginRuntimeRegionEpoch,
+      Long currentOriginRuntimeGameInstanceId) {
+    return findFollowupsByTargetOutcome(
+        "",
+        0L,
+        0L,
+        "",
+        currentOriginRuntimeRegionId,
+        currentOriginRuntimeRegionEpoch,
+        currentOriginRuntimeGameInstanceId,
+        "",
+        0L,
         null);
   }
 
@@ -344,6 +402,9 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
       long originDeadlineRegionEpoch,
       long originDeadlineTickId,
       String lateResultPolicy,
+      String currentOriginRuntimeRegionId,
+      long currentOriginRuntimeRegionEpoch,
+      Long currentOriginRuntimeGameInstanceId,
       String currentTargetRuntimeRegionId,
       long currentTargetRuntimeRegionEpoch,
       Long currentTargetRuntimeGameInstanceId) {
@@ -356,9 +417,9 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
         0L, // originRegionEpoch
         null, // targetGameInstanceId
         0L, // targetRegionEpoch
-        "", // currentOriginRuntimeRegionId
-        0L, // currentOriginRuntimeRegionEpoch
-        null, // currentOriginRuntimeGameInstanceId
+        currentOriginRuntimeRegionId, // currentOriginRuntimeRegionId
+        currentOriginRuntimeRegionEpoch, // currentOriginRuntimeRegionEpoch
+        currentOriginRuntimeGameInstanceId, // currentOriginRuntimeGameInstanceId
         currentTargetRuntimeRegionId, // currentTargetRuntimeRegionId
         currentTargetRuntimeRegionEpoch, // currentTargetRuntimeRegionEpoch
         currentTargetRuntimeGameInstanceId, // currentTargetRuntimeGameInstanceId
@@ -408,7 +469,23 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
   private java.util.List<RemoteFollowupResult> findResultsByCommandOutcome(
       String resultCommandExecutionOutcome, String effectKey, String lateResultPolicy) {
     return findResultsByCommandOutcome(
-        resultCommandExecutionOutcome, effectKey, lateResultPolicy, "", 0L, null);
+        resultCommandExecutionOutcome, effectKey, lateResultPolicy, "", 0L, null, "", 0L, null);
+  }
+
+  private java.util.List<RemoteFollowupResult> findResultsByCurrentOrigin(
+      String currentOriginRuntimeRegionId,
+      long currentOriginRuntimeRegionEpoch,
+      Long currentOriginRuntimeGameInstanceId) {
+    return findResultsByCommandOutcome(
+        "",
+        "",
+        "",
+        "",
+        0L,
+        null,
+        currentOriginRuntimeRegionId,
+        currentOriginRuntimeRegionEpoch,
+        currentOriginRuntimeGameInstanceId);
   }
 
   private java.util.List<RemoteFollowupResult> findResultsByCurrentTarget(
@@ -419,6 +496,9 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
         "",
         "",
         "",
+        "",
+        0L,
+        null,
         currentTargetRuntimeRegionId,
         currentTargetRuntimeRegionEpoch,
         currentTargetRuntimeGameInstanceId);
@@ -428,6 +508,9 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
       String resultCommandExecutionOutcome,
       String effectKey,
       String lateResultPolicy,
+      String currentOriginRuntimeRegionId,
+      long currentOriginRuntimeRegionEpoch,
+      Long currentOriginRuntimeGameInstanceId,
       String currentTargetRuntimeRegionId,
       long currentTargetRuntimeRegionEpoch,
       Long currentTargetRuntimeGameInstanceId) {
@@ -441,9 +524,9 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
         null, // targetGameInstanceId
         "", // targetRegionId
         0L, // targetRegionEpoch
-        "", // currentOriginRuntimeRegionId
-        0L, // currentOriginRuntimeRegionEpoch
-        null, // currentOriginRuntimeGameInstanceId
+        currentOriginRuntimeRegionId, // currentOriginRuntimeRegionId
+        currentOriginRuntimeRegionEpoch, // currentOriginRuntimeRegionEpoch
+        currentOriginRuntimeGameInstanceId, // currentOriginRuntimeGameInstanceId
         currentTargetRuntimeRegionId, // currentTargetRuntimeRegionId
         currentTargetRuntimeRegionEpoch, // currentTargetRuntimeRegionEpoch
         currentTargetRuntimeGameInstanceId, // currentTargetRuntimeGameInstanceId

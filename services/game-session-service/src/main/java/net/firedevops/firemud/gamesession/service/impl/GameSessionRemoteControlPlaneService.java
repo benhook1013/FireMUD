@@ -233,8 +233,7 @@ final class GameSessionRemoteControlPlaneService {
             blankToEmpty(request.getLatestResultOutcome()),
             blankToEmpty(request.getLatestResultErrorCode()),
             PageRequest.of(0, boundedRemoteListLimit(request.getLimit())));
-    Map<String, RemoteFollowup> followupsById =
-        followupMap(tenantId, coordinators);
+    Map<String, RemoteFollowup> followupsById = followupMap(tenantId, coordinators);
     Map<String, RemoteFollowupResult> latestResultsByCoordinatorId =
         latestResultMap(tenantId, coordinators);
     Map<String, GameplayCommand> targetCommandsByFollowupId =
@@ -480,10 +479,8 @@ final class GameSessionRemoteControlPlaneService {
             blankToEmpty(request.getAutomationDispatchId()),
             blankToEmpty(request.getCommandId()),
             PageRequest.of(0, boundedRemoteListLimit(request.getLimit())));
-    Map<String, RemoteCommandCoordinator> coordinatorsById =
-        coordinatorMap(tenantId, results);
-    Map<String, RemoteFollowup> followupsById =
-        followupMapForResults(tenantId, results);
+    Map<String, RemoteCommandCoordinator> coordinatorsById = coordinatorMap(tenantId, results);
+    Map<String, RemoteFollowup> followupsById = followupMapForResults(tenantId, results);
     Map<String, GameplayCommand> targetCommandsByFollowupId =
         targetCommandMap(tenantId, followupsById);
     Map<RuntimeBoundaryKey, Optional<CurrentRuntimeBoundary>> runtimeBoundaryCache =
@@ -501,9 +498,7 @@ final class GameSessionRemoteControlPlaneService {
             followup = null;
           }
           GameplayCommand targetCommand =
-              followup == null
-                  ? null
-                  : targetCommandsByFollowupId.get(followup.getFollowupId());
+              followup == null ? null : targetCommandsByFollowupId.get(followup.getFollowupId());
           response.addResults(
               toRemoteFollowupResultEntry(
                   result, coordinator, followup, targetCommand, runtimeBoundaryCache));
@@ -1845,7 +1840,13 @@ final class GameSessionRemoteControlPlaneService {
 
   private static boolean matchesTargetScope(
       GameplayCommand candidate, long tenantId, RemoteFollowup followup) {
-    return Objects.equals(candidate.getTenantId(), tenantId)
+    return hasCompleteRuntimeScope(
+            candidate.getGameInstanceId(), candidate.getRegionId(), candidate.getRegionEpoch())
+        && hasCompleteRuntimeScope(
+            followup.getTargetGameInstanceId(),
+            followup.getTargetRegionId(),
+            followup.getTargetRegionEpoch())
+        && Objects.equals(candidate.getTenantId(), tenantId)
         && Objects.equals(candidate.getGameInstanceId(), followup.getTargetGameInstanceId())
         && Objects.equals(candidate.getRegionId(), followup.getTargetRegionId())
         && Objects.equals(candidate.getRegionEpoch(), followup.getTargetRegionEpoch());
@@ -1855,14 +1856,29 @@ final class GameSessionRemoteControlPlaneService {
       RemoteFollowup followup, RemoteCommandCoordinator coordinator) {
     return followup != null
         && coordinator != null
+        && hasCompleteRuntimeScope(
+            followup.getOriginGameInstanceId(),
+            followup.getOriginRegionId(),
+            followup.getOriginRegionEpoch())
+        && hasCompleteRuntimeScope(
+            followup.getTargetGameInstanceId(),
+            followup.getTargetRegionId(),
+            followup.getTargetRegionEpoch())
+        && hasCompleteRuntimeScope(
+            coordinator.getOriginGameInstanceId(),
+            coordinator.getOriginRegionId(),
+            coordinator.getOriginRegionEpoch())
+        && hasCompleteRuntimeScope(
+            coordinator.getTargetGameInstanceId(),
+            coordinator.getTargetRegionId(),
+            coordinator.getTargetRegionEpoch())
         && Objects.equals(followup.getTenantId(), coordinator.getTenantId())
         && Objects.equals(followup.getFollowupId(), coordinator.getFollowupId())
-        && Objects.equals(
-            followup.getOriginGameInstanceId(), coordinator.getOriginGameInstanceId())
+        && matchesOptionalIdentity(followup.getCommandId(), coordinator.getCommandId())
+        && Objects.equals(followup.getOriginGameInstanceId(), coordinator.getOriginGameInstanceId())
         && Objects.equals(followup.getOriginRegionId(), coordinator.getOriginRegionId())
         && followup.getOriginRegionEpoch() == coordinator.getOriginRegionEpoch()
-        && Objects.equals(
-            followup.getTargetGameInstanceId(), coordinator.getTargetGameInstanceId())
+        && Objects.equals(followup.getTargetGameInstanceId(), coordinator.getTargetGameInstanceId())
         && Objects.equals(followup.getTargetRegionId(), coordinator.getTargetRegionId())
         && followup.getTargetRegionEpoch() == coordinator.getTargetRegionEpoch();
   }
@@ -1871,15 +1887,29 @@ final class GameSessionRemoteControlPlaneService {
       RemoteFollowupResult result, RemoteCommandCoordinator coordinator) {
     return result != null
         && coordinator != null
+        && hasCompleteRuntimeScope(
+            result.getOriginGameInstanceId(),
+            result.getOriginRegionId(),
+            result.getOriginRegionEpoch())
+        && hasCompleteRuntimeScope(
+            result.getTargetGameInstanceId(),
+            result.getTargetRegionId(),
+            result.getTargetRegionEpoch())
+        && hasCompleteRuntimeScope(
+            coordinator.getOriginGameInstanceId(),
+            coordinator.getOriginRegionId(),
+            coordinator.getOriginRegionEpoch())
+        && hasCompleteRuntimeScope(
+            coordinator.getTargetGameInstanceId(),
+            coordinator.getTargetRegionId(),
+            coordinator.getTargetRegionEpoch())
         && Objects.equals(result.getTenantId(), coordinator.getTenantId())
         && Objects.equals(result.getCoordinatorId(), coordinator.getCoordinatorId())
         && Objects.equals(result.getFollowupId(), coordinator.getFollowupId())
-        && Objects.equals(
-            result.getOriginGameInstanceId(), coordinator.getOriginGameInstanceId())
+        && Objects.equals(result.getOriginGameInstanceId(), coordinator.getOriginGameInstanceId())
         && Objects.equals(result.getOriginRegionId(), coordinator.getOriginRegionId())
         && result.getOriginRegionEpoch() == coordinator.getOriginRegionEpoch()
-        && Objects.equals(
-            result.getTargetGameInstanceId(), coordinator.getTargetGameInstanceId())
+        && Objects.equals(result.getTargetGameInstanceId(), coordinator.getTargetGameInstanceId())
         && Objects.equals(result.getTargetRegionId(), coordinator.getTargetRegionId())
         && result.getTargetRegionEpoch() == coordinator.getTargetRegionEpoch();
   }
@@ -1888,6 +1918,22 @@ final class GameSessionRemoteControlPlaneService {
       RemoteFollowup followup, RemoteFollowupResult result) {
     return followup != null
         && result != null
+        && hasCompleteRuntimeScope(
+            followup.getOriginGameInstanceId(),
+            followup.getOriginRegionId(),
+            followup.getOriginRegionEpoch())
+        && hasCompleteRuntimeScope(
+            followup.getTargetGameInstanceId(),
+            followup.getTargetRegionId(),
+            followup.getTargetRegionEpoch())
+        && hasCompleteRuntimeScope(
+            result.getOriginGameInstanceId(),
+            result.getOriginRegionId(),
+            result.getOriginRegionEpoch())
+        && hasCompleteRuntimeScope(
+            result.getTargetGameInstanceId(),
+            result.getTargetRegionId(),
+            result.getTargetRegionEpoch())
         && Objects.equals(followup.getTenantId(), result.getTenantId())
         && Objects.equals(followup.getFollowupId(), result.getFollowupId())
         && Objects.equals(followup.getOriginGameInstanceId(), result.getOriginGameInstanceId())
@@ -1930,8 +1976,7 @@ final class GameSessionRemoteControlPlaneService {
     return remoteFollowupRepository.findByTenantIdAndFollowupIdIn(tenantId, distinctIds).stream()
         .filter(
             followup ->
-                results.stream()
-                    .anyMatch(result -> matchesCoordinatorScope(followup, result)))
+                results.stream().anyMatch(result -> matchesCoordinatorScope(followup, result)))
         .collect(Collectors.toMap(RemoteFollowup::getFollowupId, Function.identity()));
   }
 
@@ -1970,8 +2015,7 @@ final class GameSessionRemoteControlPlaneService {
         .stream()
         .filter(
             coordinator ->
-                results.stream()
-                    .anyMatch(result -> matchesCoordinatorScope(result, coordinator)))
+                results.stream().anyMatch(result -> matchesCoordinatorScope(result, coordinator)))
         .collect(Collectors.toMap(RemoteCommandCoordinator::getCoordinatorId, Function.identity()));
   }
 
@@ -1980,9 +2024,7 @@ final class GameSessionRemoteControlPlaneService {
     if (remoteFollowupResultRepository == null || coordinators == null || coordinators.isEmpty()) {
       return Map.of();
     }
-    return remoteFollowupResultRepository
-        .findForCoordinatorScopes(coordinators)
-        .stream()
+    return remoteFollowupResultRepository.findForCoordinatorScopes(coordinators).stream()
         .filter(
             result ->
                 coordinators.stream()
@@ -2016,6 +2058,20 @@ final class GameSessionRemoteControlPlaneService {
                 GameplayCommand::getRemoteFollowupId,
                 Function.identity(),
                 (existing, ignored) -> existing));
+  }
+
+  private static boolean hasCompleteRuntimeScope(
+      Long gameInstanceId, String regionId, Long regionEpoch) {
+    return gameInstanceId != null
+        && gameInstanceId > 0
+        && regionId != null
+        && !regionId.isBlank()
+        && regionEpoch != null
+        && regionEpoch > 0;
+  }
+
+  private static boolean matchesOptionalIdentity(String expected, String actual) {
+    return expected == null || expected.isBlank() || Objects.equals(expected, actual);
   }
 
   private static Map<String, RemoteFollowup> followupsById(List<RemoteFollowup> followups) {

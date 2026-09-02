@@ -44,7 +44,7 @@ final class GameSessionAdmissionPointerControlPlaneService {
                       gameplayAdmissionPointerAuthorityService.listPointerAudit(
                           pointer.tenantId(), pointer.worldSlug(), pointer.realmSlug());
                   if (audit.isEmpty()) {
-                    throw new IllegalStateException(
+                    throw new AdmissionPointerAuditUnavailableException(
                         "Admission pointer audit unavailable for current pointer "
                             + pointer.tenantId()
                             + ":"

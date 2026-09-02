@@ -280,11 +280,13 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       List<RemoteCommandCoordinator> coordinators, long currentOriginRegionEpoch, Instant now) {
     int reconciled = 0;
     for (RemoteCommandCoordinator coordinator : coordinators) {
-      if (coordinator.getOriginRegionEpoch() != currentOriginRegionEpoch) {
+      if (!hasCompleteRuntimeScope(coordinator)) {
         continue;
       }
-      RemoteFollowupResult result =
-          latestResult(coordinator).orElse(null);
+      if (!Objects.equals(coordinator.getOriginRegionEpoch(), currentOriginRegionEpoch)) {
+        continue;
+      }
+      RemoteFollowupResult result = latestResult(coordinator).orElse(null);
       if (result == null) {
         continue;
       }
@@ -310,8 +312,10 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
   private int reconcileLateResults(List<RemoteCommandCoordinator> coordinators, Instant now) {
     int reconciled = 0;
     for (RemoteCommandCoordinator coordinator : coordinators) {
-      RemoteFollowupResult result =
-          latestResult(coordinator).orElse(null);
+      if (!hasCompleteRuntimeScope(coordinator)) {
+        continue;
+      }
+      RemoteFollowupResult result = latestResult(coordinator).orElse(null);
       if (result == null) {
         continue;
       }
@@ -395,6 +399,28 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         && Objects.equals(command.getRegionEpoch(), targetRegionEpoch);
   }
 
+  private static boolean hasCompleteRuntimeScope(RemoteCommandCoordinator coordinator) {
+    return coordinator != null
+        && hasCompleteRuntimeScope(
+            coordinator.getOriginGameInstanceId(),
+            coordinator.getOriginRegionId(),
+            coordinator.getOriginRegionEpoch())
+        && hasCompleteRuntimeScope(
+            coordinator.getTargetGameInstanceId(),
+            coordinator.getTargetRegionId(),
+            coordinator.getTargetRegionEpoch());
+  }
+
+  private static boolean hasCompleteRuntimeScope(
+      Long gameInstanceId, String regionId, Long regionEpoch) {
+    return gameInstanceId != null
+        && gameInstanceId > 0
+        && regionId != null
+        && !regionId.isBlank()
+        && regionEpoch != null
+        && regionEpoch > 0;
+  }
+
   private static boolean matchesCoordinatorScope(
       RemoteFollowupResult result, RemoteCommandCoordinator coordinator) {
     return result != null
@@ -402,21 +428,23 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         && Objects.equals(result.getTenantId(), coordinator.getTenantId())
         && Objects.equals(result.getCoordinatorId(), coordinator.getCoordinatorId())
         && Objects.equals(result.getFollowupId(), coordinator.getFollowupId())
-        && Objects.equals(
-            result.getOriginGameInstanceId(), coordinator.getOriginGameInstanceId())
+        && Objects.equals(result.getOriginGameInstanceId(), coordinator.getOriginGameInstanceId())
         && Objects.equals(result.getOriginRegionId(), coordinator.getOriginRegionId())
-        && result.getOriginRegionEpoch() == coordinator.getOriginRegionEpoch()
-        && Objects.equals(
-            result.getTargetGameInstanceId(), coordinator.getTargetGameInstanceId())
+        && Objects.equals(result.getOriginRegionEpoch(), coordinator.getOriginRegionEpoch())
+        && Objects.equals(result.getTargetGameInstanceId(), coordinator.getTargetGameInstanceId())
         && Objects.equals(result.getTargetRegionId(), coordinator.getTargetRegionId())
-        && result.getTargetRegionEpoch() == coordinator.getTargetRegionEpoch();
+        && Objects.equals(result.getTargetRegionEpoch(), coordinator.getTargetRegionEpoch());
   }
 
   private static boolean deadlineReached(
       RemoteCommandCoordinator coordinator, long currentOriginRegionEpoch, long currentTickId) {
-    return currentOriginRegionEpoch > coordinator.getOriginDeadlineRegionEpoch()
-        || (currentOriginRegionEpoch == coordinator.getOriginDeadlineRegionEpoch()
-            && currentTickId >= coordinator.getOriginDeadlineTickId());
+    Long deadlineRegionEpoch = coordinator.getOriginDeadlineRegionEpoch();
+    Long deadlineTickId = coordinator.getOriginDeadlineTickId();
+    return deadlineRegionEpoch != null
+        && deadlineTickId != null
+        && (currentOriginRegionEpoch > deadlineRegionEpoch
+            || (currentOriginRegionEpoch == deadlineRegionEpoch
+                && currentTickId >= deadlineTickId));
   }
 
   private static void validateScheduleRequest(ScheduleRequest request) {
@@ -497,22 +525,22 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     }
     if (!Objects.equals(request.originGameInstanceId(), coordinator.getOriginGameInstanceId())
         || !request.originRegionId().equals(coordinator.getOriginRegionId())
-        || request.originRegionEpoch() != coordinator.getOriginRegionEpoch()) {
+        || !Objects.equals(request.originRegionEpoch(), coordinator.getOriginRegionEpoch())) {
       throw new IllegalArgumentException("origin scope does not match remote coordinator");
     }
     if (!Objects.equals(request.targetGameInstanceId(), coordinator.getTargetGameInstanceId())
         || !request.targetRegionId().equals(coordinator.getTargetRegionId())
-        || request.targetRegionEpoch() != coordinator.getTargetRegionEpoch()) {
+        || !Objects.equals(request.targetRegionEpoch(), coordinator.getTargetRegionEpoch())) {
       throw new IllegalArgumentException("target scope does not match remote coordinator");
     }
     if (!Objects.equals(request.originGameInstanceId(), followup.getOriginGameInstanceId())
         || !request.originRegionId().equals(followup.getOriginRegionId())
-        || request.originRegionEpoch() != followup.getOriginRegionEpoch()) {
+        || !Objects.equals(request.originRegionEpoch(), followup.getOriginRegionEpoch())) {
       throw new IllegalArgumentException("origin scope does not match remote followup");
     }
     if (!Objects.equals(request.targetGameInstanceId(), followup.getTargetGameInstanceId())
         || !request.targetRegionId().equals(followup.getTargetRegionId())
-        || request.targetRegionEpoch() != followup.getTargetRegionEpoch()) {
+        || !Objects.equals(request.targetRegionEpoch(), followup.getTargetRegionEpoch())) {
       throw new IllegalArgumentException("target scope does not match remote followup");
     }
   }
@@ -522,10 +550,10 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         || !request.followupId().equals(existing.getFollowupId())
         || !Objects.equals(request.originGameInstanceId(), existing.getOriginGameInstanceId())
         || !request.originRegionId().equals(existing.getOriginRegionId())
-        || request.originRegionEpoch() != existing.getOriginRegionEpoch()
+        || !Objects.equals(request.originRegionEpoch(), existing.getOriginRegionEpoch())
         || !Objects.equals(request.targetGameInstanceId(), existing.getTargetGameInstanceId())
         || !request.targetRegionId().equals(existing.getTargetRegionId())
-        || request.targetRegionEpoch() != existing.getTargetRegionEpoch()
+        || !Objects.equals(request.targetRegionEpoch(), existing.getTargetRegionEpoch())
         || !request.outcome().equals(existing.getOutcome())
         || !sameResultAuthority(existing, request)) {
       throw new IllegalArgumentException("result_id already records a different remote outcome");
@@ -540,18 +568,19 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     if (!request.followupId().equals(existing.getFollowupId())) {
       throw new IllegalArgumentException("command_id already maps to a different followup_id");
     }
-    if (request.originGameInstanceId() != existing.getOriginGameInstanceId()
+    if (!Objects.equals(request.originGameInstanceId(), existing.getOriginGameInstanceId())
         || !request.originRegionId().equals(existing.getOriginRegionId())
-        || request.originRegionEpoch() != existing.getOriginRegionEpoch()
-        || request.targetGameInstanceId() != existing.getTargetGameInstanceId()
+        || !Objects.equals(request.originRegionEpoch(), existing.getOriginRegionEpoch())
+        || !Objects.equals(request.targetGameInstanceId(), existing.getTargetGameInstanceId())
         || !request.targetRegionId().equals(existing.getTargetRegionId())
-        || request.targetRegionEpoch() != existing.getTargetRegionEpoch()) {
+        || !Objects.equals(request.targetRegionEpoch(), existing.getTargetRegionEpoch())) {
       throw new IllegalArgumentException(
           "command_id already maps to a different remote execution scope");
     }
-    if (request.targetDueTickId() != existing.getTargetDueTickId()
-        || request.originDeadlineRegionEpoch() != existing.getOriginDeadlineRegionEpoch()
-        || request.originDeadlineTickId() != existing.getOriginDeadlineTickId()
+    if (!Objects.equals(request.targetDueTickId(), existing.getTargetDueTickId())
+        || !Objects.equals(
+            request.originDeadlineRegionEpoch(), existing.getOriginDeadlineRegionEpoch())
+        || !Objects.equals(request.originDeadlineTickId(), existing.getOriginDeadlineTickId())
         || !request.lateResultPolicy().equals(existing.getLateResultPolicy())
         || !sameSchedulingMetadata(
             existing.getPlayableStateScope(),
@@ -575,12 +604,12 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       throw new IllegalArgumentException(
           "effect_key already maps to a different followup_id on the target timeline");
     }
-    if (request.originGameInstanceId() != existing.getOriginGameInstanceId()
+    if (!Objects.equals(request.originGameInstanceId(), existing.getOriginGameInstanceId())
         || !request.originRegionId().equals(existing.getOriginRegionId())
-        || request.originRegionEpoch() != existing.getOriginRegionEpoch()
-        || request.targetGameInstanceId() != existing.getTargetGameInstanceId()
+        || !Objects.equals(request.originRegionEpoch(), existing.getOriginRegionEpoch())
+        || !Objects.equals(request.targetGameInstanceId(), existing.getTargetGameInstanceId())
         || !request.targetRegionId().equals(existing.getTargetRegionId())
-        || request.targetRegionEpoch() != existing.getTargetRegionEpoch()) {
+        || !Objects.equals(request.targetRegionEpoch(), existing.getTargetRegionEpoch())) {
       throw new IllegalArgumentException(
           "effect_key already maps to a different remote execution scope");
     }
@@ -590,7 +619,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             request.payloadKind(),
             request.requestedCommand(),
             request.requiresSoloTick());
-    if (request.targetDueTickId() != existing.getDueTickId()
+    if (!Objects.equals(request.targetDueTickId(), existing.getDueTickId())
         || !normalized(blankToNull(request.targetEntityId()))
             .equals(normalized(existing.getTargetEntityId()))
         || !normalized(blankToNull(request.payloadJson()))
@@ -1385,8 +1414,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             coordinator.getTargetRegionId(),
             coordinator.getTargetRegionEpoch(),
             coordinator.getFollowupId());
-    RemoteFollowupResult latestResult =
-        latestResult(coordinator).orElse(null);
+    RemoteFollowupResult latestResult = latestResult(coordinator).orElse(null);
     ResultSummary resultSummary =
         latestResult == null
             ? new ResultSummary(null, null, null)
@@ -1469,10 +1497,16 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
   private static boolean matchesScope(
       GameplayCommand command,
       long tenantId,
-      long gameInstanceId,
+      Long gameInstanceId,
       String regionId,
-      long regionEpoch) {
-    return Objects.equals(command.getTenantId(), tenantId)
+      Long regionEpoch) {
+    return gameInstanceId != null
+        && gameInstanceId > 0
+        && regionId != null
+        && !regionId.isBlank()
+        && regionEpoch != null
+        && regionEpoch > 0
+        && Objects.equals(command.getTenantId(), tenantId)
         && Objects.equals(command.getGameInstanceId(), gameInstanceId)
         && Objects.equals(command.getRegionId(), regionId)
         && Objects.equals(command.getRegionEpoch(), regionEpoch);

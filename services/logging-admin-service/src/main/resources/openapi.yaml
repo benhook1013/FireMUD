@@ -48,6 +48,7 @@ components:
         status:
           $ref: '#/components/schemas/ResultStatus'
         data:
+          type: object
           nullable: true
         error:
           $ref: '#/components/schemas/ErrorDetail'

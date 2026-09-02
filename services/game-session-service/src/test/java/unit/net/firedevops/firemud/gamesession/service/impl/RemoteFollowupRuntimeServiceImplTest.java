@@ -1763,8 +1763,7 @@ class RemoteFollowupRuntimeServiceImplTest {
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
         .thenReturn(List.of());
-    when(resultRepository.findLatestForCoordinator(coordinator))
-        .thenReturn(Optional.of(result));
+    when(resultRepository.findLatestForCoordinator(coordinator)).thenReturn(Optional.of(result));
     when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
     when(gameplayCommandRepository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
@@ -1811,6 +1810,31 @@ class RemoteFollowupRuntimeServiceImplTest {
   }
 
   @Test
+  void reconcileResultsSkipsCoordinatorWithIncompletePersistedScope() {
+    RemoteCommandCoordinator coordinator = coordinator();
+    coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
+    coordinator.setOriginGameInstanceId(null);
+    RemoteFollowupResult malformedResult = result("ABANDONED");
+    malformedResult.setOriginGameInstanceId(null);
+    when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
+            1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE))
+        .thenReturn(List.of(coordinator));
+    when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
+            1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
+        .thenReturn(List.of());
+    when(resultRepository.findLatestForCoordinator(coordinator))
+        .thenReturn(Optional.of(malformedResult));
+
+    int reconciled = service.reconcileResults(1L, "region-a", 4L);
+
+    assertEquals(0, reconciled);
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE, coordinator.getState());
+    verify(coordinatorRepository, never()).save(any());
+    verify(gameplayCommandRepository, never()).save(any());
+  }
+
+  @Test
   void reconcileResultsKeepsPendingCoordinatorUntilTargetCommandTerminates() {
     RemoteCommandCoordinator coordinator = coordinator();
     coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
@@ -1831,8 +1855,7 @@ class RemoteFollowupRuntimeServiceImplTest {
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
         .thenReturn(List.of());
-    when(resultRepository.findLatestForCoordinator(coordinator))
-        .thenReturn(Optional.of(result));
+    when(resultRepository.findLatestForCoordinator(coordinator)).thenReturn(Optional.of(result));
     when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(originCommand));
     when(gameplayCommandRepository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
@@ -1862,8 +1885,7 @@ class RemoteFollowupRuntimeServiceImplTest {
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
         .thenReturn(List.of());
-    when(resultRepository.findLatestForCoordinator(coordinator))
-        .thenReturn(Optional.of(result));
+    when(resultRepository.findLatestForCoordinator(coordinator)).thenReturn(Optional.of(result));
     when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(originCommand));
     when(gameplayCommandRepository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
@@ -1902,8 +1924,7 @@ class RemoteFollowupRuntimeServiceImplTest {
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
         .thenReturn(List.of());
-    when(resultRepository.findLatestForCoordinator(coordinator))
-        .thenReturn(Optional.of(result));
+    when(resultRepository.findLatestForCoordinator(coordinator)).thenReturn(Optional.of(result));
     when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(originCommand));
     when(gameplayCommandRepository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
@@ -1939,8 +1960,7 @@ class RemoteFollowupRuntimeServiceImplTest {
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
         .thenReturn(List.of());
-    when(resultRepository.findLatestForCoordinator(coordinator))
-        .thenReturn(Optional.of(result));
+    when(resultRepository.findLatestForCoordinator(coordinator)).thenReturn(Optional.of(result));
     when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(originCommand));
     when(gameplayCommandRepository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
@@ -1984,8 +2004,7 @@ class RemoteFollowupRuntimeServiceImplTest {
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
         .thenReturn(List.of(coordinator));
-    when(resultRepository.findLatestForCoordinator(coordinator))
-        .thenReturn(Optional.of(result));
+    when(resultRepository.findLatestForCoordinator(coordinator)).thenReturn(Optional.of(result));
     when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
     when(gameplayCommandRepository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
@@ -2028,8 +2047,7 @@ class RemoteFollowupRuntimeServiceImplTest {
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
         .thenReturn(List.of(coordinator));
-    when(resultRepository.findLatestForCoordinator(coordinator))
-        .thenReturn(Optional.of(result));
+    when(resultRepository.findLatestForCoordinator(coordinator)).thenReturn(Optional.of(result));
     when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
     when(gameplayCommandRepository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
@@ -2083,8 +2101,7 @@ class RemoteFollowupRuntimeServiceImplTest {
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
         .thenReturn(List.of());
-    when(resultRepository.findLatestForCoordinator(coordinator))
-        .thenReturn(Optional.of(result));
+    when(resultRepository.findLatestForCoordinator(coordinator)).thenReturn(Optional.of(result));
 
     int reconciled = service.reconcileResults(1L, "region-a", 4L);
 
@@ -2149,8 +2166,7 @@ class RemoteFollowupRuntimeServiceImplTest {
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
         .thenReturn(List.of());
-    when(resultRepository.findLatestForCoordinator(coordinator))
-        .thenReturn(Optional.of(result));
+    when(resultRepository.findLatestForCoordinator(coordinator)).thenReturn(Optional.of(result));
     when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(originCommand));
     when(gameplayCommandRepository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(

@@ -334,7 +334,7 @@ class GameplayAdmissionPointerSnapshotsTest {
   }
 
   @Test
-  void repairGenericBootstrapShellClearsRoutingScopeWithStaleRoutingBundle() {
+  void repairGenericBootstrapShellClearsRoutingScopeWhenRuntimeGameInstanceDiffers() {
     SessionContext shell = bootstrapShell(22L, 1L, "demo", "production", 7L, "SHARED");
     GameplayAdmissionPointerSnapshot stalePointer =
         new GameplayAdmissionPointerSnapshot(
@@ -361,6 +361,37 @@ class GameplayAdmissionPointerSnapshotsTest {
     assertThat(repaired.playableStateScope()).isNull();
     assertThat(GameplayAdmissionPointerSnapshots.sameBootstrapRoute(repaired, repaired)).isTrue();
     assertThat(GameplayAdmissionPointerSnapshots.sameBootstrapRoute(repaired, absent)).isTrue();
+  }
+
+  @Test
+  void repairGenericBootstrapShellClearsRoutingScopeWithOlderMatchingRuntimePointerVersion() {
+    SessionContext shell = bootstrapShell(22L, 1L, "demo", "production", 7L, "SHARED");
+    GameplayAdmissionPointerSnapshot stalePointer =
+        new GameplayAdmissionPointerSnapshot(
+            "demo",
+            "Demo",
+            "production",
+            "Production",
+            22L,
+            1L,
+            6L,
+            true,
+            true,
+            false,
+            "SHARED",
+            "ALLOW_NEW");
+
+    SessionContext repaired =
+        GameplayAdmissionPointerSnapshots.repairGenericBootstrapShell(shell, List.of(stalePointer));
+
+    assertThat(repaired.worldSlug()).isNull();
+    assertThat(repaired.realmSlug()).isNull();
+    assertThat(repaired.pointerVersion()).isZero();
+    assertThat(repaired.playableStateScope()).isNull();
+    assertThat(
+            GameplayAdmissionPointerSnapshots.sameBootstrapRoute(
+                repaired, bootstrapShell(22L, 1L, null, null, 0L, null)))
+        .isTrue();
   }
 
   @Test

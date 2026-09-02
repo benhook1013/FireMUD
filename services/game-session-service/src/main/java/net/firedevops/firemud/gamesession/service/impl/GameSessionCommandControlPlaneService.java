@@ -9,11 +9,8 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionResponse;
@@ -1847,8 +1844,7 @@ public final class GameSessionCommandControlPlaneService {
         && Objects.equals(coordinator.getOriginGameInstanceId(), command.getGameInstanceId())
         && Objects.equals(coordinator.getOriginRegionId(), command.getRegionId())
         && Objects.equals(coordinator.getOriginRegionEpoch(), command.getRegionEpoch())
-        && matchesOptionalIdentity(
-            command.getRemoteCoordinatorId(), coordinator.getCoordinatorId())
+        && matchesOptionalIdentity(command.getRemoteCoordinatorId(), coordinator.getCoordinatorId())
         && matchesOptionalIdentity(command.getRemoteFollowupId(), coordinator.getFollowupId());
   }
 
@@ -1875,12 +1871,10 @@ public final class GameSessionCommandControlPlaneService {
         && Objects.equals(followup.getTenantId(), coordinator.getTenantId())
         && Objects.equals(followup.getFollowupId(), coordinator.getFollowupId())
         && matchesOptionalIdentity(followup.getCommandId(), coordinator.getCommandId())
-        && Objects.equals(
-            followup.getOriginGameInstanceId(), coordinator.getOriginGameInstanceId())
+        && Objects.equals(followup.getOriginGameInstanceId(), coordinator.getOriginGameInstanceId())
         && Objects.equals(followup.getOriginRegionId(), coordinator.getOriginRegionId())
         && Objects.equals(followup.getOriginRegionEpoch(), coordinator.getOriginRegionEpoch())
-        && Objects.equals(
-            followup.getTargetGameInstanceId(), coordinator.getTargetGameInstanceId())
+        && Objects.equals(followup.getTargetGameInstanceId(), coordinator.getTargetGameInstanceId())
         && Objects.equals(followup.getTargetRegionId(), coordinator.getTargetRegionId())
         && Objects.equals(followup.getTargetRegionEpoch(), coordinator.getTargetRegionEpoch());
   }
@@ -1906,102 +1900,12 @@ public final class GameSessionCommandControlPlaneService {
         && Objects.equals(result.getTenantId(), coordinator.getTenantId())
         && Objects.equals(result.getCoordinatorId(), coordinator.getCoordinatorId())
         && Objects.equals(result.getFollowupId(), coordinator.getFollowupId())
-        && Objects.equals(
-            result.getOriginGameInstanceId(), coordinator.getOriginGameInstanceId())
+        && Objects.equals(result.getOriginGameInstanceId(), coordinator.getOriginGameInstanceId())
         && Objects.equals(result.getOriginRegionId(), coordinator.getOriginRegionId())
         && result.getOriginRegionEpoch() == coordinator.getOriginRegionEpoch()
-        && Objects.equals(
-            result.getTargetGameInstanceId(), coordinator.getTargetGameInstanceId())
+        && Objects.equals(result.getTargetGameInstanceId(), coordinator.getTargetGameInstanceId())
         && Objects.equals(result.getTargetRegionId(), coordinator.getTargetRegionId())
         && result.getTargetRegionEpoch() == coordinator.getTargetRegionEpoch();
-  }
-
-  private Map<String, RemoteFollowup> followupMap(long tenantId, List<String> followupIds) {
-    if (remoteFollowupRepository == null) {
-      return Map.of();
-    }
-    List<String> distinctIds = distinctNonBlank(followupIds);
-    if (distinctIds.isEmpty()) {
-      return Map.of();
-    }
-    return remoteFollowupRepository.findByTenantIdAndFollowupIdIn(tenantId, distinctIds).stream()
-        .collect(Collectors.toMap(RemoteFollowup::getFollowupId, Function.identity()));
-  }
-
-  private Map<String, RemoteCommandCoordinator> coordinatorByFollowupMap(
-      long tenantId, List<String> followupIds) {
-    if (remoteCommandCoordinatorRepository == null) {
-      return Map.of();
-    }
-    List<String> distinctIds = distinctNonBlank(followupIds);
-    if (distinctIds.isEmpty()) {
-      return Map.of();
-    }
-    return remoteCommandCoordinatorRepository
-        .findByTenantIdAndFollowupIdIn(tenantId, distinctIds)
-        .stream()
-        .collect(Collectors.toMap(RemoteCommandCoordinator::getFollowupId, Function.identity()));
-  }
-
-  private Map<String, RemoteCommandCoordinator> coordinatorMap(
-      long tenantId, List<String> coordinatorIds) {
-    if (remoteCommandCoordinatorRepository == null) {
-      return Map.of();
-    }
-    List<String> distinctIds = distinctNonBlank(coordinatorIds);
-    if (distinctIds.isEmpty()) {
-      return Map.of();
-    }
-    return remoteCommandCoordinatorRepository
-        .findByTenantIdAndCoordinatorIdIn(tenantId, distinctIds)
-        .stream()
-        .collect(Collectors.toMap(RemoteCommandCoordinator::getCoordinatorId, Function.identity()));
-  }
-
-  private Map<String, RemoteFollowupResult> latestResultMap(
-      long tenantId, List<String> coordinatorIds) {
-    List<String> distinctIds = distinctNonBlank(coordinatorIds);
-    if (distinctIds.isEmpty()) {
-      return Map.of();
-    }
-    return remoteFollowupResultRepository
-        .findByTenantIdAndCoordinatorIdInOrderByObservedAtAsc(tenantId, distinctIds)
-        .stream()
-        .collect(
-            Collectors.toMap(
-                RemoteFollowupResult::getCoordinatorId,
-                Function.identity(),
-                (ignored, replacement) -> replacement));
-  }
-
-  private Map<String, GameplayCommand> targetCommandMap(
-      long tenantId, Map<String, RemoteFollowup> followupsById) {
-    if (gameplayCommandRepository == null || followupsById == null || followupsById.isEmpty()) {
-      return Map.of();
-    }
-    List<String> distinctIds = distinctNonBlank(followupsById.keySet().stream().toList());
-    if (distinctIds.isEmpty()) {
-      return Map.of();
-    }
-    return gameplayCommandRepository
-        .findByTenantIdAndRemoteFollowupIdIn(tenantId, distinctIds)
-        .stream()
-        .filter(
-            candidate -> {
-              RemoteFollowup followup = followupsById.get(candidate.getRemoteFollowupId());
-              return followup != null
-                  && matchesTargetScope(
-                      candidate,
-                      tenantId,
-                      followup.getTargetGameInstanceId(),
-                      followup.getTargetRegionId(),
-                      followup.getTargetRegionEpoch());
-            })
-        .collect(
-            Collectors.toMap(
-                GameplayCommand::getRemoteFollowupId,
-                Function.identity(),
-                (existing, ignored) -> existing));
   }
 
   private static List<String> distinctNonBlank(List<String> values) {

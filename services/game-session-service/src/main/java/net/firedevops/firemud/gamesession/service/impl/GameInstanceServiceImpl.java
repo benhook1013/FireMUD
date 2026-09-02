@@ -142,6 +142,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     boolean oldSessionStopped = false;
     boolean worldActivationMayHaveCommitted = false;
     PreparedWorldInstance preparedWorldInstance = null;
+    GameInstanceDto finalized;
     try {
       validateStartDependencies();
       preparedWorldInstance =
@@ -165,14 +166,11 @@ public class GameInstanceServiceImpl implements GameInstanceService {
             "finalize replaced session stop");
         oldSessionStopped = true;
       }
-      GameInstanceDto finalized;
       worldActivationMayHaveCommitted = true;
       activatePreparedWorldInstance(preparedWorldInstance);
       runtimeState = withStatus(stage.startingState(), STATUS_RUNNING);
       sessionStateService.saveState(runtimeState);
       finalized = inTransaction(() -> finalizeStartedSession(stage), "finalize session start");
-      meterRegistry.counter("game_sessions_started_total").increment();
-      return finalized;
     } catch (RuntimeException ex) {
       compensateStartFailure(
           stage,
@@ -186,6 +184,12 @@ public class GameInstanceServiceImpl implements GameInstanceService {
           preparedWorldInstance);
       throw ex;
     }
+    try {
+      meterRegistry.counter("game_sessions_started_total").increment();
+    } catch (RuntimeException metricFailure) {
+      logger.warn("Failed to record started game session metric", metricFailure);
+    }
+    return finalized;
   }
 
   @Override
@@ -354,9 +358,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
           "delete failed started session state",
           () -> sessionStateService.deleteState(runtimeState.tenantId(), runtimeState.id()));
     }
-    if (oldStateDeleted
-        && !oldWorldTerminationRequested
-        && stage.existingRunningState() != null) {
+    if (oldStateDeleted && !oldWorldTerminationRequested && stage.existingRunningState() != null) {
       runRollbackSafely(
           "restore replaced session state",
           () -> sessionStateService.saveState(stage.existingRunningState()));
@@ -398,8 +400,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
                     GameInstance starting =
                         repository
                             .findById(stage.startingState().id())
-                            .orElseThrow(
-                                () -> new IllegalArgumentException("Session not found"));
+                            .orElseThrow(() -> new IllegalArgumentException("Session not found"));
                     starting.setStatus(STATUS_STARTING);
                     repository.save(starting);
                     return null;

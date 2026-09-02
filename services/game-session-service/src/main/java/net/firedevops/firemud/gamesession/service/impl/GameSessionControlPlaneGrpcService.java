@@ -162,7 +162,7 @@ public final class GameSessionControlPlaneGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
-    } catch (IllegalStateException ex) {
+    } catch (AdmissionPointerAuditUnavailableException ex) {
       logger.warn("ListAdmissionPointers authority unavailable", ex);
       ListAdmissionPointersResponse response =
           ListAdmissionPointersResponse.newBuilder()

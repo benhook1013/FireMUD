@@ -14,6 +14,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.HashMap;
 import java.util.Map;
@@ -89,6 +90,33 @@ class GameInstanceServiceImplTest {
   }
 
   @Test
+  void startSessionDoesNotCompensateWhenStartedMetricFails() {
+    MeterRegistry failingMeterRegistry = mock(MeterRegistry.class);
+    when(failingMeterRegistry.counter("game_sessions_started_total"))
+        .thenThrow(new IllegalStateException("metrics unavailable"));
+    service =
+        new GameInstanceServiceImpl(
+            repository,
+            mapper,
+            stateService,
+            gameDesignClient,
+            null,
+            worldManagementClient,
+            null,
+            null,
+            failingMeterRegistry,
+            immediateTransactionOperations());
+
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-metric-failure", 42L);
+
+    GameInstanceDto dto = service.startSession(request);
+
+    assertEquals("RUNNING", dto.status());
+    assertEquals("RUNNING", store.get(10L).getStatus());
+    verify(stateService, never()).deleteState(1L, 10L);
+  }
+
+  @Test
   void startSessionQuarantinesOwnerWhenWorldActivationFails() {
     StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-activation-failure", 42L);
     when(worldManagementClient.activatePreparedWorldInstance(anyLong(), anyLong(), anyLong()))
@@ -116,8 +144,7 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionQuarantinesOwnerAfterAmbiguousWorldActivationResponse() {
-    StartSessionRequest request =
-        new StartSessionRequest(1L, 3L, "cp-activation-timeout", 42L);
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-activation-timeout", 42L);
     when(worldManagementClient.activatePreparedWorldInstance(anyLong(), anyLong(), anyLong()))
         .thenThrow(new IllegalStateException("activation response timed out"));
 
@@ -133,8 +160,7 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionQuarantinesOwnerWhenRuntimeStateSaveFailsAfterActivation() {
-    StartSessionRequest request =
-        new StartSessionRequest(1L, 3L, "cp-runtime-save-failure", 42L);
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-runtime-save-failure", 42L);
     AtomicInteger saveCount = new AtomicInteger();
     doAnswer(
             invocation -> {
@@ -159,8 +185,7 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionQuarantinesOwnerWhenLocalFinalizationFailsAfterActivation() {
-    StartSessionRequest request =
-        new StartSessionRequest(1L, 3L, "cp-finalization-failure", 42L);
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-finalization-failure", 42L);
     doThrow(new IllegalStateException("local finalization failed"))
         .when(mapper)
         .toDto(any(GameInstance.class));
