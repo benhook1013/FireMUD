@@ -466,17 +466,13 @@ public class RemoteCommandCoordinatorRepository {
             currentOrigin
                 .TENANT_ID
                 .eq(coordinator.TENANT_ID)
-                .and(currentOrigin.GAME_INSTANCE_ID.eq(coordinator.ORIGIN_GAME_INSTANCE_ID))
-                .and(currentOrigin.REGION_ID.eq(coordinator.ORIGIN_REGION_ID))
-                .and(currentOrigin.REGION_EPOCH.eq(coordinator.ORIGIN_REGION_EPOCH)))
+                .and(currentOrigin.GAME_INSTANCE_ID.eq(coordinator.ORIGIN_GAME_INSTANCE_ID)))
         .leftJoin(currentTarget)
         .on(
             currentTarget
                 .TENANT_ID
                 .eq(coordinator.TENANT_ID)
-                .and(currentTarget.GAME_INSTANCE_ID.eq(coordinator.TARGET_GAME_INSTANCE_ID))
-                .and(currentTarget.REGION_ID.eq(coordinator.TARGET_REGION_ID))
-                .and(currentTarget.REGION_EPOCH.eq(coordinator.TARGET_REGION_EPOCH)))
+                .and(currentTarget.GAME_INSTANCE_ID.eq(coordinator.TARGET_GAME_INSTANCE_ID)))
         .leftJoin(targetCommand)
         .on(
             targetCommand

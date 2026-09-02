@@ -126,7 +126,7 @@ Inputs:
 
 Semantics:
 
-- Idempotency is scoped to each normalized scope-and-mode step under the workflow-scoped request ID: an exact retry of a given step, including its other normalized request fields, returns that step's stored result without reapplying the transition. The same workflow-scoped ID deliberately spans the distinct `PAUSED_FOR_ROLLBACK` and `NORMAL` steps; that mode transition is not an idempotency misuse.
+- Idempotency is scoped to each normalized scope-and-mode step under the workflow-scoped request ID: an exact retry of a given step, including its other normalized request fields, returns that step's stored result without reapplying the transition. The same workflow-scoped ID deliberately spans the distinct `PAUSED_FOR_ROLLBACK` and `NORMAL` steps; that mode transition is not an idempotency misuse. Set succeeds only with `APPLIED` or `ALREADY_APPLIED`; `NOT_FOUND` is reserved for the read-only drain-status diagnostic and cannot authorize recovery.
 - `PAUSED_FOR_ROLLBACK` prevents admission of new external, scheduler, and timer triggers for the scope while allowing already-admitted work to be drained or canceled.
 - During pause, ingress calls return explicit rollback backpressure outcomes and remain visible in the event-scope ingress audit; they do not create handler-scoped `script_event_audit` rows before handler resolution.
 - Entering `PAUSED_FOR_ROLLBACK` must also advance a scope-local **admission epoch**. Every already-admitted execution carries the epoch under which it was accepted, and any later outbox-persist or tick-handoff attempt must re-check that epoch before committing side effects.

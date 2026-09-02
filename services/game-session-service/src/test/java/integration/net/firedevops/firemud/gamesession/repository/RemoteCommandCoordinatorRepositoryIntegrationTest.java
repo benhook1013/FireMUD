@@ -182,11 +182,15 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
         1L,
         9L);
 
-    assertThat(findCoordinatorsByCurrentTarget("region-sibling", 99L, 9L)).isEmpty();
+    assertThat(findCoordinatorsByCurrentTarget("region-sibling", 99L, 9L))
+        .extracting(RemoteCommandCoordinator::getCoordinatorId)
+        .containsExactly("coord-1");
     assertThat(findFollowupsByCurrentTarget("region-sibling", 99L, 9L))
         .extracting(RemoteFollowup::getFollowupId)
         .containsExactly("rf-1");
-    assertThat(findResultsByCurrentTarget("region-sibling", 99L, 9L)).isEmpty();
+    assertThat(findResultsByCurrentTarget("region-sibling", 99L, 9L))
+        .extracting(RemoteFollowupResult::getResultId)
+        .containsExactly("result-current-target-scope");
   }
 
   @Test

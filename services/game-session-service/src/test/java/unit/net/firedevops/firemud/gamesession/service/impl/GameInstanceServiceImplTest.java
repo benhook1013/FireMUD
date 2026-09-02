@@ -135,7 +135,7 @@ class GameInstanceServiceImplTest {
     ArgumentCaptor<GameInstanceDto> states = ArgumentCaptor.forClass(GameInstanceDto.class);
     verify(stateService).saveState(states.capture());
     assertEquals("STARTING", states.getValue().status());
-    verify(stateService).deleteState(1L, 10L);
+    verify(stateService, never()).deleteState(1L, 10L);
     verify(worldManagementClient, never())
         .failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), any());
     verify(repository, never()).deleteById(10L);
@@ -151,7 +151,7 @@ class GameInstanceServiceImplTest {
     assertThrows(IllegalStateException.class, () -> service.startSession(request));
 
     verify(stateService).saveState(any(GameInstanceDto.class));
-    verify(stateService).deleteState(1L, 10L);
+    verify(stateService, never()).deleteState(1L, 10L);
     verify(worldManagementClient, never())
         .failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), any());
     verify(repository, never()).deleteById(10L);
@@ -176,7 +176,7 @@ class GameInstanceServiceImplTest {
 
     verify(worldManagementClient).activatePreparedWorldInstance(anyLong(), anyLong(), anyLong());
     verify(stateService, times(2)).saveState(any(GameInstanceDto.class));
-    verify(stateService).deleteState(1L, 10L);
+    verify(stateService, never()).deleteState(1L, 10L);
     verify(worldManagementClient, never())
         .failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), any());
     verify(repository, never()).deleteById(10L);
@@ -194,7 +194,7 @@ class GameInstanceServiceImplTest {
 
     verify(worldManagementClient).activatePreparedWorldInstance(anyLong(), anyLong(), anyLong());
     verify(stateService, times(2)).saveState(any(GameInstanceDto.class));
-    verify(stateService).deleteState(1L, 10L);
+    verify(stateService, never()).deleteState(1L, 10L);
     verify(worldManagementClient, never())
         .failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), any());
     verify(repository, never()).deleteById(10L);
@@ -328,6 +328,7 @@ class GameInstanceServiceImplTest {
     assertEquals(1, store.size());
     assertEquals("STOPPING", store.get(7L).getStatus());
     verify(stateService).deleteState(2L, 7L);
+    verify(stateService).deleteState(2L, 10L);
     verify(stateService, times(1)).saveState(any(GameInstanceDto.class));
   }
 

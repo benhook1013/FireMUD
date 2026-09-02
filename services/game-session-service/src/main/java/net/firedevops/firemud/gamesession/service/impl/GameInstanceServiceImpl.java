@@ -349,7 +349,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       boolean oldSessionStopped,
       boolean worldActivationMayHaveCommitted,
       @Nullable PreparedWorldInstance preparedWorldInstance) {
-    if (newStateSaved) {
+    if (newStateSaved && !worldActivationMayHaveCommitted) {
       runRollbackSafely(
           "delete failed started session state",
           () -> sessionStateService.deleteState(runtimeState.tenantId(), runtimeState.id()));

@@ -390,17 +390,13 @@ public class RemoteFollowupResultRepository {
             currentOrigin
                 .TENANT_ID
                 .eq(result.TENANT_ID)
-                .and(currentOrigin.GAME_INSTANCE_ID.eq(result.ORIGIN_GAME_INSTANCE_ID))
-                .and(currentOrigin.REGION_ID.eq(result.ORIGIN_REGION_ID))
-                .and(currentOrigin.REGION_EPOCH.eq(result.ORIGIN_REGION_EPOCH)))
+                .and(currentOrigin.GAME_INSTANCE_ID.eq(result.ORIGIN_GAME_INSTANCE_ID)))
         .leftJoin(currentTarget)
         .on(
             currentTarget
                 .TENANT_ID
                 .eq(result.TENANT_ID)
-                .and(currentTarget.GAME_INSTANCE_ID.eq(result.TARGET_GAME_INSTANCE_ID))
-                .and(currentTarget.REGION_ID.eq(result.TARGET_REGION_ID))
-                .and(currentTarget.REGION_EPOCH.eq(result.TARGET_REGION_EPOCH)))
+                .and(currentTarget.GAME_INSTANCE_ID.eq(result.TARGET_GAME_INSTANCE_ID)))
         .leftJoin(linkedFollowup)
         .on(
             linkedFollowup
