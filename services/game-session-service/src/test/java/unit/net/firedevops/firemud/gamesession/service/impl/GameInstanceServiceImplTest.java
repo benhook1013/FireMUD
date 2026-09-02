@@ -279,6 +279,20 @@ class GameInstanceServiceImplTest {
   }
 
   @Test
+  void stopSessionKeepsSessionStoppedWhenFinalizationFailsAfterWorldTermination() {
+    persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
+    doThrow(new IllegalStateException("local finalization failed"))
+        .when(mapper)
+        .toDto(any(GameInstance.class));
+
+    assertThrows(IllegalStateException.class, () -> service.stopSession(10L));
+
+    verify(worldManagementClient)
+        .terminateWorldInstance(anyLong(), anyLong(), anyLong(), any(), any());
+    assertEquals("STOPPED", store.get(10L).getStatus());
+  }
+
+  @Test
   void startSessionFailsFastWhenStateSaveFails() {
     StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-4", 42L);
     doThrow(new IllegalStateException("redis down")).when(stateService).saveState(any());

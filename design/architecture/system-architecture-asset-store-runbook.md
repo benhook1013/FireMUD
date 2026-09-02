@@ -126,12 +126,15 @@ When using a self-hosted MinIO cluster as the asset store:
 Occasionally the asset-export step of `PublishVersion` may fail in a way that
 leaves a version incomplete or unusable:
 
-- When the Game Design publication workflow coordinated by Temporal marks a
-  version as **Failed**, the canonical Game Design release/version/launch
-  descriptor and attestation surfaces must not make it launchable, and
-  operators must not attempt to start game instances against it. Any retained
-  legacy `game_manifest` row is diagnostic/disposition-only and is neither
-  evidence nor a launch gate.
+- **Target-state workflow only:** When the Game Design publication workflow
+  coordinated by Temporal marks a version as **Failed**, the canonical Game
+  Design release/version/launch descriptor and attestation surfaces must not
+  make it launchable, and operators must not attempt to start game instances
+  against it. Any retained legacy `game_manifest` row is
+  diagnostic/disposition-only and is neither evidence nor a launch gate. The
+  current first slice executes publication synchronously when Temporal is
+  disabled; its failure handling is incomplete as documented above and is not
+  equivalent to durable Temporal failure coordination.
 - **Target-state only:** Failed versions may have partially written candidates in a private quarantine namespace; do not delete those candidates manually. If there is no intention to retry publish, use the target Game Design `AbandonFailedVersionAssets(...)` operation to record durable abandonment, then invoke pre-tombstone `TombstoneVersionAssets(tenantId, versionId, expectedArtifactStateEpoch, tombstoneWorkflowId)` to prove caller-tenant `FAILED` authority, frozen proof, and no reachability before its CAS transition. **Target-state only:** the abandonment record and target authority/CAS transition are not implemented. The current exporter writes directly to the private `tenant/version/` prefix and has no separate quarantine namespace.
 - **Target-state only:** Failed or `EXPORTED_UNATTESTED` candidates are never launchable, never used as fallback, and never repaired in place while runtime admission continues. A retry creates a new approved workflow attempt and either completes a fully attested `PUBLISHED` release or remains non-launchable. In the current first slice, a failed `PublishAttempt` is terminal for that workflow identity and no retry-publish or repair-version orchestration is exposed; only the published-artifact repair API exists.
 - The canonical lifecycle states, transitions, bundle-readback rules, and target serialization fence are defined in [Asset Storage Setup](./microservices/game-design-service/asset-storage.md#asset-lifecycle-and-publish-workflow). Operators must preserve these local consequences:

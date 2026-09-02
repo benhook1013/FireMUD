@@ -1897,6 +1897,22 @@ public final class GameSessionCommandControlPlaneService {
       RemoteFollowupResult result, RemoteCommandCoordinator coordinator) {
     return result != null
         && coordinator != null
+        && hasCompleteRuntimeScope(
+            result.getOriginGameInstanceId(),
+            result.getOriginRegionId(),
+            result.getOriginRegionEpoch())
+        && hasCompleteRuntimeScope(
+            result.getTargetGameInstanceId(),
+            result.getTargetRegionId(),
+            result.getTargetRegionEpoch())
+        && hasCompleteRuntimeScope(
+            coordinator.getOriginGameInstanceId(),
+            coordinator.getOriginRegionId(),
+            coordinator.getOriginRegionEpoch())
+        && hasCompleteRuntimeScope(
+            coordinator.getTargetGameInstanceId(),
+            coordinator.getTargetRegionId(),
+            coordinator.getTargetRegionEpoch())
         && Objects.equals(result.getTenantId(), coordinator.getTenantId())
         && Objects.equals(result.getCoordinatorId(), coordinator.getCoordinatorId())
         && Objects.equals(result.getFollowupId(), coordinator.getFollowupId())
