@@ -296,13 +296,27 @@ class GameInstanceServiceImplTest {
     GameInstance existing = persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
     when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
         .thenReturn(Optional.of(existing));
-    doThrow(new IllegalStateException("redis down")).when(stateService).saveState(any());
+    AtomicInteger saveCount = new AtomicInteger();
+    doAnswer(
+            invocation -> {
+              if (saveCount.incrementAndGet() == 1) {
+                throw new IllegalStateException("redis down");
+              }
+              return null;
+            })
+        .when(stateService)
+        .saveState(any());
 
     assertThrows(IllegalStateException.class, () -> service.startSession(request, true));
 
     assertEquals(1, store.size());
     assertEquals("RUNNING", store.get(7L).getStatus());
     verify(stateService, never()).deleteState(2L, 7L);
+    ArgumentCaptor<GameInstanceDto> states = ArgumentCaptor.forClass(GameInstanceDto.class);
+    verify(stateService, times(2)).saveState(states.capture());
+    assertEquals(10L, states.getAllValues().get(0).id());
+    assertEquals(7L, states.getAllValues().get(1).id());
+    assertEquals("RUNNING", states.getAllValues().get(1).status());
     verify(worldManagementClient, never()).getWorldInstanceLifecycle(anyLong(), anyLong());
   }
 
@@ -329,7 +343,9 @@ class GameInstanceServiceImplTest {
     assertEquals("STOPPING", store.get(7L).getStatus());
     verify(stateService).deleteState(2L, 7L);
     verify(stateService).deleteState(2L, 10L);
-    verify(stateService, times(1)).saveState(any(GameInstanceDto.class));
+    ArgumentCaptor<GameInstanceDto> states = ArgumentCaptor.forClass(GameInstanceDto.class);
+    verify(stateService, times(1)).saveState(states.capture());
+    assertEquals(10L, states.getValue().id());
   }
 
   @Test

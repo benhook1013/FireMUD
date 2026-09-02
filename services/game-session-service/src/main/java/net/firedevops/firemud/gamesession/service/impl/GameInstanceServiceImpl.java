@@ -357,6 +357,9 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     GameInstanceDto existingRunningState = stage.existingRunningState();
     if (existingRunningState != null && !oldWorldTerminationRequested) {
       runRollbackSafely(
+          "restore replaced session runtime state",
+          () -> sessionStateService.saveState(existingRunningState));
+      runRollbackSafely(
           "restore replaced session row",
           () ->
               inTransaction(

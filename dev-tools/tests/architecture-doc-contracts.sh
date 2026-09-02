@@ -1263,7 +1263,9 @@ for path in [
         )
 
 
-def extract_unique_markdown_section(text, heading, source_label):
+def extract_unique_markdown_section(
+    text, heading, source_label, include_fenced_content=True
+):
     heading_pattern = re.compile(
         rf"^[ ]{{0,3}}##[ \t]+{re.escape(heading)}(?:[ \t]+#+)?[ \t]*(?:\r?\n)?$"
     )
@@ -1275,7 +1277,7 @@ def extract_unique_markdown_section(text, heading, source_label):
 
     for line_number, line in iter_visible_markdown_lines(
         text,
-        include_fenced_content=True,
+        include_fenced_content=include_fenced_content,
         source_label=source_label,
     ):
         is_heading = not in_fenced_block and level_two_heading.match(line)
@@ -1305,8 +1307,12 @@ def extract_unique_markdown_section(text, heading, source_label):
     return sections[0].replace(html_comment_boundary, "")
 
 
-def require_section_contains_text(text, heading, snippets, source_label):
-    section = extract_unique_markdown_section(text, heading, source_label)
+def require_section_contains_text(
+    text, heading, snippets, source_label, include_fenced_content=True
+):
+    section = extract_unique_markdown_section(
+        text, heading, source_label, include_fenced_content=include_fenced_content
+    )
     missing = [snippet for snippet in snippets if snippet not in section]
     if missing:
         raise SystemExit(
@@ -1316,7 +1322,13 @@ def require_section_contains_text(text, heading, snippets, source_label):
 
 def require_section_contains(path, heading, snippets):
     text = (root / path).read_text(encoding="utf-8")
-    require_section_contains_text(text, heading, snippets, path)
+    require_section_contains_text(
+        text,
+        heading,
+        snippets,
+        path,
+        include_fenced_content=False,
+    )
 
 
 fenced_heading_fixture = (
@@ -1789,8 +1801,9 @@ if "`automation_script_triggers_dropped_total`" in catch_up_rows[0]:
     raise SystemExit(
         "system-architecture-scripting-normative-contract-tables.md: catch-up cluster denial uses ingress-drop metric"
     )
-require_contains(
+require_section_contains(
     "design/architecture/system-architecture-scripting-control-plane-api.md",
+    "Control Plane APIs (Normative)",
     [
         "bounded immutable `lastResetReason`",
         "bounded immutable `resetReason`",
