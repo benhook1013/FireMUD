@@ -23,6 +23,7 @@ import org.jooq.Select;
 import org.jooq.SelectFieldOrAsterisk;
 import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 @SuppressFBWarnings(
@@ -330,6 +331,7 @@ public class GameplayCommandRepository {
         .fetchOptional(this::toEntity);
   }
 
+  @Transactional
   public IdempotentInsertResult insertIfAbsentByIdempotencyIdentity(GameplayCommand entity) {
     if (entity.getId() != null || !hasIdempotencyIdentity(entity)) {
       throw new IllegalArgumentException(
@@ -445,11 +447,13 @@ public class GameplayCommandRepository {
             .TENANT_ID
             .eq(entity.getTenantId())
             .and(pointer.GAME_INSTANCE_ID.eq(entity.getGameInstanceId()));
+    dsl.select(pointer.ID)
+        .from(pointer)
+        .where(pointerMatch.and(exactlyOne(targetMatch)))
+        .forUpdate()
+        .fetch();
     Select<Record> source =
-        dsl.select(values)
-            .from(pointer)
-            .where(pointerMatch.and(exactlyOne(targetMatch)))
-            .forUpdate();
+        dsl.select(values).from(pointer).where(pointerMatch.and(exactlyOne(targetMatch)));
     if (hasText(entity.getRemoteFollowupId())) {
       return dsl.insertInto(GAMEPLAY_COMMAND)
           .columns(fields)

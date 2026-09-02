@@ -28,6 +28,9 @@ import org.testcontainers.containers.PostgreSQLContainer;
 
 /** Shared gameplay-oriented cross-service bootstrap fixture above the lower-level app harness. */
 public final class GameplayCrossServiceStack implements AutoCloseable {
+  static final String SYNTHETIC_LOAD_WORLD_PREFIX = "demo-player-";
+  static final String SYNTHETIC_LOAD_ACTOR = "test/gameplay-load";
+
   private final AccountRuntimeStubServer accountStub;
   private final GameDesignStubServer gameDesignStub;
   private final WorldManagementStubServer worldStub;
@@ -173,6 +176,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     clearRedis();
     JdbcTemplate jdbc = jdbc();
     GameInstanceTestFixtures.ensureGameInstancesTable(jdbc);
+    clearSyntheticAdmissionPointerState(jdbc);
     jdbc.execute("TRUNCATE TABLE runtime_region_status RESTART IDENTITY");
     jdbc.execute("TRUNCATE TABLE game_instances RESTART IDENTITY");
     if (characterIds.length > 0) {
@@ -183,6 +187,18 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
             jdbc, tenantId, ownerAccountId, gameTemplateId);
     seedRuntimeOwnership(tenantId, gameInstanceId);
     return gameInstanceId;
+  }
+
+  private void clearSyntheticAdmissionPointerState(JdbcTemplate jdbc) {
+    // Audit rows are removed first so this remains safe if a future schema adds an FK to the
+    // current pointer row. The world prefix is reserved for this fixture; keep canonical demo and
+    // sandbox authority untouched.
+    jdbc.update(
+        "DELETE FROM gameplay_admission_pointer_event " + "WHERE world_slug LIKE ?",
+        SYNTHETIC_LOAD_WORLD_PREFIX + "%");
+    jdbc.update(
+        "DELETE FROM gameplay_admission_pointer " + "WHERE world_slug LIKE ?",
+        SYNTHETIC_LOAD_WORLD_PREFIX + "%");
   }
 
   private void seedRuntimeOwnership(long tenantId, long gameInstanceId) {
@@ -278,6 +294,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
 
   @Override
   public synchronized void close() {
+    clearSyntheticAdmissionPointerState(jdbc());
     gameSession.close();
     gameLogic.close();
     if (socialStub != null) {

@@ -953,7 +953,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     assertEquals("ABANDONED", result.effectStatus());
     assertEquals("REMOTE_GAMEPLAY_PAYLOAD_INVALID", result.failureCode());
     assertEquals(
-        "worldSlug, realmSlug, and pointerVersion must be provided together",
+        "worldSlug, realmSlug, pointerVersion, and playableStateScope must be provided together",
         result.failureMessage());
     verifyNoInteractions(
         gameplayCommandRepository, gameInstanceRepository, runtimeRegionStatusRepository);
@@ -1003,7 +1003,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     assertEquals("ABANDONED", result.effectStatus());
     assertEquals("REMOTE_SCRIPT_EVENT_PAYLOAD_INVALID", result.failureCode());
     assertEquals(
-        "worldSlug, realmSlug, and pointerVersion must be provided together",
+        "worldSlug, realmSlug, pointerVersion, and playableStateScope must be provided together",
         result.failureMessage());
     verifyNoInteractions(automationScriptingClient);
   }

@@ -1134,7 +1134,7 @@ class GameSessionWebSocketHandlerTest {
   }
 
   @Test
-  void handleMessageClearsPartialGenericBootstrapRoutingWhenRuntimeAuthorityIsAbsent()
+  void handleMessageRepairsPartialGenericBootstrapRoutingFromSingularRuntimeAuthority()
       throws Exception {
     when(session.getAttributes())
         .thenReturn(
@@ -1200,7 +1200,8 @@ class GameSessionWebSocketHandlerTest {
                         && context.bootstrapGameInstanceId() == 7L
                         && "demo".equals(context.worldSlug())
                         && "production".equals(context.realmSlug())
-                        && context.pointerVersion() == 8L));
+                        && context.pointerVersion() == 8L
+                        && "SHARED".equals(context.playableStateScope())));
     org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(sessionContextService, interpreter);
     inOrder.verify(sessionContextService).save(any(SessionContext.class));
     inOrder.verify(interpreter).interpret("41", command, false);

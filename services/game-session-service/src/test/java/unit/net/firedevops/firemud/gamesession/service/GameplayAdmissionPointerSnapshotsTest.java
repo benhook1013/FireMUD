@@ -374,6 +374,22 @@ class GameplayAdmissionPointerSnapshotsTest {
   }
 
   @Test
+  void sameBootstrapRouteFailsClosedForScopeOnlyContext() {
+    SessionContext existing = bootstrapShell(22L, 1L, null, null, 0L, "SHARED");
+    SessionContext incoming = bootstrapShell(22L, 1L, null, null, 0L, null);
+
+    assertThat(GameplayAdmissionPointerSnapshots.sameBootstrapRoute(existing, incoming)).isFalse();
+  }
+
+  @Test
+  void sameBootstrapRouteAcceptsTwoContextsWithNoRoutingValues() {
+    SessionContext existing = bootstrapShell(22L, 1L, null, null, 0L, null);
+    SessionContext incoming = bootstrapShell(22L, 1L, null, null, 0L, null);
+
+    assertThat(GameplayAdmissionPointerSnapshots.sameBootstrapRoute(existing, incoming)).isTrue();
+  }
+
+  @Test
   void sameBootstrapRouteAcceptsFirstPartyConnectContextWithCaseInsensitiveRoutingIdentity() {
     FirstPartyConnectContext existing =
         new FirstPartyConnectContext(

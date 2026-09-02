@@ -185,14 +185,17 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       AdmissionStateValidation stateValidation = validateAdmissionState(request);
       admission = stateValidation.admission();
       if (admission.admitted()) {
+        TriggerAdmission dryRunAdmission = validateDryRunBudget(request);
         admission =
-            admissionWithHandlers(
-                request,
-                schemaVersion,
-                definition,
-                sourceService,
-                tenantKey,
-                stateValidation.state());
+            dryRunAdmission != null
+                ? dryRunAdmission
+                : admissionWithHandlers(
+                    request,
+                    schemaVersion,
+                    definition,
+                    sourceService,
+                    tenantKey,
+                    stateValidation.state());
       }
     }
     HandlerScopeValues requestScopeValues = requestScopeValues(request);
@@ -289,10 +292,6 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     TriggerAdmission pluginAdmission = validatePluginRuntimeState(request);
     if (pluginAdmission != null) {
       return pluginAdmission;
-    }
-    TriggerAdmission dryRunAdmission = validateDryRunBudget(request);
-    if (dryRunAdmission != null) {
-      return dryRunAdmission;
     }
     return new TriggerAdmission(true, OUTCOME_ADMITTED, "admitted_for_handler_resolution", 0);
   }

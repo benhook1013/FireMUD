@@ -2382,12 +2382,29 @@ class TickStageScriptTest {
 
   @SuppressWarnings("unchecked")
   private byte[] serializedKey(String key) {
-    return ((RedisSerializer<Object>) redisTemplate.getKeySerializer()).serialize(key);
+    RedisSerializer<Object> serializer = (RedisSerializer<Object>) redisTemplate.getKeySerializer();
+    if (serializer == null) {
+      throw new IllegalStateException("Redis key serializer is not configured");
+    }
+    byte[] serialized = serializer.serialize(key);
+    if (serialized == null) {
+      throw new IllegalStateException("Redis key serializer returned null");
+    }
+    return serialized;
   }
 
   @SuppressWarnings("unchecked")
   private byte[] serializeValue(Object value) {
-    return ((RedisSerializer<Object>) redisTemplate.getValueSerializer()).serialize(value);
+    RedisSerializer<Object> serializer =
+        (RedisSerializer<Object>) redisTemplate.getValueSerializer();
+    if (serializer == null) {
+      throw new IllegalStateException("Redis value serializer is not configured");
+    }
+    byte[] serialized = serializer.serialize(value);
+    if (serialized == null) {
+      throw new IllegalStateException("Redis value serializer returned null");
+    }
+    return serialized;
   }
 
   private static byte[] serializedEnvelope(int typeCode, long payloadLength, byte[] payload) {

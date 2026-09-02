@@ -450,11 +450,14 @@ public final class DefaultDurableRemoteFollowupExecutionService
     String worldSlug = authoritativeText(followup.getWorldSlug(), root, "worldSlug");
     String realmSlug = authoritativeText(followup.getRealmSlug(), root, "realmSlug");
     Long pointerVersion = authoritativeLong(followup.getPointerVersion(), root, "pointerVersion");
+    String playableStateScope =
+        authoritativeText(followup.getPlayableStateScope(), root, "playableStateScope");
     GameplayAdmissionPointerSnapshots.requireCompleteOrAbsentRoutingBundle(
         worldSlug,
         realmSlug,
         pointerVersion,
-        "worldSlug, realmSlug, and pointerVersion must be provided together");
+        playableStateScope,
+        "worldSlug, realmSlug, pointerVersion, and playableStateScope must be provided together");
     return GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
         worldSlug, realmSlug, pointerVersion);
   }
